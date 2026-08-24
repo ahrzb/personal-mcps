@@ -286,7 +286,10 @@ a config change, not a design change.
 
 The CLI performs every admin operation by calling these tools — the CLI has no private
 admin API. (`diff`/`apply` are CLI-side compositions of `*_list` reads and `*_create` /
-`*_delete` / `grant_set` writes.)
+`*_delete` / `grant_set` writes.) The only non-MCP traffic the CLI ever sends is the
+auth-session family — `login`, `logout`, `whoami` — which rides better-auth's endpoints
+(`whoami` can't be MCP even in principle: hub URLs embed the username, which is exactly
+what `whoami` discovers).
 
 ## 9. YAML config, diff, apply
 

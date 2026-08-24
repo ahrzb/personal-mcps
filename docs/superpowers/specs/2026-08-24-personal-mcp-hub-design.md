@@ -212,6 +212,23 @@ delete matching token rows as a server-side side effect (§8), and verification
 additionally rejects tokens whose referenced row no longer exists (§6 for service
 tokens, §7 for service-account tokens).)
 
+```sql
+CREATE TABLE audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  owner_id TEXT NOT NULL,              -- namespace the event happened in
+  principal TEXT NOT NULL,             -- 'user:<name>' | 'sa:<slug>' | 'svc:<slug>' | 'bootstrap'
+  event TEXT NOT NULL,                 -- 'tools/call' | 'admin.<tool>' | 'connect.register' |
+                                       -- 'connect.replaced' | 'auth.login' | 'auth.device_approved' | …
+  service TEXT,                        -- slug, when applicable
+  tool TEXT,
+  outcome TEXT NOT NULL,               -- 'ok' | '-32001' | '-32002' | '-32000' | 'error'
+  detail TEXT                          -- small JSON summary; NEVER tool arguments,
+                                       -- results, or token material
+);
+CREATE INDEX audit_owner_ts ON audit(owner_id, ts);
+```
+
 The DO keeps per-service volatile/cached state in its own SQLite: cached `tools/list`
 result, connection metadata. Identity/auth facts for the socket ride in
 `serializeAttachment` (≤16 KB).
@@ -425,8 +442,14 @@ Tools (names final, shapes reviewed at implementation time):
   token also closes that service's live socket (code `4001`) if the connection was
   opened with it.
 
+- `audit_query` — `{ principal?, service?, event?, since?, until?, limit? (default 100) }`
+  → audit rows, newest first. Read-only; like everything else, `pmcp audit` is sugar
+  over this tool.
+
 Every tool that takes a service slug rejects `pmcp` with the same error (`grant_set`,
-`service_*`, `token_issue` alike) — the reservation is uniform, not per-tool.
+`service_*`, `token_issue` alike) — the reservation is uniform, not per-tool. Every
+mutating `pmcp` tool writes an `admin.<tool>` audit row with a summary of the change
+(never secrets — `token_issue` logs that a token was issued and for whom, not the key).
 
 The `pmcp` slug is **reserved and virtual**: no `service` row exists for it.
 `service_list` includes it flagged `builtin: true`. Access is admin (user) tokens only in v1 —
@@ -509,6 +532,7 @@ pmcp diff  -f mcps.yaml
 pmcp apply -f mcps.yaml [--yes]
 pmcp token issue (--account <slug> | --service <slug>) [--expires 90d]
 pmcp token list | revoke <id>
+pmcp audit [--account <slug>] [--service <slug>] [--since 7d]
 ```
 
 All service and account references resolve within the logged-in user's namespace (the
@@ -639,10 +663,14 @@ No dashboard; the CLI and admin MCP are the management UI.
 - Log hygiene: `Authorization` headers and anything matching `pmcp_(sa|svc)_…` are
   redacted from logs, error responses, and exception traces; MCP bodies for the `pmcp`
   service (which carry issued tokens) are never logged.
-- Audit: one structured log line per auth decision and per `tools/call` (principal,
-  service, tool, allow/deny/error) via Workers observability — plus the coarse
-  `last_used_at` on tokens (§5). Enough to answer "what did this token do, and is it
-  still in use"; a D1 audit table is deferred until that's insufficient.
+- Audit trail: the D1 `audit` table (§5) is the durable record — Workers Logs retention
+  is only 3–7 days, so log lines are ops debugging, not audit. Recorded: every
+  `tools/call` (allowed and denied), every mutating `pmcp` admin tool, logins, device
+  approvals, connect/register/replaced events, and bootstrap invocations. Not recorded:
+  `tools/list` (agent polling noise) and, anywhere, tool arguments/results or token
+  material. Queried via `audit_query` / `pmcp audit`. A daily cron trigger prunes rows
+  older than 90 days. The coarse `last_used_at` on tokens (§5) complements it for
+  at-a-glance rotation checks.
 
 ## 16. Testing
 

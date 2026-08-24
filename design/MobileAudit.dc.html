@@ -66,9 +66,17 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
         </div>
       </div>
+      <div style="height: 44px; box-sizing: border-box; padding: 0 14px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; justify-content: space-between;">
+        <span>All events</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+      </div>
       <div style="height: 44px; box-sizing: border-box; padding: 0 14px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; gap: 8px;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
         <span style="color: #a1a1aa;">Filter by tool…</span>
+      </div>
+      <div style="height: 44px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 6px; background: #ffffff; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path><path d="M12 15V3"></path></svg>
+        <span>Export JSONL</span>
       </div>
     </div>
 
@@ -100,25 +108,15 @@
         <div style="display: flex; align-items: baseline; gap: 8px;">
           <div style="font-size: 14px; font-weight: 500;">Events per day</div>
         </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <div style="display: flex; align-items: center; gap: 6px;">
-            <span style="width: 8px; height: 8px; border-radius: 2px; background: #71717a;"></span>
-            <span style="font-size: 12px; color: #71717a;">allowed</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 6px;">
-            <span style="width: 8px; height: 8px; border-radius: 2px; background: #dc2626;"></span>
-            <span style="font-size: 12px; color: #71717a;">denied</span>
-          </div>
-        </div>
       </div>
       <div style="display: flex; align-items: flex-end; gap: 6px; height: 110px; border-bottom: 1px solid #e4e4e7;">
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 52px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;"><div style="height: 4px; background: #dc2626; border-radius: 3px 3px 0 0;"></div><div style="height: 60px; background: #71717a;"></div></div>
+        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 66px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 64px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 55px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;"><div style="height: 8px; background: #dc2626; border-radius: 3px 3px 0 0;"></div><div style="height: 90px; background: #71717a;"></div></div>
+        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 100px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 62px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;"><div style="height: 5px; background: #dc2626; border-radius: 3px 3px 0 0;"></div><div style="height: 58px; background: #71717a;"></div></div>
+        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 65px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
       </div>
       <div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0;">
         <div style="font-size: 11px; color: #a1a1aa; text-align: center;">18</div>
@@ -206,7 +204,7 @@
   </div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":390,"height":1560}}'>
+<script data-dc-script data-props='{"$preview":{"width":390,"height":1668}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

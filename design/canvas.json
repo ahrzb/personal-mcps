@@ -14,7 +14,7 @@
     { "file": "MobileTwoFactor.dc.html", "x": 450, "y": 2760, "w": 390, "h": 640, "title": "Two-factor · Mobile" },
     { "file": "MobileDevice.dc.html", "x": 900, "y": 2760, "w": 390, "h": 800, "title": "Device · Mobile" },
     { "file": "MobileAccount.dc.html", "x": 1350, "y": 2760, "w": 390, "h": 1180, "title": "Account · Mobile" },
-    { "file": "MobileAudit.dc.html", "x": 1800, "y": 2760, "w": 390, "h": 1560, "title": "Audit · Mobile" },
+    { "file": "MobileAudit.dc.html", "x": 1800, "y": 2760, "w": 390, "h": 1668, "title": "Audit · Mobile" },
     { "file": "MobileApprovals.dc.html", "x": 2250, "y": 2760, "w": 390, "h": 1160, "title": "Approvals · Mobile" },
     { "file": "MobileApprovalDetail.dc.html", "x": 2700, "y": 2760, "w": 390, "h": 800, "title": "Approval detail · Mobile" },
     { "file": "MobileServices.dc.html", "x": 3150, "y": 2760, "w": 390, "h": 960, "title": "Services · Mobile" },

@@ -44,7 +44,7 @@
       </div>
       <div style="display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path><path d="M12 15V3"></path></svg>
-        <span>Export CSV</span>
+        <span>Export JSONL</span>
       </div>
     </div>
 
@@ -114,16 +114,6 @@
           <div style="font-size: 14px; font-weight: 500;">Events over time</div>
           <div style="font-size: 12px; color: #71717a;">6-hour buckets</div>
         </div>
-        <div style="display: flex; align-items: center; gap: 16px;">
-          <div style="display: flex; align-items: center; gap: 6px;">
-            <span style="width: 8px; height: 8px; border-radius: 2px; background: #71717a;"></span>
-            <span style="font-size: 12px; color: #71717a;">allowed</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 6px;">
-            <span style="width: 8px; height: 8px; border-radius: 2px; background: #dc2626;"></span>
-            <span style="font-size: 12px; color: #71717a;">denied</span>
-          </div>
-        </div>
       </div>
       <div style="display: flex; align-items: flex-end; gap: 4px; height: 140px; border-bottom: 1px solid #e4e4e7; padding-bottom: 0;">
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 22px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
@@ -132,7 +122,7 @@
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 30px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 18px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 62px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;"><div style="height: 5px; background: #dc2626; border-radius: 3px 3px 0 0;"></div><div style="height: 68px; background: #71717a;"></div></div>
+        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 75px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 38px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 25px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 70px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
@@ -143,22 +133,21 @@
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 66px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 35px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 28px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end; position: relative; gap: 2px;">
+        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end; position: relative;">
           <div style="position: absolute; bottom: 92px; left: calc(100% + 8px); background: #18181b; color: #fafafa; border-radius: 6px; padding: 6px 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; flex-direction: column; gap: 2px; width: max-content;">
             <div style="font-size: 12px; font-weight: 500;">Aug 22 · 06:00–12:00</div>
-            <div style="font-size: 12px; color: #a1a1aa;">96 events · 6 denied</div>
+            <div style="font-size: 12px; color: #a1a1aa;">96 events</div>
           </div>
-          <div style="height: 8px; background: #dc2626; border-radius: 3px 3px 0 0;"></div>
-          <div style="height: 118px; background: #52525b;"></div>
+          <div style="height: 128px; background: #52525b; border-radius: 3px 3px 0 0;"></div>
         </div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;"><div style="height: 5px; background: #dc2626; border-radius: 3px 3px 0 0;"></div><div style="height: 82px; background: #71717a;"></div></div>
+        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 89px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 50px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 20px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 74px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 60px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 33px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 26px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;"><div style="height: 6px; background: #dc2626; border-radius: 3px 3px 0 0;"></div><div style="height: 78px; background: #71717a;"></div></div>
+        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 86px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 64px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
         <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 14px; background: #71717a; border-radius: 3px 3px 0 0;"></div></div>
       </div>

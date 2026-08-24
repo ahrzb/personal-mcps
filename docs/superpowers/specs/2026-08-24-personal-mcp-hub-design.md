@@ -21,7 +21,7 @@ Components:
 | **clients** (py + js) | Libraries a service author uses: write a normal MCP server, hand it to the lib, it maintains the reverse connection. |
 | **cli** (`pmcp`) | Login via device flow, invoke MCP tools, diff/apply the YAML config. |
 | **admin MCP** | The hub's own management (services, accounts, grants, tokens) exposed as a built-in MCP service named `pmcp` — its tools are ordinary tools (`pmcp_service_list` on the aggregated endpoint). |
-| **web pages** | Server-rendered pages (Hono JSX, §13): `/login`, `/device`, `/account`, plus `/services`, `/approvals`, `/audit` — fronts over the same handlers as the `pmcp` tools, no web-only capability (except `/account`, §13). |
+| **web pages** | Server-rendered pages (Hono JSX, §13): `/login`, `/device`, `/account`, plus `/services`, `/approvals`, `/audit` — fronts over the same handlers as the `pmcp` tools, no web-only capability (except `/account`, and `/audit`'s streaming JSONL export — a serialization of `audit_query`, §13). |
 
 Non-goals (v1): cross-namespace sharing between users, resources/prompts proxying, MCP-native OAuth for
 third-party clients, push notifications (`subscriptions/listen`), any web UI beyond the
@@ -52,8 +52,9 @@ server-rendered pages of §13 (no SPA).
   only of tool-name characters `[A-Za-z0-9._-]` is matched as a literal tool name — §7
   pins the rule; anything else compiles as a regex, and `*` is accepted as an alias for
   `.*`). Every service additionally
-  has the built-in wildcard role **`*`** matching all tools, present and future, with no
-  declaration needed — for both kinds. Trust boundary, stated plainly: roles confine
+  has the built-in wildcard role **`all`** matching all tools, present and future, with
+  no declaration needed — for both kinds. (`all` is a reserved role name — never
+  declarable, only grantable; it was renamed from `*`, which read like a regex.) Trust boundary, stated plainly: roles confine
   the *service account*, not the service — a tunneled service self-declares its roles,
   so granting any role on it trusts that service fully (a compromised bot can widen its
   own roles; the hub logs such drift, §6, but the blast radius is accepted as
@@ -165,7 +166,10 @@ server-rendered pages of §13 (no SPA).
 ## 5. Data model
 
 better-auth owns: `user`, `session`, `account`, `verification`, `twoFactor`, `passkey`,
-`deviceCode`.
+`deviceCode`. One extension of ours on `passkey`: a `last_used_at` column the hub
+stamps after each successful passkey sign-in (better-auth's schema only tracks
+`createdAt`) — cheap (one UPDATE per human passkey login) and it backs the "last used"
+line on `/account`'s passkey rows.
 
 Ours, in D1:
 
@@ -217,7 +221,7 @@ CREATE TABLE service_account (
 CREATE TABLE grant_ (                   -- "grant" is an SQL keyword
   service_account_id TEXT NOT NULL REFERENCES service_account(id) ON DELETE CASCADE,
   service_id TEXT NOT NULL REFERENCES service(id) ON DELETE CASCADE,
-  role TEXT NOT NULL,                    -- exact role name, or the literal '*' (§9)
+  role TEXT NOT NULL,                    -- exact role name, or the built-in 'all' (§9)
   mode TEXT NOT NULL DEFAULT 'allow' CHECK (mode IN ('allow', 'approval')),
   PRIMARY KEY (service_account_id, service_id, role)
 );
@@ -325,8 +329,8 @@ Two message namespaces:
      The service identity comes **exclusively** from the authenticated token — the
      payload carries no service field, so a token for one slug can never touch another
      service's registration. The hub validates the declaration before accepting it:
-     role names must match `[a-z0-9_-]{1,64}` (`*` is rejected — it's the resolver's
-     built-in), every pattern must compile as a regex, and pattern length (≤128 chars)
+     role names must match `[a-z0-9_-]{1,64}` (`all` is rejected — it's the resolver's
+     built-in, §2), every pattern must compile as a regex, and pattern length (≤128 chars)
      and per-role pattern count (≤64) are capped; violations get a JSON-RPC error reply
      and the socket is closed. The hub verifies the service row still exists (close
      `4003` if not), upserts `roles_json` in D1 and checks for **role drift**: for each
@@ -342,7 +346,7 @@ Two message namespaces:
      visible, not silent. The hub then replies `{ "ok": true }` and immediately issues
      `tools/list` to warm its cache. A `roles` value of `{}` means "no roles declared" —
      the service is then reachable only by admin tokens or accounts granted the
-     built-in `*` role.
+     built-in `all` role.
    - `hub/replaced` (hub → client, notification): a newer connection for the same slug
      arrived; the old socket is closed with code `4000` after this. Eviction happens at
      **acceptance** of the new socket (`ctx.acceptWebSocket`), before its `hub/register`
@@ -459,8 +463,8 @@ Per request:
 2. Resolve the allowed-tool filter (per service):
    - owner → all tools (sees everything in their namespace);
    - service account → the union of anchored-regex patterns of its granted roles,
-     resolved against the service's `roles_json` **at request time**; the built-in `*`
-     role contributes `.*` without ever appearing in `roles_json`. A granted role no
+     resolved against the service's `roles_json` **at request time**; the built-in
+     `all` role contributes `.*` without ever appearing in `roles_json`. A granted role no
      longer present in `roles_json` resolves to the empty pattern set — it still counts
      as a grant (the account gets an empty `tools/list` and `-32001`, not a 404). On the
      scoped endpoint a service account gets **404** both for a nonexistent slug and for
@@ -594,15 +598,15 @@ caller's identity and resolved roles (proxied: only when enabled, below):
 - **Tunneled**: `_meta` fields on the forwarded request —
   `hub/principal` (`"sa:claude"` or `"user:ahrzb"`) and `hub/roles` (the caller's
   granted role names on this service, exactly as granted — the built-in wildcard is
-  forwarded literally as `"*"`, never expanded into declared role names; owners get
-  `["*"]`). The client libraries surface these on the tool context (e.g.
+  forwarded literally as `"all"`, never expanded into declared role names; owners get
+  `["all"]`). The client libraries surface these on the tool context (e.g.
   `ctx.principal`, `ctx.roles`, `ctx.has_role("editor")`); `has_role(x)` returns true
-  when the list contains `x` or `"*"`, so owner and `*`-granted calls behave
-  identically, and `*` can never collide with a real role name (§6 rejects it in
+  when the list contains `x` or `"all"`, so owner and `all`-granted calls behave
+  identically, and `all` can never collide with a real role name (§6 rejects it in
   declarations).
 - **Proxied**: only when the service sets `forward_identity: true` (default **false**):
   real HTTP headers on the upstream request — `X-Pmcp-Principal` and `X-Pmcp-Roles`
-  (comma-separated, same values — including a literal `*`) — so an upstream you also
+  (comma-separated, same values — including a literal `all`) — so an upstream you also
   control can branch on them. Third-party upstreams (Notion, Linear) have no need for
   internal identifiers, so with the flag off no `X-Pmcp-*` headers are sent.
 
@@ -712,7 +716,7 @@ Tools (names final, shapes reviewed at implementation time):
   `auth: headers` ones — each mode has exactly one credential path. `service_list` /
   `service_get` additionally report the OAuth connection status for `auth: oauth`
   services (not connected / connected / needs reconnect). Proxied role definitions get the same validation
-  as `hub/register` (§6): name charset, no `*`, patterns must compile, caps. Delete
+  as `hub/register` (§6): name charset, `all` rejected, patterns must compile, caps. Delete
   also deletes the service's `token` rows, tells its DO to close any live socket (code
   `4001`) and drop cached state (DO side effects apply to tunneled services only —
   proxied services have no DO and no tokens).
@@ -727,7 +731,7 @@ Tools (names final, shapes reviewed at implementation time):
 - `grant_set` — replaces the full grant set for (account, service); each entry is a
   role name plus optional mode (`reader` or `reader:approval`, the same syntax as §9).
   Applies the same role validation as the YAML layer (§9): undeclared roles warn for
-  tunneled services, hard-error for proxied ones; a role literally named `*` is never
+  tunneled services, hard-error for proxied ones; a role literally named `all` is never
   declarable, only grantable (it's the built-in).
 - `approval_list` — `{ status?, limit? }` → approval requests, newest first (pending
   and history alike).
@@ -742,9 +746,11 @@ Tools (names final, shapes reviewed at implementation time):
   token also closes that service's live socket (code `4001`) if the connection was
   opened with it.
 
-- `audit_query` — `{ principal?, service?, event?, since?, until?, limit? (default 100) }`
-  → audit rows, newest first. Read-only; like everything else, `pmcp audit` is sugar
-  over this tool.
+- `audit_query` — `{ principal?, service?, event?, tool?, since?, until?, limit?
+  (default 100), offset? (default 0) }` → `{ rows, total }`, newest first; `total`
+  counts every row matching the filters (a COUNT over the 90-day-pruned table is
+  cheap, and it backs the web UI's page numbers and "N events match" line). Read-only;
+  like everything else, `pmcp audit` is sugar over this tool.
 
 Every tool that takes a service slug rejects `pmcp` with the same error (`grant_set`,
 `service_*`, `token_issue` alike) — the reservation is uniform, not per-tool. Every
@@ -830,7 +836,7 @@ service_accounts:
   alike. Grants
   referencing roles a *tunneled* service hasn't declared are applied but flagged with a
   warning (tunneled roles arrive at connect time, so the file can legitimately be ahead
-  of the first connection); `*` is exempt, and for proxied services undeclared roles are
+  of the first connection); `all` is exempt, and for proxied services undeclared roles are
   a hard error (their roles live in this same file). The reserved `pmcp` slug is
   excluded from the delete computation and rejected anywhere it appears in the file —
   as a `services:` key or inside a `grants:` block.
@@ -950,9 +956,15 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   cookie-authenticated session with recent authentication — bearer-sourced sessions are
   rejected on these routes (§4).
 - `/audit` — read-only, cookie-session-gated view over the audit table (§5): a plain
-  server-rendered table, newest first, with account/service/since filters and a
-  "before" cursor for paging. Same query logic as `audit_query`; no mutations, so no
-  CSRF surface.
+  server-rendered table, newest first, with the same filters as `audit_query`
+  (account, service, event, tool, time range) and offset/limit paging backed by
+  `audit_query`'s `total` (desktop shows numbered pages, mobile a "Load more" that
+  accumulates offsets — one contract, two presentations). An **Export JSONL** action
+  streams every row matching the current filters, one JSON object per line: the
+  handler re-runs the same query in `limit`-sized chunks and writes each chunk to a
+  streaming response as it is fetched, never holding the full result set in memory —
+  a serialization of `audit_query`, not a new capability. No mutations, so no CSRF
+  surface.
 - `/approvals` — cookie-session-gated: pending requests up top (account, service, tool,
   redacted arguments, requested time, approve/reject buttons — CSRF token on the POST),
   decision history below. `/approvals/<id>` is the detail page the `-32003` error links
@@ -1125,9 +1137,11 @@ personal-mcps/
 9. **Role patterns are anchored regexes** (a bare tool name matches itself; `*` is an
    alias for `.*`), for both tunneled-declared and proxied virtual roles — one pattern
    language everywhere, and regex was wanted for virtual roles anyway.
-10. **The wildcard role `*` is built-in on every service** (both kinds), matching all
-    tools present and future; it never appears in `roles_json` and is resolved at
-    request time.
+10. **The wildcard role is named `all`, built-in on every service** (both kinds),
+    matching all tools present and future; it never appears in `roles_json`, is
+    rejected in declarations (it fits the role-name charset, so the rejection is
+    explicit), and is resolved at request time. Renamed from `*`, which read like a
+    regex; `*` remains only as a pattern alias for `.*` (item 9).
 11. **Proxied upstream auth is static headers (default) or interactive OAuth**
     (`auth: oauth`, §7) — connected from `/services`, tokens encrypted at rest (§5),
     never in YAML (which declares only the mode; the mode is stored in its own

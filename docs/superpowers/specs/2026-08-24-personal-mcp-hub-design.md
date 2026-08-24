@@ -5,11 +5,13 @@ Status: draft, for review
 
 ## 1. Overview
 
-A personal MCP hub. Services (small programs, written like telegram bots) dial **out** to a
-central server with a persistent WebSocket and expose an MCP server through it. The hub
-proxies inbound MCP clients (Claude, other agents, the CLI) to those services, enforcing
-per-service-account role grants. Each user owns their own namespace — services, service
-accounts, grants, YAML file — managed via a CLI and served under `/<user>/mcp…` URLs.
+A personal MCP hub. Services come in two kinds: **tunneled** — small programs (written
+like telegram bots) that dial **out** to the hub with a persistent WebSocket and expose
+an MCP server through it — and **proxied** — existing remote MCP endpoints (e.g.
+Notion's) that the hub forwards to directly. The hub proxies inbound MCP clients
+(Claude, other agents, the CLI) to those services, enforcing per-service-account role
+grants. Each user owns their own namespace — services, service accounts, grants, YAML
+file — managed via a CLI and served under `/<user>/mcp…` URLs.
 
 Components:
 
@@ -30,14 +32,20 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
   Created by a repo script; password + optional TOTP second factor and/or passkey.
   Usernames are `[a-z0-9-]`, minus a reserved list (`login`, `device`, `account`, `api`,
   `connect`, `internal`, `mcp`, …) since they become top-level URL segments.
-- **Service** — a registered MCP service (the "bot"). Identified by `(owner, slug)` —
-  slugs are `[a-z0-9-]` (no underscore; §7 relies on this), unique per owner. Has at
-  most one live connection. Declares its **roles** at connect time. Lifecycle:
-  provisioned → online ↔ offline, plus reversible **archived** and terminal deletion
-  (§6, "Service lifecycle").
-- **Role** — named subset of a service's tools, declared by the service itself in code:
-  `{"reader": ["get_news", "search_*"], "admin": ["*"]}`. Patterns are glob-style over
-  tool names.
+- **Service** — a registered MCP service. Identified by `(owner, slug)` — slugs are
+  `[a-z0-9-]` (no underscore; §7 relies on this), unique per owner. Two kinds:
+  - *tunneled* (the "bot"): dials in over WebSocket, at most one live connection,
+    declares its roles at connect time. Lifecycle: provisioned → online ↔ offline, plus
+    reversible **archived** and terminal deletion (§6, "Service lifecycle").
+  - *proxied*: an upstream MCP endpoint URL the hub forwards to. No connection, no
+    online/offline; roles are defined in config ("virtual roles"), not by the upstream.
+    Lifecycle is just provisioned / archived / deleted.
+- **Role** — named subset of a service's tools. Declared in code at registration for
+  tunneled services (`{"reader": ["get_news", "search_.*"]}`), in the YAML / admin tools
+  for proxied ones. Patterns are **anchored regexes** over tool names (a plain tool name
+  is its own regex; `*` is accepted as an alias for `.*`). Every service additionally
+  has the built-in wildcard role **`*`** matching all tools, present and future, with no
+  declaration needed — for both kinds.
 - **Service account** — an identity for an AI agent or system (`claude`, `cron`). Holds
   **grants**.
 - **Grant** — (service account, service, role). A service account may call exactly the
@@ -45,8 +53,8 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
 - **Token** — bearer credential. Three kinds:
   - *user token*: better-auth session token obtained by the CLI via device flow → admin access.
   - *service-account token*: long-lived API key bound to a service account → limited by grants.
-  - *service token*: long-lived API key bound to a service → only valid for opening the
-    reverse WebSocket as that service.
+  - *service token*: long-lived API key bound to a **tunneled** service → only valid for
+    opening the reverse WebSocket as that service. Proxied services have no tokens.
 
 ## 3. Architecture
 
@@ -62,14 +70,20 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
                                                             fetch(allowed, jsonrpc)
                                                            ┌──────────────▼──────────────┐
  ┌──────────┐    wss://host/connect                        │  ServiceConnection DO       │
- │ service  │ ────────────────────────────────────────────▶│  (one per <user>/<service>, │
- │ (bot)    │    Bearer: service token                     │   SQLite-backed, hibernating│
+ │ tunneled │ ────────────────────────────────────────────▶│  (one per <user>/<service>, │
+ │ service  │    Bearer: service token                     │   SQLite-backed, hibernating│
  └──────────┘    JSON-RPC frames, hub acts as MCP client   │   WebSocket)                │
+                                                           └─────────────────────────────┘
+ ┌──────────┐    Streamable HTTP (hub as MCP client,       ┌─────────────────────────────┐
+ │ upstream │ ◀────────────────────────────────────────────│  Worker (proxied kind:      │
+ │ MCP      │    stored upstream auth header)              │  forwards directly, no DO)  │
+ └──────────┘                                              └─────────────────────────────┘
 ```
 
 - The Worker is the single trust boundary: it authenticates every consumer request,
   resolves grants from D1, and forwards the request plus the resolved *allowed-tools
-  filter* to the service's Durable Object.
+  filter* to the service's Durable Object (tunneled) or straight to the upstream
+  endpoint as an MCP client (proxied — no DO involved).
 - The DO owns the live WebSocket (hibernatable), a cached tool list, and pending
   request correlation. It never validates tokens itself for consumer traffic — it trusts
   the Worker.
@@ -85,6 +99,9 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
   factory building a **low-level `Server`** (`setRequestHandler('tools/list' | 'tools/call', …)`)
   — the SDK-endorsed gateway pattern. Its `legacy: 'stateless'` lane serves 2025-era
   clients for free. Do **not** use Cloudflare's `McpAgent` (deprecated, frozen on SDK v1).
+  For proxied services the Worker dials upstream with `Client` from
+  `@modelcontextprotocol/client` (Streamable HTTP transport; it handles legacy-upstream
+  handshakes itself).
 - **Auth**: better-auth **≥ 1.7** with D1 as `database` (instantiated per request — D1
   bindings are request-scoped). Plugins:
   - `username()` — login is username + password; email is a synthesized placeholder
@@ -126,7 +143,11 @@ CREATE TABLE service (
   slug TEXT NOT NULL,                  -- [a-z0-9-], referenced in YAML and /<user>/mcp/<slug>
   name TEXT NOT NULL,
   description TEXT DEFAULT '',
-  roles_json TEXT NOT NULL DEFAULT '{}',  -- {"reader": ["get_news","search_*"], ...}, updated at registration
+  kind TEXT NOT NULL DEFAULT 'tunnel' CHECK (kind IN ('tunnel', 'proxy')),
+  upstream_url TEXT,                   -- proxy kind only
+  upstream_auth_json TEXT,             -- proxy kind only; headers, set imperatively (§8), never via YAML
+  roles_json TEXT NOT NULL DEFAULT '{}',  -- {"reader": ["get_news","search_.*"], ...}
+                                          -- tunnel: written at registration; proxy: via config
   created_at INTEGER NOT NULL,
   last_connected_at INTEGER,
   archived_at INTEGER,                 -- non-NULL = archived (§6, "Service lifecycle")
@@ -172,7 +193,9 @@ The DO keeps per-service volatile/cached state in its own SQLite: cached `tools/
 result, connection metadata. Identity/auth facts for the socket ride in
 `serializeAttachment` (≤16 KB).
 
-## 6. Reverse connection protocol (service ↔ hub)
+## 6. Reverse connection protocol (tunneled service ↔ hub)
+
+This section is tunnel-kind only; proxied services have no connection of their own.
 
 Transport: WebSocket to `wss://<host>/connect`, `Authorization: Bearer pmcp_svc_…`.
 The Worker verifies the service token, resolves the service (and its owner), and hands
@@ -186,13 +209,14 @@ Two message namespaces:
 1. **Control** — JSON-RPC methods prefixed `hub/`, handled by the client library, never
    reaching the user's MCP server:
    - `hub/register` (client → hub, first message):
-     `{ "clientVersion": "...", "protocolVersion": "2026-07-28", "roles": { "<role>": ["<glob>", …] } }`
+     `{ "clientVersion": "...", "protocolVersion": "2026-07-28", "roles": { "<role>": ["<regex>", …] } }`
      The service identity comes **exclusively** from the authenticated token — the
      payload carries no service field, so a token for one slug can never touch another
      service's registration. The hub verifies the service row still exists (close `4003`
      if not), upserts `roles_json` in D1, replies `{ "ok": true }`, then immediately
      issues `tools/list` to warm its cache. A `roles` value of `{}` means "no roles
-     declared" — only admin tokens can call the service.
+     declared" — the service is then reachable only by admin tokens or accounts granted
+     the built-in `*` role.
    - `hub/replaced` (hub → client, notification): a newer connection for the same slug
      arrived; the old socket is closed with code `4000` after this. Client must NOT
      reconnect automatically in this case (two copies of a bot fighting for the slot is an
@@ -243,6 +267,10 @@ which case the caller gets an error anyway and retries).
 4. **Deleted** — terminal (`service_delete` / removal from YAML): grants cascade, tokens
    are deleted, the live socket is closed (`4001`), the DO's cached state is wiped.
 
+Proxied services skip the connection-related states: their lifecycle is provisioned
+(with `endpoint` + config-defined roles, no token) ↔ archived → deleted, with the same
+archived semantics on the consumer side (`-32002`, hidden from aggregation).
+
 ## 7. Consumer-facing proxy
 
 Two shapes, one pipeline — both stateless 2026-07-28 MCP endpoints (via
@@ -265,26 +293,29 @@ Per request:
    URL — a session or service-account of any other user gets 404 (not 403; namespaces
    don't leak existence).
 2. Resolve the allowed-tool filter (per service):
-   - owner → `["*"]` (sees everything in their namespace);
-   - service account → its grant rows for the service, where a stored role of `*`
-     expands **at request time** to every role currently in the service's `roles_json`;
-     the filter is the union of those roles' glob patterns. Scoped endpoint with no
-     grants → 403 (with a JSON-RPC-shaped body per spec); aggregated endpoint simply
+   - owner → all tools (sees everything in their namespace);
+   - service account → the union of anchored-regex patterns of its granted roles,
+     resolved against the service's `roles_json` **at request time**; the built-in `*`
+     role contributes `.*` without ever appearing in `roles_json`. Scoped endpoint with
+     no grants → 403 (with a JSON-RPC-shaped body per spec); aggregated endpoint simply
      spans the services with at least one grant.
 3. Dispatch:
    - `server/discover` → answered by the Worker (hub capabilities).
-   - `tools/list` → served from the DO's **cached** list (kept in DO SQLite, so it
-     survives disconnects — deploy-induced reconnect flapping doesn't churn agent tool
-     lists), filtered by the allowed patterns; aggregated adds the slug prefix and
-     fans out over the relevant DOs, skipping archived services; on a scoped endpoint,
-     an archived service fails with `-32002` like every other request to it.
-     `ttlMs`/`cacheScope` hints set so clients can cache. A service that has never
-     connected lists no tools.
+   - `tools/list` → tunneled: served from the DO's **cached** list (kept in DO SQLite,
+     so it survives disconnects — deploy-induced reconnect flapping doesn't churn agent
+     tool lists; a service that has never connected lists no tools). Proxied: forwarded
+     live to the upstream endpoint with the stored auth headers. Both filtered by the
+     allowed patterns; aggregated adds the slug prefix and fans out over the relevant
+     services, skipping archived ones; on a scoped endpoint an archived service fails
+     with `-32002` like every other request to it. `ttlMs`/`cacheScope` hints set so
+     clients can cache.
    - `tools/call` → (aggregated: split off the slug prefix first) name must match the
-     filter, else JSON-RPC error `-32001` ("tool not permitted"). Otherwise forwarded
-     through the DO to the live connection; response relayed back verbatim. Archived →
-     `-32002` ("service archived") — checked first, since an archived service is also
-     disconnected; otherwise not connected → `-32000` ("service offline").
+     filter, else JSON-RPC error `-32001` ("tool not permitted"). Otherwise forwarded —
+     through the DO to the live connection (tunneled) or to the upstream endpoint
+     (proxied) — and the response relayed back verbatim. Archived → `-32002` ("service
+     archived") — checked first, since an archived service is also disconnected;
+     otherwise tunnel-not-connected or upstream-unreachable → `-32000` ("service
+     unavailable").
    - anything else → `-32601`.
 
 The hub terminates auth entirely; client tokens are never forwarded to services
@@ -297,10 +328,18 @@ implemented locally instead of forwarded to a DO, and every tool operates on the
 namespace of the `<user>` in the URL (which step 1 already proved is the caller's own).
 Tools (names final, shapes reviewed at implementation time):
 
-- `service_list` / `service_get` — includes declared roles, connection status, archived
-  status, last seen (diff/apply depend on the archived field being readable here).
-- `service_create` / `service_delete` — delete also deletes the service's `token` rows,
-  tells its DO to close any live socket (code `4001`) and drop cached state.
+- `service_list` / `service_get` — includes kind, declared roles, archived status, and
+  for proxied services the endpoint; connection status and last seen apply to tunneled
+  services only (proxied rows report `kind: proxy` in their place). diff/apply depend on
+  kind, endpoint, roles, and archived all being readable here.
+- `service_create` / `service_update` / `service_delete` — create/update take `kind` and,
+  for proxied services, `endpoint` and `roles` (the virtual role definitions). Delete
+  also deletes the service's `token` rows, tells its DO to close any live socket (code
+  `4001`) and drop cached state (DO side effects apply to tunneled services only —
+  proxied services have no DO and no tokens).
+- `service_set_upstream_auth` — proxied only: stores the headers (e.g. a bearer token)
+  the hub sends upstream. Imperative and write-only, like `token_issue` — secrets never
+  appear in YAML or in read tools.
 - `service_archive` / `service_unarchive` — archive severs any live socket (close
   `4002`) and hides the service from consumers; everything is retained for unarchive
   (§6, "Service lifecycle").
@@ -308,7 +347,7 @@ Tools (names final, shapes reviewed at implementation time):
   account's `token` rows.
 - `grant_set` — replaces the full grant set for (account, service).
 - `token_issue` — `{ kind: "service_account" | "service", slug, expires_in? }` → plaintext
-  key (shown once).
+  key (shown once). `kind: "service"` is rejected for proxied services (nothing connects).
 - `token_list` / `token_revoke` — revoking a `service` token also closes that service's
   live socket (code `4001`) if the connection was opened with it.
 
@@ -333,9 +372,16 @@ imperative (secrets and humans don't belong in a declarative file).
 
 ```yaml
 services:
-  news:
+  news:                     # kind: tunnel is the default; roles come from registration
     name: News MCP
     description: RSS digester on the home server
+  notion:
+    kind: proxy
+    endpoint: https://mcp.notion.com/mcp
+    roles:                  # virtual roles — defined here because the upstream can't
+      editor: ["create_page", "update_.*"]   # anchored regexes over tool names
+      reader: ["search", "fetch_.*"]
+    # upstream auth is imperative (service_set_upstream_auth) — never in this file
   home:
     name: Home automation
     archived: true          # parked: connections refused, hidden from consumers,
@@ -347,8 +393,8 @@ service_accounts:
     grants:
       news: [reader]        # exact role names; warned (not rejected) if the service
                             # hasn't declared them yet
-      home: ["*"]           # the literal '*' (no other patterns): stored verbatim, expanded
-                            # at request time to every declared role, present and future
+      notion: [editor]
+      home: ["*"]           # the built-in wildcard role: every tool, present and future
   cron:
     name: Nightly jobs
     grants:
@@ -359,10 +405,13 @@ service_accounts:
   delete plan (including archive/unarchive transitions from the `archived` field).
   Full desired state: deletes include services/accounts present on the
   server but absent from the file, **and** grants for any (account, service) pair not
-  listed under that account's `grants:` block. Grants referencing roles the service
-  hasn't declared are applied but flagged with a warning (services declare roles at
-  connect time, so the file can legitimately be ahead of the first connection); `*` is
-  exempt from that warning. The reserved `pmcp` slug is excluded from the delete
+  listed under that account's `grants:` block. For proxied services, `endpoint` and
+  `roles` are part of the desired state and diffed like any other field. Grants
+  referencing roles a *tunneled* service hasn't declared are applied but flagged with a
+  warning (tunneled roles arrive at connect time, so the file can legitimately be ahead
+  of the first connection); `*` is exempt, and for proxied services undeclared roles are
+  a hard error (their roles live in this same file). The reserved `pmcp` slug is
+  excluded from the delete
   computation and rejected if it appears in the file.
 - `pmcp apply -f mcps.yaml` — shows the same diff, asks for confirmation (`--yes` to
   skip), applies. Deleting a service or account cascades its grants and deletes its
@@ -375,7 +424,8 @@ TypeScript, ships in the monorepo, run via `npx pmcp` or installed globally.
 ```
 pmcp login [--url https://mcp.example.com]   # RFC 8628 device flow; prints code + URL
 pmcp logout | whoami
-pmcp ls                                       # services + online/offline + roles
+pmcp ls                                       # services + status (online/offline for tunneled,
+                                              #   proxy for proxied) + roles
 pmcp tools <service>                          # tools/list as seen with current token
 pmcp call <service> <tool> [--json '{…}' | key=value …]   # or the aggregated name:
 pmcp call <service>_<tool> [...]                          # unambiguous, slugs have no '_'
@@ -419,7 +469,7 @@ serve(  # blocks; connects, registers, reconnects forever
     mcp,
     url="https://mcp.example.com",   # or PMCP_URL; wss://<origin>/connect is derived
     token=...,                        # or PMCP_SERVICE_TOKEN
-    roles={"reader": ["get_news", "search_*"]},
+    roles={"reader": ["get_news", "search_.*"]},
 )
 ```
 
@@ -468,16 +518,21 @@ No dashboard; the CLI and admin MCP are the management UI.
   later without rework (the device-flow plugin and login pages are the groundwork).
 - **D1 for per-service state** — network hop on every DO wake for no benefit; DO SQLite
   is colocated and priced identically. D1 kept only for the shared control plane.
+- **OAuth to upstream servers** (hub acting as an OAuth client, CIMD document, token
+  refresh) — deferred; v1 upstream auth for proxied services is static headers set
+  imperatively. Upstreams needing interactive OAuth aren't supported until then.
 
 ## 15. Error handling and operational behavior
 
-- Every proxied request: 30 s hard timeout → JSON-RPC error to the caller; pending map
-  rejected on socket close.
+- Every forwarded request, both kinds: 30 s hard timeout → JSON-RPC error to the caller.
+  Tunneled: the DO's pending map is rejected on socket close. Proxied: the upstream
+  fetch is aborted at the same deadline.
 - Hub deploys terminate all WebSockets: services reconnect (backoff), consumers retry.
   Treat every `tools/call` as at-most-once.
 - Duplicate service connection: newest wins, oldest gets `hub/replaced` + close 4000.
-- Offline service: `-32000` immediately, no queueing; archived services return `-32002`
-  instead (§6). (Queue-and-retry is a later feature if it ever hurts.)
+- Unavailable service (tunnel offline, or proxied upstream unreachable): `-32000`
+  immediately, no queueing; archived services return `-32002` instead (§6).
+  (Queue-and-retry is a later feature if it ever hurts.)
 - Token revocation: consumer tokens are checked on every request, so revocation is
   immediate there. A revoked *service* token (or a deleted service) additionally severs
   the live reverse connection — the Worker tells the DO to close the socket with code
@@ -490,7 +545,8 @@ No dashboard; the CLI and admin MCP are the management UI.
   service connects over WS to the DO, consumer POSTs `tools/list`/`tools/call` through
   both the aggregated and scoped endpoints, asserts role filtering, prefix routing,
   namespace isolation (cross-user 404), offline/archived errors, timeout behavior,
-  connection replacement.
+  connection replacement; a proxied service backed by an in-test fake upstream asserts
+  forwarding, virtual-role filtering, and upstream-failure mapping.
 - **clients/py**: pytest; the WS↔anyio bridge tested against an in-process websocket
   server; reconnect/backoff logic unit-tested with a fake clock.
 - **clients/js**: vitest; same shape.
@@ -523,9 +579,10 @@ personal-mcps/
 2. **Namespaces are silos.** Each user fully controls their own namespace and can't see
    any other; there is no sharing, no global admin, no cross-namespace grants. Sharing a
    service between users would be a real design extension — out of scope until wanted.
-3. **Roles live in service code**, declared at registration; the YAML only references
-   them. The alternative (roles defined centrally in YAML) was rejected because only the
-   service knows its tools.
+3. **Tunneled services' roles live in service code**, declared at registration — the
+   YAML only references them; central YAML definitions for tunneled roles were rejected
+   because only the service knows its tools. Proxied services are the exception: their
+   virtual roles are defined in config, because the upstream can't declare any.
 4. **v1 proxies tools only** — no resources, prompts, or push notification streams.
 5. **Usernames, not emails**, with synthesized placeholder emails internally.
 6. **`apply` deletes by default** (after showing the diff and confirming) — the YAML is
@@ -535,3 +592,11 @@ personal-mcps/
 8. **Service/service-account tokens are our own hashed-token table**, not the
    `@better-auth/api-key` plugin — the plugin can only bind keys to users/organizations
    and can mint sessions from keys, which would bypass the grants model (§4).
+9. **Role patterns are anchored regexes** (a bare tool name matches itself; `*` is an
+   alias for `.*`), for both tunneled-declared and proxied virtual roles — one pattern
+   language everywhere, and regex was wanted for virtual roles anyway.
+10. **The wildcard role `*` is built-in on every service** (both kinds), matching all
+    tools present and future; it never appears in `roles_json` and is resolved at
+    request time.
+11. **Proxied upstream auth is static headers, set imperatively** — no OAuth-to-upstream
+    in v1 (§14), no secrets in YAML.

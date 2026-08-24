@@ -166,10 +166,12 @@ CREATE TABLE service (
                                        -- kind is immutable after create (service_update rejects
                                        -- changes; recreate to convert)
   upstream_url TEXT,                   -- proxy kind only
-  upstream_auth_json TEXT,             -- proxy kind only; headers, set imperatively (§8), never via
-                                       -- YAML; AES-GCM envelope-encrypted (WebCrypto, key in a
-                                       -- wrangler secret) so D1 exports/dumps don't leak upstream
-                                       -- credentials
+  upstream_auth_json TEXT,             -- proxy kind only; AES-GCM envelope-encrypted (WebCrypto,
+                                       -- key in a wrangler secret) so D1 exports/dumps don't leak
+                                       -- upstream credentials. Inside: {kind: 'headers', headers}
+                                       -- (set imperatively, §8) or {kind: 'oauth', tokens,
+                                       -- as_metadata, client} (populated by the connect flow, §7).
+                                       -- Never via YAML either way.
   roles_json TEXT NOT NULL DEFAULT '{}',  -- {"reader": ["get_news","search_.*"], ...}
                                           -- tunnel: written at registration; proxy: via config
   created_at INTEGER NOT NULL,
@@ -481,6 +483,26 @@ caller's identity and resolved roles:
 Identity is informational for the service's own logic; the hub's grant check has
 already run and services must not treat these fields as secrets.
 
+### Upstream OAuth (proxied services)
+
+A proxied service's upstream auth is one of two kinds, declared as `auth: headers`
+(default) or `auth: oauth` on the service:
+
+- **headers** — static headers stored via `service_set_upstream_auth` (as before).
+- **oauth** — for upstreams that require sign-in (Linear, etc.). The owner clicks
+  **Connect** on the `/services` page (or follows the URL `pmcp connect <slug>`
+  prints): the hub discovers the upstream's authorization server via its RFC 9728
+  protected-resource metadata, obtains a client identity (CIMD document hosted by the
+  hub, falling back to Dynamic Client Registration where the AS still wants it), and
+  runs the authorization-code + PKCE flow in the owner's browser with callback
+  `/oauth/upstream/callback`. The token bundle lands in the encrypted
+  `upstream_auth_json`; the hub attaches `Authorization: Bearer` upstream and
+  refreshes proactively. A failed refresh flips the service to **needs reconnect** —
+  calls fail `-32000` and `/services` shows a Reconnect button — and Disconnect wipes
+  the bundle. Connect/disconnect/refresh-failure all write audit rows
+  (`upstream.oauth_*`). The YAML declares only the `auth` mode; tokens never appear in
+  it, and the mode is diffed like any other field.
+
 ### Sensitive-field redaction
 
 Some tool arguments (passwords, tokens) must never be persisted — not even in the
@@ -520,9 +542,11 @@ Tools (names final, shapes reviewed at implementation time):
   readable here.
 - `service_create` / `service_update` / `service_delete` — create takes `kind`,
   `redact` (sensitive-field paths, §7 — either kind) and, for proxied services,
-  `endpoint` and `roles` (the virtual role definitions); update takes the same minus
-  `kind`, which is **immutable** (recreate to convert — conversion would orphan
-  service tokens and DO state). Proxied role definitions get the same validation
+  `endpoint`, `roles` (the virtual role definitions), and `auth` (`headers` |
+  `oauth`, §7); update takes the same minus `kind`, which is **immutable** (recreate
+  to convert — conversion would orphan service tokens and DO state). `service_list` /
+  `service_get` additionally report the OAuth connection status for `auth: oauth`
+  services (not connected / connected / needs reconnect). Proxied role definitions get the same validation
   as `hub/register` (§6): name charset, no `*`, patterns must compile, caps. Delete
   also deletes the service's `token` rows, tells its DO to close any live socket (code
   `4001`) and drop cached state (DO side effects apply to tunneled services only —
@@ -594,6 +618,12 @@ services:
     redact:                 # sensitive argument paths per tool (§7) — config-declared
       create_page: ["credentials.token"]     #   because upstream schemas rarely mark writeOnly
     # upstream auth is imperative (service_set_upstream_auth) — never in this file
+  linear:
+    kind: proxy
+    endpoint: https://mcp.linear.app/mcp
+    auth: oauth             # connected interactively from /services (§7); tokens never here
+    roles:
+      reader: ["list_.*", "get_.*"]
   home:
     name: Home automation
     archived: true          # parked: connections refused, hidden from consumers,
@@ -652,6 +682,7 @@ pmcp token list | revoke <id>
 pmcp audit [--account <slug>] [--service <slug>] [--since 7d]
 pmcp approvals [--pending | --history]
 pmcp approve <id> | reject <id>
+pmcp connect <service>                        # prints the /services OAuth connect URL (§7)
 ```
 
 All service and account references resolve within the logged-in user's namespace (the
@@ -749,8 +780,17 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   redacted arguments, requested time, approve/reject buttons — CSRF token on the POST),
   decision history below. `/approvals/<id>` is the detail page the `-32003` error links
   to; only the namespace owner can open it.
+- `/services` — cookie-session-gated service management: active services (kind, status —
+  online/offline for tunneled, connection state for OAuth-proxied — roles, last seen)
+  with archive/delete actions; an archived section with unarchive/delete; an add-service
+  flow (pick tunneled / proxied / proxied + OAuth; tunneled creation shows the service
+  token once; OAuth creation continues into the provider's consent screen, §7); and
+  Connect/Reconnect/Disconnect for `auth: oauth` services. CSRF tokens on every
+  mutation.
 
-No dashboard beyond that; the CLI and admin MCP are the management UI.
+The dashboard pages (`/services`, `/approvals`, `/audit`, `/account`) and the CLI are
+both fronts over the same server-side handlers as the `pmcp` tools — one
+implementation, three surfaces, no web-only capability.
 
 ## 14. Alternatives considered
 
@@ -764,9 +804,11 @@ No dashboard beyond that; the CLI and admin MCP are the management UI.
   later without rework (the device-flow plugin and login pages are the groundwork).
 - **D1 for per-service state** — network hop on every DO wake for no benefit; DO SQLite
   is colocated and priced identically. D1 kept only for the shared control plane.
-- **OAuth to upstream servers** (hub acting as an OAuth client, CIMD document, token
-  refresh) — deferred; v1 upstream auth for proxied services is static headers set
-  imperatively. Upstreams needing interactive OAuth aren't supported until then.
+- **OAuth to upstream servers** — originally deferred, now in scope as `auth: oauth`
+  proxied services (§7): the interactive connect flow was the missing piece for real
+  upstreams like Linear, and the hub already had the encrypted credential store and
+  browser surface it needs. Static headers remain the default for upstreams that take
+  a token.
 
 ## 15. Error handling and operational behavior
 
@@ -828,6 +870,8 @@ No dashboard beyond that; the CLI and admin MCP are the management UI.
   once → second identical call opens a fresh pending; changed args don't match; reject
   and expiry paths; `writeOnly` and config-declared fields masked in the stored
   `args_json`; identity `_meta` / `X-Pmcp-*` headers present on forwarded calls.
+- **upstream oauth**: fake AS in-test — expired access token triggers refresh before
+  forwarding; failed refresh surfaces needs-reconnect and calls fail `-32000`.
 - One `scripts/e2e.md` runbook (manual): deploy to a dev worker, run the example service,
   `pmcp call` round-trip.
 
@@ -875,8 +919,9 @@ personal-mcps/
 10. **The wildcard role `*` is built-in on every service** (both kinds), matching all
     tools present and future; it never appears in `roles_json` and is resolved at
     request time.
-11. **Proxied upstream auth is static headers, set imperatively** — no OAuth-to-upstream
-    in v1 (§14), no secrets in YAML; encrypted at rest (§5).
+11. **Proxied upstream auth is static headers (default) or interactive OAuth**
+    (`auth: oauth`, §7) — connected from `/services`, tokens encrypted at rest (§5),
+    never in YAML (which declares only the mode).
 12. **Token expiry defaults differ by kind**: 90 d for service-account tokens (they get
     pasted into agent configs), none for service tokens (telegram-bot model, bots on
     home servers shouldn't silently die) — both overridable at issue time.

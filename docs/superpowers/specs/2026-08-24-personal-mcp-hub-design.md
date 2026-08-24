@@ -18,7 +18,7 @@ Components:
 | **server** | Cloudflare Worker + Durable Objects. Terminates auth, owns the registry, proxies MCP traffic. |
 | **clients** (py + js) | Libraries a service author uses: write a normal MCP server, hand it to the lib, it maintains the reverse connection. |
 | **cli** (`pmcp`) | Login via device flow, invoke MCP tools, diff/apply the YAML config. |
-| **admin MCP** | The hub's own management (services, accounts, grants, tokens) exposed as a built-in MCP service named `hub`. |
+| **admin MCP** | The hub's own management (services, accounts, grants, tokens) exposed as a built-in MCP service named `pmcp` — its tools are ordinary tools (`pmcp_service_list` on the aggregated endpoint). |
 
 Non-goals (v1): cross-namespace sharing between users, resources/prompts proxying, MCP-native OAuth for
 third-party clients, push notifications (`subscriptions/listen`), web dashboard.
@@ -54,7 +54,7 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
  │ clients  │  POST /<user>/mcp/<service> (scoped)         │  - better-auth (D1)         │
  │          │ ───────────────────────────────────────────▶ │  - authz: grants → allowed  │
  └──────────┘   Bearer: user token | service-account key   │    tool patterns            │
- ┌──────────┐  POST /<user>/mcp/hub (admin MCP)            │  - hub service (built-in)   │
+ ┌──────────┐  POST /<user>/mcp/pmcp (admin MCP)           │  - pmcp service (built-in)  │
  │ pmcp CLI │ ───────────────────────────────────────────▶ │                             │
  └──────────┘                                              └──────────────┬──────────────┘
                                                             fetch(allowed, jsonrpc)
@@ -224,10 +224,11 @@ Two shapes, one pipeline — both stateless 2026-07-28 MCP endpoints (via
 
 - `POST /<user>/mcp` — **aggregated**: every tool the caller may use across `<user>`'s
   services, tool names prefixed `<slug>_<tool>`. Slugs contain no `_`, so the first `_`
-  splits the name unambiguously. The built-in `hub` service is *excluded* from
-  aggregation (admin tools would pollute agent tool lists).
+  splits the name unambiguously. The built-in `pmcp` service participates like any
+  other — owners see `pmcp_service_list` etc.; service accounts can't hold `pmcp`
+  grants (§8), so admin tools never reach them.
 - `POST /<user>/mcp/<slug>` — **scoped** to one service, unprefixed tool names. This is
-  also how `hub` is reached (`/<user>/mcp/hub`).
+  also how `pmcp` is reached (`/<user>/mcp/pmcp`).
 
 Per request:
 
@@ -260,9 +261,9 @@ Per request:
 The hub terminates auth entirely; client tokens are never forwarded to services
 (MCP audience-binding rules forbid pass-through anyway).
 
-## 8. Admin MCP (`hub` service)
+## 8. Admin MCP (the built-in `pmcp` service)
 
-Built into the Worker at `POST /<user>/mcp/hub` — same proxy pipeline, but tools are
+Built into the Worker at `POST /<user>/mcp/pmcp` — same proxy pipeline, but tools are
 implemented locally instead of forwarded to a DO, and every tool operates on the
 namespace of the `<user>` in the URL (which step 1 already proved is the caller's own).
 Tools (names final, shapes reviewed at implementation time):
@@ -278,18 +279,18 @@ Tools (names final, shapes reviewed at implementation time):
 - `token_list` / `token_revoke` — revoking a `service` token also closes that service's
   live socket (code `4001`) if the connection was opened with it.
 
-The `hub` slug is **reserved and virtual**: no `service` row exists for it.
+The `pmcp` slug is **reserved and virtual**: no `service` row exists for it.
 `service_list` includes it flagged `builtin: true`; `service_create`, `service_delete`,
 and `grant_set` reject the slug. Access is therefore admin (user) tokens only in v1 —
-service accounts can't hold hub grants. Turning `hub` into a grantable service later is
-a config change, not a design change.
+service accounts can't hold `pmcp` grants. Turning `pmcp` into a grantable service later
+is a config change, not a design change.
 
 The CLI performs every admin operation by calling these tools — the CLI has no private
 admin API. (`diff`/`apply` are CLI-side compositions of `*_list` reads and `*_create` /
 `*_delete` / `grant_set` writes.) The only non-MCP traffic the CLI ever sends is the
 auth-session family — `login`, `logout`, `whoami` — which rides better-auth's endpoints
-(`whoami` can't be MCP even in principle: hub URLs embed the username, which is exactly
-what `whoami` discovers).
+(`whoami` can't be MCP even in principle: endpoint URLs embed the username, which is
+exactly what `whoami` discovers).
 
 ## 9. YAML config, diff, apply
 
@@ -318,13 +319,13 @@ service_accounts:
       news: [reader]
 ```
 
-- `pmcp diff -f mcps.yaml` — reads server state via `hub` tools, prints a create/update/
+- `pmcp diff -f mcps.yaml` — reads server state via `pmcp` tools, prints a create/update/
   delete plan. Full desired state: deletes include services/accounts present on the
   server but absent from the file, **and** grants for any (account, service) pair not
   listed under that account's `grants:` block. Grants referencing roles the service
   hasn't declared are applied but flagged with a warning (services declare roles at
   connect time, so the file can legitimately be ahead of the first connection); `*` is
-  exempt from that warning. The reserved `hub` slug is excluded from the delete
+  exempt from that warning. The reserved `pmcp` slug is excluded from the delete
   computation and rejected if it appears in the file.
 - `pmcp apply -f mcps.yaml` — shows the same diff, asks for confirmation (`--yes` to
   skip), applies. Deleting a service or account cascades its grants and deletes its
@@ -339,7 +340,8 @@ pmcp login [--url https://mcp.example.com]   # RFC 8628 device flow; prints code
 pmcp logout | whoami
 pmcp ls                                       # services + online/offline + roles
 pmcp tools <service>                          # tools/list as seen with current token
-pmcp call <service> <tool> [--json '{…}' | key=value …]
+pmcp call <service> <tool> [--json '{…}' | key=value …]   # or the aggregated name:
+pmcp call <service>_<tool> [...]                          # unambiguous, slugs have no '_'
 pmcp diff  -f mcps.yaml
 pmcp apply -f mcps.yaml [--yes]
 pmcp token issue (--account <slug> | --service <slug>) [--expires 90d]
@@ -348,6 +350,10 @@ pmcp token list | revoke <id>
 
 All service and account references resolve within the logged-in user's namespace (the
 CLI learns the username from `whoami` and builds `/<user>/mcp/…` URLs itself).
+
+Every subcommand except the auth family is presentation sugar: `ls`, `tools`, `token`,
+`diff`, and `apply` are compositions of the same `pmcp_*` and MCP tool calls that
+`pmcp call` (or any agent) can make directly — nicer output, zero extra capability.
 
 Config: `~/.config/pmcp/config.json` (server URL + session token). `PMCP_TOKEN` env var
 overrides the stored token (any token kind — with a service-account key, `ls`/`tools`/
@@ -458,7 +464,7 @@ No dashboard; the CLI and admin MCP are the management UI.
 
 ```
 personal-mcps/
-  server/            # CF Worker: auth, proxy, hub MCP, ServiceConnection DO, migrations/
+  server/            # CF Worker: auth, proxy, pmcp admin MCP, ServiceConnection DO, migrations/
   cli/               # pmcp
   clients/
     js/              # @personal-mcps/client

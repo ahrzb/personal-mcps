@@ -24,8 +24,9 @@ Components:
 | **web pages** | Server-rendered pages (Hono JSX, §13): `/login`, `/device`, `/account`, plus `/services`, `/approvals`, `/audit` — fronts over the same handlers as the `pmcp` tools, no web-only capability (except `/account`, and `/audit`'s streaming JSONL export — a serialization of `audit_query`, §13). |
 
 Non-goals (v1): cross-namespace sharing between users, resources/prompts proxying, MCP-native OAuth for
-third-party clients, push notifications (`subscriptions/listen`), any web UI beyond the
-server-rendered pages of §13 (no SPA).
+third-party clients, MCP push streams (`subscriptions/listen`), any web UI beyond the
+server-rendered pages of §13 (no SPA — the pages do ship as an installable PWA with
+Web Push for approvals, §13).
 
 ## 2. Concepts
 
@@ -138,8 +139,10 @@ server-rendered pages of §13 (no SPA).
   its keys can only reference users/organizations, not our service rows, and its
   session-minting behavior is an escalation footgun. A small hashed-token table is
   simpler and safer; better-auth handles humans only.)
-- **Session-scope guards**: credential-management and password-change endpoints
-  (`/account`, change-password) require a cookie-authenticated web session with recent
+- **Session-scope guards**: credential-management endpoints (`/account` — TOTP and
+  passkey enrollment/removal, session revocation; there is no self-serve password
+  change, the users script (§12) is the only password path) require a
+  cookie-authenticated web session with recent
   authentication — bearer-sourced (CLI) sessions are rejected there, so a stolen CLI
   token cannot enroll new credentials and become persistent account takeover. Session
   lifetime config is shared between web and CLI sessions (better-auth default 7 d
@@ -287,10 +290,21 @@ CREATE TABLE audit (
   duration_ms INTEGER,                 -- hub-measured wall time from consumer request to
                                        -- response; set on every tools/call row (denials are
                                        -- just fast), NULL for non-call events
+  client_name TEXT,                    -- consumer clientInfo.name (e.g. 'claude-code'), when sent (§7)
+  client_version TEXT,
+  client_session_id TEXT,              -- client-declared session id (e.g. Claude Code's), when sent
   detail TEXT                          -- small JSON summary; NEVER tool arguments,
                                        -- results, or token material
 );
 CREATE INDEX audit_owner_ts ON audit(owner_id, ts);
+
+CREATE TABLE push_subscription (       -- Web Push targets for approval notifications (§13)
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  keys_json TEXT NOT NULL,             -- p256dh + auth as handed out by the browser
+  created_at INTEGER NOT NULL
+);
 ```
 
 The DO keeps per-service volatile/cached state in its own SQLite: cached `tools/list`
@@ -584,8 +598,13 @@ approvals — the step-1 and step-2 lookups, `approval_list`, `/approvals`,
 and at that moment flips any such `pending` row to `expired`, writing the
 `approval.expired` audit row exactly once. The daily cron (§15) additionally sweeps
 remaining past-expiry `pending` rows to `expired` (same audit row) before pruning;
-there is no hourly job. v1 never blocks the original request while waiting — blocking
-until decision, plus push-notifying the owner, is explicitly future work.
+there is no hourly job. v1 never blocks the original request while waiting —
+blocking-until-decided is explicitly future work. The owner is push-notified instead:
+creating a `pending` approval row sends a Web Push to every `push_subscription` row
+(§5, §13) naming the service and tool plus the approval id — never arguments (push
+payloads rest on third-party push services; §15's hygiene applies). Tapping the
+notification opens `/approvals/<id>`. Push is best-effort; the dashboard stays the
+source of truth.
 `tools/list` shows approval-gated tools like any other (the agent must see them to
 call them).
 
@@ -616,6 +635,15 @@ overwrite, never merge — so any `hub/*` field a service sees was written by th
 never the caller. (Other consumer `_meta` keys, e.g. `progressToken`, pass through
 untouched. The proxied analogue holds by construction: `X-Pmcp-*` headers are set on
 the hub's own upstream request, which never copies consumer headers.)
+
+**Client metadata capture**: AI consumers identify themselves — `clientInfo`
+(name/version) plus vendor `_meta` keys such as a client session id (Claude Code sends
+one). The hub copies `clientInfo.name`, `clientInfo.version`, and a recognized
+session-id key onto each `tools/call` audit row (`client_name` / `client_version` /
+`client_session_id`, §5), each truncated to 128 chars and treated strictly as untrusted
+display data — never parsed, never part of any authorization decision. The recognized
+session-id keys are a small allowlist maintained in code (Claude Code's first);
+unrecognized vendor `_meta` still passes through to services untouched, as above.
 
 Alongside identity, the hub forwards the consumer's declared
 `io.modelcontextprotocol/clientCapabilities` unchanged: copied into the forwarded
@@ -723,6 +751,11 @@ Tools (names final, shapes reviewed at implementation time):
 - `service_set_upstream_auth` — proxied only: stores the headers (e.g. a bearer token)
   the hub sends upstream. Imperative and write-only, like `token_issue` — secrets never
   appear in YAML or in read tools.
+- `service_disconnect` — `auth: oauth` proxied services only: wipes the stored token
+  bundle (audit row `upstream.disconnected`), leaving the service not-connected until
+  Connect runs again (§7). The web Disconnect button fronts this tool. Connect/Reconnect
+  have no tool equivalent — the consent redirect is inherently a browser interaction
+  (`pmcp connect` prints the URL).
 - `service_archive` / `service_unarchive` — archive severs any live socket (close
   `4002`) and hides the service from consumers; everything is retained for unarchive
   (§6, "Service lifecycle").
@@ -746,8 +779,9 @@ Tools (names final, shapes reviewed at implementation time):
   token also closes that service's live socket (code `4001`) if the connection was
   opened with it.
 
-- `audit_query` — `{ principal?, service?, event?, tool?, since?, until?, limit?
-  (default 100), offset? (default 0) }` → `{ rows, total }`, newest first; `total`
+- `audit_query` — `{ principal?, service?, event?, tool?, session?, since?, until?,
+  limit? (default 100), offset? (default 0) }` → `{ rows, total }`, newest first
+  (`session` matches `client_session_id`, §5); `total`
   counts every row matching the filters (a COUNT over the 90-day-pruned table is
   cheap, and it backs the web UI's page numbers and "N events match" line). Read-only;
   like everything else, `pmcp audit` is sugar over this tool.
@@ -761,6 +795,15 @@ The `pmcp` slug is **reserved and virtual**: no `service` row exists for it.
 `service_list` includes it flagged `builtin: true`. Access is admin (user) tokens only in v1 —
 service accounts can't hold `pmcp` grants. Turning `pmcp` into a grantable service later
 is a config change, not a design change.
+
+**Parity invariant, pinned**: anything the web UI or CLI can do has an equivalent
+`pmcp` tool — UI and CLI are presentation layers, so an AI agent holding an admin
+token can do everything the owner can. Exceptions, also pinned: the auth/credential
+family (login, device approval, TOTP/passkey enrollment, sessions, passwords — §12's
+users script and §13's `/account`; deliberately never exposed to models), the
+upstream-OAuth consent redirect (browser-only; its Disconnect counterpart *is* a
+tool), and `/audit`'s JSONL export (a streaming serialization of `audit_query` — same
+rows, different framing).
 
 The CLI performs every admin operation by calling these tools — the CLI has no private
 admin API. (`diff`/`apply` are CLI-side compositions of `*_list` reads and `*_create` /
@@ -860,18 +903,27 @@ pmcp diff  -f mcps.yaml
 pmcp apply -f mcps.yaml [--yes]
 pmcp token issue (--account <slug> | --service <slug>) [--expires 90d]
 pmcp token list | revoke <id>
-pmcp audit [--account <slug>] [--service <slug>] [--since 7d]
+pmcp audit [--account <slug>] [--service <slug>] [--session <id>] [--since 7d]
+pmcp audit --export jsonl > events.jsonl      # streams the same rows as the web export
 pmcp approvals [--pending | --history]
 pmcp approve <id> | reject <id>
 pmcp connect <service>                        # prints the /services OAuth connect URL (§7)
+pmcp service create <slug> (--tunneled | --proxied <endpoint> [--auth headers|oauth])
+                                              # tunneled create prints the service token once
+pmcp service archive|unarchive|delete|disconnect <slug>
+pmcp service set-auth <slug> --header 'Authorization: Bearer …'   # service_set_upstream_auth
 ```
 
 All service and account references resolve within the logged-in user's namespace (the
 CLI learns the username from `whoami` and builds `/<user>/mcp/…` URLs itself).
 
 Every subcommand except the auth family is presentation sugar: `ls`, `tools`, `token`,
-`diff`, and `apply` are compositions of the same `pmcp_*` and MCP tool calls that
-`pmcp call` (or any agent) can make directly — nicer output, zero extra capability.
+`service`, `diff`, and `apply` are compositions of the same `pmcp_*` and MCP tool
+calls that `pmcp call` (or any agent) can make directly — nicer output, zero extra
+capability. The converse holds too: every UI capability is reachable from the CLI
+(§8's parity invariant) — only the UX differs. YAML `diff`/`apply` is the CLI-native
+way to manage services and grants declaratively; the imperative `pmcp service` family
+covers the one-off actions the UI does with buttons.
 
 Config: `~/.config/pmcp/config.json` (server URL + session token). `PMCP_TOKEN` env var
 overrides the stored token — session or service-account tokens only (`pmcp_svc_` tokens
@@ -963,8 +1015,11 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   streams every row matching the current filters, one JSON object per line: the
   handler re-runs the same query in `limit`-sized chunks and writes each chunk to a
   streaming response as it is fetched, never holding the full result set in memory —
-  a serialization of `audit_query`, not a new capability. No mutations, so no CSRF
-  surface.
+  a serialization of `audit_query`, not a new capability. The expanded row detail
+  shows the caller's client metadata when present (client name/version and session id,
+  §5/§7); the session id renders as a link to this same audit view filtered to that
+  session (`?session=…`, backed by `audit_query`'s `session` filter). No mutations, so
+  no CSRF surface.
 - `/approvals` — cookie-session-gated: pending requests up top (account, service, tool,
   redacted arguments, requested time, approve/reject buttons — CSRF token on the POST),
   decision history below. `/approvals/<id>` is the detail page the `-32003` error links
@@ -983,6 +1038,16 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   dynamic client registration. `/oauth/upstream/callback` belongs to this cookie-session-gated surface:
   it requires the owner's session and a live single-use `state` bound to it, per §7 —
   the callback is a mutation (it writes `upstream_auth_json`) and is guarded like one.
+
+**PWA**: the web surface ships a web-app manifest and a minimal service worker, so
+the dashboard installs to phone and desktop home screens. Pages stay server-rendered —
+the service worker exists for installability and push, not offline rendering (the
+no-SPA pin holds, §1). **Approval push**: `/approvals` offers a per-browser "Enable
+notifications" control; subscriptions land in `push_subscription` (§5), and every new
+approval request sends a Web Push (VAPID keys in Worker secrets, ES256 via WebCrypto,
+RFC 8291 payload encryption) naming the service and tool — never arguments — which
+opens `/approvals/<id>` on tap. A `404`/`410` from the push service prunes the
+subscription. Best-effort delivery; the dashboard is the source of truth (§7).
 
 The dashboard pages `/services`, `/approvals`, and `/audit` and the CLI are both
 fronts over the same server-side handlers as the `pmcp` tools — one implementation,
@@ -1042,7 +1107,8 @@ no CLI token or `pmcp` tool can ever reach it.
 - Audit trail: the D1 `audit` table (§5) is the durable record — Workers Logs retention
   is only 3–7 days, so log lines are ops debugging, not audit. Recorded: every
   `tools/call` (allowed and denied, with hub-measured `duration_ms` for latency
-  visibility in `/audit`), approval lifecycle transitions
+  visibility in `/audit`, and the caller's self-declared client name/version/session
+  id when sent, §7 — display data only), approval lifecycle transitions
   (`approval.requested/approved/rejected/expired`), every mutating `pmcp` admin tool,
   logins, device approvals, connect/register/replaced/roles_widened events, and bootstrap
   invocations. Not recorded: `tools/list` (agent polling noise), and the audit table
@@ -1158,8 +1224,8 @@ personal-mcps/
     accounts; the service is trusted. Drift logging, not pinning, is the v1 answer.
 15. **Approvals never block the original request** in v1 — the agent gets `-32003` +
     a link immediately, and an approval is a single-use, args-hash-bound pass consumed
-    by an identical retry. Blocking-until-decided and push notifications are declared
-    future work (§7). The retry-with-identical-args contract is the simplification to
+    by an identical retry. Blocking-until-decided is declared future work (§7); the
+    owner is Web Push-notified through the PWA instead (§13). The retry-with-identical-args contract is the simplification to
     revisit if agents handle it poorly. An approval spans a full MRTR exchange —
     consumed on `resultType: "complete"` (or service error), not at first dispatch —
     and the args binding is `params.arguments` only, excluding
@@ -1177,3 +1243,15 @@ personal-mcps/
 18. **Forwarded requests assert the consumer's `clientCapabilities`**, mirrored per
     request — the hub never advertises input capabilities of its own; MRTR round-trips
     pass through as ordinary `tools/call` retries (§7).
+19. **Parity invariant**: everything the web UI and CLI can do has an equivalent
+    `pmcp` tool, so AI agents with an admin token have full capability. The pinned
+    exceptions — the auth/credential family, the OAuth consent redirect, and the
+    JSONL export serialization — are §8's list; the auth family is deliberately never
+    exposed to models.
+20. **Client metadata is captured on audit rows** (`clientInfo` name/version plus an
+    allowlisted vendor session-id `_meta` key, e.g. Claude Code's) — truncated,
+    untrusted, display-and-filter only (`audit_query.session`), never authorization
+    input (§5, §7).
+21. **The web surface is a PWA** (manifest + minimal service worker; pages stay
+    server-rendered, no SPA) and approval requests are Web Push-notified through it
+    (§13). Blocking-until-decided remains future work.

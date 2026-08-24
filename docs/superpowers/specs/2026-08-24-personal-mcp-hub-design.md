@@ -8,8 +8,8 @@ Status: draft, for review
 A personal MCP hub. Services (small programs, written like telegram bots) dial **out** to a
 central server with a persistent WebSocket and expose an MCP server through it. The hub
 proxies inbound MCP clients (Claude, other agents, the CLI) to those services, enforcing
-per-service-account role grants. Everything is managed by one human owner via a CLI and a
-declarative YAML file.
+per-service-account role grants. Each user owns their own namespace — services, service
+accounts, grants, YAML file — managed via a CLI and served under `/<user>/mcp…` URLs.
 
 Components:
 
@@ -20,15 +20,19 @@ Components:
 | **cli** (`pmcp`) | Login via device flow, invoke MCP tools, diff/apply the YAML config. |
 | **admin MCP** | The hub's own management (services, accounts, grants, tokens) exposed as a built-in MCP service named `hub`. |
 
-Non-goals (v1): multi-tenant use, resources/prompts proxying, MCP-native OAuth for
+Non-goals (v1): cross-namespace sharing between users, resources/prompts proxying, MCP-native OAuth for
 third-party clients, push notifications (`subscriptions/listen`), web dashboard.
 
 ## 2. Concepts
 
-- **User** — a human. Every user is an admin (this is a personal system). Created by a
-  repo script; password + optional TOTP second factor and/or passkey.
-- **Service** — a registered MCP service (the "bot"). Identified by a slug (`news`,
-  `home`). Has at most one live connection. Declares its **roles** at connect time.
+- **User** — a human, owner of a namespace. Every user is the admin *of their own
+  namespace* (services, service accounts, grants); there is no cross-namespace access.
+  Created by a repo script; password + optional TOTP second factor and/or passkey.
+  Usernames are `[a-z0-9-]`, minus a reserved list (`login`, `device`, `account`, `api`,
+  `connect`, `internal`, `mcp`, …) since they become top-level URL segments.
+- **Service** — a registered MCP service (the "bot"). Identified by `(owner, slug)` —
+  slugs are `[a-z0-9-]` (no underscore; §7 relies on this), unique per owner. Has at
+  most one live connection. Declares its **roles** at connect time.
 - **Role** — named subset of a service's tools, declared by the service itself in code:
   `{"reader": ["get_news", "search_*"], "admin": ["*"]}`. Patterns are glob-style over
   tool names.
@@ -45,17 +49,18 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
 ## 3. Architecture
 
 ```
- ┌──────────┐  MCP Streamable HTTP (POST /mcp/<service>)   ┌─────────────────────────────┐
- │ MCP      │ ───────────────────────────────────────────▶ │  Worker                     │
- │ clients  │   Bearer: user token | service-account key   │  - better-auth (D1)         │
- └──────────┘                                              │  - authz: grants → allowed  │
- ┌──────────┐  POST /mcp/hub (admin MCP)                   │    tool patterns            │
- │ pmcp CLI │ ───────────────────────────────────────────▶ │  - hub service (built-in)   │
+ ┌──────────┐  MCP Streamable HTTP                         ┌─────────────────────────────┐
+ │ MCP      │  POST /<user>/mcp          (aggregated)      │  Worker                     │
+ │ clients  │  POST /<user>/mcp/<service> (scoped)         │  - better-auth (D1)         │
+ │          │ ───────────────────────────────────────────▶ │  - authz: grants → allowed  │
+ └──────────┘   Bearer: user token | service-account key   │    tool patterns            │
+ ┌──────────┐  POST /<user>/mcp/hub (admin MCP)            │  - hub service (built-in)   │
+ │ pmcp CLI │ ───────────────────────────────────────────▶ │                             │
  └──────────┘                                              └──────────────┬──────────────┘
                                                             fetch(allowed, jsonrpc)
                                                            ┌──────────────▼──────────────┐
  ┌──────────┐    wss://host/connect                        │  ServiceConnection DO       │
- │ service  │ ────────────────────────────────────────────▶│  (one per service slug,     │
+ │ service  │ ────────────────────────────────────────────▶│  (one per <user>/<service>, │
  │ (bot)    │    Bearer: service token                     │   SQLite-backed, hibernating│
  └──────────┘    JSON-RPC frames, hub acts as MCP client   │   WebSocket)                │
 ```
@@ -115,20 +120,24 @@ Ours, in D1:
 ```sql
 CREATE TABLE service (
   id TEXT PRIMARY KEY,
-  slug TEXT NOT NULL UNIQUE,           -- url-safe, referenced in YAML and /mcp/<slug>
+  owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL,                  -- [a-z0-9-], referenced in YAML and /<user>/mcp/<slug>
   name TEXT NOT NULL,
   description TEXT DEFAULT '',
   roles_json TEXT NOT NULL DEFAULT '{}',  -- {"reader": ["get_news","search_*"], ...}, updated at registration
   created_at INTEGER NOT NULL,
-  last_connected_at INTEGER
+  last_connected_at INTEGER,
+  UNIQUE (owner_id, slug)
 );
 
 CREATE TABLE service_account (
   id TEXT PRIMARY KEY,
-  slug TEXT NOT NULL UNIQUE,
+  owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  slug TEXT NOT NULL,
   name TEXT NOT NULL,
   description TEXT DEFAULT '',
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  UNIQUE (owner_id, slug)
 );
 
 CREATE TABLE grant_ (                   -- "grant" is an SQL keyword
@@ -162,8 +171,9 @@ result, connection metadata. Identity/auth facts for the socket ride in
 ## 6. Reverse connection protocol (service ↔ hub)
 
 Transport: WebSocket to `wss://<host>/connect`, `Authorization: Bearer pmcp_svc_…`.
-The Worker verifies the service token, resolves the service, and hands the socket to
-`ServiceConnection` DO `getByName(slug)`, which calls `ctx.acceptWebSocket(ws, [slug])`.
+The Worker verifies the service token, resolves the service (and its owner), and hands
+the socket to `ServiceConnection` DO `getByName("<username>/<slug>")`, which calls
+`ctx.acceptWebSocket(ws, ["<username>/<slug>"])`.
 
 Framing: **one JSON-RPC 2.0 message per WebSocket text message** (WS already provides
 message framing; each side generates UUID-string ids for the requests it initiates).
@@ -209,39 +219,53 @@ which case the caller gets an error anyway and retries).
 
 ## 7. Consumer-facing proxy
 
-`POST /mcp/<slug>` — a stateless 2026-07-28 MCP endpoint per service (via
-`createMcpHandler`, route resolved from the URL).
+Two shapes, one pipeline — both stateless 2026-07-28 MCP endpoints (via
+`createMcpHandler`, user and service resolved from the URL):
+
+- `POST /<user>/mcp` — **aggregated**: every tool the caller may use across `<user>`'s
+  services, tool names prefixed `<slug>_<tool>`. Slugs contain no `_`, so the first `_`
+  splits the name unambiguously. The built-in `hub` service is *excluded* from
+  aggregation (admin tools would pollute agent tool lists).
+- `POST /<user>/mcp/<slug>` — **scoped** to one service, unprefixed tool names. This is
+  also how `hub` is reached (`/<user>/mcp/hub`).
 
 Per request:
 
 1. Authenticate the Bearer token: `pmcp_sa_` prefix → SHA-256 lookup in `token` (must be
    unrevoked, unexpired, and its `ref_id` must still resolve to a live service account) →
    service account; otherwise better-auth session lookup → user. `pmcp_svc_` tokens are
-   rejected here.
-2. Resolve the allowed-tool filter:
-   - user → `["*"]` (admins see everything);
-   - service account → its grant rows for this service, where a stored role of `*`
+   rejected here. The resolved principal must belong to the `<user>` namespace in the
+   URL — a session or service-account of any other user gets 404 (not 403; namespaces
+   don't leak existence).
+2. Resolve the allowed-tool filter (per service):
+   - owner → `["*"]` (sees everything in their namespace);
+   - service account → its grant rows for the service, where a stored role of `*`
      expands **at request time** to every role currently in the service's `roles_json`;
-     the filter is the union of those roles' glob patterns. No grants → 403 (with a
-     JSON-RPC-shaped body per spec).
+     the filter is the union of those roles' glob patterns. Scoped endpoint with no
+     grants → 403 (with a JSON-RPC-shaped body per spec); aggregated endpoint simply
+     spans the services with at least one grant.
 3. Dispatch:
    - `server/discover` → answered by the Worker (hub capabilities).
-   - `tools/list` → DO returns cached list; Worker filters by the allowed patterns.
-     `ttlMs`/`cacheScope` hints set so clients can cache.
-   - `tools/call` → name must match the filter, else JSON-RPC error `-32001`
-     ("tool not permitted"). Otherwise forwarded through the DO to the service; response
-     relayed back verbatim.
+   - `tools/list` → served from the DO's **cached** list (kept in DO SQLite, so it
+     survives disconnects — deploy-induced reconnect flapping doesn't churn agent tool
+     lists), filtered by the allowed patterns; aggregated adds the slug prefix and
+     fans out over the relevant DOs. `ttlMs`/`cacheScope` hints set so clients can
+     cache. A service that has never connected lists no tools.
+   - `tools/call` → (aggregated: split off the slug prefix first) name must match the
+     filter, else JSON-RPC error `-32001` ("tool not permitted"). Otherwise forwarded
+     through the DO to the live connection; response relayed back verbatim. Service not
+     connected → `-32000` ("service offline").
    - anything else → `-32601`.
-4. Service not connected → JSON-RPC error `-32000` ("service offline").
 
 The hub terminates auth entirely; client tokens are never forwarded to services
 (MCP audience-binding rules forbid pass-through anyway).
 
 ## 8. Admin MCP (`hub` service)
 
-Built into the Worker at `POST /mcp/hub` — same proxy pipeline, but tools are implemented
-locally instead of forwarded to a DO. Tools (names final, shapes reviewed at
-implementation time):
+Built into the Worker at `POST /<user>/mcp/hub` — same proxy pipeline, but tools are
+implemented locally instead of forwarded to a DO, and every tool operates on the
+namespace of the `<user>` in the URL (which step 1 already proved is the caller's own).
+Tools (names final, shapes reviewed at implementation time):
 
 - `service_list` / `service_get` — includes declared roles, connection status, last seen.
 - `service_create` / `service_delete` — delete also deletes the service's `token` rows,
@@ -266,9 +290,9 @@ admin API. (`diff`/`apply` are CLI-side compositions of `*_list` reads and `*_cr
 
 ## 9. YAML config, diff, apply
 
-One file, default `mcps.yaml`, authoritative for services, service accounts, and grants
-within its scope. Users and tokens are deliberately imperative (secrets and humans don't
-belong in a declarative file).
+One file per user, default `mcps.yaml`, authoritative for the logged-in user's
+namespace: services, service accounts, and grants. Users and tokens are deliberately
+imperative (secrets and humans don't belong in a declarative file).
 
 ```yaml
 services:
@@ -318,6 +342,9 @@ pmcp apply -f mcps.yaml [--yes]
 pmcp token issue (--account <slug> | --service <slug>) [--expires 90d]
 pmcp token list | revoke <id>
 ```
+
+All service and account references resolve within the logged-in user's namespace (the
+CLI learns the username from `whoami` and builds `/<user>/mcp/…` URLs itself).
 
 Config: `~/.config/pmcp/config.json` (server URL + session token). `PMCP_TOKEN` env var
 overrides the stored token (any token kind — with a service-account key, `ls`/`tools`/
@@ -413,8 +440,9 @@ No dashboard; the CLI and admin MCP are the management UI.
 ## 16. Testing
 
 - **server**: vitest + `@cloudflare/vitest-pool-workers`. Core integration test: fake
-  service connects over WS to the DO, consumer POSTs `tools/list`/`tools/call` through the
-  Worker, asserts role filtering, offline errors, timeout behavior, connection
+  service connects over WS to the DO, consumer POSTs `tools/list`/`tools/call` through
+  both the aggregated and scoped endpoints, asserts role filtering, prefix routing,
+  namespace isolation (cross-user 404), offline errors, timeout behavior, connection
   replacement.
 - **clients/py**: pytest; the WS↔anyio bridge tested against an in-process websocket
   server; reconnect/backoff logic unit-tested with a fake clock.
@@ -445,7 +473,9 @@ personal-mcps/
 1. **CLI auth = device flow → session token**, not a full OAuth 2.1 provider (§14). The
    full provider is the documented upgrade path when external MCP clients need to log in
    on their own.
-2. **All human users are admins.** Per-user permissions are YAGNI for a personal system.
+2. **Namespaces are silos.** Each user fully controls their own namespace and can't see
+   any other; there is no sharing, no global admin, no cross-namespace grants. Sharing a
+   service between users would be a real design extension — out of scope until wanted.
 3. **Roles live in service code**, declared at registration; the YAML only references
    them. The alternative (roles defined centrally in YAML) was rejected because only the
    service knows its tools.

@@ -960,10 +960,15 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
 - `/services` — cookie-session-gated service management: active services (kind, status —
   online/offline for tunneled, connection state for OAuth-proxied — roles, last seen)
   with archive/delete actions; an archived section with unarchive/delete; an add-service
-  flow (pick tunneled / proxied / proxied + OAuth; tunneled creation shows the service
-  token once; OAuth creation continues into the provider's consent screen, §7); and
+  flow (pick tunneled or proxied — the two kinds, §2; for proxied, after the endpoint
+  the form asks for the authentication type, `headers` or `oauth` (§7); tunneled
+  creation shows the service token once; choosing `oauth` continues into the provider's
+  consent screen, §7); and
   Connect/Reconnect/Disconnect for `auth: oauth` services. CSRF tokens on every
-  mutation. `/oauth/upstream/callback` belongs to this cookie-session-gated surface:
+  mutation. Future work for the add-service form: probe the entered URL (the §7
+  RFC 9728 discovery) to suggest the auth type and surface provider-specific options,
+  and accept manually pre-registered client credentials for OAuth providers without
+  dynamic client registration. `/oauth/upstream/callback` belongs to this cookie-session-gated surface:
   it requires the owner's session and a live single-use `state` bound to it, per §7 —
   the callback is a mutation (it writes `upstream_auth_json`) and is guarded like one.
 

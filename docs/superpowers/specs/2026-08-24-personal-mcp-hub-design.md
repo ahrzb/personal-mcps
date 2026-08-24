@@ -21,17 +21,23 @@ Components:
 | **clients** (py + js) | Libraries a service author uses: write a normal MCP server, hand it to the lib, it maintains the reverse connection. |
 | **cli** (`pmcp`) | Login via device flow, invoke MCP tools, diff/apply the YAML config. |
 | **admin MCP** | The hub's own management (services, accounts, grants, tokens) exposed as a built-in MCP service named `pmcp` — its tools are ordinary tools (`pmcp_service_list` on the aggregated endpoint). |
+| **web pages** | Server-rendered pages (Hono JSX, §13): `/login`, `/device`, `/account`, plus `/services`, `/approvals`, `/audit` — fronts over the same handlers as the `pmcp` tools, no web-only capability (except `/account`, §13). |
 
 Non-goals (v1): cross-namespace sharing between users, resources/prompts proxying, MCP-native OAuth for
-third-party clients, push notifications (`subscriptions/listen`), web dashboard.
+third-party clients, push notifications (`subscriptions/listen`), any web UI beyond the
+server-rendered pages of §13 (no SPA).
 
 ## 2. Concepts
 
 - **User** — a human, owner of a namespace. Every user is the admin *of their own
   namespace* (services, service accounts, grants); there is no cross-namespace access.
   Created by a repo script; password + optional TOTP second factor and/or passkey.
-  Usernames are `[a-z0-9-]`, minus a reserved list (`login`, `device`, `account`, `api`,
-  `connect`, `internal`, `mcp`, …) since they become top-level URL segments.
+  Usernames are `[a-z0-9-]`, minus a reserved list, since they become top-level URL
+  segments: every top-level route segment the Worker serves is reserved — currently
+  `login`, `device`, `account`, `audit`, `approvals`, `services`, `oauth`, `api`,
+  `connect`, `internal`, plus `mcp`. Adding a top-level route extends this set; the
+  implementation must derive the reserved list from the route table (or enforce the
+  equivalence with a test that walks the router), so the two can never drift.
 - **Service** — a registered MCP service. Identified by `(owner, slug)` — slugs are
   `[a-z0-9-]` (no underscore; §7 relies on this), unique per owner. Two kinds:
   - *tunneled* (the "bot"): dials in over WebSocket, at most one live connection,
@@ -42,8 +48,10 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
     Lifecycle is just provisioned / archived / deleted.
 - **Role** — named subset of a service's tools. Declared in code at registration for
   tunneled services (`{"reader": ["get_news", "search_.*"]}`), in the YAML / admin tools
-  for proxied ones. Patterns are **anchored regexes** over tool names (a plain tool name
-  is its own regex; `*` is accepted as an alias for `.*`). Every service additionally
+  for proxied ones. Patterns are **anchored regexes** over tool names (a pattern made
+  only of tool-name characters `[A-Za-z0-9._-]` is matched as a literal tool name — §7
+  pins the rule; anything else compiles as a regex, and `*` is accepted as an alias for
+  `.*`). Every service additionally
   has the built-in wildcard role **`*`** matching all tools, present and future, with no
   declaration needed — for both kinds. Trust boundary, stated plainly: roles confine
   the *service account*, not the service — a tunneled service self-declares its roles,
@@ -138,7 +146,13 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
   accepting the browser exposure.
 - **Schema migrations**: generated SQL checked in as `wrangler d1 migrations` files
   (better-auth CLI generate + our own tables); applied with `wrangler d1 migrations apply`.
-  No runtime migration endpoint.
+  The better-auth CLI cannot run against the production config — D1 bindings exist only
+  inside the Workers runtime, so `@better-auth/cli generate` fails with "Failed to
+  initialize database adapter". Generation therefore uses a small CLI-only auth config
+  with the identical plugin list (username, twoFactor, passkey, deviceAuthorization,
+  bearer) pointed at a local SQLite Kysely dialect (e.g. better-sqlite3); better-auth
+  targets the same SQLite dialect either way, so the emitted SQL is checked in
+  unchanged as the wrangler migration. No runtime migration endpoint.
 - **Clients**: Python — `mcp` package v2 (`MCPServer`, low-level `Server.run(read, write)`
   over a custom transport: an async context manager bridging an outbound WebSocket to the
   anyio stream pair). JS — `@modelcontextprotocol/server` v2 with a small custom
@@ -166,12 +180,22 @@ CREATE TABLE service (
                                        -- kind is immutable after create (service_update rejects
                                        -- changes; recreate to convert)
   upstream_url TEXT,                   -- proxy kind only
+  upstream_auth_mode TEXT CHECK (upstream_auth_mode IN ('headers', 'oauth')),
+                                       -- proxy kind only; the declared `auth` mode (§7, §9),
+                                       -- default 'headers'. Deliberately separate from
+                                       -- upstream_auth_json: the mode is configuration and
+                                       -- survives Disconnect; the envelope is credentials and
+                                       -- exists only while connected/configured.
+  forward_identity INTEGER NOT NULL DEFAULT 0,
+                                       -- proxy kind only; send X-Pmcp-* identity headers
+                                       -- upstream (§7, "Caller identity forwarding")
   upstream_auth_json TEXT,             -- proxy kind only; AES-GCM envelope-encrypted (WebCrypto,
                                        -- key in a wrangler secret) so D1 exports/dumps don't leak
                                        -- upstream credentials. Inside: {kind: 'headers', headers}
                                        -- (set imperatively, §8) or {kind: 'oauth', tokens,
                                        -- as_metadata, client} (populated by the connect flow, §7).
-                                       -- Never via YAML either way.
+                                       -- Never via YAML either way. Envelope kind always matches
+                                       -- upstream_auth_mode.
   roles_json TEXT NOT NULL DEFAULT '{}',  -- {"reader": ["get_news","search_.*"], ...}
                                           -- tunnel: written at registration; proxy: via config
   created_at INTEGER NOT NULL,
@@ -204,13 +228,17 @@ CREATE TABLE approval (
   service_account_id TEXT NOT NULL REFERENCES service_account(id) ON DELETE CASCADE,
   service_id TEXT NOT NULL REFERENCES service(id) ON DELETE CASCADE,
   tool TEXT NOT NULL,
-  args_hash TEXT NOT NULL,               -- SHA-256 of the canonical (sorted-keys) argument JSON,
-                                         -- computed POST-redaction (§7 — no digest of a secret)
+  args_hash TEXT NOT NULL,               -- SHA-256 of the canonical (sorted-keys) JSON of
+                                         -- params.arguments ONLY, computed POST-redaction (§7 —
+                                         -- no digest of a secret); MRTR inputResponses/requestState
+                                         -- are outside the binding and never persisted (§7)
   args_json TEXT NOT NULL,               -- the arguments SHOWN to the owner — stored
                                          -- post-redaction (§7): the ONLY place the hub
                                          -- ever persists tool arguments
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'approved', 'rejected', 'expired', 'used')),
+                                         -- past expires_at is treated as expired on every read;
+                                         -- rows are flipped lazily (§7)
   created_at INTEGER NOT NULL,
   decided_at INTEGER,
   expires_at INTEGER NOT NULL            -- 1 h from creation; covers both the pending
@@ -247,7 +275,8 @@ CREATE TABLE audit (
   owner_id TEXT NOT NULL,              -- namespace the event happened in
   principal TEXT NOT NULL,             -- 'user:<name>' | 'sa:<slug>' | 'svc:<slug>' | 'bootstrap'
   event TEXT NOT NULL,                 -- 'tools/call' | 'admin.<tool>' | 'connect.register' |
-                                       -- 'connect.replaced' | 'auth.login' | 'auth.device_approved' | …
+                                       -- 'connect.replaced' | 'connect.roles_widened' |
+                                       -- 'auth.login' | 'auth.device_approved' | …
   service TEXT,                        -- slug, when applicable
   tool TEXT,
   outcome TEXT NOT NULL,               -- 'ok' | '-32000' | '-32001' | '-32002' | '-32003' | 'error'
@@ -297,15 +326,28 @@ Two message namespaces:
      built-in), every pattern must compile as a regex, and pattern length (≤128 chars)
      and per-role pattern count (≤64) are capped; violations get a JSON-RPC error reply
      and the socket is closed. The hub verifies the service row still exists (close
-     `4003` if not), upserts `roles_json` in D1 — **logging any change that widens a
-     role with live grants** (self-declared roles mean a compromised bot can widen its
-     own roles; the blast radius stays inside that service, but the drift must be
-     visible, not silent) — replies `{ "ok": true }`, then immediately issues
+     `4003` if not), upserts `roles_json` in D1 and checks for **role drift**: for each
+     role name, the old and new pattern lists are compared as sets of exact pattern
+     strings, with a role absent from either side treated as the empty set. Any role
+     that holds ≥1 live grant and whose new set is not a subset of its old set — i.e.
+     any pattern added or textually changed — writes a `connect.roles_widened` audit
+     row listing the affected roles and their added/changed patterns. The comparison is
+     textual only; the hub never attempts regex-language containment (rewriting
+     `get_news` to `get_.*` is logged because the string changed, not because the hub
+     reasons about the language). Self-declared roles mean a compromised bot can widen
+     its own roles; the blast radius stays inside that service, but the drift must be
+     visible, not silent. The hub then replies `{ "ok": true }` and immediately issues
      `tools/list` to warm its cache. A `roles` value of `{}` means "no roles declared" —
      the service is then reachable only by admin tokens or accounts granted the
      built-in `*` role.
    - `hub/replaced` (hub → client, notification): a newer connection for the same slug
-     arrived; the old socket is closed with code `4000` after this. Client must NOT
+     arrived; the old socket is closed with code `4000` after this. Eviction happens at
+     **acceptance** of the new socket (`ctx.acceptWebSocket`), before its `hub/register`
+     is seen — the DO never holds two sockets, preserving §2's at-most-one-connection
+     invariant. Accepted consequence: if the new socket's registration then fails
+     validation or never arrives, the old healthy connection is already gone and the
+     service stays offline until the bot reconnects (a service-token holder can already
+     deny service by connecting, so this adds no attacker capability). Client must NOT
      reconnect automatically in this case (two copies of a bot fighting for the slot is
      an operator error worth surfacing). The hub logs every replacement — with a stolen
      service token, eviction-and-impersonation looks exactly like this, so it's a
@@ -316,10 +358,23 @@ Two message namespaces:
    invalidates its cache and re-lists.
 
 Handshake, pinned: the wire is stateless 2026-07-28-style — **`initialize` never crosses
-the wire**. Hub-originated requests are self-contained (required `_meta` protocol-version
-fields included); the client library performs whatever session bootstrap its local SDK
-needs (synthesizing an initialize exchange internally if the SDK requires one). After
-`hub/register` → `{ok: true}`, the first MCP message from the hub is `tools/list`.
+the wire**. Hub-originated requests are self-contained, carrying all required `_meta`
+protocol fields: `io.modelcontextprotocol/protocolVersion`, and
+`io.modelcontextprotocol/clientCapabilities` **mirrored from the consumer's request** —
+the hub asserts the calling client's capabilities, not its own (a legacy-lane consumer
+that sent none gets `{}`, which per MRTR rules means the service must not emit
+elicitation/sampling inputRequests for that caller). The client library performs
+whatever session bootstrap its local SDK needs (synthesizing an initialize exchange
+internally if the SDK requires one). After `hub/register` → `{ok: true}`, the first MCP
+message from the hub is `tools/list`.
+
+Registration deadline, pinned: a socket that has not delivered a valid `hub/register`
+within **10 s** of acceptance is closed with code `4004` (protocol error); the client
+library treats this like any disconnect (reconnect with backoff). Any message other
+than `hub/register` received before registration completes is a protocol error:
+JSON-RPC error reply, then close `4004`. The hub never forwards consumer traffic to an
+unregistered socket — until `hub/register` succeeds the service is offline and
+`tools/call` fails `-32000`.
 
 Liveness: the client library relies on WebSocket **protocol ping frames** (every ~25 s) —
 the Cloudflare runtime auto-pongs these without waking the DO, keeping NATs open at zero
@@ -345,9 +400,11 @@ which case the caller gets an error anyway and retries).
    outlives its token's `expires_at` until the next reconnect; that asymmetry is
    deliberate (revocation is the immediate path). A provisioned-but-never-connected
    service has no roles and lists no tools.
-2. **Online / offline** — runtime status, derived purely from whether the DO holds a
-   live socket (surfaced in `service_list` / `pmcp ls`). Offline still serves the cached
-   `tools/list`; only `tools/call` requires the connection.
+2. **Online / offline** — runtime status: **online** means the DO holds a live,
+   **registered** socket (surfaced in `service_list` / `pmcp ls`); a socket accepted
+   but not yet past `hub/register` is not online — the 10 s registration deadline
+   bounds that window. Offline still serves the cached `tools/list`; only `tools/call`
+   requires the connection.
 3. **Archived** — a reversible parking state set by the owner (`service_archive`, or
    `archived: true` in YAML). While archived: connection attempts are rejected at the
    WebSocket upgrade (HTTP 403), an existing connection is severed (close `4002`), the
@@ -381,7 +438,13 @@ Per request:
 1. Authenticate. **`Authorization: Bearer` only** — session cookies are never consulted
    on `/<user>/mcp*` (this single rule removes the whole browser-CSRF surface for the
    admin MCP), tokens in query strings are rejected, `Content-Type: application/json`
-   is required, and Origin is validated. Resolution: `pmcp_sa_` prefix → SHA-256 lookup
+   is required, and an `Origin` header, when present, must match the hub's own origin
+   (else **403**); requests without an `Origin` pass — every legitimate consumer (CLI,
+   agents, server-side MCP clients) is a non-browser client that sends none, so the
+   check is pure defense-in-depth against browser-originated requests, with the same
+   if-present-must-match semantics as the SDK's `originValidation` middleware (which
+   `createMcpHandler` does not apply automatically — wire it in explicitly).
+   Resolution: `pmcp_sa_` prefix → SHA-256 lookup
    in `token` with an explicit `kind = 'service_account'` check (unrevoked, unexpired,
    `ref_id` resolves to a live service account) → service account; `pmcp_svc_` /
    `pmcp_sa_`-prefixed tokens **never** fall through to session lookup; anything else →
@@ -403,10 +466,12 @@ Per request:
      one grant.
 
    Pattern semantics, pinned: compile as `^(?:<pattern>)$` with no flags (naive
-   `'^'+p+'$'` breaks on top-level `|` — `^a|.*$` matches everything; §16 has the
-   regression test). A pattern containing no regex metacharacters is compared as a
-   literal string, so a tool named `get.news` can't be matched by an exact-looking
-   role entry for `getXnews`.
+   `'^'+p+'$'` breaks on top-level `|` — `^foo|bar$` matches `foox` via its `^foo`
+   branch; §16 has the regression test). A pattern consisting only of tool-name
+   characters (`^[A-Za-z0-9._-]+$` — `*` and `|` fall outside this set, so
+   `search_.*` and `a|b` still compile as regexes) is compared as a literal string,
+   never compiled — so an exact-looking role entry `get.news` matches only the tool
+   `get.news`, not `getXnews`.
 3. Dispatch:
    - `server/discover` → answered by the Worker (hub capabilities).
    - `tools/list` → tunneled: served from the DO's **cached** list (kept in DO SQLite,
@@ -414,9 +479,16 @@ Per request:
      tool lists; a service that has never connected lists no tools). Proxied: forwarded
      live to the upstream endpoint with the stored auth headers. Both filtered by the
      allowed patterns; aggregated adds the slug prefix and fans out over the relevant
-     services, skipping archived ones; on a scoped endpoint an archived service fails
-     with `-32002` like every other request to it. `ttlMs`/`cacheScope` hints set so
-     clients can cache.
+     services **in parallel**, skipping archived ones, with a **10 s per-upstream
+     deadline** (inside §15's 30 s request budget — tunneled services answer from cache
+     and are unaffected). A proxied upstream that errors, times out, or is in
+     needs-reconnect (§7, "Upstream OAuth") contributes zero tools and the aggregated
+     list still succeeds; the omitted slugs are reported in the result's `_meta`
+     (`pmcp/unavailable: ["<slug>", …]`) and logged as an ops event (not an audit row —
+     §15 keeps `tools/list` out of audit). The scoped endpoint is where that failure
+     surfaces: scoped `tools/list` against an unreachable or needs-reconnect proxied
+     upstream fails `-32000`, and an archived service fails with `-32002` like every
+     other request to it. `ttlMs`/`cacheScope` hints set so clients can cache.
    - `tools/call` → (aggregated: split off the slug prefix first; a prefix matching no
      service → `-32001`, indistinguishable from not-permitted) checks run in a fixed
      order, identical on both endpoint shapes: **filter first** (`-32001` "tool not
@@ -425,7 +497,15 @@ Per request:
      **availability** (tunnel-not-connected or upstream-unreachable → `-32000` "service
      unavailable"). Passing all four, the call is forwarded — through the DO to the live
      connection (tunneled) or to the upstream endpoint (proxied) — with the caller
-     identity attached (below), and the response relayed back verbatim.
+     identity attached (below), and the response relayed back verbatim. For proxied
+     services, "verbatim" applies only to a well-formed JSON-RPC response from the
+     upstream; any HTTP-level failure — non-2xx status, a body that is not a JSON-RPC
+     message, TLS or transport error — maps to `-32000` with a generic "service
+     unavailable" message. The upstream's status line, headers (including
+     `WWW-Authenticate`), and body are never echoed to the consumer (extending §15's
+     log-hygiene rule); the audit row's `detail` records the failure class (e.g.
+     `upstream_status: 401` vs `unreachable`) so the owner can tell expired static
+     headers from a down upstream.
    - anything else → `-32601`.
 
 ### Approval flow
@@ -435,21 +515,42 @@ does not execute on its own:
 
 1. The Worker looks for an `approval` row matching (account, service, tool,
    `args_hash`) with `status: approved` and unexpired. Found → the call proceeds
-   through the availability check, and the row is marked `used` (single use) only at
-   the moment the call is actually dispatched — an approved retry that hits an offline
-   service gets `-32000` **without consuming the approval**, so the owner never has to
-   re-approve because a bot was mid-reconnect.
-2. Otherwise it records a `pending` approval — arguments stored **post-redaction**
-   (below); for tunneled services a pending row is only created for a tool present in
-   the cached catalog (no schema → no redaction map → refuse with `-32000` instead;
-   such a call could not execute anyway) — and replies with JSON-RPC error **`-32003`**
-   ("approval required"), whose `data` carries
+   through the availability check; on unavailability the row is left `approved` — an
+   approved retry that hits an offline service gets `-32000` **without consuming the
+   approval**, so the owner never has to re-approve because a bot was mid-reconnect.
+   If availability passes, the Worker **claims the row atomically** before dispatching
+   — a compare-and-set (`UPDATE approval SET status = 'used', decided_at = ? WHERE id
+   = ? AND status = 'approved'`, checking the statement's changed-row count) — and
+   dispatches only if the claim changed a row. A claim that changes no rows means a
+   concurrent identical call already consumed the approval: treat it as no approval
+   and fall through to step 2 (fresh `pending`, `-32003`). The initial SELECT alone
+   never authorizes dispatch — N concurrent identical calls must resolve to exactly
+   one execution. If dispatch fails *after* a successful claim (30 s timeout, socket
+   dropped mid-call), the approval stays consumed: the call may already have reached
+   the service (every `tools/call` is at-most-once, §15), so reverting the row would
+   risk a second execution — the caller's retry gets a fresh `-32003` and the owner
+   re-approves. One exception restores the row: a leg whose relayed result is MRTR
+   `input_required` (below) flips it back to `approved` with the same CAS discipline,
+   so the exchange can continue on the original approval.
+2. Otherwise, if an unexpired `pending` row already exists for the same (account,
+   service, tool, `args_hash`), no new row is inserted and no new `approval.requested`
+   audit row is written — the reply is `-32003` carrying that row's existing
+   `approvalId`/`expiresAt`, so retries see a stable id and link. Only when no such
+   row exists does it record a fresh `pending` approval — arguments stored
+   **post-redaction** (below); for tunneled services a pending row is only created for
+   a tool present in the cached catalog (no schema → no redaction map → refuse with
+   `-32000` instead; such a call could not execute anyway) — and reply with JSON-RPC
+   error **`-32003`** ("approval required"), whose `data` carries
    `{ approvalId, approvalUrl, expiresAt }`. The message text includes the URL too, so
-   an agent that only surfaces error strings still hands the user something actionable.
+   an agent that only surfaces error strings still hands the user something
+   actionable. `approval.tool` stores the **unprefixed** tool name (aggregated calls
+   split off the slug prefix before the gate, above), so retries through either
+   endpoint shape match the same row.
 3. The owner opens the link (or `pmcp approvals`), sees the request detail — account,
    service, tool, redacted arguments, requested time — and approves or rejects.
 4. The agent retries the **identical** call (same canonical-JSON arguments — the hash
-   must match). Approved → executes (once); rejected or expired → `-32003` again with a
+   must match). Approved → executes (once); still pending → `-32003` with the same
+   `approvalId` (no new row, per step 2); rejected or expired → `-32003` again with a
    fresh pending record and link.
 
 `args_hash` is computed over the **post-redaction** canonical JSON: no digest of a
@@ -458,9 +559,25 @@ crackable). The accepted trade-off, stated plainly: redacted fields are excluded
 the args binding, so a retry differing only in a sensitive field still matches — the
 owner is approving the visible arguments.
 
+MRTR (2026-07-28 Multi Round-Trip Requests): the args binding is `params.arguments`
+only — `inputResponses` and `requestState` on a retry are excluded from `args_hash`,
+excluded from the stored `args_json`, and never persisted or displayed anywhere
+(elicited values are exactly the secrets `writeOnly` exists for; like results, they
+pass through the hub verbatim). One approval covers the whole MRTR exchange: a
+forwarded leg that returns `resultType: "input_required"` restores the claimed row to
+`approved` (step 1), so follow-up legs (same `params.arguments`, plus
+`inputResponses`/`requestState`) pass on the original approval until a `complete`
+result or service error consumes it, with `expires_at` (1 h) bounding the exchange.
+
 Approvals are single-use, args-bound, and expire 1 h after creation. Every transition
 writes an audit row (`approval.requested` / `approval.approved` / `approval.rejected` /
-`approval.expired`). v1 never blocks the original request while waiting — blocking
+`approval.expired`). Expiry is enforced **lazily**: every path that reads or decides
+approvals — the step-1 and step-2 lookups, `approval_list`, `/approvals`,
+`approval_decide` — treats `expires_at < now` as expired regardless of stored status,
+and at that moment flips any such `pending` row to `expired`, writing the
+`approval.expired` audit row exactly once. The daily cron (§15) additionally sweeps
+remaining past-expiry `pending` rows to `expired` (same audit row) before pruning;
+there is no hourly job. v1 never blocks the original request while waiting — blocking
 until decision, plus push-notifying the owner, is explicitly future work.
 `tools/list` shows approval-gated tools like any other (the agent must see them to
 call them).
@@ -469,19 +586,44 @@ call them).
 
 Services can do their own fine-grained authorization on top of the hub's role gate —
 useful when one tool serves several roles. Every forwarded `tools/call` carries the
-caller's identity and resolved roles:
+caller's identity and resolved roles (proxied: only when enabled, below):
 
 - **Tunneled**: `_meta` fields on the forwarded request —
   `hub/principal` (`"sa:claude"` or `"user:ahrzb"`) and `hub/roles` (the caller's
-  granted role names on this service, post-`*`-expansion; owners get `["*"]`). The
-  client libraries surface these on the tool context (e.g. `ctx.principal`,
-  `ctx.roles`, `ctx.has_role("editor")`).
-- **Proxied**: real HTTP headers on the upstream request — `X-Pmcp-Principal` and
-  `X-Pmcp-Roles` (comma-separated) — so an upstream you also control can branch on
-  them.
+  granted role names on this service, exactly as granted — the built-in wildcard is
+  forwarded literally as `"*"`, never expanded into declared role names; owners get
+  `["*"]`). The client libraries surface these on the tool context (e.g.
+  `ctx.principal`, `ctx.roles`, `ctx.has_role("editor")`); `has_role(x)` returns true
+  when the list contains `x` or `"*"`, so owner and `*`-granted calls behave
+  identically, and `*` can never collide with a real role name (§6 rejects it in
+  declarations).
+- **Proxied**: only when the service sets `forward_identity: true` (default **false**):
+  real HTTP headers on the upstream request — `X-Pmcp-Principal` and `X-Pmcp-Roles`
+  (comma-separated, same values — including a literal `*`) — so an upstream you also
+  control can branch on them. Third-party upstreams (Notion, Linear) have no need for
+  internal identifiers, so with the flag off no `X-Pmcp-*` headers are sent.
+
+The `hub/` prefix in `_meta` is **reserved**: before forwarding, the hub deletes every
+consumer-supplied `_meta` key beginning with `hub/` and then sets its own values —
+overwrite, never merge — so any `hub/*` field a service sees was written by the hub,
+never the caller. (Other consumer `_meta` keys, e.g. `progressToken`, pass through
+untouched. The proxied analogue holds by construction: `X-Pmcp-*` headers are set on
+the hub's own upstream request, which never copies consumer headers.)
+
+Alongside identity, the hub forwards the consumer's declared
+`io.modelcontextprotocol/clientCapabilities` unchanged: copied into the forwarded
+request's `_meta` (tunneled, §6) and into the per-request `Client` configuration so
+the upstream sees the consumer's capabilities, not the hub's (proxied). An
+`input_required` result flows back to the consumer through the existing relay-verbatim
+path, and the consumer's retry (with `inputResponses` + `requestState`) is an ordinary
+`tools/call` re-entering the same pipeline — the hub itself never answers an
+inputRequest. Legacy consumers that declare no capabilities are forwarded `{}`, so
+services correctly refrain from elicitation/sampling for them.
 
 Identity is informational for the service's own logic; the hub's grant check has
-already run and services must not treat these fields as secrets.
+already run and services must not treat these fields as secrets. Services *may* trust
+`hub/*` values for their own fine-grained checks precisely because the hub strips
+inbound copies — a consumer cannot inject them.
 
 ### Upstream OAuth (proxied services)
 
@@ -495,7 +637,19 @@ A proxied service's upstream auth is one of two kinds, declared as `auth: header
   protected-resource metadata, obtains a client identity (CIMD document hosted by the
   hub, falling back to Dynamic Client Registration where the AS still wants it), and
   runs the authorization-code + PKCE flow in the owner's browser with callback
-  `/oauth/upstream/callback`. The token bundle lands in the encrypted
+  `/oauth/upstream/callback`. Connect initiation mints a one-time unguessable `state`,
+  stored server-side bound to {owner, service, expected AS issuer + token endpoint,
+  PKCE verifier} and to the initiating cookie session, expiring in ~10 minutes. PKCE
+  is not the CSRF defense here — RFC 9700 permits that only when the client has
+  ensured the AS enforces PKCE, which a dynamically discovered upstream can't
+  guarantee. The callback requires a valid owner cookie session (§13), resolves
+  `state` to a live, unconsumed record belonging to that same session — consuming it
+  single-use; missing, mismatched, expired, or replayed `state` rejects the callback
+  with nothing stored — and, when the AS advertises RFC 9207 support, verifies the
+  response's `iss` equals the recorded issuer. Because the one callback URL is shared
+  across authorization servers, the `state` record is also the mix-up defense: the
+  code is only ever redeemed, with the bound verifier, at the token endpoint recorded
+  at initiation. The token bundle lands in the encrypted
   `upstream_auth_json`; the hub attaches `Authorization: Bearer` upstream and
   refreshes proactively. A failed refresh flips the service to **needs reconnect** —
   calls fail `-32000` and `/services` shows a Reconnect button — and Disconnect wipes
@@ -536,15 +690,23 @@ namespace of the `<user>` in the URL (which step 1 already proved is the caller'
 Tools (names final, shapes reviewed at implementation time):
 
 - `service_list` / `service_get` — includes kind, declared roles, redact paths,
-  archived status, and for proxied services the endpoint; connection status and last
-  seen apply to tunneled services only (proxied rows report `kind: proxy` in their
-  place). diff/apply depend on kind, endpoint, roles, redact, and archived all being
-  readable here.
+  archived status, and for proxied services the endpoint, the `auth` mode, and
+  `forward_identity`; connection status and last seen apply to tunneled services only
+  (proxied rows report `kind: proxy` in their place). diff/apply depend on kind,
+  endpoint, auth, forward_identity, roles, redact, and archived all being readable
+  here.
 - `service_create` / `service_update` / `service_delete` — create takes `kind`,
   `redact` (sensitive-field paths, §7 — either kind) and, for proxied services,
-  `endpoint`, `roles` (the virtual role definitions), and `auth` (`headers` |
-  `oauth`, §7); update takes the same minus `kind`, which is **immutable** (recreate
-  to convert — conversion would orphan service tokens and DO state). `service_list` /
+  `endpoint`, `roles` (the virtual role definitions), `auth` (`headers` | `oauth`,
+  §7), and `forward_identity` (identity headers, §7; default false); update takes the
+  same minus `kind`, which is **immutable** (recreate to convert — conversion would
+  orphan service tokens and DO state). Changing `auth` in either direction is accepted
+  but destructive: any stored `upstream_auth_json` is wiped (audit row
+  `upstream.auth_mode_changed`), leaving the service not-connected until the owner
+  runs Connect (`auth: oauth`) or `service_set_upstream_auth` (`auth: headers`);
+  `pmcp diff` flags a mode flip as destructive in the plan. `service_set_upstream_auth`
+  is rejected on `auth: oauth` services, and the Connect flow (§7) is rejected on
+  `auth: headers` ones — each mode has exactly one credential path. `service_list` /
   `service_get` additionally report the OAuth connection status for `auth: oauth`
   services (not connected / connected / needs reconnect). Proxied role definitions get the same validation
   as `hub/register` (§6): name charset, no `*`, patterns must compile, caps. Delete
@@ -593,10 +755,19 @@ is a config change, not a design change.
 
 The CLI performs every admin operation by calling these tools — the CLI has no private
 admin API. (`diff`/`apply` are CLI-side compositions of `*_list` reads and `*_create` /
-`*_delete` / `*_archive` / `*_unarchive` / `grant_set` writes.) The only non-MCP traffic the CLI ever sends is the
-auth-session family — `login`, `logout`, `whoami` — which rides better-auth's endpoints
-(`whoami` can't be MCP even in principle: endpoint URLs embed the username, which is
-exactly what `whoami` discovers).
+`*_delete` / `*_archive` / `*_unarchive` / `grant_set` writes.) The only non-MCP
+traffic the CLI ever sends is the auth-session family: `login` and `logout` ride
+better-auth's endpoints unchanged, while `whoami` is a hub-owned route,
+`GET /api/whoami` (`whoami` can't be MCP even in principle: endpoint URLs embed the
+username, which is exactly what `whoami` discovers — and it must also resolve
+`pmcp_sa_` keys, which better-auth cannot, §4). Resolution mirrors §7 step 1: a
+`pmcp_sa_`-prefixed bearer → SHA-256 lookup in `token` with an explicit
+`kind = 'service_account'` check (unrevoked, unexpired, `ref_id` resolves to a live
+service account) → `{ "principal": "sa:<slug>", "namespace": "<owner username>" }`; a
+`pmcp_svc_`-prefixed bearer → **401**, never a session lookup; anything else →
+better-auth session lookup → `{ "principal": "user:<name>", "namespace": "<name>" }`;
+no valid principal → **401** with `WWW-Authenticate: Bearer`. This response shape is
+pinned — it is the CLI↔server contract §10 depends on.
 
 ## 9. YAML config, diff, apply
 
@@ -649,8 +820,9 @@ service_accounts:
   Full desired state: deletes include services/accounts present on the
   server but absent from the file, **and** grants for any (account, service) pair not
   listed under that account's `grants:` block. `redact` (either kind) and, for proxied
-  services, `endpoint` and `roles` are part of the desired state and diffed like any
-  other field. Listing the same role name in both modes (`[reader,
+  services, `endpoint`, `auth`, `forward_identity`, and `roles` are part of the
+  desired state and diffed like any other field (an `auth` flip is shown as
+  destructive — it wipes stored upstream credentials, §8). Listing the same role name in both modes (`[reader,
   "reader:approval"]`) is rejected as a config error — in the YAML and in `grant_set`
   alike. Grants
   referencing roles a *tunneled* service hasn't declared are applied but flagged with a
@@ -694,10 +866,12 @@ Every subcommand except the auth family is presentation sugar: `ls`, `tools`, `t
 
 Config: `~/.config/pmcp/config.json` (server URL + session token). `PMCP_TOKEN` env var
 overrides the stored token — session or service-account tokens only (`pmcp_svc_` tokens
-are rejected by every consumer surface). With a service-account key, `ls`/`tools`/
-`call` work within grants and admin commands fail. The auth-family `whoami` endpoint
-accepts both token kinds and returns the principal and its namespace — that's how the
-CLI builds `/<user>/mcp/…` URLs when it holds only a service-account key. `PMCP_URL`
+are rejected by every consumer surface). With a service-account key, `tools`/`call`
+work within grants; `ls` and every other admin-backed command fail (`ls` is sugar over
+`pmcp_service_list`, and service accounts can never hold `pmcp` grants, §8). The hub's
+`GET /api/whoami` route (§8) accepts both token kinds and returns
+`{ principal, namespace }` — that's how the CLI builds `/<user>/mcp/…` URLs when it
+holds only a service-account key. `PMCP_URL`
 overrides the URL and is always the **https origin** — everywhere, including the client
 libraries, which derive `wss://<origin>/connect` from it.
 
@@ -786,11 +960,16 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   flow (pick tunneled / proxied / proxied + OAuth; tunneled creation shows the service
   token once; OAuth creation continues into the provider's consent screen, §7); and
   Connect/Reconnect/Disconnect for `auth: oauth` services. CSRF tokens on every
-  mutation.
+  mutation. `/oauth/upstream/callback` belongs to this cookie-session-gated surface:
+  it requires the owner's session and a live single-use `state` bound to it, per §7 —
+  the callback is a mutation (it writes `upstream_auth_json`) and is guarded like one.
 
-The dashboard pages (`/services`, `/approvals`, `/audit`, `/account`) and the CLI are
-both fronts over the same server-side handlers as the `pmcp` tools — one
-implementation, three surfaces, no web-only capability.
+The dashboard pages `/services`, `/approvals`, and `/audit` and the CLI are both
+fronts over the same server-side handlers as the `pmcp` tools — one implementation,
+three surfaces. `/account` is the deliberate exception: credential management (TOTP,
+passkeys, active sessions) rides better-auth's endpoints and is intentionally
+web-only — §4's session-scope guards reject bearer-sourced sessions there precisely so
+no CLI token or `pmcp` tool can ever reach it.
 
 ## 14. Alternatives considered
 
@@ -818,9 +997,10 @@ implementation, three surfaces, no web-only capability.
 - Hub deploys terminate all WebSockets: services reconnect (backoff), consumers retry.
   Treat every `tools/call` as at-most-once.
 - Duplicate service connection: newest wins, oldest gets `hub/replaced` + close 4000.
-- Unavailable service (tunnel offline, or proxied upstream unreachable): `-32000`
-  immediately, no queueing; archived services return `-32002` instead (§6).
-  (Queue-and-retry is a later feature if it ever hurts.)
+- Unavailable service (tunnel offline, proxied upstream unreachable, or proxied
+  upstream HTTP/protocol failure — §7): `-32000` immediately, no queueing; archived
+  services return `-32002` instead (§6). (Queue-and-retry is a later feature if it
+  ever hurts.)
 - Token revocation: consumer tokens are checked on every request, so revocation is
   immediate there. A revoked *service* token (or a deleted service) additionally severs
   the live reverse connection — the Worker tells the DO to close the socket with code
@@ -843,7 +1023,7 @@ implementation, three surfaces, no web-only capability.
   is only 3–7 days, so log lines are ops debugging, not audit. Recorded: every
   `tools/call` (allowed and denied), approval lifecycle transitions
   (`approval.requested/approved/rejected/expired`), every mutating `pmcp` admin tool,
-  logins, device approvals, connect/register/replaced events, and bootstrap
+  logins, device approvals, connect/register/replaced/roles_widened events, and bootstrap
   invocations. Not recorded: `tools/list` (agent polling noise), and the audit table
   never holds tool arguments/results or token material (approval rows are the sole
   persisted arguments anywhere in the hub, post-redaction, §7). Queried via
@@ -858,20 +1038,40 @@ implementation, three surfaces, no web-only capability.
   both the aggregated and scoped endpoints, asserts role filtering, prefix routing,
   namespace isolation (cross-user 404), offline/archived errors, timeout behavior,
   connection replacement; a proxied service backed by an in-test fake upstream asserts
-  forwarding, virtual-role filtering, and upstream-failure mapping.
+  forwarding, virtual-role filtering, and upstream-failure mapping (unreachable, HTTP
+  401/500, non-JSON-RPC body — all `-32000`, upstream body never echoed) — including
+  aggregated `tools/list` with one failing or hanging upstream: the aggregate succeeds
+  without that service's tools (slug listed in `_meta.pmcp/unavailable`) while the
+  scoped list fails `-32000`.
 - **clients/py**: pytest; the WS↔anyio bridge tested against an in-process websocket
   server; reconnect/backoff logic unit-tested with a fake clock.
 - **clients/js**: vitest; same shape.
 - **cli**: unit tests for YAML diff (pure function: desired + current → plan).
-- **pattern matching**: regression tests pinned by §7 — `a|.*` must NOT match `zzz`
-  (anchoring via `^(?:…)$`), metacharacter-free patterns compare literally
-  (`get.news` ≠ `getXnews`).
+- **pattern matching**: regression tests pinned by §7 — `foo|bar` must NOT match
+  `foox` (naive `^foo|bar$` parses as `(^foo)|(bar$)` and matches it via the `^foo`
+  branch; correct `^(?:foo|bar)$` rejects it) but must match `foo` and `bar` exactly;
+  literal-grammar patterns (`^[A-Za-z0-9._-]+$`) compare literally — pattern
+  `get.news` must NOT match tool `getXnews` — while patterns outside the grammar
+  still compile (`search_.*` matches `search_news`).
 - **approval flow**: call → `-32003` with link → approve → identical retry executes
-  once → second identical call opens a fresh pending; changed args don't match; reject
-  and expiry paths; `writeOnly` and config-declared fields masked in the stored
-  `args_json`; identity `_meta` / `X-Pmcp-*` headers present on forwarded calls.
+  once → second identical call opens a fresh pending; N concurrent identical calls
+  against one approval dispatch exactly once (the CAS claim; losers get `-32003`);
+  retry while still pending returns the same approvalId without a new row; a
+  past-expiry pending row reads as expired everywhere and emits `approval.expired`
+  exactly once; changed args don't match; reject and expiry paths; an MRTR exchange
+  rides one approval — an approved call returning `input_required` restores it, the
+  follow-up leg carrying `inputResponses`/`requestState` executes and a `complete`
+  result marks it `used`, and `inputResponses` never appear in the stored `args_json`;
+  `writeOnly` and config-declared fields masked in the stored `args_json`; identity
+  `_meta` present on tunneled calls with the consumer's `clientCapabilities` mirrored
+  onto the forwarded request (both kinds, `{}` when absent); a consumer-supplied
+  `_meta` key under `hub/` (e.g. a forged `hub/roles`) is stripped before forwarding
+  while non-reserved keys like `progressToken` survive; `X-Pmcp-*` headers present
+  only with `forward_identity: true` and absent by default.
 - **upstream oauth**: fake AS in-test — expired access token triggers refresh before
-  forwarding; failed refresh surfaces needs-reconnect and calls fail `-32000`.
+  forwarding; failed refresh surfaces needs-reconnect and calls fail `-32000`; a
+  callback carrying a valid code but a missing, consumed, expired, or other-session
+  `state` is rejected and writes nothing.
 - One `scripts/e2e.md` runbook (manual): deploy to a dev worker, run the example service,
   `pmcp call` round-trip.
 
@@ -921,7 +1121,9 @@ personal-mcps/
     request time.
 11. **Proxied upstream auth is static headers (default) or interactive OAuth**
     (`auth: oauth`, §7) — connected from `/services`, tokens encrypted at rest (§5),
-    never in YAML (which declares only the mode).
+    never in YAML (which declares only the mode; the mode is stored in its own
+    `upstream_auth_mode` column, distinct from the credential envelope, and flipping
+    it wipes stored credentials, §8).
 12. **Token expiry defaults differ by kind**: 90 d for service-account tokens (they get
     pasted into agent configs), none for service tokens (telegram-bot model, bots on
     home servers shouldn't silently die) — both overridable at issue time.
@@ -935,11 +1137,20 @@ personal-mcps/
     a link immediately, and an approval is a single-use, args-hash-bound pass consumed
     by an identical retry. Blocking-until-decided and push notifications are declared
     future work (§7). The retry-with-identical-args contract is the simplification to
-    revisit if agents handle it poorly.
+    revisit if agents handle it poorly. An approval spans a full MRTR exchange —
+    consumed on `resultType: "complete"` (or service error), not at first dispatch —
+    and the args binding is `params.arguments` only, excluding
+    `inputResponses`/`requestState` (§7).
 16. **Sensitive fields are declared as JSON Schema `writeOnly`** (standard keyword, no
     invented syntax) for tunneled services, plus config-declared `redact` paths on
     either kind — config is the *only* proxied path in v1, since proxied schemas are
     never cached (§7). The approval `args_hash` binds post-redaction arguments only.
 17. **Caller identity rides `_meta` (tunneled) / `X-Pmcp-*` headers (proxied)** —
-    informational, for service-side fine-grained checks; never a security boundary the
-    hub relies on.
+    informational for the hub — never a boundary the hub itself relies on — but
+    trustworthy for service-side fine-grained checks because the hub strips
+    consumer-supplied `hub/*` `_meta` keys before injecting its own (§7). Proxied
+    identity headers are opt-in per service (`forward_identity`, default off) — never
+    sent to upstreams the owner hasn't marked.
+18. **Forwarded requests assert the consumer's `clientCapabilities`**, mirrored per
+    request — the hub never advertises input capabilities of its own; MRTR round-trips
+    pass through as ordinary `tools/call` retries (§7).

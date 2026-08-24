@@ -45,7 +45,11 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
   for proxied ones. Patterns are **anchored regexes** over tool names (a plain tool name
   is its own regex; `*` is accepted as an alias for `.*`). Every service additionally
   has the built-in wildcard role **`*`** matching all tools, present and future, with no
-  declaration needed — for both kinds.
+  declaration needed — for both kinds. Trust boundary, stated plainly: roles confine
+  the *service account*, not the service — a tunneled service self-declares its roles,
+  so granting any role on it trusts that service fully (a compromised bot can widen its
+  own roles; the hub logs such drift, §6, but the blast radius is accepted as
+  one-service-wide).
 - **Service account** — an identity for an AI agent or system (`claude`, `cron`). Holds
   **grants**.
 - **Grant** — (service account, service, role). A service account may call exactly the
@@ -113,10 +117,20 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
   - `bearer()` — lets the CLI present its session token as `Authorization: Bearer`.
 - **Service-account and service tokens**: our own `token` table (§5), not a better-auth
   plugin. 256-bit random secrets with `pmcp_sa_` / `pmcp_svc_` prefixes, SHA-256 hashed at
-  rest, plaintext shown once. (`@better-auth/api-key` was considered and rejected: its
-  keys can only reference users/organizations, not our service rows, and its
+  rest, plaintext shown once. Unsalted SHA-256 is deliberate and correct for 256-bit
+  random secrets (GitHub PATs and Vault tokens do the same): preimage attacks are
+  infeasible, salting adds nothing, and slow KDFs are for low-entropy human secrets —
+  do not "fix" this into bcrypt. (`@better-auth/api-key` was considered and rejected:
+  its keys can only reference users/organizations, not our service rows, and its
   session-minting behavior is an escalation footgun. A small hashed-token table is
   simpler and safer; better-auth handles humans only.)
+- **Session-scope guards**: credential-management and password-change endpoints
+  (`/account`, change-password) require a cookie-authenticated web session with recent
+  authentication — bearer-sourced (CLI) sessions are rejected there, so a stolen CLI
+  token cannot enroll new credentials and become persistent account takeover. Session
+  lifetime config is shared between web and CLI sessions (better-auth default 7 d
+  sliding) — a conscious coupling; don't tune it up for CLI convenience without
+  accepting the browser exposure.
 - **Schema migrations**: generated SQL checked in as `wrangler d1 migrations` files
   (better-auth CLI generate + our own tables); applied with `wrangler d1 migrations apply`.
   No runtime migration endpoint.
@@ -144,8 +158,13 @@ CREATE TABLE service (
   name TEXT NOT NULL,
   description TEXT DEFAULT '',
   kind TEXT NOT NULL DEFAULT 'tunnel' CHECK (kind IN ('tunnel', 'proxy')),
+                                       -- kind is immutable after create (service_update rejects
+                                       -- changes; recreate to convert)
   upstream_url TEXT,                   -- proxy kind only
-  upstream_auth_json TEXT,             -- proxy kind only; headers, set imperatively (§8), never via YAML
+  upstream_auth_json TEXT,             -- proxy kind only; headers, set imperatively (§8), never via
+                                       -- YAML; AES-GCM envelope-encrypted (WebCrypto, key in a
+                                       -- wrangler secret) so D1 exports/dumps don't leak upstream
+                                       -- credentials
   roles_json TEXT NOT NULL DEFAULT '{}',  -- {"reader": ["get_news","search_.*"], ...}
                                           -- tunnel: written at registration; proxy: via config
   created_at INTEGER NOT NULL,
@@ -178,8 +197,12 @@ CREATE TABLE token (
   name TEXT NOT NULL DEFAULT '',
   hash TEXT NOT NULL UNIQUE,             -- SHA-256 of the full token string
   prefix TEXT NOT NULL,                  -- first ~12 chars, for display in listings
-  expires_at INTEGER,
+  expires_at INTEGER,                    -- pmcp_sa_ tokens default to 90 d (overridable, incl.
+                                         -- 'never'); pmcp_svc_ default to no expiry (telegram-bot
+                                         -- model: revoke on compromise)
   created_at INTEGER NOT NULL,
+  last_used_at INTEGER,                  -- coarse (updated at most hourly), shown in token_list —
+                                         -- makes leaked-token use and rotation state observable
   revoked_at INTEGER
 );
 ```
@@ -198,9 +221,21 @@ result, connection metadata. Identity/auth facts for the socket ride in
 This section is tunnel-kind only; proxied services have no connection of their own.
 
 Transport: WebSocket to `wss://<host>/connect`, `Authorization: Bearer pmcp_svc_…`.
-The Worker verifies the service token, resolves the service (and its owner), and hands
-the socket to `ServiceConnection` DO `getByName("<username>/<slug>")`, which calls
-`ctx.acceptWebSocket(ws, ["<username>/<slug>"])`.
+The Worker verifies the service token — checking the token row's `kind` column
+explicitly, not just the prefix — resolves the service (and its owner), and hands the
+socket to `ServiceConnection` DO `getByName(service.id)` (the opaque id, not
+`user/slug`, so deleting a user and recreating the same username can never rebind to a
+stale DO), which calls `ctx.acceptWebSocket(ws, [service.id])`.
+
+Upgrade response matrix — the status codes carry meaning for the client library:
+- **401** — no/invalid/expired/revoked token, wrong token kind (`pmcp_sa_`, session), or
+  a token whose service row is gone or is `kind: proxy`. Client treats this as fatal:
+  stop and surface a credentials error (no retry loop on a dead credential).
+- **403** — means exactly one thing: the service is archived. Client keeps retrying at
+  max backoff so unarchiving heals automatically.
+- Close `4001` after establishment (token revoked / service deleted) is treated like
+  401: stop and surface. Close `4003` exists only for the row-deleted-between-upgrade-
+  and-register race.
 
 Framing: **one JSON-RPC 2.0 message per WebSocket text message** (WS already provides
 message framing; each side generates UUID-string ids for the requests it initiates).
@@ -212,15 +247,24 @@ Two message namespaces:
      `{ "clientVersion": "...", "protocolVersion": "2026-07-28", "roles": { "<role>": ["<regex>", …] } }`
      The service identity comes **exclusively** from the authenticated token — the
      payload carries no service field, so a token for one slug can never touch another
-     service's registration. The hub verifies the service row still exists (close `4003`
-     if not), upserts `roles_json` in D1, replies `{ "ok": true }`, then immediately
-     issues `tools/list` to warm its cache. A `roles` value of `{}` means "no roles
-     declared" — the service is then reachable only by admin tokens or accounts granted
-     the built-in `*` role.
+     service's registration. The hub validates the declaration before accepting it:
+     role names must match `[a-z0-9_-]{1,64}` (`*` is rejected — it's the resolver's
+     built-in), every pattern must compile as a regex, and pattern length (≤128 chars)
+     and per-role pattern count (≤64) are capped; violations get a JSON-RPC error reply
+     and the socket is closed. The hub verifies the service row still exists (close
+     `4003` if not), upserts `roles_json` in D1 — **logging any change that widens a
+     role with live grants** (self-declared roles mean a compromised bot can widen its
+     own roles; the blast radius stays inside that service, but the drift must be
+     visible, not silent) — replies `{ "ok": true }`, then immediately issues
+     `tools/list` to warm its cache. A `roles` value of `{}` means "no roles declared" —
+     the service is then reachable only by admin tokens or accounts granted the
+     built-in `*` role.
    - `hub/replaced` (hub → client, notification): a newer connection for the same slug
      arrived; the old socket is closed with code `4000` after this. Client must NOT
-     reconnect automatically in this case (two copies of a bot fighting for the slot is an
-     operator error worth surfacing).
+     reconnect automatically in this case (two copies of a bot fighting for the slot is
+     an operator error worth surfacing). The hub logs every replacement — with a stolen
+     service token, eviction-and-impersonation looks exactly like this, so it's a
+     security signal, not just noise.
 2. **MCP** — everything else. The hub acts as the MCP *client*; the service is the MCP
    *server*. v1 forwards: `tools/list`, `tools/call`. The client library also sends
    `notifications/tools/list_changed` when the user's server changes its tool set; the DO
@@ -251,8 +295,11 @@ which case the caller gets an error anyway and retries).
    service token (`token_issue`), which is handed to the bot. The token is the service's
    sole credential: it authenticates registration (the role declaration) and every
    (re)connection. Multiple tokens per service may be live at once, so rotation is
-   issue-new → deploy → revoke-old. A provisioned-but-never-connected service has no
-   roles and lists no tools.
+   issue-new → deploy → revoke-old (`last_used_at` in `token_list` shows which token
+   the bot is actually on). Expiry is checked at upgrade only — an established socket
+   outlives its token's `expires_at` until the next reconnect; that asymmetry is
+   deliberate (revocation is the immediate path). A provisioned-but-never-connected
+   service has no roles and lists no tools.
 2. **Online / offline** — runtime status, derived purely from whether the DO holds a
    live socket (surfaced in `service_list` / `pmcp ls`). Offline still serves the cached
    `tools/list`; only `tools/call` requires the connection.
@@ -286,19 +333,35 @@ Two shapes, one pipeline — both stateless 2026-07-28 MCP endpoints (via
 
 Per request:
 
-1. Authenticate the Bearer token: `pmcp_sa_` prefix → SHA-256 lookup in `token` (must be
-   unrevoked, unexpired, and its `ref_id` must still resolve to a live service account) →
-   service account; otherwise better-auth session lookup → user. `pmcp_svc_` tokens are
-   rejected here. The resolved principal must belong to the `<user>` namespace in the
-   URL — a session or service-account of any other user gets 404 (not 403; namespaces
-   don't leak existence).
+1. Authenticate. **`Authorization: Bearer` only** — session cookies are never consulted
+   on `/<user>/mcp*` (this single rule removes the whole browser-CSRF surface for the
+   admin MCP), tokens in query strings are rejected, `Content-Type: application/json`
+   is required, and Origin is validated. Resolution: `pmcp_sa_` prefix → SHA-256 lookup
+   in `token` with an explicit `kind = 'service_account'` check (unrevoked, unexpired,
+   `ref_id` resolves to a live service account) → service account; `pmcp_svc_` /
+   `pmcp_sa_`-prefixed tokens **never** fall through to session lookup; anything else →
+   better-auth session lookup → user. Failure matrix: any request that doesn't resolve
+   to a valid principal → **401** with a `WWW-Authenticate: Bearer` header, regardless
+   of whether `<user>` exists (so unauthenticated probes can't enumerate usernames). A
+   *resolved* principal on another user's namespace (or a nonexistent user) → **404**
+   (namespaces don't leak existence).
 2. Resolve the allowed-tool filter (per service):
    - owner → all tools (sees everything in their namespace);
    - service account → the union of anchored-regex patterns of its granted roles,
      resolved against the service's `roles_json` **at request time**; the built-in `*`
-     role contributes `.*` without ever appearing in `roles_json`. Scoped endpoint with
-     no grants → 403 (with a JSON-RPC-shaped body per spec); aggregated endpoint simply
-     spans the services with at least one grant.
+     role contributes `.*` without ever appearing in `roles_json`. A granted role no
+     longer present in `roles_json` resolves to the empty pattern set — it still counts
+     as a grant (the account gets an empty `tools/list` and `-32001`, not a 404). On the
+     scoped endpoint a service account gets **404** both for a nonexistent slug and for
+     a service it holds no grants on — indistinguishable, so zero-grant accounts can't
+     enumerate the namespace. The aggregated endpoint spans the services with at least
+     one grant.
+
+   Pattern semantics, pinned: compile as `^(?:<pattern>)$` with no flags (naive
+   `'^'+p+'$'` breaks on top-level `|` — `^a|.*$` matches everything; §16 has the
+   regression test). A pattern containing no regex metacharacters is compared as a
+   literal string, so a tool named `get.news` can't be matched by an exact-looking
+   role entry for `getXnews`.
 3. Dispatch:
    - `server/discover` → answered by the Worker (hub capabilities).
    - `tools/list` → tunneled: served from the DO's **cached** list (kept in DO SQLite,
@@ -309,13 +372,14 @@ Per request:
      services, skipping archived ones; on a scoped endpoint an archived service fails
      with `-32002` like every other request to it. `ttlMs`/`cacheScope` hints set so
      clients can cache.
-   - `tools/call` → (aggregated: split off the slug prefix first) name must match the
-     filter, else JSON-RPC error `-32001` ("tool not permitted"). Otherwise forwarded —
-     through the DO to the live connection (tunneled) or to the upstream endpoint
-     (proxied) — and the response relayed back verbatim. Archived → `-32002` ("service
-     archived") — checked first, since an archived service is also disconnected;
-     otherwise tunnel-not-connected or upstream-unreachable → `-32000` ("service
-     unavailable").
+   - `tools/call` → (aggregated: split off the slug prefix first; a prefix matching no
+     service → `-32001`, indistinguishable from not-permitted) checks run in a fixed
+     order, identical on both endpoint shapes: **filter first** (`-32001` "tool not
+     permitted" — so an ungranted account can't even learn a service is archived), then
+     **archived** (`-32002`), then **availability** (tunnel-not-connected or
+     upstream-unreachable → `-32000` "service unavailable"). Passing all three, the
+     call is forwarded — through the DO to the live connection (tunneled) or to the
+     upstream endpoint (proxied) — and the response relayed back verbatim.
    - anything else → `-32601`.
 
 The hub terminates auth entirely; client tokens are never forwarded to services
@@ -332,8 +396,11 @@ Tools (names final, shapes reviewed at implementation time):
   for proxied services the endpoint; connection status and last seen apply to tunneled
   services only (proxied rows report `kind: proxy` in their place). diff/apply depend on
   kind, endpoint, roles, and archived all being readable here.
-- `service_create` / `service_update` / `service_delete` — create/update take `kind` and,
-  for proxied services, `endpoint` and `roles` (the virtual role definitions). Delete
+- `service_create` / `service_update` / `service_delete` — create takes `kind` and, for
+  proxied services, `endpoint` and `roles` (the virtual role definitions); update takes
+  the same minus `kind`, which is **immutable** (recreate to convert — conversion would
+  orphan service tokens and DO state). Proxied role definitions get the same validation
+  as `hub/register` (§6): name charset, no `*`, patterns must compile, caps. Delete
   also deletes the service's `token` rows, tells its DO to close any live socket (code
   `4001`) and drop cached state (DO side effects apply to tunneled services only —
   proxied services have no DO and no tokens).
@@ -345,15 +412,24 @@ Tools (names final, shapes reviewed at implementation time):
   (§6, "Service lifecycle").
 - `account_list` / `account_create` / `account_delete` — delete also deletes the
   account's `token` rows.
-- `grant_set` — replaces the full grant set for (account, service).
+- `grant_set` — replaces the full grant set for (account, service). Applies the same
+  role validation as the YAML layer (§9): undeclared roles warn for tunneled services,
+  hard-error for proxied ones; a role literally named `*` is never declarable, only
+  grantable (it's the built-in).
 - `token_issue` — `{ kind: "service_account" | "service", slug, expires_in? }` → plaintext
   key (shown once). `kind: "service"` is rejected for proxied services (nothing connects).
-- `token_list` / `token_revoke` — revoking a `service` token also closes that service's
-  live socket (code `4001`) if the connection was opened with it.
+  Service-account tokens default to 90 d expiry (pass `expires_in` to override,
+  including `never`) — these are the tokens pasted into agent configs; service tokens
+  default to no expiry (revoke-on-compromise, the telegram-bot model).
+- `token_list` / `token_revoke` — listings include `last_used_at`; revoking a `service`
+  token also closes that service's live socket (code `4001`) if the connection was
+  opened with it.
+
+Every tool that takes a service slug rejects `pmcp` with the same error (`grant_set`,
+`service_*`, `token_issue` alike) — the reservation is uniform, not per-tool.
 
 The `pmcp` slug is **reserved and virtual**: no `service` row exists for it.
-`service_list` includes it flagged `builtin: true`; `service_create`, `service_delete`,
-and `grant_set` reject the slug. Access is therefore admin (user) tokens only in v1 —
+`service_list` includes it flagged `builtin: true`. Access is admin (user) tokens only in v1 —
 service accounts can't hold `pmcp` grants. Turning `pmcp` into a grantable service later
 is a config change, not a design change.
 
@@ -411,8 +487,8 @@ service_accounts:
   warning (tunneled roles arrive at connect time, so the file can legitimately be ahead
   of the first connection); `*` is exempt, and for proxied services undeclared roles are
   a hard error (their roles live in this same file). The reserved `pmcp` slug is
-  excluded from the delete
-  computation and rejected if it appears in the file.
+  excluded from the delete computation and rejected anywhere it appears in the file —
+  as a `services:` key or inside a `grants:` block.
 - `pmcp apply -f mcps.yaml` — shows the same diff, asks for confirmation (`--yes` to
   skip), applies. Deleting a service or account cascades its grants and deletes its
   tokens (server-side side effect of the `*_delete` tools, §8).
@@ -443,10 +519,13 @@ Every subcommand except the auth family is presentation sugar: `ls`, `tools`, `t
 `pmcp call` (or any agent) can make directly — nicer output, zero extra capability.
 
 Config: `~/.config/pmcp/config.json` (server URL + session token). `PMCP_TOKEN` env var
-overrides the stored token (any token kind — with a service-account key, `ls`/`tools`/
-`call` work within grants and admin commands fail with 403). `PMCP_URL` overrides the
-URL and is always the **https origin** — everywhere, including the client libraries,
-which derive `wss://<origin>/connect` from it.
+overrides the stored token — session or service-account tokens only (`pmcp_svc_` tokens
+are rejected by every consumer surface). With a service-account key, `ls`/`tools`/
+`call` work within grants and admin commands fail. The auth-family `whoami` endpoint
+accepts both token kinds and returns the principal and its namespace — that's how the
+CLI builds `/<user>/mcp/…` URLs when it holds only a service-account key. `PMCP_URL`
+overrides the URL and is always the **https origin** — everywhere, including the client
+libraries, which derive `wss://<origin>/connect` from it.
 
 ## 11. Client libraries
 
@@ -483,8 +562,13 @@ archived → keep retrying at max backoff, §6), stop on `hub/replaced`.
 ## 12. User management script
 
 `scripts/users.ts` (run with `pnpm users …`), talking to `POST /internal/users` on the
-Worker, guarded by a `BOOTSTRAP_SECRET` wrangler secret (constant-time compare; route
-returns 404 without it). No email involved anywhere.
+Worker, guarded by a `BOOTSTRAP_SECRET` wrangler secret (constant-time compare). When
+the secret is **unset, the route does not exist** (404 for everything) — so the owner
+can keep it disabled between uses and re-enable with `wrangler secret put`. Every
+invocation is logged. This secret is an all-namespaces master key (it can reset any
+password): rotate it after each use, on any suspicion. `reset-password` deliberately
+leaves TOTP/passkey enrollment intact, so a leaked secret alone doesn't defeat the
+second factor. No email involved anywhere.
 
 ```
 pnpm users create <username>     # generates a random password, prints it once
@@ -501,8 +585,15 @@ enrollment happens through better-auth's endpoints after first login (minimal pa
 Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is required:
 
 - `/login` — username + password, TOTP challenge, passkey button.
-- `/device` — better-auth's device-approval page (user enters the code the CLI printed).
-- `/account` — enroll/remove TOTP and passkeys, active sessions.
+- `/device` — device-approval page (user enters the code the CLI printed). Since we
+  hand-build it anyway: it shows the requesting IP and user-agent and states plainly
+  that approval grants **full admin CLI control of the namespace** (RFC 8628 §5.4 /
+  cross-device-flow BCP: the user-code channel is unauthenticated, so the page is the
+  phishing defense); the approval POST carries a CSRF token; device-code lifetime is
+  set to ~10 minutes (down from better-auth's 30-minute default).
+- `/account` — enroll/remove TOTP and passkeys, active sessions. Requires a
+  cookie-authenticated session with recent authentication — bearer-sourced sessions are
+  rejected on these routes (§4).
 
 No dashboard; the CLI and admin MCP are the management UI.
 
@@ -537,7 +628,21 @@ No dashboard; the CLI and admin MCP are the management UI.
   immediate there. A revoked *service* token (or a deleted service) additionally severs
   the live reverse connection — the Worker tells the DO to close the socket with code
   `4001` (§8); a racing re-register fails because the service row / token is gone.
-- Rate limiting: per-key limits are available in the api-key plugin config; off in v1.
+- User deletion (`/internal/users`) performs the same teardown as `service_delete` for
+  every tunneled service in the namespace — close `4001`, wipe DO cached state — before
+  the row cascade. (DOs are addressed by `service.id`, so even a missed teardown can
+  never be rebound by recreating the username.)
+- Rate limiting: one Cloudflare WAF rate-limiting rule (available on all plans) covers
+  `/login`, `/device`, `/api/auth/*`, and `/internal/users` — brute-force protection
+  for passwords, TOTP challenges, and device codes lives there. better-auth's built-in
+  limiter is in-memory (per-isolate — a no-op on Workers) and is not relied on.
+- Log hygiene: `Authorization` headers and anything matching `pmcp_(sa|svc)_…` are
+  redacted from logs, error responses, and exception traces; MCP bodies for the `pmcp`
+  service (which carry issued tokens) are never logged.
+- Audit: one structured log line per auth decision and per `tools/call` (principal,
+  service, tool, allow/deny/error) via Workers observability — plus the coarse
+  `last_used_at` on tokens (§5). Enough to answer "what did this token do, and is it
+  still in use"; a D1 audit table is deferred until that's insufficient.
 
 ## 16. Testing
 
@@ -551,6 +656,9 @@ No dashboard; the CLI and admin MCP are the management UI.
   server; reconnect/backoff logic unit-tested with a fake clock.
 - **clients/js**: vitest; same shape.
 - **cli**: unit tests for YAML diff (pure function: desired + current → plan).
+- **pattern matching**: regression tests pinned by §7 — `a|.*` must NOT match `zzz`
+  (anchoring via `^(?:…)$`), metacharacter-free patterns compare literally
+  (`get.news` ≠ `getXnews`).
 - One `scripts/e2e.md` runbook (manual): deploy to a dev worker, run the example service,
   `pmcp call` round-trip.
 
@@ -599,4 +707,13 @@ personal-mcps/
     tools present and future; it never appears in `roles_json` and is resolved at
     request time.
 11. **Proxied upstream auth is static headers, set imperatively** — no OAuth-to-upstream
-    in v1 (§14), no secrets in YAML.
+    in v1 (§14), no secrets in YAML; encrypted at rest (§5).
+12. **Token expiry defaults differ by kind**: 90 d for service-account tokens (they get
+    pasted into agent configs), none for service tokens (telegram-bot model, bots on
+    home servers shouldn't silently die) — both overridable at issue time.
+13. **No MCP-native OAuth discovery in v1** (already §14): spec-conformant clients that
+    require RFC 9728 discovery must configure a bearer header manually. We do send
+    `WWW-Authenticate` on 401 and never accept query-string tokens, so the upgrade path
+    stays clean.
+14. **Roles are not a boundary against the service itself** (§2): grants confine
+    accounts; the service is trusted. Drift logging, not pinning, is the v1 answer.

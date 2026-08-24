@@ -1,0 +1,148 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
+    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
+    a:hover { color: #52525b; }
+  </style>
+</helmet>
+<div style="width: 1080px; min-height: 1150px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
+
+  <div style="height: 56px; box-sizing: border-box; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; padding: 0 32px;">
+    <div style="display: flex; align-items: center; gap: 24px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>
+        <div style="font-size: 15px; font-weight: 600;">personal-mcps</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 4px;">
+        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Account</div>
+        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Audit</div>
+        <div style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: #f4f4f5; color: #09090b;">Approvals<span style="display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #dc2626; color: #ffffff; font-size: 11px; font-weight: 600;">2</span></div>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <div style="font-size: 14px; color: #71717a;">ahrzb</div>
+      <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Sign out</div>
+    </div>
+  </div>
+
+  <div style="width: 760px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 24px;">
+
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <div style="font-size: 24px; font-weight: 600;">Approvals</div>
+      <div style="font-size: 14px; color: #71717a;">Approval-gated requests from your service accounts. Approvals run the exact call once and expire after an hour.</div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="font-size: 16px; font-weight: 600;">Pending</div>
+
+      <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; align-items: baseline; gap: 8px;">
+              <div style="font-size: 15px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">set_scene</div>
+              <div style="font-size: 13px; color: #71717a;">on home</div>
+            </div>
+            <div style="font-size: 13px; color: #71717a;">sa:claude · requested 14:29:55</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">pending</div>
+            <div style="font-size: 12px; color: #71717a;">expires in 43 min</div>
+          </div>
+        </div>
+        <div style="background: #f4f4f5; border-radius: 8px; padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #52525b; line-height: 1.6;">{ "scene": "movie_night" }</div>
+        <div style="display: flex; justify-content: flex-end; gap: 12px;">
+          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Reject</div>
+          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #18181b; color: #fafafa; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Approve</div>
+        </div>
+      </div>
+
+      <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; align-items: baseline; gap: 8px;">
+              <div style="font-size: 15px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">create_page</div>
+              <div style="font-size: 13px; color: #71717a;">on notion</div>
+            </div>
+            <div style="font-size: 13px; color: #71717a;">sa:cron · requested 14:12:31</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">pending</div>
+            <div style="font-size: 12px; color: #71717a;">expires in 26 min</div>
+          </div>
+        </div>
+        <div style="background: #f4f4f5; border-radius: 8px; padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #52525b; line-height: 1.6;">{ "title": "Weekly report", "parent": "Reports", "credentials": { "token": "‹redacted›" } }</div>
+        <div style="display: flex; justify-content: flex-end; gap: 12px;">
+          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Reject</div>
+          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #18181b; color: #fafafa; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Approve</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="font-size: 16px; font-weight: 600;">History</div>
+      <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
+        <div style="display: grid; grid-template-columns: 150px 130px 110px 170px 1fr; gap: 0; padding: 10px 20px; border-bottom: 1px solid #e4e4e7;">
+          <div style="font-size: 13px; font-weight: 500; color: #71717a;">Time</div>
+          <div style="font-size: 13px; font-weight: 500; color: #71717a;">Principal</div>
+          <div style="font-size: 13px; font-weight: 500; color: #71717a;">Service</div>
+          <div style="font-size: 13px; font-weight: 500; color: #71717a;">Tool</div>
+          <div style="font-size: 13px; font-weight: 500; color: #71717a;">Outcome</div>
+        </div>
+        <div style="display: grid; grid-template-columns: 150px 130px 110px 170px 1fr; gap: 0; padding: 10px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 13:20</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">sa:claude</div>
+          <div style="font-size: 13px;">home</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">set_scene</div>
+          <div><span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;">executed</span></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 150px 130px 110px 170px 1fr; gap: 0; padding: 10px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 09:12</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">sa:cron</div>
+          <div style="font-size: 13px;">notion</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">create_page</div>
+          <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;">rejected</span></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 150px 130px 110px 170px 1fr; gap: 0; padding: 10px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 23 22:40</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">sa:claude</div>
+          <div style="font-size: 13px;">home</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">unlock_door</div>
+          <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;">rejected</span></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 150px 130px 110px 170px 1fr; gap: 0; padding: 10px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 23 18:05</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">sa:claude</div>
+          <div style="font-size: 13px;">home</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">set_scene</div>
+          <div><span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;">executed</span></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 150px 130px 110px 170px 1fr; gap: 0; padding: 10px 20px; align-items: center;">
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 22 11:30</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">sa:cron</div>
+          <div style="font-size: 13px;">news</div>
+          <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">purge_cache</div>
+          <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">expired</span></div>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: #71717a;">History prunes with the audit trail after 90 days.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1080,"height":1150}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

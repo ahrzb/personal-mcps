@@ -32,7 +32,9 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
   `connect`, `internal`, `mcp`, …) since they become top-level URL segments.
 - **Service** — a registered MCP service (the "bot"). Identified by `(owner, slug)` —
   slugs are `[a-z0-9-]` (no underscore; §7 relies on this), unique per owner. Has at
-  most one live connection. Declares its **roles** at connect time.
+  most one live connection. Declares its **roles** at connect time. Lifecycle:
+  provisioned → online ↔ offline, plus reversible **archived** and terminal deletion
+  (§6, "Service lifecycle").
 - **Role** — named subset of a service's tools, declared by the service itself in code:
   `{"reader": ["get_news", "search_*"], "admin": ["*"]}`. Patterns are glob-style over
   tool names.
@@ -127,6 +129,7 @@ CREATE TABLE service (
   roles_json TEXT NOT NULL DEFAULT '{}',  -- {"reader": ["get_news","search_*"], ...}, updated at registration
   created_at INTEGER NOT NULL,
   last_connected_at INTEGER,
+  archived_at INTEGER,                 -- non-NULL = archived (§6, "Service lifecycle")
   UNIQUE (owner_id, slug)
 );
 
@@ -161,8 +164,9 @@ CREATE TABLE token (
 ```
 
 (`ref_id` can't be a foreign key to two tables; `service_delete` / `account_delete`
-delete matching token rows as a server-side side effect, and verification additionally
-rejects tokens whose referenced row no longer exists — see §8.)
+delete matching token rows as a server-side side effect (§8), and verification
+additionally rejects tokens whose referenced row no longer exists (§6 for service
+tokens, §7 for service-account tokens).)
 
 The DO keeps per-service volatile/cached state in its own SQLite: cached `tools/list`
 result, connection metadata. Identity/auth facts for the socket ride in
@@ -217,6 +221,28 @@ per request. This is hibernation-safe: an unresolved incoming request blocks hib
 so the map can only be lost when it is already empty or the DO is forcibly restarted (in
 which case the caller gets an error anyway and retries).
 
+### Service lifecycle
+
+1. **Provisioned** — the owner creates the row (`service_create` / `apply`) and mints a
+   service token (`token_issue`), which is handed to the bot. The token is the service's
+   sole credential: it authenticates registration (the role declaration) and every
+   (re)connection. Multiple tokens per service may be live at once, so rotation is
+   issue-new → deploy → revoke-old. A provisioned-but-never-connected service has no
+   roles and lists no tools.
+2. **Online / offline** — runtime status, derived purely from whether the DO holds a
+   live socket (surfaced in `service_list` / `pmcp ls`). Offline still serves the cached
+   `tools/list`; only `tools/call` requires the connection.
+3. **Archived** — a reversible parking state set by the owner (`service_archive`, or
+   `archived: true` in YAML). While archived: connection attempts are rejected at the
+   WebSocket upgrade (HTTP 403), an existing connection is severed (close `4002`), the
+   service disappears from aggregated `tools/list`, and scoped calls fail with JSON-RPC
+   `-32002` ("service archived"). Roles, grants, tokens, and the cached catalog are all
+   retained — `service_unarchive` restores everything. The client library treats
+   403/4002 as "keep retrying at max backoff", so unarchiving heals within a minute
+   without touching the bot.
+4. **Deleted** — terminal (`service_delete` / removal from YAML): grants cascade, tokens
+   are deleted, the live socket is closed (`4001`), the DO's cached state is wiped.
+
 ## 7. Consumer-facing proxy
 
 Two shapes, one pipeline — both stateless 2026-07-28 MCP endpoints (via
@@ -250,12 +276,15 @@ Per request:
    - `tools/list` → served from the DO's **cached** list (kept in DO SQLite, so it
      survives disconnects — deploy-induced reconnect flapping doesn't churn agent tool
      lists), filtered by the allowed patterns; aggregated adds the slug prefix and
-     fans out over the relevant DOs. `ttlMs`/`cacheScope` hints set so clients can
-     cache. A service that has never connected lists no tools.
+     fans out over the relevant DOs, skipping archived services; on a scoped endpoint,
+     an archived service fails with `-32002` like every other request to it.
+     `ttlMs`/`cacheScope` hints set so clients can cache. A service that has never
+     connected lists no tools.
    - `tools/call` → (aggregated: split off the slug prefix first) name must match the
      filter, else JSON-RPC error `-32001` ("tool not permitted"). Otherwise forwarded
-     through the DO to the live connection; response relayed back verbatim. Service not
-     connected → `-32000` ("service offline").
+     through the DO to the live connection; response relayed back verbatim. Archived →
+     `-32002` ("service archived") — checked first, since an archived service is also
+     disconnected; otherwise not connected → `-32000` ("service offline").
    - anything else → `-32601`.
 
 The hub terminates auth entirely; client tokens are never forwarded to services
@@ -268,9 +297,13 @@ implemented locally instead of forwarded to a DO, and every tool operates on the
 namespace of the `<user>` in the URL (which step 1 already proved is the caller's own).
 Tools (names final, shapes reviewed at implementation time):
 
-- `service_list` / `service_get` — includes declared roles, connection status, last seen.
+- `service_list` / `service_get` — includes declared roles, connection status, archived
+  status, last seen (diff/apply depend on the archived field being readable here).
 - `service_create` / `service_delete` — delete also deletes the service's `token` rows,
   tells its DO to close any live socket (code `4001`) and drop cached state.
+- `service_archive` / `service_unarchive` — archive severs any live socket (close
+  `4002`) and hides the service from consumers; everything is retained for unarchive
+  (§6, "Service lifecycle").
 - `account_list` / `account_create` / `account_delete` — delete also deletes the
   account's `token` rows.
 - `grant_set` — replaces the full grant set for (account, service).
@@ -287,7 +320,7 @@ is a config change, not a design change.
 
 The CLI performs every admin operation by calling these tools — the CLI has no private
 admin API. (`diff`/`apply` are CLI-side compositions of `*_list` reads and `*_create` /
-`*_delete` / `grant_set` writes.) The only non-MCP traffic the CLI ever sends is the
+`*_delete` / `*_archive` / `*_unarchive` / `grant_set` writes.) The only non-MCP traffic the CLI ever sends is the
 auth-session family — `login`, `logout`, `whoami` — which rides better-auth's endpoints
 (`whoami` can't be MCP even in principle: endpoint URLs embed the username, which is
 exactly what `whoami` discovers).
@@ -305,12 +338,15 @@ services:
     description: RSS digester on the home server
   home:
     name: Home automation
+    archived: true          # parked: connections refused, hidden from consumers,
+                            # roles/grants/tokens retained (§6, "Service lifecycle")
 
 service_accounts:
   claude:
     name: Claude
     grants:
-      news: [reader]        # exact role names, validated against the service's declared roles
+      news: [reader]        # exact role names; warned (not rejected) if the service
+                            # hasn't declared them yet
       home: ["*"]           # the literal '*' (no other patterns): stored verbatim, expanded
                             # at request time to every declared role, present and future
   cron:
@@ -320,7 +356,8 @@ service_accounts:
 ```
 
 - `pmcp diff -f mcps.yaml` — reads server state via `pmcp` tools, prints a create/update/
-  delete plan. Full desired state: deletes include services/accounts present on the
+  delete plan (including archive/unarchive transitions from the `archived` field).
+  Full desired state: deletes include services/accounts present on the
   server but absent from the file, **and** grants for any (account, service) pair not
   listed under that account's `grants:` block. Grants referencing roles the service
   hasn't declared are applied but flagged with a warning (services declare roles at
@@ -390,7 +427,8 @@ JS (`@personal-mcps/client` on npm): identical shape — `serve(server, { url, t
 
 Library responsibilities: dial + authenticate, `hub/register`, bridge WS frames to the
 SDK's server session (custom transport), send `notifications/tools/list_changed` on tool
-mutations, protocol pings, reconnect with backoff, stop on `hub/replaced`.
+mutations, protocol pings, reconnect with backoff (403 at upgrade / close `4002` =
+archived → keep retrying at max backoff, §6), stop on `hub/replaced`.
 
 ## 12. User management script
 
@@ -438,8 +476,8 @@ No dashboard; the CLI and admin MCP are the management UI.
 - Hub deploys terminate all WebSockets: services reconnect (backoff), consumers retry.
   Treat every `tools/call` as at-most-once.
 - Duplicate service connection: newest wins, oldest gets `hub/replaced` + close 4000.
-- Offline service: `-32000` immediately, no queueing. (Queue-and-retry is a later
-  feature if it ever hurts.)
+- Offline service: `-32000` immediately, no queueing; archived services return `-32002`
+  instead (§6). (Queue-and-retry is a later feature if it ever hurts.)
 - Token revocation: consumer tokens are checked on every request, so revocation is
   immediate there. A revoked *service* token (or a deleted service) additionally severs
   the live reverse connection — the Worker tells the DO to close the socket with code
@@ -451,8 +489,8 @@ No dashboard; the CLI and admin MCP are the management UI.
 - **server**: vitest + `@cloudflare/vitest-pool-workers`. Core integration test: fake
   service connects over WS to the DO, consumer POSTs `tools/list`/`tools/call` through
   both the aggregated and scoped endpoints, asserts role filtering, prefix routing,
-  namespace isolation (cross-user 404), offline errors, timeout behavior, connection
-  replacement.
+  namespace isolation (cross-user 404), offline/archived errors, timeout behavior,
+  connection replacement.
 - **clients/py**: pytest; the WS↔anyio bridge tested against an in-process websocket
   server; reconnect/backoff logic unit-tested with a fake clock.
 - **clients/js**: vitest; same shape.

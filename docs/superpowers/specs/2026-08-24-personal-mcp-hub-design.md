@@ -618,8 +618,12 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
 - `/account` — enroll/remove TOTP and passkeys, active sessions. Requires a
   cookie-authenticated session with recent authentication — bearer-sourced sessions are
   rejected on these routes (§4).
+- `/audit` — read-only, cookie-session-gated view over the audit table (§5): a plain
+  server-rendered table, newest first, with account/service/since filters and a
+  "before" cursor for paging. Same query logic as `audit_query`; no mutations, so no
+  CSRF surface.
 
-No dashboard; the CLI and admin MCP are the management UI.
+No dashboard beyond that; the CLI and admin MCP are the management UI.
 
 ## 14. Alternatives considered
 

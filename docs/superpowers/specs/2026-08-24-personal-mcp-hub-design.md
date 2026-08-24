@@ -52,8 +52,13 @@ third-party clients, push notifications (`subscriptions/listen`), web dashboard.
   one-service-wide).
 - **Service account** — an identity for an AI agent or system (`claude`, `cron`). Holds
   **grants**.
-- **Grant** — (service account, service, role). A service account may call exactly the
-  tools matched by the union of its granted roles per service.
+- **Grant** — (service account, service, role, mode). A service account may call exactly
+  the tools matched by the union of its granted roles per service. `mode` is `allow`
+  (default) or `approval`: an approval-mode call does not execute until the owner
+  approves that specific request (§7, "Approval flow") — so per tool an account can't
+  call it, can call it, or can call it with per-request approval. A tool matched by
+  both an allow-mode and an approval-mode role is allowed outright (allow wins; approval
+  is the weaker form of allow). Owners are never approval-gated.
 - **Token** — bearer credential. Three kinds:
   - *user token*: better-auth session token obtained by the CLI via device flow → admin access.
   - *service-account token*: long-lived API key bound to a service account → limited by grants.
@@ -187,8 +192,29 @@ CREATE TABLE grant_ (                   -- "grant" is an SQL keyword
   service_account_id TEXT NOT NULL REFERENCES service_account(id) ON DELETE CASCADE,
   service_id TEXT NOT NULL REFERENCES service(id) ON DELETE CASCADE,
   role TEXT NOT NULL,                    -- exact role name, or the literal '*' (§9)
+  mode TEXT NOT NULL DEFAULT 'allow' CHECK (mode IN ('allow', 'approval')),
   PRIMARY KEY (service_account_id, service_id, role)
 );
+
+CREATE TABLE approval (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  service_account_id TEXT NOT NULL REFERENCES service_account(id) ON DELETE CASCADE,
+  service_id TEXT NOT NULL REFERENCES service(id) ON DELETE CASCADE,
+  tool TEXT NOT NULL,
+  args_hash TEXT NOT NULL,               -- SHA-256 of the canonical (sorted-keys) argument JSON,
+                                         -- computed POST-redaction (§7 — no digest of a secret)
+  args_json TEXT NOT NULL,               -- the arguments SHOWN to the owner — stored
+                                         -- post-redaction (§7): the ONLY place the hub
+                                         -- ever persists tool arguments
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected', 'expired', 'used')),
+  created_at INTEGER NOT NULL,
+  decided_at INTEGER,
+  expires_at INTEGER NOT NULL            -- 1 h from creation; covers both the pending
+                                         -- wait and the post-approval retry window
+);
+CREATE INDEX approval_owner_status ON approval(owner_id, status, created_at);
 
 CREATE TABLE token (
   id TEXT PRIMARY KEY,
@@ -222,7 +248,7 @@ CREATE TABLE audit (
                                        -- 'connect.replaced' | 'auth.login' | 'auth.device_approved' | …
   service TEXT,                        -- slug, when applicable
   tool TEXT,
-  outcome TEXT NOT NULL,               -- 'ok' | '-32001' | '-32002' | '-32000' | 'error'
+  outcome TEXT NOT NULL,               -- 'ok' | '-32000' | '-32001' | '-32002' | '-32003' | 'error'
   detail TEXT                          -- small JSON summary; NEVER tool arguments,
                                        -- results, or token material
 );
@@ -393,11 +419,89 @@ Per request:
      service → `-32001`, indistinguishable from not-permitted) checks run in a fixed
      order, identical on both endpoint shapes: **filter first** (`-32001` "tool not
      permitted" — so an ungranted account can't even learn a service is archived), then
-     **archived** (`-32002`), then **availability** (tunnel-not-connected or
-     upstream-unreachable → `-32000` "service unavailable"). Passing all three, the
-     call is forwarded — through the DO to the live connection (tunneled) or to the
-     upstream endpoint (proxied) — and the response relayed back verbatim.
+     **archived** (`-32002`), then the **approval gate** (`-32003`, below), then
+     **availability** (tunnel-not-connected or upstream-unreachable → `-32000` "service
+     unavailable"). Passing all four, the call is forwarded — through the DO to the live
+     connection (tunneled) or to the upstream endpoint (proxied) — with the caller
+     identity attached (below), and the response relayed back verbatim.
    - anything else → `-32601`.
+
+### Approval flow
+
+When the caller's only path to a tool is through approval-mode grants (§2), the call
+does not execute on its own:
+
+1. The Worker looks for an `approval` row matching (account, service, tool,
+   `args_hash`) with `status: approved` and unexpired. Found → the call proceeds
+   through the availability check, and the row is marked `used` (single use) only at
+   the moment the call is actually dispatched — an approved retry that hits an offline
+   service gets `-32000` **without consuming the approval**, so the owner never has to
+   re-approve because a bot was mid-reconnect.
+2. Otherwise it records a `pending` approval — arguments stored **post-redaction**
+   (below); for tunneled services a pending row is only created for a tool present in
+   the cached catalog (no schema → no redaction map → refuse with `-32000` instead;
+   such a call could not execute anyway) — and replies with JSON-RPC error **`-32003`**
+   ("approval required"), whose `data` carries
+   `{ approvalId, approvalUrl, expiresAt }`. The message text includes the URL too, so
+   an agent that only surfaces error strings still hands the user something actionable.
+3. The owner opens the link (or `pmcp approvals`), sees the request detail — account,
+   service, tool, redacted arguments, requested time — and approves or rejects.
+4. The agent retries the **identical** call (same canonical-JSON arguments — the hash
+   must match). Approved → executes (once); rejected or expired → `-32003` again with a
+   fresh pending record and link.
+
+`args_hash` is computed over the **post-redaction** canonical JSON: no digest of a
+sensitive value is ever persisted (a hash of a low-entropy password is offline-
+crackable). The accepted trade-off, stated plainly: redacted fields are excluded from
+the args binding, so a retry differing only in a sensitive field still matches — the
+owner is approving the visible arguments.
+
+Approvals are single-use, args-bound, and expire 1 h after creation. Every transition
+writes an audit row (`approval.requested` / `approval.approved` / `approval.rejected` /
+`approval.expired`). v1 never blocks the original request while waiting — blocking
+until decision, plus push-notifying the owner, is explicitly future work.
+`tools/list` shows approval-gated tools like any other (the agent must see them to
+call them).
+
+### Caller identity forwarding
+
+Services can do their own fine-grained authorization on top of the hub's role gate —
+useful when one tool serves several roles. Every forwarded `tools/call` carries the
+caller's identity and resolved roles:
+
+- **Tunneled**: `_meta` fields on the forwarded request —
+  `hub/principal` (`"sa:claude"` or `"user:ahrzb"`) and `hub/roles` (the caller's
+  granted role names on this service, post-`*`-expansion; owners get `["*"]`). The
+  client libraries surface these on the tool context (e.g. `ctx.principal`,
+  `ctx.roles`, `ctx.has_role("editor")`).
+- **Proxied**: real HTTP headers on the upstream request — `X-Pmcp-Principal` and
+  `X-Pmcp-Roles` (comma-separated) — so an upstream you also control can branch on
+  them.
+
+Identity is informational for the service's own logic; the hub's grant check has
+already run and services must not treat these fields as secrets.
+
+### Sensitive-field redaction
+
+Some tool arguments (passwords, tokens) must never be persisted — not even in the
+approval record. Two declaration paths, unioned:
+
+- **Schema-declared** (tunneled): any property marked with standard JSON Schema
+  **`writeOnly: true`** (at any depth) in a tool's input schema is sensitive. The hub
+  derives the map from the catalog cached in the service's DO at `tools/list` time;
+  the client libraries offer sugar for marking a parameter sensitive, which just sets
+  `writeOnly` on the emitted schema.
+- **Config-declared** (both kinds): the owner lists redaction paths per tool —
+  `redact: { "<tool-or-pattern>": ["password", "credentials.token"] }` in the YAML /
+  `service_update`. This is the **only** path for proxied services in v1: their
+  `tools/list` is forwarded live and never cached, so there is no schema to derive
+  from (honoring upstream `writeOnly` becomes possible if a proxied schema cache is
+  ever added).
+
+Redacted fields are replaced with `"‹redacted›"` before anything is stored or shown:
+the approval `args_json` (§5), any error message that echoes arguments, and any debug
+surface. This extends §15's log-hygiene rule; the audit table remains argument-free
+entirely.
 
 The hub terminates auth entirely; client tokens are never forwarded to services
 (MCP audience-binding rules forbid pass-through anyway).
@@ -409,14 +513,16 @@ implemented locally instead of forwarded to a DO, and every tool operates on the
 namespace of the `<user>` in the URL (which step 1 already proved is the caller's own).
 Tools (names final, shapes reviewed at implementation time):
 
-- `service_list` / `service_get` — includes kind, declared roles, archived status, and
-  for proxied services the endpoint; connection status and last seen apply to tunneled
-  services only (proxied rows report `kind: proxy` in their place). diff/apply depend on
-  kind, endpoint, roles, and archived all being readable here.
-- `service_create` / `service_update` / `service_delete` — create takes `kind` and, for
-  proxied services, `endpoint` and `roles` (the virtual role definitions); update takes
-  the same minus `kind`, which is **immutable** (recreate to convert — conversion would
-  orphan service tokens and DO state). Proxied role definitions get the same validation
+- `service_list` / `service_get` — includes kind, declared roles, redact paths,
+  archived status, and for proxied services the endpoint; connection status and last
+  seen apply to tunneled services only (proxied rows report `kind: proxy` in their
+  place). diff/apply depend on kind, endpoint, roles, redact, and archived all being
+  readable here.
+- `service_create` / `service_update` / `service_delete` — create takes `kind`,
+  `redact` (sensitive-field paths, §7 — either kind) and, for proxied services,
+  `endpoint` and `roles` (the virtual role definitions); update takes the same minus
+  `kind`, which is **immutable** (recreate to convert — conversion would orphan
+  service tokens and DO state). Proxied role definitions get the same validation
   as `hub/register` (§6): name charset, no `*`, patterns must compile, caps. Delete
   also deletes the service's `token` rows, tells its DO to close any live socket (code
   `4001`) and drop cached state (DO side effects apply to tunneled services only —
@@ -429,10 +535,15 @@ Tools (names final, shapes reviewed at implementation time):
   (§6, "Service lifecycle").
 - `account_list` / `account_create` / `account_delete` — delete also deletes the
   account's `token` rows.
-- `grant_set` — replaces the full grant set for (account, service). Applies the same
-  role validation as the YAML layer (§9): undeclared roles warn for tunneled services,
-  hard-error for proxied ones; a role literally named `*` is never declarable, only
-  grantable (it's the built-in).
+- `grant_set` — replaces the full grant set for (account, service); each entry is a
+  role name plus optional mode (`reader` or `reader:approval`, the same syntax as §9).
+  Applies the same role validation as the YAML layer (§9): undeclared roles warn for
+  tunneled services, hard-error for proxied ones; a role literally named `*` is never
+  declarable, only grantable (it's the built-in).
+- `approval_list` — `{ status?, limit? }` → approval requests, newest first (pending
+  and history alike).
+- `approval_decide` — `{ id, decision: "approve" | "reject" }`. The web approval page
+  (§13) and `pmcp approve/reject` are both fronts for this.
 - `token_issue` — `{ kind: "service_account" | "service", slug, expires_in? }` → plaintext
   key (shown once). `kind: "service"` is rejected for proxied services (nothing connects).
   Service-account tokens default to 90 d expiry (pass `expires_in` to override,
@@ -480,6 +591,8 @@ services:
     roles:                  # virtual roles — defined here because the upstream can't
       editor: ["create_page", "update_.*"]   # anchored regexes over tool names
       reader: ["search", "fetch_.*"]
+    redact:                 # sensitive argument paths per tool (§7) — config-declared
+      create_page: ["credentials.token"]     #   because upstream schemas rarely mark writeOnly
     # upstream auth is imperative (service_set_upstream_auth) — never in this file
   home:
     name: Home automation
@@ -493,7 +606,8 @@ service_accounts:
       news: [reader]        # exact role names; warned (not rejected) if the service
                             # hasn't declared them yet
       notion: [editor]
-      home: ["*"]           # the built-in wildcard role: every tool, present and future
+      home: ["*:approval"]  # ':approval' suffix = approval mode (§2) — role names have
+                            # no colon, so the suffix is unambiguous; bare = allow
   cron:
     name: Nightly jobs
     grants:
@@ -504,8 +618,11 @@ service_accounts:
   delete plan (including archive/unarchive transitions from the `archived` field).
   Full desired state: deletes include services/accounts present on the
   server but absent from the file, **and** grants for any (account, service) pair not
-  listed under that account's `grants:` block. For proxied services, `endpoint` and
-  `roles` are part of the desired state and diffed like any other field. Grants
+  listed under that account's `grants:` block. `redact` (either kind) and, for proxied
+  services, `endpoint` and `roles` are part of the desired state and diffed like any
+  other field. Listing the same role name in both modes (`[reader,
+  "reader:approval"]`) is rejected as a config error — in the YAML and in `grant_set`
+  alike. Grants
   referencing roles a *tunneled* service hasn't declared are applied but flagged with a
   warning (tunneled roles arrive at connect time, so the file can legitimately be ahead
   of the first connection); `*` is exempt, and for proxied services undeclared roles are
@@ -533,6 +650,8 @@ pmcp apply -f mcps.yaml [--yes]
 pmcp token issue (--account <slug> | --service <slug>) [--expires 90d]
 pmcp token list | revoke <id>
 pmcp audit [--account <slug>] [--service <slug>] [--since 7d]
+pmcp approvals [--pending | --history]
+pmcp approve <id> | reject <id>
 ```
 
 All service and account references resolve within the logged-in user's namespace (the
@@ -581,7 +700,11 @@ JS (`@personal-mcps/client` on npm): identical shape — `serve(server, { url, t
 Library responsibilities: dial + authenticate, `hub/register`, bridge WS frames to the
 SDK's server session (custom transport), send `notifications/tools/list_changed` on tool
 mutations, protocol pings, reconnect with backoff (403 at upgrade / close `4002` =
-archived → keep retrying at max backoff, §6), stop on `hub/replaced`.
+archived → keep retrying at max backoff, §6), stop on `hub/replaced`. Plus two
+in-handler affordances (§7): the caller identity — `ctx.principal`, `ctx.roles`,
+`ctx.has_role("editor")`, read from the forwarded `_meta` — and sensitive-parameter
+sugar (e.g. `sensitive=["password"]` on a tool) that marks the schema property
+`writeOnly: true` so the hub redacts it.
 
 ## 12. User management script
 
@@ -622,6 +745,10 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   server-rendered table, newest first, with account/service/since filters and a
   "before" cursor for paging. Same query logic as `audit_query`; no mutations, so no
   CSRF surface.
+- `/approvals` — cookie-session-gated: pending requests up top (account, service, tool,
+  redacted arguments, requested time, approve/reject buttons — CSRF token on the POST),
+  decision history below. `/approvals/<id>` is the detail page the `-32003` error links
+  to; only the namespace owner can open it.
 
 No dashboard beyond that; the CLI and admin MCP are the management UI.
 
@@ -666,15 +793,21 @@ No dashboard beyond that; the CLI and admin MCP are the management UI.
   limiter is in-memory (per-isolate — a no-op on Workers) and is not relied on.
 - Log hygiene: `Authorization` headers and anything matching `pmcp_(sa|svc)_…` are
   redacted from logs, error responses, and exception traces; MCP bodies for the `pmcp`
-  service (which carry issued tokens) are never logged.
+  service (which carry issued tokens) are never logged; `writeOnly`/config-declared
+  sensitive fields are masked before any storage or display (§7). Approval rows are the
+  only persisted arguments, always post-redaction, pruned by the same daily cron as
+  audit (90 days).
 - Audit trail: the D1 `audit` table (§5) is the durable record — Workers Logs retention
   is only 3–7 days, so log lines are ops debugging, not audit. Recorded: every
-  `tools/call` (allowed and denied), every mutating `pmcp` admin tool, logins, device
-  approvals, connect/register/replaced events, and bootstrap invocations. Not recorded:
-  `tools/list` (agent polling noise) and, anywhere, tool arguments/results or token
-  material. Queried via `audit_query` / `pmcp audit`. A daily cron trigger prunes rows
-  older than 90 days. The coarse `last_used_at` on tokens (§5) complements it for
-  at-a-glance rotation checks.
+  `tools/call` (allowed and denied), approval lifecycle transitions
+  (`approval.requested/approved/rejected/expired`), every mutating `pmcp` admin tool,
+  logins, device approvals, connect/register/replaced events, and bootstrap
+  invocations. Not recorded: `tools/list` (agent polling noise), and the audit table
+  never holds tool arguments/results or token material (approval rows are the sole
+  persisted arguments anywhere in the hub, post-redaction, §7). Queried via
+  `audit_query` / `pmcp audit`. A daily cron trigger prunes rows older than 90 days.
+  The coarse `last_used_at` on tokens (§5) complements it for at-a-glance rotation
+  checks.
 
 ## 16. Testing
 
@@ -691,6 +824,10 @@ No dashboard beyond that; the CLI and admin MCP are the management UI.
 - **pattern matching**: regression tests pinned by §7 — `a|.*` must NOT match `zzz`
   (anchoring via `^(?:…)$`), metacharacter-free patterns compare literally
   (`get.news` ≠ `getXnews`).
+- **approval flow**: call → `-32003` with link → approve → identical retry executes
+  once → second identical call opens a fresh pending; changed args don't match; reject
+  and expiry paths; `writeOnly` and config-declared fields masked in the stored
+  `args_json`; identity `_meta` / `X-Pmcp-*` headers present on forwarded calls.
 - One `scripts/e2e.md` runbook (manual): deploy to a dev worker, run the example service,
   `pmcp call` round-trip.
 
@@ -749,3 +886,15 @@ personal-mcps/
     stays clean.
 14. **Roles are not a boundary against the service itself** (§2): grants confine
     accounts; the service is trusted. Drift logging, not pinning, is the v1 answer.
+15. **Approvals never block the original request** in v1 — the agent gets `-32003` +
+    a link immediately, and an approval is a single-use, args-hash-bound pass consumed
+    by an identical retry. Blocking-until-decided and push notifications are declared
+    future work (§7). The retry-with-identical-args contract is the simplification to
+    revisit if agents handle it poorly.
+16. **Sensitive fields are declared as JSON Schema `writeOnly`** (standard keyword, no
+    invented syntax) for tunneled services, plus config-declared `redact` paths on
+    either kind — config is the *only* proxied path in v1, since proxied schemas are
+    never cached (§7). The approval `args_hash` binds post-redaction arguments only.
+17. **Caller identity rides `_meta` (tunneled) / `X-Pmcp-*` headers (proxied)** —
+    informational, for service-side fine-grained checks; never a security boundary the
+    hub relies on.

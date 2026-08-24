@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
+    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
+    a:hover { color: #52525b; }
+  </style>
+</helmet>
+<div style="width: 480px; min-height: 680px; box-sizing: border-box; background: #fafafa; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; padding: 32px;">
+
+  <div style="display: flex; align-items: center; gap: 8px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>
+    <div style="font-size: 15px; font-weight: 600;">personal-mcps</div>
+  </div>
+
+  <div style="width: 400px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <div style="font-size: 16px; font-weight: 600;">Approve CLI sign-in</div>
+      <div style="font-size: 13px; color: #71717a;">A device is asking to sign in with this code.</div>
+    </div>
+
+    <div style="height: 44px; box-sizing: border-box; border: 1px solid #e4e4e7; border-radius: 8px; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; justify-content: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 16px; font-weight: 600; letter-spacing: 3px;">BDWJ-KTQP</div>
+
+    <div style="background: #f4f4f5; border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="font-size: 13px; color: #71717a;">IP address</div>
+        <div style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">203.0.113.42</div>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="font-size: 13px; color: #71717a;">Client</div>
+        <div style="font-size: 13px;">pmcp CLI on Windows</div>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="font-size: 13px; color: #71717a;">Requested</div>
+        <div style="font-size: 13px;">Just now</div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 14px;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#92400e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 2px;"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+      <div style="display: flex; flex-direction: column; gap: 2px;">
+        <div style="font-size: 14px; font-weight: 500; color: #92400e;">Grants full admin access</div>
+        <div style="font-size: 13px; color: #92400e; line-height: 1.5;">Approving signs this device in as ahrzb with full control of your namespace — services, grants, and tokens.</div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 12px;">
+      <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 36px; background: #ffffff; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Deny</div>
+      <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 36px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Approve</div>
+    </div>
+  </div>
+
+  <div style="font-size: 12px; color: #71717a;">Codes expire after 10 minutes.</div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":480,"height":680}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

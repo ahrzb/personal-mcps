@@ -1,0 +1,16 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 880, "h": 1560, "title": "Design System" },
+    { "file": "Login.dc.html", "x": 940, "y": 0, "w": 440, "h": 620, "title": "Login" },
+    { "file": "TwoFactor.dc.html", "x": 1440, "y": 0, "w": 440, "h": 540, "title": "Two-factor" },
+    { "file": "Device.dc.html", "x": 1940, "y": 0, "w": 480, "h": 680, "title": "Device approval" },
+    { "file": "Account.dc.html", "x": 940, "y": 720, "w": 1080, "h": 1050, "title": "Account" },
+    { "file": "Audit.dc.html", "x": 2080, "y": 720, "w": 1240, "h": 1460, "title": "Audit log" },
+    { "file": "MobileLogin.dc.html", "x": 0, "y": 2320, "w": 390, "h": 720, "title": "Login · Mobile" },
+    { "file": "MobileTwoFactor.dc.html", "x": 450, "y": 2320, "w": 390, "h": 640, "title": "Two-factor · Mobile" },
+    { "file": "MobileDevice.dc.html", "x": 900, "y": 2320, "w": 390, "h": 800, "title": "Device · Mobile" },
+    { "file": "MobileAccount.dc.html", "x": 1350, "y": 2320, "w": 390, "h": 1180, "title": "Account · Mobile" },
+    { "file": "MobileAudit.dc.html", "x": 1800, "y": 2320, "w": 390, "h": 1560, "title": "Audit · Mobile" }
+  ],
+  "launch": { "view": "canvas" }
+}

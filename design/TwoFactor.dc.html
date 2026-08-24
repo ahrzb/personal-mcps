@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
+    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
+    a:hover { color: #52525b; }
+  </style>
+</helmet>
+<div style="width: 440px; min-height: 540px; box-sizing: border-box; background: #fafafa; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; padding: 32px;">
+
+  <div style="display: flex; align-items: center; gap: 8px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>
+    <div style="font-size: 15px; font-weight: 600;">personal-mcps</div>
+  </div>
+
+  <div style="width: 360px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <div style="font-size: 16px; font-weight: 600;">Two-factor code</div>
+      <div style="font-size: 13px; color: #71717a;">Enter the 6-digit code from your authenticator app.</div>
+    </div>
+
+    <div style="display: flex; gap: 8px; justify-content: center;">
+      <div style="width: 44px; height: 48px; box-sizing: border-box; border: 1px solid #e4e4e7; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600;">4</div>
+      <div style="width: 44px; height: 48px; box-sizing: border-box; border: 1px solid #e4e4e7; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600;">9</div>
+      <div style="width: 44px; height: 48px; box-sizing: border-box; border: 1px solid #e4e4e7; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600;">2</div>
+      <div style="width: 44px; height: 48px; box-sizing: border-box; border: 1px solid #a1a1aa; border-radius: 8px; box-shadow: 0 0 0 3px rgba(161,161,170,0.35); display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600;"></div>
+      <div style="width: 44px; height: 48px; box-sizing: border-box; border: 1px solid #e4e4e7; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600;"></div>
+      <div style="width: 44px; height: 48px; box-sizing: border-box; border: 1px solid #e4e4e7; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 600;"></div>
+    </div>
+
+    <div style="display: flex; align-items: center; justify-content: center; height: 36px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Verify</div>
+
+    <div style="font-size: 13px; text-align: center;"><a href="#">Use a backup code instead</a></div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":440,"height":540}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

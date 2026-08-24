@@ -280,6 +280,9 @@ CREATE TABLE audit (
   service TEXT,                        -- slug, when applicable
   tool TEXT,
   outcome TEXT NOT NULL,               -- 'ok' | '-32000' | '-32001' | '-32002' | '-32003' | 'error'
+  duration_ms INTEGER,                 -- hub-measured wall time from consumer request to
+                                       -- response; set on every tools/call row (denials are
+                                       -- just fast), NULL for non-call events
   detail TEXT                          -- small JSON summary; NEVER tool arguments,
                                        -- results, or token material
 );
@@ -1021,7 +1024,8 @@ no CLI token or `pmcp` tool can ever reach it.
   audit (90 days).
 - Audit trail: the D1 `audit` table (§5) is the durable record — Workers Logs retention
   is only 3–7 days, so log lines are ops debugging, not audit. Recorded: every
-  `tools/call` (allowed and denied), approval lifecycle transitions
+  `tools/call` (allowed and denied, with hub-measured `duration_ms` for latency
+  visibility in `/audit`), approval lifecycle transitions
   (`approval.requested/approved/rejected/expired`), every mutating `pmcp` admin tool,
   logins, device approvals, connect/register/replaced/roles_widened events, and bootstrap
   invocations. Not recorded: `tools/list` (agent polling noise), and the audit table

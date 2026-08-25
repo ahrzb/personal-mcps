@@ -120,8 +120,8 @@ the failure is a spec question, not an execution one.
 | D1 | Test runners + pending inventory | single agent (Opus) | **gated ✓** |
 | DV | UI visual checkers vs artboards | workflow (Sonnet) | **gated ✓** |
 | D2 | Pure core (pattern, filter, canonical, redact) | workflow | **gated ✓** (`ce5392e`) |
-| D3 | Migrations, registry, identity, audit | workflow | in flight |
-| D4 | Gateway, admin, approvals | workflow | outline |
+| D3 | Migrations, registry, identity, audit | workflow | **gated ✓** (`c83bb17`) |
+| D4 | Gateway, admin, approvals | workflow | in flight |
 | D5 | Upstream proxy, cron, hygiene | workflow | outline |
 | D6 | Tunnel DO + contracts + approval e2e | workflow | outline |
 | D7 | Web surface wiring | workflow | outline |
@@ -259,20 +259,36 @@ deliverable).
 plus a migrations-forward check (fresh DB vs migrated DB equality).
 **Est. scale:** ~8 agents, ~800k–1.2M tokens.
 
-### D4 — Gateway, admin, approvals *(outline)*
+### D4 — Gateway, admin, approvals *(detailed 2026-08-25, pre-launch)*
 
-**Owns:** `server/src/gateway.ts`, `server/src/admin.ts` (rest), 
+**Owns:** `server/src/gateway.ts`, `server/src/admin.ts` (rest),
 `server/src/approvals.ts` (rest),
-`server/test/worker/{approvals,admin-ops,admin-pipeline,auth-matrix,order.table}.test.ts`.
-**Spec:** §7 (pipeline order, refusal vocabulary, `-32001` approval machinery,
-virtual `pmcp` service), §8 (admin ops incl. `token_issue`'s writeOnly key), §18
-decision 22.
-**Suites (exit):** the five worker suites above green — the order table is the
-marquee: every refusal case beside its allow-twin, refusal rows never carrying
-bodies.
-**Shape:** as D2; the approvals implementer gets the seeded-clock twin pattern
-(`ApprovalsConfig.now`, `TokenSpec.expired`) spelled out.
-**Est. scale:** ~9 agents, ~1–1.5M tokens.
+`server/test/worker/{approvals,admin-ops,admin-pipeline,auth-matrix,order.table}.test.ts`
+(116 cases), **plus three seam extensions the suites' dep lines force**:
+`server/src/identity.ts` session half (`resolvePrincipal` consumer matrix,
+`requireOwnerSession`, better-auth wiring — auth-matrix pins them),
+`server/src/index.ts` fetch routing for `/<user>/mcp*`, `/api/whoami`, bootstrap
+(auth-matrix drives `exports.default.fetch`; D7 keeps the web-page routes), and a
+**minimal** `server/test/harness/fake-upstream.ts` (order.table's proxied
+allow-twins need `miniflare.outboundService`; D5 extends it).
+**Spec:** §7 (pipeline order filter→archived→approval→availability, refusal
+vocabulary -32000..-32003, approval machinery, virtual `pmcp`), §8 (admin ops
+incl. `token_issue`'s writeOnly key, whoami mirror), §4/§13 session-scope guards,
+§12 bootstrap 404-shape, §18 decision 22, availability-first decision.
+**Preconditions:** D3 gated (seed harness + migrations + identity machine half).
+**Suites (exit):** all five green; order.table is the marquee (refusal beside
+allow-twin, refusals never carrying bodies); auth-matrix's ~32 rows
+indistinguishability-checked.
+**Shape:** probe FIRST alongside oracles — strategy §11's prerequisite: a spike
+agent proves better-auth 1.7 sessions resolve on D1 inside workerd (Kysely D1
+dialect is contested) *before* auth-matrix implementation starts; a red probe
+halts the dispatch as a spec/toolchain escalation. Then as D2/D3: author → 2
+adversarial verifiers → reconcile → implement in dependency order (approvals ∥
+identity-session first, then gateway, then admin) → verbatim check → PSD → fix.
+The approvals implementer gets the seeded-clock twin pattern (`ApprovalsConfig.now`,
+`TokenSpec.expired`) spelled out.
+**Gate:** standard gate (with the table-expansion amendment).
+**Est. scale:** ~12 agents, ~1.2–1.6M tokens.
 
 ### D5 — Upstream proxy, cron, hygiene *(outline)*
 
@@ -434,3 +450,32 @@ read-only here (single-writer: worker suite) — a client dispatch editing
   fix + PSD re-green, not a pinned oracle. Candidate rows for D9's
   completeness critic (D2 titles stay locked). Committed `ce5392e`; D3
   launched immediately.
+- 2026-08-25 16:00 — **D3 gated.** Workflow `wf_307a7f81-08b`: 12 agents, 0
+  errors, ~1.96M subagent tokens. Oracles: 96 rows reviewed per verifier, 12
+  discrepancies, 8 fixed, 4 rejected with citations (the referent-gone row's
+  verdict split between resolveServiceToken and the upgrade handler was the
+  substantive one). Three migrations from §5; the migrations suite's
+  exhaustiveness case parses the applied DDL and found it needed **zero**
+  edits. Mid-workflow red was real but shallow: registry (37) and
+  identity-tokens (23) both died in seedOwner on the one unimplemented
+  `resolveAuditConfig` stub — the PSD fix agent landed the minimal audit slice
+  while fixing the admin auditConfig leakage finding, and the orchestrator
+  re-ran everything: **worker 139 / unit 90 / 0 failures, tsc 0**. Inventory
+  audit under the amended rule: 42 pure flips, exactly the 5 aggregate
+  placeholders removed, 97 row-titled additions all passed, 0 regressions, 0
+  foreign files. PSD: 9 findings, 7 non-low fixed, 0 disputed (proxy-only
+  field set spelled once; provisionUser stopped returning a password that
+  authenticates nothing; one global `D1Like` in new `workers-env.d.ts`; DDL
+  DEFAULTs dropped where the domain writer always binds; identity's OWNED_BY
+  fragment made one-parameter). Granted ownership extensions, recorded:
+  `upstream.connectionStatus` (envelope-presence read with a ponytail ceiling
+  comment; D5 replaces), two appended limits.ts constants
+  (SERVICE_ACCOUNT_TOKEN_TTL_MS, TOKEN_LAST_USED_STAMP_MS). **Gate catch:**
+  the inventory run flushed out a 1-in-N flake in D2's canonical key-order law
+  — shuffleKeysDeep lost a fast-check-generated "__proto__" key to prototype
+  assignment; fixed with fromEntries, root-caused and proven inline.
+  **Debt for D4:** auth-matrix's sessionShapedBearer() fixture must become a
+  real better-auth sign-in; seed teardown routes through admin's
+  service_delete stub, so the tunnel project cannot seed services until D4
+  lands; identity's raw forceKindColumn helper is documented in place.
+  Committed `c83bb17`; D4 launched immediately.

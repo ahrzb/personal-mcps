@@ -79,7 +79,13 @@ scale.** Two kinds of exit criteria:
      test-inventory.json` shows **only** `todo → passed` transitions for this
      dispatch's cases: no case deleted, no title reworded, no foreign suite
      touched. (The inventory file is committed at each gate, so the diff *is* the
-     audit trail.)
+     audit trail.) *Amendment (D3 onward):* table-driven suites carry aggregate
+     placeholder todos ("one case per <X>Row — title as authored"); at the gate
+     each placeholder is replaced by the row-registered cases whose titles were
+     authored and adversarially verified in the Oracles stage. The audit then
+     checks: placeholder removed → its describe gained ≥1 passed case titled
+     verbatim from the oracle rows; concrete todos still flip purely; nothing
+     regresses passed → anything.
 3. - [ ] `npx tsc --noEmit` exit 0; `uv run pytest` (clients/py) still collects
      with no new failures.
 4. - [ ] Ownership audit: `git status` touches only the entry's **Owns** globs.
@@ -110,11 +116,11 @@ the failure is a spec question, not an execution one.
 
 | # | Dispatch | Grain | Status |
 |---|----------|-------|--------|
-| D0 | Checkpoint commit | inline | **awaits user's word** |
+| D0 | Checkpoint commit | inline | **done** (six commits `4c6b937..3cd694f`) |
 | D1 | Test runners + pending inventory | single agent (Opus) | **gated ✓** |
 | DV | UI visual checkers vs artboards | workflow (Sonnet) | **gated ✓** |
-| D2 | Pure core (pattern, filter, canonical, redact) | workflow | next — full detail below |
-| D3 | Migrations, registry, identity, audit | workflow | outline |
+| D2 | Pure core (pattern, filter, canonical, redact) | workflow | **gated ✓** (`ce5392e`) |
+| D3 | Migrations, registry, identity, audit | workflow | in flight |
 | D4 | Gateway, admin, approvals | workflow | outline |
 | D5 | Upstream proxy, cron, hygiene | workflow | outline |
 | D6 | Tunnel DO + contracts + approval e2e | workflow | outline |
@@ -409,3 +415,22 @@ read-only here (single-writer: worker suite) — a client dispatch editing
   (DOM/computed-style verification carries the pass) and the pane has a ~10-tab
   cap — dead checkers leak tabs, so prompts must demand tab cleanup; two
   orphans were closed by hand mid-run. Loop stopped; D2 awaits Amir's go.
+- 2026-08-25 14:20 — **D2 gated** ("move forward, do all steps back to back" —
+  continuous mode from here). Workflow `wf_b4bb2c2c-130`: 11 agents, 0 errors,
+  ~1.45M subagent tokens. Oracle authoring caught **23 discrepancies** in
+  adversarial verify before any implementation ran. Gate re-run by the
+  orchestrator: full suite 90 passed / 492 todo / 0 fail; inventory diff exactly
+  90 pure `todo → passed` flips (line-pairing audit — no title changed, no case
+  added); tsc 0; ownership exact (registry.ts, approvals.ts, unit tests,
+  inventory). PSD: 4 findings (1 high, 3 medium), all fixed and re-greened —
+  the high one was two live coverage gaps in the redaction walk (array `items`
+  never walked → under-redaction; carriesMark over-refusal); the fix unified
+  the keyword decision into one `samePathSubschemas` helper and memoized the
+  walk on relative paths (2^n `$defs` re-walk → linear, measured 2870ms → fast
+  at depth 20). Orchestrator eyeballed the final redaction section — design
+  sound, soundness argument for memo-under-cycle-cut written into the code.
+  **Recorded debt:** the two redaction holes PSD found were *untested* — unit
+  tables carry no array-`items` redaction rows, so that behavior rests on the
+  fix + PSD re-green, not a pinned oracle. Candidate rows for D9's
+  completeness critic (D2 titles stay locked). Committed `ce5392e`; D3
+  launched immediately.

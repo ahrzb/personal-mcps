@@ -23,6 +23,7 @@
 // module alone reads and interprets their proxy-auth columns (upstream_url,
 // upstream_auth_mode, forward_identity, upstream_auth_json).
 
+import { env } from "cloudflare:workers";
 import { HubError } from "./gateway";
 import type { ServiceBackend } from "./gateway";
 import type { Service } from "./registry";
@@ -188,7 +189,15 @@ export async function setHeaders(service: Service, headers: Record<string, strin
  */
 export async function connectionStatus(service: Service): Promise<UpstreamConnectionStatus> {
   // deps: D1 `service` · crypto.subtle (AES-GCM envelope)
-  throw new Error("unimplemented");
+  // ponytail: presence of the envelope column only — enough for the not_connected/connected
+  // split registry.test.ts observes across an auth-mode flip. `needs_reconnect` lives INSIDE
+  // the envelope, so telling it apart needs the AES-GCM open path this module's own dispatch
+  // (D5) lands with the rest of the file; extend here when it does.
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT upstream_auth_json FROM service WHERE id = ?`)
+    .bind(service.id)
+    .first<{ upstream_auth_json: string | null }>();
+  return row?.upstream_auth_json ? "connected" : "not_connected";
 }
 
 /**

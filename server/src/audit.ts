@@ -9,8 +9,11 @@
 // export. The D1 `audit` table (§5) is private to this module: every write goes
 // through record(), every read through query().
 
+import { AUDIT_BODY_CAP_BYTES, RETENTION_DAYS } from "./limits";
+
 /** Cloudflare D1 binding (@cloudflare/workers-types `D1Database`) — the control-plane
- *  database, request-scoped, handed in by the composition root. */
+ *  database, request-scoped, handed in by the composition root. Narrowed to
+ *  workers-env.d.ts's `D1Like` at the one place a statement is actually prepared. */
 type D1Database = unknown;
 
 /**
@@ -36,7 +39,22 @@ export function resolveAuditConfig(vars: {
   AUDIT_BODY_CAP_BYTES?: string;
 }): AuditConfig {
   // deps: limits.RETENTION_DAYS · limits.AUDIT_BODY_CAP_BYTES
-  throw new Error("unimplemented");
+  return {
+    retentionDays: positiveInt(vars.AUDIT_RETENTION_DAYS) ?? RETENTION_DAYS,
+    bodyCapBytes: positiveInt(vars.AUDIT_BODY_CAP_BYTES) ?? AUDIT_BODY_CAP_BYTES,
+  };
+}
+
+/**
+ * An override is honoured only when it is a whole positive count; anything else — absent,
+ * blank, "7 days", 0, negative — is the limits.ts default. Never a throw: a typo'd var
+ * must not take the worker down, and never 0 either, which would read as "retain nothing"
+ * / "store no body at all" and silently disable the very thing the knob configures.
+ */
+function positiveInt(raw: string | undefined): number | null {
+  if (raw === undefined || raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : null;
 }
 
 /**
@@ -139,7 +157,57 @@ export type AuditQuery = {
  */
 export async function record(db: D1Database, entry: AuditEntry, config: AuditConfig): Promise<void> {
   // deps: D1 `audit`
-  throw new Error("unimplemented");
+  const client = entry.client ?? {};
+  await (db as D1Like)
+    .prepare(
+      `INSERT INTO audit (ts, owner_id, principal, event, service, tool, outcome,
+         duration_ms, client_name, client_version, client_session_id,
+         args_json, result_json, detail)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      Date.now(),
+      entry.ownerId,
+      entry.principal,
+      entry.event,
+      entry.service ?? null,
+      entry.tool ?? null,
+      entry.outcome,
+      entry.durationMs ?? null,
+      displayField(client.name),
+      displayField(client.version),
+      displayField(client.sessionId),
+      cappedBody(entry.args, config.bodyCapBytes),
+      cappedBody(entry.result, config.bodyCapBytes),
+      entry.detail === undefined ? null : JSON.stringify(entry.detail),
+    )
+    .run();
+}
+
+/**
+ * How much of a client-declared string is kept. Untrusted display data (§7), so the bound
+ * exists to stop a consumer writing a novel into every row — not to preserve meaning at
+ * the edge. A local constant rather than a limits.ts one for the same reason identity's
+ * PREFIX_DISPLAY_LENGTH is: no spec § pins the number, it pins that there IS one.
+ */
+const CLIENT_FIELD_MAX_LENGTH = 128;
+
+/** Truncated HERE, at the chokepoint, so no call site has to remember to (§15). */
+function displayField(value: string | undefined): string | null {
+  return value === undefined ? null : value.slice(0, CLIENT_FIELD_MAX_LENGTH);
+}
+
+/**
+ * A body arrives already masked (see AuditEntry); this module's own duty is the size cap.
+ * An over-cap body is replaced WHOLE by one `oversize` stub — truncating the JSON instead
+ * would store a string no reader can parse, which is worse than storing none of it.
+ */
+function cappedBody(body: Record<string, unknown> | undefined, capBytes: number): string | null {
+  if (body === undefined) return null;
+  const json = JSON.stringify(body);
+  const bytes = new TextEncoder().encode(json).length;
+  if (bytes <= capBytes) return json;
+  return JSON.stringify({ stub: "oversize", bytes } satisfies BodyStub);
 }
 
 /**

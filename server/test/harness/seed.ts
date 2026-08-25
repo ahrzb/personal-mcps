@@ -25,6 +25,9 @@
 //
 // deps: registry.Registry · identity.issueToken/revokeToken/deleteTokensFor · admin.provisionUser/deleteUser · cloudflare:test env.DB (the real D1 binding)
 
+import { deleteUser, provisionUser } from "../../src/admin";
+import { issueToken, revokeToken } from "../../src/identity";
+import { Registry } from "../../src/registry";
 import type {
   GrantEntry,
   RoleDeclaration,
@@ -62,21 +65,38 @@ type D1Database = unknown;
  *    reaches past the seam: `expired` is minted through the production path like every
  *    other state here. TokenSpec.expired below is that mechanism's whole surface.
  *
- * 3. `admin.provisionUser` returns a plaintext password and writes an audit row
- *    (principal `bootstrap`). Every seeded namespace therefore starts with audit rows and
- *    one live human credential — `hygiene.test.ts`'s sentinel sweep must expect the
- *    bootstrap row to exist and must prove the password appears in no column.
+ * 3. `admin.provisionUser` writes an audit row (principal `bootstrap`), so every seeded
+ *    namespace starts with audit rows — `hygiene.test.ts`'s sentinel sweep must expect the
+ *    bootstrap row to exist. It does NOT hand back a human credential: better-auth is not
+ *    a dependency of this repo yet (0001_auth.sql's header), so the seam writes the `user`
+ *    row alone and returns `{ userId }`. A seeded owner is therefore not signable-in, and
+ *    `SeededOwner` carries no `password` — a fixture needing a real session fails to
+ *    compile until D4's probe lands, rather than holding a string that authenticates
+ *    nothing. Machine credentials (TokenSpec) are unaffected.
  *
  * 4. There is no seam for granting anything on the builtin `pmcp` service, because it has
  *    no row id (registry's PMCP_SLUG comment). The harness cannot even express the
  *    illegal state — the reservation is structural, exactly as §8 claims.
+ *
+ * 5. `seedOwner` and `resetNamespace` take NO `db`, while seedService/seedAccount/
+ *    seedGrants do: identity and admin resolve D1 ambiently through `cloudflare:workers`,
+ *    registry takes it explicitly. The asymmetric signature is the honest one — a uniform
+ *    `db` on the two builders that discard it would say the owner row and every token land
+ *    in the handle the fixture holds, and they do not.
+ *
+ * 6. `migrations.test.ts` needs something this module deliberately does NOT export: a
+ *    valid COLUMN row per table, overridable field by field, for constraints that must be
+ *    exercised as raw writes (a `service.kind` of "websocket" cannot be reached through
+ *    createService, which is the point of the constraint). That builder writes no row
+ *    either — it returns values the suite binds itself — but its shape is the schema's,
+ *    not the domain's, so it belongs beside the table it describes rather than here, where
+ *    every export is phrased in registry/identity/admin vocabulary.
  */
 
-/** The namespace owner, as provisioned. `password` exists only here and only once (§12). */
+/** The namespace owner, as provisioned — id and name only, no sign-in (FINDINGS 3). */
 export type SeededOwner = {
   userId: string;
   username: string;
-  password: string;
 };
 
 /** A seeded service, reduced to what fixtures address it by: the opaque DO key and the slug. */
@@ -200,18 +220,39 @@ export type SeededNamespace = {
  */
 export function uniqueSlug(prefix: string): string {
   // deps: crypto.randomUUID
-  throw new Error("unimplemented");
+  return `${prefix}-${RUN_ID}-${++slugCounter}`;
 }
 
 /**
- * Provision a namespace owner through the ONE user-creation seam (§12's
- * `admin.provisionUser`, the same code POST /internal/users runs) and return the
- * once-only password with it. Deliberately not a better-auth call of its own: if a test
- * can create a user some other way, so can a bug.
+ * A random tag per module instance plus a monotonic counter — the PAIR is what holds in
+ * the `tunnel` project either way its shared runtime falls: distinct module instances
+ * differ in RUN_ID, and one instance shared across files (`isolate: false`) keeps
+ * counting. Hex and hyphens only, so the result stays inside the [a-z0-9-] charset slugs
+ * and usernames are both pinned to (§2).
  */
-export async function seedOwner(db: D1Database, username?: string): Promise<SeededOwner> {
+const RUN_ID = crypto.randomUUID().slice(0, 8);
+let slugCounter = 0;
+
+/**
+ * The fixture-local TTL for a TokenSpec.expired mint, and the extra margin its backdated
+ * t0 carries. Not a limits.ts constant: nothing in the spec pins how long a dead fixture
+ * token was alive for — the only property that matters is `t0 + ttl` sitting safely in the
+ * past by the time anything resolves it.
+ */
+const EXPIRED_TOKEN_TTL_SECONDS = 60;
+const EXPIRED_TOKEN_BACKDATE_MS = 60_000;
+
+/**
+ * Provision a namespace owner through the ONE user-creation seam (§12's
+ * `admin.provisionUser`, the same code POST /internal/users runs). Deliberately not a
+ * better-auth call of its own: if a test can create a user some other way, so can a bug.
+ * Takes no `db` because the seam it fronts takes none (FINDINGS 5).
+ */
+export async function seedOwner(username?: string): Promise<SeededOwner> {
   // deps: admin.provisionUser · uniqueSlug
-  throw new Error("unimplemented");
+  const name = username ?? uniqueSlug("owner");
+  const { userId } = await provisionUser(name);
+  return { userId, username: name };
 }
 
 /**
@@ -227,7 +268,28 @@ export async function seedService(
   spec: ServiceSpec,
 ): Promise<ServiceDetail> {
   // deps: registry.Registry.createService · registry.Registry.archiveService
-  throw new Error("unimplemented");
+  const registry = new Registry(db);
+  const created = await registry.createService({
+    ownerId,
+    slug: spec.slug,
+    name: spec.name ?? spec.slug,
+    description: spec.description,
+    kind: spec.kind,
+    upstreamUrl: spec.upstreamUrl,
+    upstreamAuthMode: spec.upstreamAuthMode,
+    forwardIdentity: spec.forwardIdentity,
+    roles: spec.roles,
+    redact: spec.redact,
+    redactResults: spec.redactResults,
+    logBodies: spec.logBodies,
+  });
+  if (!spec.archived) return created;
+  // Archived is a stage, not a create field: re-read so the caller sees the row as registry
+  // reports it AFTER the flag lands, rather than createService's pre-archive answer.
+  await registry.archiveService(created.id);
+  const archived = await registry.getService(ownerId, spec.slug);
+  if (!archived) throw new Error(`seedService: "${spec.slug}" vanished between create and archive`);
+  return archived;
 }
 
 /** Create one service account through `Registry.createAccount`. Born credential-less. */
@@ -237,7 +299,12 @@ export async function seedAccount(
   spec: AccountSpec,
 ): Promise<ServiceAccount> {
   // deps: registry.Registry.createAccount
-  throw new Error("unimplemented");
+  return new Registry(db).createAccount({
+    ownerId,
+    slug: spec.slug,
+    name: spec.name ?? spec.slug,
+    description: spec.description,
+  });
 }
 
 /**
@@ -253,7 +320,7 @@ export async function seedGrants(
   entries: GrantEntry[],
 ): Promise<string[]> {
   // deps: registry.Registry.setGrants
-  throw new Error("unimplemented");
+  return new Registry(db).setGrants(accountId, serviceId, entries);
 }
 
 /**
@@ -262,10 +329,9 @@ export async function seedGrants(
  * actually be reached by. An `expired` spec mints through the same issueToken with a
  * backdated `now()` (FINDINGS 2), so an expired row is as production-shaped as a live one.
  * The plaintext is returned once and held only in the fixture's SeededNamespace; nothing
- * here stores or logs it.
+ * here stores or logs it. Takes no `db`, like the identity seam it fronts (FINDINGS 5).
  */
 export async function seedToken(
-  db: D1Database,
   ownerId: string,
   kind: TokenKind,
   refId: string,
@@ -273,7 +339,21 @@ export async function seedToken(
   spec: TokenSpec,
 ): Promise<SeededToken> {
   // deps: identity.issueToken (with its optional now()) · identity.revokeToken
-  throw new Error("unimplemented");
+  let issued: { id: string; token: string };
+  if (spec.expired) {
+    if (spec.expiresIn === "never") {
+      throw new Error(`seedToken: "${spec.as}" cannot be both expired and never-expiring`);
+    }
+    // FINDINGS 2: mint at a t0 whose expiry has already elapsed under the real clock, so a
+    // dead row is written by the same production path as a live one.
+    const ttlSeconds = spec.expiresIn ?? EXPIRED_TOKEN_TTL_SECONDS;
+    const mintedAt = Date.now() - ttlSeconds * 1000 - EXPIRED_TOKEN_BACKDATE_MS;
+    issued = await issueToken({ kind, refId, expiresIn: ttlSeconds }, () => mintedAt);
+  } else {
+    issued = await issueToken({ kind, refId, expiresIn: spec.expiresIn });
+  }
+  if (spec.revoked) await revokeToken(ownerId, issued.id);
+  return { id: issued.id, kind, refSlug, token: issued.token };
 }
 
 /**
@@ -287,7 +367,56 @@ export async function seedNamespace(
   spec: NamespaceSpec,
 ): Promise<SeededNamespace> {
   // deps: seedOwner · seedService · seedAccount · seedGrants · seedToken
-  throw new Error("unimplemented");
+  const owner = await seedOwner(spec.username);
+  const services: Record<string, SeededService> = {};
+  const accounts: Record<string, SeededAccount> = {};
+  const tokens: Record<string, SeededToken> = {};
+
+  for (const service of spec.services ?? []) {
+    const { id, slug, kind } = await seedService(db, owner.userId, service);
+    services[slug] = { id, slug, kind };
+  }
+  for (const account of spec.accounts ?? []) {
+    const { id, slug } = await seedAccount(db, owner.userId, account);
+    accounts[slug] = { id, slug };
+  }
+
+  for (const account of spec.accounts ?? []) {
+    for (const [slug, entries] of Object.entries(account.grants ?? {})) {
+      const service = services[slug];
+      if (!service) {
+        throw new Error(`seedNamespace: account "${account.slug}" grants on unseeded service "${slug}"`);
+      }
+      const warnings = await seedGrants(db, accounts[account.slug].id, service.id, entries);
+      // Surfaced, never swallowed: warnings are legitimate here (a tunneled service's roles
+      // are undeclared until it first connects — FINDINGS 1), so they print rather than
+      // throw, and a fixture drifting from the state it claims is visible in the run log.
+      if (warnings.length > 0) {
+        console.warn(`seedNamespace: grants ${account.slug} → ${slug}: ${warnings.join("; ")}`);
+      }
+    }
+  }
+
+  async function mint(kind: TokenKind, refId: string, refSlug: string, specs: TokenSpec[] = []) {
+    for (const spec of specs) {
+      if (tokens[spec.as]) throw new Error(`seedNamespace: duplicate token handle "${spec.as}"`);
+      tokens[spec.as] = await seedToken(owner.userId, kind, refId, refSlug, spec);
+    }
+  }
+  for (const service of spec.services ?? []) {
+    await mint("service", services[service.slug].id, service.slug, service.tokens);
+  }
+  for (const account of spec.accounts ?? []) {
+    await mint("service_account", accounts[account.slug].id, account.slug, account.tokens);
+  }
+
+  return {
+    owner,
+    services,
+    accounts,
+    tokens,
+    teardown: () => resetNamespace(owner.username),
+  };
 }
 
 /**
@@ -296,8 +425,9 @@ export async function seedNamespace(
  * `tunnel` project's shared storage is left genuinely clean rather than
  * approximately-clean. Idempotent, like the op it fronts: tearing down twice is not an
  * error, and neither is tearing down a namespace a failing test never finished building.
+ * Takes no `db`, like the op it fronts (FINDINGS 5).
  */
-export async function resetNamespace(db: D1Database, username: string): Promise<void> {
+export async function resetNamespace(username: string): Promise<void> {
   // deps: admin.deleteUser
-  throw new Error("unimplemented");
+  await deleteUser(username);
 }

@@ -177,11 +177,13 @@ export function runCanonicalClassTable(rows: readonly CanonicalClass[]): void {
 function shuffleKeysDeep(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(shuffleKeysDeep);
   if (v !== null && typeof v === "object") {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(v as Record<string, unknown>).reverse()) {
-      out[key] = shuffleKeysDeep((v as Record<string, unknown>)[key]);
-    }
-    return out;
+    // fromEntries, not out[key] = …: assignment to a generated "__proto__" key sets
+    // the prototype and silently drops the own property, losing a key the original had.
+    return Object.fromEntries(
+      Object.keys(v as Record<string, unknown>)
+        .reverse()
+        .map((key) => [key, shuffleKeysDeep((v as Record<string, unknown>)[key])]),
+    );
   }
   return v;
 }

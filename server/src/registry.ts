@@ -604,9 +604,16 @@ function maskPath(node: unknown, segments: string[]): void {
  * sever/wipe, and audit rows are the caller's choreography.
  */
 export class Registry {
+  private readonly db: D1Like;
+
   constructor(db: D1Database) {
     // deps: none
-    throw new Error("unimplemented");
+    this.db = db as D1Like;
+  }
+
+  /** The one `service` read every method below shares — by opaque id, reservation-blind. */
+  private async row(serviceId: string): Promise<ServiceRow | null> {
+    return this.db.prepare(`SELECT * FROM service WHERE id = ?`).bind(serviceId).first<ServiceRow>();
   }
 
   /**
@@ -617,7 +624,12 @@ export class Registry {
    */
   async getService(ownerId: string, slug: string): Promise<ServiceDetail | null> {
     // deps: D1 `service`
-    throw new Error("unimplemented");
+    if (slug === PMCP_SLUG) return null;
+    const row = await this.db
+      .prepare(`SELECT * FROM service WHERE owner_id = ? AND slug = ?`)
+      .bind(ownerId, slug)
+      .first<ServiceRow>();
+    return row ? toDetail(row) : null;
   }
 
   /**
@@ -630,7 +642,17 @@ export class Registry {
    */
   async listServicesFor(principal: Principal): Promise<ServiceDetail[]> {
     // deps: D1 `service` · D1 `grant_`
-    throw new Error("unimplemented");
+    // A zero-grant account's subselect is empty, so "sees nothing" needs no special case.
+    const [sql, key] =
+      principal.kind === "user"
+        ? [`SELECT * FROM service WHERE owner_id = ?`, principal.userId]
+        : [
+            `SELECT * FROM service
+             WHERE id IN (SELECT service_id FROM grant_ WHERE service_account_id = ?)`,
+            principal.accountId,
+          ];
+    const { results } = await this.db.prepare(`${sql} ORDER BY slug`).bind(key).all<ServiceRow>();
+    return results.map(toDetail);
   }
 
   /**
@@ -638,20 +660,82 @@ export class Registry {
    * user/slug, never reused — deleting and recreating a slug can never rebind
    * a stale DO). Rejects a malformed slug ([a-z0-9-] only — no underscore; §7's
    * prefix split relies on it), the reserved `pmcp` slug, a duplicate (owner,
-   * slug), and kind/field mismatches: proxied drafts need upstreamUrl and a
-   * declaration that passes validateRoles; tunneled drafts must carry neither.
+   * slug), and kind/field mismatches: a proxied draft needs upstreamUrl and a
+   * declaration that passes validateRoles, and a tunneled draft carries none of
+   * the PROXY_ONLY fields — the same set, and the same check, updateService
+   * refuses to patch.
    * An absent `logBodies` resolves here, by kind (tunnel true, proxy false,
    * §15) — the stored column is always concrete, never "default".
    */
   async createService(draft: ServiceDraft): Promise<ServiceDetail> {
     // deps: validateRoles · D1 `service` · crypto
-    throw new Error("unimplemented");
+    assertSlug(draft.slug);
+    if (draft.slug === PMCP_SLUG) throw new Error(`slug "${PMCP_SLUG}" is reserved`);
+    const proxied = draft.kind === "proxy";
+    if (proxied && !draft.upstreamUrl) {
+      throw new Error(`proxied service "${draft.slug}" needs an upstreamUrl`);
+    }
+    assertKindFields(draft.kind, draft.slug, draft);
+    const roles = draft.roles ?? {};
+    assertRoles(roles);
+    if (await this.getService(draft.ownerId, draft.slug)) {
+      throw new Error(`slug "${draft.slug}" already exists in this namespace`);
+    }
+
+    const row: ServiceRow = {
+      // Opaque and fresh: never derived from user/slug, so a recreated slug can never be
+      // rebound to the deleted service's DO.
+      id: crypto.randomUUID(),
+      owner_id: draft.ownerId,
+      slug: draft.slug,
+      name: draft.name,
+      description: draft.description ?? "",
+      kind: draft.kind,
+      upstream_url: draft.upstreamUrl ?? null,
+      upstream_auth_mode: draft.upstreamAuthMode ?? null,
+      forward_identity: draft.forwardIdentity ? 1 : 0,
+      upstream_auth_json: null,
+      roles_json: JSON.stringify(roles),
+      redact_json: JSON.stringify(draft.redact ?? {}),
+      redact_results_json: JSON.stringify(draft.redactResults ?? {}),
+      // §15: resolved HERE, by kind, so the stored column is always concrete.
+      log_bodies: (draft.logBodies ?? !proxied) ? 1 : 0,
+      created_at: Date.now(),
+      last_connected_at: null,
+      archived_at: null,
+    };
+    await this.db
+      .prepare(
+        `INSERT INTO service (id, owner_id, slug, name, description, kind, upstream_url,
+           upstream_auth_mode, forward_identity, roles_json, redact_json, redact_results_json,
+           log_bodies, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        row.id,
+        row.owner_id,
+        row.slug,
+        row.name,
+        row.description,
+        row.kind,
+        row.upstream_url,
+        row.upstream_auth_mode,
+        row.forward_identity,
+        row.roles_json,
+        row.redact_json,
+        row.redact_results_json,
+        row.log_bodies,
+        row.created_at,
+      )
+      .run();
+    return toDetail(row);
   }
 
   /**
-   * Patches one service row. Kind is unpatchable by construction. Declared
-   * roles and upstream fields are writable for proxied rows only (tunneled
-   * declarations arrive via upsertDeclaredRoles) and get the same validation
+   * Patches one service row. Kind is unpatchable by construction. The
+   * PROXY_ONLY fields are writable for proxied rows only — the same set
+   * createService refuses on a tunneled draft, through the same check (tunneled
+   * declarations arrive via upsertDeclaredRoles) — and get the same validation
    * as create; redact/redactResults paths and logBodies are writable for
    * either kind. Flipping
    * upstreamAuthMode clears the stored credential envelope in the same write —
@@ -660,7 +744,41 @@ export class Registry {
    */
   async updateService(serviceId: string, patch: ServicePatch): Promise<ServiceDetail> {
     // deps: validateRoles · D1 `service`
-    throw new Error("unimplemented");
+    const row = await this.row(serviceId);
+    if (!row) throw new Error(`no service with id "${serviceId}"`);
+    assertKindFields(row.kind, row.slug, patch);
+    if (patch.roles !== undefined) assertRoles(patch.roles);
+
+    const columns: string[] = [];
+    const values: unknown[] = [];
+    const set = (column: string, value: unknown) => {
+      columns.push(`${column} = ?`);
+      values.push(value);
+    };
+    if (patch.name !== undefined) set("name", patch.name);
+    if (patch.description !== undefined) set("description", patch.description);
+    if (patch.upstreamUrl !== undefined) set("upstream_url", patch.upstreamUrl);
+    if (patch.forwardIdentity !== undefined) set("forward_identity", patch.forwardIdentity ? 1 : 0);
+    if (patch.roles !== undefined) set("roles_json", JSON.stringify(patch.roles));
+    if (patch.redact !== undefined) set("redact_json", JSON.stringify(patch.redact));
+    if (patch.redactResults !== undefined) set("redact_results_json", JSON.stringify(patch.redactResults));
+    if (patch.logBodies !== undefined) set("log_bodies", patch.logBodies ? 1 : 0);
+    if (patch.upstreamAuthMode !== undefined) {
+      set("upstream_auth_mode", patch.upstreamAuthMode);
+      // The row invariant: mode and envelope kind can never disagree, so a FLIP wipes the
+      // envelope in the SAME write. Re-declaring the mode it already has is not a flip —
+      // an idempotent `apply` must not disconnect the service it is re-applying.
+      if (patch.upstreamAuthMode !== row.upstream_auth_mode) set("upstream_auth_json", null);
+    }
+    if (columns.length > 0) {
+      await this.db
+        .prepare(`UPDATE service SET ${columns.join(", ")} WHERE id = ?`)
+        .bind(...values, serviceId)
+        .run();
+    }
+    const updated = await this.row(serviceId);
+    if (!updated) throw new Error(`service "${serviceId}" vanished mid-update`);
+    return toDetail(updated);
   }
 
   /**
@@ -670,7 +788,7 @@ export class Registry {
    */
   async deleteService(serviceId: string): Promise<void> {
     // deps: D1 `service`
-    throw new Error("unimplemented");
+    await this.db.prepare(`DELETE FROM service WHERE id = ?`).bind(serviceId).run();
   }
 
   /**
@@ -680,7 +798,15 @@ export class Registry {
    */
   async archiveService(serviceId: string): Promise<void> {
     // deps: D1 `service`
-    throw new Error("unimplemented");
+    await this.setArchived(serviceId, Date.now());
+  }
+
+  /** Both flags in one write, so idempotence and the unknown-id throw are stated once. */
+  private async setArchived(serviceId: string, at: number | null): Promise<void> {
+    const row = await this.row(serviceId);
+    if (!row) throw new Error(`no service with id "${serviceId}"`);
+    if ((row.archived_at !== null) === (at !== null)) return;
+    await this.db.prepare(`UPDATE service SET archived_at = ? WHERE id = ?`).bind(at, serviceId).run();
   }
 
   /**
@@ -690,19 +816,27 @@ export class Registry {
    */
   async unarchiveService(serviceId: string): Promise<void> {
     // deps: D1 `service`
-    throw new Error("unimplemented");
+    await this.setArchived(serviceId, null);
   }
 
   /** Looks up one service-account row by (owner, slug); null when absent. */
   async getAccount(ownerId: string, slug: string): Promise<ServiceAccount | null> {
     // deps: D1 `service_account`
-    throw new Error("unimplemented");
+    const row = await this.db
+      .prepare(`SELECT * FROM service_account WHERE owner_id = ? AND slug = ?`)
+      .bind(ownerId, slug)
+      .first<AccountRow>();
+    return row ? toAccount(row) : null;
   }
 
   /** Every service-account row in the namespace; grants ride grantsFor. */
   async listAccounts(ownerId: string): Promise<ServiceAccount[]> {
     // deps: D1 `service_account`
-    throw new Error("unimplemented");
+    const { results } = await this.db
+      .prepare(`SELECT * FROM service_account WHERE owner_id = ? ORDER BY slug`)
+      .bind(ownerId)
+      .all<AccountRow>();
+    return results.map(toAccount);
   }
 
   /**
@@ -712,7 +846,33 @@ export class Registry {
    */
   async createAccount(draft: AccountDraft): Promise<ServiceAccount> {
     // deps: D1 `service_account` · crypto
-    throw new Error("unimplemented");
+    assertSlug(draft.slug);
+    if (await this.getAccount(draft.ownerId, draft.slug)) {
+      throw new Error(`account slug "${draft.slug}" already exists in this namespace`);
+    }
+    const account: ServiceAccount = {
+      id: crypto.randomUUID(),
+      ownerId: draft.ownerId,
+      slug: draft.slug,
+      name: draft.name,
+      description: draft.description ?? "",
+      createdAt: Date.now(),
+    };
+    await this.db
+      .prepare(
+        `INSERT INTO service_account (id, owner_id, slug, name, description, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        account.id,
+        account.ownerId,
+        account.slug,
+        account.name,
+        account.description,
+        account.createdAt,
+      )
+      .run();
+    return account;
   }
 
   /**
@@ -721,7 +881,7 @@ export class Registry {
    */
   async deleteAccount(accountId: string): Promise<void> {
     // deps: D1 `service_account`
-    throw new Error("unimplemented");
+    await this.db.prepare(`DELETE FROM service_account WHERE id = ?`).bind(accountId).run();
   }
 
   /**
@@ -735,7 +895,41 @@ export class Registry {
    */
   async setGrants(accountId: string, serviceId: string, entries: GrantEntry[]): Promise<string[]> {
     // deps: validateRoles · D1 `grant_` · D1 `service`
-    throw new Error("unimplemented");
+    const row = await this.row(serviceId);
+    if (!row) throw new Error(`no service with id "${serviceId}"`);
+    const declared: RoleDeclaration = JSON.parse(row.roles_json);
+    const warnings: string[] = [];
+    const seen = new Set<string>();
+
+    // Everything that can refuse runs BEFORE the write: a rejected set stores nothing.
+    for (const entry of entries) {
+      if (seen.has(entry.role)) {
+        throw new Error(`role "${entry.role}" appears twice — one grant row per (account, service, role)`);
+      }
+      seen.add(entry.role);
+      if (entry.role === "all") continue; // the built-in: always grantable, never declared
+      assertRoles({ [entry.role]: [] });
+      if (Object.prototype.hasOwnProperty.call(declared, entry.role)) continue;
+      if (row.kind === "proxy") {
+        // A proxied declaration is complete by construction, so this is an owner error.
+        throw new Error(`role "${entry.role}" is not declared by service "${row.slug}"`);
+      }
+      // A tunneled declaration arrives at registration — the file may be ahead of it.
+      warnings.push(`role "${entry.role}" is not declared by service "${row.slug}" yet`);
+    }
+
+    // The full set, replaced atomically: an empty entries list is a legal revoke-everything.
+    await this.db.batch([
+      this.db
+        .prepare(`DELETE FROM grant_ WHERE service_account_id = ? AND service_id = ?`)
+        .bind(accountId, serviceId),
+      ...entries.map((entry) =>
+        this.db
+          .prepare(`INSERT INTO grant_ (service_account_id, service_id, role, mode) VALUES (?, ?, ?, ?)`)
+          .bind(accountId, serviceId, entry.role, entry.mode),
+      ),
+    ]);
+    return warnings;
   }
 
   /**
@@ -745,7 +939,26 @@ export class Registry {
    */
   async grantsFor(accountId: string): Promise<ServiceGrants[]> {
     // deps: D1 `grant_` · D1 `service`
-    throw new Error("unimplemented");
+    const { results } = await this.db
+      .prepare(
+        `SELECT g.service_id, s.slug, g.role, g.mode
+         FROM grant_ g JOIN service s ON s.id = g.service_id
+         WHERE g.service_account_id = ?
+         ORDER BY s.slug, g.role`,
+      )
+      .bind(accountId)
+      .all<{ service_id: string; slug: string; role: string; mode: GrantMode }>();
+
+    const perService = new Map<string, ServiceGrants>();
+    for (const row of results) {
+      let grants = perService.get(row.service_id);
+      if (!grants) {
+        grants = { serviceId: row.service_id, serviceSlug: row.slug, entries: [] };
+        perService.set(row.service_id, grants);
+      }
+      grants.entries.push({ role: row.role, mode: row.mode });
+    }
+    return [...perService.values()];
   }
 
   /**
@@ -759,7 +972,19 @@ export class Registry {
    */
   async resolveAccess(principal: Principal, service: Service): Promise<ToolFilter> {
     // deps: buildToolFilter · D1 `grant_` · D1 `service`
-    throw new Error("unimplemented");
+    if (principal.kind === "user") return buildToolFilter([{ role: "all", mode: "allow" }], {});
+    // Re-read, never trust the passed row: a role widened at reconnect must bite on the very
+    // next call. The virtual `pmcp` service has no row, which reads as "declares nothing".
+    const row = await this.row(service.id);
+    const declared: RoleDeclaration = row ? JSON.parse(row.roles_json) : {};
+    const { results } = await this.db
+      .prepare(
+        `SELECT role, mode FROM grant_
+         WHERE service_account_id = ? AND service_id = ? ORDER BY role`,
+      )
+      .bind(principal.accountId, service.id)
+      .all<GrantEntry>();
+    return buildToolFilter(results, declared);
   }
 
   /**
@@ -777,7 +1002,16 @@ export class Registry {
     direction: "args" | "results",
   ): Promise<string[]> {
     // deps: matchesPattern · D1 `service`
-    throw new Error("unimplemented");
+    const row = await this.row(service.id);
+    if (!row) return []; // the virtual `pmcp` builtin declares no redaction config
+    const config: Record<string, string[]> = JSON.parse(
+      direction === "args" ? row.redact_json : row.redact_results_json,
+    );
+    const paths = new Set<string>();
+    for (const [key, declared] of Object.entries(config)) {
+      if (matchesPattern(key, tool)) for (const path of declared) paths.add(path);
+    }
+    return [...paths];
   }
 
   /**
@@ -793,6 +1027,141 @@ export class Registry {
    */
   async upsertDeclaredRoles(serviceId: string, roles: RoleDeclaration): Promise<DriftReport> {
     // deps: validateRoles · D1 `service` · D1 `grant_`
-    throw new Error("unimplemented");
+    const row = await this.row(serviceId);
+    if (!row) throw new Error(`service "${serviceId}" no longer exists`); // caller's close-4003
+    if (row.kind !== "tunnel") throw new Error(`proxied service "${row.slug}" declares roles in config`);
+    assertRoles(roles); // before any write: an invalid declaration never lands partially
+
+    const previous: RoleDeclaration = JSON.parse(row.roles_json);
+    const { results } = await this.db
+      .prepare(`SELECT DISTINCT role FROM grant_ WHERE service_id = ?`)
+      .bind(serviceId)
+      .all<{ role: string }>();
+    const granted = new Set(results.map((g) => g.role));
+
+    // Textual only (§6): a role absent from either side is the empty set, and a role nobody
+    // holds is silent. Never regex-language containment — a rewritten string IS drift.
+    const widened: DriftReport["widened"] = [];
+    for (const [role, patterns] of Object.entries(roles)) {
+      if (!granted.has(role)) continue;
+      const before = new Set(previous[role] ?? []);
+      const added = [...new Set(patterns.filter((p) => !before.has(p)))];
+      if (added.length > 0) widened.push({ role, patterns: added });
+    }
+
+    await this.db
+      .prepare(`UPDATE service SET roles_json = ?, last_connected_at = ? WHERE id = ?`)
+      .bind(JSON.stringify(roles), Date.now(), serviceId)
+      .run();
+    return { widened };
   }
+}
+
+/** The `service` row as §5 declares it — the column format this module alone reads. */
+type ServiceRow = {
+  id: string;
+  owner_id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  kind: ServiceKind;
+  upstream_url: string | null;
+  upstream_auth_mode: "headers" | "oauth" | null;
+  forward_identity: number;
+  upstream_auth_json: string | null;
+  roles_json: string;
+  redact_json: string;
+  redact_results_json: string;
+  log_bodies: number;
+  created_at: number;
+  last_connected_at: number | null;
+  archived_at: number | null;
+};
+
+/** The `service_account` row, same discipline. */
+type AccountRow = {
+  id: string;
+  owner_id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  created_at: number;
+};
+
+/** The one row→domain translation: archived is a timestamp column, the booleans are 0/1. */
+function toDetail(row: ServiceRow): ServiceDetail {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    slug: row.slug,
+    kind: row.kind,
+    archived: row.archived_at !== null,
+    logBodies: row.log_bodies !== 0,
+    name: row.name,
+    description: row.description ?? "",
+    upstreamUrl: row.upstream_url,
+    upstreamAuthMode: row.upstream_auth_mode,
+    forwardIdentity: row.forward_identity !== 0,
+    declaredRoles: JSON.parse(row.roles_json),
+    redact: JSON.parse(row.redact_json),
+    redactResults: JSON.parse(row.redact_results_json),
+    createdAt: row.created_at,
+    lastConnectedAt: row.last_connected_at,
+  };
+}
+
+function toAccount(row: AccountRow): ServiceAccount {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    slug: row.slug,
+    name: row.name,
+    description: row.description ?? "",
+    createdAt: row.created_at,
+  };
+}
+
+/**
+ * §2's slug grammar, deliberately narrower than the role-name one: no underscore, because
+ * §7 splits an aggregated tool name at the FIRST `_`, and no dot or uppercase, because a
+ * slug is a URL path segment.
+ */
+const SLUG_CHARSET = /^[a-z0-9-]+$/;
+
+function assertSlug(slug: string): void {
+  if (!SLUG_CHARSET.test(slug)) throw new Error(`slug "${slug}" must match [a-z0-9-]`);
+}
+
+/** validateRoles' violations, as the throw every write path owes its caller. */
+function assertRoles(decl: RoleDeclaration): void {
+  const violations = validateRoles(decl);
+  if (violations.length > 0) throw new Error(violations.join("; "));
+}
+
+/**
+ * The fields only a PROXIED service may carry, named ONCE: the upstream endpoint and its
+ * declared auth mode, the identity-forwarding flag, and the role declaration a tunneled
+ * service instead sends at registration. Both write paths ask the question through
+ * assertKindFields below, so create and patch can never answer it differently — and the
+ * next proxy-only field is one edit here rather than two lists that silently disagree.
+ */
+const PROXY_ONLY = ["upstreamUrl", "upstreamAuthMode", "forwardIdentity", "roles"] as const;
+
+/** A draft or patch, seen as just the proxy-only fields — all that this check reads. */
+type ProxyOnlyFields = Partial<Record<(typeof PROXY_ONLY)[number], unknown>>;
+
+/**
+ * The kind/field rule of §5, as the throw both createService and updateService owe their
+ * caller: a tunneled row carries none of PROXY_ONLY, in either direction. The message
+ * names every offending field at once, so a caller fixes one draft rather than one field
+ * per round trip.
+ */
+function assertKindFields(kind: ServiceKind, slug: string, fields: ProxyOnlyFields): void {
+  if (kind === "proxy") return;
+  const offending = PROXY_ONLY.filter((field) => fields[field] !== undefined);
+  if (offending.length === 0) return;
+  throw new Error(
+    `tunneled service "${slug}" has no ${offending.join(", ")}: ` +
+      `upstream fields are proxied-only, and a tunnel declares its roles at registration`,
+  );
 }

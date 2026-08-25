@@ -35,6 +35,20 @@ export const OAUTH_STATE_TTL_MS = 10 * 60_000;
  */
 export const RETENTION_DAYS = 7;
 
+/**
+ * §5/§8 — the default life of a `pmcp_sa_` token: 90 days. Service tokens have no
+ * default expiry at all (the telegram-bot model, §18 decision 12), which is why only
+ * one of the two kinds has a constant here — the other's default is the absence of one.
+ */
+export const SERVICE_ACCOUNT_TOKEN_TTL_MS = 90 * 24 * 60 * 60_000;
+
+/**
+ * §5 — how coarse `token.last_used_at` is: a successful resolve advances it at most
+ * once per this window, so the column is a rotation/staleness signal (§15) rather than
+ * a write on every request.
+ */
+export const TOKEN_LAST_USED_STAMP_MS = 60 * 60_000;
+
 /** §6 — a role pattern string may be at most this long. */
 export const ROLE_PATTERN_MAX_LENGTH = 128;
 

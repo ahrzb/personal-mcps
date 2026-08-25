@@ -19,6 +19,15 @@
 // login redirects) that the composition root returns verbatim. HubError never
 // originates here; mapping errors into JSON-RPC is the gateway's monopoly.
 
+import { env } from "cloudflare:workers";
+import { SERVICE_ACCOUNT_TOKEN_TTL_MS, TOKEN_LAST_USED_STAMP_MS } from "./limits";
+
+/** The control plane: identity takes no binding parameter, so it resolves it ambiently.
+ *  `D1Like` is workers-env.d.ts's — the binding's shape is declared once, for everyone. */
+function db(): D1Like {
+  return env.DB as D1Like;
+}
+
 /**
  * The resolved caller identity that every downstream decision keys on — produced
  * here, consumed by the gateway pipeline, never constructed anywhere else.
@@ -112,11 +121,110 @@ export async function resolvePrincipal(req: Request, now?: () => number): Promis
  */
 export async function resolveServiceToken(
   req: Request,
-  now?: () => number,
+  now: () => number = Date.now,
 ): Promise<{ serviceId: string } | null> {
   // deps: D1 `token` · crypto.subtle
-  throw new Error("unimplemented");
+  // One `return null` vocabulary and no thrown error: nothing below distinguishes which
+  // check failed, so the upgrade's 401 cannot either. The query-string case needs no
+  // clause of its own — the header is the only place a credential is read from.
+  const presented = bearerToken(req);
+  if (presented === null || !presented.startsWith(TOKEN_PREFIX.service)) return null;
+  const row = await db()
+    .prepare(
+      `SELECT "id", "kind", "ref_id", "expires_at", "last_used_at", "revoked_at"
+         FROM token WHERE "hash" = ?`,
+    )
+    .bind(await hashToken(presented))
+    .first<TokenRow>();
+  if (row === null) return null;
+  // kind from the COLUMN, never the prefix (§6): the two can disagree.
+  if (row.kind !== "service") return null;
+  if (row.revoked_at != null) return null;
+  const at = now();
+  if (row.expires_at != null && row.expires_at <= at) return null;
+  await stampLastUsed(row, at);
+  return { serviceId: row.ref_id };
 }
+
+/** The `token` columns every resolve reads — snake_case, as the table spells them. */
+type TokenRow = {
+  id: string;
+  kind: TokenKind;
+  ref_id: string;
+  expires_at: number | null;
+  last_used_at: number | null;
+  revoked_at: number | null;
+};
+
+/**
+ * The prefix per kind — the ONE place the wire spelling of a credential lives. Written
+ * at mint, matched at resolve, and never trusted as evidence of kind (that is the
+ * `kind` column's job, §6).
+ */
+const TOKEN_PREFIX: Record<TokenKind, string> = {
+  service_account: "pmcp_sa_",
+  service: "pmcp_svc_",
+};
+
+/**
+ * How much of the token the listing shows: §5's "first ~12 chars" — enough to tell two
+ * live credentials apart in `token_list`, far short of guessing either. An
+ * approximation in the spec, so it is a local detail rather than a limits.ts constant.
+ */
+const PREFIX_DISPLAY_LENGTH = 12;
+
+/** `Authorization: Bearer <token>`, or null. The only transport a credential arrives on. */
+function bearerToken(req: Request): string | null {
+  const header = req.headers.get("Authorization");
+  const match = header?.match(/^Bearer\s+(\S+)$/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Unsalted SHA-256, hex — deliberate for 256-bit random secrets (§4: do not "fix" this
+ * into bcrypt). The hash is what the table stores; the plaintext never returns.
+ */
+async function hashToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** 256 CSPRNG bits, base64url — the whole entropy of a credential (§4). */
+function randomSecret(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/**
+ * The coarse last-used stamp (§5): advanced at most once per
+ * limits.TOKEN_LAST_USED_STAMP_MS, so a busy credential costs one write an hour rather
+ * than one per request. Only a SUCCESSFUL resolve reaches here.
+ */
+async function stampLastUsed(row: Pick<TokenRow, "id" | "last_used_at">, at: number): Promise<void> {
+  if (row.last_used_at != null && at - row.last_used_at < TOKEN_LAST_USED_STAMP_MS) return;
+  await db().prepare(`UPDATE token SET "last_used_at" = ? WHERE "id" = ?`).bind(at, row.id).run();
+}
+
+/**
+ * The ownership test both listTokens and revokeToken key on: `token.ref_id` has no
+ * foreign key (§5), so a token belongs to a namespace only through the service or
+ * service-account row its kind names. A token whose referent is gone belongs to nobody
+ * and appears nowhere — which is also why deleteTokensFor exists.
+ *
+ * ONE placeholder, deliberately: the fragment's internals are not caller knowledge, so
+ * neither call site counts `?`s in a string declared far away, and adding a third
+ * referent kind — the obvious future edit — is an edit HERE alone rather than a silent
+ * re-pairing of somebody else's positional binds.
+ */
+const OWNED_BY = `? IN (
+    SELECT s.owner_id FROM service s
+     WHERE token."kind" = 'service' AND s.id = token."ref_id"
+    UNION ALL
+    SELECT a.owner_id FROM service_account a
+     WHERE token."kind" = 'service_account' AND a.id = token."ref_id")`;
 
 /**
  * A resolved cookie session: the signed-in owner plus the session's stable
@@ -168,10 +276,44 @@ export async function issueToken(
     refId: string;
     expiresIn?: number | "never";
   },
-  now?: () => number,
+  now: () => number = Date.now,
 ): Promise<{ id: string; token: string }> {
   // deps: D1 `token` · crypto.getRandomValues · crypto.subtle
-  throw new Error("unimplemented");
+  const createdAt = now();
+  const id = crypto.randomUUID();
+  const token = TOKEN_PREFIX[input.kind] + randomSecret();
+  await db()
+    .prepare(
+      `INSERT INTO token ("id", "kind", "ref_id", "hash", "prefix", "expires_at", "created_at")
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      id,
+      input.kind,
+      input.refId,
+      await hashToken(token),
+      token.slice(0, PREFIX_DISPLAY_LENGTH),
+      expiryFor(input.kind, input.expiresIn, createdAt),
+      createdAt,
+    )
+    .run();
+  // The one and only time the plaintext exists outside the caller's hand.
+  return { id, token };
+}
+
+/**
+ * §5/§18 decision 12: an absent `expiresIn` means the kind's default — 90 days for the
+ * keys pasted into agent configs, none at all for the bot on a home server. `"never"`
+ * and an explicit count each override it, in both directions.
+ */
+function expiryFor(
+  kind: TokenKind,
+  expiresIn: number | "never" | undefined,
+  createdAt: number,
+): number | null {
+  if (expiresIn === "never") return null;
+  if (expiresIn !== undefined) return createdAt + expiresIn * 1000;
+  return kind === "service_account" ? createdAt + SERVICE_ACCOUNT_TOKEN_TTL_MS : null;
 }
 
 /**
@@ -183,7 +325,33 @@ export async function issueToken(
  */
 export async function listTokens(ownerId: string): Promise<TokenInfo[]> {
   // deps: D1 `token` · D1 `service` · D1 `service_account`
-  throw new Error("unimplemented");
+  // The joins exist for the SLUG; ownership is OWNED_BY's one rule, which is also what
+  // keeps a token whose referent is gone out of every listing.
+  const { results } = await db()
+    .prepare(
+      `SELECT token."id", token."kind", token."ref_id", token."prefix", token."created_at",
+              token."expires_at", token."last_used_at", token."revoked_at",
+              COALESCE(svc.slug, acct.slug) AS ref_slug
+         FROM token
+         LEFT JOIN service svc ON token."kind" = 'service' AND svc.id = token."ref_id"
+         LEFT JOIN service_account acct
+                ON token."kind" = 'service_account' AND acct.id = token."ref_id"
+        WHERE ${OWNED_BY}
+        ORDER BY token."created_at" DESC`,
+    )
+    .bind(ownerId)
+    .all<TokenRow & { prefix: string; created_at: number; ref_slug: string }>();
+  return results.map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    refId: row.ref_id,
+    refSlug: row.ref_slug,
+    prefix: row.prefix,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at ?? null,
+    lastUsedAt: row.last_used_at ?? null,
+    revokedAt: row.revoked_at ?? null,
+  }));
 }
 
 /**
@@ -196,7 +364,15 @@ export async function listTokens(ownerId: string): Promise<TokenInfo[]> {
  */
 export async function revokeToken(ownerId: string, id: string): Promise<boolean> {
   // deps: D1 `token` · D1 `service` · D1 `service_account`
-  throw new Error("unimplemented");
+  // COALESCE keeps the FIRST revocation's instant, so a re-revoke changes nothing while
+  // still matching the row — which is exactly the idempotent `true`. A row outside the
+  // namespace matches nothing, indistinguishably from one that does not exist.
+  const { meta } = await db()
+    .prepare(`UPDATE token SET "revoked_at" = COALESCE("revoked_at", ?)
+               WHERE "id" = ? AND ${OWNED_BY}`)
+    .bind(Date.now(), id, ownerId)
+    .run();
+  return meta.changes > 0;
 }
 
 /**
@@ -208,7 +384,7 @@ export async function revokeToken(ownerId: string, id: string): Promise<boolean>
  */
 export async function deleteTokensFor(refId: string): Promise<void> {
   // deps: D1 `token`
-  throw new Error("unimplemented");
+  await db().prepare(`DELETE FROM token WHERE "ref_id" = ?`).bind(refId).run();
 }
 
 /**

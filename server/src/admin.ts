@@ -7,14 +7,38 @@
 // the uniform rejection of the reserved `pmcp` slug (§8: one error, every op, never
 // per-tool); the `admin.<tool>` audit row each mutating handler writes about itself; the
 // credential wipe on an upstream auth-mode flip; and the once-only presentation of
-// plaintext secrets (tokens, bootstrap passwords) — returned to the caller, never stored,
-// never logged.
+// plaintext secrets — returned to the caller, never stored, never logged. Today that is
+// token_issue's key alone: §12's bootstrap password waits on better-auth, and until then
+// provisionUser hands back no secret at all rather than one nothing authenticates.
 //
 // Anti-decay rule, binding at review: any handler reducible to a single registry call is
 // a pass-through and gets folded back into its caller — an entry earns its row only while
 // it composes validation, cascade ordering, and audit.
 
+import { env } from "cloudflare:workers";
+import { record, resolveAuditConfig } from "./audit";
+import type { AuditConfig } from "./audit";
 import type { ServiceBackend } from "./gateway";
+import type { Principal } from "./identity";
+import { Registry } from "./registry";
+
+/** The control plane, resolved the way every no-binding-parameter seam here resolves it.
+ *  `D1Like` is workers-env.d.ts's — the binding's shape is declared once, for everyone. */
+function db(): D1Like {
+  return env.DB as D1Like;
+}
+
+/**
+ * §15's two knobs, parsed by their one owner — audit's, never re-implemented here — and
+ * resolved ONCE per process, which is what audit's AuditConfig contract asks for. The
+ * bootstrap pair takes no context parameter (§12: it is POST /internal/users, not an op),
+ * so this stands in for the composition root's thread until admin grows one; a config the
+ * root wants to override still has exactly one resolution site to be overridden at.
+ */
+let resolvedAuditConfig: AuditConfig | undefined;
+function auditConfig(): AuditConfig {
+  return (resolvedAuditConfig ??= resolveAuditConfig(env));
+}
 
 /**
  * One row of the ops table. `schema` (a zod schema at implementation) is the op's single
@@ -376,20 +400,54 @@ export const adminBackend: ServiceBackend = {
 
 /**
  * Bootstrap a namespace (§12, served by POST /internal/users — never a pmcp tool; the
- * auth family is pinned outside the parity invariant, §8). Creates the better-auth user
- * — username plus a generated random password; email is the synthesized
- * `<username>@users.local` placeholder, never used — and returns the password: the ONLY
- * time it exists in plaintext, never stored or logged (the audit row, principal
- * 'bootstrap', records the creation, not the secret). Validates the username charset
- * (`[a-z0-9-]`); collision with reserved top-level routes is the route's own check — the
- * composition root owns the route table RESERVED_ROUTES derives from (§2).
+ * auth family is pinned outside the parity invariant, §8). Creates the user row —
+ * username plus the synthesized `<username>@users.local` placeholder email, never used —
+ * and writes the audit row (principal 'bootstrap') that records the creation. Validates
+ * the username charset (`[a-z0-9-]`); collision with reserved top-level routes is the
+ * route's own check — the composition root owns the route table RESERVED_ROUTES derives
+ * from (§2).
+ *
+ * Returns the id ALONE. §12's generated password belongs to the call that can also store
+ * a credential for it, which is better-auth's user-create — not a dependency of this repo
+ * yet (0001_auth.sql's header; D4's dispatch opens with the probe that decides it). Until
+ * then the namespace has no human sign-in, and every caller that needs one fails to
+ * compile here rather than holding a string that authenticates nothing. Machine
+ * credentials are unaffected: they are identity's `token` table, which needs no
+ * better-auth.
  */
-export async function provisionUser(
-  username: string,
-): Promise<{ userId: string; password: string }> {
+export async function provisionUser(username: string): Promise<{ userId: string }> {
   // deps: better-auth (user create) · crypto · audit.record
-  throw new Error("unimplemented");
+  if (!USERNAME_CHARSET.test(username)) {
+    throw new Error(`username must match [a-z0-9-]: "${username}"`);
+  }
+  const userId = crypto.randomUUID();
+  const now = Date.now();
+  // ponytail: the `user` row is written here rather than through better-auth. Upgrade path:
+  // replace this INSERT with better-auth's user-create call — which mints the §12 password
+  // AND the `account` row behind it — and widen the return to carry it back once.
+  await db()
+    .prepare(
+      `INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt", "username", "displayUsername")
+       VALUES (?, ?, ?, 0, ?, ?, ?, ?)`,
+    )
+    .bind(userId, username, `${username}@users.local`, now, now, username, username)
+    .run();
+  await record(
+    db(),
+    {
+      ownerId: userId,
+      principal: "bootstrap",
+      event: "bootstrap.user_created",
+      outcome: "ok",
+      detail: { username },
+    },
+    auditConfig(),
+  );
+  return { userId };
 }
+
+/** §2: a username is `[a-z0-9-]`; route-name collisions are the route's own check. */
+const USERNAME_CHARSET = /^[a-z0-9-]+$/;
 
 /**
  * Full namespace teardown (§15): every tunneled service gets the service_delete cascade
@@ -401,5 +459,28 @@ export async function provisionUser(
  */
 export async function deleteUser(username: string): Promise<void> {
   // deps: ops.service_delete · better-auth (user delete) · D1 `user` · audit.record
-  throw new Error("unimplemented");
+  const user = await db()
+    .prepare(`SELECT "id" FROM "user" WHERE "username" = ?`)
+    .bind(username)
+    .first<{ id: string }>();
+  if (!user) return; // the postcondition is absence, so an absent user is already met
+  const owner: Principal = { kind: "user", userId: user.id, username };
+  // Services first, one at a time through the op that owns the ordering (D1 batch, THEN
+  // sever + wipe) — the `user` row's own cascade cannot reach tokens or DOs.
+  const services = await new Registry(db()).listServicesFor(owner);
+  for (const service of services) {
+    await ops.service_delete.handler(user.id, { slug: service.slug });
+  }
+  await db().prepare(`DELETE FROM "user" WHERE "id" = ?`).bind(user.id).run();
+  await record(
+    db(),
+    {
+      ownerId: user.id,
+      principal: "bootstrap",
+      event: "bootstrap.user_deleted",
+      outcome: "ok",
+      detail: { username, services: services.length },
+    },
+    auditConfig(),
+  );
 }

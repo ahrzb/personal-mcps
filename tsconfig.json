@@ -6,7 +6,18 @@
     "lib": ["ES2022", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "skipLibCheck": true
   },
-  "include": ["server/src", "cli/src", "clients/js/src", "scripts"]
+  "include": [
+    "server/src",
+    "server/dev",
+    "server/test",
+    "cli/src",
+    "cli/test",
+    "clients/js/src",
+    "clients/js/test",
+    "scripts"
+  ]
 }

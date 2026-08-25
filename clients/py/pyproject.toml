@@ -1,0 +1,82 @@
+# pmcp-client — packaging for the Python service-author library (spec §6, §11) and
+# for the pytest lane that pins it (strategy §2's `scripts` + clients project).
+#
+# This package is deliberately STANDALONE. It shares nothing with the TypeScript
+# workspace but the checked-in `contracts/*.json` fixtures, read as files — no build
+# step crosses the boundary, and a Python library that needed a pnpm install to be
+# tested would defeat the point of copying the wire shapes in the first place (§4).
+#
+# RUNNER STAGE. `uv sync --group dev` has been run: the environment and `uv.lock` exist
+# and `uv run pytest` collects the whole outline. Every source function still raises
+# `NotImplementedError` and every test module is skipped at the module level
+# (`pytestmark = pytest.mark.skip(reason="outline")`), so the suite reports pending and
+# nothing here can go green by accident. The lists below stay unpinned deliberately —
+# the lock file is the pin, and version floors land with the first test that depends on
+# one.
+
+[project]
+name = "pmcp-client"
+version = "0.0.0"
+description = "Keep an MCP server reachable through a personal-mcps hub's reverse tunnel."
+# No `readme` key: there is no clients/py/README.md yet, and naming a file that does
+# not exist turns a build into a confusing failure. It goes in with the first release.
+
+# 3.12 is the floor because the library's public surface uses PEP 695 type-parameter
+# syntax — `type Secret[T] = Annotated[T, ...]` in src/pmcp_client/__init__.py is a
+# syntax error on 3.11, so this is a hard requirement rather than a preference.
+requires-python = ">=3.12"
+
+dependencies = [
+    # The official MCP SDK — the library bridges a transport into it and never
+    # reimplements it (strategy §9: the SDK is never faked, on either side).
+    "mcp",
+    # The WebSocket client behind HubTransport's outbound dial (§6).
+    "websockets",
+    # The structured-concurrency runtime the SDK's stream pair and this library's
+    # reconnect loop both run on. Pinned to the asyncio backend everywhere; see the
+    # pytest section below for why the test lane pins it too.
+    "anyio",
+]
+
+[dependency-groups]
+# The test lane's own dependencies, declared here rather than under [project] so a
+# service author installing pmcp-client never pulls a test runner in. `uv sync
+# --group dev` installs them; `uv run pytest` from this directory runs the lane.
+dev = [
+    # The runner for the whole `scripts` + clients lane on the Python side (§2).
+    "pytest",
+    # anyio's pytest plugin is what `anyio_mode` below configures; it ships inside
+    # anyio itself, so the group names anyio explicitly rather than relying on the
+    # runtime dependency above being present in a test environment.
+    "anyio",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# src layout: the importable package is src/pmcp_client, so a test can only reach it
+# through an install (or `pythonpath` below) and never by accidentally importing the
+# working directory. That is the whole reason for the extra directory — an
+# accidental import of a half-built package is exactly the failure a skeleton stage
+# invites.
+packages = ["src/pmcp_client"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# anyio_mode = "auto" collects every `async def test_*` as an anyio test with no
+# per-test marker (conftest.py states the rationale: the transport is an async
+# context manager, so nearly every case is async and the markers would be pure
+# noise). The BACKEND is pinned to asyncio by conftest's `anyio_backend` fixture and
+# deliberately not here — the mcp SDK, websockets, and the library's own loop all run
+# on asyncio in production, and a trio parametrization would test a configuration no
+# bot will ever run.
+anyio_mode = "auto"
+
+# Reach src/ without an install, so `python -m compileall` and a bare `pytest` behave
+# the same before the first `uv sync`. An editable install would also do it; this
+# keeps the skeleton stage honest — nothing here depends on an install having
+# happened.
+pythonpath = ["src"]

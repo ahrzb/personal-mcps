@@ -1111,6 +1111,9 @@ select {
   font-size: var(--text-xs);
   color: var(--fg-subtle);
   line-height: 1.6;
+  /* pre-wrap, or the <pre> default white-space keeps overflow-wrap from ever
+     firing and a single-line JSON body becomes a 17000px scroll strip. */
+  white-space: pre-wrap;
   overflow-x: auto;
   overflow-wrap: anywhere;
   margin: 0;
@@ -1585,6 +1588,17 @@ dialog .actions {
   }
 
   .auth-desc {
+    font-size: var(--text-base);
+  }
+
+  /* approval-detail's card heading wears the shared card-title/card-desc
+     classes, not auth-title/auth-desc — scope under .auth so account's
+     settings cards keep their desktop scale. */
+  .auth .card-title {
+    font-size: 20px;
+  }
+
+  .auth .card-desc {
     font-size: var(--text-base);
   }
 

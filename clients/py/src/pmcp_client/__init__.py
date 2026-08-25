@@ -32,6 +32,7 @@ The reconnect contract, stated once — everything below refers back here:
   service becomes a 401 at the next upgrade, which is the fatal path above.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 # The author's MCP server — mcp.server.MCPServer (or the low-level
@@ -53,10 +54,24 @@ __all__ = [
     "McpServer",
     "RegistrationError",
     "Roles",
+    "backoff_delay",
     "caller",
     "sensitive",
     "serve",
 ]
+
+
+def backoff_delay(attempt: int, rng: Callable[[], float]) -> float:
+    """The reconnect schedule as pure arithmetic — ``attempt`` (consecutive
+    failures, 0-based) -> delay in seconds. Doubling from 1 s to the 60 s cap,
+    jitter drawn from ``rng`` (a [0,1) source; the loop passes random.random,
+    tests a seeded stub). Attempt 0 is jittered from zero, so a hub deploy's
+    reconnect storm spreads out instead of every bot re-registering in the same
+    second. Exported so doubling, cap, and jitter bounds are a table test, not a
+    property of a live loop; the transport's reconnect loop is its only
+    production caller — the same schedule as the JS library's ``backoffDelay``."""
+    # deps: none
+    raise NotImplementedError
 
 
 class CredentialsError(Exception):

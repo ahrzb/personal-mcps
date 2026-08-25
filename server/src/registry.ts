@@ -7,8 +7,10 @@
 // the literal-grammar fast path, `*` as a `.*` alias, the built-in `all` role
 // resolved at request time and never stored, union-of-roles with
 // allow-beats-approval), role-declaration validation shared by hub/register and
-// proxied config, textual drift detection on re-declaration, and the `pmcp` slug
-// reservation.
+// proxied config, textual drift detection on re-declaration, the `pmcp` slug
+// reservation — and the redaction path grammar: writeOnlyPaths/applyRedaction are
+// the system's ONE definition of how sensitive-argument paths are found and
+// applied (tunnel walks schemas with the former; approvals masks with the latter).
 //
 // HIDES: the roles_json / redact column formats (the tunnel DO hands wire-shaped
 // declarations to upsertDeclaredRoles and never touches the columns), how
@@ -227,6 +229,36 @@ export function validateRoles(decl: RoleDeclaration): string[] {
  */
 export function buildToolFilter(entries: GrantEntry[], declared: RoleDeclaration): ToolFilter {
   // deps: matchesPattern
+  throw new Error("unimplemented");
+}
+
+/**
+ * The schema-declared half of §7's redaction union, as pure data: walks a JSON
+ * Schema for properties marked `writeOnly: true` at any depth and returns their
+ * dot-paths relative to `params.arguments` (e.g. "credentials.token") — the same
+ * path grammar applyRedaction consumes and config `redact` entries are written
+ * in. Total over anything schema-shaped: a malformed or absent schema yields [],
+ * never an error (an unredactable tool is refused upstream on other grounds).
+ */
+export function writeOnlyPaths(schema: unknown): string[] {
+  // deps: none
+  throw new Error("unimplemented");
+}
+
+/**
+ * The one masking transformation: a copy of `args` with the value at every
+ * matching dot-path replaced by "‹redacted›" — the input is never mutated, so
+ * callers hold redacted data as a new value rather than trusting a flag. A path
+ * meeting an array applies to every element; a path absent from `args` is
+ * ignored. Everything the hub ever persists or displays about approval
+ * arguments flows through here first — hashing included (§7: args_hash is
+ * post-redaction).
+ */
+export function applyRedaction(
+  args: Record<string, unknown>,
+  paths: string[],
+): Record<string, unknown> {
+  // deps: none
   throw new Error("unimplemented");
 }
 

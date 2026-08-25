@@ -95,7 +95,9 @@ export interface ServiceBackend {
    * The union of sensitive-argument paths for one tool — schema-declared `writeOnly`
    * plus config-declared `redact` entries (§7) — used to redact before an approval row
    * is stored. Returns null when the tool is unknown to this backend (e.g. absent from
-   * a tunnel's cached catalog): the gateway answers -32000 and nothing downstream runs.
+   * a tunnel's cached catalog): the gateway answers -32001 — the same code as
+   * not-permitted/unknown, so the refusal cannot be used to map grant patterns (§7) —
+   * and nothing downstream runs.
    */
   sensitivePaths(service: Service, tool: string): Promise<string[] | null>;
 }
@@ -235,8 +237,10 @@ async function listAggregated(env: Env, ownerId: string, ctx: BackendCtx): Promi
  * The one tools/call pipeline, identical for both endpoint shapes — `slug` and `tool`
  * arrive already split and unprefixed, so approvals bind to the same row either way.
  * Runs the pinned order: filter (-32001 — an ungranted account learns nothing more),
- * archived (-32002), the approval gate (three-phase: approvals.check, then
- * probeAvailability, then the atomic claim, then dispatch, then settle — `-32003` with
+ * archived (-32002), the approval gate (which consults probeAvailability FIRST: a
+ * known-unavailable service fails -32000 before any approval row is read, created, or
+ * consumed — no pending, no push, an existing pass untouched; then the three phases:
+ * approvals.check, the atomic claim, dispatch, settle — `-32003` with
  * { approvalId, approvalUrl, expiresAt } when a decision is still owed, and an MRTR
  * input_required leg restores the claim), then availability (-32000). A passing call
  * is forwarded post-hygiene with identity attached and relayed verbatim. audit.record

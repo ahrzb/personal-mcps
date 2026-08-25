@@ -32,7 +32,7 @@ export type Env = {
   /** Secret: better-auth signing/session secret (§4). */
   BETTER_AUTH_SECRET: string;
   /** Secret: AES-GCM key enveloping `upstream_auth_json` at rest (§5). */
-  UPSTREAM_AUTH_KEY: string;
+  UPSTREAM_CREDS_KEY: string;
   /** Secret: Web Push VAPID public key, ES256 (§13). */
   VAPID_PUBLIC_KEY: string;
   /** Secret: Web Push VAPID private key, ES256 (§13). */
@@ -96,11 +96,15 @@ export default {
   /**
    * The daily cron fan-out (§15, §7): flip past-expiry pending approvals to expired
    * (one approval.expired audit row each), prune audit and approval rows older than
-   * 90 days, and drop stale upstream-OAuth `state` records (~10 min TTL, §7). Each leg
-   * runs even when another fails — a missed sweep must not starve the prune.
+   * 90 days, and drop stale upstream-OAuth `state` records (~10 min TTL, §7). The
+   * legs run as a named list under Promise.allSettled — structurally, not by
+   * promise: one leg failing never starves the others, and the list is a seam a
+   * test can stub to prove it. Every run writes one `cron.swept` audit row with
+   * per-leg outcome and counts, so "did the cron fire, and did every leg succeed"
+   * is answerable from the /audit page — the cron's only monitoring.
    */
   async scheduled(controller: unknown, env: Env): Promise<void> {
-    // deps: approvals.sweepExpired · audit.prune · upstream.cleanupStaleState
+    // deps: approvals.sweepExpired · audit.prune · upstream.cleanupStaleState · audit.record (cron.swept)
     throw new Error("unimplemented");
   },
 };

@@ -106,16 +106,16 @@ export const tunnelBackend: ServiceBackend = {
   },
 
   /**
-   * The schema-declared half of §7's redaction union: walks the cached catalog entry's
-   * inputSchema for properties marked `writeOnly: true` at any depth and returns their
-   * dot-paths relative to params.arguments (e.g. "credentials.token") — the same path
-   * grammar as config-declared `redact` entries, which the caller unions in itself.
+   * The schema-declared half of §7's redaction union: hands the cached catalog
+   * entry's inputSchema to registry.writeOnlyPaths — the one definition of the
+   * path grammar — and returns its dot-paths; the caller unions config-declared
+   * `redact` paths in itself.
    * Returns null when the tool is absent from the cached catalog (never-connected
-   * services included): the gateway answers -32000 and nothing downstream runs. Never
-   * touches the live socket.
+   * services included): the gateway answers -32001 (indistinguishable from
+   * not-permitted, §7) and nothing downstream runs. Never touches the live socket.
    */
   async sensitivePaths(service, tool) {
-    // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.listTools
+    // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.listTools · registry.writeOnlyPaths
     throw new Error("unimplemented");
   },
 };
@@ -148,14 +148,35 @@ export async function wipe(serviceId: Service["id"]): Promise<void> {
 /**
  * "online" iff the DO holds a live socket that has completed hub/register — an accepted
  * but not-yet-registered socket reads as offline (the 10 s deadline bounds that window,
- * §6). This is the availability probe the approval pipeline runs *between* check and
- * claim, so an offline service never consumes an approval, and the status column behind
- * service_list / /services. Cheap and side-effect-free.
+ * §6). This is the availability probe the approval gate consults FIRST (a known-offline
+ * service is refused -32000 before any approval row is read, created, or consumed, §7)
+ * and again between check and claim, so an offline service never consumes an approval —
+ * and the status column behind service_list / /services. Cheap and side-effect-free.
  */
 export async function status(serviceId: Service["id"]): Promise<"online" | "offline"> {
   // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.status
   throw new Error("unimplemented");
 }
+
+/**
+ * The identity a socket carries through hibernation — stored via serializeAttachment
+ * at acceptance, updated at registration, read back on every wake (alarm, forward,
+ * sever, status). VERSIONED: `v` is bumped whenever this shape changes, and a wake
+ * that reads an unknown or absent version treats the socket as unintelligible —
+ * close 4004, and the client library's ordinary reconnect brings it back into
+ * current code within seconds. That converts deploy version-skew (an old-code
+ * attachment woken by new code, should hibernated sockets ever survive a deploy)
+ * from silent corruption into a routine self-healing reconnect.
+ */
+type ConnectionAttachment = {
+  v: 1;
+  serviceId: string;
+  ownerId: string;
+  slug: string;
+  /** Which token opened this connection — sever(code, onlyIfTokenId) compares against it. */
+  tokenId: string;
+  registered: boolean;
+};
 
 /**
  * The per-service Durable Object: at most one accepted socket ever (newest wins at
@@ -182,9 +203,9 @@ export class ServiceConnection {
    * close 4000) at *acceptance*, before the newcomer registers, so there is never a
    * two-socket window — and writes the connect.replaced audit row, because with a stolen
    * token eviction-and-impersonation looks exactly like this. Accepts the new socket
-   * into the hibernation API with the connection identity (service id/slug/owner,
-   * opening token, not-yet-registered) attached via serializeAttachment, and arms the
-   * 10 s registration deadline. Anything that is not a WebSocket upgrade is rejected.
+   * into the hibernation API with the versioned ConnectionAttachment (not-yet-registered)
+   * attached via serializeAttachment, and arms the registration deadline
+   * (limits.REGISTRATION_DEADLINE_MS). Anything that is not a WebSocket upgrade is rejected.
    */
   async fetch(req: Request): Promise<Response> {
     // deps: DO ctx.acceptWebSocket · DO ws.serializeAttachment · DO ctx.storage.setAlarm · audit.record

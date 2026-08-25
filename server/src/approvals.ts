@@ -110,6 +110,12 @@ export type ApprovalsConfig = {
   publicOrigin: string;
   audit: { record(entry: AuditEntry): Promise<void> };
   vapid: { publicKey: string; privateKey: string; subject: string };
+  /**
+   * The clock, epoch ms. Injected because expiry is a read-time interpretation
+   * and workerd tests cannot fake global timers — every expiry and window
+   * judgment in this module reads it, never Date.now().
+   */
+  now(): number;
 };
 
 /**
@@ -144,12 +150,15 @@ export class Approvals {
    * pending wait and the post-approval retry), with an `approval.requested`
    * audit row and a best-effort push to the owner.
    *
+   * The caller refuses known-unavailable services with -32000 BEFORE invoking
+   * check (§7) — this module never probes availability itself, and a pending row
+   * is never created for a service the hub already knows cannot execute.
+   *
    * `principal` must be a service-account principal — owners are never
    * approval-gated, so the filter never routes them here. `redactPaths` are
    * dot-separated paths into `args` (the caller resolves the writeOnly/config
-   * union); each matched value is replaced with "‹redacted›" before hashing or
-   * storing, paths absent from `args` are ignored, and a path meeting an array
-   * applies to every element.
+   * union); masking is registry.applyRedaction — the one definition — applied
+   * before anything is hashed or stored.
    */
   async check(
     principal: Principal,
@@ -158,7 +167,7 @@ export class Approvals {
     args: Record<string, unknown> | undefined,
     redactPaths: string[],
   ): Promise<CheckResult> {
-    // deps: canonicalJson · notifyOwner · crypto.subtle · D1 `approval` · audit.record
+    // deps: canonicalJson · registry.applyRedaction · notifyOwner · crypto.subtle · D1 `approval` · audit.record
     throw new Error("unimplemented");
   }
 

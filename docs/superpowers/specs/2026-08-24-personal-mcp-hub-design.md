@@ -531,7 +531,14 @@ Per request:
 ### Approval flow
 
 When the caller's only path to a tool is through approval-mode grants (§2), the call
-does not execute on its own:
+does not execute on its own. The gate consults **known availability first**: a service
+the hub already knows cannot execute — tunneled with no live registered connection,
+proxied flagged `not_connected` or `needs_reconnect` — fails `-32000` before any
+approval row is read, created, or consumed. The owner is never asked to approve a call
+that cannot run (no pending row, no push), and an existing approved pass survives
+untouched; the agent's retry once the service returns is what opens the pending. This
+is stored knowledge only — no dial is attempted, so a `connected` proxied upstream
+that is genuinely unreachable still surfaces at dispatch. Past that refusal:
 
 1. The Worker looks for an `approval` row matching (account, service, tool,
    `args_hash`) with `status: approved` and unexpired. Found → the call proceeds
@@ -559,7 +566,9 @@ does not execute on its own:
    row exists does it record a fresh `pending` approval — arguments stored
    **post-redaction** (below); for tunneled services a pending row is only created for
    a tool present in the cached catalog (no schema → no redaction map → refuse with
-   `-32000` instead; such a call could not execute anyway) — and reply with JSON-RPC
+   `-32001` instead, the same code as not-permitted/unknown, so a probing agent cannot
+   use the refusal to map its own grant patterns; such a call could not execute
+   anyway, and the catalog heals at the service's next registration) — and reply with JSON-RPC
    error **`-32003`** ("approval required"), whose `data` carries
    `{ approvalId, approvalUrl, expiresAt }`. The message text includes the URL too, so
    an agent that only surfaces error strings still hands the user something

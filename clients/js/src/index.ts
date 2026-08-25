@@ -99,7 +99,8 @@ export async function serve(server: McpServer, options?: ServeOptions): Promise<
  *
  * One transport is one service lifetime, not one socket: reconnects — jittered
  * exponential backoff, 1 s → 60 s cap, forever (hub deploys sever every socket,
- * so this is routine) — happen inside, invisible to the SDK session, and
+ * so this is routine; the schedule itself is backoffDelay, exported pure) —
+ * happen inside, invisible to the SDK session, and
  * `hub/register` is re-sent on every (re)connect. `onclose` fires once, at a
  * terminal state only.
  *
@@ -175,6 +176,20 @@ export class HubTransport {
     // deps: ws
     throw new Error("unimplemented");
   }
+}
+
+/**
+ * The reconnect schedule as pure arithmetic — `attempt` (consecutive failures,
+ * 0-based) → delay in milliseconds. Doubling from 1 s to the 60 s cap, jitter
+ * drawn from `rng` (a [0,1) source; the loop passes Math.random, tests a seeded
+ * stub). Attempt 0 is jittered from zero, so a hub deploy's reconnect storm
+ * spreads out instead of every bot re-registering in the same second. Exported
+ * so doubling, cap, and jitter bounds are a table test, not a property of a
+ * live loop; HubTransport's reconnect loop is its only production caller.
+ */
+export function backoffDelay(attempt: number, rng: () => number): number {
+  // deps: none
+  throw new Error("unimplemented");
 }
 
 /**

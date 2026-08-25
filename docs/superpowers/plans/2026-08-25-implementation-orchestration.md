@@ -462,7 +462,12 @@ check and (manual, once) a real push notification to a real browser.
   incl. the D2 array-items redaction rows debt and the 0004 migrations-pin
   owner rows.
 - [ ] Close the loop with the user: findings, cost actuals vs estimates, what
-  to harden next (real service migrations, custom domain).
+  to harden next (real service migrations, custom domain). Parked decision to
+  revisit: better-auth Dash (@better-auth/infra) — user tried connecting it
+  2026-08-26; optional cloud dashboard, NOT needed for auth to work, and it
+  phones home from the auth path with an API key, against the no-phone-home
+  stance (telemetry already disabled). Weigh deliberately if wanted:
+  dash() plugin + BETTER_AUTH_API_KEY via wrangler secret + redeploy.
 
 ---
 

@@ -43,6 +43,24 @@ export type Env = {
    * the operator sets it for a use and rotates it after.
    */
   BOOTSTRAP_SECRET?: string;
+  /**
+   * Secret, optional: the Sentry DSN. Unset means Sentry is fully disabled — no
+   * transport, no events, nothing to configure; the worker behaves exactly as if
+   * the integration were absent.
+   */
+  SENTRY_DSN?: string;
+  /**
+   * Var, optional: audit/approval retention in days (§15). Unset means
+   * limits.RETENTION_DAYS. Parsed only by audit.resolveAuditConfig, called at the
+   * entry points (fetch/scheduled here, and the tunnel DO) — siblings receive the
+   * resolved AuditConfig, never the string.
+   */
+  AUDIT_RETENTION_DAYS?: string;
+  /**
+   * Var, optional: per-body size cap for the audit body columns (§15). Unset means
+   * limits.AUDIT_BODY_CAP_BYTES. Same parse path as AUDIT_RETENTION_DAYS.
+   */
+  AUDIT_BODY_CAP_BYTES?: string;
 };
 
 /**
@@ -80,7 +98,16 @@ export const RESERVED_ROUTES: ReadonlySet<string> = new Set([...ROUTES, "mcp"]);
  */
 export { ServiceConnection } from "./tunnel";
 
-/** The worker entrypoint: HTTP/WebSocket in `fetch`, the daily cron in `scheduled`. */
+/**
+ * The worker entrypoint: HTTP/WebSocket in `fetch`, the daily cron in `scheduled`.
+ *
+ * At implementation this object is wrapped in `withSentry` (@sentry/cloudflare) here,
+ * at the composition root — the one place that holds SENTRY_DSN, and a no-op while
+ * that secret is unset. §15's log hygiene binds Sentry events like any other sink:
+ * `beforeSend` strips `Authorization` headers and anything matching `pmcp_(sa|svc)_…`,
+ * and request or tool bodies never ride an event at all — the D1 `audit` table is the
+ * only place a body is ever persisted, post-redaction and capped.
+ */
 export default {
   /**
    * Routes by first path segment through ROUTES; anything else falls through to
@@ -90,13 +117,14 @@ export default {
    * on /connect, BOOTSTRAP_SECRET on /internal).
    */
   async fetch(request: Request, env: Env): Promise<Response> {
-    // deps: hono · identity.authRoutes · identity.whoamiRoute · identity.bootstrapRoute · web.pageRoutes · gateway.mcpRoutes · tunnel.handleConnect · upstream.clientMetadata
+    // deps: hono · identity.authRoutes · identity.whoamiRoute · identity.bootstrapRoute · web.pageRoutes · gateway.mcpRoutes · tunnel.handleConnect · upstream.clientMetadata · audit.resolveAuditConfig
     throw new Error("unimplemented");
   },
   /**
    * The daily cron fan-out (§15, §7): flip past-expiry pending approvals to expired
-   * (one approval.expired audit row each), prune audit and approval rows older than
-   * 90 days, and drop stale upstream-OAuth `state` records (~10 min TTL, §7). The
+   * (one approval.expired audit row each), prune audit and approval rows past the
+   * retention window (default limits.RETENTION_DAYS, AUDIT_RETENTION_DAYS
+   * overrides), and drop stale upstream-OAuth `state` records (~10 min TTL, §7). The
    * legs run as a named list under Promise.allSettled — structurally, not by
    * promise: one leg failing never starves the others, and the list is a seam a
    * test can stub to prove it. Every run writes one `cron.swept` audit row with
@@ -104,7 +132,7 @@ export default {
    * is answerable from the /audit page — the cron's only monitoring.
    */
   async scheduled(controller: unknown, env: Env): Promise<void> {
-    // deps: approvals.sweepExpired · audit.prune · upstream.cleanupStaleState · audit.record (cron.swept)
+    // deps: approvals.sweepExpired · audit.prune · upstream.cleanupStaleState · audit.record (cron.swept) · audit.resolveAuditConfig
     throw new Error("unimplemented");
   },
 };

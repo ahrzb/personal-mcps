@@ -110,9 +110,11 @@ export const upstreamBackend: ServiceBackend = {
   },
 
   /**
-   * Always resolves to `[]`: proxied schemas are never cached in v1 (spec pin), so there
-   * is no `writeOnly` map to derive — config-declared `redact` paths are the only proxied
-   * redaction source, unioned in by the approval layer. Never returns null: without a
+   * Always resolves to `{ args: [], results: [] }`: proxied schemas are never cached
+   * in v1 (spec pin), so there is no `writeOnly` map to derive in either direction —
+   * config-declared `redact` / `redact_results` paths are the only proxied redaction
+   * source, unioned in by the gateway (which is also why proxied `log_bodies`
+   * defaults OFF, §15). Never returns null: without a
    * catalog no tool is "unknown", so no proxied call is refused on that ground.
    */
   async sensitivePaths(service, tool) {

@@ -46,13 +46,18 @@ export type JsonRpcResponse = {
 /**
  * An MCP tool descriptor as listed to consumers. `inputSchema` is the service's JSON
  * Schema passed through untouched — `writeOnly` markers survive so redaction (§7) can
- * derive from it. On the aggregated endpoint `name` carries the `<slug>_` prefix; on
- * the scoped endpoint it never does.
+ * derive from them, and on an input the keyword is standard usage. `outputSchema`
+ * (present when the service declares one) is different: the hub co-opts `writeOnly`
+ * there as its internal result-secret marker, so the listing paths below strip it
+ * from every outputSchema before a consumer sees it (§7) — backends return the
+ * catalog verbatim and never strip. On the aggregated endpoint `name` carries the
+ * `<slug>_` prefix; on the scoped endpoint it never does.
  */
 export type Tool = {
   name: string;
   description?: string;
   inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
 };
 
 /**
@@ -92,14 +97,23 @@ export interface ServiceBackend {
    */
   call(service: Service, msg: JsonRpcRequest, ctx: BackendCtx): Promise<JsonRpcResponse>;
   /**
-   * The union of sensitive-argument paths for one tool — schema-declared `writeOnly`
-   * plus config-declared `redact` entries (§7) — used to redact before an approval row
-   * is stored. Returns null when the tool is unknown to this backend (e.g. absent from
-   * a tunnel's cached catalog): the gateway answers -32001 — the same code as
+   * The SCHEMA-declared sensitive paths for one tool, per direction (§7): `args`
+   * from `writeOnly` in the cached inputSchema, `results` from `writeOnly` in the
+   * cached outputSchema (tunnel walks both; upstream has no cache and answers empty;
+   * admin marks its own — token_issue's key). The gateway unions each direction with
+   * the matching config map (registry.redactPathsFor "args" / "results") before
+   * anything is stored or shown — approval rows and audit bodies alike. Returns null
+   * when no sound map can exist: the tool is unknown to this backend (absent from a
+   * tunnel's cached catalog) OR its cached schema tripped
+   * registry.validateSchemaIndirection at registration (unsupported indirection could
+   * conceal a mark, §7). Either way the gateway answers -32001 — the same code as
    * not-permitted/unknown, so the refusal cannot be used to map grant patterns (§7) —
-   * and nothing downstream runs.
+   * nothing downstream runs, and no body is ever recorded for such a tool (§15).
    */
-  sensitivePaths(service: Service, tool: string): Promise<string[] | null>;
+  sensitivePaths(
+    service: Service,
+    tool: string,
+  ): Promise<{ args: string[]; results: string[] } | null>;
 }
 
 /**
@@ -151,7 +165,9 @@ function splitAggregatedName(name: string): { slug: string; tool: string } | nul
 
 /**
  * The virtual Service row for the builtin `pmcp` admin service (§8): reserved slug, no
- * D1 row ever exists for it, never archived. Exists so the admin backend rides the
+ * D1 row ever exists for it, never archived, logBodies fixed ON (§15 — the builtin's
+ * schemas are the hub's own, so the tunneled default applies and token_issue's key is
+ * masked by the uniform rule). Exists so the admin backend rides the
  * same pipeline as everything else; its `kind` field is set only to satisfy the type —
  * backend selection happens on the slug before kind is ever read.
  */
@@ -210,7 +226,9 @@ function prepareForward(msg: JsonRpcRequest, ctx: BackendCtx): JsonRpcRequest {
 
 /**
  * Scoped tools/list (§7): the backend's catalog filtered by the caller's grant
- * patterns, names unprefixed, with ttlMs/cacheScope hints. Archived → -32002; an
+ * patterns, names unprefixed, with ttlMs/cacheScope hints — and every outputSchema
+ * served with its `writeOnly` markers stripped (the hub's internal result-secret
+ * co-opt never reaches the wire, §7). Archived → -32002; an
  * unreachable or needs-reconnect proxied upstream → -32000 — the scoped endpoint is
  * where the aggregate's silent omissions surface. Never audited (§15).
  */
@@ -226,7 +244,8 @@ async function listScoped(env: Env, ownerId: string, slug: string, ctx: BackendC
  * `<slug>_`. A failing or hanging upstream contributes zero tools and its slug is
  * returned in `unavailable` — surfaced to the consumer as `_meta["pmcp/unavailable"]`
  * and logged as an ops event, never an audit row — while the aggregate itself always
- * succeeds. Tunneled lists come from DO cache and cannot miss the deadline.
+ * succeeds. Served outputSchemas get the same `writeOnly` strip as the scoped list
+ * (§7). Tunneled lists come from DO cache and cannot miss the deadline.
  */
 async function listAggregated(env: Env, ownerId: string, ctx: BackendCtx): Promise<{ tools: Tool[]; unavailable: string[] }> {
   // deps: registry.listServicesFor · registry.resolveAccess · selectBackend · virtualPmcpService
@@ -243,12 +262,21 @@ async function listAggregated(env: Env, ownerId: string, ctx: BackendCtx): Promi
  * approvals.check, the atomic claim, dispatch, settle — `-32003` with
  * { approvalId, approvalUrl, expiresAt } when a decision is still owed, and an MRTR
  * input_required leg restores the claim), then availability (-32000). A passing call
- * is forwarded post-hygiene with identity attached and relayed verbatim. audit.record
- * is AWAITED with hub-measured duration — a failed audit write fails the call. All
+ * is forwarded post-hygiene with identity attached and relayed verbatim — what the
+ * CONSUMER receives is never redacted; masking exists for persistence only.
+ * audit.record
+ * is AWAITED with hub-measured duration — a failed audit write fails the call. When
+ * the service's log_bodies is on AND the call was dispatched (§15 — refusal rows
+ * never carry bodies; several refusals predate any redaction map), the audit entry
+ * carries the bodies: args
+ * masked under the args union (backend schema paths + config redact), the result's
+ * structuredContent masked under the results union (backend + config
+ * redact_results), each unstructured result block replaced by a blob BodyStub —
+ * audit.record itself enforces the size cap. All
  * failures leave as HubError; only the caller of this seam maps them to the wire.
  */
 async function callTool(env: Env, ownerId: string, slug: string, tool: string, msg: JsonRpcRequest, ctx: BackendCtx): Promise<JsonRpcResponse> {
-  // deps: registry.getService · registry.resolveAccess · approvals.check · approvals.claim · approvals.settle · audit.record · selectBackend · virtualPmcpService · probeAvailability · prepareForward
+  // deps: registry.getService · registry.resolveAccess · registry.redactPathsFor · registry.applyRedaction · approvals.check · approvals.claim · approvals.settle · audit.record · selectBackend · virtualPmcpService · probeAvailability · prepareForward
   throw new Error("unimplemented");
 }
 

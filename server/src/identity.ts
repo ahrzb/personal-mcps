@@ -85,8 +85,13 @@ export function formatPrincipal(p: Principal): string {
  * outsiders can enumerate usernames. Success coarsely stamps the token's
  * last_used_at. Transport hygiene (Content-Type, Origin-if-present) is the gateway's
  * job, not this function's.
+ *
+ * `now` is the injected clock (epoch ms) every expiry judgment and last_used_at
+ * stamp reads — same rationale as ApprovalsConfig.now: workerd tests cannot fake
+ * global timers, and the expired-token refusal must be seedable beside its live
+ * twin. Production callers omit it.
  */
-export async function resolvePrincipal(req: Request): Promise<Principal> {
+export async function resolvePrincipal(req: Request, now?: () => number): Promise<Principal> {
   // deps: better-auth · D1 `token` · D1 `service_account` · D1 `user` · crypto.subtle
   throw new Error("unimplemented");
 }
@@ -102,9 +107,13 @@ export async function resolvePrincipal(req: Request): Promise<Principal> {
  * severing a live socket on revoke is the admin op's cascade, never this
  * function's). Row-level verdicts stay with the upgrade handler, which fetches the
  * service anyway: row gone or kind proxy → 401, archived → 403. Success coarsely
- * stamps last_used_at.
+ * stamps last_used_at. `now` is the injected clock (see resolvePrincipal);
+ * production callers omit it.
  */
-export async function resolveServiceToken(req: Request): Promise<{ serviceId: string } | null> {
+export async function resolveServiceToken(
+  req: Request,
+  now?: () => number,
+): Promise<{ serviceId: string } | null> {
   // deps: D1 `token` · crypto.subtle
   throw new Error("unimplemented");
 }
@@ -148,12 +157,19 @@ export async function requireOwnerSession(
  * compromise). Trusts `refId`: resolving slugs, refusing the reserved `pmcp` slug,
  * and rejecting service tokens on proxied services are the admin op's validations.
  * The returned `id` is the handle for revokeToken and the row listTokens shows.
+ * `now` is the injected clock stamping created_at/expires_at (see
+ * resolvePrincipal) — issuing at a fake t0 and resolving past t0+expiry is how the
+ * expired-refusal row gets its live allow-twin without sleeping or a test-only
+ * "mint dead token" affordance. Production callers omit it.
  */
-export async function issueToken(input: {
-  kind: TokenKind;
-  refId: string;
-  expiresIn?: number | "never";
-}): Promise<{ id: string; token: string }> {
+export async function issueToken(
+  input: {
+    kind: TokenKind;
+    refId: string;
+    expiresIn?: number | "never";
+  },
+  now?: () => number,
+): Promise<{ id: string; token: string }> {
   // deps: D1 `token` · crypto.getRandomValues · crypto.subtle
   throw new Error("unimplemented");
 }

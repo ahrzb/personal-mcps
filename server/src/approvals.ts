@@ -111,6 +111,12 @@ export type ApprovalsConfig = {
   audit: { record(entry: AuditEntry): Promise<void> };
   vapid: { publicKey: string; privateKey: string; subject: string };
   /**
+   * Retention in days, resolved once by the composition root (AUDIT_RETENTION_DAYS
+   * env var or limits.RETENTION_DAYS): approval rows age out on audit's schedule
+   * (§15), and sweepExpired prunes past this.
+   */
+  retentionDays: number;
+  /**
    * The clock, epoch ms. Injected because expiry is a read-time interpretation
    * and workerd tests cannot fake global timers — every expiry and window
    * judgment in this module reads it, never Date.now().
@@ -145,8 +151,8 @@ export class Approvals {
    * Otherwise → `{ outcome: "required", … }`. An existing unexpired `pending`
    * row for the same binding is returned as-is — stable id across retries, no
    * new row, audit entry, or push. Only when none exists is a fresh pending row
-   * inserted (redacted arguments and all — the only place the hub ever persists
-   * tool arguments), expiring 1 h from creation (one window covering the
+   * inserted (arguments post-redaction, like every body the hub persists, §15),
+   * expiring 1 h from creation (one window covering the
    * pending wait and the post-approval retry), with an `approval.requested`
    * audit row and a best-effort push to the owner.
    *
@@ -249,8 +255,8 @@ export class Approvals {
    * Daily-cron housekeeping: flips every remaining past-expiry `pending` row to
    * `expired` (writing each `approval.expired` audit row exactly once — lazy
    * expiry means most were already flipped at read time), then prunes rows
-   * older than 90 days (approval rows are the hub's only persisted arguments,
-   * so they age out on audit's schedule, §15). Returns counts for the cron's
+   * past config.retentionDays — approval rows hold persisted arguments, so
+   * they age out on audit's schedule (§15). Returns counts for the cron's
    * ops log.
    */
   async sweepExpired(): Promise<{ expired: number; pruned: number }> {

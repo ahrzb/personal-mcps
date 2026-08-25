@@ -13,27 +13,31 @@ disconnected the hub is already failing consumer calls with -32000, and outbound
 notifications are dropped (the hub re-lists tools after every registration, so a
 dropped ``list_changed`` heals itself).
 
-The reconnect contract, stated once — everything below refers back here:
+The reconnect contract, stated once — everything below refers back here. Every
+case is one of three behaviors — ``stop_fatal``, ``stop_quiet``, ``reconnect``
+— and a reconnecting case additionally carries a schedule, ``exponential`` or
+``max_only``:
 
 - 401 at upgrade, or close code 4001 after establishment — the credential is
-  dead (revoked/expired token, wrong token kind, deleted service): stop and
-  raise :class:`CredentialsError`. Never retry a dead credential.
-- 403 at upgrade, or close code 4002 — the service is archived: keep retrying
-  at the maximum backoff, so unarchiving heals within a minute without touching
-  the bot.
+  dead (revoked/expired token, wrong token kind, deleted service):
+  ``stop_fatal``, raising :class:`CredentialsError`. Never retry a dead
+  credential.
+- 403 at upgrade, or close code 4002 — the service is archived: ``reconnect``
+  on the ``max_only`` schedule, so unarchiving heals within a minute without
+  touching the bot.
 - close code 4000 (after ``hub/replaced``) — a newer connection took the slot:
-  stop quietly, never reconnect (two copies of a bot fighting for the slot is
-  an operator error worth surfacing).
+  ``stop_quiet``, never reconnect (two copies of a bot fighting for the slot
+  is an operator error worth surfacing).
 - a rejected ``hub/register`` declaration (bad role name, non-compiling
-  pattern, over caps) — raise :class:`RegistrationError`: identical input
-  cannot start succeeding, so it is surfaced, not retried.
-- everything else — network drop, hub deploy, close 4003/4004 — reconnect
-  forever with jittered exponential backoff (1 s → 60 s cap); a truly deleted
+  pattern, over caps) — ``stop_fatal``, raising :class:`RegistrationError`:
+  identical input cannot start succeeding, so it is surfaced, not retried.
+- everything else — network drop, hub deploy, close 4003/4004 — ``reconnect``
+  on the ``exponential`` schedule (jittered, 1 s → 60 s cap); a truly deleted
   service becomes a 401 at the next upgrade, which is the fatal path above.
 """
 
 from collections.abc import Callable
-from typing import Any
+from typing import Annotated, Any
 
 # The author's MCP server — mcp.server.MCPServer (or the low-level
 # mcp.server.Server) from the ``mcp`` package v2; external, never imported here.
@@ -54,11 +58,23 @@ __all__ = [
     "McpServer",
     "RegistrationError",
     "Roles",
+    "Secret",
     "backoff_delay",
     "caller",
     "sensitive",
     "serve",
 ]
+
+# Secret[T] — the pydantic-style spelling of §7's sensitive-field declaration:
+# annotate a tool input or output model field as ``Secret[str]`` and the emitted
+# JSON Schema carries ``writeOnly: true`` at that path, in both directions — the
+# hub reads the marker and strips it from outputSchemas served to consumers.
+# Schema-only, deliberately NOT pydantic's SecretStr: runtime values validate,
+# repr, and serialize normally — real values cross the wire, and the HUB masks
+# before anything is persisted or shown (§15). At implementation the marker is a
+# json_schema_extra annotation the schema generator honors; the string here is a
+# skeleton placeholder.
+type Secret[T] = Annotated[T, "pmcp:secret"]
 
 
 def backoff_delay(attempt: int, rng: Callable[[], float]) -> float:
@@ -194,8 +210,10 @@ def caller(meta: dict[str, Any] | None) -> CallerIdentity:
 
 
 def sensitive(schema: dict[str, Any], paths: list[str]) -> dict[str, Any]:
-    """Mark input-schema properties sensitive so the hub redacts them (§7,
-    "Sensitive-field redaction"): returns a copy of ``schema`` — the original
+    """Mark schema properties sensitive by path — the hand-written-schema
+    spelling of §7's sensitive-field declaration (:data:`Secret` is the
+    model-field spelling). Works on an input schema or an output schema alike:
+    returns a copy of ``schema`` — the original
     is not mutated — with ``writeOnly: true`` (the standard JSON Schema
     keyword; no invented syntax) set at each dot-path in ``paths``, e.g.
     ``"password"`` or ``"credentials.token"``. A path naming no property in the

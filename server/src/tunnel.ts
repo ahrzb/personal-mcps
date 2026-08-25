@@ -4,11 +4,16 @@
  * service, addressed by the opaque `service.id` — never user/slug, so deleting a user and
  * recreating the username can never rebind to a stale DO.
  *
- * This module owns the whole §6 wire protocol so no other module ever learns it:
+ * This module owns the whole §6 wire protocol so no other module ever learns its
+ * MECHANICS — framing, correlation, the attachment format. The protocol's published
+ * VOCABULARY (the 4000–4004 close codes and the hub/* method names) is different: it
+ * is the cross-language contract the client libraries hard-code, so it is exported
+ * below for exactly one consumer — the contracts fixture producer (§4 of the testing
+ * strategy; the tunnel protocol suite asserts observed wire values equal these
+ * exports, locking behavior to the table). No sibling module imports them:
  * hub/register validation with the 10 s registration deadline (close 4004), newest-wins
- * replacement at socket *acceptance* (hub/replaced, then close 4000), the 4000–4004
- * close-code vocabulary and its client retry semantics (only 4001/4002 escape, as
- * SeverCode), liveness by WebSocket protocol pings (runtime auto-pong, no application
+ * replacement at socket *acceptance* (hub/replaced, then close 4000) — only 4001/4002
+ * escape as SeverCode for callers — liveness by WebSocket protocol pings (runtime auto-pong, no application
  * heartbeat), and the stateless 2026-07-28 wire — `initialize` never crosses; every
  * hub-originated request is self-contained, carrying its protocol `_meta` fields. It also
  * owns the hibernation discipline: socket identity rides serializeAttachment, in-flight
@@ -26,6 +31,13 @@ import type { JsonRpcRequest, JsonRpcResponse, ServiceBackend, Tool } from "./ga
 import type { Service } from "./registry";
 
 /**
+ * Close code for connection replacement: a newer socket took the slot (after the
+ * hub/replaced notification) — the client stops quietly and never reconnects (§6).
+ * Exported as published vocabulary (module header); never a SeverCode.
+ */
+export const CLOSE_REPLACED = 4000;
+
+/**
  * Close code for token-revoked / service-deleted evictions: the client library treats it
  * like a 401 — stop reconnecting and surface a credentials error (§6).
  */
@@ -38,10 +50,30 @@ export const CLOSE_REVOKED = 4001;
 export const CLOSE_ARCHIVED = 4002;
 
 /**
- * The only close codes a caller may hand to sever(). The rest of the 4000–4004
- * vocabulary — 4000 replaced, 4003 row-gone-during-register race, 4004 protocol /
- * registration deadline — is issued by this module alone and never appears in any
- * other module's code.
+ * Close code for the row-gone-during-register race: the service row vanished between
+ * upgrade and registration — the client reconnects; a truly deleted service meets
+ * 401 at the next upgrade (§6). Published vocabulary; never a SeverCode.
+ */
+export const CLOSE_ROW_GONE = 4003;
+
+/**
+ * Close code for protocol violations and the missed registration deadline — also the
+ * self-heal path for an unintelligible hibernation attachment. The client
+ * reconnects (§6). Published vocabulary; never a SeverCode.
+ */
+export const CLOSE_PROTOCOL = 4004;
+
+/**
+ * The hub/* control-frame method names — the other half of the published wire
+ * vocabulary (§6): `register` is the client's one pre-traffic obligation,
+ * `replaced` the hub's step-aside notification before CLOSE_REPLACED.
+ */
+export const HUB_METHODS = { register: "hub/register", replaced: "hub/replaced" } as const;
+
+/**
+ * The only close codes a caller may hand to sever(). CLOSE_REPLACED / CLOSE_ROW_GONE /
+ * CLOSE_PROTOCOL are issued by this module alone — exported above as contract
+ * vocabulary, never accepted here.
  */
 export type SeverCode = typeof CLOSE_REVOKED | typeof CLOSE_ARCHIVED;
 
@@ -106,12 +138,15 @@ export const tunnelBackend: ServiceBackend = {
   },
 
   /**
-   * The schema-declared half of §7's redaction union: hands the cached catalog
-   * entry's inputSchema to registry.writeOnlyPaths — the one definition of the
-   * path grammar — and returns its dot-paths; the caller unions config-declared
-   * `redact` paths in itself.
+   * The schema-declared half of §7's redaction union, both directions: hands the
+   * cached catalog entry's inputSchema and outputSchema each to
+   * registry.writeOnlyPaths — the one definition of the path grammar — and returns
+   * `{ args, results }` (an absent outputSchema yields empty results); the caller
+   * unions config-declared `redact` / `redact_results` paths in itself.
    * Returns null when the tool is absent from the cached catalog (never-connected
-   * services included): the gateway answers -32001 (indistinguishable from
+   * services included) OR cached flagged schema-unsound (its schema tripped
+   * validateSchemaIndirection at catalog warm, §7): the gateway answers -32001
+   * (indistinguishable from
    * not-permitted, §7) and nothing downstream runs. Never touches the live socket.
    */
   async sensitivePaths(service, tool) {
@@ -208,7 +243,7 @@ export class ServiceConnection {
    * (limits.REGISTRATION_DEADLINE_MS). Anything that is not a WebSocket upgrade is rejected.
    */
   async fetch(req: Request): Promise<Response> {
-    // deps: DO ctx.acceptWebSocket · DO ws.serializeAttachment · DO ctx.storage.setAlarm · audit.record
+    // deps: DO ctx.acceptWebSocket · DO ws.serializeAttachment · DO ctx.storage.setAlarm · audit.record · audit.resolveAuditConfig
     throw new Error("unimplemented");
   }
 
@@ -219,12 +254,18 @@ export class ServiceConnection {
    * a vanished service row closes 4003, success replies {ok:true}, writes the
    * connect.register audit row, and immediately issues tools/list to warm the catalog.
    * After registration: correlation replies resolve the pending map, and
-   * notifications/tools/list_changed invalidates the cached catalog and re-lists. Any
+   * notifications/tools/list_changed invalidates the cached catalog and re-lists.
+   * When the warmed catalog lands, each tool's input/output schemas run
+   * registry.validateSchemaIndirection: violations are LOUD — echoed to the service
+   * as a warning frame and logged — and the tool is cached flagged schema-unsound,
+   * which makes sensitivePaths answer null for it (§7's -32001 / no-body handling);
+   * the registration itself still succeeds, so one exotic tool never bricks the
+   * service. Any
    * pre-registration message other than hub/register is a protocol error — error reply,
    * then close 4004. The hub never forwards consumer traffic to an unregistered socket.
    */
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    // deps: registry.upsertDeclaredRoles · audit.record · DO SQLite `catalog` · DO ws.serializeAttachment
+    // deps: registry.upsertDeclaredRoles · registry.validateSchemaIndirection · audit.record · audit.resolveAuditConfig · DO SQLite `catalog` · DO ws.serializeAttachment
     throw new Error("unimplemented");
   }
 
@@ -261,7 +302,10 @@ export class ServiceConnection {
 
   /**
    * The cached catalog, verbatim as last received from the service — names,
-   * descriptions, inputSchema (the schemas are what sensitivePaths walks). Empty for a
+   * descriptions, inputSchema and outputSchema (the schemas are what sensitivePaths
+   * walks, both directions §7; serving-time `writeOnly` stripping on outputSchemas
+   * is the gateway's job, never done here — the cache stays the verbatim oracle).
+   * Empty for a
    * service that has never completed a registration. Never touches the socket.
    */
   async listTools(): Promise<Tool[]> {

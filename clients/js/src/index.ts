@@ -7,8 +7,9 @@
 // (re-sent on every (re)connect), the split between hub/* control frames and MCP
 // traffic, WebSocket protocol pings (~25 s, no application heartbeat), and the
 // entire disconnect policy — the close-code vocabulary 4000–4004 and the upgrade
-// statuses 401/403 map onto exactly three behaviors (stop quietly, stop with an
-// error, reconnect with backoff), decided in HubTransport and nowhere else.
+// statuses 401/403 map onto exactly three behaviors (`stop_fatal`, `stop_quiet`,
+// `reconnect`), with a reconnecting case additionally carrying a schedule
+// (`exponential` or `max_only`), decided in HubTransport and nowhere else.
 //
 // HIDES the wire completely: the author never sees a socket, a JSON-RPC frame, or
 // a reconnect. One deliberate absence: the library never buffers traffic for an
@@ -221,8 +222,25 @@ export function caller(meta: Record<string, unknown> | undefined): CallerIdentit
 }
 
 /**
- * Mark input-schema properties sensitive so the hub redacts them (§7,
- * "Sensitive-field redaction"): returns a copy of `schema` — the original is not
+ * Mark one schema node secret — the zod-style spelling of §7's sensitive-field
+ * declaration, usable wherever a field type goes: `secret(z.string())` inside a
+ * tool's INPUT shape or its OUTPUT shape alike. Returns a derived schema (the
+ * input is untouched) whose emitted JSON Schema carries `writeOnly: true` at
+ * that node — the hub reads the marker in both directions and strips it from
+ * outputSchemas served to consumers (§7). Schema-only: runtime values validate
+ * and serialize exactly as the wrapped schema does — real values cross the wire,
+ * and the HUB masks before anything is persisted or shown (§15).
+ */
+export function secret<S>(schema: S): S {
+  // deps: none
+  throw new Error("unimplemented");
+}
+
+/**
+ * Mark schema properties sensitive by path — the hand-written-schema spelling of
+ * §7's sensitive-field declaration, for authors not using zod shapes. Works on an
+ * input schema or an output schema alike: returns a copy of `schema` — the
+ * original is not
  * mutated — with `writeOnly: true` (the standard JSON Schema keyword; no invented
  * syntax) set at each dot-path in `paths`, e.g. "password" or
  * "credentials.token". A path naming no property in the schema is a TypeError: a

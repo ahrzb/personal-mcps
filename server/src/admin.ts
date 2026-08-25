@@ -29,6 +29,13 @@ import type { ServiceBackend } from "./gateway";
  */
 export type AdminOp = {
   schema: unknown;
+  /**
+   * Optional result schema (zod at implementation), rendered as the tool's MCP
+   * outputSchema. Declared only where it carries weight: token_issue marks its key
+   * field `writeOnly`, so §15's uniform body rule masks the one admin secret — the
+   * reason no pmcp-specific logging rule exists.
+   */
+  outputSchema?: unknown;
   handler(ownerId: string, input: unknown): Promise<unknown>;
 };
 
@@ -54,8 +61,11 @@ function assertSlugNotReserved(slug: string): void {
 export const ops: Record<string, AdminOp> = {
   /**
    * List the namespace's services, including the virtual builtin `pmcp` entry flagged
-   * `builtin: true` (no row exists for it, §8). Rows carry everything diff/apply reads
-   * (§8 pins the completeness): kind, declared roles, redact paths, archived; tunneled —
+   * `builtin: true` (no row exists for it, §8; its synthesized flags are pinned —
+   * log_bodies true, redact/redact_results empty — the same values gateway's
+   * virtualPmcpService carries, §15). Rows carry everything diff/apply reads
+   * (§8 pins the completeness): kind, declared roles, redact and redact_results
+   * paths, log_bodies, archived; tunneled —
    * connection status (online/offline) and last seen; proxied — endpoint, auth mode,
    * forward_identity, and for `auth: oauth` the connection state (not connected /
    * connected / needs reconnect). Never credentials or token material.
@@ -82,7 +92,9 @@ export const ops: Record<string, AdminOp> = {
   },
 
   /**
-   * Create a service. `{ slug, name?, description?, kind, redact? }` plus, for proxied
+   * Create a service. `{ slug, name?, description?, kind, redact?, redact_results?,
+   * log_bodies? }` (log_bodies absent defaults by kind — tunneled on, proxied off,
+   * §15) plus, for proxied
    * kind only: `endpoint`, `roles` (virtual role definitions), `auth` ('headers' |
    * 'oauth', default 'headers'), `forward_identity` (default false) — those fields are
    * rejected on tunneled creates. Slug is `[a-z0-9-]`, unique per owner, never `pmcp`.
@@ -272,13 +284,17 @@ export const ops: Record<string, AdminOp> = {
   /**
    * `{ kind: 'service_account' | 'service', slug, expires_in? }` → the plaintext token,
    * present ONLY in this result, once — never stored (SHA-256 at rest), never logged,
-   * never readable again (§4, §8). Defaults by kind (§8): service-account tokens 90 d
+   * never readable again (§4, §8). The op declares an outputSchema with the key field
+   * marked `writeOnly`, so §15's uniform body rule masks it wherever bodies are
+   * recorded — the reply the CALLER sees is never redacted (§7), only persistence is.
+   * Defaults by kind (§8): service-account tokens 90 d
    * (overridable, including 'never'); service tokens no expiry (revoke-on-compromise).
    * `kind: 'service'` is rejected for proxied services (nothing connects) and `pmcp` is
    * rejected like everywhere. Result also carries the row id and display prefix.
    */
   token_issue: {
     schema: undefined,
+    outputSchema: undefined,
     async handler(ownerId: string, input: unknown) {
       // deps: registry.getService · registry.getAccount · identity.issueToken · audit.record
       throw new Error("unimplemented");
@@ -315,7 +331,9 @@ export const ops: Record<string, AdminOp> = {
   /**
    * `{ principal?, service?, event?, tool?, session?, since?, until?, limit?, offset? }`
    * → `{ rows, total }`, newest first (§8) — the ops-table front over audit.query, which
-   * pins the filter semantics and defaults. Read-only; `pmcp audit`, /audit, and the
+   * pins the filter semantics and defaults. Rows carry the recorded body fields when
+   * present — post-redaction and stub-substituted, the only stored form (§15).
+   * Read-only; `pmcp audit`, /audit, and the
    * JSONL export all reduce to it.
    */
   audit_query: {
@@ -331,10 +349,13 @@ export const ops: Record<string, AdminOp> = {
  * The builtin `pmcp` service — the third ServiceBackend beside tunnel and upstream, so
  * the gateway pipeline (auth → filter → archived → approvals → dispatch) has no admin
  * special case. listTools renders every op as a Tool (name = ops key, inputSchema from
- * its schema); call dispatches to ops[tool].handler with `service.ownerId` and wraps a
+ * its schema, outputSchema where declared); call dispatches to ops[tool].handler with
+ * `service.ownerId` and wraps a
  * successful result — HubError escapes to the gateway, the only place errors become
- * JSON-RPC. sensitivePaths answers [] for known ops (no admin tool takes a sensitive
- * argument; plaintext tokens are RESULTS, kept out of logs by §15's pmcp-body rule) and
+ * JSON-RPC. sensitivePaths answers `{ args: [], results: [...] }` for known ops — no
+ * admin tool takes a sensitive argument, and the only sensitive result is
+ * token_issue's `writeOnly`-marked key, masked by §15's uniform body rule (no
+ * pmcp-specific logging rule exists) — and
  * null for unknown names. Only `service.ownerId` is consulted — the pmcp Service value
  * is virtual, no row exists for it (§8).
  */

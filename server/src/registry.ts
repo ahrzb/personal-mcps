@@ -9,10 +9,12 @@
 // allow-beats-approval), role-declaration validation shared by hub/register and
 // proxied config, textual drift detection on re-declaration, the `pmcp` slug
 // reservation — and the redaction path grammar: writeOnlyPaths/applyRedaction are
-// the system's ONE definition of how sensitive-argument paths are found and
-// applied (tunnel walks schemas with the former; approvals masks with the latter).
+// the system's ONE definition of how sensitive paths are found and applied, in
+// BOTH directions (§7): tunnel walks cached input and output schemas with the
+// former; approvals and the gateway's audit-body path mask with the latter.
 //
-// HIDES: the roles_json / redact column formats (the tunnel DO hands wire-shaped
+// HIDES: the roles_json / redact_json / redact_results_json / log_bodies column
+// formats (the tunnel DO hands wire-shaped
 // declarations to upsertDeclaredRoles and never touches the columns), how
 // patterns compile and match, and how grant rows plus a declaration resolve into
 // a ToolFilter. This module never writes audit rows, never maps errors to
@@ -44,6 +46,7 @@ export type Service = {
   slug: string;
   kind: ServiceKind;
   archived: boolean;
+  logBodies: boolean; // §15 — whether tools/call audit rows carry this service's bodies
 };
 
 /**
@@ -125,6 +128,7 @@ export type ServiceDetail = Service & {
   forwardIdentity: boolean;                // proxied only; X-Pmcp-* headers upstream
   declaredRoles: RoleDeclaration;
   redact: Record<string, string[]>;        // tool-or-pattern → argument paths (config-declared, §7)
+  redactResults: Record<string, string[]>; // same shape, applied to result structuredContent (§7)
   createdAt: number;
   lastConnectedAt: number | null;          // tunneled only, null until first registration
 };
@@ -145,6 +149,9 @@ export type ServiceDraft = {
   forwardIdentity?: boolean;
   roles?: RoleDeclaration;
   redact?: Record<string, string[]>;
+  redactResults?: Record<string, string[]>;
+  /** absent defaults by kind: tunnel true, proxy false (§15) */
+  logBodies?: boolean;
 };
 
 /**
@@ -159,6 +166,8 @@ export type ServicePatch = Partial<{
   forwardIdentity: boolean;
   roles: RoleDeclaration;
   redact: Record<string, string[]>;
+  redactResults: Record<string, string[]>;
+  logBodies: boolean;
 }>;
 
 /** A service-account row. Timestamps are epoch milliseconds. */
@@ -206,9 +215,11 @@ export function matchesPattern(pattern: string, tool: string): boolean {
 
 /**
  * Validates a role declaration against the rules shared by hub/register and
- * proxied config: role names match [a-z0-9_-]{1,64}, `all` is reserved (built
- * in, never declarable), every pattern compiles under the pattern language,
- * patterns are ≤128 chars, and each role holds ≤64 patterns. Returns
+ * proxied config: role names match [a-z0-9_-] within limits.ROLE_NAME_MAX_LENGTH,
+ * `all` is reserved (built in, never declarable), every pattern compiles under
+ * the pattern language, and the size caps hold (limits.ROLE_PATTERN_MAX_LENGTH
+ * per pattern, limits.ROLE_PATTERNS_MAX per role — named constants, so tests
+ * never assert literals). Returns
  * human-readable violations, empty when valid ({} is valid — no roles
  * declared). Pure; callers decide whether violations become a JSON-RPC reply
  * (the tunnel DO) or a config error (admin/YAML).
@@ -234,11 +245,18 @@ export function buildToolFilter(entries: GrantEntry[], declared: RoleDeclaration
 
 /**
  * The schema-declared half of §7's redaction union, as pure data: walks a JSON
- * Schema for properties marked `writeOnly: true` at any depth and returns their
- * dot-paths relative to `params.arguments` (e.g. "credentials.token") — the same
- * path grammar applyRedaction consumes and config `redact` entries are written
- * in. Total over anything schema-shaped: a malformed or absent schema yields [],
- * never an error (an unredactable tool is refused upstream on other grounds).
+ * Schema — an inputSchema or an outputSchema alike, the walk is
+ * direction-blind — for properties marked `writeOnly: true` and
+ * returns their dot-paths relative to the walked schema's root
+ * (`params.arguments` for inputs, `structuredContent` for outputs; e.g.
+ * "credentials.token") — the same path grammar applyRedaction consumes and
+ * config `redact` / `redact_results` entries are written in. "At any depth"
+ * includes indirection (§7): same-document `#/…` refs are resolved by JSON
+ * Pointer, marks are unioned across allOf/anyOf/oneOf branches (a field secret
+ * in ANY branch masks — over-masking is safe), and secret-free cycles are cut.
+ * Callers guarantee the schema passed validateSchemaIndirection — the walk
+ * never guesses at indirection that validator refuses. A malformed or absent
+ * schema still yields [], never an error.
  */
 export function writeOnlyPaths(schema: unknown): string[] {
   // deps: none
@@ -246,13 +264,38 @@ export function writeOnlyPaths(schema: unknown): string[] {
 }
 
 /**
+ * The refuse-line for schema indirection the walk cannot soundly resolve (§7):
+ * external or non-`#/` refs, `$id`/`$anchor`/`$dynamicRef` resolution games, and
+ * a recursive cycle carrying `writeOnly` inside it (its path set is infinite —
+ * no finite dot-path list can express the mask). Returns human-readable
+ * violations naming the construct, empty when the schema is walkable — same
+ * shape and same registration-time role as validateRoles. This is what keeps
+ * unsupported indirection LOUD: an unresolved ref could conceal a mark, so a
+ * tool that trips this line gets no derivable redaction map at all — the
+ * backend answers sensitivePaths null and the existing -32001 / no-body
+ * machinery takes over (§7, §15). Never a silent [].
+ */
+export function validateSchemaIndirection(schema: unknown): string[] {
+  // deps: none
+  throw new Error("unimplemented");
+}
+
+/**
+ * The one spelling of a masked value — what applyRedaction writes and every
+ * surface shows. Exported so tests and renderers reference the name, never
+ * re-type the literal (the constants discipline, §16).
+ */
+export const REDACTED = "‹redacted›";
+
+/**
  * The one masking transformation: a copy of `args` with the value at every
- * matching dot-path replaced by "‹redacted›" — the input is never mutated, so
+ * matching dot-path replaced by REDACTED — the input is never mutated, so
  * callers hold redacted data as a new value rather than trusting a flag. A path
  * meeting an array applies to every element; a path absent from `args` is
- * ignored. Everything the hub ever persists or displays about approval
- * arguments flows through here first — hashing included (§7: args_hash is
- * post-redaction).
+ * ignored. Direction-blind: the same function masks `params.arguments` and
+ * result `structuredContent`, each with its own path union (§7). Every body the
+ * hub ever persists or displays — approval args, the audit body columns —
+ * flows through here first, hashing included (§7: args_hash is post-redaction).
  */
 export function applyRedaction(
   args: Record<string, unknown>,
@@ -307,6 +350,8 @@ export class Registry {
    * prefix split relies on it), the reserved `pmcp` slug, a duplicate (owner,
    * slug), and kind/field mismatches: proxied drafts need upstreamUrl and a
    * declaration that passes validateRoles; tunneled drafts must carry neither.
+   * An absent `logBodies` resolves here, by kind (tunnel true, proxy false,
+   * §15) — the stored column is always concrete, never "default".
    */
   async createService(draft: ServiceDraft): Promise<ServiceDetail> {
     // deps: validateRoles · D1 `service` · crypto
@@ -317,7 +362,8 @@ export class Registry {
    * Patches one service row. Kind is unpatchable by construction. Declared
    * roles and upstream fields are writable for proxied rows only (tunneled
    * declarations arrive via upsertDeclaredRoles) and get the same validation
-   * as create; redact paths are writable for either kind. Flipping
+   * as create; redact/redactResults paths and logBodies are writable for
+   * either kind. Flipping
    * upstreamAuthMode clears the stored credential envelope in the same write —
    * the mode column and the envelope kind can never disagree; the audit row
    * for that wipe is the caller's. Throws on an unknown id.
@@ -427,13 +473,19 @@ export class Registry {
   }
 
   /**
-   * The CONFIG-declared sensitive-argument paths for one tool: the union of
-   * paths under every redact key matching the tool (keys are tool names or
-   * patterns in the same pattern language). Empty when nothing is declared.
-   * Schema-declared writeOnly paths are the tunnel backend's business; the
-   * gateway unions the two before anything is stored or shown.
+   * The CONFIG-declared sensitive paths for one tool in one direction: the
+   * union of paths under every matching key of the direction's config map —
+   * `redact` for "args", `redact_results` for "results" (§7; keys are tool
+   * names or patterns in the same pattern language). Empty when nothing is
+   * declared. Schema-declared writeOnly paths are the tunnel backend's
+   * business; the gateway unions the two per direction before anything is
+   * stored or shown.
    */
-  async redactPathsFor(service: Service, tool: string): Promise<string[]> {
+  async redactPathsFor(
+    service: Service,
+    tool: string,
+    direction: "args" | "results",
+  ): Promise<string[]> {
     // deps: matchesPattern · D1 `service`
     throw new Error("unimplemented");
   }

@@ -3,7 +3,8 @@
  *
  * This module OWNS the YAML config language and everything about interpreting it:
  * the document shape and its defaults (kind: tunnel, auth: headers,
- * forward_identity: false, archived: false, name: slug), the `role:approval`
+ * forward_identity: false, archived: false, name: slug, redact/redact_results: {},
+ * log_bodies by kind — tunnel true, proxy false, §15), the `role:approval`
  * grant suffix, every validation severity (what warns vs what hard-errors), the
  * field-by-field equality that decides an update, what counts as destructive,
  * and the order plan steps must execute in. It HIDES YAML from everything else:
@@ -37,6 +38,10 @@ export type DesiredService = {
   archived: boolean;
   /** sensitive argument paths per tool-name-or-pattern (§7) — either kind */
   redact: Record<string, string[]>;
+  /** identical shape, applied to result structuredContent (§7) — either kind */
+  redactResults: Record<string, string[]>;
+  /** audit body logging (§15) — either kind; the normalized default is by kind */
+  logBodies: boolean;
   endpoint?: string;
   auth?: "headers" | "oauth";
   forwardIdentity?: boolean;
@@ -82,6 +87,8 @@ export type CurrentService = {
   /** declared roles — from registration for tunnel kind, from config for proxy kind */
   roles: Record<string, string[]>;
   redact: Record<string, string[]>;
+  redactResults: Record<string, string[]>;
+  logBodies: boolean;
   endpoint?: string;
   auth?: "headers" | "oauth";
   forwardIdentity?: boolean;

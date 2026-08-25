@@ -322,8 +322,12 @@ export type AuditFilters = {
 
 /**
  * `pmcp audit` — audit_query presentation (§8). Default: one page as a table,
- * newest first, plus the "N events match" line from `total`. `exportJsonl`
- * instead streams EVERY matching row to stdout, one JSON object per line, by
+ * newest first, plus the "N events match" line from `total`; recorded bodies
+ * (§15 — post-redaction and stub-substituted, the only stored form) render in a
+ * row's detail, with stubs shown as typed size placeholders
+ * (`‹blob image/png · 4.2 MB›`), never raw. `exportJsonl`
+ * instead streams EVERY matching row to stdout, one JSON object per line —
+ * bodies included verbatim as stored — by
  * re-querying in limit-sized chunks — the same rows as the web export (§10,
  * §13), never held in memory at once. Exit 0 even when nothing matches.
  */

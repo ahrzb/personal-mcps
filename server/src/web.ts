@@ -41,7 +41,10 @@ type PageRouter = unknown;
  * - /audit — read-only view over audit.query with its exact filters; desktop page
  *   numbers and mobile "Load more" are two presentations of the one { rows, total }
  *   offset/limit contract, and a row's client session id links back here as
- *   ?session=…. "Export JSONL" streams via streamAuditJsonl. No mutations, no CSRF.
+ *   ?session=…. The expanded row detail renders the recorded bodies when present
+ *   (post-redaction args / result structuredContent, §15), with BodyStubs shown as
+ *   typed size placeholders (e.g. ‹blob image/png · 4.2 MB›), never bytes.
+ *   "Export JSONL" streams via streamAuditJsonl. No mutations, no CSRF.
  * - /approvals, /approvals/<id> — pending requests and decision history; approve and
  *   reject POST into the approval_decide admin op; the per-browser "Enable
  *   notifications" control POSTs the browser's push subscription to

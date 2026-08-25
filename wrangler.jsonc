@@ -45,8 +45,10 @@
 
   "vars": {
     // Canonical public https origin: scheme + host, no trailing slash, no path.
-    // Every absolute URL the hub emits derives from this one value.
-    "PUBLIC_ORIGIN": "https://mcp.example.com"
+    // Every absolute URL the hub emits derives from this one value — including
+    // better-auth's baseURL and cookie domain (§4: the auth instance is built
+    // per-request from this var; nothing is configured on better-auth's side).
+    "PUBLIC_ORIGIN": "https://personal-mcps.ahrzb.workers.dev"
 
     // Optional overrides — leave unset to use the defaults in server/src/limits.ts.
     // Both are strings here and parsed once by the composition root.

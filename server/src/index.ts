@@ -3,9 +3,25 @@
 // derived from), the wrangler Env shape (every binding and secret named exactly once),
 // the top-level route table as data — from which RESERVED_ROUTES is derived so served
 // routes and reserved usernames can never drift (§2; the §16 router-walk test pins this
-// export) — the daily cron fan-out, and the ServiceConnection Durable Object re-export
+// export, and identity receives the set as an argument rather than importing it back) —
+// the daily cron fan-out, and the ServiceConnection Durable Object re-export
 // wrangler requires from the entry module. It HIDES deployment topology: no sibling ever
 // names a binding, a secret, a cron schedule, or a URL prefix.
+
+import { Hono } from "hono";
+import { mcpMessage } from "./gateway";
+import {
+  anonymousNotFound,
+  authRoutes,
+  bootstrapRoute,
+  requireOwnerSession,
+  resolvePrincipal,
+  unauthorized,
+  USERNAME_CHARSET,
+  whoamiRoute,
+} from "./identity";
+import type { Principal } from "./identity";
+import { PMCP_SLUG, Registry } from "./registry";
 
 /** @cloudflare/workers-types D1Database — external types never imported in skeletons. */
 type D1Database = unknown;
@@ -117,8 +133,17 @@ export default {
    * on /connect, BOOTSTRAP_SECRET on /internal).
    */
   async fetch(request: Request, env: Env): Promise<Response> {
-    // deps: hono · identity.authRoutes · identity.whoamiRoute · identity.bootstrapRoute · web.pageRoutes · gateway.mcpRoutes · tunnel.handleConnect · upstream.clientMetadata · audit.resolveAuditConfig
-    throw new Error("unimplemented");
+    // deps: hono · identity.authRoutes · identity.whoamiRoute · identity.bootstrapRoute · web.pageRoutes · gateway.mcpMessage · tunnel.handleConnect · upstream.clientMetadata · audit.resolveAuditConfig
+    try {
+      return await router().fetch(request, env);
+    } catch (thrown) {
+      // identity's guards refuse by THROWING a built Response (its failure convention);
+      // the composition root is where those become the answer, verbatim. Hono rethrows
+      // non-Error values rather than routing them through its error handler, so this is
+      // the one place they can be caught.
+      if (thrown instanceof Response) return thrown;
+      throw thrown;
+    }
   },
   /**
    * The daily cron fan-out (§15, §7): flip past-expiry pending approvals to expired
@@ -136,3 +161,159 @@ export default {
     throw new Error("unimplemented");
   },
 };
+
+/**
+ * The router, built once per isolate. Registration order is the route table's order plus
+ * the `/:user/mcp*` fallthrough last, so a reserved segment can never be shadowed by a
+ * username — and the reservation is checked again at the door anyway, because a route
+ * this worker does not serve yet (a stub below) must not become a claimable namespace.
+ */
+let built: Hono<{ Bindings: Env }> | undefined;
+function router(): Hono<{ Bindings: Env }> {
+  return (built ??= buildRouter());
+}
+
+function buildRouter(): Hono<{ Bindings: Env }> {
+  const app = new Hono<{ Bindings: Env }>();
+  // ONE 404 for the whole worker: an unrouted path, a foreign namespace, a service the
+  // caller holds no grants on, and a disabled bootstrap route all answer with these
+  // bytes. "Indistinguishable from route-not-found" is only true if it is the same
+  // Response, so identity builds it and this is where the router agrees to use it.
+  app.notFound(() => anonymousNotFound());
+
+  // better-auth's own surface (§4) and the CLI's one non-MCP data route (§8).
+  app.route("/api/auth", authRoutes() as Hono);
+  app.route("/api", whoamiRoute() as Hono);
+
+  // §12: the bootstrap route EXISTS only while its secret does. Unset → nothing is
+  // mounted to answer, so the notFound above does, which is the spec's "404 for
+  // everything". The secret is read here and passed in: no sibling names a binding.
+  app.post("/internal/users", async (c) => {
+    const secret = c.env.BOOTSTRAP_SECRET;
+    if (!secret) return anonymousNotFound();
+    return bootstrapApp(secret).fetch(c.req.raw, c.env);
+  });
+
+  // §4/§13: credential management is the one cookie-session surface whose GUARD is wired
+  // here — a bearer-sourced session never reaches it, and it demands recent auth. The
+  // page behind the guard is the web dispatch's.
+  app.all("/account", accountGuard);
+  app.all("/account/*", accountGuard);
+
+  // Everything else the route table names is served as a stub: registered, so §2's
+  // reservation and the router agree, and answering 501 so nothing mistakes a stub for
+  // a working page.
+  for (const route of ROUTES) {
+    if (WIRED_ROUTES.has(route)) continue;
+    app.all(`/${route}`, notImplemented);
+    app.all(`/${route}/*`, notImplemented);
+  }
+
+  // §7's two consumer endpoint shapes. POST only — the 2026-07-28 revision is
+  // POST-only, and every other method falls through to the same 404 an unknown path
+  // gets.
+  app.post("/:user/mcp", (c) => mcpEntry(c.req.raw, c.env, c.req.param("user")));
+  app.post("/:user/mcp/:slug", (c) =>
+    mcpEntry(c.req.raw, c.env, c.req.param("user"), c.req.param("slug")),
+  );
+  return app;
+}
+
+/** The top-level segments this worker actually wires; the rest of ROUTES is stubbed. */
+const WIRED_ROUTES: ReadonlySet<string> = new Set(["api", "internal", "account"]);
+
+/** A route the table reserves and no dispatch has built yet. */
+const notImplemented = () => new Response("Not Implemented", { status: 501 });
+
+/** The §4/§13 guard on /account, in front of a page a later dispatch supplies. */
+async function accountGuard(c: { req: { raw: Request } }): Promise<Response> {
+  await requireOwnerSession(c.req.raw, { recent: true });
+  return notImplemented();
+}
+
+/**
+ * The bootstrap sub-app, rebuilt only if the secret it closes over is rotated. §2's
+ * reservation travels with it as an ARGUMENT, like the secret and for the same reason:
+ * the route table it derives from is this module's, and a leg that refuses a reserved
+ * username must not have to import the composition root to learn what one is.
+ */
+let bootstrap: { secret: string; app: Hono } | undefined;
+function bootstrapApp(secret: string): Hono {
+  if (bootstrap?.secret !== secret) {
+    bootstrap = { secret, app: bootstrapRoute(secret, RESERVED_ROUTES) as Hono };
+  }
+  return bootstrap.app;
+}
+
+/**
+ * The door on `/<user>/mcp*` — §7 step 1's whole HTTP-level verdict, in the order the
+ * spec states it: transport hygiene, then who is calling, then whether this namespace and
+ * (scoped) this service exist FOR THEM. Everything here refuses with a status; the
+ * pipeline past it speaks JSON-RPC and never sees a request that failed any of it.
+ *
+ * The refusals are deliberately few and shared: one 401 (identity's, with
+ * `WWW-Authenticate`), one 403 (the Origin rule's — the only 403 on this surface), one
+ * 404 (the worker's single anonymous one). That is what makes the anti-enumeration
+ * claims byte-true instead of merely status-true.
+ *
+ * The resolved principal is HANDED to the pipeline rather than left for it to re-derive:
+ * §7 step 1 runs once per request, here, and gateway never has to trust — or re-prove —
+ * who is calling. That is what "entered ONLY past the door" buys, and it is why a
+ * session-bearer call costs one better-auth round trip rather than two.
+ */
+async function mcpEntry(
+  request: Request,
+  env: Env,
+  user: string,
+  slug?: string,
+): Promise<Response> {
+  // A reserved segment is never a namespace (§2), so a request shaped like one is
+  // route-not-found — checked here as well as at registration, because a segment stubbed
+  // today is a served route tomorrow and must not be claimable in between.
+  if (!USERNAME_CHARSET.test(user) || RESERVED_ROUTES.has(user)) return anonymousNotFound();
+  // OPEN (auth-matrix.test.ts's row says so too): §7 step 1 requires `application/json`
+  // and states no status for its absence, while giving the Origin failure an explicit
+  // 403. Refusing as "no valid principal" is what the stated vocabulary leaves; if the
+  // owner decides 415 or 400, this line and that row change together.
+  if (!isJson(request)) return unauthorized();
+  const origin = request.headers.get("Origin");
+  // If-present-must-match: non-browser consumers send none and pass, which is every
+  // legitimate caller; a browser that sends someone else's origin is the case this exists
+  // for (the SDK's originValidation semantics, which createMcpHandler does not apply).
+  if (origin !== null && origin !== env.PUBLIC_ORIGIN) {
+    return new Response("Forbidden", {
+      status: 403,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  const principal = await resolvePrincipal(request);
+  if (slug !== undefined && !(await visibleOnScoped(env, principal, slug))) {
+    return anonymousNotFound();
+  }
+  return mcpMessage(request, env, principal, slug);
+}
+
+/** §7 step 1: `Content-Type: application/json` is required (parameters ignored). */
+function isJson(request: Request): boolean {
+  const type = request.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+  return type === "application/json";
+}
+
+/**
+ * §7 step 2's scoped-endpoint visibility, as a 404: a service account gets the same
+ * answer for a slug that does not exist and for one it holds no grants on, so a
+ * zero-grant account cannot enumerate the namespace — and the reserved `pmcp` builtin is
+ * one more slug it holds no grants on (§8: admin tokens only), never a 401 that would
+ * invite it to authenticate differently. Owners see every service in their own namespace.
+ */
+async function visibleOnScoped(env: Env, principal: Principal, slug: string): Promise<boolean> {
+  if (slug === PMCP_SLUG) return principal.kind === "user";
+  const registry = new Registry(env.DB);
+  const ownerId = principal.kind === "user" ? principal.userId : principal.ownerId;
+  const service = await registry.getService(ownerId, slug);
+  if (service === null) return false;
+  if (principal.kind === "user") return true;
+  // registry's own signal: an empty roleNames on an account means no grants at all here,
+  // as opposed to grants whose roles have gone undeclared (a normal, listable state).
+  return (await registry.resolveAccess(principal, service)).roleNames.length > 0;
+}

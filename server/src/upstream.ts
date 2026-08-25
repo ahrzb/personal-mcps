@@ -24,9 +24,15 @@
 // upstream_auth_mode, forward_identity, upstream_auth_json).
 
 import { env } from "cloudflare:workers";
-import { HubError } from "./gateway";
-import type { ServiceBackend } from "./gateway";
+import { record } from "./audit";
+// The refusal vocabulary comes from the leaf that owns it, NOT from the consumer pipeline:
+// `class UpstreamError extends HubError` is evaluated at module init, and an edge back
+// into gateway would put HubError in its temporal dead zone on the first import.
+import { HubError } from "./errors";
+import type { BackendCtx, JsonRpcRequest, JsonRpcResponse, ServiceBackend, Tool } from "./gateway";
+import { formatPrincipal } from "./principal";
 import type { Service } from "./registry";
+import { CALL_TIMEOUT_MS } from "./limits";
 
 /**
  * Upstream credential state of a proxied service, as shown by `service_list` /
@@ -92,7 +98,14 @@ export const upstreamBackend: ServiceBackend = {
    */
   async listTools(service, ctx) {
     // deps: D1 `service` · crypto.subtle (AES-GCM envelope) · @modelcontextprotocol/client Client (Streamable HTTP) · audit.record (refresh failure)
-    throw new Error("unimplemented");
+    const relayed = await dial(service, {
+      jsonrpc: "2.0",
+      id: crypto.randomUUID(),
+      method: "tools/list",
+      params: {},
+    });
+    const tools = (relayed.result as { tools?: unknown } | undefined)?.tools;
+    return Array.isArray(tools) ? (tools as Tool[]) : [];
   },
 
   /**
@@ -107,7 +120,7 @@ export const upstreamBackend: ServiceBackend = {
    */
   async call(service, msg, ctx) {
     // deps: D1 `service` · crypto.subtle (AES-GCM envelope) · @modelcontextprotocol/client Client (Streamable HTTP) · audit.record (refresh failure)
-    throw new Error("unimplemented");
+    return dial(service, msg, ctx);
   },
 
   /**
@@ -120,9 +133,75 @@ export const upstreamBackend: ServiceBackend = {
    */
   async sensitivePaths(service, tool) {
     // deps: none
-    throw new Error("unimplemented");
+    return { args: [], results: [] };
   },
 };
+
+/**
+ * One JSON-RPC round trip to the service's upstream endpoint, with every failure class
+ * collapsed into the one -32000 the consumer ever sees. `identity` present ⇔ this is a
+ * forwarded `tools/call`: the `X-Pmcp-*` headers ride only then, and only when the
+ * service opted into `forward_identity` (§7 — default off, and consumer headers are
+ * never copied upstream).
+ *
+ * ponytail: D5 owns this module. What is here is the TRANSPORT alone, which is all the
+ * order-table's proxied allow-twins need: no credential envelope is read (so an upstream
+ * that demands one answers 401 → `upstream_status`), no proactive refresh, no
+ * needs_reconnect flip, and a hand-written POST rather than the SDK `Client` §7 pins
+ * (`@modelcontextprotocol/client` is not a dependency yet). Each of those is an addition
+ * here, not a rewrite of the pipeline above it.
+ */
+async function dial(
+  service: Service,
+  msg: JsonRpcRequest,
+  identity?: BackendCtx,
+): Promise<JsonRpcResponse> {
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT upstream_url, forward_identity FROM service WHERE id = ?`)
+    .bind(service.id)
+    .first<{ upstream_url: string | null; forward_identity: number }>();
+  if (!row?.upstream_url) throw failure("unreachable");
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  if (identity !== undefined && row.forward_identity !== 0) {
+    headers["X-Pmcp-Principal"] = formatPrincipal(identity.principal);
+    headers["X-Pmcp-Roles"] = identity.roles.join(",");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(row.upstream_url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(msg),
+      // Strategy §10: a redirect is answered, never followed — the credential must not
+      // walk off to another origin.
+      redirect: "manual",
+      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw failure((err as { name?: string } | null)?.name === "TimeoutError" ? "timeout" : "unreachable");
+  }
+  // The status line, the headers (WWW-Authenticate included) and the body are never
+  // echoed to a consumer; the class survives only for the audit row's detail (§7).
+  if (!response.ok) throw failure("upstream_status", response.status);
+  const body = (await response.json().catch(() => null)) as JsonRpcResponse | null;
+  if (typeof body !== "object" || body === null || body.jsonrpc !== "2.0") throw failure("bad_body");
+  return body;
+}
+
+/** The one shape every upstream failure leaves this module in — see UpstreamError. */
+function failure(failureClass: UpstreamFailureClass, upstreamStatus?: number): UpstreamError {
+  // `declare readonly` fields carry no constructor, so the class is stamped after
+  // construction — the assignment site is here and nowhere else.
+  return Object.assign(new UpstreamError(-32000, "service unavailable"), {
+    failureClass,
+    upstreamStatus,
+  });
+}
 
 /**
  * Starts the interactive OAuth connect flow for an `auth: oauth` proxied service and
@@ -165,7 +244,19 @@ export async function handleCallback(req: Request): Promise<Response> {
  */
 export async function disconnect(service: Service): Promise<void> {
   // deps: D1 `service` · audit.record
-  throw new Error("unimplemented");
+  await (env.DB as D1Like)
+    .prepare(`UPDATE service SET upstream_auth_json = NULL WHERE id = ?`)
+    .bind(service.id)
+    .run();
+  // Unconditional, unlike the wipe above: the row records that Disconnect RAN, which is
+  // what an owner reading the ledger asked about. "Idempotent" is about the envelope.
+  await record(env.DB, {
+    ownerId: service.ownerId,
+    principal: await ownerPrincipal(service.ownerId),
+    event: "upstream.disconnected",
+    service: service.slug,
+    outcome: "ok",
+  });
 }
 
 /**
@@ -176,8 +267,90 @@ export async function disconnect(service: Service): Promise<void> {
  * credential path.
  */
 export async function setHeaders(service: Service, headers: Record<string, string>): Promise<void> {
-  // deps: crypto.subtle (AES-GCM envelope) · D1 `service` · gateway.HubError
-  throw new Error("unimplemented");
+  // deps: crypto.subtle (AES-GCM envelope) · D1 `service` · errors.HubError
+  const mode = await authModeOf(service);
+  // Each mode has exactly one credential path (§8), and this is the headers mode's: a
+  // tunneled service has no upstream at all, an oauth one has Connect.
+  if (mode !== "headers") {
+    throw new HubError(INVALID_PARAMS, "this service does not store upstream headers");
+  }
+  await (env.DB as D1Like)
+    .prepare(`UPDATE service SET upstream_auth_json = ? WHERE id = ?`)
+    .bind(await seal({ kind: "headers", headers }), service.id)
+    .run();
+}
+
+/** The declared auth mode of a PROXIED service; null for a tunneled one (it has no upstream). */
+async function authModeOf(service: Service): Promise<"headers" | "oauth" | null> {
+  if (service.kind !== "proxy") return null;
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT upstream_auth_mode FROM service WHERE id = ?`)
+    .bind(service.id)
+    .first<{ upstream_auth_mode: "headers" | "oauth" | null }>();
+  return row?.upstream_auth_mode ?? null;
+}
+
+/**
+ * JSON-RPC's own "invalid params" — not one of §7's four refusal codes, which describe a
+ * consumer's call, and this refuses an OWNER's configuration request instead.
+ */
+const INVALID_PARAMS = -32602;
+
+/** The envelope's leading version byte, so ciphertext written under today's key is
+ *  self-describing before any key is applied (§5: the key rotates without a migration). */
+const ENVELOPE_VERSION = 1;
+
+/**
+ * Seal one credential bundle into `upstream_auth_json` (§5): `base64(version ‖ iv ‖
+ * AES-GCM ciphertext)` under the single UPSTREAM_CREDS_KEY secret. The bundle's shape is
+ * this module's alone — nothing outside reads the column.
+ *
+ * ponytail: the opening half is written with the dispatch that needs it (D5's proactive
+ * refresh and the `needs_reconnect` read inside the bundle — `connectionStatus`'s own
+ * note). Until then the envelope is written and never read back, which is exactly what
+ * §8's "write-only, like token_issue" asks of the headers path anyway.
+ */
+async function seal(bundle: unknown): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      await envelopeKey(),
+      new TextEncoder().encode(JSON.stringify(bundle)),
+    ),
+  );
+  const framed = new Uint8Array(1 + iv.length + ciphertext.length);
+  framed[0] = ENVELOPE_VERSION;
+  framed.set(iv, 1);
+  framed.set(ciphertext, 1 + iv.length);
+  return btoa(String.fromCharCode(...framed));
+}
+
+/**
+ * The AES-GCM key behind every envelope, derived from the wrangler secret so any secret
+ * string is a valid key. Throws rather than falling back when the secret is unset: a hub
+ * that quietly stored upstream credentials in the clear is the one failure this whole
+ * envelope exists to prevent.
+ */
+async function envelopeKey(): Promise<CryptoKey> {
+  const secret = env.UPSTREAM_CREDS_KEY;
+  if (!secret) throw new Error("UPSTREAM_CREDS_KEY is unset — upstream credentials cannot be sealed");
+  const material = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
+  return crypto.subtle.importKey("raw", material, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+/**
+ * Who a credential change is recorded as. Every path into this module is owner-initiated
+ * (§8: Connect is a browser interaction, Disconnect and setHeaders are admin ops), and the
+ * seams take a `Service` rather than a principal — so the one name the ledger needs is
+ * looked up from the namespace the service already carries.
+ */
+async function ownerPrincipal(ownerId: string): Promise<string> {
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT "username" FROM "user" WHERE "id" = ?`)
+    .bind(ownerId)
+    .first<{ username: string }>();
+  return formatPrincipal({ kind: "user", userId: ownerId, username: row?.username ?? ownerId });
 }
 
 /**

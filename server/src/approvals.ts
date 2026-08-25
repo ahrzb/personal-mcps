@@ -34,10 +34,14 @@
  * mid-reconnect.
  */
 
-import type { Principal } from "./identity";
+import { formatPrincipal } from "./principal";
+import type { Principal } from "./principal";
+import { applyRedaction } from "./registry";
 import type { Service } from "./registry";
+import { CODES, HubError } from "./errors";
 import type { JsonRpcResponse } from "./gateway";
 import type { AuditEntry } from "./audit";
+import { APPROVAL_WINDOW_MS } from "./limits";
 
 /** Cloudflare D1 binding (`D1Database` from `@cloudflare/workers-types`) — opaque here. */
 type D1Database = unknown;
@@ -122,6 +126,17 @@ export type ApprovalsConfig = {
    * judgment in this module reads it, never Date.now().
    */
   now(): number;
+  /**
+   * The Web Push TRANSPORT, and nothing else: one encrypted POST to one
+   * subscription, answering the push service's status. Everything ABOUT a push
+   * — which subscriptions receive it, what the payload may name (§15: never
+   * arguments), and that a 404/410 prunes the row — stays inside notifyOwner;
+   * this seam hides only the VAPID ES256 + RFC 8291 crypto, which is a
+   * library's job and not this module's (the header's webpush-webcrypto).
+   * Absent = no transport wired, so nothing is sent — a push is best-effort by
+   * contract, and an unwired hub must not fail the request that created the row.
+   */
+  push?(subscription: PushSubscriptionJson, payload: string): Promise<{ status: number }>;
 };
 
 /**
@@ -131,9 +146,11 @@ export type ApprovalsConfig = {
  * drives sweepExpired.
  */
 export class Approvals {
+  private readonly db: D1Like;
+
   constructor(private readonly config: ApprovalsConfig) {
     // deps: none
-    throw new Error("unimplemented");
+    this.db = config.db as D1Like;
   }
 
   /**
@@ -174,7 +191,97 @@ export class Approvals {
     redactPaths: string[],
   ): Promise<CheckResult> {
     // deps: canonicalJson · registry.applyRedaction · notifyOwner · crypto.subtle · D1 `approval` · audit.record
-    throw new Error("unimplemented");
+    if (principal.kind !== "service_account") {
+      // Owners are never approval-gated (§7), so the filter never routes them here; a
+      // caller that does has lost the principal, which is a bug rather than a refusal.
+      throw new Error("approvals.check: only a service-account principal is approval-gated");
+    }
+    const masked = applyRedaction(args ?? {}, redactPaths);
+    const argsHash = await sha256Hex(canonicalJson(masked));
+    const now = this.config.now();
+
+    // One read covers both step-1 (approved) and step-2 (pending) lookups — same four-column
+    // key, and the two answers differ only in which live row came back.
+    const { results } = await this.db
+      .prepare(
+        `SELECT * FROM approval
+         WHERE service_account_id = ? AND service_id = ? AND tool = ? AND args_hash = ?
+           AND status IN ('pending', 'approved')`,
+      )
+      .bind(principal.accountId, service.id, tool, argsHash)
+      .all<ApprovalDbRow>();
+
+    // Lazy expiry, applied BEFORE the decision and before any insert: the flip is what makes
+    // the owner's ledger read "expired, then re-requested" rather than the reverse (§7).
+    for (const row of results) {
+      if (row.expires_at < now && row.status === "pending") await this.flipExpired(row, service.slug);
+    }
+    const live = results.filter((row) => row.expires_at >= now);
+    const approved = live.find((row) => row.status === "approved");
+    if (approved) return { outcome: "ok", approvalId: approved.id };
+    const pending = live.find((row) => row.status === "pending");
+    if (pending) return required(pending, this.config.publicOrigin);
+
+    const fresh: ApprovalDbRow = {
+      id: crypto.randomUUID(),
+      owner_id: service.ownerId,
+      service_account_id: principal.accountId,
+      service_id: service.id,
+      tool,
+      args_hash: argsHash,
+      args_json: JSON.stringify(masked),
+      status: "pending",
+      created_at: now,
+      decided_at: null,
+      expires_at: now + APPROVAL_WINDOW_MS,
+    };
+    try {
+      await this.db
+        .prepare(
+          `INSERT INTO approval (id, owner_id, service_account_id, service_id, tool,
+             args_hash, args_json, status, created_at, decided_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          fresh.id,
+          fresh.owner_id,
+          fresh.service_account_id,
+          fresh.service_id,
+          fresh.tool,
+          fresh.args_hash,
+          fresh.args_json,
+          fresh.status,
+          fresh.created_at,
+          fresh.decided_at,
+          fresh.expires_at,
+        )
+        .run();
+    } catch (err) {
+      // The partial unique index — not this code — killed the race (§7 step 2). The loser
+      // re-reads and returns the WINNER's row: same id, no second audit row, no second push.
+      const winner = await this.db
+        .prepare(
+          `SELECT * FROM approval
+           WHERE service_account_id = ? AND service_id = ? AND tool = ? AND args_hash = ?
+             AND status = 'pending' AND expires_at >= ?`,
+        )
+        .bind(principal.accountId, service.id, tool, argsHash, now)
+        .first<ApprovalDbRow>();
+      if (!winner) throw err;
+      return required(winner, this.config.publicOrigin);
+    }
+
+    await this.config.audit.record({
+      ownerId: fresh.owner_id,
+      principal: formatPrincipal(principal),
+      event: "approval.requested",
+      service: service.slug,
+      tool,
+      outcome: "ok",
+      detail: { approvalId: fresh.id },
+    });
+    await this.notifyOwner(fresh.owner_id, fresh.id, service.slug, tool);
+    return required(fresh, this.config.publicOrigin);
   }
 
   /**
@@ -188,7 +295,18 @@ export class Approvals {
    */
   async claim(approvalId: string): Promise<ApprovalClaim | "lost"> {
     // deps: D1 `approval`
-    throw new Error("unimplemented");
+    const now = this.config.now();
+    // §7 step 1's CAS verbatim, plus the lazy-expiry clause every path carries: a row that
+    // died between check and claim is not claimable, and the changed-row count is the sole
+    // authority on who dispatches.
+    const { meta } = await this.db
+      .prepare(
+        `UPDATE approval SET status = 'used', decided_at = ?
+         WHERE id = ? AND status = 'approved' AND expires_at >= ?`,
+      )
+      .bind(now, approvalId, now)
+      .run();
+    return meta.changes === 1 ? { id: approvalId } : "lost";
   }
 
   /**
@@ -207,7 +325,18 @@ export class Approvals {
    */
   async settle(claim: ApprovalClaim, rawResult: JsonRpcResponse): Promise<void> {
     // deps: D1 `approval`
-    throw new Error("unimplemented");
+    const result = rawResult.result;
+    const inputRequired =
+      rawResult.error === undefined &&
+      typeof result === "object" &&
+      result !== null &&
+      (result as Record<string, unknown>).resultType === "input_required";
+    if (!inputRequired) return; // complete result or service error: the pass stays spent.
+    // Same CAS discipline as the claim (§7): only the row THIS claim consumed is restored.
+    await this.db
+      .prepare(`UPDATE approval SET status = 'approved' WHERE id = ? AND status = 'used'`)
+      .bind(claim.id)
+      .run();
   }
 
   /**
@@ -222,8 +351,50 @@ export class Approvals {
    * agent's identical retry is what executes.
    */
   async decide(ownerId: string, id: string, decision: "approve" | "reject"): Promise<void> {
-    // deps: D1 `approval` · audit.record · gateway.HubError
-    throw new Error("unimplemented");
+    // deps: D1 `approval` · audit.record · errors.HubError
+    const now = this.config.now();
+    const row = await this.db
+      .prepare(
+        `SELECT a.*, s.slug AS service_slug, u."username" AS owner_username FROM approval a
+         JOIN service s ON s.id = a.service_id
+         JOIN "user" u ON u."id" = a.owner_id
+         WHERE a.id = ? AND a.owner_id = ?`,
+      )
+      .bind(id, ownerId)
+      .first<ApprovalDbRow & { service_slug: string; owner_username: string }>();
+    // Lazy expiry is applied here too, before the refusal: a past-expiry pending row is
+    // flipped (audited once) and only then refused, so `approval_decide` leaves the ledger
+    // in the same state a read of the same row would have (§7).
+    if (row && row.status === "pending" && row.expires_at < now) {
+      await this.flipExpired(row, row.service_slug);
+    }
+    if (!row || row.status !== "pending" || row.expires_at < now) {
+      // ONE message for all four refusals — unknown id, another namespace's row, an
+      // already-decided row, a dead one. A distinguishing message would let a caller probe
+      // for ids outside its namespace, the same reason -32001 is indistinguishable (§7),
+      // which is also why the code is READ from the pinned table rather than re-spelled.
+      throw new HubError(CODES.notPermitted, "no decidable approval request");
+    }
+
+    const status = decision === "approve" ? "approved" : "rejected";
+    await this.db
+      .prepare(`UPDATE approval SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'`)
+      .bind(status, now, id)
+      .run();
+    await this.config.audit.record({
+      ownerId,
+      // The decider is the namespace owner by construction: only their session reaches here.
+      principal: formatPrincipal({
+        kind: "user",
+        userId: ownerId,
+        username: row.owner_username,
+      }),
+      event: `approval.${status}`,
+      service: row.service_slug,
+      tool: row.tool,
+      outcome: "ok",
+      detail: { approvalId: id },
+    });
   }
 
   /**
@@ -236,7 +407,39 @@ export class Approvals {
    */
   async list(ownerId: string, filters?: ApprovalListFilters): Promise<ApprovalRow[]> {
     // deps: D1 `approval` · D1 `service` · D1 `service_account` · audit.record
-    throw new Error("unimplemented");
+    const now = this.config.now();
+    // ponytail: the whole namespace is read, then interpreted and filtered in JS, because a
+    // `status` filter is a filter on the INTERPRETED status — a past-expiry `approved` row
+    // must not answer a `status: "approved"` query, which SQL over the column cannot say.
+    // Retention (§15, days) bounds the table; push the filter into SQL only if it stops being
+    // small.
+    const { results } = await this.db
+      .prepare(
+        `SELECT a.*, s.slug AS service_slug, sa.slug AS account_slug FROM approval a
+         JOIN service s ON s.id = a.service_id
+         JOIN service_account sa ON sa.id = a.service_account_id
+         WHERE a.owner_id = ? ORDER BY a.created_at DESC`,
+      )
+      .bind(ownerId)
+      .all<ApprovalDbRow & { service_slug: string; account_slug: string }>();
+
+    const rows: ApprovalRow[] = [];
+    for (const row of results) {
+      if (row.expires_at < now && row.status === "pending") await this.flipExpired(row, row.service_slug);
+      rows.push({
+        id: row.id,
+        accountSlug: row.account_slug,
+        serviceSlug: row.service_slug,
+        tool: row.tool,
+        args: JSON.parse(row.args_json) as Record<string, unknown>,
+        status: readStatus(row, now),
+        createdAt: new Date(row.created_at).toISOString(),
+        decidedAt: row.decided_at === null ? null : new Date(row.decided_at).toISOString(),
+        expiresAt: new Date(row.expires_at).toISOString(),
+      });
+    }
+    const matching = filters?.status ? rows.filter((row) => row.status === filters.status) : rows;
+    return matching.slice(0, filters?.limit ?? DEFAULT_LIST_LIMIT);
   }
 
   /**
@@ -248,7 +451,22 @@ export class Approvals {
    */
   async subscribePush(userId: string, subscription: PushSubscriptionJson): Promise<void> {
     // deps: D1 `push_subscription` · crypto.randomUUID
-    throw new Error("unimplemented");
+    // The endpoint's UNIQUE constraint is what makes re-subscribing one browser a replace
+    // rather than a second notification — the upsert rides it instead of reading first.
+    await this.db
+      .prepare(
+        `INSERT INTO push_subscription (id, user_id, endpoint, keys_json, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (endpoint) DO UPDATE SET user_id = excluded.user_id, keys_json = excluded.keys_json`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        userId,
+        subscription.endpoint,
+        JSON.stringify(subscription.keys),
+        this.config.now(),
+      )
+      .run();
   }
 
   /**
@@ -261,7 +479,26 @@ export class Approvals {
    */
   async sweepExpired(): Promise<{ expired: number; pruned: number }> {
     // deps: D1 `approval` · audit.record
-    throw new Error("unimplemented");
+    const now = this.config.now();
+    const { results } = await this.db
+      .prepare(
+        `SELECT a.*, s.slug AS service_slug FROM approval a
+         JOIN service s ON s.id = a.service_id
+         WHERE a.status = 'pending' AND a.expires_at < ?`,
+      )
+      .bind(now)
+      .all<ApprovalDbRow & { service_slug: string }>();
+    let expired = 0;
+    for (const row of results) {
+      if (await this.flipExpired(row, row.service_slug)) expired += 1;
+    }
+    // Flip first, prune second (§7): a row that is both past-expiry and past-retention still
+    // leaves its `approval.expired` behind before the row itself goes.
+    const { meta } = await this.db
+      .prepare(`DELETE FROM approval WHERE created_at < ?`)
+      .bind(now - this.config.retentionDays * DAY_MS)
+      .run();
+    return { expired, pruned: meta.changes };
   }
 
   /**
@@ -280,9 +517,121 @@ export class Approvals {
     serviceSlug: string,
     tool: string,
   ): Promise<void> {
-    // deps: D1 `push_subscription` · webpush-webcrypto (VAPID ES256 + RFC 8291) · fetch
-    throw new Error("unimplemented");
+    // deps: D1 `push_subscription` · config.push (VAPID ES256 + RFC 8291) · fetch
+    const send = this.config.push;
+    if (!send) return;
+    try {
+      // Service, tool and id — never arguments, redacted or otherwise (§15: the payload rests
+      // on a third-party push service).
+      const payload = JSON.stringify({
+        approvalId,
+        service: serviceSlug,
+        tool,
+        url: approvalUrl(this.config.publicOrigin, approvalId),
+      });
+      const { results } = await this.db
+        .prepare(`SELECT id, endpoint, keys_json FROM push_subscription WHERE user_id = ?`)
+        .bind(ownerId)
+        .all<{ id: string; endpoint: string; keys_json: string }>();
+      for (const sub of results) {
+        try {
+          const { status } = await send(
+            { endpoint: sub.endpoint, keys: JSON.parse(sub.keys_json) as PushSubscriptionJson["keys"] },
+            payload,
+          );
+          // Gone for good — and ONLY these two: a 500 or a rejected fetch is a flaky push
+          // service, and unsubscribing the owner over one would be the worse failure.
+          if (status === 404 || status === 410) {
+            await this.db.prepare(`DELETE FROM push_subscription WHERE id = ?`).bind(sub.id).run();
+          }
+        } catch {
+          // Best-effort per subscription: one dead endpoint must not skip the others.
+        }
+      }
+    } catch {
+      // Never throws: a push failure must not fail the request that created the row (§7).
+    }
   }
+
+  /**
+   * The lazy-expiry WRITE, and the only one — a conditional UPDATE so the
+   * `approval.expired` audit row is written exactly once however many readers race
+   * (§7). Answers whether THIS caller was the one that flipped it. Only `pending`
+   * rows are ever rewritten: a past-expiry `approved` row reads as expired and stays
+   * as it is.
+   */
+  private async flipExpired(row: ApprovalDbRow, serviceSlug: string): Promise<boolean> {
+    const { meta } = await this.db
+      .prepare(`UPDATE approval SET status = 'expired' WHERE id = ? AND status = 'pending'`)
+      .bind(row.id)
+      .run();
+    if (meta.changes !== 1) return false;
+    await this.config.audit.record({
+      ownerId: row.owner_id,
+      principal: "hub",
+      event: "approval.expired",
+      service: serviceSlug,
+      tool: row.tool,
+      outcome: "ok",
+      detail: { approvalId: row.id },
+    });
+    return true;
+  }
+}
+
+/** The `approval` row as stored (§5) — private to this module, like the table. */
+type ApprovalDbRow = {
+  id: string;
+  owner_id: string;
+  service_account_id: string;
+  service_id: string;
+  tool: string;
+  args_hash: string;
+  args_json: string;
+  status: ApprovalStatus;
+  created_at: number;
+  decided_at: number | null;
+  expires_at: number;
+};
+
+/** `approval_list`'s cap when the caller names none — audit_query's default, by contract. */
+const DEFAULT_LIST_LIMIT = 100;
+
+/** Retention is pinned in DAYS (limits.RETENTION_DAYS); every other duration here is ms. */
+const DAY_MS = 24 * 60 * 60_000;
+
+/** The one place the `/approvals/<id>` path is built on the root-owned origin. */
+function approvalUrl(publicOrigin: string, id: string): string {
+  return `${publicOrigin}/approvals/${id}`;
+}
+
+/**
+ * Expiry as an interpretation: past `expires_at` reads `expired` whatever the column says —
+ * for the two statuses that could still authorize something. A `used` or `rejected` row is
+ * already settled and keeps its own word: §7's "regardless of stored status" exists to stop
+ * a stale `pending`/`approved` reading as live, and reporting every settled row older than
+ * the 1 h window as `expired` would erase the whole history `approval_list` is there to show.
+ */
+function readStatus(row: ApprovalDbRow, now: number): ApprovalStatus {
+  return row.expires_at < now && (row.status === "pending" || row.status === "approved")
+    ? "expired"
+    : row.status;
+}
+
+/** The -32003 payload the gateway folds into `data` and the message text alike. */
+function required(row: ApprovalDbRow, publicOrigin: string): CheckResult {
+  return {
+    outcome: "required",
+    approvalId: row.id,
+    approvalUrl: approvalUrl(publicOrigin, row.id),
+    expiresAt: new Date(row.expires_at).toISOString(),
+  };
+}
+
+/** SHA-256 of a UTF-8 string as lowercase hex — the stored `args_hash` form. */
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /**

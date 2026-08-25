@@ -1,17 +1,41 @@
-// gateway.ts — the consumer-facing MCP pipeline (§7): every /:user/mcp request enters
-// and leaves through this module. It OWNS both endpoint shapes (POST /:user/mcp
+// gateway.ts — the consumer-facing MCP pipeline (§7): every /:user/mcp message is answered
+// by this module. It OWNS the JSON-RPC half of both endpoint shapes (POST /:user/mcp
 // aggregated, POST /:user/mcp/:slug scoped) and their SDK wiring (createMcpHandler with
 // a per-request low-level Server, legacy-stateless lane included — comment-level only,
 // the SDK never appears in sibling modules); the aggregated `<slug>_<tool>` split; the
-// pinned check order filter → archived → approval → availability; server/discover;
-// `_meta` hygiene and client-metadata capture; and the ONE mapping from HubError to
-// JSON-RPC wire errors. It HIDES the wire entirely: sibling modules throw HubError and
-// never see a JSON-RPC error code, and backends never see an unfiltered tool name, an
-// archived service, or an unapproved gated call.
+// pinned check order filter → archived → approval → availability (§7's list, with the
+// availability-first decision folding its last two into one test — see callTool);
+// server/discover; `_meta` hygiene and client-metadata capture; the ONE redaction map per
+// call; and the ONE mapping from HubError to JSON-RPC wire errors. It HIDES the wire
+// entirely: sibling modules throw the HubError vocabulary errors.ts owns and never see a
+// JSON-RPC error code, and backends never see an unfiltered tool name, an archived
+// service, or an unapproved gated call.
+//
+// What it does NOT own: §7 step 1's HTTP-level door. Content-Type, the Origin rule, the
+// 401 with WWW-Authenticate, the scoped-visibility 404 and the resolution of the caller
+// all belong to index.mcpEntry, which hands the resolved principal in. One resolution per
+// request, and one place to change step 1.
+//
+// IMPLEMENTATION NOTE (2026-08-25): `@modelcontextprotocol/server` is not a dependency of
+// this repo and "no new dependencies" is binding, so the SDK wiring named above is served
+// by hand: the composition root routes the two shapes and the JSON-RPC envelope is read
+// and written here. The seam is unchanged — the SDK still appears in no sibling module —
+// and swapping createMcpHandler in later is an edit to `mcpMessage`/`route` alone.
 
-import type { Principal } from "./identity";
+import { adminBackend, BUILTIN_LOG_BODIES } from "./admin";
+import { Approvals } from "./approvals";
+import type { ApprovalClaim, CheckResult } from "./approvals";
+import { config as auditConfig, record } from "./audit";
+import type { BodyStub } from "./audit";
+import { archived, CODES, HubError, notPermitted, unavailable } from "./errors";
+import { formatPrincipal } from "./principal";
+import type { Principal } from "./principal";
+import { applyRedaction, PMCP_SLUG, Registry } from "./registry";
 import type { Service } from "./registry";
+import { status as tunnelStatus, tunnelBackend } from "./tunnel";
+import { connectionStatus, upstreamBackend } from "./upstream";
 import type { Env } from "./index";
+import { AGGREGATED_LIST_DEADLINE_MS } from "./limits";
 
 /**
  * A JSON-RPC 2.0 id as the hub accepts it on requests. `null` ids are never accepted
@@ -116,40 +140,133 @@ export interface ServiceBackend {
   ): Promise<{ args: string[]; results: string[] } | null>;
 }
 
-/**
- * The hub's one error vocabulary. `code` is a code from the pinned table — -32000
- * service unavailable · -32001 tool not permitted / unknown (deliberately
- * indistinguishable, §7) · -32002 service archived · -32003 approval required, `data`
- * carrying { approvalId, approvalUrl, expiresAt } · -32601 method not found. Thrown
- * anywhere in the pipeline or backends; it reaches the wire only through this module's
- * mapping, so no sibling ever builds a JSON-RPC error object.
- */
-export class HubError extends Error {
-  code: number;
-  data?: unknown;
-  /** `message` must already respect log hygiene (§15): no secrets, no upstream bodies. */
-  constructor(code: number, message: string, data?: unknown) {
-    // deps: none
-    super(message);
-    throw new Error("unimplemented");
-  }
+/** The -32003 payload, in `data` and in the message text alike (§7 step 2). */
+function approvalRequired(check: Extract<CheckResult, { outcome: "required" }>): HubError {
+  const { approvalId, approvalUrl, expiresAt } = check;
+  return new HubError(CODES.approvalRequired, `approval required: ${approvalUrl}`, {
+    approvalId,
+    approvalUrl,
+    expiresAt,
+  });
 }
 
 /**
- * The consumer MCP surface as one mountable route group — mounted by the composition
- * root under /:user/mcp and /:user/mcp/:slug (typed unknown here; hono and the MCP SDK
- * exist only at implementation). Enforces §7 step 1 at the door: Bearer-only (cookies
- * never consulted, query-string tokens rejected), Content-Type application/json
- * required, an Origin header if present must equal the hub's origin (else 403); no
- * valid principal → 401 with WWW-Authenticate regardless of the username's existence,
- * a resolved principal on a foreign or missing namespace → 404. Answers
- * server/discover itself with hub capabilities, routes tools/list and tools/call into
- * the pipeline below, and everything else to -32601. The SDK's legacy-stateless lane
- * serves 2025-era clients from the same wiring.
+ * The consumer MCP pipeline as one entry point: §7 steps 2–3 for one already-admitted
+ * message, from bytes to bytes. `slug` present ⇔ the scoped shape.
+ *
+ * The door is index.mcpEntry's, not this function's, and `principal` is the proof: by the
+ * time a request arrives here Content-Type, the Origin rule, the caller's resolution and
+ * (scoped) the service's visibility to that caller have all been decided ONCE, at the
+ * composition root. What is left is JSON-RPC — this function answers `server/discover`
+ * itself with hub capabilities, routes tools/list and tools/call into the pipeline below,
+ * refuses every other method with -32601, and answers 200 whether or not it refused. (The
+ * SDK's legacy-stateless lane would serve 2025-era clients from the same wiring; it is
+ * comment-level only, like the rest of the SDK seam.)
  */
-export function mcpRoutes(): unknown {
-  // deps: hono · @modelcontextprotocol/server (createMcpHandler, Server) · identity.resolvePrincipal · splitAggregatedName · captureClientMeta · callTool · listScoped · listAggregated · toWire
-  throw new Error("unimplemented");
+export async function mcpMessage(
+  request: Request,
+  env: Env,
+  principal: Principal,
+  slug?: string,
+): Promise<Response> {
+  // deps: splitAggregatedName · captureClientMeta · callTool · listScoped · listAggregated · toWire
+  const msg = await readMessage(request);
+  if (msg === null) {
+    return jsonRpc(toWire(new HubError(CODES.invalidRequest, "invalid request"), null));
+  }
+  // A notification carries no id, so there is nothing to answer to (§ JSON-RPC 2.0).
+  if (msg.id === undefined) return new Response(null, { status: 202 });
+  const ctx: BackendCtx = { principal, roles: [], clientMeta: captureClientMeta(msg) };
+  const ownerId = principal.kind === "user" ? principal.userId : principal.ownerId;
+  try {
+    return jsonRpc(await route(env, ownerId, slug, msg, ctx));
+  } catch (err) {
+    if (err instanceof Response) throw err; // identity's convention, never ours to swallow
+    return jsonRpc(toWire(err, msg.id ?? null));
+  }
+}
+
+/** §7 step 3's method table: three served methods, everything else -32601. */
+async function route(
+  env: Env,
+  ownerId: string,
+  slug: string | undefined,
+  msg: JsonRpcRequest,
+  ctx: BackendCtx,
+): Promise<JsonRpcResponse> {
+  const id = msg.id ?? null;
+  switch (msg.method) {
+    // Answered by the hub on BOTH shapes: a slug in the URL is not resolved, dialed, or
+    // filtered for it.
+    case "server/discover":
+      return { jsonrpc: "2.0", id, result: hubCapabilities() };
+    case "tools/list": {
+      if (slug !== undefined) {
+        return { jsonrpc: "2.0", id, result: toolsResult(await listScoped(env, ownerId, slug, ctx)) };
+      }
+      const { tools, unavailable: omitted } = await listAggregated(env, ownerId, ctx);
+      const result = toolsResult(tools);
+      // §7: the omitted slugs are reported in the result's `_meta`, and logged as an ops
+      // event — never an audit row (§15 keeps tools/list out of audit entirely).
+      if (omitted.length > 0) {
+        console.warn(`pmcp/unavailable: ${omitted.join(",")}`);
+        result._meta = { "pmcp/unavailable": omitted };
+      }
+      return { jsonrpc: "2.0", id, result };
+    }
+    case "tools/call": {
+      const name = typeof msg.params?.name === "string" ? msg.params.name : "";
+      if (slug !== undefined) return callTool(env, ownerId, slug, name, msg, ctx);
+      const split = splitAggregatedName(name);
+      // A name with no `_` at all names no service — the same -32001 as not-permitted,
+      // never a distinct "malformed name" signal (§7).
+      if (split === null) throw notPermitted();
+      return callTool(env, ownerId, split.slug, split.tool, msg, ctx);
+    }
+    default:
+      throw new HubError(CODES.methodNotFound, "method not found");
+  }
+}
+
+/** The `server/discover` answer (§7): hub capabilities, no service resolved. */
+function hubCapabilities(): Record<string, unknown> {
+  return {
+    supportedVersions: [PROTOCOL_VERSION],
+    capabilities: { tools: { listChanged: false } },
+    resultType: "complete",
+    ttlMs: 0,
+    cacheScope: "private",
+  };
+}
+
+/** The one MCP revision this hub speaks (§7: stateless 2026-07-28 endpoints). */
+const PROTOCOL_VERSION = "2026-07-28";
+
+/**
+ * §7's cache hints on a tools/list result. `cacheScope` is always `private` — a listing
+ * is filtered by the caller's grants, so a shared cache would serve one account's view to
+ * another. No § pins the window, only that there is one, so it lives here rather than in
+ * limits.ts (audit's CLIENT_FIELD_MAX_LENGTH keeps its number for the same reason).
+ */
+const TOOLS_LIST_TTL_MS = 30_000;
+
+function toolsResult(tools: Tool[]): Record<string, unknown> {
+  return { tools, resultType: "complete", ttlMs: TOOLS_LIST_TTL_MS, cacheScope: "private" };
+}
+
+/** The JSON-RPC envelope as HTTP: always 200 — refusals are payloads, not statuses. */
+function jsonRpc(response: JsonRpcResponse): Response {
+  return new Response(JSON.stringify(response), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** The inbound body, or null when it is not a JSON-RPC request object at all. */
+async function readMessage(request: Request): Promise<JsonRpcRequest | null> {
+  const body = (await request.json().catch(() => null)) as JsonRpcRequest | null;
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  return typeof body.method === "string" ? body : null;
 }
 
 /**
@@ -160,7 +277,9 @@ export function mcpRoutes(): unknown {
  */
 function splitAggregatedName(name: string): { slug: string; tool: string } | null {
   // deps: none
-  throw new Error("unimplemented");
+  const at = name.indexOf("_");
+  if (at <= 0 || at === name.length - 1) return null;
+  return { slug: name.slice(0, at), tool: name.slice(at + 1) };
 }
 
 /**
@@ -173,7 +292,18 @@ function splitAggregatedName(name: string): { slug: string; tool: string } | nul
  */
 function virtualPmcpService(ownerId: string): Service {
   // deps: none
-  throw new Error("unimplemented");
+  return {
+    // No row exists, so no row id does either: the slug IS the id, and every registry
+    // read keyed by it comes back empty (which reads as "declares nothing", §8).
+    id: PMCP_SLUG,
+    ownerId,
+    slug: PMCP_SLUG,
+    kind: "tunnel",
+    archived: false,
+    // The same constant admin's builtin service_list row reads, so the two descriptions
+    // of one virtual service cannot drift (§15).
+    logBodies: BUILTIN_LOG_BODIES,
+  };
 }
 
 /**
@@ -182,7 +312,8 @@ function virtualPmcpService(ownerId: string): Service {
  */
 function selectBackend(service: Service): ServiceBackend {
   // deps: admin.adminBackend · tunnel.tunnelBackend · upstream.upstreamBackend
-  throw new Error("unimplemented");
+  if (service.slug === PMCP_SLUG) return adminBackend;
+  return service.kind === "tunnel" ? tunnelBackend : upstreamBackend;
 }
 
 /**
@@ -193,9 +324,13 @@ function selectBackend(service: Service): ServiceBackend {
  * consumes an approval. Best-effort: a probe that passes can still lose the race, and
  * a post-claim dispatch failure leaves the claim consumed by design.
  */
-async function probeAvailability(env: Env, service: Service): Promise<boolean> {
+async function probeAvailability(service: Service): Promise<boolean> {
   // deps: tunnel.status · upstream.connectionStatus
-  throw new Error("unimplemented");
+  if (service.slug === PMCP_SLUG) return true;
+  if (service.kind === "tunnel") return (await tunnelStatus(service.id)) === "online";
+  // §7 spells "known unavailable" for a proxied service as `not_connected` OR
+  // `needs_reconnect`, so `connected` is the only state that may dispatch.
+  return (await connectionStatus(service)) === "connected";
 }
 
 /**
@@ -207,7 +342,41 @@ async function probeAvailability(env: Env, service: Service): Promise<boolean> {
  */
 function captureClientMeta(msg: JsonRpcRequest): BackendCtx["clientMeta"] {
   // deps: none
-  throw new Error("unimplemented");
+  // The 128-char bound is applied by audit.record, at its chokepoint, so no call site has
+  // to remember it (§15); this function only decides WHICH strings are display data.
+  const meta = metaOf(msg);
+  const info = meta[CLIENT_INFO_META_KEY] as { name?: unknown; version?: unknown } | undefined;
+  const captured = {
+    name: displayString(info?.name),
+    version: displayString(info?.version),
+    sessionId: SESSION_ID_META_KEYS.map((key) => displayString(meta[key])).find(
+      (value) => value !== undefined,
+    ),
+  };
+  const empty = Object.values(captured).every((value) => value === undefined);
+  return empty ? undefined : captured;
+}
+
+/** The reserved `_meta` keys of the 2026-07-28 wire this module reads or mirrors. */
+const CLIENT_INFO_META_KEY = "io.modelcontextprotocol/clientInfo";
+const CLIENT_CAPABILITIES_META_KEY = "io.modelcontextprotocol/clientCapabilities";
+
+/**
+ * §7's allowlist of vendor session-id `_meta` keys, maintained in code. Claude Code's
+ * first — and, honestly, only: the exact vendor spelling is not pinned by any spec §, so
+ * a hub that meets a second client adds one line here rather than parsing anything.
+ */
+const SESSION_ID_META_KEYS = ["claudecode/sessionId"];
+
+/** Untrusted display data is a string or it is nothing — never coerced, never parsed. */
+function displayString(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/** A request's `_meta`, always an object so readers need no absence branch. */
+function metaOf(msg: JsonRpcRequest): Record<string, unknown> {
+  const meta = msg.params?._meta;
+  return typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>) : {};
 }
 
 /**
@@ -220,9 +389,20 @@ function captureClientMeta(msg: JsonRpcRequest): BackendCtx["clientMeta"] {
  * Pure: returns a new message, never mutates the input.
  */
 function prepareForward(msg: JsonRpcRequest, ctx: BackendCtx): JsonRpcRequest {
-  // deps: none
-  throw new Error("unimplemented");
+  // deps: principal.formatPrincipal
+  const meta: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(metaOf(msg))) {
+    // The `hub/` prefix is reserved: a consumer-supplied one is dropped, never merged.
+    if (!key.startsWith(HUB_META_PREFIX)) meta[key] = value;
+  }
+  meta[`${HUB_META_PREFIX}principal`] = formatPrincipal(ctx.principal);
+  meta[`${HUB_META_PREFIX}roles`] = ctx.roles;
+  meta[CLIENT_CAPABILITIES_META_KEY] = meta[CLIENT_CAPABILITIES_META_KEY] ?? {};
+  return { ...msg, params: { ...(msg.params ?? {}), _meta: meta } };
 }
+
+/** The reserved prefix of every `_meta` key the hub writes — and no consumer may. */
+const HUB_META_PREFIX = "hub/";
 
 /**
  * Scoped tools/list (§7): the backend's catalog filtered by the caller's grant
@@ -234,7 +414,15 @@ function prepareForward(msg: JsonRpcRequest, ctx: BackendCtx): JsonRpcRequest {
  */
 async function listScoped(env: Env, ownerId: string, slug: string, ctx: BackendCtx): Promise<Tool[]> {
   // deps: registry.getService · registry.resolveAccess · selectBackend · virtualPmcpService
-  throw new Error("unimplemented");
+  const registry = new Registry(env.DB);
+  const service = slug === PMCP_SLUG ? virtualPmcpService(ownerId) : await registry.getService(ownerId, slug);
+  // The door already answered 404 for a slug this caller cannot see, so a miss here is
+  // the same not-permitted answer every other unresolvable name gets.
+  if (service === null) throw notPermitted();
+  const filter = await registry.resolveAccess(ctx.principal, service);
+  if (service.archived) throw archived();
+  const catalog = await selectBackend(service).listTools(service, { ...ctx, roles: filter.roleNames });
+  return filter.filterList(catalog).map(served);
 }
 
 /**
@@ -249,35 +437,377 @@ async function listScoped(env: Env, ownerId: string, slug: string, ctx: BackendC
  */
 async function listAggregated(env: Env, ownerId: string, ctx: BackendCtx): Promise<{ tools: Tool[]; unavailable: string[] }> {
   // deps: registry.listServicesFor · registry.resolveAccess · selectBackend · virtualPmcpService
-  throw new Error("unimplemented");
+  const registry = new Registry(env.DB);
+  const visible: Service[] = (await registry.listServicesFor(ctx.principal)).filter((s) => !s.archived);
+  // The builtin participates like any other service for its owner; a service account can
+  // hold no grants on it (§8), so it is never added for one.
+  if (ctx.principal.kind === "user") visible.push(virtualPmcpService(ownerId));
+
+  const listed: ListedService[] = await Promise.all(
+    visible.map(async (service): Promise<ListedService> => {
+      const filter = await registry.resolveAccess(ctx.principal, service);
+      try {
+        const catalog = await withDeadline(
+          selectBackend(service).listTools(service, { ...ctx, roles: filter.roleNames }),
+          AGGREGATED_LIST_DEADLINE_MS,
+        );
+        return {
+          slug: service.slug,
+          tools: filter
+            .filterList(catalog)
+            .map((tool) => ({ ...served(tool), name: `${service.slug}_${tool.name}` })),
+        };
+      } catch (err) {
+        // Two failure classes, two OPERATOR signals. A HubError is somebody else's
+        // downtime — errored, timed out, needs-reconnect — and `pmcp/unavailable` is the
+        // line an operator reads before going to look at that upstream. A TypeError in
+        // filterList, or a bug in served(), is a HUB defect: it is logged as one, against
+        // this module, so it can never send anybody to a perfectly healthy upstream.
+        //
+        // Both still contribute zero tools, because §7 pins that the aggregate itself
+        // always succeeds: one service's failure — ours or theirs — may not cost the
+        // consumer the other nine, which is exactly what rethrowing here would do.
+        if (!(err instanceof HubError)) {
+          console.error(`pmcp/fan-out: hub defect listing "${service.slug}"`, err);
+        }
+        return { slug: service.slug, unavailable: true };
+      }
+    }),
+  );
+  return {
+    tools: listed.flatMap((entry) => ("tools" in entry ? entry.tools : [])),
+    unavailable: listed.filter((entry) => "unavailable" in entry).map((entry) => entry.slug),
+  };
+}
+
+/** One service's contribution to the fan-out: what it served, or that it could not. The
+ *  union is the partition — no caller re-derives which is which from a container shape. */
+type ListedService = { slug: string; tools: Tool[] } | { slug: string; unavailable: true };
+
+/** §7's per-upstream deadline inside the fan-out; the timer never outlives the race. */
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(unavailable()), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * One tool as served to a consumer: the hub's internal result-secret marker stripped from
+ * the outputSchema, the inputSchema untouched (there `writeOnly` is standard usage, §7).
+ */
+function served(tool: Tool): Tool {
+  if (tool.outputSchema === undefined) return tool;
+  return { ...tool, outputSchema: withoutWriteOnly(tool.outputSchema) as Record<string, unknown> };
+}
+
+/** Drops `writeOnly: true` at any depth — and only that: a PROPERTY named `writeOnly`
+ *  (whose value is a schema, not `true`) is a field name and survives. */
+function withoutWriteOnly(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(withoutWriteOnly);
+  if (typeof node !== "object" || node === null) return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "writeOnly" && value === true) continue;
+    out[key] = withoutWriteOnly(value);
+  }
+  return out;
 }
 
 /**
  * The one tools/call pipeline, identical for both endpoint shapes — `slug` and `tool`
  * arrive already split and unprefixed, so approvals bind to the same row either way.
  * Runs the pinned order: filter (-32001 — an ungranted account learns nothing more),
- * archived (-32002), the approval gate (which consults probeAvailability FIRST: a
- * known-unavailable service fails -32000 before any approval row is read, created, or
- * consumed — no pending, no push, an existing pass untouched; then the three phases:
- * approvals.check, the atomic claim, dispatch, settle — `-32003` with
+ * archived (-32002), availability (-32000 — §7 lists it last but the availability-first
+ * decision puts it ahead of the approval gate, and one test serves both), the call's
+ * redaction map (-32001 when no sound one exists, §7), then the approval gate —
+ * approvals.check, the atomic claim, dispatch, settle: `-32003` with
  * { approvalId, approvalUrl, expiresAt } when a decision is still owed, and an MRTR
- * input_required leg restores the claim), then availability (-32000). A passing call
+ * input_required leg restores the claim. A passing call
  * is forwarded post-hygiene with identity attached and relayed verbatim — what the
  * CONSUMER receives is never redacted; masking exists for persistence only.
- * audit.record
+ *
+ * Exactly one audit row leaves this function, written after the try/catch: audit.record
  * is AWAITED with hub-measured duration — a failed audit write fails the call. When
  * the service's log_bodies is on AND the call was dispatched (§15 — refusal rows
- * never carry bodies; several refusals predate any redaction map), the audit entry
- * carries the bodies: args
- * masked under the args union (backend schema paths + config redact), the result's
- * structuredContent masked under the results union (backend + config
+ * never carry bodies), the entry carries the bodies: args
+ * masked under the redaction map's args union (backend schema paths + config redact), the
+ * result's structuredContent under its results union (backend + config
  * redact_results), each unstructured result block replaced by a blob BodyStub —
  * audit.record itself enforces the size cap. All
  * failures leave as HubError; only the caller of this seam maps them to the wire.
  */
 async function callTool(env: Env, ownerId: string, slug: string, tool: string, msg: JsonRpcRequest, ctx: BackendCtx): Promise<JsonRpcResponse> {
   // deps: registry.getService · registry.resolveAccess · registry.redactPathsFor · registry.applyRedaction · approvals.check · approvals.claim · approvals.settle · audit.record · selectBackend · virtualPmcpService · probeAvailability · prepareForward
-  throw new Error("unimplemented");
+  const startedAt = Date.now();
+  const registry = new Registry(env.DB);
+  // The row this call will leave, filled in by whichever branch below reaches an answer.
+  // ONE exit: `recordCall` is invoked after the try/catch and nowhere else, which is what
+  // makes "every path through callTool ends in exactly one audit row" readable off the
+  // control flow instead of inferred from which statements can throw. It also means a
+  // failure in the ledger path can never masquerade as a refusal of the call it is
+  // recording — a second, refusal-shaped row for a call that actually dispatched.
+  let outcome = "error";
+  let bodies: CallBodies = {};
+  let answer: JsonRpcResponse | undefined;
+  let refusal: unknown;
+  let recordedSlug = slug;
+  try {
+    const service =
+      slug === PMCP_SLUG ? virtualPmcpService(ownerId) : await registry.getService(ownerId, slug);
+    // An aggregated prefix matching no visible service: -32001, indistinguishable from
+    // not-permitted, so tool names cannot enumerate a namespace (§7 step 3).
+    if (service === null) throw notPermitted();
+    recordedSlug = service.slug;
+
+    // 1 — filter. First, always: an ungranted account may not learn that a service is
+    // archived, unreachable, or even real.
+    const filter = await registry.resolveAccess(ctx.principal, service);
+    const mode = filter.check(tool);
+    if (mode === "deny") throw notPermitted();
+
+    // 2 — archived.
+    if (service.archived) throw archived();
+
+    const backend = selectBackend(service);
+    const serviceCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
+
+    // 3 — availability, tested ONCE. §7 lists it last, after the approval gate, but the
+    // 2026-08-25 availability-first decision puts it first INSIDE that gate: a service the
+    // hub already knows cannot execute fails -32000 before any approval row is read,
+    // created or consumed. Two sentences, one verdict, one place — a gated call and an
+    // ungated one reach it at the same point, which is also what keeps the map below (a
+    // backend round trip and a D1 read) off the path of a call that was never going to run.
+    if (!(await probeAvailability(service))) throw unavailable();
+
+    // Derived ONCE for the whole call, so the approval row and the audit row of the same
+    // call can never be masked under different maps (§15). Null means no sound map exists
+    // for this tool and nothing downstream may run — -32001, the same code as
+    // not-permitted, so the refusal cannot be used to map grant patterns (§7).
+    const redaction = await redactionMapFor(registry, backend, service, tool);
+    if (redaction === null) throw notPermitted();
+
+    // 4 — the approval gate (owners are never routed into it; the filter answered
+    // `allow` for them via the built-in `all`).
+    const claim = mode === "approval"
+      ? await passGate(env, service, tool, msg, redaction.args, ctx.principal)
+      : undefined;
+
+    // The forwarded message carries the UNPREFIXED name; the aggregated prefix is the
+    // hub's addressing, never the service's business.
+    const forwarded = prepareForward({ ...msg, params: { ...msg.params, name: tool } }, serviceCtx);
+    const relayed = await backend.call(service, forwarded, serviceCtx);
+    // An MRTR input_required leg restores the pass; anything else leaves it spent.
+    if (claim) await approvalsFor(env).settle(claim, relayed);
+    // The hub's own outcome vocabulary (§15): a service that answered with a JSON-RPC
+    // error was still reached, and `error` — not one of the hub's refusal codes — is
+    // what that is.
+    outcome = relayed.error === undefined ? "ok" : "error";
+    if (service.logBodies) bodies = callBodies(redaction, msg, relayed);
+    // Re-addressed to the consumer's own id; everything else is relayed verbatim.
+    answer = { ...relayed, id: msg.id ?? null };
+  } catch (err) {
+    // §15: every tools/call leaves a row, denials included (they are just fast) — and a
+    // refusal row NEVER carries bodies, whatever the service's log_bodies says.
+    refusal = err;
+    outcome = err instanceof HubError ? String(err.code) : "error";
+    bodies = {};
+  }
+  await recordCall(env, {
+    ownerId,
+    ctx,
+    slug: recordedSlug,
+    tool,
+    outcome,
+    durationMs: Date.now() - startedAt,
+    bodies,
+  });
+  if (answer === undefined) throw refusal;
+  return answer;
+}
+
+/**
+ * §7's approval gate: check → claim, and nothing before them. Its two preconditions are
+ * the caller's, tested once each in callTool above — the service is available (§7's
+ * availability-first clause: no pending row, no push, no existing pass touched for a
+ * service the hub already knows cannot execute) and the call's redaction map is derived,
+ * so the approval row and the audit row of the same call cannot be masked differently
+ * (§15). A lost claim is no approval at all: re-entering check is what opens the fresh
+ * pending row §7 step 1 hands back as -32003.
+ */
+async function passGate(
+  env: Env,
+  service: Service,
+  tool: string,
+  msg: JsonRpcRequest,
+  redactPaths: string[],
+  principal: Principal,
+): Promise<ApprovalClaim> {
+  const gate = approvalsFor(env);
+  const args = argumentsOf(msg);
+
+  let verdict = await gate.check(principal, service, tool, args, redactPaths);
+  while (verdict.outcome === "ok") {
+    const claim = await gate.claim(verdict.approvalId);
+    if (claim !== "lost") return claim;
+    // A concurrent identical call consumed the pass: treat it as no approval and fall
+    // through to step 2, which is exactly what a fresh check does.
+    verdict = await gate.check(principal, service, tool, args, redactPaths);
+  }
+  throw approvalRequired(verdict);
+}
+
+/**
+ * §7's per-direction redaction map for ONE call, derived exactly once and handed to every
+ * site that masks anything: the approval row's arguments and the audit row's bodies alike.
+ * Each direction is the union of the backend's SCHEMA-declared paths (`writeOnly`) with
+ * the service's configured ones (`redact` / `redact_results`).
+ *
+ * Null has ONE meaning here — no sound map can exist for this tool (unknown to the
+ * backend, or its cached schema tripped registry.validateSchemaIndirection) — and one
+ * consequence, taken by callTool at the gate: -32001, the same code as not-permitted, so
+ * the refusal cannot be used to map grant patterns (§7). Nothing downstream runs, and no
+ * body is ever recorded for such a tool (§15).
+ */
+async function redactionMapFor(
+  registry: Registry,
+  backend: ServiceBackend,
+  service: Service,
+  tool: string,
+): Promise<{ args: string[]; results: string[] } | null> {
+  // deps: ServiceBackend.sensitivePaths · registry.redactPathsFor
+  const schemaPaths = await backend.sensitivePaths(service, tool);
+  if (schemaPaths === null) return null;
+  return {
+    args: union(schemaPaths.args, await registry.redactPathsFor(service, tool, "args")),
+    results: union(schemaPaths.results, await registry.redactPathsFor(service, tool, "results")),
+  };
+}
+
+/** `params.arguments` and nothing else — the whole args binding (§7, MRTR clause). */
+function argumentsOf(msg: JsonRpcRequest): Record<string, unknown> | undefined {
+  const args = msg.params?.arguments;
+  return typeof args === "object" && args !== null ? (args as Record<string, unknown>) : undefined;
+}
+
+/** Two path lists as one set — §7's per-direction union of schema and config paths. */
+function union(a: string[], b: string[]): string[] {
+  return [...new Set([...a, ...b])];
+}
+
+/** What a `tools/call` row may carry: both masked, or — on every refusal — neither (§15). */
+type CallBodies = { args?: Record<string, unknown>; result?: Record<string, unknown> };
+
+/**
+ * The audit bodies of a DISPATCHED call whose service opts into them (§15): arguments
+ * masked under the args union, `structuredContent` under the results union, and every
+ * unstructured content block replaced by a blob stub — bytes never stored. `redaction` is
+ * the call's ONE map (redactionMapFor), which is why a tool with no derivable map cannot
+ * reach here at all: callTool refused it at the gate.
+ */
+function callBodies(
+  redaction: { args: string[]; results: string[] },
+  msg: JsonRpcRequest,
+  relayed: JsonRpcResponse,
+): CallBodies {
+  const result = (relayed.result ?? {}) as Record<string, unknown>;
+  const structured = result.structuredContent;
+  const body: Record<string, unknown> = {};
+  if (typeof structured === "object" && structured !== null) {
+    body.structuredContent = applyRedaction(structured as Record<string, unknown>, redaction.results);
+  }
+  // Unstructured content is never persisted, only stubbed — which is why only structured
+  // data is ever redactable (§7, §15).
+  if (Array.isArray(result.content)) body.content = result.content.map(blobStub);
+  return { args: applyRedaction(argumentsOf(msg) ?? {}, redaction.args), result: body };
+}
+
+/** One unstructured result block, as the ledger keeps it: type and size, never bytes. */
+function blobStub(block: unknown): BodyStub {
+  const type = (block as { type?: unknown } | null)?.type;
+  return {
+    stub: "blob",
+    contentType: typeof type === "string" ? type : undefined,
+    bytes: new TextEncoder().encode(JSON.stringify(block ?? null)).length,
+  };
+}
+
+/** The one `tools/call` audit write — every path through callTool ends in exactly one. */
+async function recordCall(
+  env: Env,
+  entry: {
+    ownerId: string;
+    ctx: BackendCtx;
+    slug: string;
+    tool: string;
+    outcome: string;
+    durationMs: number;
+    bodies: CallBodies;
+  },
+): Promise<void> {
+  await record(env.DB, {
+    ownerId: entry.ownerId,
+    principal: formatPrincipal(entry.ctx.principal),
+    event: "tools/call",
+    service: entry.slug,
+    tool: entry.tool,
+    outcome: entry.outcome,
+    durationMs: entry.durationMs,
+    client: entry.ctx.clientMeta,
+    args: entry.bodies.args,
+    result: entry.bodies.result,
+  });
+}
+
+/**
+ * The approval gate, wired from the composition root's env. Built per request because
+ * every binding it closes over is (D1 especially); the clock is the real one — only
+ * tests inject another, and they construct their own.
+ */
+function approvalsFor(env: Env): Approvals {
+  return new Approvals({
+    db: env.DB,
+    publicOrigin: env.PUBLIC_ORIGIN,
+    audit: { record: (entry) => record(env.DB, entry) },
+    vapid: {
+      publicKey: env.VAPID_PUBLIC_KEY,
+      privateKey: env.VAPID_PRIVATE_KEY,
+      subject: env.PUBLIC_ORIGIN,
+    },
+    retentionDays: auditConfig().retentionDays,
+    now: Date.now,
+    push: sendPush,
+  });
+}
+
+/**
+ * The Web Push TRANSPORT (§13): one POST per subscription, answering the push service's
+ * status so approvals can prune dead endpoints.
+ *
+ * ponytail: RFC 8291 payload encryption and the VAPID ES256 signature belong to a
+ * library (§7 names webpush-webcrypto) that this repo does not depend on yet, so this is
+ * a bare POST — real push services will refuse it, which is why push is best-effort by
+ * contract and a refusal never fails the request that created the row. The payload
+ * carries only what §15 already permits on a third-party service (service, tool, id,
+ * link) and never arguments. Swap in the library and this function is the only edit.
+ */
+async function sendPush(
+  subscription: { endpoint: string },
+  payload: string,
+): Promise<{ status: number }> {
+  const response = await fetch(subscription.endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", TTL: "60" },
+    body: payload,
+  });
+  return { status: response.status };
 }
 
 /**
@@ -288,5 +818,14 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
  */
 function toWire(err: unknown, id: JsonRpcId | null): JsonRpcResponse {
   // deps: none
-  throw new Error("unimplemented");
+  if (err instanceof HubError) {
+    const error = { code: err.code, message: err.message };
+    return {
+      jsonrpc: "2.0",
+      id,
+      error: err.data === undefined ? error : { ...error, data: err.data },
+    };
+  }
+  // Nothing of the cause: not its message, not its stack, not its type.
+  return { jsonrpc: "2.0", id, error: { code: CODES.internal, message: "internal error" } };
 }

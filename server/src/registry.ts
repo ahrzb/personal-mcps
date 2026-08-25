@@ -670,16 +670,18 @@ export class Registry {
   async createService(draft: ServiceDraft): Promise<ServiceDetail> {
     // deps: validateRoles · D1 `service` · crypto
     assertSlug(draft.slug);
-    if (draft.slug === PMCP_SLUG) throw new Error(`slug "${PMCP_SLUG}" is reserved`);
+    if (draft.slug === PMCP_SLUG) {
+      throw new RegistryRefusal("slug", `"${PMCP_SLUG}" is reserved for the builtin`);
+    }
     const proxied = draft.kind === "proxy";
     if (proxied && !draft.upstreamUrl) {
-      throw new Error(`proxied service "${draft.slug}" needs an upstreamUrl`);
+      throw new RegistryRefusal("upstreamUrl", "is required for a proxied service");
     }
-    assertKindFields(draft.kind, draft.slug, draft);
+    assertKindFields(draft.kind, draft);
     const roles = draft.roles ?? {};
     assertRoles(roles);
     if (await this.getService(draft.ownerId, draft.slug)) {
-      throw new Error(`slug "${draft.slug}" already exists in this namespace`);
+      throw new RegistryRefusal("slug", "already exists in this namespace");
     }
 
     const row: ServiceRow = {
@@ -746,7 +748,7 @@ export class Registry {
     // deps: validateRoles · D1 `service`
     const row = await this.row(serviceId);
     if (!row) throw new Error(`no service with id "${serviceId}"`);
-    assertKindFields(row.kind, row.slug, patch);
+    assertKindFields(row.kind, patch);
     if (patch.roles !== undefined) assertRoles(patch.roles);
 
     const columns: string[] = [];
@@ -788,7 +790,18 @@ export class Registry {
    */
   async deleteService(serviceId: string): Promise<void> {
     // deps: D1 `service`
-    await this.db.prepare(`DELETE FROM service WHERE id = ?`).bind(serviceId).run();
+    await this.deleteServiceStatement(serviceId).run();
+  }
+
+  /**
+   * The same delete as a STATEMENT rather than a write, so admin's cascade can put it and
+   * the token delete into one `batch` — which is what §15 means by "one atomic D1 batch",
+   * and the only way to have it: D1 offers no interactive transaction. Nothing else
+   * differs; a caller with only this row to remove uses deleteService.
+   */
+  deleteServiceStatement(serviceId: string): D1Stmt {
+    // deps: D1 `service`
+    return this.db.prepare(`DELETE FROM service WHERE id = ?`).bind(serviceId);
   }
 
   /**
@@ -848,7 +861,7 @@ export class Registry {
     // deps: D1 `service_account` · crypto
     assertSlug(draft.slug);
     if (await this.getAccount(draft.ownerId, draft.slug)) {
-      throw new Error(`account slug "${draft.slug}" already exists in this namespace`);
+      throw new RegistryRefusal("slug", "already exists in this namespace");
     }
     const account: ServiceAccount = {
       id: crypto.randomUUID(),
@@ -881,7 +894,13 @@ export class Registry {
    */
   async deleteAccount(accountId: string): Promise<void> {
     // deps: D1 `service_account`
-    await this.db.prepare(`DELETE FROM service_account WHERE id = ?`).bind(accountId).run();
+    await this.deleteAccountStatement(accountId).run();
+  }
+
+  /** The account delete as a statement — deleteServiceStatement's twin, same reason. */
+  deleteAccountStatement(accountId: string): D1Stmt {
+    // deps: D1 `service_account`
+    return this.db.prepare(`DELETE FROM service_account WHERE id = ?`).bind(accountId);
   }
 
   /**
@@ -904,7 +923,10 @@ export class Registry {
     // Everything that can refuse runs BEFORE the write: a rejected set stores nothing.
     for (const entry of entries) {
       if (seen.has(entry.role)) {
-        throw new Error(`role "${entry.role}" appears twice — one grant row per (account, service, role)`);
+        throw new RegistryRefusal(
+          "roles",
+          `names "${entry.role}" twice — one grant row per (account, service, role)`,
+        );
       }
       seen.add(entry.role);
       if (entry.role === "all") continue; // the built-in: always grantable, never declared
@@ -912,7 +934,7 @@ export class Registry {
       if (Object.prototype.hasOwnProperty.call(declared, entry.role)) continue;
       if (row.kind === "proxy") {
         // A proxied declaration is complete by construction, so this is an owner error.
-        throw new Error(`role "${entry.role}" is not declared by service "${row.slug}"`);
+        throw new RegistryRefusal("roles", `names "${entry.role}", which this service does not declare`);
       }
       // A tunneled declaration arrives at registration — the file may be ahead of it.
       warnings.push(`role "${entry.role}" is not declared by service "${row.slug}" yet`);
@@ -1124,18 +1146,19 @@ function toAccount(row: AccountRow): ServiceAccount {
 /**
  * §2's slug grammar, deliberately narrower than the role-name one: no underscore, because
  * §7 splits an aggregated tool name at the FIRST `_`, and no dot or uppercase, because a
- * slug is a URL path segment.
+ * slug is a URL path segment. Exported so a front that ADVERTISES the constraint (admin's
+ * rendered JSON Schema `pattern`) and the code that enforces it read one definition.
  */
-const SLUG_CHARSET = /^[a-z0-9-]+$/;
+export const SLUG_CHARSET = /^[a-z0-9-]+$/;
 
 function assertSlug(slug: string): void {
-  if (!SLUG_CHARSET.test(slug)) throw new Error(`slug "${slug}" must match [a-z0-9-]`);
+  if (!SLUG_CHARSET.test(slug)) throw new RegistryRefusal("slug", "must match [a-z0-9-]");
 }
 
 /** validateRoles' violations, as the throw every write path owes its caller. */
 function assertRoles(decl: RoleDeclaration): void {
   const violations = validateRoles(decl);
-  if (violations.length > 0) throw new Error(violations.join("; "));
+  if (violations.length > 0) throw new RegistryRefusal("roles", violations.join("; "));
 }
 
 /**
@@ -1156,12 +1179,32 @@ type ProxyOnlyFields = Partial<Record<(typeof PROXY_ONLY)[number], unknown>>;
  * names every offending field at once, so a caller fixes one draft rather than one field
  * per round trip.
  */
-function assertKindFields(kind: ServiceKind, slug: string, fields: ProxyOnlyFields): void {
+function assertKindFields(kind: ServiceKind, fields: ProxyOnlyFields): void {
   if (kind === "proxy") return;
   const offending = PROXY_ONLY.filter((field) => fields[field] !== undefined);
   if (offending.length === 0) return;
-  throw new Error(
-    `tunneled service "${slug}" has no ${offending.join(", ")}: ` +
+  throw new RegistryRefusal(
+    "kind",
+    `a tunneled service has no ${offending.join(", ")}: ` +
       `upstream fields are proxied-only, and a tunnel declares its roles at registration`,
   );
+}
+
+/**
+ * An owner's CONFIGURATION mistake, as distinct from a bug — a duplicate slug, an
+ * undeclared role, a field the kind does not carry. It is a type rather than prose
+ * because the caller that renders it (admin's ops table) has to tell the two apart: a
+ * refusal becomes `invalid params` and reaches the owner, while anything else is a defect
+ * and reaches the wire as -32603 with no cause at all (§15). `field` names WHICH input
+ * was refused; `reason` is authored here and never contains a credential — this module
+ * receives none (upstream headers and token material live behind other seams entirely).
+ * Every other throw out of this module is an invariant violation and stays a plain Error.
+ */
+export class RegistryRefusal extends Error {
+  constructor(
+    readonly field: string,
+    readonly reason: string,
+  ) {
+    super(`"${field}" ${reason}`);
+  }
 }

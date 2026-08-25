@@ -14,6 +14,12 @@
 -- `REFERENCES "user"("id")` (§5) are declared in 0002/0003 and depend on this file
 -- running first, which the 0001 prefix guarantees.
 --
+-- 2026-08-25: three transcription deltas corrected in place against better-auth 1.7.1's
+-- own models, each observed as a runtime failure before it was fixed (D4's probe):
+-- `account.issuer` was missing, `twoFactor` was missing verified/failedVerificationCount/
+-- lockedUntil, and `deviceCode` carried createdAt/updatedAt that better-auth never writes.
+-- The upgrade path below is unchanged and still the real fix.
+--
 -- ponytail: transcribed by hand from better-auth ≥ 1.7's SQLite generator output — the
 -- CLI cannot run yet (better-auth is not a dependency of this repo, and adding one is
 -- outside the migrations phase). Upgrade path when it lands: run the §4 CLI-only auth
@@ -53,6 +59,9 @@ CREATE TABLE "account" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "accountId" TEXT NOT NULL,
   "providerId" TEXT NOT NULL,
+  -- 1.7's account-identity scoping: required, and written as 'local:credential' for a
+  -- password account. Missing from the original transcription — sign-up failed 500.
+  "issuer" TEXT NOT NULL,
   "userId" TEXT NOT NULL REFERENCES "user" ("id") ON DELETE CASCADE,
   "accessToken" TEXT,
   "refreshToken" TEXT,
@@ -78,7 +87,11 @@ CREATE TABLE "twoFactor" (
   "id" TEXT NOT NULL PRIMARY KEY,
   "secret" TEXT NOT NULL,
   "backupCodes" TEXT NOT NULL,
-  "userId" TEXT NOT NULL REFERENCES "user" ("id") ON DELETE CASCADE
+  "userId" TEXT NOT NULL REFERENCES "user" ("id") ON DELETE CASCADE,
+  -- TOTP enrollment/verification state (optional in the model, so no NOT NULL).
+  "verified" INTEGER,
+  "failedVerificationCount" INTEGER,
+  "lockedUntil" DATE
 );
 
 CREATE TABLE "passkey" (
@@ -105,7 +118,9 @@ CREATE TABLE "deviceCode" (
   "lastPolledAt" DATE,
   "pollingInterval" INTEGER,
   "clientId" TEXT,
-  "scope" TEXT,
-  "createdAt" DATE NOT NULL,
-  "updatedAt" DATE NOT NULL
+  "scope" TEXT
+  -- No createdAt/updatedAt: better-auth 1.7's deviceCode model declares neither, so its
+  -- INSERT omits both. Declared NOT NULL here, they failed every device/code call with a
+  -- NOT NULL constraint violation — an EXTRA-column mismatch, which never surfaces as
+  -- "no such column".
 );

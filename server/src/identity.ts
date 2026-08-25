@@ -2,7 +2,8 @@
 //
 // This module owns both ways a request proves itself: better-auth sessions for humans
 // (the instantiation, the plugin list — username, twoFactor, passkey,
-// deviceAuthorization, bearer — and every table better-auth manages are hidden here;
+// deviceAuthorization, bearer; passkey arrives with its separate package, see auth() —
+// and every table better-auth manages are hidden here;
 // no other module touches better-auth) and our hashed-token table for machines.
 // Hidden with them: the whole token scheme — the pmcp_sa_/pmcp_svc_ prefixes, 256-bit
 // secrets stored as unsalted SHA-256 (deliberate for high-entropy random secrets; do
@@ -20,7 +21,21 @@
 // originates here; mapping errors into JSON-RPC is the gateway's monopoly.
 
 import { env } from "cloudflare:workers";
-import { SERVICE_ACCOUNT_TOKEN_TTL_MS, TOKEN_LAST_USED_STAMP_MS } from "./limits";
+import { betterAuth } from "better-auth";
+import { bearer } from "better-auth/plugins/bearer";
+import { deviceAuthorization } from "better-auth/plugins/device-authorization";
+import { twoFactor } from "better-auth/plugins/two-factor";
+import { username as usernamePlugin } from "better-auth/plugins/username";
+import { Hono } from "hono";
+import { deleteUser, provisionUser } from "./admin";
+import { record } from "./audit";
+import { formatPrincipal } from "./principal";
+import type { Principal } from "./principal";
+import {
+  DEVICE_CODE_TTL_MS,
+  SERVICE_ACCOUNT_TOKEN_TTL_MS,
+  TOKEN_LAST_USED_STAMP_MS,
+} from "./limits";
 
 /** The control plane: identity takes no binding parameter, so it resolves it ambiently.
  *  `D1Like` is workers-env.d.ts's — the binding's shape is declared once, for everyone. */
@@ -29,18 +44,63 @@ function db(): D1Like {
 }
 
 /**
- * The resolved caller identity that every downstream decision keys on — produced
- * here, consumed by the gateway pipeline, never constructed anywhere else.
- *
- * A `user` is the namespace owner acting as themself (web session or CLI device-flow
- * session): sees every service, never approval-gated. A `service_account` is a
- * machine identity confined by its grants; `ownerId` names the namespace it lives in
- * and `slug` is its per-owner name. Service tokens (`pmcp_svc_`) never become a
- * Principal — they authenticate only the /connect upgrade, via resolveServiceToken.
+ * §2's first rule about what a username may be: `[a-z0-9-]`. It lives beside the module
+ * that VALIDATES usernames — better-auth's `usernameValidator` below is the enforcement
+ * point — and the door (index.mcpEntry) and admin.provisionUser read this one definition
+ * rather than each spelling the class again. §2's other rule, the reserved-segment
+ * collision, cannot live here: it derives from the composition root's route table, so it
+ * arrives as an argument (bootstrapRoute).
  */
-export type Principal =
-  | { kind: "user"; userId: string; username: string }
-  | { kind: "service_account"; accountId: string; ownerId: string; slug: string };
+export const USERNAME_CHARSET = /^[a-z0-9-]+$/;
+
+/**
+ * The ONE better-auth instantiation (§4), built per call because a D1 binding is
+ * request-scoped and an instance closing over a stale one is a dead instance. The plugin
+ * list is the spec's, minus passkey: `@better-auth/passkey` is a separate package that
+ * 1.7 does not bundle and this repo does not install, so the passkey ceremonies — and the
+ * `last_used_at` stamp §5 extends them with — arrive with that dependency, not before.
+ *
+ * `database: env.DB` IS the whole D1 wiring: `@better-auth/kysely-adapter` ships its own
+ * D1 dialect and selects it by duck-typing the binding, so no dialect is constructed here
+ * and no `kysely-d1` package is needed. The cast exists only because better-auth's
+ * `database` option names `D1Database` from `@cloudflare/workers-types`, which this repo
+ * deliberately does not install (every binding is `unknown`, index.ts's Env).
+ *
+ * Two consequences worth knowing before touching anything better-auth writes: values land
+ * as SQLite text/integers (dates as ISO-8601 TEXT, booleans as 0/1), and D1 has no
+ * interactive transactions, so nothing here may be wrapped in one.
+ */
+function auth() {
+  return betterAuth({
+    database: env.DB as never,
+    secret: env.BETTER_AUTH_SECRET,
+    baseURL: env.PUBLIC_ORIGIN,
+    // A Worker never phones home: the bundled telemetry is opt-in, and this says so.
+    telemetry: { enabled: false },
+    emailAndPassword: { enabled: true },
+    plugins: [
+      // §2's charset, handed to the plugin that would otherwise apply its own (which
+      // rejects the hyphen every generated username may carry). One rule for what a
+      // username is, spelled where §2 says it: admin.provisionUser writes it, this
+      // accepts it.
+      usernamePlugin({ usernameValidator: (name) => USERNAME_CHARSET.test(name) }),
+      twoFactor(),
+      // §13: ~10 minutes, down from better-auth's 30-minute default.
+      deviceAuthorization({ expiresIn: `${DEVICE_CODE_TTL_MS / 1000}s` }),
+      bearer(),
+    ],
+  });
+}
+
+/**
+ * The resolved caller identity that every downstream decision keys on — PRODUCED here
+ * (resolvePrincipal and nothing else), never constructed anywhere else. The type and its
+ * canonical string live in principal.ts, a leaf, so a module that only has to name a
+ * caller does not inherit better-auth and `cloudflare:workers`; both are re-exported here
+ * because this is still where a principal comes from.
+ */
+export type { Principal };
+export { formatPrincipal };
 
 /**
  * The two machine-credential kinds in the token table. `service_account` keys
@@ -70,16 +130,6 @@ export type TokenInfo = {
 };
 
 /**
- * The one canonical principal string — `user:<username>` or `sa:<slug>` — used
- * identically by audit rows, the forwarded `hub/principal` _meta field, and
- * /api/whoami. Owning the format here keeps three surfaces from each knowing it.
- */
-export function formatPrincipal(p: Principal): string {
-  // deps: none
-  throw new Error("unimplemented");
-}
-
-/**
  * Authenticates a consumer request on `/<user>/mcp*` and proves the caller may act
  * in the URL's namespace — the whole §7-step-1 matrix in one call. Bearer-only:
  * session cookies are never consulted (that single rule removes the browser-CSRF
@@ -102,7 +152,123 @@ export function formatPrincipal(p: Principal): string {
  */
 export async function resolvePrincipal(req: Request, now?: () => number): Promise<Principal> {
   // deps: better-auth · D1 `token` · D1 `service_account` · D1 `user` · crypto.subtle
-  throw new Error("unimplemented");
+  // Credential FIRST, namespace second — that order IS the anti-enumeration rule: an
+  // unauthenticated probe never reaches a lookup that could answer differently for a
+  // username that exists, so its 401 is the same 401 either way.
+  const principal = await resolveCredential(req, now ?? Date.now);
+  if (principal === null) throw unauthorized();
+  const owner = await ownerIdFor(namespaceOf(req));
+  // One `throw` for "the namespace is someone else's" and "the namespace is nobody's":
+  // a resolved caller learns only that there is nothing here for them.
+  if (owner === null || owner !== namespaceIdOf(principal)) throw anonymousNotFound();
+  return principal;
+}
+
+/**
+ * §7 step 1's resolution proper, with no namespace judgment: the prefix dispatch, and
+ * nothing else. Shared by resolvePrincipal — which adds the namespace — and by
+ * `/api/whoami`, whose URL carries no namespace to add (§8: "Resolution mirrors §7
+ * step 1"). Answers null for every way a request fails to name somebody, so no caller
+ * can accidentally tell two failures apart.
+ */
+async function resolveCredential(req: Request, now: () => number): Promise<Principal | null> {
+  const presented = bearerToken(req);
+  if (presented === null) return null;
+  // A service credential means nothing on a consumer surface, and — the mutation this
+  // guards against — a `pmcp_`-prefixed token whose lookup MISSES must not fall through
+  // to the session lookup below either. Both prefixes answer here, whatever the row says.
+  if (presented.startsWith(TOKEN_PREFIX.service)) return null;
+  if (presented.startsWith(TOKEN_PREFIX.service_account)) {
+    return serviceAccountFor(presented, now);
+  }
+  return sessionUserFor(presented);
+}
+
+/**
+ * The `pmcp_sa_` leg: the token row must be of kind `service_account` BY COLUMN,
+ * unrevoked and unexpired, and its `ref_id` must still resolve to a live account row
+ * (§5 gives that reference no FK, so a deleted account leaves the token dangling —
+ * a live credential for nobody, which is nobody).
+ */
+async function serviceAccountFor(presented: string, now: () => number): Promise<Principal | null> {
+  const row = await db()
+    .prepare(
+      `SELECT "id", "kind", "ref_id", "expires_at", "last_used_at", "revoked_at"
+         FROM token WHERE "hash" = ?`,
+    )
+    .bind(await hashToken(presented))
+    .first<TokenRow>();
+  if (row === null || row.kind !== "service_account" || row.revoked_at != null) return null;
+  const at = now();
+  if (row.expires_at != null && row.expires_at <= at) return null;
+  const account = await db()
+    .prepare(`SELECT "id", "owner_id", "slug" FROM service_account WHERE id = ?`)
+    .bind(row.ref_id)
+    .first<{ id: string; owner_id: string; slug: string }>();
+  if (account === null) return null;
+  await stampLastUsed(row, at);
+  return { kind: "service_account", accountId: account.id, ownerId: account.owner_id, slug: account.slug };
+}
+
+/**
+ * The fall-through leg: better-auth's own session lookup, riding §4's `bearer()` plugin.
+ * The Authorization header is rebuilt into a bare Headers rather than passed through,
+ * because better-auth would happily read a Cookie from the original — and on `/<user>/mcp*`
+ * a cookie is never a credential (§7 step 1, the whole browser-CSRF surface).
+ */
+async function sessionUserFor(presented: string): Promise<Principal | null> {
+  const session = await auth().api.getSession({
+    headers: new Headers({ authorization: `Bearer ${presented}` }),
+  });
+  const user = session?.user as { id: string; username?: string | null } | undefined;
+  if (!user?.username) return null;
+  return { kind: "user", userId: user.id, username: user.username };
+}
+
+/** The namespace a consumer request addresses: the first path segment of `/<user>/mcp*`. */
+function namespaceOf(req: Request): string {
+  return decodeURIComponent(new URL(req.url).pathname.split("/")[1] ?? "");
+}
+
+/** The namespace a resolved principal lives in — its owner's user id, either kind. */
+function namespaceIdOf(p: Principal): string {
+  return p.kind === "user" ? p.userId : p.ownerId;
+}
+
+/** The user id behind a username, or null when no such user exists. */
+async function ownerIdFor(name: string): Promise<string | null> {
+  if (name === "") return null;
+  const row = await db()
+    .prepare(`SELECT "id" FROM "user" WHERE "username" = ?`)
+    .bind(name)
+    .first<{ id: string }>();
+  return row?.id ?? null;
+}
+
+/**
+ * The 401 every unresolved consumer request gets, with the `WWW-Authenticate: Bearer`
+ * §7 step 1 attaches to the surface (and §18 decision 13 keeps as the OAuth-discovery
+ * upgrade path). One builder, so the row on an existing username and the row on an
+ * absent one are the same bytes — which is the property, not the status.
+ */
+export function unauthorized(): Response {
+  return new Response("Unauthorized", {
+    status: 401,
+    headers: { "WWW-Authenticate": "Bearer", "Content-Type": "text/plain; charset=utf-8" },
+  });
+}
+
+/**
+ * The hub's ONE 404: served for a foreign or absent namespace, for a service a caller
+ * holds no grants on, for the bootstrap route while its secret is unset — and by the
+ * composition root for any unrouted path. Sharing the builder is what makes
+ * "indistinguishable from route-not-found" true byte for byte rather than by intent.
+ */
+export function anonymousNotFound(): Response {
+  return new Response("Not Found", {
+    status: 404,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
 }
 
 /**
@@ -189,6 +355,22 @@ async function hashToken(token: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * A length-independent comparison for the §12 master key: every byte of both strings is
+ * read whichever way the answer goes, so a wrong secret's refusal time says nothing about
+ * how much of it was right.
+ */
+function constantTimeEqual(a: string, b: string): boolean {
+  const left = new TextEncoder().encode(a);
+  const right = new TextEncoder().encode(b);
+  // Length itself is not secret (and cannot be hidden by any comparison), but the loop
+  // below must still run over a fixed span, so it walks the longer of the two.
+  let diff = left.length ^ right.length;
+  const span = Math.max(left.length, right.length);
+  for (let i = 0; i < span; i++) diff |= (left[i] ?? 0) ^ (right[i] ?? 0);
+  return diff === 0;
+}
+
 /** 256 CSPRNG bits, base64url — the whole entropy of a credential (§4). */
 function randomSecret(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -253,7 +435,48 @@ export async function requireOwnerSession(
   opts?: { recent?: boolean },
 ): Promise<OwnerSession> {
   // deps: better-auth
-  throw new Error("unimplemented");
+  // Cookie ONLY, rebuilt into a bare Headers: an Authorization header on a web route is
+  // not a credential here, and this is where "bearer-sourced sessions are rejected"
+  // becomes structural rather than a check. It holds for the device flow because the
+  // hub never hands a browser cookie out for one — /device/token answers with a bearer
+  // token and no Set-Cookie — and better-auth's session cookie is SIGNED, so a stolen
+  // CLI token replayed as a raw cookie value resolves to nobody.
+  const cookie = req.headers.get("Cookie");
+  const session = cookie === null
+    ? null
+    : await auth().api.getSession({ headers: new Headers({ cookie }) });
+  const user = session?.user as { id: string; username?: string | null } | undefined;
+  if (!session || !user?.username) throw loginRedirect(req);
+  if (opts?.recent && !(await isRecentAuth(session.session.createdAt))) throw loginRedirect(req);
+  return {
+    user: { kind: "user", userId: user.id, username: user.username },
+    sessionId: session.session.id,
+  };
+}
+
+/**
+ * "Recent authentication" is better-auth's own session freshness — `createdAt` inside the
+ * configured `freshAge`, the same window it guards its own sensitive endpoints with.
+ * Deliberately not a second window of ours: two answers to "is this session fresh enough"
+ * is one more than the system can keep consistent.
+ */
+async function isRecentAuth(createdAt: Date | string): Promise<boolean> {
+  const freshAgeSeconds = (await auth().$context).sessionConfig.freshAge;
+  if (freshAgeSeconds === 0) return true; // freshness disabled, better-auth's own escape
+  return Date.now() - new Date(createdAt).getTime() < freshAgeSeconds * 1000;
+}
+
+/**
+ * The web surfaces' refusal (§13): a browser is sent to sign in, carrying where it was
+ * going so the page it wanted survives the round trip. Never a 401 — a human with an
+ * expired session is not an API client with a bad token.
+ */
+function loginRedirect(req: Request): Response {
+  const { pathname, search } = new URL(req.url);
+  return new Response(null, {
+    status: 302,
+    headers: { Location: `/login?next=${encodeURIComponent(pathname + search)}` },
+  });
 }
 
 /**
@@ -325,23 +548,63 @@ function expiryFor(
  */
 export async function listTokens(ownerId: string): Promise<TokenInfo[]> {
   // deps: D1 `token` · D1 `service` · D1 `service_account`
-  // The joins exist for the SLUG; ownership is OWNED_BY's one rule, which is also what
-  // keeps a token whose referent is gone out of every listing.
   const { results } = await db()
-    .prepare(
-      `SELECT token."id", token."kind", token."ref_id", token."prefix", token."created_at",
+    .prepare(`${TOKEN_READ} ORDER BY token."created_at" DESC`)
+    .bind(ownerId)
+    .all<TokenListRow>();
+  return results.map(toTokenInfo);
+}
+
+/**
+ * ONE token in `ownerId`'s namespace, by the id `token_list` reports — or null when the
+ * id names none, or one outside the namespace (the two are one answer, as everywhere
+ * here). Exists because every caller that wants one row wants exactly what the listing
+ * shows for it: the display prefix and the resolved expiry are decisions made once, in
+ * the shape below, and a caller scanning listTokens to find a single row is paying for
+ * the whole namespace to re-derive them.
+ */
+export async function tokenFor(ownerId: string, id: string): Promise<TokenInfo | null> {
+  // deps: D1 `token` · D1 `service` · D1 `service_account`
+  const row = await db()
+    .prepare(`${TOKEN_READ} AND token."id" = ?`)
+    .bind(ownerId, id)
+    .first<TokenListRow>();
+  return row === null ? null : toTokenInfo(row);
+}
+
+/**
+ * How many token rows are bound to this service or account id — what the deleting
+ * cascades report about what they removed. Keyed by REFERENT, exactly like
+ * deleteTokensFor, so "how many will go" and "which go" cannot answer differently.
+ */
+export async function countTokensFor(refId: string): Promise<number> {
+  // deps: D1 `token`
+  const row = await db()
+    .prepare(`SELECT COUNT(*) AS n FROM token WHERE "ref_id" = ?`)
+    .bind(refId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/**
+ * The read behind every token surface: the joins exist for the SLUG, and ownership is
+ * OWNED_BY's one rule — which is also what keeps a token whose referent is gone out of
+ * every answer. Callers append their own ordering or their own `AND`, in that order of
+ * binds (ownerId first).
+ */
+const TOKEN_READ = `SELECT token."id", token."kind", token."ref_id", token."prefix", token."created_at",
               token."expires_at", token."last_used_at", token."revoked_at",
               COALESCE(svc.slug, acct.slug) AS ref_slug
          FROM token
          LEFT JOIN service svc ON token."kind" = 'service' AND svc.id = token."ref_id"
          LEFT JOIN service_account acct
                 ON token."kind" = 'service_account' AND acct.id = token."ref_id"
-        WHERE ${OWNED_BY}
-        ORDER BY token."created_at" DESC`,
-    )
-    .bind(ownerId)
-    .all<TokenRow & { prefix: string; created_at: number; ref_slug: string }>();
-  return results.map((row) => ({
+        WHERE ${OWNED_BY}`;
+
+type TokenListRow = TokenRow & { prefix: string; created_at: number; ref_slug: string };
+
+function toTokenInfo(row: TokenListRow): TokenInfo {
+  return {
     id: row.id,
     kind: row.kind,
     refId: row.ref_id,
@@ -351,7 +614,7 @@ export async function listTokens(ownerId: string): Promise<TokenInfo[]> {
     expiresAt: row.expires_at ?? null,
     lastUsedAt: row.last_used_at ?? null,
     revokedAt: row.revoked_at ?? null,
-  }));
+  };
 }
 
 /**
@@ -384,7 +647,17 @@ export async function revokeToken(ownerId: string, id: string): Promise<boolean>
  */
 export async function deleteTokensFor(refId: string): Promise<void> {
   // deps: D1 `token`
-  await db().prepare(`DELETE FROM token WHERE "ref_id" = ?`).bind(refId).run();
+  await deleteTokensForStatement(refId).run();
+}
+
+/**
+ * The same delete as a STATEMENT rather than a write, so admin's deleting cascades can put
+ * it and the row delete into ONE `db().batch` — §15's "one atomic D1 batch", and the only
+ * way to have it, D1 having no interactive transaction. Nothing else differs.
+ */
+export function deleteTokensForStatement(refId: string): D1Stmt {
+  // deps: D1 `token`
+  return db().prepare(`DELETE FROM token WHERE "ref_id" = ?`).bind(refId);
 }
 
 /**
@@ -400,7 +673,69 @@ export async function deleteTokensFor(refId: string): Promise<void> {
  */
 export function authRoutes(): unknown {
   // deps: better-auth · audit.record · D1 `passkey`
-  throw new Error("unimplemented");
+  const app = new Hono();
+  // One catch-all: which endpoints exist under here is better-auth's plugin list to
+  // decide, not a route table of ours to keep in sync with it.
+  app.all("/*", async (c) => {
+    const response = await auth().handler(c.req.raw);
+    await recordAuthEvent(c.req.raw, response);
+    return response;
+  });
+  return app;
+}
+
+/**
+ * §15's "logins, device approvals" audit rows, keyed by the better-auth endpoint that
+ * produced them. Suffix-matched because the group is mounted under a prefix the
+ * composition root chooses, which is not this module's business to know.
+ */
+const AUDITED_AUTH_ENDPOINTS: Record<string, string> = {
+  "/sign-in/username": "auth.login",
+  "/sign-in/email": "auth.login",
+  "/device/approve": "auth.device_approved",
+};
+
+/** Records one audited auth event, if this request was one and it succeeded. */
+async function recordAuthEvent(req: Request, response: Response): Promise<void> {
+  const path = new URL(req.url).pathname;
+  const event = Object.entries(AUDITED_AUTH_ENDPOINTS).find(([suffix]) =>
+    path.endsWith(suffix),
+  )?.[1];
+  if (event === undefined || !response.ok) return;
+  const actor = await authEventActor(req, response);
+  if (actor === null) return; // nothing to attribute it to is nothing to record
+  await record(db(), {
+    ownerId: actor.userId,
+    principal: formatPrincipal(actor),
+    event,
+    outcome: "ok",
+  });
+}
+
+/**
+ * Who an audited auth event is about: the sign-in responses name the user they just
+ * authenticated, and a device approval is attributable to the browser session that
+ * approved it. Never throws — an audit row is not worth failing a login over, and
+ * better-auth's bodies are its own shape to change.
+ */
+async function authEventActor(
+  req: Request,
+  response: Response,
+): Promise<Extract<Principal, { kind: "user" }> | null> {
+  const body = (await response
+    .clone()
+    .json()
+    .catch(() => null)) as { user?: { id?: string; username?: string } } | null;
+  if (body?.user?.id && body.user.username) {
+    return { kind: "user", userId: body.user.id, username: body.user.username };
+  }
+  const cookie = req.headers.get("Cookie");
+  if (cookie === null) return null;
+  const session = await auth()
+    .api.getSession({ headers: new Headers({ cookie }) })
+    .catch(() => null);
+  const user = session?.user as { id: string; username?: string | null } | undefined;
+  return user?.username ? { kind: "user", userId: user.id, username: user.username } : null;
 }
 
 /**
@@ -414,7 +749,31 @@ export function authRoutes(): unknown {
  */
 export function whoamiRoute(): unknown {
   // deps: better-auth · D1 `token` · D1 `service_account` · D1 `user` · crypto.subtle
-  throw new Error("unimplemented");
+  const app = new Hono();
+  app.get("/whoami", async (c) => {
+    // resolveCredential, not resolvePrincipal: there is no `<user>` in this URL to prove
+    // anything about — which is the whole reason whoami exists (§8).
+    const principal = await resolveCredential(c.req.raw, Date.now);
+    if (principal === null) return unauthorized();
+    return c.json({
+      principal: formatPrincipal(principal),
+      namespace: await namespaceNameOf(principal),
+    });
+  });
+  return app;
+}
+
+/** The username whose namespace a principal acts in — its own, or its owner's. */
+async function namespaceNameOf(p: Principal): Promise<string> {
+  if (p.kind === "user") return p.username;
+  const row = await db()
+    .prepare(`SELECT "username" FROM "user" WHERE "id" = ?`)
+    .bind(p.ownerId)
+    .first<{ username: string }>();
+  // An account row cannot outlive its owner (§5's cascade), so this is unreachable
+  // rather than a case: answering "" would be inventing a namespace.
+  if (row === null) throw new Error(`service account ${p.slug} has no owner row`);
+  return row.username;
 }
 
 /**
@@ -423,12 +782,193 @@ export function whoamiRoute(): unknown {
  * unset, the route does not exist: 404 for everything, indistinguishable from any
  * unknown path, so the owner keeps it disabled between uses. The secret compare is
  * constant-time, and every invocation — accepted or refused — writes an audit row
- * (principal `bootstrap`). reset-password leaves TOTP/passkey enrollment intact, so
- * the secret alone never defeats a second factor. User deletion hands the namespace
- * teardown (token/row cascade, socket severing, DO wipes) to the admin-owned
- * cascade before better-auth's user rows go.
+ * (principal `bootstrap`, event `bootstrap.<op>`), written HERE and only here so a leg
+ * added tomorrow is audited without its author remembering to. reset-password leaves
+ * TOTP/passkey enrollment intact, so the secret alone never defeats a second factor. User
+ * deletion hands the namespace teardown (token/row cascade, socket severing, DO wipes) to
+ * the admin-owned cascade before better-auth's user rows go.
+ *
+ * Both of §12's inputs ARRIVE as arguments and neither is named here: the BOOTSTRAP_SECRET
+ * binding, and `reserved` — the top-level segments a username may not claim (§2), derived
+ * from the composition root's route table.
  */
-export function bootstrapRoute(): unknown {
+export function bootstrapRoute(secret: string, reserved: ReadonlySet<string>): unknown {
   // deps: better-auth · admin.provisionUser · admin.deleteUser · audit.record · D1 `user` · crypto.subtle
-  throw new Error("unimplemented");
+  const app = new Hono();
+  // Path-agnostic: the composition root decides WHERE §12's route lives and hands this
+  // group only the requests that belong to it — the same reason the secret arrives as an
+  // argument rather than being read from a binding here.
+  app.post("/*", async (c) => {
+    const presented = bearerToken(c.req.raw);
+    if (presented === null || !constantTimeEqual(presented, secret)) {
+      await recordBootstrap(BOOTSTRAP_OWNERLESS, "unknown", "refused");
+      // No WWW-Authenticate: this route answers no principal and advertises no Bearer
+      // scheme — the 401 says "wrong secret" where the 404 says "route disabled", and
+      // that split is the whole signal scripts/users.ts reads (§12).
+      return new Response("Unauthorized", {
+        status: 401,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
+    const body = (await c.req.json().catch(() => null)) as BootstrapRequest | null;
+    if (body?.op === undefined) {
+      await recordBootstrap(BOOTSTRAP_OWNERLESS, "unknown", "error");
+      return new Response("Bad Request", { status: 400 });
+    }
+    const named = "username" in body ? { username: body.username } : undefined;
+    try {
+      const leg = await runBootstrapOp(body, reserved);
+      await recordBootstrap(leg.ownerId, body.op, "ok", named);
+      return c.json(leg.answer);
+    } catch (err) {
+      if (!(err instanceof BootstrapRefusal)) throw err;
+      await recordBootstrap(BOOTSTRAP_OWNERLESS, body.op, "error", {
+        ...named,
+        reason: err.message,
+      });
+      // A conflict the operator resolves by retyping — never a 500, and never the 404
+      // that means "the route is disabled".
+      return new Response(err.message, { status: 409 });
+    }
+  });
+  return app;
+}
+
+/**
+ * §12's four legs, each answering the body the script prints and the namespace its row is
+ * filed under — `bootstrap` when there is none (a listing spans everyone). Auditing is
+ * deliberately NOT here: the route above writes exactly one row per invocation, which is
+ * what makes §12's "every invocation" one line at one site rather than four promises.
+ */
+async function runBootstrapOp(
+  body: BootstrapRequest,
+  reserved: ReadonlySet<string>,
+): Promise<BootstrapLeg> {
+  switch (body.op) {
+    case "create":
+      return createUser(body.username, reserved);
+    case "list":
+      return listUsers();
+    case "delete":
+      return removeUser(body.username);
+    case "reset-password":
+      return resetPassword(body.username);
+  }
+}
+
+/** One leg's answer: the JSON the script reads, and whose namespace to file the row in. */
+type BootstrapLeg = { ownerId: string; answer: Record<string, unknown> };
+
+/** The request body of POST /internal/users — scripts/users.ts holds the copied twin. */
+type BootstrapRequest =
+  | { op: "create"; username: string }
+  | { op: "list" }
+  | { op: "delete"; username: string }
+  | { op: "reset-password"; username: string };
+
+/**
+ * The `owner_id` a bootstrap invocation with no namespace to name is filed under: a
+ * refused secret, a malformed body, a listing that spans everyone. The column is NOT
+ * NULL and has no FK (§5), so a sentinel is a row rather than a lie about a user; it
+ * appears on no owner's /audit page, which is correct — an all-namespaces master key's
+ * misuse is not one namespace's news.
+ */
+const BOOTSTRAP_OWNERLESS = "bootstrap";
+
+/** §12: every invocation is logged, accepted or refused, as principal `bootstrap`. The
+ *  `op` is always the REQUEST's op name, so `event = 'bootstrap.create'` selects every
+ *  create rather than only the failed ones. */
+async function recordBootstrap(
+  ownerId: string,
+  op: string,
+  outcome: string,
+  detail?: Record<string, unknown>,
+): Promise<void> {
+  await record(db(), {
+    ownerId,
+    principal: BOOTSTRAP_OWNERLESS,
+    event: `bootstrap.${op}`,
+    outcome,
+    detail,
+  });
+}
+
+/**
+ * §12's create: the namespace through admin's one provisioning seam, then the human
+ * credential — the password exists in this function's scope and in the response, and
+ * nowhere else, ever. provisionUser's `bootstrap.user_created` is a domain event about a
+ * NAMESPACE, beside this invocation's own row rather than standing in for it.
+ */
+async function createUser(name: string, reserved: ReadonlySet<string>): Promise<BootstrapLeg> {
+  if (reserved.has(name)) {
+    // §2: a username can never claim a served top-level segment. The set arrives from the
+    // composition root, which owns the route table it derives from.
+    throw new BootstrapRefusal(`"${name}" is a reserved route segment`);
+  }
+  if (await ownerIdFor(name)) throw new BootstrapRefusal(`"${name}" already exists`);
+  const { userId } = await provisionUser(name);
+  const password = randomSecret();
+  await setPassword(userId, password);
+  return { ownerId: userId, answer: { op: "create", username: name, password } };
+}
+
+/** §12's list: usernames only — the script prints nothing else. */
+async function listUsers(): Promise<BootstrapLeg> {
+  const { results } = await db()
+    .prepare(`SELECT "username" FROM "user" WHERE "username" IS NOT NULL ORDER BY "username"`)
+    .all<{ username: string }>();
+  return {
+    ownerId: BOOTSTRAP_OWNERLESS,
+    answer: { op: "list", usernames: results.map((row) => row.username) },
+  };
+}
+
+/** §12's delete: admin's full teardown, and absence as the postcondition either way. */
+async function removeUser(name: string): Promise<BootstrapLeg> {
+  const userId = await ownerIdFor(name);
+  await deleteUser(name);
+  return { ownerId: userId ?? BOOTSTRAP_OWNERLESS, answer: { op: "delete", username: name } };
+}
+
+/**
+ * §12's reset-password: a new credential and nothing else — TOTP and passkey enrollment
+ * are untouched, so the master key alone never defeats a second factor.
+ */
+async function resetPassword(name: string): Promise<BootstrapLeg> {
+  const userId = await ownerIdFor(name);
+  if (userId === null) throw new BootstrapRefusal(`no such user: "${name}"`);
+  const password = randomSecret();
+  await setPassword(userId, password);
+  return { ownerId: userId, answer: { op: "reset-password", username: name, password } };
+}
+
+/** A bootstrap op the operator can fix by retyping — surfaced as 409, never a 500. */
+class BootstrapRefusal extends Error {}
+
+/**
+ * The ONE place a password is written (§4/§12: there is no self-serve password change
+ * anywhere, so this has exactly two callers, both inside the bootstrap route, and is
+ * never reachable from any MCP surface). Creates the credential account on first use and
+ * replaces the hash afterwards; `provisionUser` writes the `user` row alone, so a
+ * freshly provisioned namespace passes through the create leg here exactly once.
+ *
+ * `issuer` is better-auth 1.7's account-identity scope, spelled as its own
+ * `createLocalAccountIssuer("credential")` does — that helper lives in a transitive
+ * package this repo does not depend on directly.
+ */
+export async function setPassword(userId: string, password: string): Promise<void> {
+  const ctx = await auth().$context;
+  const hash = await ctx.password.hash(password);
+  const existing = await ctx.internalAdapter.findCredentialAccount(userId);
+  if (existing) {
+    await ctx.internalAdapter.updatePassword(userId, hash);
+    return;
+  }
+  await ctx.internalAdapter.createAccount({
+    userId,
+    providerId: "credential",
+    accountId: userId,
+    issuer: "local:credential",
+    password: hash,
+  } as never);
 }

@@ -17,6 +17,9 @@
 import path from "node:path";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
+// The extension is spelled out because Vite's native config loader (the coming default)
+// resolves config imports without one only by accident.
+import { outboundRouter } from "./server/test/harness/fake-upstream.ts";
 
 // `.mts`, and therefore ESM: the top-level await below is a build error under the CJS
 // output Vite falls back to for a plain `.ts` config.
@@ -26,9 +29,29 @@ const migrations = await readD1Migrations(path.join(import.meta.dirname, "server
 const workersPool = {
   wrangler: { configPath: "./wrangler.jsonc" },
   miniflare: {
-    // Read by server/test/setup/d1.ts, which is the only thing that touches it.
-    bindings: { TEST_MIGRATIONS: migrations },
+    // TEST_MIGRATIONS is read by server/test/setup/d1.ts, which is the only thing that
+    // touches it. UPSTREAM_CREDS_KEY is a wrangler SECRET in production (wrangler.jsonc
+    // names it and holds no value); the credential envelope refuses to seal without one,
+    // so the two projects that write one need a value here — visibly fake, and scoped to
+    // an isolated test database.
+    bindings: {
+      TEST_MIGRATIONS: migrations,
+      UPSTREAM_CREDS_KEY: "FAKE0000-upstream-creds-key",
+    },
   },
+} as const;
+
+/**
+ * The `worker` project's pool: the shared one plus the fake upstream on every outbound
+ * fetch. `outboundService` is configured ONCE for the pool and shares no memory with the
+ * test that provoked a request — which is why the harness encodes its scenario in the URL
+ * and answers observations over the wire (fake-upstream.ts's header says it in full).
+ * Total by construction: a dial to any host but the fake's two answers 502, so a test
+ * that accidentally reaches the internet fails loudly instead of passing in CI.
+ */
+const workerPool = {
+  ...workersPool,
+  miniflare: { ...workersPool.miniflare, outboundService: outboundRouter },
 } as const;
 
 export default defineConfig({
@@ -42,7 +65,7 @@ export default defineConfig({
         },
       },
       {
-        plugins: [cloudflareTest(workersPool)],
+        plugins: [cloudflareTest(workerPool)],
         test: {
           name: "worker",
           include: ["server/test/worker/**/*.test.ts"],

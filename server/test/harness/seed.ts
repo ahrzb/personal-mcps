@@ -23,10 +23,10 @@
 // upstream.setHeaders / the connect flow may write an envelope, which is the point of
 // upstream-credentials.test.ts).
 //
-// deps: registry.Registry · identity.issueToken/revokeToken/deleteTokensFor · admin.provisionUser/deleteUser · cloudflare:test env.DB (the real D1 binding)
+// deps: registry.Registry · identity.issueToken/revokeToken/deleteTokensFor/setPassword · admin.provisionUser/deleteUser · cloudflare:test env.DB (the real D1 binding)
 
 import { deleteUser, provisionUser } from "../../src/admin";
-import { issueToken, revokeToken } from "../../src/identity";
+import { issueToken, revokeToken, setPassword } from "../../src/identity";
 import { Registry } from "../../src/registry";
 import type {
   GrantEntry,
@@ -67,12 +67,15 @@ type D1Database = unknown;
  *
  * 3. `admin.provisionUser` writes an audit row (principal `bootstrap`), so every seeded
  *    namespace starts with audit rows — `hygiene.test.ts`'s sentinel sweep must expect the
- *    bootstrap row to exist. It does NOT hand back a human credential: better-auth is not
- *    a dependency of this repo yet (0001_auth.sql's header), so the seam writes the `user`
- *    row alone and returns `{ userId }`. A seeded owner is therefore not signable-in, and
- *    `SeededOwner` carries no `password` — a fixture needing a real session fails to
- *    compile until D4's probe lands, rather than holding a string that authenticates
- *    nothing. Machine credentials (TokenSpec) are unaffected.
+ *    bootstrap row to exist. It does NOT hand back a human credential: the seam writes the
+ *    `user` row alone and returns `{ userId }`.
+ *
+ *    RESOLVED 2026-08-25 (D4): better-auth is a dependency now, and the password half of
+ *    §12's create — the credential account behind the `user` row — is `identity.setPassword`,
+ *    the one place in the system a password is written. `seedOwnerCredential` below fronts
+ *    it, so a fixture that needs a real session asks for one explicitly and everything
+ *    else keeps paying nothing for it (the hash is deliberately slow). `SeededOwner` still
+ *    carries no password: the credential is a separate act, not a property of every owner.
  *
  * 4. There is no seam for granting anything on the builtin `pmcp` service, because it has
  *    no row id (registry's PMCP_SLUG comment). The harness cannot even express the
@@ -253,6 +256,69 @@ export async function seedOwner(username?: string): Promise<SeededOwner> {
   const name = username ?? uniqueSlug("owner");
   const { userId } = await provisionUser(name);
   return { userId, username: name };
+}
+
+/**
+ * The password every seeded owner that asks for one gets. A constant, and obviously fake:
+ * it authenticates exactly one throwaway namespace inside one isolated test database, and
+ * anything that looks like a real credential in a fixture is a credential someone will
+ * one day paste somewhere real.
+ */
+export const SEEDED_OWNER_PASSWORD = "FAKE0000-seeded-owner-password";
+
+/**
+ * Make a seeded owner signable-in — the session-capable half of `seedOwner`, opt-in
+ * because better-auth's password hash is (correctly) slow and most fixtures never need a
+ * human. Goes through `identity.setPassword`, the same seam §12's `create` uses, so the
+ * credential a fixture signs in with is the one the bootstrap script would have made.
+ * Returns the password so the call site reads without a second import.
+ */
+export async function seedOwnerCredential(userId: string): Promise<string> {
+  // deps: identity.setPassword
+  await setPassword(userId, SEEDED_OWNER_PASSWORD);
+  return SEEDED_OWNER_PASSWORD;
+}
+
+/** A signed-in owner as a client holds the session: the bearer token, and the browser
+ *  cookie (`name=value`, signature included) the same sign-in set. */
+export type SeededSession = { token: string; cookie: string };
+
+/**
+ * Sign a seeded owner in — the only way a session exists is for someone to sign in, so
+ * this drives the real route through `exports.default.fetch` rather than reaching for
+ * better-auth, which is identity's alone to touch. Gives the owner a credential first, so
+ * one call is the whole "this fixture has a human" story.
+ *
+ * The composition root is imported DYNAMICALLY: every worker and tunnel suite imports this
+ * harness, and only the two that mint a session should have to load the whole worker (and
+ * fail when something unrelated to them cannot).
+ */
+export async function seedOwnerSession(owner: SeededOwner): Promise<SeededSession> {
+  // deps: seedOwnerCredential · ../../src/index (default.fetch)
+  const { default: worker } = await import("../../src/index");
+  const { env } = await import("cloudflare:test");
+  const bindings = env as unknown as { PUBLIC_ORIGIN: string };
+  await seedOwnerCredential(owner.userId);
+  const response = await worker.fetch(
+    new Request(`${bindings.PUBLIC_ORIGIN}/api/auth/sign-in/username`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: bindings.PUBLIC_ORIGIN },
+      body: JSON.stringify({ username: owner.username, password: SEEDED_OWNER_PASSWORD }),
+    }),
+    env as never,
+  );
+  if (response.status !== 200) {
+    throw new Error(`seedOwnerSession: sign-in failed ${response.status} ${await response.text()}`);
+  }
+  const { token } = (await response.json()) as { token: string };
+  // The session cookie is the one carrying this token plus its signature; better-auth
+  // names it (`__Secure-` prefixed under an https origin), so the name is read, not spelled.
+  const cookie = response.headers
+    .getSetCookie()
+    .map((header) => header.split(";")[0])
+    .find((pair) => pair.includes(`=${token}.`));
+  if (cookie === undefined) throw new Error("seedOwnerSession: sign-in set no session cookie");
+  return { token, cookie };
 }
 
 /**

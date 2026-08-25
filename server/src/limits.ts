@@ -49,6 +49,13 @@ export const SERVICE_ACCOUNT_TOKEN_TTL_MS = 90 * 24 * 60 * 60_000;
  */
 export const TOKEN_LAST_USED_STAMP_MS = 60 * 60_000;
 
+/**
+ * §13 — the RFC 8628 device code's life, cut from better-auth's 30-minute default: the
+ * user-code channel is unauthenticated, so the window a phished code stays redeemable in
+ * is the thing being shortened.
+ */
+export const DEVICE_CODE_TTL_MS = 10 * 60_000;
+
 /** §6 — a role pattern string may be at most this long. */
 export const ROLE_PATTERN_MAX_LENGTH = 128;
 

@@ -9,6 +9,7 @@
 // export. The D1 `audit` table (§5) is private to this module: every write goes
 // through record(), every read through query().
 
+import { env } from "cloudflare:workers";
 import { AUDIT_BODY_CAP_BYTES, RETENTION_DAYS } from "./limits";
 
 /** Cloudflare D1 binding (@cloudflare/workers-types `D1Database`) — the control-plane
@@ -17,9 +18,8 @@ import { AUDIT_BODY_CAP_BYTES, RETENTION_DAYS } from "./limits";
 type D1Database = unknown;
 
 /**
- * The two knobs of §15, resolved once by the composition root (env override or the
- * limits.ts default — RETENTION_DAYS / AUDIT_BODY_CAP_BYTES) and passed in; never
- * re-read from env here, and never a per-request decision.
+ * The two knobs of §15 (env override or the limits.ts default — RETENTION_DAYS /
+ * AUDIT_BODY_CAP_BYTES), resolved by this module and by nobody else.
  */
 export type AuditConfig = {
   retentionDays: number;
@@ -29,10 +29,10 @@ export type AuditConfig = {
 /**
  * The ONE place the §15 env overrides are parsed: string vars in, resolved
  * AuditConfig out, with limits.RETENTION_DAYS / limits.AUDIT_BODY_CAP_BYTES as
- * the defaults for absent or unparsable values. Both entry points call it —
- * the worker's composition root (fetch/scheduled) and the tunnel DO, which
- * reaches env through `cloudflare:workers` — so no sibling ever re-implements
- * the parse or reads the raw strings.
+ * the defaults for absent or unparsable values. Exported for the callers that hold vars
+ * this module's ambient env cannot see (the cron's own reporting); `config()` below is
+ * what everything else uses, so no sibling re-implements the parse, keeps a memo of its
+ * own, or reads the raw strings.
  */
 export function resolveAuditConfig(vars: {
   AUDIT_RETENTION_DAYS?: string;
@@ -43,6 +43,19 @@ export function resolveAuditConfig(vars: {
     retentionDays: positiveInt(vars.AUDIT_RETENTION_DAYS) ?? RETENTION_DAYS,
     bodyCapBytes: positiveInt(vars.AUDIT_BODY_CAP_BYTES) ?? AUDIT_BODY_CAP_BYTES,
   };
+}
+
+/**
+ * §15's two knobs as every sink reads them: off the ambient env, at the moment they are
+ * needed. Deliberately NOT memoized — the parse is two `Number` calls, and a
+ * process-global memo would make an env override unreachable after the first audit write
+ * of the process, which is exactly the state the harness overrides per request to escape.
+ * The only reason this is a function rather than four private copies of the same `let` is
+ * that "who decides the retention window" must have one answer.
+ */
+export function config(): AuditConfig {
+  // deps: cloudflare:workers env · resolveAuditConfig
+  return resolveAuditConfig(env);
 }
 
 /**
@@ -149,14 +162,16 @@ export type AuditQuery = {
  * availability (a call the ledger cannot attest to must not succeed silently). Hygiene
  * is enforced at this chokepoint: each `client` field is truncated to 128 chars before
  * storage, and each body (`args`, `result` — arriving pre-masked, see AuditEntry)
- * whose serialization exceeds config.bodyCapBytes is replaced WHOLE by one
+ * whose serialization exceeds the §15 body cap is replaced WHOLE by one
  * `oversize` BodyStub — never truncated into corrupt JSON. `detail` is the caller's
  * obligation to keep to a summary; token material is never accepted anywhere. Never
  * called for `tools/list` (§15 keeps it out of audit by vocabulary, not by
- * filtering).
+ * filtering). The cap is read from config() here, so no call site carries a knob it has
+ * no business knowing about.
  */
-export async function record(db: D1Database, entry: AuditEntry, config: AuditConfig): Promise<void> {
-  // deps: D1 `audit`
+export async function record(db: D1Database, entry: AuditEntry): Promise<void> {
+  // deps: D1 `audit` · config
+  const { bodyCapBytes } = config();
   const client = entry.client ?? {};
   await (db as D1Like)
     .prepare(
@@ -177,8 +192,8 @@ export async function record(db: D1Database, entry: AuditEntry, config: AuditCon
       displayField(client.name),
       displayField(client.version),
       displayField(client.sessionId),
-      cappedBody(entry.args, config.bodyCapBytes),
-      cappedBody(entry.result, config.bodyCapBytes),
+      cappedBody(entry.args, bodyCapBytes),
+      cappedBody(entry.result, bodyCapBytes),
       entry.detail === undefined ? null : JSON.stringify(entry.detail),
     )
     .run();
@@ -225,7 +240,103 @@ export async function query(
   filters: AuditQuery,
 ): Promise<{ rows: AuditRow[]; total: number }> {
   // deps: D1 `audit`
-  throw new Error("unimplemented");
+  const where = whereClause(ownerId, filters);
+  const binding = db as D1Like;
+  const page = await binding
+    .prepare(
+      `SELECT * FROM audit WHERE ${where.sql}
+        ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`,
+    )
+    .bind(...where.values, filters.limit ?? DEFAULT_LIMIT, filters.offset ?? 0)
+    .all<AuditDbRow>();
+  // The COUNT ignores limit/offset by design (§8): it backs "N events match", which is a
+  // fact about the filters, not about the page being looked at.
+  const counted = await binding
+    .prepare(`SELECT COUNT(*) AS n FROM audit WHERE ${where.sql}`)
+    .bind(...where.values)
+    .first<{ n: number }>();
+  return { rows: page.results.map(toRow), total: counted?.n ?? 0 };
+}
+
+/** `limit`'s default, pinned by §8 beside audit_query's own — one number, one owner. */
+const DEFAULT_LIMIT = 100;
+
+/**
+ * The filter clause both statements share, so the page and the count can never disagree
+ * about what "matching" means. The namespace leads it as a PARAMETER rather than a filter
+ * field (see AuditQuery): every read is scoped whether or not the caller filtered.
+ */
+function whereClause(ownerId: string, filters: AuditQuery): { sql: string; values: unknown[] } {
+  const clauses = [`owner_id = ?`];
+  const values: unknown[] = [ownerId];
+  const exact: [keyof AuditQuery, string][] = [
+    ["principal", "principal"],
+    ["service", "service"],
+    ["event", "event"],
+    ["tool", "tool"],
+    ["session", "client_session_id"],
+  ];
+  for (const [field, column] of exact) {
+    if (filters[field] === undefined) continue;
+    clauses.push(`${column} = ?`);
+    values.push(filters[field]);
+  }
+  if (filters.since !== undefined) {
+    clauses.push(`ts >= ?`);
+    values.push(filters.since);
+  }
+  if (filters.until !== undefined) {
+    clauses.push(`ts <= ?`);
+    values.push(filters.until);
+  }
+  return { sql: clauses.join(" AND "), values };
+}
+
+/** The `audit` row as §5 declares it — the column format this module alone reads. */
+type AuditDbRow = {
+  id: number;
+  ts: number;
+  owner_id: string;
+  principal: string;
+  event: string;
+  service: string | null;
+  tool: string | null;
+  outcome: string;
+  duration_ms: number | null;
+  client_name: string | null;
+  client_version: string | null;
+  client_session_id: string | null;
+  args_json: string | null;
+  result_json: string | null;
+  detail: string | null;
+};
+
+/**
+ * One stored row as every reader sees it. Absent columns are OMITTED rather than set to
+ * null: an AuditEntry's optional fields mean "this event has none", and a reader that has
+ * to tell `undefined` from `null` is reading two vocabularies for one absence.
+ */
+function toRow(row: AuditDbRow): AuditRow {
+  const client = {
+    ...(row.client_name === null ? {} : { name: row.client_name }),
+    ...(row.client_version === null ? {} : { version: row.client_version }),
+    ...(row.client_session_id === null ? {} : { sessionId: row.client_session_id }),
+  };
+  return {
+    id: row.id,
+    ts: row.ts,
+    ownerId: row.owner_id,
+    principal: row.principal,
+    event: row.event,
+    ...(row.service === null ? {} : { service: row.service }),
+    ...(row.tool === null ? {} : { tool: row.tool }),
+    outcome: row.outcome,
+    ...(row.duration_ms === null ? {} : { durationMs: row.duration_ms }),
+    ...(Object.keys(client).length === 0 ? {} : { client }),
+    ...(row.args_json === null ? {} : { args: JSON.parse(row.args_json) as Record<string, unknown> }),
+    ...(row.result_json === null ? {} : { result: JSON.parse(row.result_json) as Record<string, unknown> }),
+    ...(row.detail === null ? {} : { detail: JSON.parse(row.detail) as Record<string, unknown> }),
+  };
 }
 
 /**

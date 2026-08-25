@@ -41,7 +41,7 @@ import {
 } from "../../src/identity";
 import type { TokenInfo, TokenKind } from "../../src/identity";
 import { SERVICE_ACCOUNT_TOKEN_TTL_MS } from "../../src/limits";
-import { seedNamespace } from "../harness/seed";
+import { seedNamespace, seedOwnerSession } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 
 /**
@@ -254,17 +254,14 @@ async function forceKindColumn(tokenId: string, kind: TokenKind): Promise<void> 
 }
 
 /**
- * A session bearer for the seeded owner.
- *
- * GAP, and deliberately visible: seed.ts FINDINGS 3 records that better-auth is not a
- * dependency of this repo yet, so a provisioned owner has no credential row and cannot be
- * signed in — a REAL session token, which the authored row asks for, is not mintable here.
- * What this presents is session-SHAPED: a bearer carrying no `pmcp_` prefix, which is the
- * evidence the row is about (a `pmcp_svc_` surface must not fall through to a session
- * lookup). Upgrade it to a real sign-in in this one function when D4 wires better-auth.
+ * A REAL session bearer for the seeded owner — the owner signs in through the mounted
+ * better-auth route and the token that comes back is what the row presents. The GAP this
+ * function used to carry (no better-auth dependency, so a session-SHAPED string stood in)
+ * closed with D4: presenting a genuine human credential is what makes the refusal evidence
+ * about the resolution ORDER rather than about a hash that matches nothing.
  */
-function sessionShapedBearer(): string {
-  return `FAKE0000.${crypto.randomUUID()}`;
+async function sessionBearer(ns: SeededNamespace): Promise<string> {
+  return (await seedOwnerSession(ns.owner)).token;
 }
 
 /**
@@ -286,7 +283,7 @@ async function requestFor(row: ServiceTokenRow, ns: SeededNamespace): Promise<Re
       // own surface, worth nothing here.
       return bearerRequest(ns.tokens.sa.token);
     case "session_token":
-      return bearerRequest(sessionShapedBearer());
+      return bearerRequest(await sessionBearer(ns));
     case "query_string_token":
       // The row's OWN valid secret, moved out of the header: the transport is the rule.
       return new Request(`${CONNECT_URL}?token=${encodeURIComponent(ns.tokens.svc.token)}`);

@@ -27,6 +27,7 @@
  * thread an env object; the composition root owns the binding name.
  */
 
+import { DurableObject, env } from "cloudflare:workers";
 import type { JsonRpcRequest, JsonRpcResponse, ServiceBackend, Tool } from "./gateway";
 import type { Service } from "./registry";
 
@@ -118,7 +119,8 @@ export const tunnelBackend: ServiceBackend = {
    */
   async listTools(service, ctx) {
     // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.listTools
-    throw new Error("unimplemented");
+    const namespace = env.SERVICE_CONNECTION as DurableObjectNamespaceLike<ServiceConnection>;
+    return namespace.get(namespace.idFromName(service.id)).listTools();
   },
 
   /**
@@ -218,11 +220,11 @@ type ConnectionAttachment = {
  * acceptance), the cached tools/list catalog in its own SQLite, in-flight correlation in
  * memory. It trusts the worker half completely — an upgrade only reaches fetch() after
  * handleConnect authenticated the service token, and no other entry point carries
- * credentials at all. At implementation this extends DurableObject from
- * `cloudflare:workers` with the WebSocket hibernation API and SQLite storage
- * (new_sqlite_classes); every non-fetch entry point below is a stub RPC method.
+ * credentials at all. It extends DurableObject from `cloudflare:workers` with the
+ * WebSocket hibernation API and SQLite storage (new_sqlite_classes); every non-fetch
+ * entry point below is an RPC method the worker half calls through the namespace binding.
  */
-export class ServiceConnection {
+export class ServiceConnection extends DurableObject {
   /**
    * Hub-initiated requests awaiting their response frame, keyed by wire id. In-memory on
    * purpose: an unresolved inbound consumer request blocks hibernation, so this map can
@@ -309,8 +311,13 @@ export class ServiceConnection {
    * service that has never completed a registration. Never touches the socket.
    */
   async listTools(): Promise<Tool[]> {
-    // deps: DO SQLite `catalog`
-    throw new Error("unimplemented");
+    // deps: DO ctx.storage `catalog`
+    // ponytail: one durable-KV key holding the whole catalog, absent until a registration
+    // warms it — which is exactly the never-connected answer, no table and no migration to
+    // own. D6 owns the write half (webSocketMessage's catalog warm, plus the
+    // schema-unsound flag sensitivePaths reads) and may reshape this into SQLite rows;
+    // this read is only the half that has to be right before anyone has connected.
+    return (await this.ctx.storage.get<Tool[]>("catalog")) ?? [];
   }
 
   /**

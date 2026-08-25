@@ -121,8 +121,8 @@ the failure is a spec question, not an execution one.
 | DV | UI visual checkers vs artboards | workflow (Sonnet) | **gated ✓** |
 | D2 | Pure core (pattern, filter, canonical, redact) | workflow | **gated ✓** (`ce5392e`) |
 | D3 | Migrations, registry, identity, audit | workflow | **gated ✓** (`c83bb17`) |
-| D4 | Gateway, admin, approvals | workflow | in flight |
-| D5 | Upstream proxy, cron, hygiene | workflow | outline |
+| D4 | Gateway, admin, approvals | workflow | **gated ✓** (`ffe2c4a`) |
+| D5 | Upstream proxy, cron, hygiene | workflow | in flight |
 | D6 | Tunnel DO + contracts + approval e2e | workflow | outline |
 | D7 | Web surface wiring | workflow | outline |
 | D8 | CLI + JS/Python clients | workflow | outline |
@@ -290,18 +290,36 @@ The approvals implementer gets the seeded-clock twin pattern (`ApprovalsConfig.n
 **Gate:** standard gate (with the table-expansion amendment).
 **Est. scale:** ~12 agents, ~1.2–1.6M tokens.
 
-### D5 — Upstream proxy, cron, hygiene *(outline)*
+### D5 — Upstream proxy, cron, hygiene *(detailed 2026-08-25, pre-launch)*
 
-**Owns:** `server/src/upstream.ts`, `server/src/index.ts` (scheduled leg + Env
-parse via `audit.resolveAuditConfig`), `server/test/harness/fake-upstream.ts`,
+**Owns:** `server/src/upstream.ts` (rest — D4 left the minimal transport
+`dial`/`listTools`/`call`/`sensitivePaths` and the credential-seal half
+`setHeaders`/`disconnect`/`seal`/`envelopeKey`; every ponytail ceiling in the
+file names D5's half: envelope-open, the §7 connect flow — RFC 9728 discovery,
+CIMD/DCR, PKCE, RFC 9207 — proactive refresh, the `needs_reconnect` flip,
+`UpstreamError.failureClass` mapping), `server/src/audit.ts` (`prune`,
+`exportJsonl`; add the `hub` principal member to the AuditEntry doc),
+`server/src/index.ts` (scheduled leg: approvals.sweepExpired + audit.prune +
+stale OAuth-state drop, one `cron.swept` row), `server/test/harness/fake-upstream.ts`
+(extend: OAuth server behaviors, failure modes), 
 `server/test/worker/{upstream-credentials,upstream-proxy,cron,hygiene}.test.ts`.
 **Spec:** §7 (proxied dispatch, per-service `log_bodies` opt-in, `redact:` /
 `redact_results:`), §15 (log hygiene incl. Sentry beforeSend, retention-as-guard
 cron), §5 (OAuth state TTL).
+**Preconditions:** D4 gated (envelope format v1 pinned by `seal`:
+version-byte ‖ 12-byte IV ‖ AES-GCM under `UPSTREAM_CREDS_KEY`; fake test
+binding already in vitest.config.mts).
 **Suites (exit):** the four worker suites green; hygiene is the judged one made
 mechanical — planted fake secrets provably absent from every log/event/stored body
-(incl. case 14a: schema-unsound tool records no body).
-**Est. scale:** ~8 agents, ~800k–1.2M tokens.
+(incl. case 14a: schema-unsound tool records no body). Sentry's beforeSend is
+pinned as a pure exported function — the SDK is not a dependency and this
+dispatch adds none.
+**Shape:** as D4 minus the probe (no contested toolchain): author → 2
+adversarial verifiers → reconcile → implement in dependency order (upstream
+credentials+proxy with the fake-upstream extension first, then cron+hygiene,
+which consume it) → verbatim check → PSD → fix.
+**Gate:** standard gate (with the table-expansion amendment).
+**Est. scale:** ~9 agents, ~800k–1.2M tokens.
 
 ### D6 — Tunnel DO, contracts, approval e2e *(outline)*
 
@@ -479,3 +497,53 @@ read-only here (single-writer: worker suite) — a client dispatch editing
   service_delete stub, so the tunnel project cannot seed services until D4
   lands; identity's raw forceKindColumn helper is documented in place.
   Committed `c83bb17`; D4 launched immediately.
+- 2026-08-25 19:30 — **D4 gated.** Workflow `wf_846aae6a-485`: 13 agents, 0
+  errors, ~3.17M subagent tokens (the biggest dispatch yet, as predicted).
+  Probe first, and it earned its slot: better-auth 1.7.1 needs **no** D1
+  adapter package — the kysely adapter ships its own `D1SqliteDialect` and
+  duck-types the binding, so `database: env.DB` is the whole wiring; the
+  contested `kysely-d1` sources were wrong. It also caught three transcription
+  errors in 0001_auth.sql by field-by-field comparison against the installed
+  plugin schemas (`account.issuer` missing, three `twoFactor` columns missing,
+  two `deviceCode` timestamp columns that better-auth never writes) — each
+  verified as a live 500 before the fix. Oracles: 85 rows per verifier, 22
+  discrepancies reconciled; the substantive one was an unreachable order.table
+  row (approval-gate catalog miss on an *offline* tunneled service — 
+  availability-first refuses -32000 before the catalog is ever read), deleted
+  rather than implemented around. Implementation: approvals 35 cases (push
+  transport parked as a seam — `ApprovalsConfig.push` — with one honest todo
+  until webpush-webcrypto lands), auth surface 36 (real sign-in through
+  `exports.default.fetch` in the seed harness; D3's sessionShapedBearer debt
+  paid), gateway 29, admin 40 (19 ops from one declaration table with a closed
+  schema language in lieu of zod). PSD: 23 findings, 4 high, 18 fixed, 2
+  disputed with reasons the gate accepts (§7's always-successful aggregate
+  forbids the rethrow; the auth-matrix oracle ceiling needs locked-row edits).
+  The fix pass extracted `errors.ts` and `principal.ts` as dependency-free
+  leaf modules — the dynamic-import workarounds and their prose-guarded
+  boot-crash class dissolved structurally. **Gate action:** one row stayed red
+  because it needs the DO's cached catalog — a D6 dependency the plan
+  scheduled two dispatches late. Pulled the minimal slice forward with a
+  scoped agent: `ServiceConnection` now extends DurableObject and
+  `listTools()` serves `ctx.storage.get("catalog") ?? []`; everything else in
+  tunnel.ts still throws. D6 inherits the storage shape as reshapeable.
+  Inventory audit: **111 pure flips, 28 additions, 4 removals** (2 aggregate
+  placeholders per the amendment, 1 reconciliation-deleted row, 1 invariant
+  case folded into per-row assertions — its law survives as the registered
+  "three -32001 sources" case), 0 regressions. Suite 368/330/0, tsc 0.
+  Excursions accepted and recorded: migrations deltas (probe-verified),
+  `limits.DEVICE_CODE_TTL_MS`, `audit.query()` + `audit.config()`,
+  upstream.ts's minimal transport + credential-seal halves (ponytail ceilings
+  name what D5 adds: envelope-open, connect flow, refresh, needs_reconnect),
+  `UPSTREAM_CREDS_KEY` fake binding in vitest config, registry typed
+  refusals + delete statements. **Spec flag for the user:** §7's "expired
+  regardless of stored status" is implemented as pending/approved only —
+  the literal reading would erase used/rejected decision history inside the
+  retention window; reasoning sits on `readStatus`, and the literal version
+  is a spec commit + new table rows if wanted. **Debt:** audit's principal
+  vocabulary gained a `hub` member (lazy-expiry rows; cron.swept will want
+  it — D5 updates the AuditEntry doc); BETTER_AUTH_SECRET unbound in the
+  test env (dev-default fallback, harmless); the parked push-decrypt todo
+  becomes real when a dispatch is granted webpush-webcrypto (§13 names it —
+  D7's call); scripts/test-inventory.mjs now shells `npx pnpm` because
+  proto's shim went stale mid-session. Committed `ffe2c4a`; D5 launched
+  immediately.

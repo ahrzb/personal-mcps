@@ -10,7 +10,8 @@ import path from "node:path";
 
 const tmp = ".vitest-report.json";
 try {
-  execSync(`pnpm exec vitest run --reporter=json --outputFile=${tmp}`, { stdio: ["ignore", "pipe", "pipe"] });
+  // npx, not bare pnpm: proto's shim refuses to run until its pinned version is installed.
+  execSync(`npx pnpm exec vitest run --reporter=json --outputFile=${tmp}`, { stdio: ["ignore", "pipe", "pipe"] });
 } catch {
   // Failing tests exit nonzero but still write the report; the gate reads states, not exit codes.
 }

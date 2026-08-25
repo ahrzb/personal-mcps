@@ -205,6 +205,13 @@ CREATE TABLE service (
                                        -- upstream_auth_mode.
   roles_json TEXT NOT NULL DEFAULT '{}',  -- {"reader": ["get_news","search_.*"], ...}
                                           -- tunnel: written at registration; proxy: via config
+  redact_json TEXT NOT NULL DEFAULT '{}', -- config-declared sensitive ARGUMENT paths per
+                                          -- tool-or-pattern (§7) — either kind
+  redact_results_json TEXT NOT NULL DEFAULT '{}',
+                                          -- same shape, applied to result structuredContent (§7)
+  log_bodies INTEGER NOT NULL,            -- audit body logging for this service (§15); set at
+                                          -- create: an absent input defaults by kind —
+                                          -- tunnel 1, proxy 0
   created_at INTEGER NOT NULL,
   last_connected_at INTEGER,
   archived_at INTEGER,                 -- non-NULL = archived (§6, "Service lifecycle")
@@ -240,8 +247,8 @@ CREATE TABLE approval (
                                          -- no digest of a secret); MRTR inputResponses/requestState
                                          -- are outside the binding and never persisted (§7)
   args_json TEXT NOT NULL,               -- the arguments SHOWN to the owner — stored
-                                         -- post-redaction (§7): the ONLY place the hub
-                                         -- ever persists tool arguments
+                                         -- post-redaction (§7), like every persisted
+                                         -- body in the hub (§15)
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'approved', 'rejected', 'expired', 'used')),
                                          -- past expires_at is treated as expired on every read;
@@ -292,8 +299,18 @@ CREATE TABLE audit (
   client_name TEXT,                    -- consumer clientInfo.name (e.g. 'claude-code'), when sent (§7)
   client_version TEXT,
   client_session_id TEXT,              -- client-declared session id (e.g. Claude Code's), when sent
-  detail TEXT                          -- small JSON summary; NEVER tool arguments,
-                                       -- results, or token material
+  args_json TEXT,                      -- tools/call rows, when the service's log_bodies is on
+                                       -- (§15): params.arguments POST-redaction (§7's union),
+                                       -- size-capped — an over-cap body is a stub, never
+                                       -- truncated JSON
+  result_json TEXT,                    -- same gate; envelope pinned (§15): mirrors the
+                                       -- MCP result's two carriers — structuredContent
+                                       -- post-redaction, content as one typed size stub
+                                       -- ({stub, contentType?, bytes}) per block, never
+                                       -- bytes; a result with only content blocks
+                                       -- stores {content: [...]}
+  detail TEXT                          -- small JSON summary; NEVER token material — bodies
+                                       -- live only in the two capped columns above
 );
 CREATE INDEX audit_owner_ts ON audit(owner_id, ts);
 
@@ -591,8 +608,9 @@ owner is approving the visible arguments.
 MRTR (2026-07-28 Multi Round-Trip Requests): the args binding is `params.arguments`
 only — `inputResponses` and `requestState` on a retry are excluded from `args_hash`,
 excluded from the stored `args_json`, and never persisted or displayed anywhere
-(elicited values are exactly the secrets `writeOnly` exists for; like results, they
-pass through the hub verbatim). One approval covers the whole MRTR exchange: a
+(elicited values are exactly the secrets `writeOnly` exists for; they pass through
+the hub verbatim and never enter any persisted body — approval rows and the audit
+body columns alike, §15). One approval covers the whole MRTR exchange: a
 forwarded leg that returns `resultType: "input_required"` restores the claimed row to
 `approved` (step 1), so follow-up legs (same `params.arguments`, plus
 `inputResponses`/`requestState`) pass on the original approval until a `complete`
@@ -702,25 +720,52 @@ A proxied service's upstream auth is one of two kinds, declared as `auth: header
 
 ### Sensitive-field redaction
 
-Some tool arguments (passwords, tokens) must never be persisted — not even in the
-approval record. Two declaration paths, unioned:
+Some tool arguments and results (passwords, tokens) must never be persisted — not
+even in the approval record or the audit body columns (§15). Sensitivity is declared
+per direction, from two sources, unioned:
 
 - **Schema-declared** (tunneled): any property marked with standard JSON Schema
-  **`writeOnly: true`** (at any depth) in a tool's input schema is sensitive. The hub
-  derives the map from the catalog cached in the service's DO at `tools/list` time;
-  the client libraries offer sugar for marking a parameter sensitive, which just sets
-  `writeOnly` on the emitted schema.
+  **`writeOnly: true`** (at any depth) in a tool's input **or output** schema is
+  sensitive. The hub derives both maps from the catalog cached in the service's DO
+  at `tools/list` time; the client libraries make declaring it natural (§11): a
+  `Secret` field type in pydantic-/zod-style tool definitions emits `writeOnly`
+  wherever it appears — input and output models alike — plus path-based sugar for
+  hand-written schemas. On an *output* schema the keyword is the hub's internal
+  marker only (its standard meaning, "sent but never returned", doesn't fit an
+  output field): the hub strips `writeOnly` from every outputSchema it serves to
+  consumers, so the co-opt never reaches the wire. Input schemas are served as
+  declared — `writeOnly` on an input is standard usage.
+
+  "At any depth" includes indirection, because SDK schema generators emit
+  `$defs`+`$ref` by default: the hub's walk resolves same-document `#/…` refs by
+  JSON Pointer, unions marks across `allOf`/`anyOf`/`oneOf` branches (secret in any
+  branch masks — over-masking is safe), and cuts secret-free cycles. What the walk
+  cannot soundly resolve is refused LOUDLY, never skipped — an unresolved ref could
+  conceal a mark: external or non-local refs, `$id`/`$anchor`/`$dynamicRef`
+  resolution, and a recursive cycle carrying a secret (its path set is infinite —
+  no finite path list can express the mask). Violations are reported per tool at
+  catalog warm — echoed to the service and logged; registration still succeeds —
+  and such a tool is cached **schema-unsound**: it has no derivable redaction map,
+  so approval-gated calls refuse `-32001` (the catalog-miss rule below) and its
+  bodies are never recorded (§15). Inlining `$defs` client-side remains optional
+  sugar, not a requirement.
 - **Config-declared** (both kinds): the owner lists redaction paths per tool —
-  `redact: { "<tool-or-pattern>": ["password", "credentials.token"] }` in the YAML /
-  `service_update`. This is the **only** path for proxied services in v1: their
-  `tools/list` is forwarded live and never cached, so there is no schema to derive
-  from (honoring upstream `writeOnly` becomes possible if a proxied schema cache is
-  ever added).
+  `redact: { "<tool-or-pattern>": ["password", "credentials.token"] }` for
+  arguments, and `redact_results:` (identical shape, applied to the result's
+  `structuredContent`) — in the YAML / `service_update`. This is the **only** path
+  for proxied services in v1: their `tools/list` is forwarded live and never cached,
+  so there is no schema to derive from (honoring upstream `writeOnly` becomes
+  possible if a proxied schema cache is ever added).
 
 Redacted fields are replaced with `"‹redacted›"` before anything is stored or shown:
-the approval `args_json` (§5), any error message that echoes arguments, and any debug
-surface. This extends §15's log-hygiene rule; the audit table remains argument-free
-entirely.
+the approval `args_json` (§5), the audit body columns (`args_json` / `result_json`,
+§15), any error message that echoes arguments, and any debug surface. "Stored or
+shown" means the hub's OWN surfaces — approval detail, audit views, error echoes;
+the caller's live JSON-RPC reply is never redacted (a `token_issue` caller must
+receive the key, once — masking exists for persistence and display, not for the
+wire). This extends
+§15's log-hygiene rule. Only *structured* data is ever redactable — which is why
+unstructured result content is never persisted at all, only stubbed (§15).
 
 The hub terminates auth entirely; client tokens are never forwarded to services
 (MCP audience-binding rules forbid pass-through anyway).
@@ -732,14 +777,17 @@ implemented locally instead of forwarded to a DO, and every tool operates on the
 namespace of the `<user>` in the URL (which step 1 already proved is the caller's own).
 Tools (names final, shapes reviewed at implementation time):
 
-- `service_list` / `service_get` — includes kind, declared roles, redact paths,
-  archived status, and for proxied services the endpoint, the `auth` mode, and
+- `service_list` / `service_get` — includes kind, declared roles, redact paths
+  (`redact` and `redact_results`), `log_bodies`, archived status, and for proxied
+  services the endpoint, the `auth` mode, and
   `forward_identity`; connection status and last seen apply to tunneled services only
   (proxied rows report `kind: proxy` in their place). diff/apply depend on kind,
-  endpoint, auth, forward_identity, roles, redact, and archived all being readable
-  here.
+  endpoint, auth, forward_identity, roles, redact, redact_results, log_bodies, and
+  archived all being readable here.
 - `service_create` / `service_update` / `service_delete` — create takes `kind`,
-  `redact` (sensitive-field paths, §7 — either kind) and, for proxied services,
+  `redact` / `redact_results` (sensitive-field paths, §7 — either kind),
+  `log_bodies` (audit body logging, §15 — either kind; absent defaults by kind,
+  tunneled on / proxied off) and, for proxied services,
   `endpoint`, `roles` (the virtual role definitions), `auth` (`headers` | `oauth`,
   §7), and `forward_identity` (identity headers, §7; default false); update takes the
   same minus `kind`, which is **immutable** (recreate to convert — conversion would
@@ -785,7 +833,10 @@ Tools (names final, shapes reviewed at implementation time):
   key (shown once). `kind: "service"` is rejected for proxied services (nothing connects).
   Service-account tokens default to 90 d expiry (pass `expires_in` to override,
   including `never`) — these are the tokens pasted into agent configs; service tokens
-  default to no expiry (revoke-on-compromise, the telegram-bot model).
+  default to no expiry (revoke-on-compromise, the telegram-bot model). The issued
+  key is a `writeOnly`-marked field in this tool's *output* schema, so §15's uniform
+  body rule masks it wherever bodies are recorded — no pmcp-specific logging rule
+  exists or is needed.
 - `token_list` / `token_revoke` — listings include `last_used_at`; revoking a `service`
   token also closes that service's live socket (code `4001`) if the connection was
   opened with it.
@@ -793,8 +844,10 @@ Tools (names final, shapes reviewed at implementation time):
 - `audit_query` — `{ principal?, service?, event?, tool?, session?, since?, until?,
   limit? (default 100), offset? (default 0) }` → `{ rows, total }`, newest first
   (`session` matches `client_session_id`, §5); `total`
-  counts every row matching the filters (a COUNT over the 90-day-pruned table is
-  cheap, and it backs the web UI's page numbers and "N events match" line). Read-only;
+  counts every row matching the filters (a COUNT over the retention-pruned table is
+  cheap, and it backs the web UI's page numbers and "N events match" line). Rows carry
+  the recorded body columns when present (§15) — post-redaction and stub-substituted,
+  like everything persisted. Read-only;
   like everything else, `pmcp audit` is sugar over this tool.
 
 Every tool that takes a service slug rejects `pmcp` with the same error (`grant_set`,
@@ -846,11 +899,15 @@ services:
   notion:
     kind: proxy
     endpoint: https://mcp.notion.com/mcp
+    log_bodies: true        # opt-in: proxied bodies are not audited by default (§15);
+                            #   tunneled services default to true — either flips
     roles:                  # virtual roles — defined here because the upstream can't
       editor: ["create_page", "update_.*"]   # anchored regexes over tool names
       reader: ["search", "fetch_.*"]
     redact:                 # sensitive argument paths per tool (§7) — config-declared
       create_page: ["credentials.token"]     #   because upstream schemas rarely mark writeOnly
+    redact_results:         # identical shape, applied to result structuredContent (§7)
+      create_page: ["page.share_token"]
     # upstream auth is imperative (service_set_upstream_auth) — never in this file
   linear:
     kind: proxy
@@ -882,7 +939,8 @@ service_accounts:
   delete plan (including archive/unarchive transitions from the `archived` field).
   Full desired state: deletes include services/accounts present on the
   server but absent from the file, **and** grants for any (account, service) pair not
-  listed under that account's `grants:` block. `redact` (either kind) and, for proxied
+  listed under that account's `grants:` block. `redact`, `redact_results`, and
+  `log_bodies` (either kind) and, for proxied
   services, `endpoint`, `auth`, `forward_identity`, and `roles` are part of the
   desired state and diffed like any other field (an `auth` flip is shown as
   destructive — it wipes stored upstream credentials, §8). Listing the same role name in both modes (`[reader,
@@ -979,9 +1037,13 @@ SDK's server session (custom transport), send `notifications/tools/list_changed`
 mutations, protocol pings, reconnect with backoff (403 at upgrade / close `4002` =
 archived → keep retrying at max backoff, §6), stop on `hub/replaced`. Plus two
 in-handler affordances (§7): the caller identity — `ctx.principal`, `ctx.roles`,
-`ctx.has_role("editor")`, read from the forwarded `_meta` — and sensitive-parameter
-sugar (e.g. `sensitive=["password"]` on a tool) that marks the schema property
-`writeOnly: true` so the hub redacts it.
+`ctx.has_role("editor")`, read from the forwarded `_meta` — and sensitive-field
+marking, in two spellings: a `Secret` field type for pydantic-/zod-style tool
+definitions (`api_key: Secret[str]` — the emitted JSON Schema carries
+`writeOnly: true` at that path, in input and output models alike; schema-only,
+values still serialize normally on the wire — the HUB does the masking, §7), and
+path-based sugar for hand-written schemas (`sensitive(schema, ["password"])`,
+input or output schema alike).
 
 ## 12. User management script
 
@@ -1028,7 +1090,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   streaming response as it is fetched, never holding the full result set in memory —
   a serialization of `audit_query`, not a new capability. The expanded row detail
   shows the caller's client metadata when present (client name/version and session id,
-  §5/§7); the session id renders as a link to this same audit view filtered to that
+  §5/§7) and the recorded call bodies when present (§15) — post-redaction args and
+  result structuredContent, with stubs rendered as typed size placeholders (e.g.
+  `‹blob image/png · 4.2 MB›`, never the bytes); the session id renders as a link to this same audit view filtered to that
   session (`?session=…`, backed by `audit_query`'s `session` filter). No mutations, so
   no CSRF surface.
 - `/approvals` — cookie-session-gated: pending requests up top (account, service, tool,
@@ -1110,24 +1174,50 @@ no CLI token or `pmcp` tool can ever reach it.
   for passwords, TOTP challenges, and device codes lives there. better-auth's built-in
   limiter is in-memory (per-isolate — a no-op on Workers) and is not relied on.
 - Log hygiene: `Authorization` headers and anything matching `pmcp_(sa|svc)_…` are
-  redacted from logs, error responses, and exception traces; MCP bodies for the `pmcp`
-  service (which carry issued tokens) are never logged; `writeOnly`/config-declared
-  sensitive fields are masked before any storage or display (§7). Approval rows are the
-  only persisted arguments, always post-redaction, pruned by the same daily cron as
-  audit (90 days).
-- Audit trail: the D1 `audit` table (§5) is the durable record — Workers Logs retention
-  is only 3–7 days, so log lines are ops debugging, not audit. Recorded: every
+  redacted from logs, error responses, and exception traces; `writeOnly`/config-declared
+  sensitive fields are masked before any storage or display (§7). The rule is uniform
+  across services — the `pmcp` builtin needs no special case, because its one secret
+  (`token_issue`'s key) is a `writeOnly`-marked output field masked like any other
+  (§8). Every persisted body (approval `args_json`, the audit body columns) is
+  post-redaction and pruned by the same daily cron as audit.
+- Audit trail: the D1 `audit` table (§5) is the record of record — structured,
+  per-namespace, queryable (`audit_query` / `pmcp audit`); Workers Logs lines are ops
+  debugging only. Recorded: every
   `tools/call` (allowed and denied, with hub-measured `duration_ms` for latency
   visibility in `/audit`, and the caller's self-declared client name/version/session
   id when sent, §7 — display data only), approval lifecycle transitions
   (`approval.requested/approved/rejected/expired`), every mutating `pmcp` admin tool,
   logins, device approvals, connect/register/replaced/roles_widened events, and bootstrap
-  invocations. Not recorded: `tools/list` (agent polling noise), and the audit table
-  never holds tool arguments/results or token material (approval rows are the sole
-  persisted arguments anywhere in the hub, post-redaction, §7). Queried via
-  `audit_query` / `pmcp audit`. A daily cron trigger prunes rows older than 90 days.
-  The coarse `last_used_at` on tokens (§5) complements it for at-a-glance rotation
-  checks.
+  invocations. Not recorded: `tools/list` (agent polling noise), and token material
+  never — in any column.
+- Audit bodies: a `tools/call` row carries the call's bodies when the service's
+  `log_bodies` flag is on AND the call was actually dispatched. Refusal rows
+  (`-32000`/`-32001`/`-32002`/`-32003`) never carry bodies — several refusals happen
+  before any redaction map exists (a catalog-miss has no schema, §7), so recording
+  them would persist unmasked arguments. The flag's default is by kind: tunneled
+  **on** (our libraries
+  declare secrets in both schema directions, §7/§11), proxied **off** (no trustworthy
+  schema; the owner opts in per service and covers it with `redact` /
+  `redact_results` paths, §9); the virtual `pmcp` builtin has no service row and is
+  fixed **on** (its schemas are the hub's own, §8 — which is how `token_issue`'s key
+  is "masked wherever bodies are recorded" rather than special-cased). What is
+  stored: `params.arguments` post-redaction, and
+  the result's `structuredContent` post-redaction. Unstructured result content
+  (text/image/resource blocks) is never stored — each block becomes a typed size stub
+  (`{stub: "blob", contentType, bytes}`), so "the image generator returned a 4 MB png"
+  is visible without the bytes. Each body is capped at `AUDIT_BODY_CAP_BYTES`
+  (default 16 KiB, env-overridable): an over-cap body is replaced whole by an
+  `oversize` stub — never truncated into corrupt JSON. Exact stub spelling is pinned
+  by the contract fixtures at implementation. MRTR `inputResponses`/`requestState`
+  never enter the body columns (§7).
+- Retention: a daily cron trigger prunes audit and approval rows past the retention
+  window — default **7 days**, `AUDIT_RETENTION_DAYS` env var overrides. Deliberately
+  short: whatever the audit table holds, `audit_query` can read (§8), so retention is
+  the primary bound on body exposure; the JSONL export (§13) is the archive path for
+  anyone wanting longer. The trade, stated once: seven days is also the forensics
+  window — a quietly abused token must be noticed within it. The coarse
+  `last_used_at` on tokens (§5) carries the rotation/staleness question past the
+  window.
 
 ## 16. Testing
 
@@ -1160,7 +1250,13 @@ no CLI token or `pmcp` tool can ever reach it.
   rides one approval — an approved call returning `input_required` restores it, the
   follow-up leg carrying `inputResponses`/`requestState` executes and a `complete`
   result marks it `used`, and `inputResponses` never appear in the stored `args_json`;
-  `writeOnly` and config-declared fields masked in the stored `args_json`; identity
+  `writeOnly` and config-declared fields masked in the stored `args_json`; audit
+  bodies recorded per `log_bodies` (tunneled default on, proxied default off, either
+  flips): args and result structuredContent masked in both directions — input-schema
+  and output-schema `writeOnly` plus `redact`/`redact_results` paths — unstructured
+  blocks stored as stubs, an over-cap body as an `oversize` stub, `writeOnly`
+  stripped from served outputSchemas, and `token_issue`'s key masked in its recorded
+  result by the uniform rule; identity
   `_meta` present on tunneled calls with the consumer's `clientCapabilities` mirrored
   onto the forwarded request (both kinds, `{}` when absent); a consumer-supplied
   `_meta` key under `hub/` (e.g. a forged `hub/roles`) is stripped before forwarding
@@ -1242,9 +1338,16 @@ personal-mcps/
     and the args binding is `params.arguments` only, excluding
     `inputResponses`/`requestState` (§7).
 16. **Sensitive fields are declared as JSON Schema `writeOnly`** (standard keyword, no
-    invented syntax) for tunneled services, plus config-declared `redact` paths on
+    invented syntax) for tunneled services — in **both directions**: the client
+    libraries' `Secret` field type emits it in input and output schemas alike, and the
+    hub strips it from outputSchemas served to consumers (internal marker only, §7) —
+    plus config-declared `redact` / `redact_results` paths on
     either kind — config is the *only* proxied path in v1, since proxied schemas are
-    never cached (§7). The approval `args_hash` binds post-redaction arguments only.
+    never cached (§7). The walk resolves same-document `$ref`s and unions
+    composition branches; indirection it cannot soundly resolve (external refs,
+    `$id`/`$dynamicRef`, recursive-secret cycles) makes the tool loudly
+    schema-unsound — no map, `-32001` on gated calls, no recorded bodies — never a
+    silent skip (§7). The approval `args_hash` binds post-redaction arguments only.
 17. **Caller identity rides `_meta` (tunneled) / `X-Pmcp-*` headers (proxied)** —
     informational for the hub — never a boundary the hub itself relies on — but
     trustworthy for service-side fine-grained checks because the hub strips
@@ -1266,3 +1369,12 @@ personal-mcps/
 21. **The web surface is a PWA** (manifest + minimal service worker; pages stay
     server-rendered, no SPA) and approval requests are Web Push-notified through it
     (§13). Blocking-until-decided remains future work.
+22. **Audit rows carry call bodies, post-redaction, under short retention** (§15):
+    per-service `log_bodies` (tunneled default on, proxied default off — proxied
+    schemas can't be trusted, so the owner opts in and covers secrets with config
+    paths); results only as masked `structuredContent`; unstructured content and
+    over-cap bodies become typed size stubs (cap `AUDIT_BODY_CAP_BYTES`, default
+    16 KiB); retention default **7 days** (`AUDIT_RETENTION_DAYS` overrides) — short
+    retention is the accepted mitigation for `audit_query` exposing whatever the
+    table holds, and the JSONL export is the archive path. Storing the stubbed blobs
+    themselves (e.g. R2, referenced from the stub) is the natural future upgrade.

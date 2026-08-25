@@ -11,8 +11,9 @@ Three consequences drive everything below:
 
 - **Writing a test is design work.** Making a pinned behavior executable is where
   contradictions surface; amending the spec is a normal *output* of test authoring,
-  not a failure of it. (Authoring this strategy found two spec inconsistencies and
-  a handful of skeleton problems — §11.)
+  not a failure of it. (Authoring this strategy — and pinning the decisions it
+  produced — found three spec inconsistencies and a handful of skeleton
+  problems — §11.)
 - **A one-line spec change must not ripple through forty tests.** Change
   amplification in a test suite is the same disease as in code. The cure is
   structural: the spec's matrices live as *data tables*, the assertion logic lives
@@ -64,7 +65,8 @@ package (2026-08). Facts the layout depends on:
   requests first, so the *abrupt-crash-mid-call* branch stays out of reach (§10).
 - Vitest fake timers do not reach workerd simulators or DO alarms — so **time is
   injected** (`ApprovalsConfig.now()`) or **constant-shrunk** (a constants module
-  owning the 10 s / 30 s / 1 h / 90 d / 10 min values; tests reference constants,
+  owning the 10 s / 30 s / 1 h / 7 d / 10 min values plus the audit body cap;
+  tests reference constants,
   never literals — "30 s → 45 s" is then a one-line change with zero test churn).
 
 The projects:
@@ -85,9 +87,9 @@ The projects:
 | `server/test/unit/pattern.test.ts` | `matchesPattern`/`validateRoles`: the §7 regressions (`foo\|bar` ✓`foo`/`bar` ✗`foox`; literal `get.news` ✗`getXnews`; `get_*` ≡ `get_.*`), never-throws, the cap table |
 | `server/test/unit/filter.test.ts` | `buildToolFilter`: `all` → everything untouched declaration; granted-but-undeclared in `roleNames` but matches nothing; empty grants = the scoped-404 signal; allow-beats-approval as a law |
 | `server/test/unit/canonical.test.ts` | `canonicalJson` laws: key order irrelevant at depth, arrays ordered, idempotent, `undefined`≡`{}` (enables "absent args binds as {}"), throws on cycles/BigInt |
-| `server/test/unit/redact.test.ts` | the path grammar + writeOnly walk as a pure table — *conditional on nudge N1 (§11)* |
+| `server/test/unit/redact.test.ts` | the path grammar + writeOnly walk as a pure table — direction-blind: input and output schemas through the same walk (§7, decided 2026-08-25) |
 | `cli/test/plan.test.ts` | the diff planner, classic fail-first TDD: defaults, `role:approval` split, delete-by-absence, warn-vs-error per kind, `pmcp` rejection, kind-change error, destructive flags, step order — plus the empty-plan law (state derived from desired ⇒ empty plan) |
-| `clients/js/test/api.test.ts` | `caller()`/`sensitive()` pure halves; backoff schedule table *(nudge N2)* |
+| `clients/js/test/api.test.ts` | `caller()`/`sensitive()`/`secret()` pure halves (marking works on input and output schemas; values untouched); backoff schedule table *(nudge N2)* |
 
 ### `worker` — real D1, no sockets
 
@@ -103,7 +105,7 @@ The projects:
 | `order.table.test.ts` | the check order as the table it is (~16 rows): ungranted+archived → `-32001` not `-32002`; unknown prefix → `-32001`; first-`_` split; `server/discover`; `-32601` |
 | `upstream-proxy.test.ts` | the failure table (everything → `-32000`, `data` unset, body never echoed, class only in audit detail); aggregated fan-out with a failing + a hanging upstream; refresh-before-forward observed in order; `X-Pmcp-*` only with `forward_identity`; **subrequest counts asserted explicitly** (workerd enforces no cap locally) |
 | `admin-pipeline.test.ts` | pmcp through the real endpoint: accounts see no `pmcp_*` tools (structural), owner never approval-gated, `builtin: true` row |
-| `hygiene.test.ts` | sentinel-string sweep: no audit row contains arguments/results/token material; the approval table is the *only* place arguments persist; recomputed post-redaction hash equality + raw-hash inequality |
+| `hygiene.test.ts` | sentinel-string sweep: no persisted row contains token material or an unmasked sentinel secret; bodies exist only in approval `args_json` and the audit body columns, always post-redaction (§15 — the body table: `log_bodies` defaults by kind and flips both ways, results only as masked structuredContent, unstructured blocks → blob stubs, over-cap → oversize stub against a shrunk `AUDIT_BODY_CAP_BYTES`, `token_issue`'s recorded result masked by the uniform rule); served outputSchemas carry no `writeOnly`; recomputed post-redaction hash equality + raw-hash inequality |
 | `cron.test.ts` | one scheduled run produces all three effects; the wrangler cron string equals the expected constant (honestly labelled — nothing local proves an expression fires daily) |
 | `web-pages.test.ts` | thin by design: CSRF rejection with the ops handler provably not run; `/approvals/<id>` owner-only; export line count = `total`; **parity direction B** — form fields = the same zod schema's keys |
 | `routes.test.ts` | the §2 router-walk equivalence, both sides derived; reserved-username refusal |
@@ -137,7 +139,9 @@ The spec deliberately COPIES wire shapes across boundaries with no shared packag
 The pin mechanism: checked-in JSON fixtures — whoami, the error codes + `-32003`
 data, tunnel frames, **close codes → required client behavior**, bootstrap
 request/response, admin op names + schemas, the `service_list`/`account_list` rows
-the diff planner reads. `server/test/worker/contracts.test.ts` is the **only
+the diff planner reads, and the audit body-stub wire shape (`blob`/`oversize` —
+spec §15 defers its exact spelling to these fixtures).
+`server/test/worker/contracts.test.ts` is the **only
 writer**, asserting the server's real emissions deep-equal each fixture;
 CLI/clients/scripts consume them read-only. Plain JSON means neither side can
 import a type from it, so the copied shapes stay copied while both answer to one
@@ -285,8 +289,11 @@ facts (each with a re-run trigger):**
   plain curl gets JSON, not a bot-challenge page).
 
 **Passively, forever:** `scheduled()` writes one `cron.swept` audit row per run —
-"did the cron fire" becomes a question the `/audit` page answers. A dead cron
-costs storage, never security (expiry is lazy) — it's a janitor, not a guard.
+"did the cron fire" becomes a question the `/audit` page answers. Approval expiry
+stays lazy, so that leg is a janitor — but since bodies landed in audit under the
+7-day retention (§11), the prune leg is a GUARD: a dead cron leaves recorded call
+bodies readable via `audit_query` indefinitely, which is precisely the failure
+the `cron.swept` heartbeat exists to surface early.
 
 **Per-commit CI (~2 min, zero credentials):** `tsc --noEmit` + vitest (worker/unit
 parallel; tunnel serial) + pytest + `wrangler deploy --dry-run` — the dry-run
@@ -297,7 +304,7 @@ Accepted risks are recorded with explicit revisit triggers (D1-under-real-
 concurrency: trigger = an approval consumed twice; deploy-storm behavior: trigger
 = >50 services; browser-side PWA mechanics: trigger = the web surface outgrowing
 §13 or a second contributor; RFC 9207 as likely-dead-branch; constant-time
-compare and pmcp-body log exclusion as reviewed-not-tested).
+compare as reviewed-not-tested).
 
 ## 11. Decisions and findings from authoring this strategy
 
@@ -315,7 +322,8 @@ approvals skeleton comments updated; the order-table and approval-e2e rows encod
 (no pass × known-offline) → `-32000`.
 
 Resolved 2026-08-25 — **N1 applied**: registry exports the pure pair
-`writeOnlyPaths(schema)` / `applyRedaction(args, paths)`; tunnel and approvals
+`writeOnlyPaths(schema)` / `applyRedaction(args, paths)`; tunnel, approvals, and
+the gateway's audit-body path (the principal consumer since the body decision)
 consume them, so the path grammar has one definition and `unit/redact.test.ts`
 is unconditional. **N2 applied**: `backoffDelay(attempt, rng)` (JS) and
 `backoff_delay(attempt, rng)` (Python) exported pure, first delay jittered from
@@ -339,9 +347,55 @@ no-test-only-exports rule; Direction B plus review is the guard. **E1
 acknowledged**: the constant-time BOOTSTRAP_SECRET compare stays
 reviewed-not-tested (timing is not behaviorally observable in-process).
 
-Open:
-- The §15 pmcp-body log sentence: keep the special case, or state the uniform
-  no-bodies-in-operational-logs rule once (under discussion).
+Resolved 2026-08-25 — **audit bodies, uniform rule** (spec §5/§7/§15, decision
+22): the pmcp-body special case is GONE — `token_issue`'s key is a
+`writeOnly`-marked output field masked like any other secret. Sensitivity is
+declared in both directions: the client libraries' `Secret` field type /
+`secret()` wrapper emits `writeOnly` in input and output schemas (the hub strips
+it from served outputSchemas — internal marker only), and config gains
+`redact_results` beside `redact`. Audit `tools/call` rows carry bodies per the
+per-service `log_bodies` flag (tunneled default on, proxied default off — no
+trustworthy proxied schema, so the owner opts in with config paths): args and
+result structuredContent post-redaction; unstructured blocks and over-cap bodies
+become typed size stubs (`AUDIT_BODY_CAP_BYTES`, default 16 KiB). Retention
+drops to **7 days** default; both knobs are env vars parsed once at the
+composition root (`AUDIT_RETENTION_DAYS`, `AUDIT_BODY_CAP_BYTES`), with
+limits.ts holding the defaults. `hygiene.test.ts` owns the body table;
+`unit/redact.test.ts` walks both directions. (Also fixed while pinning: §5's
+`service` table had never materialized the config `redact` column — it now has
+`redact_json`, `redact_results_json`, and `log_bodies`.)
+
+Resolved 2026-08-25 — **the skeleton-authoring escalations**, decided as a batch:
+- **Injected clock in identity** (`resolvePrincipal` / `resolveServiceToken` /
+  `issueToken` take optional `now()`): the expired-token refusal is seeded by
+  issuing at a fake t0 and resolving past expiry — no sleeping, no test-only
+  mint-dead-token affordance; same rationale as `ApprovalsConfig.now()`.
+- **Tunnel wire vocabulary exported** (`CLOSE_REPLACED`/`CLOSE_ROW_GONE`/
+  `CLOSE_PROTOCOL`/`HUB_METHODS` beside the existing SeverCode pair): the
+  published cross-language contract, not hidden mechanics — the contracts
+  producer emits fixtures from it, and `tunnel/protocol.test.ts` asserts observed
+  wire values equal the exports, locking behavior to the table. No sibling
+  imports them.
+- **The writeOnly walk resolves local refs** (spec §7): same-document `#/…` JSON
+  Pointer resolution, mark union across `allOf`/`anyOf`/`oneOf`, secret-free
+  cycles cut. The refuse-line — external refs, `$id`/`$anchor`/`$dynamicRef`,
+  recursive-secret cycles — is enforced by the new pure
+  `registry.validateSchemaIndirection` at catalog warm: loud per-tool violations,
+  registration still succeeds, the tool is cached schema-unsound → `sensitivePaths`
+  null → `-32001` on gated calls and no recorded bodies. Forced client-side
+  inlining was considered and rejected (plain-SDK bots emit `$defs` by default;
+  refusing them breaks the just-connect promise). `unit/redact.test.ts`'s open
+  `$ref` ambiguity is thereby closed.
+- **Named constants** for the role caps (`ROLE_PATTERN_MAX_LENGTH` /
+  `ROLE_PATTERNS_MAX` / `ROLE_NAME_MAX_LENGTH` in limits.ts) and the mask
+  sentinel (`registry.REDACTED`) — the table runners lose their caps/sentinel
+  parameters and reference the names.
+- **Close-code behavior vocabulary**: three behaviors (`stop_fatal` /
+  `stop_quiet` / `reconnect`) plus a `schedule` attribute (`exponential` /
+  `max_only`) — matching the row shape both client suites already carry; the
+  contracts README and both client docstrings align to this one vocabulary.
+
+Open: none.
 
 First tasks at implementation, no decision needed: verify better-auth 1.7 on D1
 inside workerd before `auth-matrix.test.ts` is written (Kysely D1 dialect —

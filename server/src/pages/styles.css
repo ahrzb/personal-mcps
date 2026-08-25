@@ -88,6 +88,13 @@
   box-sizing: border-box;
 }
 
+/* The HTML `hidden` attribute must always win over a component's own `display`
+   (`.alert`, `.field`, and any future class) — otherwise a component that sets
+   its own `display` silently un-hides itself. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -477,9 +484,13 @@ select {
   color: var(--ring);
 }
 
+/* !important: an invalid control must read as invalid regardless of which
+   type-selector or component rule (input[type=...], .otp input, ...) supplied
+   its border/shadow — those all tie or beat this attribute selector on
+   specificity alone. */
 [aria-invalid="true"] {
-  border-color: var(--destructive);
-  box-shadow: none;
+  border-color: var(--destructive) !important;
+  box-shadow: none !important;
 }
 
 .input--mono {
@@ -640,6 +651,27 @@ select {
   width: 260px;
 }
 
+/* Groups audit's two `.filters` rows so the narrow breakpoint can flatten them
+   (`.filters{display:contents}`) into one reorderable sequence without
+   reaching past this box into the surrounding form's other children (the
+   session-filter note, the narrow Export button). Wide: just the same
+   top-to-bottom stack the two rows always had. */
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-6);
+}
+
+/* Pairs "All accounts"/"All services" for the narrow breakpoint without
+   touching the wide layout: `display:contents` here is invisible to the wide
+   `.filters` row, so both selects stay flat, individually-ordered flex items
+   of it (Audit.dc.html). The narrow override below turns this into their own
+   shared row (MobileAudit.dc.html). */
+.filter-pair {
+  display: contents;
+}
+
 /* two full-width action buttons — device's Approve/Deny row. DOM order stays
    Deny-then-Approve (Device.dc.html's row); the narrow breakpoint below
    reverses the STACK, not the markup, landing on MobileDevice.dc.html's
@@ -649,8 +681,15 @@ select {
   gap: var(--space-6);
 }
 
+/* flex-basis:auto (not the 0% that a bare `flex:1` shorthand sets) — a 0%
+   basis hands sizing on the main axis entirely to flex-grow, and once
+   column-reverse makes that axis the buttons' height, an intrinsically-sized
+   container has no extra space to grow into, collapsing both buttons to
+   near-zero height. auto keeps each button's own height (--control-h /
+   --control-h-touch) as the starting size in both orientations — matching
+   Device.dc.html's own `flex-grow: 1` (no basis override). */
 .confirm-actions .btn {
-  flex: 1;
+  flex: 1 1 auto;
 }
 
 .spacer {
@@ -854,6 +893,13 @@ select {
   text-align: left;
 }
 
+/* table-layout:auto lets an unbreakable cell (a long tool name) steal width
+   from every other column via <colgroup>-ignoring content sizing — fixed
+   layout makes the <colgroup> widths authoritative regardless of content. */
+.table--fixed {
+  table-layout: fixed;
+}
+
 .table th {
   padding: var(--space-5) var(--space-9);
   border-bottom: 1px solid var(--border);
@@ -878,6 +924,7 @@ select {
 .table .cell-mono {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+  overflow-wrap: anywhere;
 }
 
 .table .cell-time {
@@ -1511,6 +1558,64 @@ dialog .actions {
     width: var(--control-h-touch);
   }
 
+  /* .otp input ties the touch-target rule above on specificity (0,1,1 each);
+     placed after it, this wins the tie and restores MobileTwoFactor.dc.html's
+     48x52 digit boxes instead of the generic 44px touch height. */
+  .otp input {
+    width: 48px;
+    height: 52px;
+  }
+
+  /* the auth pages (login, device, approval-detail, add-service) drop the
+     bordered/shadowed card and go full-bleed at the narrow breakpoint —
+     MobileLogin.dc.html / MobileTwoFactor.dc.html / MobileDevice.dc.html /
+     MobileApprovalDetail.dc.html. */
+  .auth {
+    background: var(--bg);
+  }
+
+  .auth-card {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .auth-title {
+    font-size: 20px;
+  }
+
+  .auth-desc {
+    font-size: var(--text-base);
+  }
+
+  .auth .brand {
+    font-size: var(--text-lg);
+  }
+
+  /* device's live user code grows with the rest of the touch-target scale. */
+  .code-display {
+    height: 52px;
+  }
+
+  /* MobileTwoFactor.dc.html: "Use a backup code instead" becomes a full-width
+     bordered button (unlike Back to sign in, still a plain link below it). */
+  .switch-method a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: var(--control-h-touch);
+    padding: 0 var(--space-8);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    box-shadow: var(--shadow);
+    color: var(--fg);
+    font-size: var(--text-base);
+    font-weight: 500;
+    text-decoration: none;
+    width: 100%;
+  }
+
   .actions .btn {
     flex: 1;
   }
@@ -1522,10 +1627,18 @@ dialog .actions {
     font-size: var(--text-base);
   }
 
-  .filters {
-    flex-direction: column;
-    align-items: stretch;
+  /* MobileAudit.dc.html's control order (segmented, date range, paired
+     accounts/services, all events, tool search, Export) isn't the wide two-row
+     grouping (Audit.dc.html) — `.filter-group` takes over the column stack
+     `.filters` used to do itself, and each `.filters` row flattens
+     (display:contents) into it so `order` can reach every control at once
+     without touching the surrounding form's other children. */
+  .filter-group {
     gap: var(--space-5);
+  }
+
+  .filters {
+    display: contents;
   }
 
   .filters select,
@@ -1533,6 +1646,22 @@ dialog .actions {
   .filters .input-group,
   .filters .input-group input {
     width: 100%;
+  }
+
+  /* the tool search box sorts after the three selects instead of staying
+     where it sits on the wide row (right after date range). */
+  .filter-tool {
+    order: 1;
+  }
+
+  .filter-pair {
+    display: flex;
+    gap: var(--space-4);
+  }
+
+  .filter-pair select {
+    width: auto;
+    flex: 1;
   }
 
   .confirm-actions {

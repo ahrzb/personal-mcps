@@ -411,50 +411,58 @@ export const AuditPage: FC<AuditProps> = (props) => {
           {filters.session && <input type="hidden" name="session" value={filters.session} />}
           <input type="hidden" name="offset" value="0" />
 
-          <div class="filters">
-            <RangeSegment filters={filters} now={now} />
-            <div class="input-group">
-              <IconCalendar />
-              <input type="text" readonly value={fmtDateRange(filters.since, filters.until)} />
+          {/* .filter-group ties these two rows together so the narrow breakpoint can
+              flatten (`.filters{display:contents}`) and reorder them as one sequence —
+              MobileAudit.dc.html's control order doesn't match either row on its own
+              (the tool search box moves after the selects; accounts/services pair up). */}
+          <div class="filter-group">
+            <div class="filters">
+              <RangeSegment filters={filters} now={now} />
+              <div class="input-group">
+                <IconCalendar />
+                <input type="text" readonly value={fmtDateRange(filters.since, filters.until)} />
+              </div>
+              <div class="spacer wide-only"></div>
+              <div class="input-group filter-tool">
+                <IconSearch />
+                <input type="search" name="tool" placeholder="Filter by tool…" value={filters.tool ?? ""} />
+              </div>
             </div>
-            <div class="spacer wide-only"></div>
-            <div class="input-group">
-              <IconSearch />
-              <input type="search" name="tool" placeholder="Filter by tool…" value={filters.tool ?? ""} />
-            </div>
-          </div>
 
-          <div class="filters">
-            <select name="principal" onchange="this.form.submit()">
-              <option value="">All accounts</option>
-              {options.principals.map((p) => (
-                <option value={p} selected={p === filters.principal ? true : undefined}>
-                  {p}
-                </option>
-              ))}
-            </select>
-            <select name="service" onchange="this.form.submit()">
-              <option value="">All services</option>
-              {options.services.map((s) => (
-                <option value={s} selected={s === filters.service ? true : undefined}>
-                  {s}
-                </option>
-              ))}
-            </select>
-            <select name="event" onchange="this.form.submit()">
-              <option value="">All events</option>
-              {options.events.map((e) => (
-                <option value={e} selected={e === filters.event ? true : undefined}>
-                  {e}
-                </option>
-              ))}
-            </select>
-            <div class="spacer wide-only"></div>
-            <div class="wide-only" style="display:flex;align-items:center;gap:12px">
-              <span class="note">{fmtNumber(paging.total)} events match</span>
-              <a class="btn btn--ghost btn--sm" href={paths.audit}>
-                Clear filters
-              </a>
+            <div class="filters">
+              <div class="filter-pair">
+                <select name="principal" onchange="this.form.submit()">
+                  <option value="">All accounts</option>
+                  {options.principals.map((p) => (
+                    <option value={p} selected={p === filters.principal ? true : undefined}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+                <select name="service" onchange="this.form.submit()">
+                  <option value="">All services</option>
+                  {options.services.map((s) => (
+                    <option value={s} selected={s === filters.service ? true : undefined}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <select name="event" onchange="this.form.submit()">
+                <option value="">All events</option>
+                {options.events.map((e) => (
+                  <option value={e} selected={e === filters.event ? true : undefined}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+              <div class="spacer wide-only"></div>
+              <div class="wide-only" style="display:flex;align-items:center;gap:12px">
+                <span class="note">{fmtNumber(paging.total)} events match</span>
+                <a class="btn btn--ghost btn--sm" href={paths.audit}>
+                  Clear filters
+                </a>
+              </div>
             </div>
           </div>
 
@@ -541,7 +549,13 @@ export const AuditPage: FC<AuditProps> = (props) => {
 
         {rows.length > 0 ? (
           <div class="card">
-            <table class="table">
+            <div class="narrow-only">
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)">
+                <span class="muted" style="font-weight:500">Latest events</span>
+                <span class="note">newest first</span>
+              </div>
+            </div>
+            <table class="table table--fixed">
               <colgroup>
                 <col style="width:150px" />
                 <col style="width:130px" />
@@ -628,15 +642,17 @@ export const AuditPage: FC<AuditProps> = (props) => {
         )}
 
         {rows.length > 0 && (
-          <div class="narrow-only" style="display:flex;flex-direction:column;gap:8px">
-            {hasNext && (
-              <a class="btn btn--outline btn--block" href={auditLink(filters, { limit: loadMoreLimit, offset: 0 })}>
-                Load more
-              </a>
-            )}
-            <p class="note center">
-              Showing {fmtNumber(rangeEnd)} of {fmtNumber(paging.total)} · entries prune after {retentionDays} days
-            </p>
+          <div class="narrow-only">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              {hasNext && (
+                <a class="btn btn--outline btn--block" href={auditLink(filters, { limit: loadMoreLimit, offset: 0 })}>
+                  Load more
+                </a>
+              )}
+              <p class="note center">
+                Showing {fmtNumber(rangeEnd)} of {fmtNumber(paging.total)} · entries prune after {retentionDays} days
+              </p>
+            </div>
           </div>
         )}
       </main>

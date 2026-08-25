@@ -315,6 +315,13 @@ const PasskeysCard: FC<{ passkeys: PasskeyRow[]; now: string }> = ({ passkeys, n
 
 /* --------------------------------------------------------------- sessions --- */
 
+/** "pmcp CLI" -> "pmcp CLI · device flow" for CLI sessions (model.ts on `SessionRow`) —
+ *  the one label suffix computed here rather than carried by the fixture, so the
+ *  desktop row, the mobile card, and the revoke confirm dialog title all agree. */
+function sessionLabel(session: SessionRow): string {
+  return session.source === "cli" ? `${session.client} · device flow` : session.client;
+}
+
 const SessionsCard: FC<{ sessions: SessionRow[]; now: string }> = ({ sessions, now }) => (
   <div class="card">
     {/* wide: header padded like a card, table full-bleed to the card's edges (Account.dc.html) */}
@@ -336,7 +343,7 @@ const SessionsCard: FC<{ sessions: SessionRow[]; now: string }> = ({ sessions, n
           <tr key={session.id}>
             <td>
               <div style="display: flex; align-items: center; gap: var(--space-4);">
-                <span>{session.client}</span>
+                <span>{sessionLabel(session)}</span>
                 {session.current ? <span class="badge badge--outline">current</span> : null}
               </div>
             </td>
@@ -365,7 +372,7 @@ const SessionsCard: FC<{ sessions: SessionRow[]; now: string }> = ({ sessions, n
           <div class="list-item" key={session.id}>
             <div style="display: flex; flex-direction: column; gap: var(--space-1);">
               <div style="display: flex; align-items: center; gap: var(--space-4);">
-                <span class="list-title">{session.client}</span>
+                <span class="list-title">{sessionLabel(session)}</span>
                 {session.current ? <span class="badge badge--outline">current</span> : null}
               </div>
               <div class="list-meta">
@@ -390,7 +397,11 @@ const DIALOG_ID = "confirm-account";
 const DIALOG_TITLE_ID = "confirm-account-title";
 
 /** Dialogs.dc.html's three destructive confirmations, as server-rendered `<dialog open>` state. */
-const ConfirmDialog: FC<{ confirm: AccountConfirm; csrfToken: string }> = ({ confirm, csrfToken }) => {
+const ConfirmDialog: FC<{ confirm: AccountConfirm; csrfToken: string; sessions: SessionRow[] }> = ({
+  confirm,
+  csrfToken,
+  sessions,
+}) => {
   let title: string;
   let text: string;
   let body: ReturnType<FC>;
@@ -432,7 +443,8 @@ const ConfirmDialog: FC<{ confirm: AccountConfirm; csrfToken: string }> = ({ con
       </form>
     );
   } else {
-    title = `Revoke “${confirm.client}”?`;
+    const matched = sessions.find((s) => s.id === confirm.id);
+    title = `Revoke “${matched ? sessionLabel(matched) : confirm.client}”?`;
     text = "This session is signed out immediately and can't be restored — whoever's using it will need to sign in again.";
     body = (
       <form method="post" action={paths.auth.sessionRevoke} class="actions">
@@ -501,7 +513,7 @@ export const AccountPage: FC<AccountProps> = (props) => {
         <SessionsCard sessions={sessions} now={now} />
       </main>
 
-      {confirm ? <ConfirmDialog confirm={confirm} csrfToken={csrfToken} /> : null}
+      {confirm ? <ConfirmDialog confirm={confirm} csrfToken={csrfToken} sessions={sessions} /> : null}
     </Layout>
   );
 };

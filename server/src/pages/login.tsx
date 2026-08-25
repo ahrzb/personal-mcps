@@ -140,7 +140,10 @@ const TotpCard: FC<{ step: Extract<LoginStep, { kind: "totp" }>; redirectTo: str
         Verify
       </button>
     </form>
-    <p class="muted center">
+    {/* MobileTwoFactor.dc.html: this becomes a full-width bordered button at
+        the narrow breakpoint (.switch-method in styles.css); desktop keeps it
+        a plain link (TwoFactor.dc.html). */}
+    <p class="muted center switch-method">
       <a href={switchMethod("backup-code")}>Use a backup code instead</a>
     </p>
   </div>

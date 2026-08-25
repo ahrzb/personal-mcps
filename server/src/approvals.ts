@@ -296,5 +296,38 @@ export class Approvals {
  */
 export function canonicalJson(value: unknown): string {
   // deps: none
-  throw new Error("unimplemented");
+  return stringifyCanonical(value === undefined ? {} : value, []);
+}
+
+/**
+ * Recursive worker behind canonicalJson. `ancestors` is the recursion PATH (not
+ * a whole-graph visited set) — a fresh array per level, so a value reachable
+ * twice through two different siblings is expanded twice, and only a value
+ * that is its own ancestor (a real cycle) throws. Built manually rather than
+ * "rebuild a sorted plain object, then JSON.stringify it once": a plain object
+ * silently reorders integer-index-like keys ("2" before "10") ahead of
+ * insertion order, which would fight the code-unit sort this function exists
+ * to guarantee.
+ */
+function stringifyCanonical(value: unknown, ancestors: readonly unknown[]): string {
+  if (typeof value === "bigint") {
+    throw new TypeError("canonicalJson: BigInt has no JSON representation");
+  }
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (ancestors.includes(value)) {
+    throw new TypeError("canonicalJson: cyclic structure");
+  }
+  const path = [...ancestors, value];
+  if (Array.isArray(value)) {
+    const items = value.map((item) => stringifyCanonical(item === undefined ? null : item, path));
+    return `[${items.join(",")}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  const entries = Object.keys(obj)
+    .filter((key) => obj[key] !== undefined)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stringifyCanonical(obj[key], path)}`);
+  return `{${entries.join(",")}}`;
 }

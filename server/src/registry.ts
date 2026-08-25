@@ -23,6 +23,7 @@
 // a row invariant (mode and envelope kind can never disagree), not a read.
 
 import type { Principal } from "./identity";
+import { ROLE_NAME_MAX_LENGTH, ROLE_PATTERN_MAX_LENGTH, ROLE_PATTERNS_MAX } from "./limits";
 
 /** The request-scoped Cloudflare D1 binding (`D1Database` from `@cloudflare/workers-types`). */
 type D1Database = unknown;
@@ -210,7 +211,32 @@ export const PMCP_SLUG = "pmcp";
  */
 export function matchesPattern(pattern: string, tool: string): boolean {
   // deps: none
-  throw new Error("unimplemented");
+  if (LITERAL_PATTERN.test(pattern)) return pattern === tool;
+  const re = compilePattern(pattern);
+  return re ? re.test(tool) : false;
+}
+
+/** The literal-grammar fast path: tool-name characters only, compared as a string. */
+const LITERAL_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/** `*` not already escaped or preceded by `.` reads as `.*` (§2/§18 item 9). */
+function aliasStars(pattern: string): string {
+  let out = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    const prev = pattern[i - 1];
+    out += ch === "*" && prev !== "." && prev !== "\\" ? ".*" : ch;
+  }
+  return out;
+}
+
+/** Shared by matchesPattern and validateRoles so the two can never disagree on compilability. */
+function compilePattern(pattern: string): RegExp | null {
+  try {
+    return new RegExp(`^(?:${aliasStars(pattern)})$`);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -226,8 +252,32 @@ export function matchesPattern(pattern: string, tool: string): boolean {
  */
 export function validateRoles(decl: RoleDeclaration): string[] {
   // deps: none
-  throw new Error("unimplemented");
+  const violations: string[] = [];
+  for (const [name, patterns] of Object.entries(decl)) {
+    if (name === "all") {
+      violations.push(`role name "all" is reserved`);
+      continue;
+    }
+    if (!ROLE_NAME_CHARSET.test(name) || name.length > ROLE_NAME_MAX_LENGTH) {
+      violations.push(`role name "${name}" must match [a-z0-9_-]{1,${ROLE_NAME_MAX_LENGTH}}`);
+    }
+    if (patterns.length > ROLE_PATTERNS_MAX) {
+      violations.push(`role "${name}" declares more than ${ROLE_PATTERNS_MAX} patterns`);
+    }
+    for (const pattern of patterns) {
+      if (pattern.length > ROLE_PATTERN_MAX_LENGTH) {
+        violations.push(`pattern "${pattern}" in role "${name}" exceeds ${ROLE_PATTERN_MAX_LENGTH} characters`);
+      }
+      if (compilePattern(pattern) === null) {
+        violations.push(`pattern "${pattern}" in role "${name}" does not compile`);
+      }
+    }
+  }
+  return violations;
 }
+
+/** The role-name grammar validateRoles reports against. */
+const ROLE_NAME_CHARSET = /^[a-z0-9_-]+$/;
 
 /**
  * The pure heart of access resolution: grant entries (exactly as stored, or the
@@ -240,7 +290,29 @@ export function validateRoles(decl: RoleDeclaration): string[] {
  */
 export function buildToolFilter(entries: GrantEntry[], declared: RoleDeclaration): ToolFilter {
   // deps: matchesPattern
-  throw new Error("unimplemented");
+  const roleNames = entries.map((e) => e.role);
+
+  function roleMatches(role: string, tool: string): boolean {
+    if (role === "all") return true;
+    const patterns = declared[role];
+    return patterns ? patterns.some((p) => matchesPattern(p, tool)) : false;
+  }
+
+  function check(tool: string): AccessMode {
+    let approved = false;
+    for (const entry of entries) {
+      if (!roleMatches(entry.role, tool)) continue;
+      if (entry.mode === "allow") return "allow"; // allow beats approval, any order
+      approved = true;
+    }
+    return approved ? "approval" : "deny";
+  }
+
+  return {
+    check,
+    filterList: (tools) => tools.filter((t) => check(t.name) !== "deny"),
+    roleNames,
+  };
 }
 
 /**
@@ -253,14 +325,207 @@ export function buildToolFilter(entries: GrantEntry[], declared: RoleDeclaration
  * config `redact` / `redact_results` entries are written in. "At any depth"
  * includes indirection (§7): same-document `#/…` refs are resolved by JSON
  * Pointer, marks are unioned across allOf/anyOf/oneOf branches (a field secret
- * in ANY branch masks — over-masking is safe), and secret-free cycles are cut.
+ * in ANY branch masks — over-masking is safe), an array whose ELEMENTS carry the
+ * mark is masked at the array's own path (the grammar has no index segment), and
+ * secret-free cycles are cut.
  * Callers guarantee the schema passed validateSchemaIndirection — the walk
  * never guesses at indirection that validator refuses. A malformed or absent
  * schema still yields [], never an error.
  */
 export function writeOnlyPaths(schema: unknown): string[] {
   // deps: none
-  throw new Error("unimplemented");
+  return isJsonObject(schema) ? walk(schema).paths : [];
+}
+
+/** A JSON object — the only shape either half of §7's redaction pair descends into. */
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Same-document pointers only; everything else is validateSchemaIndirection's business. */
+function isLocalRef(ref: string): boolean {
+  return ref === "#" || ref.startsWith("#/");
+}
+
+/**
+ * RFC 6901: `~1` unescapes BEFORE `~0`, or the token `a~01b` reads as the key `a/b`
+ * instead of the `a~1b` it names — the one place the two orders disagree.
+ */
+function pointerTarget(root: JsonObject, ref: string): unknown {
+  let node: unknown = root;
+  for (const token of ref === "#" ? [] : ref.slice(2).split("/")) {
+    if (!isJsonObject(node)) return undefined;
+    node = node[token.replace(/~1/g, "/").replace(/~0/g, "~")];
+  }
+  return node;
+}
+
+/** §7: a mark in ANY branch masks — over-masking is safe, so composition unions. */
+const BRANCH_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
+
+/**
+ * §7's keyword decision, spelled ONCE: the subschemas reachable from `node` without
+ * consuming a path segment — the same-document `$ref` target, the allOf/anyOf/oneOf
+ * branches, and `items` in both its single and tuple forms (an array collapses into its
+ * parent's path, because the mask applies to every element and the grammar has no index
+ * segment). Every question below is asked through this set — is this marked, what are
+ * its children, does this cycle carry a secret — so growing the set is one edit rather
+ * than three that can silently disagree.
+ */
+function samePathSubschemas(node: JsonObject, root: JsonObject): JsonObject[] {
+  const reachable: JsonObject[] = [];
+  const ref = node.$ref;
+  if (typeof ref === "string" && isLocalRef(ref)) {
+    const target = pointerTarget(root, ref);
+    if (isJsonObject(target)) reachable.push(target);
+  }
+  for (const keyword of BRANCH_KEYWORDS) {
+    const branches = node[keyword];
+    if (Array.isArray(branches)) reachable.push(...branches.filter(isJsonObject));
+  }
+  const items = node.items;
+  if (Array.isArray(items)) reachable.push(...items.filter(isJsonObject));
+  else if (isJsonObject(items)) reachable.push(items);
+  return reachable;
+}
+
+/**
+ * Is THIS subschema itself marked? A mark on any same-path subschema is a mark on the
+ * node — a marked `$defs` target marks the property pointing at it, and an array of
+ * marked elements is masked whole — but never on `properties`: a marked child is the
+ * child's path, not its parent's.
+ */
+function marked(node: JsonObject, root: JsonObject, seen: Set<JsonObject>): boolean {
+  if (seen.has(node)) return false;
+  seen.add(node);
+  if (node.writeOnly === true) return true;
+  return samePathSubschemas(node, root).some((sub) => marked(sub, root, seen));
+}
+
+/**
+ * The subschemas one dot-segment deeper, each with the segment it adds: the `properties`
+ * of the node AND of every same-path subschema, so a composed or `$ref`-ed shape's
+ * fields are the node's fields. A name can repeat across branches (two `anyOf` arms each
+ * declaring `token`); both entries are kept, and the union takes whichever one marks.
+ */
+function pathChildren(
+  node: JsonObject,
+  root: JsonObject,
+  seen: Set<JsonObject>,
+): [string, JsonObject][] {
+  if (seen.has(node)) return [];
+  seen.add(node);
+  const children: [string, JsonObject][] = [];
+  const properties = node.properties;
+  if (isJsonObject(properties)) {
+    for (const [key, sub] of Object.entries(properties)) {
+      if (isJsonObject(sub)) children.push([key, sub]);
+    }
+  }
+  for (const sub of samePathSubschemas(node, root)) children.push(...pathChildren(sub, root, seen));
+  return children;
+}
+
+/**
+ * Does anything reachable from this subschema carry a mark? Read from the same two edge
+ * sets the walk itself uses, so it answers exactly "the walk would emit a path here" —
+ * a `writeOnly` sitting in a DATA value (a `default`, an `enum` entry) is not a mark.
+ * This is the secret-free test a detected cycle is judged by: secret-free means CUT,
+ * secret-carrying means refused (its path set is infinite).
+ */
+function carriesMark(node: JsonObject, root: JsonObject, seen: Set<JsonObject>): boolean {
+  if (seen.has(node)) return false;
+  seen.add(node);
+  if (marked(node, root, new Set())) return true;
+  return pathChildren(node, root, new Set()).some(([, sub]) => carriesMark(sub, root, seen));
+}
+
+/** What one walk answers — both halves, so neither caller passes the other's accumulator. */
+type WalkResult = { paths: string[]; cycles: string[] };
+
+/**
+ * The one descent both halves of the refuse-line contract read: the dot-paths under a
+ * schema, plus the single violation only a walk can see (a cycle carrying a secret).
+ * Each caller names the half it wants.
+ */
+function walk(schema: JsonObject): WalkResult {
+  return relativeWalk(schema, schema, new Set(), new Map());
+}
+
+/**
+ * Paths RELATIVE to `node`; the caller prefixes them at the property boundary. Relative
+ * is what makes an answer prefix-independent and so memoizable per node, which bounds
+ * the walk by its own ANSWER: one visit per subschema plus one string per path returned.
+ * Building absolute paths instead re-walks a `$defs` once per referring path and costs
+ * 2^(sharing depth) even when the answer is EMPTY — on schemas the registered service
+ * supplies and the hub walks at every catalog warm. A schema whose answer is genuinely
+ * exponential (n shared levels above a mark really do name 2^n distinct dot-paths) still
+ * costs that much; no memo can shrink an answer.
+ *
+ * `open` is the subschemas being expanded on the CURRENT descent, so only a back-edge is
+ * a cycle. A cut edge is always mark-free — a marked one is refused instead — and a
+ * mark-free subtree yields no paths, so a memoized answer stays correct in every later
+ * context.
+ */
+function relativeWalk(
+  node: JsonObject,
+  root: JsonObject,
+  open: Set<JsonObject>,
+  memo: Map<JsonObject, WalkResult>,
+): WalkResult {
+  const cached = memo.get(node);
+  if (cached) return cached;
+
+  const paths: string[] = [];
+  const cycles: string[] = [];
+  for (const [key, sub] of pathChildren(node, root, new Set())) {
+    // A marked property is masked whole, so its own subtree needs no paths of its own.
+    if (marked(sub, root, new Set())) {
+      paths.push(key);
+      continue;
+    }
+    if (open.has(sub)) {
+      const at = typeof sub.$ref === "string" ? `: ${sub.$ref}` : "";
+      if (carriesMark(sub, root, new Set())) {
+        cycles.push(`recursive $ref cycle carrying a writeOnly field${at}`);
+      }
+      continue;
+    }
+    open.add(sub);
+    const inner = relativeWalk(sub, root, open, memo);
+    open.delete(sub);
+    for (const path of inner.paths) paths.push(`${key}.${path}`);
+    cycles.push(...inner.cycles);
+  }
+
+  const result = { paths: [...new Set(paths)], cycles: [...new Set(cycles)] };
+  memo.set(node, result);
+  return result;
+}
+
+/**
+ * The static half of the refuse-line: constructs whose mere PRESENCE anywhere in the
+ * document makes resolution a guess, reachable or not — an `$anchor` sitting in an
+ * unreferenced `$defs` is still a target the walk cannot address.
+ */
+function scanIndirection(node: unknown, violations: string[], seen: Set<object>): void {
+  if (Array.isArray(node)) {
+    for (const entry of node) scanIndirection(entry, violations, seen);
+    return;
+  }
+  if (!isJsonObject(node) || seen.has(node)) return;
+  seen.add(node);
+  if ("$id" in node) violations.push(`$id is not resolved: ${String(node.$id)}`);
+  if ("$anchor" in node) violations.push(`$anchor is not resolved: ${String(node.$anchor)}`);
+  if ("$dynamicRef" in node) {
+    violations.push(`$dynamicRef is not resolved: ${String(node.$dynamicRef)}`);
+  }
+  if (typeof node.$ref === "string" && !isLocalRef(node.$ref)) {
+    violations.push(`external or non-local $ref is not resolved: ${node.$ref}`);
+  }
+  for (const value of Object.values(node)) scanIndirection(value, violations, seen);
 }
 
 /**
@@ -277,7 +542,11 @@ export function writeOnlyPaths(schema: unknown): string[] {
  */
 export function validateSchemaIndirection(schema: unknown): string[] {
   // deps: none
-  throw new Error("unimplemented");
+  if (!isJsonObject(schema)) return [];
+  const violations: string[] = [];
+  scanIndirection(schema, violations, new Set());
+  violations.push(...walk(schema).cycles);
+  return violations;
 }
 
 /**
@@ -302,7 +571,28 @@ export function applyRedaction(
   paths: string[],
 ): Record<string, unknown> {
   // deps: none
-  throw new Error("unimplemented");
+  const copy = structuredClone(args);
+  for (const path of paths) maskPath(copy, path.split("."));
+  return copy;
+}
+
+/**
+ * Navigates only what is already there: an absent segment ends the walk, so no key is
+ * ever invented, and a segment whose value is already the sentinel is a string rather
+ * than a container — which is what makes an overlapping union (`credentials.token`
+ * beside `credentials`) order-independent.
+ */
+function maskPath(node: unknown, segments: string[]): void {
+  // A path meeting an array applies to every element.
+  if (Array.isArray(node)) {
+    for (const element of node) maskPath(element, segments);
+    return;
+  }
+  if (!isJsonObject(node)) return;
+  const [head, ...rest] = segments;
+  if (!Object.prototype.hasOwnProperty.call(node, head)) return;
+  if (rest.length === 0) node[head] = REDACTED;
+  else maskPath(node[head], rest);
 }
 
 /**

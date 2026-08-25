@@ -26,6 +26,7 @@ import {
 import type { Principal } from "./identity";
 import { HUB_PRINCIPAL } from "./principal";
 import { PMCP_SLUG, Registry } from "./registry";
+import { handleConnect } from "./tunnel";
 import {
   cleanupStaleState,
   clientMetadata,
@@ -70,6 +71,13 @@ export type Env = {
    * the operator sets it for a use and rotates it after.
    */
   BOOTSTRAP_SECRET?: string;
+  /**
+   * Secret, optional: better-auth Dash (the hosted ops dashboard) API key. Unset —
+   * dev, tests — means the dash plugin is not even constructed, so nothing phones
+   * home from those environments (user-accepted exception 2026-08-26 to the
+   * no-phone-home stance, production only).
+   */
+  BETTER_AUTH_API_KEY?: string;
   /**
    * Secret, optional: the Sentry DSN. Unset means Sentry is fully disabled — no
    * transport, no events, nothing to configure; the worker behaves exactly as if
@@ -296,6 +304,11 @@ function buildRouter(): Hono<{ Bindings: Env }> {
   app.get(CLIENT_METADATA_PATH, (c) => clientMetadata(new URL(c.env.PUBLIC_ORIGIN)));
   app.get(OAUTH_CALLBACK_PATH, (c) => handleCallback(c.req.raw));
 
+  // §6: the reverse connection's one door. GET only — an upgrade is a GET — and the
+  // handler owns the whole 401/403/101 matrix, including what a request without
+  // `Upgrade: websocket` gets.
+  app.get("/connect", (c) => handleConnect(c.req.raw));
+
   // §4/§13: credential management is the one cookie-session surface whose GUARD is wired
   // here — a bearer-sourced session never reaches it, and it demands recent auth. The
   // page behind the guard is the web dispatch's.
@@ -324,7 +337,13 @@ function buildRouter(): Hono<{ Bindings: Env }> {
 /** The top-level segments this worker actually wires; the rest of ROUTES is stubbed.
  *  `oauth` is here for its two §7 routes above — anything else under it falls to the one
  *  anonymous 404, never to a 501 that would advertise an unbuilt surface. */
-const WIRED_ROUTES: ReadonlySet<string> = new Set(["api", "internal", "account", "oauth"]);
+const WIRED_ROUTES: ReadonlySet<string> = new Set([
+  "api",
+  "internal",
+  "account",
+  "oauth",
+  "connect",
+]);
 
 /** A route the table reserves and no dispatch has built yet. */
 const notImplemented = () => new Response("Not Implemented", { status: 501 });

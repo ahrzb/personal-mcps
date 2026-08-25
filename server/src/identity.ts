@@ -27,6 +27,7 @@ import { bearer } from "better-auth/plugins/bearer";
 import { deviceAuthorization } from "better-auth/plugins/device-authorization";
 import { twoFactor } from "better-auth/plugins/two-factor";
 import { username as usernamePlugin } from "better-auth/plugins/username";
+import { dash } from "@better-auth/infra";
 import { Hono } from "hono";
 import { deleteUser, provisionUser } from "./admin";
 import { record } from "./audit";
@@ -89,6 +90,10 @@ function auth() {
       // §13: ~10 minutes, down from better-auth's 30-minute default.
       deviceAuthorization({ expiresIn: `${DEVICE_CODE_TTL_MS / 1000}s` }),
       bearer(),
+      // Dash (better-auth's hosted dashboard) rides ONLY where its key is deployed:
+      // the plugin phones home, so dev and tests — where the secret is absent —
+      // construct exactly the plugin list above and nothing more.
+      ...(env.BETTER_AUTH_API_KEY ? [dash({ apiKey: env.BETTER_AUTH_API_KEY })] : []),
     ],
   });
 }

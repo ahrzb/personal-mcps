@@ -1,2 +1,6 @@
 design/personal-mcps-ui.html
 node_modules/
+.wrangler/
+.dev.vars
+__pycache__/
+*.pyc

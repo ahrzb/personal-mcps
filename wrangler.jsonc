@@ -1,0 +1,70 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "personal-mcps",
+
+  // The composition root (§17). It owns the Env shape below and re-exports the
+  // ServiceConnection DO class, which wrangler resolves against this entry module.
+  "main": "server/src/index.ts",
+
+  "compatibility_date": "2026-08-20",
+  // Load-bearing, not decoration: the vitest worker pool silently tolerates its
+  // absence while a real deploy rejects it, so `wrangler deploy --dry-run` in CI is
+  // what actually pins this flag (testing strategy §"every commit").
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Workers Logs: ops debugging only. The record of record is the D1 `audit` table
+  // (§15) — these lines are never queried by the product.
+  "observability": { "enabled": true },
+
+  // The shared control plane (§5): better-auth tables plus ours.
+  //
+  // Created 2026-08-25 (`wrangler d1 create personal-mcps`, region WEUR). Migrations:
+  //   npx wrangler d1 migrations apply personal-mcps --local    # dev
+  //   npx wrangler d1 migrations apply personal-mcps --remote   # prod
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "personal-mcps",
+      "database_id": "d3eeeb8a-cf84-479d-a25c-d134577d470c",
+      "migrations_dir": "server/migrations"
+    }
+  ],
+
+  // One DO instance per tunneled service, addressed by opaque `service.id` (§3, §6).
+  "durable_objects": {
+    "bindings": [{ "name": "SERVICE_CONNECTION", "class_name": "ServiceConnection" }]
+  },
+  // `new_sqlite_classes`, not `new_classes`: ServiceConnection is SQLite-backed.
+  // Storage backend is fixed at class creation and cannot be changed afterwards.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ServiceConnection"] }],
+
+  // Daily sweep (§15, §7): expire past-deadline approvals, prune audit/approval rows
+  // past the retention window, drop stale upstream-OAuth `state` rows. Each run writes
+  // one `cron.swept` audit row — the cron's only monitoring.
+  "triggers": { "crons": ["0 4 * * *"] },
+
+  "vars": {
+    // Canonical public https origin: scheme + host, no trailing slash, no path.
+    // Every absolute URL the hub emits derives from this one value.
+    "PUBLIC_ORIGIN": "https://mcp.example.com"
+
+    // Optional overrides — leave unset to use the defaults in server/src/limits.ts.
+    // Both are strings here and parsed once by the composition root.
+    // "AUDIT_RETENTION_DAYS": "7",      // default limits.RETENTION_DAYS = 7 days
+    // "AUDIT_BODY_CAP_BYTES": "16384"   // default limits.AUDIT_BODY_CAP_BYTES = 16 KiB
+  }
+
+  // Secrets — never values here, only names. Set each with:
+  //   npx wrangler secret put <NAME>
+  //
+  // Required:
+  //   BETTER_AUTH_SECRET   better-auth signing/session secret (§4)
+  //   UPSTREAM_CREDS_KEY   AES-GCM key enveloping `upstream_auth_json` at rest (§5)
+  //   VAPID_PUBLIC_KEY     Web Push VAPID public key, ES256 (§13)
+  //   VAPID_PRIVATE_KEY    Web Push VAPID private key, ES256 (§13)
+  //
+  // Optional:
+  //   BOOTSTRAP_SECRET     while unset, POST /internal/users 404s (§12). An
+  //                        all-namespaces master key: set it for a use, rotate after.
+  //   SENTRY_DSN           unset means Sentry is fully disabled.
+}

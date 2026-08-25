@@ -1,0 +1,7 @@
+allowBuilds:
+  esbuild: true # bundler used by wrangler; postinstall places its platform binary
+  workerd: true # the Workers runtime itself — its postinstall downloads the binary wrangler dev runs
+minimumReleaseAgeExclude:
+  - '@sentry/cloudflare@10.71.0'
+  - '@sentry/core@10.71.0'
+  - '@sentry/server-utils@10.71.0'

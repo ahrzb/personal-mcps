@@ -124,9 +124,10 @@ the failure is a spec question, not an execution one.
 | D4 | Gateway, admin, approvals | workflow | **gated ✓** (`ffe2c4a`) |
 | D5 | Upstream proxy, cron, hygiene | workflow | **gated ✓** (`d036455`) |
 | D6 | Tunnel DO + contracts + approval e2e | workflow | in flight |
-| D7 | Web surface wiring | workflow | outline |
-| D8 | CLI + JS/Python clients | workflow | outline |
-| D9 | Full-suite deploy + cross-module PSD sweep | workflow + inline | outline |
+| D7 | First deploy + live wire (initialize, smoke.ts, thin tunnel client) | workflow + inline | outline (shift-left 2026-08-25) |
+| D8 | CLI + JS/Python clients, against the live hub | workflow | outline |
+| D9 | Web surface wiring + Web Push | workflow | outline |
+| D10 | Final sweep (zero-todo, cross-module PSD, cost actuals) | workflow + inline | outline |
 
 Order is dependency-driven: nothing waits on anything it doesn't consume. D2–D3
 could overlap in principle (disjoint suites) but share `server/src/registry.ts`, so
@@ -350,61 +351,118 @@ judge it as one: what does it hide behind `handleConnect`/`tunnelBackend`/
 `status`/`sever`/`wipe`?).
 **Est. scale:** ~10–12 agents, ~1.5–2.5M tokens. The big one.
 
-### D7 — Web surface wiring *(outline)*
+### D7 — First deploy + live wire *(restructured 2026-08-25: shift-left)*
 
-**Named debt D7 must collect:** `audit.exportJsonl` is implemented (D5) but
+The old plan back-loaded every real-world integration — first true deploy,
+first WebSocket through Cloudflare's edge, first standards-compliant MCP
+client — into D9, after the clients were already built against fakes. This
+dispatch pulls all of it directly behind D6, so structural issues (edge
+behavior, DO migrations in production, handshake gaps, wrangler quirks) are
+found while everything downstream can still absorb the fix cheaply. From this
+dispatch on, **deploy-freshest-master + run the live smoke is a standing step
+of every gate**, not a D-final ceremony.
+
+**Owns:**
+- `initialize` handshake pull-forward: spec §7 commit (method table gains
+  `initialize`; `notifications/initialized` already absorbed by the
+  notification-202 branch), order.table oracle rows for both shapes, the
+  minimal hand-rolled answer in gateway.route (protocolVersion, capabilities,
+  serverInfo). The SDK swap stays the recorded ceiling — this makes real MCP
+  clients work, nothing more.
+- First real deploy: `wrangler secret put` (BETTER_AUTH_SECRET,
+  UPSTREAM_CREDS_KEY, BOOTSTRAP_SECRET — generated values), remote D1
+  migrations, PUBLIC_ORIGIN → the workers.dev origin, `wrangler deploy` +
+  `--dry-run` in the gate.
+- `scripts/smoke.ts` — the live end-to-end walk against a deployed origin
+  (HUB_ORIGIN + BOOTSTRAP_SECRET env): bootstrap user → sign-in → whoami →
+  `token_issue` via pmcp → `server/discover`/`initialize`/`tools/list` as the
+  service account → create tunneled service + token → connect the thin client
+  (below) from THIS machine through the edge → online → `tools/call` over the
+  live socket → full approval walk → `audit_query` verification → cleanup
+  cascade. Exit code + printed report; every later gate runs it.
+- Thin tunnel-client slice: the minimal JS `serve()` transport half pulled
+  forward from D8's `clients/js` (connect, register, answer tools/list +
+  one tool, reconnect-on-4002) — just enough for smoke to drive a REAL
+  process through a REAL edge WebSocket into the production DO. D8 absorbs
+  and completes it; its file lives where D8 expects it.
+- Claude-as-client proof: the orchestrator adds the deployed hub to Claude
+  Code (`claude mcp add --transport http` + bearer) and drives
+  tools/list/tools/call interactively — a second, independent
+  standards-compliant client exercising the wire.
+**Spec:** §7 (method table amendment), §12 (bootstrap flow live), §6 (the
+protocol through a real edge), §10 (deploy).
+**Grain:** inline (deploy, secrets, Claude-as-client) + one small workflow
+(initialize rows + gateway change + smoke.ts + thin client, ~5 agents).
+**Est. scale:** ~5 agents, ~400–600k tokens.
+
+### D8 — CLI + JS/Python clients *(outline; now against a LIVE hub)*
+
+**Owns:** `cli/src/**`, `clients/js/src/**` (absorbing and completing D7's
+thin transport slice), `clients/py/src/**`, `clients/js/test/**` (incl.
+fake-hub.ts), `clients/py/tests/**` (incl. fake_hub.py), `scripts/users.ts`,
+`scripts/test/bootstrap-contract.test.ts`, `cli/test/plan.test.ts`,
+`scripts/smoke.ts` (extended: CLI login via device flow, YAML apply, both
+client libraries driven against the deployed hub).
+**Spec:** §9 (YAML diff/apply — `plan.ts` is pure and goes first), §10, §11
+(serve/caller/secret/sensitive; the reconnect contract's three behaviors +
+schedule), §12, §14 (device flow live); contracts families as the
+cross-language lock.
+**Suites (exit):** plan, bootstrap-contract, js api/transport/
+contracts-consumer (against fake-hub + committed fixtures), py mirrors green
+under `uv run pytest` — AND the extended live smoke green against the
+deployed hub, which is what the fixtures cannot prove (real TLS, real edge,
+real clocks).
+**Shape:** JS first establishes behavior; the Python port is a Sonnet
+translation task judged by its own suite, not by diff similarity. Contract
+fixtures are read-only here (single-writer: worker suite) — a client dispatch
+editing `contracts/*.json` is a gate failure.
+**Est. scale:** ~8 agents, Sonnet-weighted, ~700k–1M tokens.
+
+### D9 — Web surface wiring + Web Push *(outline; moved after clients — lowest structural risk)*
+
+**Named debt D9 must collect:** `audit.exportJsonl` is implemented (D5) but
 pinned by no oracle row anywhere — its consumer is §13's /audit Export action;
 author its rows when that lands. Also weigh surfacing the `hub`-namespace
-`cron.swept` rows somewhere an owner can see (they are invisible to owner-scoped
-/audit by design — trade stated at the HUB_NAMESPACE export).
+`cron.swept` rows somewhere an owner can see (they are invisible to
+owner-scoped /audit by design — trade stated at the HUB_NAMESPACE export).
+The parked approvals push-decrypt todo lands here too: webpush-webcrypto is
+this dispatch's sanctioned dependency (§13 names it), the gateway's bare-POST
+push transport becomes real RFC 8291/VAPID, and the approvals suite's parked
+case goes green with nothing else moving.
 
-**Owns:** `server/src/web.ts`, `server/src/index.ts` (ROUTES data), 
-`server/src/pages/model.ts` (fixture seam → real queries), 
-`server/test/worker/{web-pages,routes}.test.ts`. Templates under `pages/*.tsx`
-deliberately unchanged — `model.ts` is the seam; a template edit here is a design
-smell the gate rejects (change amplification: the seam exists so wiring touches one
-file per page, not two).
+**Owns:** `server/src/web.ts`, `server/src/index.ts` (ROUTES data),
+`server/src/pages/model.ts` (fixture seam → real queries),
+`server/test/worker/{web-pages,routes}.test.ts`, the push transport.
+Templates under `pages/*.tsx` deliberately unchanged — `model.ts` is the
+seam; a template edit here is a design smell the gate rejects (change
+amplification: the seam exists so wiring touches one file per page, not two).
 **Spec:** §13, §16 (router-walk test: every route in ROUTES reachable, every
 reserved route refused), better-auth wiring, the ROUTES-as-data pin.
-**Suites (exit):** web-pages (incl. the substituted-handler proof that pages never
-execute admin ops), routes. Deploy smoke: login page renders on workers.dev.
+**Suites (exit):** web-pages (incl. the substituted-handler proof that pages
+never execute admin ops), routes; live smoke extended with a page-render
+check and (manual, once) a real push notification to a real browser.
 **Grain note:** Sonnet-heavy — wiring is mechanical by construction.
 **Est. scale:** ~6 agents, ~500–800k tokens.
 
-### D8 — CLI + JS/Python clients *(outline)*
+### D10 — Final sweep *(outline; was D9's back half)*
 
-**Owns:** `cli/src/**`, `clients/js/src/**`, `clients/py/src/**`,
-`clients/js/test/**` (incl. fake-hub.ts), `clients/py/tests/**` (incl.
-fake_hub.py), `scripts/users.ts`, `scripts/test/bootstrap-contract.test.ts`,
-`cli/test/plan.test.ts`.
-**Spec:** §9 (YAML diff/apply — `plan.ts` is pure and goes first), §10, §11
-(serve/caller/secret/sensitive; the reconnect contract's three behaviors +
-schedule), §12; contracts families as the cross-language lock.
-**Suites (exit):** plan, bootstrap-contract, js api/transport/contracts-consumer
-(against fake-hub + committed fixtures), py mirrors green under `uv run pytest`.
-**Shape:** JS first establishes behavior; the Python port is a Sonnet translation
-task judged by its own suite, not by diff similarity. Contract fixtures are
-read-only here (single-writer: worker suite) — a client dispatch editing
-`contracts/*.json` is a gate failure.
-**Est. scale:** ~8 agents, Sonnet-weighted, ~700k–1M tokens.
-
-### D9 — Full-suite deploy + cross-module PSD sweep *(outline)*
-
-**Grain:** inline (deploy, gates) + one review workflow.
+**Grain:** inline (gates) + one review workflow.
 **Owns:** nothing new — fixes route back through the owning dispatch's resume.
 - [ ] Full `pnpm test` + `uv run pytest`: zero todo, zero skip, zero fail.
-- [ ] `test-inventory.json` final state: every one of the 582 authored cases
-  `passed`; diff against the D1 baseline shows only `todo → passed` across the
-  whole history.
-- [ ] Real deploy; smoke the live worker: bootstrap flow, one tunneled fake
-  service registering from a local process, one `tools/call` end-to-end, audit row
-  visible in `/audit` with body per config.
-- [ ] Cross-module PSD sweep (workflow, ~4 Opus lenses over module boundaries —
-  the per-dispatch reviews saw diffs; this one judges the seams: registry↔gateway,
-  gateway↔tunnel, identity↔everything, pages-model↔web) + a completeness critic
-  ("which spec § has no green case pointing at it?").
-- [ ] Close the loop with the user: findings, cost actuals vs estimates, what to
-  harden next (PWA push, real service migrations).
+- [ ] `test-inventory.json` final state: every authored case `passed`; diff
+  against the D1 baseline shows only `todo → passed` across the whole history
+  (plus the amendments each gate recorded).
+- [ ] Final deploy + the full extended smoke (by now it covers bootstrap,
+  MCP handshake, tunnel, approvals, CLI device flow, both clients, pages) —
+  this is a re-run of a standing step, not a first encounter.
+- [ ] Cross-module PSD sweep (workflow, ~4 Opus lenses over module
+  boundaries — the per-dispatch reviews saw diffs; this one judges the seams:
+  registry↔gateway, gateway↔tunnel, identity↔everything, pages-model↔web) +
+  a completeness critic ("which spec § has no green case pointing at it?"),
+  incl. the D2 array-items redaction rows debt and the 0004 migrations-pin
+  owner rows.
+- [ ] Close the loop with the user: findings, cost actuals vs estimates, what
+  to harden next (real service migrations, custom domain).
 
 ---
 
@@ -606,3 +664,23 @@ read-only here (single-writer: worker suite) — a client dispatch editing
   cascade rows (§9 rule 1); hygiene 14a fixture repoint at D6 (in D6's
   entry); audit.exportJsonl oracle row at D7 (in D7's entry). Committed
   `d036455`; D6 launched immediately.
+- 2026-08-25 23:20 — **Shift-left restructure of D7–D9 → D7–D10** (user
+  request: "restructure … so that things can be end to end tested earlier, so
+  that we can find structural issues earlier"). The old ordering back-loaded
+  every real-world integration into the final dispatch: first true deploy,
+  first WebSocket through Cloudflare's edge, and first standards-compliant
+  MCP client (the gateway's method table refuses `initialize` with -32601
+  today, so no real MCP client can complete a handshake) all sat in D9,
+  AFTER the CLI and clients were built against fakes. New order, by
+  structural risk: **D7** = initialize pull-forward (spec §7 method-table
+  commit + oracle rows + minimal answer; SDK swap stays the ceiling), first
+  real deploy (secrets, remote migrations, workers.dev), `scripts/smoke.ts`
+  (the full live walk incl. a thin tunnel-client slice pulled from D8 driving
+  a real process through the real edge into the production DO), and
+  Claude-as-client as a second independent conformance check. From D7 on,
+  deploy+smoke is a STANDING gate step. **D8** = CLI + clients, now proven
+  against the live hub as well as fixtures. **D9** = web surface + Web Push
+  (lowest structural risk — a model-seam wiring job — so it goes late; the
+  exportJsonl and push-decrypt debts move with it). **D10** = the old final
+  sweep, now a re-run of standing steps rather than a first encounter. D6
+  unchanged and in flight.

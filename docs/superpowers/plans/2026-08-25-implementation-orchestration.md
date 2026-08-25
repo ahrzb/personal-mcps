@@ -112,7 +112,7 @@ the failure is a spec question, not an execution one.
 |---|----------|-------|--------|
 | D0 | Checkpoint commit | inline | **awaits user's word** |
 | D1 | Test runners + pending inventory | single agent (Opus) | **gated ✓** |
-| DV | UI visual checkers vs artboards | workflow (Sonnet) | **in flight** |
+| DV | UI visual checkers vs artboards | workflow (Sonnet) | **gated ✓** |
 | D2 | Pure core (pattern, filter, canonical, redact) | workflow | next — full detail below |
 | D3 | Migrations, registry, identity, audit | workflow | outline |
 | D4 | Gateway, admin, approvals | workflow | outline |
@@ -393,3 +393,19 @@ read-only here (single-writer: worker suite) — a client dispatch editing
   Six commits `4c6b937..3cd694f` checkpointed the whole session's tree first
   (spec pins / skeleton pins / toolchain / test outlines / UI pages / this
   plan).
+- 2026-08-25 08:35 — **DV gated.** Recheck resumed post-reset with per-page
+  findings inlined into the prompts (the resume's one script edit); Check/Fix
+  replayed from cache, 15/15 agents, 0 errors. Five pages fully clean; the
+  approval-detail recheck caught two survivors — its mobile type scale (wears
+  `card-title`/`card-desc`, so the `.auth-title` fix skipped it) and `.code`
+  lacking `pre-wrap` (single-line JSON became a ~17,000px scroll strip on
+  bulkyArgs, pre-existing) — both fixed inline, verified live at 375px, account
+  regression-checked, committed. **Recorded debt, no action taken:** 4 nits
+  (login backup-code input not monospace; service-new token clipped without
+  ellipsis vs the board's middle-ellipsis; approvals mobile footnote carries the
+  desktop "Times are local." sentence; one audit event-detail nit) and artboard
+  gaps (no board for login backupCodeError or device denied). Ops note for
+  browser-using workflows: headless subagents cannot composite screenshots
+  (DOM/computed-style verification carries the pass) and the pane has a ~10-tab
+  cap — dead checkers leak tabs, so prompts must demand tab cleanup; two
+  orphans were closed by hand mid-run. Loop stopped; D2 awaits Amir's go.

@@ -5,7 +5,8 @@
 // deviceAuthorization, bearer; passkey arrives with its separate package, see auth() —
 // and every table better-auth manages are hidden here;
 // no other module touches better-auth) and our hashed-token table for machines.
-// Hidden with them: the whole token scheme — the pmcp_sa_/pmcp_svc_ prefixes, 256-bit
+// Hidden with them: the whole token scheme — minting and matching principal.TOKEN_PREFIX
+// (the wire spelling is a leaf so §15's scrubbers can hunt it without importing this), 256-bit
 // secrets stored as unsalted SHA-256 (deliberate for high-entropy random secrets; do
 // not "fix" into bcrypt), the prefix-dispatch resolution order in which a
 // pmcp_-prefixed token never falls through to session lookup, expiry-vs-revocation
@@ -29,7 +30,7 @@ import { username as usernamePlugin } from "better-auth/plugins/username";
 import { Hono } from "hono";
 import { deleteUser, provisionUser } from "./admin";
 import { record } from "./audit";
-import { formatPrincipal } from "./principal";
+import { formatPrincipal, TOKEN_PREFIX } from "./principal";
 import type { Principal } from "./principal";
 import {
   DEVICE_CODE_TTL_MS,
@@ -320,16 +321,6 @@ type TokenRow = {
   expires_at: number | null;
   last_used_at: number | null;
   revoked_at: number | null;
-};
-
-/**
- * The prefix per kind — the ONE place the wire spelling of a credential lives. Written
- * at mint, matched at resolve, and never trusted as evidence of kind (that is the
- * `kind` column's job, §6).
- */
-const TOKEN_PREFIX: Record<TokenKind, string> = {
-  service_account: "pmcp_sa_",
-  service: "pmcp_svc_",
 };
 
 /**

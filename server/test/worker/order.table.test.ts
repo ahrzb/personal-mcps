@@ -45,8 +45,10 @@ import type { Env } from "../../src/index";
 import { Approvals } from "../../src/approvals";
 import type { JsonRpcResponse } from "../../src/gateway";
 import { APPROVAL_WINDOW_MS } from "../../src/limits";
+import { Registry } from "../../src/registry";
 import type { GrantEntry, GrantMode, Service } from "../../src/registry";
 import type { Principal } from "../../src/identity";
+import { setHeaders } from "../../src/upstream";
 import type { UpstreamConnectionStatus } from "../../src/upstream";
 import { readObservations, upstreamUrlFor } from "../harness/fake-upstream";
 import type { UpstreamScenario } from "../harness/fake-upstream";
@@ -899,20 +901,18 @@ async function buildFixture(row: OrderRow): Promise<Fixture> {
     accounts: [{ slug: AGENT, grants: grantsFor(row, home), tokens: [{ as: TOKEN }] }],
   });
 
-  // `connected` means "a credential envelope is stored" (upstream.connectionStatus), and
-  // the only production seam that writes one — upstream.setHeaders — is D5's and still
-  // unimplemented. Planted raw, as registry.test.ts plants the same column for the same
-  // reason; nothing in this file ever reads it back.
+  // `connected` means "a credential envelope this hub can open is stored"
+  // (upstream.connectionStatus), so it is written through `upstream.setHeaders` — the seam
+  // that owns the column — and never as raw SQL. Nothing in this file reads it back.
   if (row.backend.kind === "proxy" && row.backend.status === "connected") {
-    await db()
-      .prepare(`UPDATE service SET upstream_auth_json = ? WHERE id = ?`)
-      .bind(FAKE_ENVELOPE, ns.services[NOTION].id)
-      .run();
+    const notion = await new Registry(env.DB).getService(ns.owner.userId, NOTION);
+    if (notion === null) throw new Error(`${row.title}: the fixture's proxied service vanished`);
+    await setHeaders(notion, FAKE_UPSTREAM_HEADERS);
   }
   if (row.backend.kind === "proxy" && row.backend.status === "needs_reconnect") {
     throw new Error(
-      `${row.title}: needs_reconnect is not seedable yet — it lives inside the credential ` +
-        `envelope (upstream.connectionStatus's ponytail note), so no row of this table may ask for it`,
+      `${row.title}: needs_reconnect is upstream-credentials.test.ts's — reaching it here would ` +
+        `mean running a whole connect flow, which is that file's subject and not this table's`,
     );
   }
 
@@ -1025,8 +1025,8 @@ const UPSTREAM_TOOLS = [
   { name: `${TOOL}_pages`, inputSchema: { type: "object" } },
 ];
 
-/** An obviously-fake stand-in for the AES-GCM credential envelope — see buildFixture. */
-const FAKE_ENVELOPE = "FAKE-UPSTREAM-ENVELOPE-0000-NOT-A-CREDENTIAL";
+/** The obviously-fake headers sealed into the credential envelope — see buildFixture. */
+const FAKE_UPSTREAM_HEADERS = { "X-Fixture-Token": "FAKE0000-upstream-header" };
 
 /** VAPID keys the seeding gate never signs anything with: it wires no push transport. */
 const FAKE_VAPID = {

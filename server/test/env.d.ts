@@ -19,4 +19,15 @@ declare module "cloudflare:test" {
     TEST_MIGRATIONS: D1Migration[];
   };
   export function applyD1Migrations(db: unknown, migrations: D1Migration[]): Promise<void>;
+  /** The trigger `scheduled()` takes as its 1st argument — the platform's, minted by the
+   *  plugin so the cron suite drives `exports.default.scheduled` the way workerd would. */
+  export interface ScheduledController {
+    readonly scheduledTime: number;
+    readonly cron: string;
+    noRetry(): void;
+  }
+  export function createScheduledController(options?: {
+    scheduledTime?: number | Date;
+    cron?: string;
+  }): ScheduledController;
 }

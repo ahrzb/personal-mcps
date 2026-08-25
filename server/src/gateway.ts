@@ -33,7 +33,7 @@ import type { Principal } from "./principal";
 import { applyRedaction, PMCP_SLUG, Registry } from "./registry";
 import type { Service } from "./registry";
 import { status as tunnelStatus, tunnelBackend } from "./tunnel";
-import { connectionStatus, upstreamBackend } from "./upstream";
+import { availability, upstreamBackend, UpstreamError } from "./upstream";
 import type { Env } from "./index";
 import { AGGREGATED_LIST_DEADLINE_MS } from "./limits";
 
@@ -324,13 +324,19 @@ function selectBackend(service: Service): ServiceBackend {
  * consumes an approval. Best-effort: a probe that passes can still lose the race, and
  * a post-claim dispatch failure leaves the claim consumed by design.
  */
-async function probeAvailability(service: Service): Promise<boolean> {
-  // deps: tunnel.status · upstream.connectionStatus
-  if (service.slug === PMCP_SLUG) return true;
-  if (service.kind === "tunnel") return (await tunnelStatus(service.id)) === "online";
-  // §7 spells "known unavailable" for a proxied service as `not_connected` OR
-  // `needs_reconnect`, so `connected` is the only state that may dispatch.
-  return (await connectionStatus(service)) === "connected";
+async function probeAvailability(service: Service): Promise<HubError | null> {
+  // deps: tunnel.status · upstream.availability
+  if (service.slug === PMCP_SLUG) return null;
+  if (service.kind === "tunnel") {
+    return (await tunnelStatus(service.id)) === "online" ? null : unavailable();
+  }
+  // The REFUSAL, not a boolean: §7 spells "known unavailable" for a proxied service as
+  // `not_connected` OR `needs_reconnect`, and only the module that owns the credential can
+  // say which — `needs_reconnect` carries its failure class into the audit row's `detail`
+  // so an owner reads "the credential died" rather than a bare -32000, while
+  // `not_connected` is no upstream failure at all and refuses class-free. Both are the
+  // same bytes on the wire: the class never leaves the ledger (§7).
+  return availability(service);
 }
 
 /**
@@ -559,6 +565,7 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
   let answer: JsonRpcResponse | undefined;
   let refusal: unknown;
   let recordedSlug = slug;
+  let detail: Record<string, unknown> | undefined;
   try {
     const service =
       slug === PMCP_SLUG ? virtualPmcpService(ownerId) : await registry.getService(ownerId, slug);
@@ -585,7 +592,8 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
     // created or consumed. Two sentences, one verdict, one place — a gated call and an
     // ungated one reach it at the same point, which is also what keeps the map below (a
     // backend round trip and a D1 read) off the path of a call that was never going to run.
-    if (!(await probeAvailability(service))) throw unavailable();
+    const unavailableAs = await probeAvailability(service);
+    if (unavailableAs !== null) throw unavailableAs;
 
     // Derived ONCE for the whole call, so the approval row and the audit row of the same
     // call can never be masked under different maps (§15). Null means no sound map exists
@@ -619,6 +627,17 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
     refusal = err;
     outcome = err instanceof HubError ? String(err.code) : "error";
     bodies = {};
+    // §7: every upstream failure class collapses into one -32000, and the real class
+    // survives ONLY here — which is what lets an owner tell expired static headers from a
+    // down upstream. The class name and the bare status NUMBER are all that may cross:
+    // the status text, the headers (WWW-Authenticate especially) and the body are never
+    // echoed to a consumer and never recorded (§15's hygiene rule, extended to `detail`).
+    if (err instanceof UpstreamError) {
+      detail = {
+        failureClass: err.failureClass,
+        ...(err.upstreamStatus === undefined ? {} : { upstreamStatus: err.upstreamStatus }),
+      };
+    }
   }
   await recordCall(env, {
     ownerId,
@@ -628,6 +647,7 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
     outcome,
     durationMs: Date.now() - startedAt,
     bodies,
+    detail,
   });
   if (answer === undefined) throw refusal;
   return answer;
@@ -729,12 +749,19 @@ function callBodies(
   return { args: applyRedaction(argumentsOf(msg) ?? {}, redaction.args), result: body };
 }
 
-/** One unstructured result block, as the ledger keeps it: type and size, never bytes. */
+/**
+ * One unstructured result block, as the ledger keeps it: type and size, never bytes.
+ * `contentType` is the block's DECLARED media type — `mimeType` on an image or audio block,
+ * `resource.mimeType` on an embedded resource — and absent on a text block, which declares
+ * none. Not the MCP `type` discriminator, which is already implied by the stub: §15's
+ * example is "the image generator returned a 4 MB png", and "image" is not a png.
+ */
 function blobStub(block: unknown): BodyStub {
-  const type = (block as { type?: unknown } | null)?.type;
+  const carrier = (block ?? {}) as { mimeType?: unknown; resource?: { mimeType?: unknown } };
+  const declared = carrier.mimeType ?? carrier.resource?.mimeType;
   return {
     stub: "blob",
-    contentType: typeof type === "string" ? type : undefined,
+    contentType: typeof declared === "string" ? declared : undefined,
     bytes: new TextEncoder().encode(JSON.stringify(block ?? null)).length,
   };
 }
@@ -750,6 +777,8 @@ async function recordCall(
     outcome: string;
     durationMs: number;
     bodies: CallBodies;
+    /** The upstream failure class, on the rows that had one (§7) — never a body fragment. */
+    detail?: Record<string, unknown>;
   },
 ): Promise<void> {
   await record(env.DB, {
@@ -763,6 +792,7 @@ async function recordCall(
     client: entry.ctx.clientMeta,
     args: entry.bodies.args,
     result: entry.bodies.result,
+    detail: entry.detail,
   });
 }
 

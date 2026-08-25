@@ -5,12 +5,16 @@
 // client-supplied metadata is display-only and truncated here, not at call sites;
 // `tools/list` is never recorded — agent polling noise); the retention window
 // (deliberately short, default 7 days — retention is the primary bound on what
-// audit_query can expose, §15); and the chunk-by-chunk streaming behind the JSONL
-// export. The D1 `audit` table (§5) is private to this module: every write goes
-// through record(), every read through query().
+// audit_query can expose, §15); the chunk-by-chunk streaming behind the JSONL
+// export; and the one §15 sink that is not this database — `beforeSend`, the exception
+// scrubber, which lives here rather than at the composition root so that "how the hub
+// strips secrets out of a JSON tree" has a single address. The D1 `audit` table (§5) is
+// private to this module: every write goes through record(), every read through query().
 
 import { env } from "cloudflare:workers";
 import { AUDIT_BODY_CAP_BYTES, RETENTION_DAYS } from "./limits";
+import { tokenPattern } from "./principal";
+import { REDACTED } from "./registry";
 
 /** Cloudflare D1 binding (@cloudflare/workers-types `D1Database`) — the control-plane
  *  database, request-scoped, handed in by the composition root. Narrowed to
@@ -89,7 +93,12 @@ export type BodyStub = {
  * write time, so neither appears here.
  *
  * - `ownerId` — the namespace the event happened in (every event has exactly one).
- * - `principal` — who acted: `user:<name>` | `sa:<slug>` | `svc:<slug>` | `bootstrap`.
+ * - `principal` — who acted: `user:<name>` | `sa:<slug>` | `svc:<slug>` | `bootstrap` |
+ *   `hub` (principal.HUB_PRINCIPAL — one spelling, one query). The fifth is the MACHINE
+ *   principal: an event no caller asked for — lazy
+ *   approval expiry, and every row a scheduled run writes (`cron.swept` included). It is
+ *   its own member rather than an owner's `user:<name>` because attributing a machine
+ *   action to the human reading the ledger forges the one column the ledger is read for.
  * - `event` — the vocabulary is owned here; the families (§5, §15): `tools/call`,
  *   `admin.<tool>`, `connect.register` / `connect.replaced` / `connect.roles_widened`,
  *   `auth.login` / `auth.device_approved`, `approval.requested` / `.approved` /
@@ -133,6 +142,18 @@ export type AuditEntry = {
  *  timestamp (Unix epoch ms). The one shape all three read surfaces see — `audit_query`
  *  rows, the /audit page, and each JSONL export line. */
 export type AuditRow = AuditEntry & { id: number; ts: number };
+
+/**
+ * The `owner_id` a hub-wide machine action is recorded under. A SEPARATE decision from the
+ * `hub` principal above, in a different column: `owner_id` is a column of opaque user ids
+ * and this is a reservation in it, while `principal` is a vocabulary member. They are spelled
+ * alike because the actor is the same one, and they are two constants because a rename of
+ * either must not silently follow the other. `audit.owner_id` is NOT NULL and every read is
+ * owner-scoped by parameter (§8), so the single `cron.swept` row of a run that belongs to no
+ * namespace needs one of its own. The trade is stated where it bites: an owner's own /audit
+ * does not show the sweep — the sweep is the operator's monitoring, not the owner's history.
+ */
+export const HUB_NAMESPACE = "hub";
 
 /**
  * Filters for query() and exportJsonl(), mirroring `audit_query` (§8). The
@@ -342,7 +363,8 @@ function toRow(row: AuditDbRow): AuditRow {
 /**
  * Stream every row matching the filters as JSONL — one AuditRow JSON object per line,
  * newest first, UTF-8. Backs /audit's Export action and `pmcp audit --export jsonl`;
- * per §8's parity list it is a serialization of query(), not a new capability. The full
+ * per §8's parity list it is a serialization of the same match set query() pages, not a
+ * new capability — same filters, same order, `limit`/`offset` ignored. The full
  * result set is never held in memory: rows are re-fetched in limit-sized chunks and
  * written as each chunk arrives (§13) — the chunk size is this module's private
  * business, invisible in the output.
@@ -352,9 +374,56 @@ export function exportJsonl(
   ownerId: string,
   filters: Omit<AuditQuery, "limit" | "offset">,
 ): ReadableStream<Uint8Array> {
-  // deps: query · ReadableStream · TextEncoder
-  throw new Error("unimplemented");
+  // deps: D1 `audit` · ReadableStream · TextEncoder
+  const encoder = new TextEncoder();
+  // The match set is CLOSED when the stream is constructed. An export is reader-paced, so it
+  // can be open for a long time over a table every request path appends to; without this the
+  // rows written meanwhile are, by definition, part of the match — which contradicts
+  // AuditQuery's "an export is always the complete match" and shifts every later chunk.
+  const window = { ...filters, until: filters.until ?? Date.now() };
+  let after: { ts: number; id: number } | null = null;
+  return new ReadableStream<Uint8Array>({
+    // One chunk per `pull`, so the export moves at the reader's pace and a slow client
+    // never makes the worker hold the whole result set.
+    async pull(controller) {
+      const rows = await chunkAfter(db, ownerId, window, after);
+      for (const row of rows) controller.enqueue(encoder.encode(`${JSON.stringify(row)}\n`));
+      const last = rows[rows.length - 1];
+      if (last !== undefined) after = { ts: last.ts, id: last.id };
+      // A short chunk is the end of the match set — the same signal a paged reader uses.
+      if (rows.length < EXPORT_CHUNK_ROWS) controller.close();
+    },
+  });
 }
+
+/**
+ * One export chunk, sought by the last key emitted rather than by OFFSET — no offset scan,
+ * and no COUNT: query()'s `total` is a page number the web UI needs and a streaming reader
+ * never looks at, so the export gets the rows-only statement it actually wants. The order
+ * is query()'s, so a chunk boundary means the same thing on both readers.
+ */
+async function chunkAfter(
+  db: D1Database,
+  ownerId: string,
+  filters: AuditQuery,
+  after: { ts: number; id: number } | null,
+): Promise<AuditRow[]> {
+  const where = whereClause(ownerId, filters);
+  const seek = after === null ? "" : ` AND (ts < ? OR (ts = ? AND id < ?))`;
+  const page = await (db as D1Like)
+    .prepare(`SELECT * FROM audit WHERE ${where.sql}${seek} ORDER BY ts DESC, id DESC LIMIT ?`)
+    .bind(
+      ...where.values,
+      ...(after === null ? [] : [after.ts, after.ts, after.id]),
+      EXPORT_CHUNK_ROWS,
+    )
+    .all<AuditDbRow>();
+  return page.results.map(toRow);
+}
+
+/** How many rows one export chunk re-fetches. Private on purpose: the chunking is invisible
+ *  in the output, so this is a memory knob and not part of anybody's contract. */
+const EXPORT_CHUNK_ROWS = 200;
 
 /**
  * Delete rows older than config.retentionDays (§15; default limits.RETENTION_DAYS,
@@ -364,5 +433,70 @@ export function exportJsonl(
  */
 export async function prune(db: D1Database, config: AuditConfig): Promise<number> {
   // deps: D1 `audit`
-  throw new Error("unimplemented");
+  // Namespace-blind by signature (§15): one daily trigger for the whole hub, so a second
+  // namespace's recorded bodies can never outlive the window because nobody swept it.
+  const { meta } = await (db as D1Like)
+    .prepare(`DELETE FROM audit WHERE ts < ?`)
+    .bind(Date.now() - config.retentionDays * DAY_MS)
+    .run();
+  return meta.changes;
+}
+
+/** Retention is configured in DAYS and every timestamp in the system is epoch ms. */
+const DAY_MS = 24 * 60 * 60_000;
+
+/**
+ * §15's exception sink, as a pure function: the `beforeSend` hook the Sentry integration is
+ * configured with once the SDK is wired at the composition root. It lives HERE, beside the
+ * other §15 rules, so "how the hub strips secrets out of a JSON tree" has one address.
+ * Two rules, applied at EVERY depth of whatever the SDK hands over, because a scrubber that
+ * only cleans the fields it knows about is one SDK release away from leaking: an
+ * `Authorization` value never leaves, and the credential grammar — principal.tokenPattern,
+ * derived from the prefixes identity mints, never transcribed — never leaves wherever it is
+ * spelled: a header, a message, a stack frame's argument.
+ *
+ * NEVER returns null, and never throws. Dropping the event would satisfy every scrub rule
+ * and destroy the only production signal the hub has, which is the trade §15 is not making.
+ * What it WALKS is plain arrays and plain-object trees; anything else — a Date, an Error, a
+ * class instance, a node already being visited (a cycle) — is passed through as it is rather
+ * than rebuilt, so an event that carries no secret comes back identical, prototypes included.
+ */
+export function beforeSend<Event>(event: Event): Event {
+  // deps: registry.REDACTED · principal.tokenPattern
+  return scrub(event) as Event;
+}
+
+/** `pmcp_sa_…` / `pmcp_svc_…` wherever it appears in prose. Built from the leaf that owns the
+ *  wire spelling, so a new prefix is hunted here without an edit. */
+const TOKEN_GRAMMAR = tokenPattern(1, "g");
+
+/**
+ * Depth-first, allocating only where something actually changed: the SDK's event is the
+ * caller's, so a hook that mutated it would scrub the very object the rest of the pipeline
+ * still reads — and a hook that REBUILT every node would flatten a `Date` in `extra` into
+ * `{}` on the way past. `seen` holds the nodes on the current path, so a cyclic reference —
+ * ordinary in SDK payloads — is left as it is instead of recursing to a stack overflow.
+ */
+function scrub(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (typeof value === "string") return value.replace(TOKEN_GRAMMAR, REDACTED);
+  if (typeof value !== "object" || value === null) return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const scrubbed = value.map((entry) => scrub(entry, seen));
+      return scrubbed.some((entry, at) => entry !== value[at]) ? scrubbed : value;
+    }
+    let changed = false;
+    const entries = Object.entries(value).map(([key, entry]) => {
+      const scrubbed = key.toLowerCase() === "authorization" ? REDACTED : scrub(entry, seen);
+      changed ||= scrubbed !== entry;
+      return [key, scrubbed] as const;
+    });
+    return changed ? Object.fromEntries(entries) : value;
+  } finally {
+    // Off the path once its subtree is done: a DAG (the same object referenced twice, no
+    // cycle) must be scrubbed both times, and only an ANCESTOR means a cycle.
+    seen.delete(value);
+  }
 }

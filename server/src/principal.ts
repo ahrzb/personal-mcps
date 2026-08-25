@@ -1,5 +1,7 @@
 // principal.ts — who is calling, as a value: the resolved-identity type every downstream
-// decision keys on, and the ONE canonical spelling of it.
+// decision keys on, and the ONE canonical spelling of it — of a human or machine caller
+// (formatPrincipal, HUB_PRINCIPAL) and of the credential prefixes the §15 scrubbers hunt
+// (TOKEN_PREFIX, tokenPattern).
 //
 // A LEAF (deps: none), and for the same reason errors.ts is one: audit rows, the forwarded
 // `hub/principal` _meta field, /api/whoami and the approval ledger all have to NAME a
@@ -35,4 +37,40 @@ export type Principal =
 export function formatPrincipal(p: Principal): string {
   // deps: none
   return p.kind === "user" ? `user:${p.username}` : `sa:${p.slug}`;
+}
+
+/**
+ * The fifth member of the `principal` vocabulary (see audit.AuditEntry): the MACHINE actor —
+ * lazy approval expiry, and every row a scheduled run writes. It lives here for the same
+ * reason `formatPrincipal` does: approvals and the composition root both write it into the
+ * same column, and two spellings would split one actor's history in two with nothing to
+ * catch it. Not a namespace: `audit.HUB_NAMESPACE` is a separate reservation in a column of
+ * opaque user ids, and says so where it is declared.
+ */
+export const HUB_PRINCIPAL = "hub";
+
+/**
+ * The prefix per token kind — the ONE place the wire spelling of a credential lives.
+ * Written at mint (identity.issueToken), matched at resolve, and never trusted as evidence
+ * of kind (that is the `kind` column's job, §6). It sits in this leaf rather than in
+ * identity for the same reason the principal format does: the §15 scrubbers have to NAME
+ * credential material while only identity may MINT it, and a scrubber that transcribed the
+ * grammar instead of importing it stops matching the day a prefix is rotated or extended.
+ */
+export const TOKEN_PREFIX = {
+  service_account: "pmcp_sa_",
+  service: "pmcp_svc_",
+} as const;
+
+/**
+ * The credential grammar as a matcher, derived from TOKEN_PREFIX so a new kind — or a
+ * longer scheme tag — is hunted by every §15 sink the day it is minted. `minBody` is what
+ * separates token MATERIAL from §5's deliberately-stored display prefix: a real secret's
+ * body is base64url over 256 bits, while `token.prefix` is a dozen characters the schema
+ * means to keep, so a sweep over stored columns asks for a floor and a scrubber over prose
+ * does not.
+ */
+export function tokenPattern(minBody = 1, flags = ""): RegExp {
+  // deps: none
+  return new RegExp(`(?:${Object.values(TOKEN_PREFIX).join("|")})[A-Za-z0-9_-]{${minBody},}`, flags);
 }

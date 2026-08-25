@@ -30,7 +30,7 @@ import type {
   ServiceDetail,
   ServiceKind,
 } from "../../src/registry";
-import { connectionStatus } from "../../src/upstream";
+import { connectionStatus, setHeaders } from "../../src/upstream";
 import { seedNamespace } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 
@@ -277,28 +277,16 @@ export const grantValidationRows: readonly GrantValidationRow[] = [
   },
 ];
 
-/** The sliver of the D1 binding the two envelope cases reach for directly (see below). */
-type D1Like = {
-  prepare(sql: string): {
-    bind(...values: unknown[]): { run(): Promise<unknown>; first<T>(): Promise<T | null> };
-  };
-};
-
-/** `env.DB` is typed `unknown` (test/env.d.ts); every call site names the sliver it uses. */
-function db(): D1Like {
-  return env.DB as D1Like;
-}
-
 /** A fake upstream endpoint — proxied drafts need one, and nothing here ever dials it. */
 const UPSTREAM_URL = "https://upstream.invalid/mcp";
 
 /**
- * An obviously-fake stand-in for the AES-GCM credential envelope. Planted by raw SQL
- * because only `upstream.setHeaders` / the connect flow may write a real one (seed.ts's
- * header) — and what these cases assert is that registry NULLs the column, not what the
- * envelope contains.
+ * The obviously-fake headers a stored credential envelope is seeded with. Written through
+ * `upstream.setHeaders` — the seam that owns the column (seed.ts's header) — never by raw
+ * SQL: what these cases assert is that registry NULLs the column, not what the envelope
+ * contains, and a hand-written value is one connectionStatus can no longer open.
  */
-const FAKE_ENVELOPE = "FAKE-UPSTREAM-ENVELOPE-0000-NOT-A-CREDENTIAL";
+const FAKE_UPSTREAM_HEADERS = { "X-Fixture-Token": "FAKE0000-upstream-header" };
 
 /** The one shape a service-account principal takes here; `as const` keeps it a Principal. */
 function accountPrincipal(ns: SeededNamespace, slug: string) {
@@ -619,8 +607,8 @@ describe("§5/§9 · create and update invariants", () => {
     });
     const registry = new Registry(env.DB);
     const id = ns.services.svc.id;
-    const plant = () =>
-      db().prepare("UPDATE service SET upstream_auth_json = ? WHERE id = ?").bind(FAKE_ENVELOPE, id).run();
+    const plant = async () =>
+      setHeaders(await detail(registry, ns, "svc"), FAKE_UPSTREAM_HEADERS);
 
     await plant();
     expect(await connectionStatus(await detail(registry, ns, "svc"))).toBe("connected");
@@ -630,7 +618,11 @@ describe("§5/§9 · create and update invariants", () => {
     expect(await connectionStatus(await detail(registry, ns, "svc"))).toBe("not_connected");
 
     // The twin: a patch that does not touch the mode is not a credential wipe — an idempotent
-    // `apply` must not disconnect the service it is re-applying.
+    // `apply` must not disconnect the service it is re-applying. Re-planting means going back
+    // to headers mode first, because setHeaders is the HEADERS mode's one credential path
+    // (§8) and refuses an oauth-mode service — and that flip back is itself a second mode
+    // change, wiping an envelope that the first one already emptied.
+    await registry.updateService(id, { upstreamAuthMode: "headers" });
     await plant();
     await registry.updateService(id, { name: "renamed" });
     expect(await connectionStatus(await detail(registry, ns, "svc"))).toBe("connected");

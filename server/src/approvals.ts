@@ -34,7 +34,7 @@
  * mid-reconnect.
  */
 
-import { formatPrincipal } from "./principal";
+import { formatPrincipal, HUB_PRINCIPAL } from "./principal";
 import type { Principal } from "./principal";
 import { applyRedaction } from "./registry";
 import type { Service } from "./registry";
@@ -568,7 +568,7 @@ export class Approvals {
     if (meta.changes !== 1) return false;
     await this.config.audit.record({
       ownerId: row.owner_id,
-      principal: "hub",
+      principal: HUB_PRINCIPAL,
       event: "approval.expired",
       service: serviceSlug,
       tool: row.tool,

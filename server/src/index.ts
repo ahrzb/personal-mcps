@@ -9,6 +9,9 @@
 // names a binding, a secret, a cron schedule, or a URL prefix.
 
 import { Hono } from "hono";
+import { Approvals } from "./approvals";
+import { HUB_NAMESPACE, prune, record, resolveAuditConfig } from "./audit";
+import type { AuditConfig } from "./audit";
 import { mcpMessage } from "./gateway";
 import {
   anonymousNotFound,
@@ -21,7 +24,15 @@ import {
   whoamiRoute,
 } from "./identity";
 import type { Principal } from "./identity";
+import { HUB_PRINCIPAL } from "./principal";
 import { PMCP_SLUG, Registry } from "./registry";
+import {
+  cleanupStaleState,
+  clientMetadata,
+  CLIENT_METADATA_PATH,
+  handleCallback,
+  OAUTH_CALLBACK_PATH,
+} from "./upstream";
 
 /** @cloudflare/workers-types D1Database — external types never imported in skeletons. */
 type D1Database = unknown;
@@ -119,10 +130,10 @@ export { ServiceConnection } from "./tunnel";
  *
  * At implementation this object is wrapped in `withSentry` (@sentry/cloudflare) here,
  * at the composition root — the one place that holds SENTRY_DSN, and a no-op while
- * that secret is unset. §15's log hygiene binds Sentry events like any other sink:
- * `beforeSend` strips `Authorization` headers and anything matching `pmcp_(sa|svc)_…`,
- * and request or tool bodies never ride an event at all — the D1 `audit` table is the
- * only place a body is ever persisted, post-redaction and capped.
+ * that secret is unset. The hook it is configured with is `audit.beforeSend`, beside the
+ * other §15 rules rather than here: this module holds the DSN, audit holds what may leave
+ * in an event. Request or tool bodies never ride an event at all — the D1 `audit` table is
+ * the only place a body is ever persisted, post-redaction and capped.
  */
 export default {
   /**
@@ -146,21 +157,104 @@ export default {
     }
   },
   /**
-   * The daily cron fan-out (§15, §7): flip past-expiry pending approvals to expired
-   * (one approval.expired audit row each), prune audit and approval rows past the
-   * retention window (default limits.RETENTION_DAYS, AUDIT_RETENTION_DAYS
-   * overrides), and drop stale upstream-OAuth `state` records (~10 min TTL, §7). The
-   * legs run as a named list under Promise.allSettled — structurally, not by
-   * promise: one leg failing never starves the others, and the list is a seam a
-   * test can stub to prove it. Every run writes one `cron.swept` audit row with
-   * per-leg outcome and counts, so "did the cron fire, and did every leg succeed"
-   * is answerable from the /audit page — the cron's only monitoring.
+   * The platform's daily trigger, and nothing else: a one-line adapter over `sweep`, which
+   * is where the fan-out and its seam live. `controller` is the schedule the runtime fired
+   * and this handler has no use for it — what ran is answerable from the `cron.swept` row.
    */
-  async scheduled(controller: unknown, env: Env): Promise<void> {
-    // deps: approvals.sweepExpired · audit.prune · upstream.cleanupStaleState · audit.record (cron.swept) · audit.resolveAuditConfig
-    throw new Error("unimplemented");
+  async scheduled(_controller: unknown, env: Env): Promise<void> {
+    // deps: sweep
+    await sweep(env);
   },
 };
+
+/**
+ * The daily cron fan-out (§15, §7): flip past-expiry pending approvals to expired
+ * (one approval.expired audit row each), prune audit and approval rows past the
+ * retention window (default limits.RETENTION_DAYS, AUDIT_RETENTION_DAYS
+ * overrides), and drop stale upstream-OAuth `state` records (~10 min TTL, §7). The
+ * legs run as a named list under Promise.allSettled — structurally, not by
+ * promise: one leg failing never starves the others, and `legs` is the seam a test bends
+ * to prove it (the real list with one member replaced by a rejecting one). The seam is a
+ * parameter of THIS function rather than of `scheduled` because the platform's signature is
+ * the platform's: a handler carrying its customer's fourth argument makes every caller read
+ * a comment to learn which three the runtime supplies. Every run writes one `cron.swept`
+ * audit row with per-leg outcome and counts, so "did the cron fire, and did every leg
+ * succeed" is answerable from the /audit page — the cron's only monitoring.
+ */
+export async function sweep(
+  env: Env,
+  legs: readonly CronLeg[] = cronLegs(env, resolveAuditConfig(env)),
+): Promise<void> {
+  // deps: approvals.sweepExpired · audit.prune · upstream.cleanupStaleState · audit.record (cron.swept) · audit.resolveAuditConfig
+  const settled = await Promise.allSettled(legs.map((leg) => leg.run()));
+  const outcomes: Record<string, { ok: boolean; count: number }> = {};
+  legs.forEach((leg, at) => {
+    const result = settled[at];
+    // Only the outcome and the count cross into the ledger — never the rejection's
+    // message, which is the one thing here that could carry an upstream detail (§15).
+    outcomes[leg.leg] =
+      result.status === "fulfilled" ? { ok: true, count: result.value } : { ok: false, count: 0 };
+  });
+  // §15's one heartbeat. Written after every run, failures included: "did the cron fire,
+  // and did every leg succeed" has to be answerable from /audit, which it is not if a bad
+  // run is silent.
+  await record(env.DB, {
+    ownerId: HUB_NAMESPACE,
+    principal: HUB_PRINCIPAL,
+    event: "cron.swept",
+    outcome: settled.every((result) => result.status === "fulfilled") ? "ok" : "error",
+    detail: { legs: outcomes },
+  });
+}
+
+/** One leg of the daily sweep: its name in the ledger, and the row count it reports. */
+export type CronLeg = { leg: CronLegName; run(): Promise<number> };
+
+/**
+ * §15's named list, as a vocabulary. Exported so the suite can drive the legs themselves
+ * rather than a transcription of them — a fourth leg added here has nowhere to hide.
+ */
+export const CRON_LEG_NAMES = [
+  "approvals.sweepExpired",
+  "audit.prune",
+  "upstream.cleanupStaleState",
+] as const;
+
+export type CronLegName = (typeof CRON_LEG_NAMES)[number];
+
+/**
+ * The three legs, wired from the composition root's env. Each answers ONE number — how many
+ * rows it acted on — because that is all the `cron.swept` row records and all an operator
+ * reads. `approvals.sweepExpired` does two things and reports their sum: the flip and the
+ * prune answer to different windows, but the ledger's question is "how much did this leg
+ * touch", not "which half".
+ */
+export function cronLegs(env: Env, config: AuditConfig): readonly CronLeg[] {
+  const approvals = new Approvals({
+    db: env.DB,
+    publicOrigin: env.PUBLIC_ORIGIN,
+    audit: { record: (entry) => record(env.DB, entry) },
+    vapid: {
+      publicKey: env.VAPID_PUBLIC_KEY,
+      privateKey: env.VAPID_PRIVATE_KEY,
+      subject: env.PUBLIC_ORIGIN,
+    },
+    retentionDays: config.retentionDays,
+    now: Date.now,
+    // No `push`: a sweep notifies nobody. An expiry the owner never looked at is not news.
+  });
+  return [
+    {
+      leg: "approvals.sweepExpired",
+      run: async () => {
+        const { expired, pruned } = await approvals.sweepExpired();
+        return expired + pruned;
+      },
+    },
+    { leg: "audit.prune", run: () => prune(env.DB, config) },
+    { leg: "upstream.cleanupStaleState", run: () => cleanupStaleState() },
+  ];
+}
 
 /**
  * The router, built once per isolate. Registration order is the route table's order plus
@@ -194,6 +288,14 @@ function buildRouter(): Hono<{ Bindings: Env }> {
     return bootstrapApp(secret).fetch(c.req.raw, c.env);
   });
 
+  // §7's upstream-OAuth pair, both on the canonical public origin because both are URLs
+  // the hub PUT ON THE WIRE at Connect time: the CIMD document is the client_id itself,
+  // and the callback is the redirect_uri bound into every state row. The document is
+  // static and secret-free, so it is served unauthenticated; the callback enforces its own
+  // cookie-session gate inside `handleCallback` (§13), before it looks at `state` at all.
+  app.get(CLIENT_METADATA_PATH, (c) => clientMetadata(new URL(c.env.PUBLIC_ORIGIN)));
+  app.get(OAUTH_CALLBACK_PATH, (c) => handleCallback(c.req.raw));
+
   // §4/§13: credential management is the one cookie-session surface whose GUARD is wired
   // here — a bearer-sourced session never reaches it, and it demands recent auth. The
   // page behind the guard is the web dispatch's.
@@ -219,8 +321,10 @@ function buildRouter(): Hono<{ Bindings: Env }> {
   return app;
 }
 
-/** The top-level segments this worker actually wires; the rest of ROUTES is stubbed. */
-const WIRED_ROUTES: ReadonlySet<string> = new Set(["api", "internal", "account"]);
+/** The top-level segments this worker actually wires; the rest of ROUTES is stubbed.
+ *  `oauth` is here for its two §7 routes above — anything else under it falls to the one
+ *  anonymous 404, never to a 501 that would advertise an unbuilt surface. */
+const WIRED_ROUTES: ReadonlySet<string> = new Set(["api", "internal", "account", "oauth"]);
 
 /** A route the table reserves and no dispatch has built yet. */
 const notImplemented = () => new Response("Not Implemented", { status: 501 });

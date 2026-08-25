@@ -192,7 +192,8 @@ export async function wipe(serviceId: Service["id"]): Promise<void> {
  */
 export async function status(serviceId: Service["id"]): Promise<"online" | "offline"> {
   // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.status
-  throw new Error("unimplemented");
+  const namespace = env.SERVICE_CONNECTION as DurableObjectNamespaceLike<ServiceConnection>;
+  return namespace.get(namespace.idFromName(serviceId)).status();
 }
 
 /**
@@ -358,6 +359,12 @@ export class ServiceConnection extends DurableObject {
    */
   async status(): Promise<"online" | "offline"> {
     // deps: DO ctx.getWebSockets · DO ws.deserializeAttachment
-    throw new Error("unimplemented");
+    // ponytail: unconditional "offline" — pre-D6 no socket can exist here at all (fetch()
+    // and the whole acceptance path are still stubs), so this is the only answer that is
+    // true rather than merely untested, and it needs no platform shape this repo has not
+    // declared. D6 replaces it with the contract above: online iff some ctx.getWebSockets()
+    // socket's ConnectionAttachment says `registered` — an accepted-but-not-yet-registered
+    // socket reads offline, which the 10 s deadline bounds (§6).
+    return "offline";
   }
 }

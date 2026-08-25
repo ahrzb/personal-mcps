@@ -321,6 +321,35 @@ CREATE TABLE push_subscription (       -- Web Push targets for approval notifica
   keys_json TEXT NOT NULL,             -- p256dh + auth as handed out by the browser
   created_at INTEGER NOT NULL
 );
+
+CREATE TABLE upstream_oauth_state (    -- §7 upstream-OAuth connect flow's one-time state
+                                       -- record (added 2026-08-25, migration 0004 — this
+                                       -- table was implied by §7's prose but missing from
+                                       -- this DDL as first written). upstream.ts owns the
+                                       -- lifecycle: beginConnect writes, handleCallback
+                                       -- consumes by compare-and-set DELETE, the daily
+                                       -- cron sweeps stragglers past TTL.
+  state TEXT PRIMARY KEY,              -- the unguessable nonce; also the `state` parameter
+  owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  service_id TEXT NOT NULL REFERENCES service(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,            -- only the browser session that began the flow may
+                                       -- complete it; no FK (better-auth owns `session`)
+  issuer TEXT NOT NULL,                -- RFC 9207 `iss` compares against THIS, never the
+                                       -- callback's own claim
+  token_endpoint TEXT NOT NULL,        -- mix-up defense: code redeemed here alone
+  client_id TEXT NOT NULL,             -- CIMD URL, or the id DCR handed back
+  code_verifier TEXT NOT NULL,         -- PKCE S256 verifier; plaintext DELIBERATELY — it
+                                       -- lives ~10 min, authorizes nothing alone, and a
+                                       -- reader of this table already sees the code and
+                                       -- sealed bundle beside it; §15 still bans it from
+                                       -- logs/audit/errors
+  redirect_uri TEXT NOT NULL,
+  issuer_advertised INTEGER NOT NULL,  -- 0/1: AS metadata declared iss support; §7's check
+                                       -- is conditional on it, recorded at initiation
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL          -- created_at + ~10 min; enforced at read, swept daily
+);
+CREATE INDEX upstream_oauth_state_expires ON upstream_oauth_state(expires_at);
 ```
 
 The DO keeps per-service volatile/cached state in its own SQLite: cached `tools/list`

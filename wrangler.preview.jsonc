@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "personal-mcps-preview",
+
+  // DEV-ONLY, THROWAWAY companion to server/dev/preview.ts — never deployed. No
+  // bindings, no cron: the preview worker fetches nothing and stores nothing, it only
+  // renders page components against server/dev/fixtures.ts. Use:
+  //   pnpm exec wrangler dev -c wrangler.preview.jsonc
+  "main": "server/dev/preview.ts",
+
+  // Serves /styles.css (pages link it absolutely); the worker handles every
+  // non-asset path. Dev-only, so exposing the sibling .tsx sources is harmless.
+  "assets": { "directory": "server/src/pages" },
+
+  "compatibility_date": "2026-08-20",
+  "compatibility_flags": ["nodejs_compat"]
+}

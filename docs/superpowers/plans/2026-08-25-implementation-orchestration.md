@@ -122,8 +122,8 @@ the failure is a spec question, not an execution one.
 | D2 | Pure core (pattern, filter, canonical, redact) | workflow | **gated ✓** (`ce5392e`) |
 | D3 | Migrations, registry, identity, audit | workflow | **gated ✓** (`c83bb17`) |
 | D4 | Gateway, admin, approvals | workflow | **gated ✓** (`ffe2c4a`) |
-| D5 | Upstream proxy, cron, hygiene | workflow | in flight |
-| D6 | Tunnel DO + contracts + approval e2e | workflow | outline |
+| D5 | Upstream proxy, cron, hygiene | workflow | **gated ✓** (`d036455`) |
+| D6 | Tunnel DO + contracts + approval e2e | workflow | in flight |
 | D7 | Web surface wiring | workflow | outline |
 | D8 | CLI + JS/Python clients | workflow | outline |
 | D9 | Full-suite deploy + cross-module PSD sweep | workflow + inline | outline |
@@ -323,6 +323,15 @@ which consume it) → verbatim check → PSD → fix.
 
 ### D6 — Tunnel DO, contracts, approval e2e *(outline)*
 
+**Inherits from D4/D5 pull-forwards (all reshapeable):** `ServiceConnection.listTools`
+(KV-key `catalog` read) and `status()` (registered-socket check) are minimally
+implemented; the DurableObject/namespace shadow types in `workers-env.d.ts` exist.
+**Named debt D6 must collect:** hygiene.test.ts case 14a's fixture drives the
+null-sensitivePaths law through adminBackend (unknown op) because the title's real
+producer — a schema-unsound tool in the tunneled catalog — is unreachable until
+`tunnel.sensitivePaths` lands; D6 repoints that fixture to the real producer (the
+case comment carries the promise; checked at D6's gate).
+
 **Owns:** `server/src/tunnel.ts`, `server/test/harness/fake-service.ts`,
 `server/test/tunnel/**`, `server/test/worker/contracts.test.ts`, `contracts/*.json`
 (produced), `server/src/index.ts` (fetch wiring for `/connect` if not already).
@@ -342,6 +351,12 @@ judge it as one: what does it hide behind `handleConnect`/`tunnelBackend`/
 **Est. scale:** ~10–12 agents, ~1.5–2.5M tokens. The big one.
 
 ### D7 — Web surface wiring *(outline)*
+
+**Named debt D7 must collect:** `audit.exportJsonl` is implemented (D5) but
+pinned by no oracle row anywhere — its consumer is §13's /audit Export action;
+author its rows when that lands. Also weigh surfacing the `hub`-namespace
+`cron.swept` rows somewhere an owner can see (they are invisible to owner-scoped
+/audit by design — trade stated at the HUB_NAMESPACE export).
 
 **Owns:** `server/src/web.ts`, `server/src/index.ts` (ROUTES data), 
 `server/src/pages/model.ts` (fixture seam → real queries), 
@@ -547,3 +562,47 @@ read-only here (single-writer: worker suite) — a client dispatch editing
   D7's call); scripts/test-inventory.mjs now shells `npx pnpm` because
   proto's shim went stale mid-session. Committed `ffe2c4a`; D5 launched
   immediately.
+- 2026-08-25 22:45 — **D5 gated.** Workflow `wf_35c6dac9-a39`: 10 agents, 0
+  errors, ~2.29M subagent tokens. Oracles: 48 rows per verifier, 20
+  discrepancies, 18 fixed, 2 rejected with citations. **Six mid-flight
+  grants**, all requested before use and paired with diffs at this gate:
+  (1) NEW migration 0004_upstream_oauth_state — the state table §7's prose
+  requires but §5's DDL never declared; spec §5 now carries the DDL
+  (committed with D5); (2) fixture swap in registry/order.table tests: raw
+  envelope plants → the real setHeaders seam their own stale comments named;
+  (3) gateway threads UpstreamError.failureClass + bare status into audit
+  detail (the cell three contracts said existed "solely for the gateway to
+  copy" — D4 never copied it); (4) probeAvailability returns the refusal
+  (upstream.availability minting the classed error; wire answers for
+  needs_reconnect and not_connected stay byte-identical); (5) tunnel.status
+  minimal slice (unconditional offline + ponytail ceiling); (6)
+  gateway.blobStub reads mimeType, not the MCP block type (real D4 bug).
+  **Two self-ghost episodes**: both implementers, post-summarization, forgot
+  their own edits and stopped the line over a "concurrent writer"; both
+  resolved by transcript-timestamp proof (67 and 10 logged writes matching
+  the "foreign" mtimes to the second). Orchestrator memory updated; D6+
+  prompts carry an inoculation line. **Two load-bearing harness findings**,
+  both documented in fake-upstream's header: miniflare's outboundService
+  cannot reject a fetch (six shapes probed — everything resolves; only an
+  unsupported scheme refuses pre-routing, so "unreachable" lives in an
+  ftp:// URL), and vi.mock of limits reaches test files but never src inside
+  workerd (deadline rows now cost real time; worker suite ~3 min). Cron's
+  implementer caught a real production bug in its own seam (scheduled()
+  arity vs workerd) and collapsed it to a platform-shaped adapter at PSD.
+  PSD: 19 findings (5 high), 14 non-low ALL fixed, 0 disputed — the big
+  three: credentialOf() computes one verdict over mode × envelope for every
+  reader (the list path had been dialing mode-mismatched services
+  anonymously); redeem() distinguishes rejected from unreachable/timeout so
+  a token-endpoint blip no longer bricks a service into needs_reconnect;
+  wellKnown() owns RFC path insertion for both discovery documents (the
+  8414 leg had been concatenating — a real 404 against tenant-scoped AS).
+  Token grammar got ONE home (principal.ts TOKEN_PREFIX/tokenPattern/
+  HUB_PRINCIPAL); the hygiene sweep hunts the FAKE0000 prefix structurally
+  instead of a mutable planted-list. Gate: suite 500/250/0, tsc 0;
+  inventory 68 pure flips, 64 additions, 12 justified removals (4
+  placeholders per the amendment, 8 failure-table todos re-registered
+  verbatim from verified rows), 0 regressions. **Debt recorded**: 0004 DDL
+  unpinned by migrations.test.ts until an owner authors its constraint/
+  cascade rows (§9 rule 1); hygiene 14a fixture repoint at D6 (in D6's
+  entry); audit.exportJsonl oracle row at D7 (in D7's entry). Committed
+  `d036455`; D6 launched immediately.

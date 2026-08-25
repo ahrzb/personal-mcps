@@ -381,3 +381,15 @@ read-only here (single-writer: worker suite) — a client dispatch editing
   fixes: `layout.tsx` `Section` collapsed into model's `NavSection` (drift risk
   two agents flagged); stale runner-stage note in `smoke.test.ts` corrected.
   DV launched.
+- 2026-08-25 07:15 — **DV Check + Fix landed, Recheck credit-killed.** 8/8 pages
+  checked (screenshots often unavailable to headless checkers — DOM +
+  computed-style verification carried the pass), 16 actionable findings, all
+  fixed in one pass (4 files, `server/src/pages` only, tsc 0) and committed
+  (bc6cef9). All 6 recheck agents failed on "session limit · resets 8am
+  Europe/Berlin" — Amir predicted this. Resume plan: the 08:10 wakeup re-runs
+  `Workflow({scriptPath, resumeFromRunId: "wf_f0c53c9c-564"})`; Check/Fix replay
+  from cache, only rechecks execute. Board gaps noted by checkers (no artboard
+  for login backupCodeError or device denied) are artboard debt, not page bugs.
+  Six commits `4c6b937..3cd694f` checkpointed the whole session's tree first
+  (spec pins / skeleton pins / toolchain / test outlines / UI pages / this
+  plan).

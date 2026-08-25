@@ -8,9 +8,10 @@
 // wrangler requires from the entry module. It HIDES deployment topology: no sibling ever
 // names a binding, a secret, a cron schedule, or a URL prefix.
 
+import { httpServerIntegration, withSentry } from "@sentry/cloudflare";
 import { Hono } from "hono";
 import { Approvals } from "./approvals";
-import { HUB_NAMESPACE, prune, record, resolveAuditConfig } from "./audit";
+import { beforeSend, HUB_NAMESPACE, prune, record, resolveAuditConfig } from "./audit";
 import type { AuditConfig } from "./audit";
 import { mcpMessage } from "./gateway";
 import {
@@ -135,15 +136,12 @@ export { ServiceConnection } from "./tunnel";
 
 /**
  * The worker entrypoint: HTTP/WebSocket in `fetch`, the daily cron in `scheduled`.
- *
- * At implementation this object is wrapped in `withSentry` (@sentry/cloudflare) here,
- * at the composition root — the one place that holds SENTRY_DSN, and a no-op while
- * that secret is unset. The hook it is configured with is `audit.beforeSend`, beside the
- * other §15 rules rather than here: this module holds the DSN, audit holds what may leave
- * in an event. Request or tool bodies never ride an event at all — the D1 `audit` table is
- * the only place a body is ever persisted, post-redaction and capped.
+ * Uninstrumented on purpose — `instrumented` below is what wraps it in Sentry, and only
+ * when there is a DSN to wrap it for. `ctx` is declared and unused by both legs: neither
+ * needs it, but the wrapper does (it is where the flush is scheduled), so it has to
+ * survive the hop.
  */
-export default {
+const handler = {
   /**
    * Routes by first path segment through ROUTES; anything else falls through to
    * /:user/mcp* — the username validated as `[a-z0-9-]` and not in RESERVED_ROUTES —
@@ -151,7 +149,7 @@ export default {
    * regime (cookie sessions on web pages, Bearer-only on /:user/mcp*, service tokens
    * on /connect, BOOTSTRAP_SECRET on /internal).
    */
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, _ctx?: unknown): Promise<Response> {
     // deps: hono · identity.authRoutes · identity.whoamiRoute · identity.bootstrapRoute · web.pageRoutes · gateway.mcpMessage · tunnel.handleConnect · upstream.clientMetadata · audit.resolveAuditConfig
     try {
       return await router().fetch(request, env);
@@ -169,11 +167,60 @@ export default {
    * is where the fan-out and its seam live. `controller` is the schedule the runtime fired
    * and this handler has no use for it — what ran is answerable from the `cron.swept` row.
    */
-  async scheduled(_controller: unknown, env: Env): Promise<void> {
+  async scheduled(_controller: unknown, env: Env, _ctx?: unknown): Promise<void> {
     // deps: sweep
     await sweep(env);
   },
 };
+
+/**
+ * What wrangler runs: `handler`, plus §4's Sentry wrap when — and only when — SENTRY_DSN
+ * is set. The dispatch is per-call because the DSN is a binding, not a build constant, and
+ * bindings do not exist until a request arrives.
+ *
+ * The §15 contract, stated once, here: events leave through `audit.beforeSend`, which
+ * strips `Authorization` and the `pmcp_(sa|svc)_` grammar at every depth — this module
+ * holds the DSN, audit holds what may leave in an event. Bodies never ride an event at
+ * all: the SDK captures request bodies by DEFAULT (`maxRequestBodySize: "medium"`), so
+ * that default is turned off at its source rather than scrubbed downstream, and PII
+ * collection is pinned off beside it. The D1 `audit` table stays the only place a body is
+ * ever persisted, post-redaction and capped.
+ *
+ * Unset DSN means fully off, not merely silent: the SDK's wrapper instruments every fetch
+ * regardless of whether a client can send — AsyncLocalStorage, an env proxy, spans, a
+ * re-wrapped streaming response body — so with no DSN it is never entered at all and the
+ * worker behaves exactly as if the dependency were absent (which is the state the suite
+ * runs in, and what `Env.SENTRY_DSN`'s comment promises).
+ */
+export default {
+  fetch: (request: Request, env: Env, ctx?: unknown): Promise<Response> =>
+    instrumented(env).fetch(request, env, ctx),
+  scheduled: (controller: unknown, env: Env, ctx?: unknown): Promise<void> =>
+    instrumented(env).scheduled(controller, env, ctx),
+};
+
+/**
+ * `withSentry` instruments the object it is HANDED, in place, and returns it — so it is
+ * given a copy, leaving `handler` itself the clean no-DSN path. Built once per isolate;
+ * the options callback re-reads the DSN per request, which is the SDK's own contract.
+ */
+let sentried: typeof handler | undefined;
+function instrumented(env: Env): typeof handler {
+  if (!env.SENTRY_DSN) return handler;
+  return (sentried ??= withSentry(
+    (bound: Env) => ({
+      dsn: bound.SENTRY_DSN,
+      // Both hooks, not just the error one: tracing is off here (no sample rate), but the
+      // SDK reads SENTRY_TRACES_SAMPLE_RATE from the environment on its own, so a var set
+      // one day must not be what starts sending unscrubbed transaction events.
+      beforeSend,
+      beforeSendTransaction: beforeSend,
+      sendDefaultPii: false,
+      integrations: [httpServerIntegration({ maxRequestBodySize: "none" })],
+    }),
+    { ...handler },
+  ));
+}
 
 /**
  * The daily cron fan-out (§15, §7): flip past-expiry pending approvals to expired

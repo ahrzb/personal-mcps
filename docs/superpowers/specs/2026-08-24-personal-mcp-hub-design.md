@@ -257,7 +257,6 @@ CREATE TABLE token (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('service_account', 'service')),
   ref_id TEXT NOT NULL,                  -- service_account.id or service.id per kind
-  name TEXT NOT NULL DEFAULT '',
   hash TEXT NOT NULL UNIQUE,             -- SHA-256 of the full token string
   prefix TEXT NOT NULL,                  -- first ~12 chars, for display in listings
   expires_at INTEGER,                    -- pmcp_sa_ tokens default to 90 d (overridable, incl.
@@ -760,7 +759,10 @@ Tools (names final, shapes reviewed at implementation time):
   `4002`) and hides the service from consumers; everything is retained for unarchive
   (§6, "Service lifecycle").
 - `account_list` / `account_create` / `account_delete` — delete also deletes the
-  account's `token` rows.
+  account's `token` rows. `account_list` returns each account's grants inline
+  (per service: role names and modes), so reading the full desired-state picture
+  is one `service_list` plus one `account_list` — the CLI diff planner depends on
+  this; there is no separate grant-read tool.
 - `grant_set` — replaces the full grant set for (account, service); each entry is a
   role name plus optional mode (`reader` or `reader:approval`, the same syntax as §9).
   Applies the same role validation as the YAML layer (§9): undeclared roles warn for

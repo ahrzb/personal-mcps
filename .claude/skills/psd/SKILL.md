@@ -48,7 +48,7 @@ The book's consolidated principles, phrased as judgments:
 9. **Different layer, different abstraction** — adjacent layers presenting the same idea (pass-throughs, wrapper stacks, API-mirrors-storage) mean a decomposition mistake.
 10. **Pull complexity downward** — the module absorbs unavoidable pain (its author suffers) instead of exporting it via exceptions, knobs, or half-finished results.
 11. **Define errors out of existence** — the best exception is one whose condition is redefined as normal behavior; mask low or aggregate high, never handle everywhere; crash on what can't be meaningfully survived. Every thrown exception is interface.
-12. **Design it twice** — sketch two radically different designs before committing; a significant design with no considered alternative is a warning sign, not a credential.
+12. **Design it twice** — sketch two RADICALLY different designs before committing (two variations on one idea don't count); compare on interface simplicity first, then generality, then implementation ease. It matters most for interfaces, which are harder to fix than implementations; a significant design with no considered alternative is a warning sign, not a credential — and "I'm good enough to get it right the first time" is the trap that keeps smart people from the exercise.
 13. **Comments say what the code cannot** — rationale, informal contracts, invariants, units, boundary semantics. Written first, they are a design tool; a long interface comment convicts the abstraction (the canary test).
 14. **Design for ease of reading, not ease of writing** — obvious code is code whose first reading is its correct reading; obviousness is judged by the reader.
 15. **Increments of development are abstractions, not features** — when a feature needs an abstraction, design that abstraction fully, not the special case.
@@ -56,8 +56,13 @@ The book's consolidated principles, phrased as judgments:
 Cross-cutting: **every element must pay for itself** (each interface, argument,
 class, and knob costs learning; it stays only if it removes more complexity than it
 adds), **consistency creates cognitive leverage** (similar things alike, dissimilar
-things different; never break a convention just for a better idea), and
-**moderation** — every principle above, pushed to its extreme, becomes the problem.
+things different; conventions are documented and enforced in review, and "when in
+Rome" binds — never break a convention for a locally better idea, because the value
+of the convention exceeds the value of the improvement), **decide what matters**
+(a design has a few things that matter enormously — find them, structure around
+them, emphasize them, and hide everything else; when everything is equally
+prominent, nothing is deep), and **moderation** — every principle above, pushed to
+its extreme, becomes the problem.
 
 ## Vocabulary
 
@@ -77,6 +82,8 @@ Use these terms verbatim when discussing code.
 - **Decorator/wrapper stacking** — layered same-shaped APIs each adding a sliver; trends shallow.
 - **Conjoined methods** — neither can be understood without the other; the split was the mistake.
 - **General-purpose vs special-purpose** — and the **special-general mixture** when one mechanism contains its customer's specifics.
+- **The generality sweet spot** — three questions locate it: what is the *simplest* interface that still covers every current need (fewer methods without weakening any = more general)? in how many *situations* could this be used (an API with exactly one imaginable caller is suspicious)? is it still *easy to use* for today's need (if not, it has overshot into too-general)?
+- **Together or apart** — the default is apart, but bring pieces together when they SHARE information, are USED together bidirectionally (one implies the other), OVERLAP conceptually under one higher-level category, or cannot be understood separately. Joining can eliminate duplication, hide a shared decision, and shrink both interfaces. Splitting a method is right only when the child is a cleanly separable subtask the parent can name and forget; a split whose halves must be read together (conjoined) was the mistake. Each method: one thing, done completely.
 
 **Errors**
 - **Define errors out of existence** — redefine semantics so the error case is normal (`unset` = "ensure absent").
@@ -85,7 +92,8 @@ Use these terms verbatim when discussing code.
 - **Over-masking** — hiding failures callers had a right to know about. Hide the unimportant; expose the important.
 
 **Reading & writing**
-- **Obvious code** — first guess about behavior is correct. Three routes, in order: reduce what the reader must know; reuse what they already know (conventions, expectations); supply what's missing (names, comments).
+- **Obvious code** — first guess about behavior is correct. Three routes, in order: reduce what the reader must know; reuse what they already know (conventions, expectations); supply what's missing (names, comments). Judicious whitespace and blank-line paragraphing are part of obviousness, not cosmetics.
+- **Known obscurers** — patterns that are non-obvious by construction and owe compensation: event-driven/callback flow (state when and from where a handler fires, since no call site shows it), generic containers standing in for a real type (a returned Pair/tuple has no member names — define the purpose-built type), a declaration far from its use, and code that defies the expectation its context sets (document the violation where it happens).
 - **Four comment kinds** — **interface** (precedes a declaration: the contract — behavior, argument meaning/units/constraints, return value, side effects, exceptions, preconditions), **data-member** (beside a field: units, bounds and their inclusivity, null-meaning, ownership/lifetime, invariants), **implementation** (inside a body: *what* a block accomplishes and *why*, never *how* — the code says how; for loops, what holds at each iteration), **cross-module** (a decision spanning modules — homeless by nature, so give it ONE named home, a central design-notes file or the least-surprising site, and point to it from every other site). Interface and data-member comments are the default duty — every class, method, and member carries one unless the name alone paints the full picture; implementation comments only where the code can't be made obvious; cross-module comments are rare and the worst kind to lose.
 - **Interface comment vs implementation comment** — the contract vs the mechanics; internals in an interface comment is contamination, and needing them there convicts the abstraction as shallow.
 - **Comment levels** — lower than code adds precision (units, bounds, null-meaning, ownership, invariants); higher than code adds intuition (intent, "how we get here"); *at* the level of the code it merely repeats it.
@@ -96,7 +104,7 @@ Use these terms verbatim when discussing code.
 - **Tactical programming / tactical tornado** — fast, celebrated, and the source of everyone else's cleanup. **Strategic programming** — great design that also happens to work.
 - **Investment mindset** — proactive (design twice, comments-first) and reactive (fix, don't patch around).
 - **Critical path / the ideal** — the minimum code the common case must run, designed as if the current structure didn't exist; get special cases off it with one up-front test.
-- **Death by a thousand cuts** — diffuse slowness no single fix rescues. **Measure before modifying; back out unproven complexity.**
+- **Death by a thousand cuts** — diffuse slowness no single fix rescues. **Measure before modifying** (intuition about what is slow is usually wrong; the measurement both finds the real cost and is the baseline), **measure after** (a change that didn't help comes OUT — back out unproven complexity), and remember simpler code tends to end up faster.
 
 ## Red flags
 
@@ -110,7 +118,7 @@ The official catalog — cite by name. Each: what it looks like → the question
 6. **Repetition** — same nontrivial chunk again and again → *what abstraction is missing?*
 7. **Special-General Mixture** — mechanism contains its customer's specifics → *can the specifics move up a layer?*
 8. **Conjoined Methods** — must read B to understand A → *should these be one, or split differently?*
-9. **Comment Repeats Code** — writable from the adjacent line alone → *what does the reader actually not know?*
+9. **Comment Repeats Code** — writable from the adjacent line alone (telltale: every load-bearing word in the comment already appears in the entity's name) → *what does the reader actually not know?*
 10. **Implementation Documentation Contaminates Interface** → *which sentences does a caller need — and is the method shallow?*
 11. **Vague Name** — `count`, `status`, `data` → *what would I guess this means, seeing only the name — and would I be right?*
 12. **Hard to Pick Name** → *is this one thing, or several wearing one name?*
@@ -119,7 +127,10 @@ The official catalog — cite by name. Each: what it looks like → the question
 
 Unofficial but strong: exposing internal data structures (getters returning live
 collections; API mirroring storage), getter/setter pairs as pseudo-hiding, a growing
-pile of configuration knobs, wrapper/decorator stacks, adjacent layers with the same
+pile of configuration knobs (each knob is complexity exported to the caller — the
+first question is always whether the module could compute a sensible default
+itself), generic container types standing where a named type belongs,
+wrapper/decorator stacks, adjacent layers with the same
 abstraction, error handlers that have never executed, an explosion of null/sentinel
 `if`s mirroring a UI concept, a significant design with no considered alternative,
 and global state that prevents two instances coexisting in one test process.

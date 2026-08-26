@@ -56,6 +56,8 @@ const CALL_ARGS = { text: "smoke" } as const;
 async function main(): Promise<number> {
   let password = "";
   let session = "";
+  /** The same session as `session`, in the carrier the §13 pages accept: a signed cookie. */
+  let sessionCookie = "";
   let cliSession = "";
   let agentToken = "";
   let serviceToken = "";
@@ -93,8 +95,10 @@ async function main(): Promise<number> {
     });
 
     await step("sign in", async () => {
-      session = await signIn(USERNAME, password);
-      return `session bearer issued (${session.length} chars, withheld)`;
+      const signedIn = await signIn(USERNAME, password);
+      session = signedIn.token;
+      sessionCookie = signedIn.cookie;
+      return `session bearer + browser cookie issued (${session.length} chars, withheld)`;
     });
 
     await step("whoami", async () => {
@@ -260,6 +264,24 @@ async function main(): Promise<number> {
       return `identical retry executed, echo "${String(structured.echo)}"`;
     });
 
+    await step("§13 · the /services page renders for the browser session, and for nobody else", async () => {
+      // The one page leg. The walk already holds the cookie the same sign-in set, so this
+      // asks the deployment the question no MCP call can: does the browser surface render
+      // at all — templates, stylesheet link, ops-backed reads — behind the cookie gate.
+      const rendered = await fetch(`${ORIGIN}/services`, { headers: { Cookie: sessionCookie } });
+      expect(rendered.status === 200, `authenticated /services → ${rendered.status}`);
+      const html = await rendered.text();
+      // A marker only the RENDERED page carries: the service the walk just created, drawn
+      // in the table by the same read the `pmcp` tools front.
+      expect(html.includes(SERVICE), `/services rendered no row for ${SERVICE}`);
+      const anonymous = await fetch(`${ORIGIN}/services`, { redirect: "manual" });
+      expect(
+        anonymous.status === 302 && (anonymous.headers.get("location") ?? "").startsWith("/login"),
+        `unauthenticated /services → ${anonymous.status} ${anonymous.headers.get("location") ?? ""}`,
+      );
+      return `200 with ${SERVICE} in the table; no cookie → ${anonymous.status} ${anonymous.headers.get("location") ?? ""}`;
+    });
+
     await step("audit_query sees the calls", async () => {
       const rows = asArray((await owner("audit_query", { service: SERVICE })).rows);
       const calls = rows.filter((row) => asRecord(row, "audit row").event === "tools/call");
@@ -357,9 +379,11 @@ async function bootstrap(body: Record<string, unknown>): Promise<Record<string, 
   return asRecord(await response.json(), `bootstrap ${String(body.op)} response`);
 }
 
-/** §4's password sign-in. better-auth's bearer plugin answers with the session token in the
- *  `set-auth-token` header; the body carries it too, and either is the bearer from here on. */
-async function signIn(username: string, password: string): Promise<string> {
+/** §4's password sign-in, which hands out BOTH carriers of one session: better-auth's
+ *  bearer plugin answers with the token in the `set-auth-token` header (the body carries
+ *  it too), and the same response sets the signed browser cookie — the only credential
+ *  the §13 pages ever accept. */
+async function signIn(username: string, password: string): Promise<{ token: string; cookie: string }> {
   const response = await fetch(`${ORIGIN}/api/auth/sign-in/username`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -369,7 +393,15 @@ async function signIn(username: string, password: string): Promise<string> {
   const body = asRecord(await response.json(), "sign-in response");
   const token = response.headers.get("set-auth-token") ?? body.token;
   if (typeof token !== "string" || token === "") throw new Error("sign-in carried no session token");
-  return token;
+  // Every cookie the sign-in set, sent back together — what a browser does, and the only
+  // rule here that needs no knowledge of better-auth's cookie NAMES (which carry a
+  // `__Secure-` prefix under https and may be more than one).
+  const cookie = response.headers
+    .getSetCookie()
+    .map((header) => header.split(";")[0])
+    .join("; ");
+  if (cookie === "") throw new Error("sign-in set no session cookie");
+  return { token, cookie };
 }
 
 /** One JSON POST, optionally as a signed-in user — the device-flow leg's whole transport. */

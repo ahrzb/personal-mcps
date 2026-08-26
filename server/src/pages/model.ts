@@ -1,14 +1,35 @@
 // model.ts — the view-model contract between the page handlers (web.ts) and the
 // templates in this directory, plus the ONE definition of the hub's browser URL
-// space.
+// space, plus the READS that fill those props in.
 //
 // OWNS: one Props type per page of §13, the shared chrome those pages render
-// inside, and the `paths` object every inter-page link and form action is built
-// from. HIDES: nothing about the domain — every field here is either lifted
-// straight from a skeleton read model (registry / approvals / audit / upstream /
-// tunnel, via type-only imports) or is an explicitly derived projection of one.
-// Where a page needs less than a read model offers, it says so with Pick/Omit
-// rather than restating a shape that could then drift.
+// inside, the `paths` object every inter-page link and form action is built
+// from, and one loader per page — the seam where a props value stops being a
+// fixture and becomes a real read. HIDES: nothing about the domain — every
+// field here is either lifted straight from a read model (registry / approvals
+// / audit / upstream / tunnel, via type-only imports) or is an explicitly
+// derived projection of one. Where a page needs less than a read model offers,
+// it says so with Pick/Omit rather than restating a shape that could then drift.
+//
+// The loaders CONSUME and never reimplement: every one of them reads through
+// `admin.ops` — the same handlers the `pmcp` tools and the CLI front (§8's
+// parity invariant), so a page can show nothing a tool cannot, and a filter or
+// default the tool applies is applied here by construction rather than by
+// agreement. The exceptions are named where they are made: the VAPID public
+// key and the retention window are configuration, not a read, and /account's
+// credential state is better-auth's, reached through identity's own mounted
+// endpoints because §4 gives that module sole custody.
+//
+// And ONE parity exception is a real one, stated here rather than left to be
+// discovered: /audit's four summary tiles and its histogram are AGGREGATIONS this
+// file computes over `audit_query` rows (auditStats/auditHistogram), because no op
+// returns stats or buckets. So the page shows something the CLI and the pmcp tools
+// cannot — the second such exception beside the JSONL export, and unlike that one it
+// is not merely a reframing of the same read. Closing it is an `audit_stats` op
+// (audit.ts owning the window, the buckets and the percentiles, both fronts reading
+// it), which is a change to the pinned op set in contracts/admin-ops.json and so
+// belongs to a dispatch that may move a contract. Until then the ceiling is
+// AUDIT_SCAN_ROWS's: the tiles silently lag `total` on a window past it.
 //
 // Two rules the templates depend on, stated once here:
 //
@@ -29,6 +50,13 @@
 // `now` is ISO-8601; a template comparing it with an epoch-ms field parses it
 // (Date.parse) rather than reaching for a clock of its own.
 
+import { env } from "cloudflare:workers";
+import { ops } from "../admin";
+import type { ServiceRow as OpsServiceRow } from "../admin";
+import { config as auditConfig } from "../audit";
+import { AUTH_BASE_PATH, callAuth } from "../identity";
+import type { TokenInfo } from "../identity";
+import { DEVICE_CODE_TTL_MS } from "../limits";
 import type { ServiceDetail, ServiceKind } from "../registry";
 import type { ApprovalListFilters, ApprovalRow, ApprovalStatus } from "../approvals";
 import type { AuditRow, BodyStub, AuditQuery } from "../audit";
@@ -124,6 +152,17 @@ export type AuditLinkQuery = Pick<
  *
  * Mutating targets are POST-only and CSRF-checked; the read targets are GET.
  * Both are named for what they do, not for their method.
+ *
+ * One convention holds every ops-backed mutation together, and §8's parity
+ * direction B is what it buys: the FINAL PATH SEGMENT of such a target is the
+ * `admin.ops` key it fronts, and every argument that is not a form control
+ * rides the query string under the field name the op's own schema declares.
+ * So the field set a browser submits and the field set the op accepts are one
+ * thing derived two ways — a schema change with no form change is a broken
+ * link, not a silently ignored field. The three mutations that front no tool
+ * say so by naming no op: `connect` (the consent redirect is a browser
+ * interaction, §8), `push` (approvals owns Web Push), and the device
+ * decision (better-auth's own endpoint, §4).
  */
 export const paths = {
   /* --- pages (§13) --- */
@@ -142,6 +181,16 @@ export const paths = {
   approvals: "/approvals",
   /** Read-only view over audit.query with its exact filters. */
   audit: "/audit",
+
+  /* --- the PWA shell (§13) --- */
+
+  /** Installability. Named here because web.ts serves it; layout.tsx spells the same
+   *  three URLs itself, since the shell links them rather than navigating to them. */
+  manifest: "/manifest.webmanifest",
+  /** Push + notificationclick only — never a fetch handler (the no-SPA pin). */
+  serviceWorker: "/sw.js",
+  /** The one stylesheet every page's document head links. */
+  stylesheet: "/styles.css",
 
   /** The detail page a -32003 error links an agent's user to (§7). */
   approval(id: string): string {
@@ -173,36 +222,40 @@ export const paths = {
 
   /* --- mutations posted by the pages --- */
 
-  /** Approve/deny the device code; the decision rides a submit button's value. */
+  /** Approve/deny the device code; the decision rides a submit button's value.
+   *  better-auth's endpoint underneath, so this target names no op. */
   deviceDecide: "/device/decide",
-  /** approval_decide (§8) for one request; approve and reject share the form. */
+  /** approval_decide (§8) for one request; approve and reject share the form,
+   *  which submits the `decision` field the op's schema names. */
   approvalDecide(id: string): string {
-    return `/approvals/${encodeURIComponent(id)}/decide`;
+    return `/approvals/approval_decide${query({ id })}`;
   },
   /** Where the browser's PushSubscription JSON is registered (approvals.subscribePush). */
   approvalsPush: "/approvals/push",
-  /** service_create; on `auth: oauth` the response redirects into consent (§7). */
-  serviceCreate: "/services/new",
+  /** service_create; on `auth: oauth` the response redirects into consent (§7),
+   *  and on a tunneled create it renders the once-only token instead of
+   *  redirecting — which is why this one target is not a plain redirect-back. */
+  serviceCreate: "/services/service_create",
   serviceArchive(slug: string): string {
-    return `/services/${encodeURIComponent(slug)}/archive`;
+    return `/services/service_archive${query({ slug })}`;
   },
   serviceUnarchive(slug: string): string {
-    return `/services/${encodeURIComponent(slug)}/unarchive`;
+    return `/services/service_unarchive${query({ slug })}`;
   },
   serviceDelete(slug: string): string {
-    return `/services/${encodeURIComponent(slug)}/delete`;
+    return `/services/service_delete${query({ slug })}`;
   },
   /**
    * Connect and Reconnect are the same target: both start upstream.beginConnect
    * and redirect to the provider (§7). The button label differs, the flow does
-   * not.
+   * not — and neither fronts a tool, which is why this path names no op.
    */
   serviceConnect(slug: string): string {
-    return `/services/${encodeURIComponent(slug)}/connect`;
+    return `/services/connect${query({ slug })}`;
   },
   /** service_disconnect — wipes the stored bundle, keeps everything else (§8). */
   serviceDisconnect(slug: string): string {
-    return `/services/${encodeURIComponent(slug)}/disconnect`;
+    return `/services/service_disconnect${query({ slug })}`;
   },
 
   /* --- confirm dialogs as addressable state --- */
@@ -238,6 +291,10 @@ export const paths = {
    * no template changes.
    */
   auth: {
+    /** Where the composition root mounts the group — the prefix every path below
+     *  carries. identity's, not this file's: the mount and the base path better-auth
+     *  itself routes on are one decision (identity.AUTH_BASE_PATH). */
+    base: AUTH_BASE_PATH,
     signIn: "/api/auth/sign-in/username",
     signInPasskey: "/api/auth/sign-in/passkey",
     signOut: "/api/auth/sign-out",
@@ -751,3 +808,589 @@ export type PagePropsByName = {
 
 /** The eight page keys of §13, as a type. */
 export type PageName = keyof PagePropsByName;
+
+/* ------------------------------------------------------------------ *
+ * The loaders — one per page, props out of the ops table
+ * ------------------------------------------------------------------ */
+
+/**
+ * What every loader is handed. Who is asking has ALREADY been proven — web.ts
+ * runs identity's cookie-session gate before a loader is entered, and
+ * `ownerId` is that session's user — so no loader re-checks ownership, exactly
+ * like an ops handler. `query` is the request's own query string, which is the
+ * page's whole input: every read control on every page is a GET (§13).
+ */
+export type PageContext = {
+  ownerId: string;
+  username: string;
+  /** The session rendering this page — what /account badges as "current". */
+  sessionId: string;
+  csrfToken: string;
+  /** ISO-8601: the render instant, and the only clock any template reads. */
+  now: string;
+  notice: Notice | null;
+  query: URLSearchParams;
+};
+
+/**
+ * One ops handler, by name — the single door every read below goes through. The
+ * type parameter is the caller's claim about a result shape `admin.ts` owns and
+ * nothing here re-derives; a name that is not in the table is a bug in this
+ * file, never a caller's input, so it throws rather than refusing.
+ */
+async function read<T>(
+  ctx: { ownerId: string },
+  name: string,
+  input: Record<string, unknown> = {},
+): Promise<T> {
+  const op = Object.prototype.hasOwnProperty.call(ops, name) ? ops[name] : undefined;
+  if (op === undefined) throw new Error(`pages: no such admin op "${name}"`);
+  return (await op.handler(ctx.ownerId, input)) as T;
+}
+
+/** The shell every signed-in page renders inside; the badge count is the number
+ *  of rows /approvals would show as pending, read the same way that page reads it. */
+async function shell<S extends NavSection>(
+  ctx: PageContext,
+  section: S,
+  pending?: ApprovalRow[],
+): Promise<ShellProps & { section: S }> {
+  const rows = pending ?? (await pendingOf(ctx));
+  return {
+    now: ctx.now,
+    username: ctx.username,
+    section,
+    pendingApprovals: rows.length,
+    notice: ctx.notice,
+  };
+}
+
+/** Every pending request in the namespace, newest first — `approval_list`'s own
+ *  answer, lazy expiry included (§7), so the badge and the page cannot disagree. */
+async function pendingOf(ctx: PageContext): Promise<ApprovalRow[]> {
+  const listed = await read<{ approvals: ApprovalRow[] }>(ctx, "approval_list", {
+    status: "pending",
+  });
+  return listed.approvals;
+}
+
+/* --------------------------------- /services --------------------------------- */
+
+/**
+ * /services from `service_list` plus `token_list`: the table's rows are the
+ * former, and the delete dialog's "its N tokens are revoked" line is the latter
+ * counted per service. The builtin `pmcp` row service_list appends is dropped —
+ * it is a virtual service with no row, no actions, and no slug an owner may
+ * touch (§8), so a table of things you can archive and delete is not where it
+ * belongs.
+ */
+export async function servicesProps(ctx: PageContext): Promise<ServicesProps> {
+  const [listed, credentials] = await Promise.all([
+    read<{ services: OpsServiceRow[] }>(ctx, "service_list"),
+    read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
+  ]);
+  const live = liveTokenCounts(credentials.tokens, Date.parse(ctx.now));
+  const rows = listed.services
+    .filter((row): row is Exclude<OpsServiceRow, { kind: "builtin" }> => row.kind !== "builtin")
+    .map((row) => serviceRow(row, live.get(row.slug) ?? 0));
+  const confirmSlug = ctx.query.get("confirm") === "delete" ? ctx.query.get("slug") : null;
+  const confirmRow = rows.find((row) => row.slug === confirmSlug);
+  return {
+    ...(await shell(ctx, "services")),
+    csrfToken: ctx.csrfToken,
+    active: rows.filter((row) => !row.archived),
+    archived: rows.filter((row) => row.archived),
+    confirm: confirmRow === undefined ? null : { kind: "delete-service", row: confirmRow },
+  };
+}
+
+/**
+ * One service_list row as the table draws it. The two status fields are
+ * exclusive by kind and the mapping is the row's own: a tunneled row carries
+ * `status`/`lastSeen`, a proxied one carries its endpoint and — only in oauth
+ * mode — the upstream connection state.
+ */
+function serviceRow(row: Exclude<OpsServiceRow, { kind: "builtin" }>, tokenCount: number): ServiceRow {
+  const common = {
+    slug: row.slug,
+    name: row.name,
+    archived: row.archived,
+    roleNames: Object.keys(row.roles),
+    tokenCount,
+  };
+  if (row.kind === "tunnel") {
+    return {
+      ...common,
+      kind: "tunnel",
+      upstreamUrl: null,
+      upstreamAuthMode: null,
+      lastConnectedAt: row.lastSeen,
+      connection: row.status,
+      upstream: null,
+    };
+  }
+  return {
+    ...common,
+    kind: "proxy",
+    upstreamUrl: row.endpoint,
+    upstreamAuthMode: row.auth,
+    // A proxied service never dials in, so it has no last-connected instant of
+    // its own — the column reads "—" rather than borrowing another meaning.
+    lastConnectedAt: null,
+    connection: null,
+    upstream: row.connection ?? null,
+  };
+}
+
+/** Live credentials per service slug — neither revoked nor past expiry, which is
+ *  what "its N tokens are revoked" promises to be about. */
+function liveTokenCounts(tokens: TokenInfo[], now: number): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const token of tokens) {
+    if (token.kind !== "service" || token.revokedAt !== null) continue;
+    if (token.expiresAt !== null && token.expiresAt <= now) continue;
+    counts.set(token.refSlug, (counts.get(token.refSlug) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/* ------------------------------- /services/new -------------------------------- */
+
+/** /services/new — a chromeless page whose whole state is the step web.ts is in:
+ *  the empty form, the form re-rendered with what the owner typed and why it was
+ *  refused, or the once-only token reveal. No read at all. */
+export function serviceNewProps(ctx: PageContext, step: ServiceNewStep): ServiceNewProps {
+  return { now: ctx.now, username: ctx.username, csrfToken: ctx.csrfToken, step };
+}
+
+/** The add-service form as the query string carries it back — an empty form on a
+ *  first visit, the owner's own values on a re-render. */
+export function serviceNewForm(query: URLSearchParams): ServiceNewForm {
+  const kind = query.get("kind") === "proxy" ? "proxy" : "tunnel";
+  const authMode = query.get("authMode") === "oauth" ? "oauth" : "headers";
+  return {
+    kind,
+    name: query.get("name") ?? "",
+    slug: query.get("slug") ?? "",
+    endpoint: query.get("endpoint") ?? "",
+    authMode,
+  };
+}
+
+/* -------------------------------- /approvals ---------------------------------- */
+
+/** How many decided rows /approvals shows before "Older →" widens the limit. */
+const HISTORY_LIMIT = 20;
+
+/**
+ * /approvals from `approval_list`: the pending rows (which are also the shell's
+ * badge) and the decided ones. History is capped, not paged — the tool takes
+ * `limit` and no offset (§8) — so "Older →" asks for a bigger limit and this
+ * reads one row past it to know whether the link is worth rendering.
+ */
+export async function approvalsProps(ctx: PageContext): Promise<ApprovalsProps> {
+  const historyLimit = positive(ctx.query.get("limit")) ?? HISTORY_LIMIT;
+  const pending = await pendingOf(ctx);
+  const listed = await read<{ approvals: ApprovalRow[] }>(ctx, "approval_list", {
+    // The limit caps the WHOLE list, pending rows included, so the pending ones
+    // are paid for here — otherwise a namespace with many open requests would
+    // show no history at all.
+    limit: historyLimit + pending.length + 1,
+  });
+  const decided = listed.approvals.filter((row) => row.status !== "pending");
+  return {
+    ...(await shell(ctx, "approvals", pending)),
+    csrfToken: ctx.csrfToken,
+    pending,
+    history: decided.slice(0, historyLimit),
+    historyLimit,
+    hasMoreHistory: decided.length > historyLimit,
+    // Configuration, not a read: the browser needs the public half to subscribe,
+    // and approvals owns everything that happens after (§13).
+    vapidPublicKey: env.VAPID_PUBLIC_KEY,
+  };
+}
+
+/**
+ * /approvals/<id> — one row of the same owner-scoped listing, found by id. A row
+ * in another namespace is not in this listing at all, so a foreign id and an
+ * invented one are ONE answer (null), exactly as §7 wants them to be.
+ */
+export async function approvalDetailProps(
+  ctx: PageContext,
+  id: string,
+): Promise<ApprovalDetailProps | null> {
+  const listed = await read<{ approvals: ApprovalRow[] }>(ctx, "approval_list", {
+    limit: APPROVAL_LOOKUP_LIMIT,
+  });
+  const approval = listed.approvals.find((row) => row.id === id);
+  if (approval === undefined) return null;
+  return { now: ctx.now, csrfToken: ctx.csrfToken, approval };
+}
+
+/** How deep the id lookup above reads. `approval_list` takes no id filter (§8),
+ *  and retention (§15, days) is what bounds the table — so this is a memory
+ *  bound on one page render, not a policy about what exists. */
+const APPROVAL_LOOKUP_LIMIT = 1000;
+
+/* ---------------------------------- /audit ------------------------------------ */
+
+/** The page size when the owner has not chosen one (the pager offers 25/50/100). */
+const AUDIT_PAGE_SIZE = 50;
+
+/**
+ * How many matching rows the tiles and the histogram are computed over. The
+ * stated ceiling of this page: `events` is `audit_query`'s exact total, and
+ * everything derived per-row (tool calls, denials, the latency pair, every
+ * bucket) is over at most the newest this-many rows of the same window. A
+ * filtered window on a personal hub is far smaller than this; a window that is
+ * not says so by the tiles lagging the total, which is the honest failure.
+ */
+const AUDIT_SCAN_ROWS = 1000;
+
+/** How many columns "Events over time" draws, whatever the window. */
+const AUDIT_BUCKETS = 24;
+
+/** The window the segmented control starts on. */
+const AUDIT_DEFAULT_RANGE = "24h" as const;
+
+const RANGE_SPAN_MS: Record<Exclude<AuditRange, "custom">, number> = {
+  "1h": 60 * 60_000,
+  "24h": 24 * 60 * 60_000,
+  "7d": 7 * 24 * 60 * 60_000,
+  "30d": 30 * 24 * 60 * 60_000,
+};
+
+/**
+ * /audit — four reads of one tool. The page's rows and its "N events match" line
+ * are `audit_query`'s `{ rows, total }` verbatim (§8's one paging contract, which
+ * the desktop pager and the mobile "Load more" are two presentations of); the
+ * previous window's total is what the delta is a fact about; a bounded scan of
+ * the same window feeds the tiles and the histogram; and an UNFILTERED scan
+ * feeds the three select controls, because a filter must be able to name a
+ * principal whose events fell outside the current window.
+ */
+export async function auditProps(ctx: PageContext): Promise<AuditProps> {
+  const filters = auditFilters(ctx);
+  const scoped = auditQueryOf(filters);
+  const [page, scan, previous, everything] = await Promise.all([
+    read<{ rows: AuditRow[]; total: number }>(ctx, "audit_query", {
+      ...scoped,
+      limit: filters.limit,
+      offset: filters.offset,
+    }),
+    read<{ rows: AuditRow[]; total: number }>(ctx, "audit_query", {
+      ...scoped,
+      limit: AUDIT_SCAN_ROWS,
+    }),
+    read<{ rows: AuditRow[]; total: number }>(ctx, "audit_query", {
+      ...scoped,
+      since: filters.since - (filters.until - filters.since),
+      until: filters.since - 1,
+      limit: 1,
+    }),
+    read<{ rows: AuditRow[]; total: number }>(ctx, "audit_query", { limit: AUDIT_SCAN_ROWS }),
+  ]);
+  return {
+    ...(await shell(ctx, "audit")),
+    filters,
+    options: filterOptions(everything.rows),
+    rows: page.rows.map(eventRow),
+    paging: { offset: filters.offset, limit: filters.limit, total: page.total },
+    stats: auditStats(page.total, previous.total, scan.rows),
+    histogram: auditHistogram(filters, scan.rows),
+    expandedId: positive(ctx.query.get("expand")) ?? null,
+    retentionDays: auditConfig().retentionDays,
+  };
+}
+
+/**
+ * The page's filter state, read off its own query string. `since`/`until` are
+ * always resolved — a preset is a window, not a mode — so the export link, the
+ * histogram and the tiles all cover exactly what the table shows.
+ */
+export function auditFilters(ctx: PageContext): AuditFilters {
+  const now = Date.parse(ctx.now);
+  const since = positive(ctx.query.get("since"));
+  const until = positive(ctx.query.get("until"));
+  const window =
+    since !== null && until !== null
+      ? { since, until, range: rangeOf(until - since) }
+      : { since: now - RANGE_SPAN_MS[AUDIT_DEFAULT_RANGE], until: now, range: AUDIT_DEFAULT_RANGE };
+  return {
+    ...window,
+    ...text(ctx.query, "principal"),
+    ...text(ctx.query, "service"),
+    ...text(ctx.query, "event"),
+    ...text(ctx.query, "tool"),
+    ...text(ctx.query, "session"),
+    limit: positive(ctx.query.get("limit")) ?? AUDIT_PAGE_SIZE,
+    offset: positive(ctx.query.get("offset")) ?? 0,
+  };
+}
+
+/**
+ * The filters as `audit_query` takes them — the page's state minus the two
+ * fields that are the page's own (`range` is which preset produced the window,
+ * `limit`/`offset` are the caller's page). This is also what the JSONL export
+ * is handed, which is what makes the export a serialization of the same read
+ * rather than a second one (§13).
+ */
+export function auditQueryOf(filters: AuditFilters): AuditQuery {
+  const { range: _range, limit: _limit, offset: _offset, ...query } = filters;
+  return query;
+}
+
+/** Which preset a window came from — a span that matches one exactly IS that
+ *  preset, and anything else is the custom range the date control renders. */
+function rangeOf(span: number): AuditRange {
+  const preset = (Object.keys(RANGE_SPAN_MS) as Exclude<AuditRange, "custom">[]).find(
+    (key) => RANGE_SPAN_MS[key] === span,
+  );
+  return preset ?? "custom";
+}
+
+/** One audit row as the page sees it: the namespace id dropped (every row here
+ *  belongs to the viewer's own, and carrying it would only invite rendering it). */
+function eventRow(row: AuditRow): AuditEventRow {
+  const { ownerId: _ownerId, args, result, ...rest } = row;
+  return {
+    ...rest,
+    ...(args === undefined ? {} : { args: args as RecordedBody }),
+    ...(result === undefined ? {} : { result: result as RecordedBody }),
+  };
+}
+
+/** The three selects' values, from the namespace rather than from the visible
+ *  page — sorted, so the control does not reshuffle as events arrive. */
+function filterOptions(rows: AuditRow[]): AuditFilterOptions {
+  const principals = new Set<string>();
+  const services = new Set<string>();
+  const events = new Set<string>();
+  for (const row of rows) {
+    principals.add(row.principal);
+    if (row.service !== undefined) services.add(row.service);
+    events.add(row.event);
+  }
+  const sorted = (values: Set<string>): string[] => [...values].sort();
+  return { principals: sorted(principals), services: sorted(services), events: sorted(events) };
+}
+
+/** The four tiles. `events` is exact; everything per-row is over the scan (see
+ *  AUDIT_SCAN_ROWS), and a delta with no previous window to compare against is
+ *  null rather than a number nobody can read. */
+function auditStats(total: number, previousTotal: number, scan: AuditRow[]): AuditStats {
+  const durations = scan
+    .map((row) => row.durationMs)
+    .filter((ms): ms is number => typeof ms === "number")
+    .sort((a, b) => a - b);
+  return {
+    events: total,
+    eventsDeltaPct: previousTotal === 0 ? null : Math.round(((total - previousTotal) / previousTotal) * 100),
+    toolCalls: scan.filter((row) => row.event === "tools/call").length,
+    // The two codes the row badge itself calls "denied" (§7's filter refusals);
+    // an approval-required row is not a denial, it is a question.
+    denied: scan.filter((row) => DENIED_OUTCOMES.has(row.outcome)).length,
+    medianDurationMs: percentile(durations, 0.5),
+    p95DurationMs: percentile(durations, 0.95),
+  };
+}
+
+/** §7's two "you may not" codes: not permitted, and not permitted on this tool. */
+const DENIED_OUTCOMES: ReadonlySet<string> = new Set(["-32000", "-32001"]);
+
+function percentile(sorted: number[], fraction: number): number | null {
+  if (sorted.length === 0) return null;
+  const at = Math.min(sorted.length - 1, Math.floor(fraction * sorted.length));
+  return sorted[at];
+}
+
+/** "Events over time" over the visible window: one bucket size for both
+ *  breakpoints, and the peak carried so an empty window still draws an axis. */
+function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram {
+  const span = Math.max(filters.until - filters.since, 60_000);
+  const bucketMs = Math.max(60_000, Math.ceil(span / AUDIT_BUCKETS));
+  const counts = new Array<number>(AUDIT_BUCKETS).fill(0);
+  for (const row of scan) {
+    const at = Math.floor((row.ts - filters.since) / bucketMs);
+    if (at >= 0 && at < counts.length) counts[at] += 1;
+  }
+  return {
+    bucketMs,
+    buckets: counts.map((count, at) => ({
+      start: new Date(filters.since + at * bucketMs).toISOString(),
+      count,
+    })),
+    peak: counts.reduce((high, count) => Math.max(high, count), 0),
+  };
+}
+
+/* --------------------------------- /account ----------------------------------- */
+
+/**
+ * /account — the one page whose state is better-auth's rather than the ops
+ * table's, and §4 gives better-auth exactly one custodian: identity. So this
+ * reads it the way the browser does, through identity's own mounted endpoints,
+ * rather than reaching into tables that module owns.
+ *
+ * THREE things are not sourceable through those endpoints today. Two are reported
+ * as what they are rather than invented: `passkeys` is empty because the passkey
+ * plugin is not installed at all (identity's auth() says so), and every session
+ * reads as `source: "web"` because nothing better-auth stores distinguishes a
+ * device-flow session from a browser one — the distinction identity enforces is
+ * the cookie's signature, not a column.
+ *
+ * The third IS invented, and this comment exists so no reader concludes otherwise:
+ * `backupCodesRemaining`/`generatedAt` have no endpoint behind them (`/get-session`
+ * reports `twoFactorEnabled` and nothing else; the codes live encrypted in a table
+ * §4 gives identity sole custody of), so an owner with 2FA on is told "0 backup
+ * codes remaining · generated <now>" on every render, which is false in both halves.
+ * The honest shape is a nullable pair rendered as "—", exactly like the two above —
+ * but `TwoFactorSummary`'s enabled arm is a template contract (account.tsx passes
+ * `generatedAt` straight into a `(iso: string)` formatter), so widening it is a
+ * change to a page template and is REPORTED rather than made here. All three are
+ * findings for the owner, not placeholders to be quietly kept.
+ */
+export async function accountProps(ctx: PageContext, req: Request): Promise<AccountProps> {
+  const [me, sessions] = await Promise.all([
+    callAuth<{ user?: { twoFactorEnabled?: boolean } }>(req, "/get-session"),
+    callAuth<BetterAuthSession[]>(req, "/list-sessions"),
+  ]);
+  return {
+    ...(await shell(ctx, "account")),
+    csrfToken: ctx.csrfToken,
+    twoFactor: me?.user?.twoFactorEnabled
+      ? { enabled: true, backupCodesRemaining: 0, generatedAt: ctx.now }
+      : { enabled: false },
+    enrollment: null,
+    revealedBackupCodes: null,
+    passkeys: [],
+    // better-auth's listing, defended: the shape is better-auth's own to change, and
+    // /account showing an empty list is a better answer than a 500 (callAuth's contract
+    // reads a bodiless success as `{}`, which is not a listing).
+    sessions: (Array.isArray(sessions) ? sessions : []).map((row) => sessionRow(row, ctx.sessionId)),
+    confirm: null,
+  };
+}
+
+/** The session fields /account draws, as better-auth's own listing spells them.
+ *  `token` is deliberately absent from this type: it is a credential, and a
+ *  shape that named it is one careless spread away from rendering it (§15). */
+type BetterAuthSession = {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  userAgent?: string | null;
+};
+
+function sessionRow(row: BetterAuthSession, current: string): SessionRow {
+  return {
+    id: row.id,
+    // Untrusted display data, shown as the client sent it and never parsed.
+    client: row.userAgent?.slice(0, 80) || "Unknown client",
+    source: "web",
+    createdAt: new Date(row.createdAt).toISOString(),
+    lastActiveAt: new Date(row.updatedAt).toISOString(),
+    current: row.id === current,
+  };
+}
+
+/* ---------------------------- /login and /device ------------------------------ */
+
+/**
+ * /login — the one page with no PageContext, because it has no session to build one
+ * from. Its whole input is the query string better-auth's redirect left behind, and
+ * the render instant its caller stamps (web.ts holds the clock; nothing in this file
+ * reads one).
+ */
+export function loginProps(now: string, query: URLSearchParams): LoginProps {
+  return {
+    step: loginStep(query),
+    now,
+    // identity's login redirect carries where the browser was going; a hidden field
+    // is how it survives the round trip.
+    redirectTo: query.get("next"),
+  };
+}
+
+/** Which of /login's three forms to draw, and what to say under the offending control.
+ *  better-auth answers a password POST with either a session or a two-factor challenge,
+ *  and the query string is how that answer comes back to a server-rendered page. */
+function loginStep(query: URLSearchParams): LoginStep {
+  const error = query.get("error");
+  const step = query.get("step");
+  if (step === "totp" || step === "backup-code") return { kind: step, error };
+  return { kind: "credentials", username: query.get("username") ?? "", error };
+}
+
+/**
+ * /device — the one loader whose read is not the ops table's: the user code's whole
+ * lifecycle is better-auth's (§4), so this asks identity's door about it rather than
+ * any table. `req` is here for exactly that: `callAuth` carries the caller's cookie.
+ */
+export async function deviceProps(ctx: PageContext, req: Request): Promise<DeviceProps> {
+  return {
+    now: ctx.now,
+    username: ctx.username,
+    csrfToken: ctx.csrfToken,
+    step: await deviceStep(ctx, req),
+  };
+}
+
+/**
+ * /device's three moments (§13). A code arrives on the query string — the CLI prints a
+ * deep link — and better-auth's own verify endpoint is what says whether it is live and
+ * whose it is; an unknown or expired code comes back as `enter-code` with the error, which
+ * is the same recovery either way: type another code.
+ */
+async function deviceStep(ctx: PageContext, req: Request): Promise<DeviceStep> {
+  const decided = ctx.query.get("decided");
+  if (decided === "approved" || decided === "denied") {
+    return { kind: "decided", decision: decided };
+  }
+  const userCode = ctx.query.get("user_code");
+  if (userCode === null || userCode === "") {
+    return { kind: "enter-code", userCode: "", error: ctx.query.get("error") };
+  }
+  const verified = await callAuth<{ client_id?: string }>(
+    req,
+    `/device?user_code=${encodeURIComponent(userCode)}`,
+  );
+  if (verified === null) {
+    return { kind: "enter-code", userCode, error: "That code is not valid. Check it and try again." };
+  }
+  return {
+    kind: "confirm",
+    request: {
+      userCode,
+      // KNOWN CEILING, and the reason it is spelled rather than guessed: RFC 8628 §5.4
+      // wants the REQUESTING device's address and client, and better-auth's deviceCode
+      // record carries neither (its columns are code, user, status, expiry, client_id,
+      // scope). Rendering this browser's own IP would be worse than saying nothing: it
+      // would look like corroboration while corroborating nothing.
+      ip: "unknown",
+      client: verified.client_id ?? "unknown",
+      requestedAt: ctx.now,
+      // The record's own expiry is not returned either, so this is the window's upper
+      // bound (§13's shortened device-code lifetime), which is what the page says.
+      expiresAt: new Date(Date.parse(ctx.now) + DEVICE_CODE_TTL_MS).toISOString(),
+    },
+  };
+}
+
+/* ---------------------------------- shared ------------------------------------ */
+
+/** A query field that is present and non-empty, as the one-key object a spread
+ *  can drop entirely — an absent filter must leave no trace in what is asked. */
+function text(query: URLSearchParams, name: string): Record<string, string> {
+  const value = query.get(name);
+  return value === null || value === "" ? {} : { [name]: value };
+}
+
+/** A whole non-negative number, or null for everything else — a query string is
+ *  a caller's input, and "limit=drop table" is simply not a limit. */
+function positive(raw: string | null): number | null {
+  if (raw === null || raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}

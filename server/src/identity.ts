@@ -4,7 +4,9 @@
 // (the instantiation, the plugin list — username, twoFactor, passkey,
 // deviceAuthorization, bearer; passkey arrives with its separate package, see auth() —
 // and every table better-auth manages are hidden here;
-// no other module touches better-auth) and our hashed-token table for machines.
+// no other module touches better-auth — a page that needs an answer from it asks through
+// `callAuth`, which is that rule as a function rather than as a promise) and our hashed-token
+// table for machines.
 // Hidden with them: the whole token scheme — minting and matching principal.TOKEN_PREFIX
 // (the wire spelling is a leaf so §15's scrubbers can hunt it without importing this), 256-bit
 // secrets stored as unsalted SHA-256 (deliberate for high-entropy random secrets; do
@@ -735,6 +737,49 @@ async function authEventActor(
     .catch(() => null);
   const user = session?.user as { id: string; username?: string | null } | undefined;
   return user?.username ? { kind: "user", userId: user.id, username: user.username } : null;
+}
+
+/**
+ * Where the composition root mounts `authRoutes()`: better-auth's own default basePath,
+ * which `auth()` above leaves at the default. Spelled here because the mount and the URL
+ * better-auth expects to route are ONE decision — pages/model's `paths.auth.base` reads
+ * this rather than respelling it, and `callAuth` below builds on it.
+ */
+export const AUTH_BASE_PATH = "/api/auth";
+
+/**
+ * One call into the mounted better-auth surface from inside the worker, carrying the
+ * caller's cookie and nothing else — the same door the browser uses. §4 gives better-auth
+ * exactly one custodian, and this is how a non-custodian asks it something: the pages that
+ * need an answer (/account's credential state, /device's verify and its approve/deny POST)
+ * come through here rather than each hand-rolling the mount path, the sub-app cast and the
+ * failure policy. A `body` makes it a POST.
+ *
+ * Null means the call did not succeed — no cookie to carry, a request that could not be
+ * made, or a refused status. These are page states, not a place to surface an upstream
+ * status line. An ok answer whose body is not JSON reads as `{}`: the status is the
+ * outcome, and the callers that only need "did it work" read nothing from the body.
+ */
+export async function callAuth<T>(
+  req: Request,
+  endpoint: string,
+  body?: Record<string, unknown>,
+): Promise<T | null> {
+  // deps: authRoutes · better-auth · cloudflare:workers env (PUBLIC_ORIGIN)
+  const cookie = req.headers.get("Cookie");
+  if (cookie === null) return null;
+  const app = authRoutes() as { fetch(request: Request): Promise<Response> };
+  const response = await app
+    .fetch(
+      new Request(`${env.PUBLIC_ORIGIN}${AUTH_BASE_PATH}${endpoint}`, {
+        method: body === undefined ? "GET" : "POST",
+        headers: { cookie, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+    )
+    .catch(() => null);
+  if (response === null || !response.ok) return null;
+  return (await response.json().catch(() => ({}))) as T;
 }
 
 /**

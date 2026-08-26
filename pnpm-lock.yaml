@@ -20,6 +20,9 @@ importers:
       hono:
         specifier: ^4.13.3
         version: 4.13.3
+      webpush-webcrypto:
+        specifier: ^1.0.5
+        version: 1.0.5
       ws:
         specifier: ^8.21.3
         version: 8.21.3
@@ -1227,6 +1230,9 @@ packages:
       jsdom:
         optional: true
 
+  webpush-webcrypto@1.0.5:
+    resolution: {integrity: sha512-lDKQtVxi97dJQeJ6SK4kZHazYzCc6GosluXMqzLYwBc8z2il15l8zxW1e7qAF6GrcPdpHgBZkbI17mNvOQ8lZg==}
+
   why-is-node-running@2.3.0:
     resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
     engines: {node: '>=8'}
@@ -2142,6 +2148,8 @@ snapshots:
       '@types/node': 26.3.0
     transitivePeerDependencies:
       - msw
+
+  webpush-webcrypto@1.0.5: {}
 
   why-is-node-running@2.3.0:
     dependencies:

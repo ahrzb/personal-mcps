@@ -29,8 +29,24 @@
 
 // deps: harness/seed · src/index (exports.default.fetch) · src/admin (ops — one handler substituted to prove non-execution) · src/audit · src/approvals · src/identity (session minting) · applyD1Migrations
 
-import { describe, it } from "vitest";
+import { env } from "cloudflare:test";
+import { beforeAll, describe, expect, it } from "vitest";
+import { ops } from "../../src/admin";
 import type { AdminOp } from "../../src/admin";
+import { Approvals } from "../../src/approvals";
+import { query, record } from "../../src/audit";
+import type { AuditQuery, AuditRow } from "../../src/audit";
+import { requireOwnerSession } from "../../src/identity";
+import worker from "../../src/index";
+import type { Env } from "../../src/index";
+import { paths } from "../../src/pages/model";
+import { Registry } from "../../src/registry";
+import type { Service } from "../../src/registry";
+import { beginConnect } from "../../src/upstream";
+import { upstreamUrlFor } from "../harness/fake-upstream";
+import type { AsScenario, UpstreamScenario } from "../harness/fake-upstream";
+import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
+import type { SeededNamespace, SeededSession } from "../harness/seed";
 
 /**
  * Direction B, side one: every mutating form a rendered page carries, as the ops key it
@@ -38,53 +54,807 @@ import type { AdminOp } from "../../src/admin";
  * field, whatever web.ts chooses at implementation — is known only here, so Direction B
  * survives that choice being made or changed. A page with no mutating form yields [], which
  * is the correct answer for /audit and the required answer for /account.
+ *
+ * What web.ts chose (pages/model's `paths` states it): the FINAL PATH SEGMENT of a
+ * mutating target names the op, and the arguments that are not form controls ride the
+ * target's query string under the op's own field names. So a form's field set is its named
+ * controls (minus the CSRF token, which is the page layer's own business and no op's) plus
+ * its query parameters. One <form> can carry more than one target — a submit button's
+ * `formaction` is a target of its own — and each is reported separately, because each is a
+ * different op with a different field set.
  */
 export function formsRenderedOn(html: string): { op: string; fields: string[] }[] {
   // deps: HTMLRewriter (form/input/select/textarea walk)
-  throw new Error("unimplemented");
+  const found: { op: string; fields: string[] }[] = [];
+  for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
+    const attributes = form[1];
+    const body = form[2];
+    if ((attributeOf(attributes, "method") ?? "get").toLowerCase() !== "post") continue;
+    const controls = namedControls(body);
+    const targets = new Set([attributeOf(attributes, "action") ?? "", ...formActions(body)]);
+    for (const target of targets) {
+      const url = new URL(decodeEntities(target), "https://pages.invalid");
+      found.push({
+        op: url.pathname.split("/").filter(Boolean).pop() ?? "",
+        fields: [...new Set([...controls, ...[...url.searchParams.keys()]])].sort(),
+      });
+    }
+  }
+  return found;
 }
 
 /**
  * Direction B, side two: the input field names an op accepts, read off its single source of
- * input truth (the zod schema that also renders the MCP inputSchema). Nothing between the
- * two sides is hand-maintained — that is the whole point of the direction.
+ * input truth (the field declaration that also renders the MCP inputSchema — admin.ts owns
+ * its shape; this reads the keys and nothing else). Nothing between the two sides is
+ * hand-maintained — that is the whole point of the direction.
  */
 export function schemaKeysOf(op: AdminOp): string[] {
-  // deps: zod (schema introspection)
-  throw new Error("unimplemented");
+  // deps: admin.AdminOp.schema
+  const fields = (op.schema as { fields: Record<string, unknown> }).fields;
+  return Object.keys(fields).sort();
 }
 
+/** One attribute's value out of a start tag — quoted, as every renderer emits them. */
+function attributeOf(attributes: string, name: string): string | null {
+  return new RegExp(`\\b${name}="([^"]*)"`).exec(attributes)?.[1] ?? null;
+}
+
+/** The `name`s of the controls inside one form, minus the CSRF token. */
+function namedControls(body: string): string[] {
+  const names = new Set<string>();
+  for (const control of body.matchAll(/<(?:input|select|textarea|button)\b([^>]*)>/g)) {
+    const name = attributeOf(control[1], "name");
+    if (name !== null && name !== "csrf") names.add(name);
+  }
+  return [...names];
+}
+
+/** A submit button's own target — one <form>, two ops (Archive beside Disconnect). */
+function formActions(body: string): string[] {
+  const actions: string[] = [];
+  for (const control of body.matchAll(/<button\b([^>]*)>/g)) {
+    const action = attributeOf(control[1], "formaction");
+    if (action !== null) actions.push(action);
+  }
+  return actions;
+}
+
+/** The renderer escapes `&` in attribute values; a URL comes back through this. */
+function decodeEntities(value: string): string {
+  return value.replace(/&amp;/g, "&");
+}
+
+/* ------------------------------------------------------------------ *
+ * The seeded world
+ * ------------------------------------------------------------------ */
+
+const ORIGIN = (env as unknown as Env).PUBLIC_ORIGIN;
+
+/** The RFC 8628 client id the CLI presents — the same string /device sees. */
+const DEVICE_CLIENT_ID = "pmcp-cli";
+
+/** How many audit rows the paging and export cases are written against. */
+const SEEDED_EVENTS = 9;
+
+/** The tool name every seeded audit row carries a numbered variant of, so a row is
+ *  identifiable in rendered HTML and in an exported line by the same string. */
+const TOOL_PREFIX = "walk-tool-";
+
+/** The client session id half the seeded rows share (§13's ?session=… link). */
+const SHARED_SESSION = "sess-walk-shared";
+
+type World = {
+  ns: SeededNamespace;
+  /** The owner's browser session, and a SECOND one for the cross-session CSRF row. */
+  session: SeededSession;
+  other: SeededSession;
+  sessionId: string;
+  /** A device-flow session: a real bearer, and deliberately no cookie of its own. */
+  deviceToken: string;
+  /** A pending approval in this namespace, and one in a foreign namespace. */
+  approvalId: string;
+  foreign: { ns: SeededNamespace; approvalId: string };
+  /** The oauth-mode proxied service the callback case connects. */
+  oauth: { service: Service; scenario: UpstreamScenario };
+};
+
+let world: World;
+
+beforeAll(async () => {
+  const scenario: UpstreamScenario = {
+    id: uniqueSlug("up"),
+    mode: { kind: "ok" },
+    as: { id: uniqueSlug("as") } as AsScenario,
+  };
+  const ns = await seedNamespace(env.DB, {
+    services: [
+      { slug: "news", kind: "tunnel", tokens: [{ as: "news" }] },
+      { slug: "parked", kind: "tunnel", archived: true },
+      {
+        slug: "notion",
+        kind: "proxy",
+        upstreamUrl: upstreamUrlFor(scenario),
+        upstreamAuthMode: "oauth",
+      },
+    ],
+    accounts: [
+      {
+        slug: "agent",
+        grants: { news: [{ role: "all", mode: "approval" }] },
+        tokens: [{ as: "agent" }],
+      },
+    ],
+  });
+  const session = await seedOwnerSession(ns.owner);
+  const other = await seedOwnerSession(ns.owner);
+  const { sessionId } = await requireOwnerSession(
+    new Request(`${ORIGIN}${paths.services}`, { headers: { Cookie: session.cookie } }),
+  );
+  const service = await new Registry(env.DB).getService(ns.owner.userId, "notion");
+  if (service === null) throw new Error("web-pages: the seeded oauth service vanished");
+
+  await seedAuditRows(ns.owner.userId);
+
+  world = {
+    ns,
+    session,
+    other,
+    sessionId,
+    deviceToken: await deviceFlowToken(session.cookie),
+    approvalId: await openApproval(ns, "news"),
+    foreign: await foreignWorld(),
+    oauth: { service, scenario },
+  };
+});
+
+/** A namespace that is not the fixture owner's, with a pending approval of its own —
+ *  the only way to ask "does /approvals/<id> refuse someone else's id" honestly. */
+async function foreignWorld(): Promise<World["foreign"]> {
+  const ns = await seedNamespace(env.DB, {
+    services: [{ slug: "news", kind: "tunnel" }],
+    accounts: [{ slug: "agent", grants: { news: [{ role: "all", mode: "approval" }] } }],
+  });
+  return { ns, approvalId: await openApproval(ns, "news") };
+}
+
+/**
+ * One pending approval, opened the only way one is ever opened: a gated call through
+ * `Approvals.check`. Nothing here writes an approval row by hand — a fixture that did
+ * would be pinning a shape rather than a behavior.
+ */
+async function openApproval(ns: SeededNamespace, slug: string): Promise<string> {
+  const service = await new Registry(env.DB).getService(ns.owner.userId, slug);
+  if (service === null) throw new Error(`openApproval: no service "${slug}"`);
+  const approvals = new Approvals({
+    db: env.DB,
+    publicOrigin: ORIGIN,
+    audit: { record: (entry) => record(env.DB, entry) },
+    vapid: { publicKey: "FAKE0000-vapid-public", privateKey: "FAKE0000-vapid-private", subject: ORIGIN },
+    retentionDays: 7,
+    now: Date.now,
+  });
+  const checked = await approvals.check(
+    { kind: "service_account", accountId: ns.accounts.agent.id, ownerId: ns.owner.userId, slug: "agent" },
+    service,
+    "search",
+    { q: "term" },
+    [],
+  );
+  return checked.approvalId;
+}
+
+/**
+ * The audit rows every paging and export case reads. Written through `audit.record` —
+ * the one write path — so what the page pages over is what the hub actually stores,
+ * bodies and stubs included (§15).
+ */
+async function seedAuditRows(ownerId: string): Promise<void> {
+  for (let at = 0; at < SEEDED_EVENTS; at++) {
+    await record(env.DB, {
+      ownerId,
+      principal: "sa:agent",
+      event: "tools/call",
+      service: "news",
+      tool: `${TOOL_PREFIX}${at}`,
+      outcome: at === 0 ? "-32001" : "ok",
+      durationMs: 10 + at,
+      // Half the rows share one client session, which is what the ?session=… link
+      // narrows to.
+      client: { name: "walker", version: "1.0", sessionId: at % 2 === 0 ? SHARED_SESSION : `sess-${at}` },
+      // Post-redaction bodies, because that is the only form the hub ever stores: the
+      // masked argument, and a result carrying one whole-body stub.
+      args: { q: "term", token: "‹redacted›" },
+      result: { content: [{ stub: "blob", contentType: "image/png", bytes: 4_200_000 }] },
+    });
+  }
+}
+
+/**
+ * The RFC 8628 exchange, driven through the same better-auth endpoints the CLI uses. What
+ * comes back is a session token and NO cookie — which is exactly why a device-flow session
+ * cannot be presented as a browser session (§4).
+ */
+async function deviceFlowToken(ownerCookie: string): Promise<string> {
+  const asOwner = { "content-type": "application/json", origin: ORIGIN, cookie: ownerCookie };
+  const codes = (await (
+    await call(
+      new Request(`${ORIGIN}/api/auth/device/code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ client_id: DEVICE_CLIENT_ID }),
+      }),
+    )
+  ).json()) as { device_code: string; user_code: string };
+  await call(new Request(`${ORIGIN}/api/auth/device?user_code=${codes.user_code}`, { headers: asOwner }));
+  await call(
+    new Request(`${ORIGIN}/api/auth/device/approve`, {
+      method: "POST",
+      headers: asOwner,
+      body: JSON.stringify({ userCode: codes.user_code }),
+    }),
+  );
+  const redeemed = await call(
+    new Request(`${ORIGIN}/api/auth/device/token`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        device_code: codes.device_code,
+        client_id: DEVICE_CLIENT_ID,
+      }),
+    }),
+  );
+  const body = (await redeemed.json()) as { access_token?: string };
+  if (!body.access_token) throw new Error(`device token failed: ${JSON.stringify(body)}`);
+  return body.access_token;
+}
+
+/* ------------------------------------------------------------------ *
+ * Driving the pages
+ * ------------------------------------------------------------------ */
+
+/** Every request in this file goes through the composition root, exactly as a browser's would. */
+function call(request: Request): Promise<Response> {
+  return worker.fetch(request, env as unknown as Env);
+}
+
+/** One page, fetched as the signed-in owner. */
+function get(path: string, cookie: string = world.session.cookie): Promise<Response> {
+  return call(new Request(`${ORIGIN}${path}`, { headers: { Cookie: cookie } }));
+}
+
+/** One page's HTML, which is only ever WALKED — never asserted on (§7). */
+async function page(path: string, cookie?: string): Promise<string> {
+  const response = await get(path, cookie);
+  expect(response.status, `GET ${path}`).toBe(200);
+  return response.text();
+}
+
+/** The CSRF token a page rendered — the only place a test may get one, because it is the
+ *  only place a browser gets one. */
+function csrfOf(html: string): string {
+  const token = /name="csrf"\s+value="([^"]+)"/.exec(html)?.[1];
+  if (token === undefined) throw new Error("the page rendered no CSRF field");
+  return token;
+}
+
+/** One mutating POST, as the browser's form makes it. `csrf` absent means the field is
+ *  simply not submitted — the shape of a cross-site post. */
+function post(
+  target: string,
+  fields: Record<string, string>,
+  options: { cookie?: string; csrf?: string } = {},
+): Promise<Response> {
+  const body = new FormData();
+  if (options.csrf !== undefined) body.set("csrf", options.csrf);
+  for (const [name, value] of Object.entries(fields)) body.set(name, value);
+  return call(
+    new Request(`${ORIGIN}${target}`, {
+      method: "POST",
+      headers: { Cookie: options.cookie ?? world.session.cookie },
+      body,
+    }),
+  );
+}
+
+/**
+ * Substitutes counting handlers into the ops table for the length of one case and restores
+ * them there — the mechanism the "was it invoked" cases rest on. The substitute records
+ * its input and does NOTHING else, so a page that mutated D1 on its own would leave a
+ * change nothing accounts for (case 19).
+ */
+async function withCountedOps<T>(
+  names: readonly string[],
+  work: (invocations: Map<string, unknown[]>) => Promise<T>,
+): Promise<T> {
+  const original = new Map(names.map((name) => [name, ops[name]]));
+  const invocations = new Map<string, unknown[]>();
+  for (const name of names) {
+    const real = original.get(name);
+    if (real === undefined) throw new Error(`withCountedOps: no such op "${name}"`);
+    ops[name] = {
+      schema: real.schema,
+      handler: async (_ownerId: string, input: unknown) => {
+        invocations.set(name, [...(invocations.get(name) ?? []), input]);
+        return {};
+      },
+    };
+  }
+  try {
+    return await work(invocations);
+  } finally {
+    for (const [name, real] of original) if (real !== undefined) ops[name] = real;
+  }
+}
+
+/** How many times a substituted op ran. */
+const times = (invocations: Map<string, unknown[]>, name: string): number =>
+  (invocations.get(name) ?? []).length;
+
+/* ------------------------------------------------------------------ *
+ * The cases
+ * ------------------------------------------------------------------ */
+
 describe("§13 · CSRF on every mutating POST", () => {
-  it.todo("1. §13 · a mutating POST with no CSRF field is 403 AND the substituted ops handler was never invoked (a rejected-but-executed mutation is the bug this case exists for)");
-  it.todo("2. §13 · the same POST carrying the token the page rendered succeeds and the handler ran exactly once (the allow-twin of 1 — without it, `throw 403` passes)");
-  it.todo("3. §13 · a token minted under a different cookie session is 403, handler not invoked");
-  it.todo("4. §13 · every mutating form the pages render carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one");
-  it.todo("5. §13 · /audit renders no mutating form and needs no token (no mutations, no CSRF surface)");
+  it("1. §13 · a mutating POST with no CSRF field is 403 AND the substituted ops handler was never invoked (a rejected-but-executed mutation is the bug this case exists for)", async () => {
+    await withCountedOps(["service_archive"], async (invocations) => {
+      const refused = await post(paths.serviceArchive("news"), {});
+      expect(refused.status).toBe(403);
+      expect(times(invocations, "service_archive")).toBe(0);
+    });
+  });
+
+  it("2. §13 · the same POST carrying the token the page rendered succeeds and the handler ran exactly once (the allow-twin of 1 — without it, `throw 403` passes)", async () => {
+    await withCountedOps(["service_archive"], async (invocations) => {
+      const csrf = csrfOf(await page(paths.services));
+      const accepted = await post(paths.serviceArchive("news"), {}, { csrf });
+      expect(accepted.status).toBe(303);
+      expect(accepted.headers.get("Location")).toContain(paths.services);
+      expect(times(invocations, "service_archive")).toBe(1);
+      // The op received the slug the target named — the query string IS the argument.
+      expect(invocations.get("service_archive")?.[0]).toMatchObject({ slug: "news" });
+    });
+  });
+
+  it("3. §13 · a token minted under a different cookie session is 403, handler not invoked", async () => {
+    await withCountedOps(["service_archive"], async (invocations) => {
+      const foreignToken = csrfOf(await page(paths.services, world.other.cookie));
+      const refused = await post(paths.serviceArchive("news"), {}, { csrf: foreignToken });
+      expect(refused.status).toBe(403);
+      expect(times(invocations, "service_archive")).toBe(0);
+      // The twin, so "403" is not simply what this endpoint always answers: the SAME
+      // session's own token passes.
+      const own = csrfOf(await page(paths.services));
+      expect((await post(paths.serviceArchive("news"), {}, { csrf: own })).status).toBe(303);
+      expect(times(invocations, "service_archive")).toBe(1);
+    });
+  });
+
+  it("4. §13 · every mutating form the pages render carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one", async () => {
+    // Two exclusions, both structural rather than convenient. /login is not walked at all:
+    // there is no session yet to derive a token from. And a form that posts to
+    // better-auth's own mount is outside this module's gate by design — §4 gives that
+    // surface its own origin defense, which is also why /login's forms carry no token.
+    // Everything that reaches a hub route is walked.
+    let hubForms = 0;
+    for (const [path, html] of Object.entries(await sessionPages())) {
+      for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
+        if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
+        const action = decodeEntities(attributeOf(form[1], "action") ?? "");
+        if (action.startsWith(`${paths.auth.base}/`)) continue;
+        hubForms += 1;
+        expect(/name="csrf"\s+value="[^"]+"/.test(form[2]), `${action} on ${path} carries no CSRF field`).toBe(true);
+      }
+    }
+    // The walk is proven to be looking at something: the pages really do render hub-owned
+    // mutating forms, and every one of them was checked.
+    expect(hubForms).toBeGreaterThan(0);
+  });
+
+  it("5. §13 · /audit renders no mutating form and needs no token (no mutations, no CSRF surface)", async () => {
+    const html = await page(paths.audit);
+    // Nothing on this page fronts a tool, and the one POST form it carries is the signed-in
+    // shell's Sign out — better-auth's endpoint, present on every shelled page and owned by
+    // §4 rather than by /audit.
+    for (const form of formsRenderedOn(html)) {
+      expect(Object.prototype.hasOwnProperty.call(ops, form.op), `/audit fronts "${form.op}"`).toBe(false);
+      expect(BETTER_AUTH_ACTIONS.has(form.op), `/audit posts to "${form.op}"`).toBe(true);
+    }
+    // No token is rendered at all, because the props carry none: /audit mutates nothing.
+    expect(html).not.toContain('name="csrf"');
+    // Its own controls are all GETs — the filter form included, which is why it needs none.
+    expect(html).toContain('method="get"');
+  });
 });
 
 describe("§4/§13 · cookie sessions are the only page credential", () => {
-  it.todo("6. §4 · a bearer-sourced (device-flow) session is refused on /account · a browser session renders it (the twin — the guard is about provenance, not about being logged out)");
-  it.todo("7. §7 · an Authorization: Bearer header with no cookie opens no page — bearer tokens are never consulted on page routes");
-  it.todo("8. §13 · /approvals/<id> for another namespace's approval refuses · the owner's own id renders (owner-only, and indistinguishable from a nonexistent id)");
-  it.todo("9. §13 · /manifest.webmanifest and /sw.js are served without a session — installability is not gated, and the PWA shell holds nothing to gate");
+  it("6. §4 · a bearer-sourced (device-flow) session is refused on /account · a browser session renders it (the twin — the guard is about provenance, not about being logged out)", async () => {
+    const cookieName = world.session.cookie.split("=")[0];
+    const replayed = await get(paths.account, `${cookieName}=${world.deviceToken}`);
+    expect(replayed.status).toBe(302);
+    expect(replayed.headers.get("Location")).toMatch(/^\/login(\?|$)/);
+    // The twin: the same page, the same guard, a browser session.
+    const rendered = await get(paths.account);
+    expect(rendered.status).toBe(200);
+    expect(await rendered.text()).toContain(paths.auth.signOut);
+  });
+
+  it("7. §7 · an Authorization: Bearer header with no cookie opens no page — bearer tokens are never consulted on page routes", async () => {
+    for (const bearer of [world.session.token, world.ns.tokens.agent.token, world.deviceToken]) {
+      const refused = await call(
+        new Request(`${ORIGIN}${paths.services}`, { headers: { Authorization: `Bearer ${bearer}` } }),
+      );
+      expect(refused.status).toBe(302);
+      expect(refused.headers.get("Location")).toMatch(/^\/login(\?|$)/);
+    }
+  });
+
+  it("8. §13 · /approvals/<id> for another namespace's approval refuses · the owner's own id renders (owner-only, and indistinguishable from a nonexistent id)", async () => {
+    const own = await get(paths.approval(world.approvalId));
+    expect(own.status).toBe(200);
+    expect(await own.text()).toContain(world.approvalId);
+    const foreign = await get(paths.approval(world.foreign.approvalId));
+    const invented = await get(paths.approval("apr_this-id-never-existed"));
+    expect(foreign.status).toBe(404);
+    // The two refusals are ONE answer: a probe cannot learn that the id exists elsewhere.
+    expect(await foreign.text()).toEqual(await invented.text());
+    expect(foreign.status).toBe(invented.status);
+  });
+
+  it("9. §13 · /manifest.webmanifest and /sw.js are served without a session — installability is not gated, and the PWA shell holds nothing to gate", async () => {
+    for (const path of [paths.manifest, paths.serviceWorker]) {
+      const anonymous = await call(new Request(`${ORIGIN}${path}`));
+      expect(anonymous.status, path).toBe(200);
+      const body = await anonymous.text();
+      // Nothing namespace-shaped is in either: the shell is the same bytes for everyone.
+      expect(body).not.toContain(world.ns.owner.username);
+    }
+  });
 });
 
 describe("§8/§13 · one paging contract, two presentations", () => {
-  it.todo("10. §8 · the page's \"N events match\" line is audit.query's `total`, not the rendered row count — they differ whenever a page is not the last one");
-  it.todo("11. §13 · desktop page numbers and mobile \"Load more\" walk the same offset/limit contract to the same final row set");
-  it.todo("12. §13 · Export JSONL emits exactly `total` lines for the current filters");
-  it.todo("13. §13 · the export applies the page's filters verbatim — a filtered export is a strict subset of the unfiltered one over the same seed");
-  it.todo("14. §15 · an exported row carries its recorded bodies post-redaction, with stubs rendered as typed placeholders · never the bytes a blob stub stands for");
-  it.todo("15. §13 · a row's client session id links back to this same view as ?session=… and that link returns exactly the rows sharing the session");
+  it("10. §8 · the page's \"N events match\" line is audit.query's `total`, not the rendered row count — they differ whenever a page is not the last one", async () => {
+    const filters = { event: "tools/call", service: "news" };
+    const first = await page(auditPath({ ...filters, limit: 3, offset: 0 }));
+    const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
+    expect(matchedLine(first)).toBe(truth.total);
+    // …and the two numbers really do differ on this page, which is what makes the
+    // assertion above worth making.
+    expect(renderedTools(first).length).toBe(3);
+    expect(truth.total).toBeGreaterThan(3);
+  });
+
+  it("11. §13 · desktop page numbers and mobile \"Load more\" walk the same offset/limit contract to the same final row set", async () => {
+    const filters = { event: "tools/call", service: "news", limit: 4 };
+    // Desktop: follow the pager's own next-page links until it stops offering one.
+    const desktop: string[] = [];
+    let path = auditPath({ ...filters, offset: 0 });
+    for (;;) {
+      const html = await page(path);
+      desktop.push(...renderedTools(html));
+      const next = nextPageLink(html);
+      if (next === null) break;
+      path = next;
+    }
+    // Mobile: follow "Load more", which widens the limit against the same offset.
+    let mobile: string[] = [];
+    let mobilePath = auditPath({ ...filters, offset: 0 });
+    for (;;) {
+      const html = await page(mobilePath);
+      mobile = renderedTools(html);
+      const more = loadMoreLink(html);
+      if (more === null) break;
+      mobilePath = more;
+    }
+    expect(mobile.length).toBeGreaterThan(filters.limit);
+    expect(new Set(mobile)).toEqual(new Set(desktop));
+    expect(mobile).toEqual(desktop);
+  });
+
+  it("12. §13 · Export JSONL emits exactly `total` lines for the current filters", async () => {
+    const filters = { event: "tools/call", service: "news" };
+    const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
+    const lines = await exportLines({ ...filters, limit: 3, offset: 0 });
+    // The page's limit/offset are the PAGE's, never the export's (§8).
+    expect(lines.length).toBe(truth.total);
+  });
+
+  it("13. §13 · the export applies the page's filters verbatim — a filtered export is a strict subset of the unfiltered one over the same seed", async () => {
+    const all = await exportLines({});
+    const filtered = await exportLines({ session: SHARED_SESSION });
+    const idsOf = (lines: AuditRow[]) => new Set(lines.map((row) => row.id));
+    const everything = idsOf(all);
+    expect(filtered.length).toBeGreaterThan(0);
+    expect(filtered.length).toBeLessThan(all.length);
+    for (const row of filtered) expect(everything.has(row.id)).toBe(true);
+    for (const row of filtered) expect(row.client?.sessionId).toBe(SHARED_SESSION);
+  });
+
+  it("14. §15 · an exported row carries its recorded bodies post-redaction, with stubs rendered as typed placeholders · never the bytes a blob stub stands for", async () => {
+    const [row] = await exportLines({ tool: `${TOOL_PREFIX}1` });
+    expect(row.args).toEqual({ q: "term", token: "‹redacted›" });
+    // The stub is what was stored, and it is all that leaves: a type and a size.
+    expect(row.result).toEqual({ content: [{ stub: "blob", contentType: "image/png", bytes: 4_200_000 }] });
+    // The same row on the page, expanded: a typed size placeholder, never bytes.
+    const expanded = await page(auditPath({ tool: `${TOOL_PREFIX}1`, expand: row.id }));
+    expect(expanded).toContain("‹blob image/png");
+    expect(expanded).toContain("‹redacted›");
+  });
+
+  it("15. §13 · a row's client session id links back to this same view as ?session=… and that link returns exactly the rows sharing the session", async () => {
+    const [row] = await exportLines({ tool: `${TOOL_PREFIX}0` });
+    // Expanded from the UNFILTERED view, because the link carries the page's other filters
+    // forward: what is being pinned is that the session narrows the view, not that a tool
+    // filter survives it.
+    const expanded = await page(auditPath({ expand: row.id }));
+    const link = sessionLink(expanded);
+    expect(link, "the expanded row rendered no session link").not.toBeNull();
+    expect(new URL(link ?? "", ORIGIN).searchParams.get("session")).toBe(SHARED_SESSION);
+    const shared = await page(link ?? "");
+    const truth = await query(env.DB, world.ns.owner.userId, { session: SHARED_SESSION });
+    expect(matchedLine(shared)).toBe(truth.total);
+    expect(new Set(renderedTools(shared))).toEqual(
+      new Set(truth.rows.map((event) => event.tool).filter((tool): tool is string => tool !== undefined)),
+    );
+  });
 });
 
 describe("§8 · parity direction B — forms and schemas are one source", () => {
-  it.todo("16. §8 · every form rendered on /services and /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)");
-  it.todo("17. §8 · each form's field set equals schemaKeysOf(ops[name]) — both sides derived, so a schema change with no form change fails here rather than at a user's keyboard");
-  it.todo("18. §8 · /account renders no ops-backed form at all — the pinned parity exception: credentials ride better-auth's endpoints and are never reachable from a pmcp tool");
-  it.todo("19. §8 · every page mutation reaches an ops handler (or better-auth): no page route mutates D1 on its own — the no-web-only-capability invariant, checked by substituting handlers across the ops table rather than by reading web.ts");
+  it("16. §8 · every form rendered on /services and /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)", async () => {
+    for (const path of [paths.services, paths.approvals]) {
+      const forms = formsRenderedOn(await page(path));
+      expect(forms.length, `${path} rendered no form`).toBeGreaterThan(0);
+      for (const form of forms) {
+        if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
+        expect(Object.prototype.hasOwnProperty.call(ops, form.op), `${path} fronts "${form.op}"`).toBe(true);
+      }
+    }
+  });
+
+  it("17. §8 · each form's field set equals schemaKeysOf(ops[name]) — both sides derived, so a schema change with no form change fails here rather than at a user's keyboard", async () => {
+    let checked = 0;
+    for (const path of [paths.services, paths.approvals]) {
+      for (const form of formsRenderedOn(await page(path))) {
+        if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
+        expect(form.fields, `${path} → ${form.op}`).toEqual(schemaKeysOf(ops[form.op]));
+        checked += 1;
+      }
+    }
+    expect(checked, "no ops-backed form was checked").toBeGreaterThan(0);
+  });
+
+  it("18. §8 · /account renders no ops-backed form at all — the pinned parity exception: credentials ride better-auth's endpoints and are never reachable from a pmcp tool", async () => {
+    const forms = formsRenderedOn(await page(paths.account));
+    expect(forms.length, "/account rendered no form to check").toBeGreaterThan(0);
+    for (const form of forms) {
+      expect(Object.prototype.hasOwnProperty.call(ops, form.op), `/account fronts "${form.op}"`).toBe(false);
+    }
+    // Every one of them posts to better-auth's mount instead, which is the exception
+    // stated as a positive rather than as an absence.
+    for (const form of formsRenderedOn(await page(paths.account))) {
+      expect(BETTER_AUTH_ACTIONS.has(form.op), `/account fronts "${form.op}"`).toBe(true);
+    }
+  });
+
+  it("19. §8 · every page mutation reaches an ops handler (or better-auth): no page route mutates D1 on its own — the no-web-only-capability invariant, checked by substituting handlers across the ops table rather than by reading web.ts", async () => {
+    // Everything the pages have to SAY is read first, while the ops table is still real:
+    // the targets they render, and the token they rendered them with. The substitution
+    // below replaces the read handlers too, so a page cannot be rendered under it — which
+    // is itself the parity invariant showing through (a page has no other source).
+    const targets = new Map<string, string>();
+    let csrf = "";
+    for (const path of [paths.services, paths.approvals]) {
+      const html = await page(path);
+      csrf = csrfOf(html);
+      for (const form of formsRenderedOn(html)) {
+        if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
+        targets.set(form.op, actionFor(html, form.op));
+      }
+    }
+    expect(targets.size).toBeGreaterThan(0);
+    await withCountedOps([...Object.keys(ops)], async (invocations) => {
+      const before = await namespaceShape();
+      for (const [op, target] of targets) {
+        const answered = await post(target, { decision: "approve" }, { csrf });
+        expect(answered.status, `POST ${target}`).toBe(303);
+        expect(times(invocations, op), `POST ${target} reached ${op}`).toBe(1);
+      }
+      // Substituted handlers changed nothing, so if the page layer had written to D1 on
+      // its own the namespace would have moved anyway. It did not.
+      expect(await namespaceShape()).toEqual(before);
+    });
+  });
 });
 
 describe("§7/§13 · the OAuth callback shell", () => {
-  it.todo("20. §7 · /oauth/upstream/callback without an owner session is refused before any upstream code runs and stores nothing · with the session and a live single-use state it completes (the twin; every other state failure is upstream-credentials.test.ts's table)");
+  it("20. §7 · /oauth/upstream/callback without an owner session is refused before any upstream code runs and stores nothing · with the session and a live single-use state it completes (the twin; every other state failure is upstream-credentials.test.ts's table)", async () => {
+    const started = await beginConnect(world.oauth.service, { id: world.sessionId });
+    const redirected = await fetch(started.toString(), { redirect: "manual" });
+    const callbackUrl = redirected.headers.get("Location");
+    expect(callbackUrl, "the fake AS answered no redirect").not.toBeNull();
+    const state = started.searchParams.get("state") ?? "";
+
+    const anonymous = await call(new Request(callbackUrl ?? ""));
+    expect(anonymous.status).toBe(302);
+    expect(anonymous.headers.get("Location")).toMatch(/^\/login(\?|$)/);
+    // Nothing ran and nothing was stored: the single-use state is still unconsumed and
+    // the service still holds no credential.
+    expect(await stateRows(state)).toBe(1);
+    expect(await connectionOf("notion")).toBe("not_connected");
+
+    // The twin: the same callback, the owner's browser session.
+    const completed = await call(
+      new Request(callbackUrl ?? "", { headers: { Cookie: world.session.cookie } }),
+    );
+    expect(completed.status).toBe(302);
+    expect(completed.headers.get("Location")).toContain(paths.services);
+    expect(await stateRows(state)).toBe(0);
+    expect(await connectionOf("notion")).toBe("connected");
+  });
 });
+
+/* ------------------------------------------------------------------ *
+ * Reading the pages back
+ * ------------------------------------------------------------------ */
+
+/** The better-auth endpoints the credential forms post to, as their final path segment —
+ *  read off `paths.auth` rather than spelled, so a remount moves both sides together. */
+const BETTER_AUTH_ACTIONS: ReadonlySet<string> = new Set(
+  Object.values<string>(paths.auth)
+    .filter((path) => path.startsWith(`${paths.auth.base}/`))
+    .map((path) => path.split("/").pop() ?? ""),
+);
+
+/**
+ * Every mutating target that fronts no ops key, by name. Three are §8's pinned browser
+ * interactions — the consent redirect, the per-browser push subscription, and the device
+ * decision — and the rest are better-auth's own endpoints, which the shell's Sign out puts
+ * on every page. A target outside this set and outside admin.ops is exactly the drift
+ * cases 16 and 17 exist to catch.
+ */
+const BROWSER_ONLY_TARGETS: ReadonlySet<string> = new Set([
+  "connect",
+  "push",
+  "decide",
+  ...BETTER_AUTH_ACTIONS,
+]);
+
+/** Every session-backed page, rendered — the walk's input for case 4. */
+async function sessionPages(): Promise<Record<string, string>> {
+  const deviceCode = await requestDeviceCode();
+  const rendered: Record<string, string> = {};
+  for (const path of [
+    paths.services,
+    paths.serviceNew,
+    paths.approvals,
+    paths.approval(world.approvalId),
+    paths.audit,
+    paths.account,
+    `${paths.device}?user_code=${encodeURIComponent(deviceCode)}`,
+  ]) {
+    rendered[path] = await page(path);
+  }
+  return rendered;
+}
+
+/** A live user code, claimed by the owner's session so /device renders its confirm step. */
+async function requestDeviceCode(): Promise<string> {
+  const requested = (await (
+    await call(
+      new Request(`${ORIGIN}/api/auth/device/code`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ client_id: DEVICE_CLIENT_ID }),
+      }),
+    )
+  ).json()) as { user_code: string };
+  return requested.user_code;
+}
+
+/** /audit under a set of filters, spelled the way a link on the page spells it. */
+function auditPath(filters: Record<string, string | number>): string {
+  const search = new URLSearchParams();
+  for (const [name, value] of Object.entries(filters)) search.set(name, String(value));
+  return `${paths.audit}?${search.toString()}`;
+}
+
+/** The "N events match" line, as a number. */
+function matchedLine(html: string): number {
+  const rendered = /([\d,]+) events match/.exec(html)?.[1];
+  if (rendered === undefined) throw new Error("the page rendered no \"N events match\" line");
+  return Number(rendered.replace(/,/g, ""));
+}
+
+/** The seeded tool names the page actually drew, in order — one per rendered row. */
+function renderedTools(html: string): string[] {
+  return [...html.matchAll(new RegExp(`>(${TOOL_PREFIX}\\d+)<`, "g"))]
+    .map((match) => match[1])
+    .filter((tool, at, all) => all.indexOf(tool) === at);
+}
+
+/**
+ * The pager's "next page" href, or null when the page does not offer one. The two arrows
+ * are the same element with the same class, so they are told apart by the one thing that
+ * differs — the chevron each draws. That is markup, and this is the one place this file
+ * reads any: a walk of "the page's own next link" has nothing else to grip.
+ */
+function nextPageLink(html: string): string | null {
+  const RIGHT_CHEVRON = "m9 18 6-6-6-6";
+  for (const anchor of html.matchAll(/<a class="btn-icon" href="([^"]+)">([\s\S]*?)<\/a>/g)) {
+    if (anchor[2].includes(RIGHT_CHEVRON)) return decodeEntities(anchor[1]);
+  }
+  return null;
+}
+
+/** The mobile "Load more" href, or null at the end of the set. */
+function loadMoreLink(html: string): string | null {
+  const block = /<a class="btn btn--outline btn--block" href="([^"]+)">\s*Load more/.exec(html);
+  return block === null ? null : decodeEntities(block[1]);
+}
+
+/** The ?session=… link the expanded row detail renders. */
+function sessionLink(html: string): string | null {
+  const link = /href="(\/audit\?[^"]*session=[^"]*)"/.exec(html);
+  return link === null ? null : decodeEntities(link[1]);
+}
+
+/** The export, parsed — one AuditRow per line, exactly as audit.exportJsonl frames it. */
+async function exportLines(filters: Record<string, string | number>): Promise<AuditRow[]> {
+  const search = new URLSearchParams();
+  for (const [name, value] of Object.entries(filters)) search.set(name, String(value));
+  const response = await get(`${paths.audit}/export.jsonl?${search.toString()}`);
+  expect(response.status).toBe(200);
+  // Decoded rather than `.text()`d: the export declares application/x-ndjson, and
+  // workerd warns when a body it does not consider text is read as one.
+  const body = new TextDecoder().decode(await response.arrayBuffer());
+  return body
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as AuditRow);
+}
+
+/** One form's action, as the page rendered it — how case 19 posts to a target it
+ *  discovered rather than to one it spelled. */
+function actionFor(html: string, op: string): string {
+  const action = new RegExp(`(?:form)?action="([^"]*/${op}(?:\\?[^"]*)?)"`).exec(html)?.[1];
+  if (action === undefined) throw new Error(`no rendered action for "${op}"`);
+  return decodeEntities(action);
+}
+
+/** How many state rows one connect flow still has — "stores nothing" made observable. */
+async function stateRows(state: string): Promise<number> {
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT COUNT(*) AS n FROM upstream_oauth_state WHERE state = ?`)
+    .bind(state)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/** A service's upstream connection state, read the way /services reads it. */
+async function connectionOf(slug: string): Promise<string> {
+  const listed = (await ops.service_list.handler(world.ns.owner.userId, {})) as {
+    services: { slug: string; connection?: string }[];
+  };
+  return listed.services.find((row) => row.slug === slug)?.connection ?? "not_connected";
+}
+
+/**
+ * Everything a page mutation could have changed, as one comparable value: the services
+ * and their flags, the approvals and their statuses. Case 19 compares it across a POST
+ * whose op did nothing — if the page layer wrote to D1 itself, this moves.
+ */
+async function namespaceShape(): Promise<string> {
+  const services = await (env.DB as D1Like)
+    .prepare(
+      `SELECT id, slug, archived_at, upstream_auth_json IS NOT NULL AS sealed
+         FROM service WHERE owner_id = ? ORDER BY slug`,
+    )
+    .bind(world.ns.owner.userId)
+    .all<Record<string, unknown>>();
+  const approvals = await (env.DB as D1Like)
+    .prepare(`SELECT id, status FROM approval WHERE owner_id = ? ORDER BY id`)
+    .bind(world.ns.owner.userId)
+    .all<Record<string, unknown>>();
+  return JSON.stringify({ services: services.results, approvals: approvals.results });
+}

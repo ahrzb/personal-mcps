@@ -102,7 +102,11 @@ export type PushSubscriptionJson = {
 };
 
 /**
- * Wiring, supplied once by the composition root: the control-plane D1 binding;
+ * Wiring, supplied once per construction. Every field is INJECTED and nothing here is read
+ * from a binding, which is what keeps this module loadable outside workerd (the `unit`
+ * project imports `canonicalJson` in plain Node); the filling of this seam from the
+ * environment therefore lives in wiring.ts, not here, and every production site goes
+ * through `wiring.approvalsFromEnv`. The fields: the control-plane D1 binding;
  * the canonical public origin (the root owns the origin, this module owns the
  * `/approvals/<id>` path built on it); the audit recorder, which is AWAITED — a
  * failed audit write fails the request; and the VAPID keypair from Worker
@@ -140,9 +144,10 @@ export type ApprovalsConfig = {
 };
 
 /**
- * The approval gate, constructed per request by the composition root (D1
- * bindings are request-scoped). The gateway drives check/claim/settle; the admin
- * ops table and web handlers drive decide/list/subscribePush; the daily cron
+ * The approval gate, constructed per request (D1 bindings are request-scoped) — through
+ * `wiring.approvalsFromEnv` everywhere but the tests, which are the only callers that hand
+ * this constructor a config they built themselves. The gateway drives check/claim/settle;
+ * the admin ops table and web handlers drive decide/list/subscribePush; the daily cron
  * drives sweepExpired.
  */
 export class Approvals {

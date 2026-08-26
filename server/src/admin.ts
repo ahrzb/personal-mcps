@@ -16,8 +16,9 @@
 // it composes validation, cascade ordering, and audit.
 
 import { env } from "cloudflare:workers";
-import { Approvals } from "./approvals";
-import { config as auditConfig, query, record } from "./audit";
+import type { Approvals } from "./approvals";
+import { query, record } from "./audit";
+import { approvalsFromEnv } from "./wiring";
 import { CODES, HubError, notPermitted } from "./errors";
 import type { ServiceBackend, Tool } from "./gateway";
 import {
@@ -49,24 +50,13 @@ function registry(): Registry {
 }
 
 /**
- * The approval gate as the two approval ops reach it. Wired from the ambient env because
- * an op receives an owner id, never an Env. No `push` transport is wired — neither op
- * sends one (the push belongs to `check`, which only the gateway calls), and an unwired
- * transport is how this module says so.
+ * The approval gate as the two approval ops reach it. No `push` transport is wired —
+ * neither op sends one (the push belongs to `check`, which only the gateway calls) — and
+ * that absence is the whole difference between this construction and the gateway's, which
+ * is why it is the only thing this call says.
  */
 function approvals(): Approvals {
-  return new Approvals({
-    db: db(),
-    publicOrigin: env.PUBLIC_ORIGIN,
-    audit: { record: (entry) => record(db(), entry) },
-    vapid: {
-      publicKey: env.VAPID_PUBLIC_KEY,
-      privateKey: env.VAPID_PRIVATE_KEY,
-      subject: env.PUBLIC_ORIGIN,
-    },
-    retentionDays: auditConfig().retentionDays,
-    now: Date.now,
-  });
+  return approvalsFromEnv();
 }
 
 /**

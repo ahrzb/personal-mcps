@@ -20,10 +20,18 @@ import { defineConfig } from "vitest/config";
 // The extension is spelled out because Vite's native config loader (the coming default)
 // resolves config imports without one only by accident.
 import { outboundRouter } from "./server/test/harness/fake-upstream.ts";
+import { generateVapidPair } from "./server/test/harness/push-service.ts";
 
 // `.mts`, and therefore ESM: the top-level await below is a build error under the CJS
 // output Vite falls back to for a plain `.ts` config.
 const migrations = await readD1Migrations(path.join(import.meta.dirname, "server/migrations"));
+
+// VAPID_* are wrangler SECRETS in production (wrangler.jsonc names them and holds no
+// value), and the push transport signs with real ES256 — it cannot mint a token from a
+// placeholder string, so a suite that drives the worker into sending a push needs a usable
+// pair. Generated per RUN rather than written down: a keypair in the repo is a keypair
+// someone eventually treats as real, and nothing here needs the same one twice.
+const vapid = await generateVapidPair();
 
 /** Everything the two workerd projects share: the repo's real wrangler config and the migration set. */
 const workersPool = {
@@ -37,6 +45,8 @@ const workersPool = {
     bindings: {
       TEST_MIGRATIONS: migrations,
       UPSTREAM_CREDS_KEY: "FAKE0000-upstream-creds-key",
+      VAPID_PUBLIC_KEY: vapid.publicKey,
+      VAPID_PRIVATE_KEY: vapid.privateKey,
     },
   },
 } as const;

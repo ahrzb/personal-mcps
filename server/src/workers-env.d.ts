@@ -64,6 +64,19 @@ type DurableObjectStateLike = {
   getWebSockets(tag?: string): WebSocket[];
 };
 
+/**
+ * A stylesheet imported as a Text module — wrangler.jsonc's `rules` is what makes the
+ * bytes of `pages/styles.css` reachable from a worker that has no filesystem, and web.ts
+ * serves them at `/styles.css`. Vite (the test runner's bundler) resolves the same import
+ * through its own CSS pipeline and hands back an empty string, so the tests render
+ * unstyled pages: nothing asserts on CSS, and the alternative — a second copy of a
+ * 1700-line stylesheet living in a .ts file — is the drift this repo exists to avoid.
+ */
+declare module "*.css" {
+  const css: string;
+  export default css;
+}
+
 /** The pair of ends `new WebSocketPair()` mints: `0` travels back to the client in a 101
  *  response, `1` is the end the DO accepts. */
 declare const WebSocketPair: { new (): { 0: WebSocket; 1: WebSocket } };

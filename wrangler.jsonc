@@ -16,6 +16,12 @@
   // (§15) — these lines are never queried by the product.
   "observability": { "enabled": true },
 
+  // The one stylesheet (§13) ships as a TEXT module, so `import styles from
+  // "./pages/styles.css"` hands web.ts the bytes to serve at /styles.css — a worker has
+  // no filesystem, and the alternative is a second copy of the file inside a .ts.
+  // `fallthrough` keeps wrangler's own default Text rule (txt/html/sql) alive beside it.
+  "rules": [{ "type": "Text", "globs": ["**/*.css"], "fallthrough": true }],
+
   // The shared control plane (§5): better-auth tables plus ours.
   //
   // Created 2026-08-25 (`wrangler d1 create personal-mcps`, region WEUR). Migrations:

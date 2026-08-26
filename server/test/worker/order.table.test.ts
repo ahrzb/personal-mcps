@@ -39,7 +39,8 @@
 //
 // deps: harness/seed (owner + one account; one tunneled service never connected, one
 //   proxied service, plus grants in each mode) · harness/fake-upstream
-//   (miniflare.outboundService) · ../../src/index (default.fetch) · ../../src/gateway ·
+//   (miniflare.outboundService) · harness/push-service (one subscribed browser, because
+//   the transport under this table is the real one) · ../../src/index (default.fetch) · ../../src/gateway ·
 //   ../../src/registry · ../../src/approvals · applyD1Migrations (setup) · env.DB
 
 import { env } from "cloudflare:test";
@@ -56,6 +57,7 @@ import { setHeaders } from "../../src/upstream";
 import type { UpstreamConnectionStatus } from "../../src/upstream";
 import { readObservations, upstreamUrlFor } from "../harness/fake-upstream";
 import type { UpstreamScenario } from "../harness/fake-upstream";
+import { subscribeFakeBrowser } from "../harness/push-service";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 
@@ -929,10 +931,11 @@ async function buildFixture(row: OrderRow): Promise<Fixture> {
     );
   }
 
-  await seedingGate(Date.now).subscribePush(ns.owner.userId, {
-    endpoint: upstreamUrlFor(push),
-    keys: { p256dh: "FAKE0000-p256dh", auth: "FAKE0000-auth" },
-  });
+  // A real (throwaway) subscription keypair, not a placeholder string: the worker under
+  // this table runs the REAL push transport, which encrypts for these keys and would fail
+  // to send at all against a fake — turning every `pushSent: true` row into a silent false.
+  const browser = await subscribeFakeBrowser(upstreamUrlFor(push));
+  await seedingGate(Date.now).subscribePush(ns.owner.userId, browser.subscription);
 
   const credential = row.principal === "owner"
     ? (await seedOwnerSession(ns.owner)).token

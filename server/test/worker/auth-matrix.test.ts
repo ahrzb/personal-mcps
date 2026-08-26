@@ -1034,10 +1034,16 @@ function requestFor(row: AuthMatrixRow): Request {
   return new Request(url, { method: body === undefined ? "GET" : "POST", headers, body });
 }
 
-/** The env variant a row runs under: §12's secret is the only per-row binding. */
+/**
+ * The env variant a row runs under: §12's secret is the only per-row binding. "unset" is
+ * spelled as an explicit `undefined` rather than as an absent key — the pool's bindings
+ * come from the developer's own `.env`, so a row that merely declines to SET the secret
+ * runs with whatever that file holds, and §12's "the route does not exist" row would pass
+ * or fail depending on whose machine it ran on.
+ */
 function envFor(row: AuthMatrixRow): Partial<Env> {
-  if (row.surface.route !== "bootstrap" || row.surface.secret === "unset") return {};
-  return { BOOTSTRAP_SECRET };
+  if (row.surface.route !== "bootstrap") return {};
+  return { BOOTSTRAP_SECRET: row.surface.secret === "unset" ? undefined : BOOTSTRAP_SECRET };
 }
 
 /**

@@ -42,8 +42,12 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bootstrap, BootstrapError, main } from "../users";
-import type { BootstrapRequest, BootstrapResponse } from "../users";
+// The extension is spelled out because `../users` also matches `scripts/users.mts` — the
+// executable face, whose whole body is `process.exit(await main(argv))`. Vite resolves the
+// extensionless specifier to that one and the import kills the run; tsc happens to pick the
+// library. One of the two has to be named, and the library is the one this file tests.
+import { bootstrap, BootstrapError, main } from "../users.ts";
+import type { BootstrapRequest, BootstrapResponse } from "../users.ts";
 
 /** An obviously fake master key; nothing here reaches a real route. */
 const SECRET = "FAKE0000-bootstrap-secret";

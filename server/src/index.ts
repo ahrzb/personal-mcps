@@ -10,7 +10,6 @@
 
 import { httpServerIntegration, withSentry } from "@sentry/cloudflare";
 import { Hono } from "hono";
-import { Approvals } from "./approvals";
 import { beforeSend, HUB_NAMESPACE, prune, record, resolveAuditConfig } from "./audit";
 import type { AuditConfig } from "./audit";
 import { mcpMessage } from "./gateway";
@@ -18,7 +17,6 @@ import {
   anonymousNotFound,
   authRoutes,
   bootstrapRoute,
-  requireOwnerSession,
   resolvePrincipal,
   unauthorized,
   USERNAME_CHARSET,
@@ -35,6 +33,8 @@ import {
   handleCallback,
   OAUTH_CALLBACK_PATH,
 } from "./upstream";
+import { pageRoutes } from "./web";
+import { approvalsFromEnv } from "./wiring";
 
 /** @cloudflare/workers-types D1Database — external types never imported in skeletons. */
 type D1Database = unknown;
@@ -118,7 +118,11 @@ export const ROUTES = [
   "internal", // bootstrap user management: /internal/users, BOOTSTRAP_SECRET-gated (§12)
   "manifest.webmanifest", // web: PWA manifest (§13) — a dot keeps it out of the username charset anyway
   "sw.js", // web: install+push service worker (§13)
+  "styles.css", // web: the one stylesheet every page's shell links (§13)
 ] as const;
+
+/** One top-level segment, as the table above names it. */
+export type ServedSegment = (typeof ROUTES)[number];
 
 /**
  * Segments a username can never claim (§2): every served top-level segment, plus
@@ -285,19 +289,11 @@ export type CronLegName = (typeof CRON_LEG_NAMES)[number];
  * touch", not "which half".
  */
 export function cronLegs(env: Env, config: AuditConfig): readonly CronLeg[] {
-  const approvals = new Approvals({
-    db: env.DB,
-    publicOrigin: env.PUBLIC_ORIGIN,
-    audit: { record: (entry) => record(env.DB, entry) },
-    vapid: {
-      publicKey: env.VAPID_PUBLIC_KEY,
-      privateKey: env.VAPID_PRIVATE_KEY,
-      subject: env.PUBLIC_ORIGIN,
-    },
-    retentionDays: config.retentionDays,
-    now: Date.now,
-    // No `push`: a sweep notifies nobody. An expiry the owner never looked at is not news.
-  });
+  // Two things this site says for itself and nothing else does: the retention window is
+  // the one THIS run resolved (which is what makes AUDIT_RETENTION_DAYS observable through
+  // the sweep), and there is no `push` — a sweep notifies nobody, because an expiry the
+  // owner never looked at is not news.
+  const approvals = approvalsFromEnv({ retentionDays: config.retentionDays });
   return [
     {
       leg: "approvals.sweepExpired",
@@ -330,50 +326,13 @@ function buildRouter(): Hono<{ Bindings: Env }> {
   // Response, so identity builds it and this is where the router agrees to use it.
   app.notFound(() => anonymousNotFound());
 
-  // better-auth's own surface (§4) and the CLI's one non-MCP data route (§8).
-  app.route("/api/auth", authRoutes() as Hono);
-  app.route("/api", whoamiRoute() as Hono);
+  // Every segment the route table names, mounted from the table itself — and each mount
+  // CLAIMS its whole subtree (see `claim`), which is what the §16 router walk observes.
+  for (const segment of ROUTES) MOUNTS[segment](app, segment);
 
-  // §12: the bootstrap route EXISTS only while its secret does. Unset → nothing is
-  // mounted to answer, so the notFound above does, which is the spec's "404 for
-  // everything". The secret is read here and passed in: no sibling names a binding.
-  app.post("/internal/users", async (c) => {
-    const secret = c.env.BOOTSTRAP_SECRET;
-    if (!secret) return anonymousNotFound();
-    return bootstrapApp(secret).fetch(c.req.raw, c.env);
-  });
-
-  // §7's upstream-OAuth pair, both on the canonical public origin because both are URLs
-  // the hub PUT ON THE WIRE at Connect time: the CIMD document is the client_id itself,
-  // and the callback is the redirect_uri bound into every state row. The document is
-  // static and secret-free, so it is served unauthenticated; the callback enforces its own
-  // cookie-session gate inside `handleCallback` (§13), before it looks at `state` at all.
-  app.get(CLIENT_METADATA_PATH, (c) => clientMetadata(new URL(c.env.PUBLIC_ORIGIN)));
-  app.get(OAUTH_CALLBACK_PATH, (c) => handleCallback(c.req.raw));
-
-  // §6: the reverse connection's one door. GET only — an upgrade is a GET — and the
-  // handler owns the whole 401/403/101 matrix, including what a request without
-  // `Upgrade: websocket` gets.
-  app.get("/connect", (c) => handleConnect(c.req.raw));
-
-  // §4/§13: credential management is the one cookie-session surface whose GUARD is wired
-  // here — a bearer-sourced session never reaches it, and it demands recent auth. The
-  // page behind the guard is the web dispatch's.
-  app.all("/account", accountGuard);
-  app.all("/account/*", accountGuard);
-
-  // Everything else the route table names is served as a stub: registered, so §2's
-  // reservation and the router agree, and answering 501 so nothing mistakes a stub for
-  // a working page.
-  for (const route of ROUTES) {
-    if (WIRED_ROUTES.has(route)) continue;
-    app.all(`/${route}`, notImplemented);
-    app.all(`/${route}/*`, notImplemented);
-  }
-
-  // §7's two consumer endpoint shapes. POST only — the 2026-07-28 revision is
-  // POST-only, and every other method falls through to the same 404 an unknown path
-  // gets.
+  // §7's two consumer endpoint shapes, registered LAST so a reserved segment can never be
+  // shadowed by a username. POST only — the 2026-07-28 revision is POST-only, and every
+  // other method falls through to the same 404 an unknown path gets.
   app.post("/:user/mcp", (c) => mcpEntry(c.req.raw, c.env, c.req.param("user")));
   app.post("/:user/mcp/:slug", (c) =>
     mcpEntry(c.req.raw, c.env, c.req.param("user"), c.req.param("slug")),
@@ -381,24 +340,111 @@ function buildRouter(): Hono<{ Bindings: Env }> {
   return app;
 }
 
-/** The top-level segments this worker actually wires; the rest of ROUTES is stubbed.
- *  `oauth` is here for its two §7 routes above — anything else under it falls to the one
- *  anonymous 404, never to a 501 that would advertise an unbuilt surface. */
-const WIRED_ROUTES: ReadonlySet<string> = new Set([
-  "api",
-  "internal",
-  "account",
-  "oauth",
-  "connect",
-]);
+/**
+ * What one row of ROUTES mounts. A mount registers whatever routes its segment serves and
+ * then CLAIMS the segment — `/<segment>` and everything under it — so the fallthrough can
+ * never see a reserved name. The claim is each mount's own act rather than a blanket loop
+ * over ROUTES, and that is deliberate: §16's walk is only worth running if a segment this
+ * table reserves and nothing serves is observably different from one that is served.
+ */
+type Mount = (app: Hono<{ Bindings: Env }>, segment: ServedSegment) => void;
 
-/** A route the table reserves and no dispatch has built yet. */
-const notImplemented = () => new Response("Not Implemented", { status: 501 });
+/**
+ * Segment → mount, exhaustive over ROUTES by type: a segment added to the table above with
+ * no mount here is a compile error, and a mount that claims nothing is caught at runtime by
+ * the router walk. The browser surface is one app (web.pageRoutes) that eight segments
+ * dispatch into whole; the four machine segments are mounted here because each is the
+ * composition root's own wiring of a sibling module.
+ */
+const MOUNTS: Record<ServedSegment, Mount> = {
+  login: browser,
+  device: browser,
+  account: browser,
+  audit: browser,
+  approvals: browser,
+  services: browser,
+  "manifest.webmanifest": browser,
+  "sw.js": browser,
+  "styles.css": browser,
 
-/** The §4/§13 guard on /account, in front of a page a later dispatch supplies. */
-async function accountGuard(c: { req: { raw: Request } }): Promise<Response> {
-  await requireOwnerSession(c.req.raw, { recent: true });
-  return notImplemented();
+  // better-auth's own surface (§4) and the CLI's one non-MCP data route (§8).
+  api: (app, segment) => {
+    app.route("/api/auth", authRoutes() as Hono);
+    app.route("/api", whoamiRoute() as Hono);
+    claim(app, segment, () => segmentNotFound(segment));
+  },
+
+  // §7's upstream-OAuth pair, both on the canonical public origin because both are URLs
+  // the hub PUT ON THE WIRE at Connect time: the CIMD document is the client_id itself,
+  // and the callback is the redirect_uri bound into every state row. The document is
+  // static and secret-free, so it is served unauthenticated; the callback enforces its own
+  // cookie-session gate inside `handleCallback` (§13), before it looks at `state` at all —
+  // which is why no page shell wraps it.
+  oauth: (app, segment) => {
+    app.get(CLIENT_METADATA_PATH, (c) => clientMetadata(new URL(c.env.PUBLIC_ORIGIN)));
+    app.get(OAUTH_CALLBACK_PATH, (c) => handleCallback(c.req.raw));
+    claim(app, segment, () => segmentNotFound(segment));
+  },
+
+  // §6: the reverse connection's one door. GET only — an upgrade is a GET — and the
+  // handler owns the whole 401/403/101 matrix, including what a request without
+  // `Upgrade: websocket` gets.
+  connect: (app, segment) => {
+    app.get("/connect", (c) => handleConnect(c.req.raw));
+    claim(app, segment, () => segmentNotFound(segment));
+  },
+
+  // §12: the bootstrap route EXISTS only while its secret does. Unset → the whole segment
+  // answers the one anonymous 404, which is the spec's "404 for everything" and the reason
+  // this segment claims itself rather than taking the shared tail. The secret is read here
+  // and passed in: no sibling names a binding.
+  internal: (app, segment) => {
+    claim(app, segment, (c) => {
+      const secret = c.env.BOOTSTRAP_SECRET;
+      if (!secret) return anonymousNotFound();
+      return bootstrapApp(secret).fetch(c.req.raw, c.env);
+    });
+  },
+};
+
+/** The browser surface: one Hono app (web.pageRoutes), handed every request under the
+ *  segments §13 gives it, including the ones it does not serve — its own 404 is the tail. */
+function browser(app: Hono<{ Bindings: Env }>, segment: ServedSegment): void {
+  claim(app, segment, (c) => (pages() as PageApp).fetch(c.req.raw, c.env));
+}
+
+/** web.pageRoutes as this module uses it: a fetch handler over the bindings. */
+type PageApp = { fetch(request: Request, env: Env): Promise<Response> };
+
+/** Built once per isolate, like the router it is mounted into. */
+let pageApp: unknown;
+function pages(): unknown {
+  return (pageApp ??= pageRoutes());
+}
+
+/** `/<segment>` and everything under it, answered by one handler — the claim §2 needs and
+ *  §16 walks. Registered after the segment's own routes, so those match first. */
+function claim(
+  app: Hono<{ Bindings: Env }>,
+  segment: ServedSegment,
+  handler: (c: { req: { raw: Request }; env: Env }) => Response | Promise<Response>,
+): void {
+  app.all(`/${segment}`, handler);
+  app.all(`/${segment}/*`, handler);
+}
+
+/**
+ * A path under a served segment. Deliberately NOT the hub's one anonymous 404: that answer
+ * exists so namespaces, services and unrouted paths are indistinguishable from each other,
+ * and a segment the public route table already names has nothing left to hide. Saying so is
+ * also what lets §16's walk tell "this segment is served" from "this segment is reserved and
+ * nothing answers it", which no shared 404 could.
+ */
+function segmentNotFound(segment: string): Response {
+  return new Response(`No such path under /${segment}\n`, {
+    status: 404,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
 }
 
 /**

@@ -37,19 +37,26 @@
 // and reference limits.APPROVAL_WINDOW_MS / RETENTION_DAYS by name, never a literal (§7).
 // Parallel, per-file isolation, order free.
 //
-// IMPLEMENTATION NOTE (2026-08-25), on the one bullet above that could not be built as
-// authored: the Web Push CRYPTO has no implementation to test. `webpush-webcrypto` is not a
-// dependency and this dispatch may add none, and the module header forbids hand-rolling
-// VAPID ES256 + RFC 8291 — so the transport is an injected seam (`ApprovalsConfig.push`:
-// one encrypted POST, one status back) and the fake here is that seam, not an
-// outboundService endpoint. What this file therefore still pins, and does: which
-// subscriptions a push reaches, that the PAYLOAD names service, tool and approval id and
-// carries no arguments, that a 404/410 prunes and nothing else does, and that a failing
-// push never fails the request. What it CANNOT yet pin, and leaves as the one `it.todo`
-// below: that the bytes on the wire are a verifiable VAPID JWT over an encrypted body.
-// That case becomes real when the transport lands, without moving anything else here.
+// IMPLEMENTATION NOTE (2026-08-26), superseding the 2026-08-25 one that parked the bullet
+// above: the transport landed (`src/push`, on webpush-webcrypto), so the decrypt case is
+// real and nothing else moved — every other case still runs against the seam
+// (`ApprovalsConfig.push`: one encrypted POST, one status back), whose fake is here rather
+// than at an outboundService endpoint. The split is deliberate: which subscriptions a push
+// reaches, that the PAYLOAD names service, tool and approval id and carries no arguments,
+// that a 404/410 prunes and nothing else does, and that a failing push never fails the
+// request are all decisions of `approvals`, and are pinned at the seam; only the one case
+// whose subject is the BYTES runs the real transport into a push service the suite plays
+// (harness/push-service.ts).
 //
-// deps: test/harness/seed (namespace, TWO services and TWO accounts — the second of each
+// Carried honestly from that transport: webpush-webcrypto@1.0.5 encrypts with the older
+// `aesgcm` content encoding rather than RFC 8291's `aes128gcm` (src/push's header states
+// the gap in full). The case below therefore decrypts what the sanctioned library actually
+// sends; its title's "RFC 8291" is the SPEC's requirement, not yet the wire's, and closing
+// that is a dependency decision above this file's pay grade.
+//
+// deps: test/harness/push-service (the push service the one decrypt case runs against) ·
+// server/src/push (pushSender — the real transport, wired only by that case) ·
+// test/harness/seed (namespace, TWO services and TWO accounts — the second of each
 // is what the `stored_under_other_*` rows move a stored row onto, and nothing else in this
 // file needs them) · server/src/approvals (Approvals) · server/src/registry (REDACTED,
 // Registry — the redaction paths under test) · server/src/audit (record: the REAL recorder
@@ -61,6 +68,7 @@ import { describe, expect, it } from "vitest";
 import { Approvals } from "../../src/approvals";
 import type {
   ApprovalClaim,
+  ApprovalsConfig,
   ApprovalStatus,
   CheckResult,
   PushSubscriptionJson,
@@ -69,8 +77,16 @@ import { record } from "../../src/audit";
 import type { JsonRpcResponse } from "../../src/gateway";
 import type { Principal } from "../../src/identity";
 import { APPROVAL_WINDOW_MS, RETENTION_DAYS } from "../../src/limits";
+import { pushSender } from "../../src/push";
 import { REDACTED, Registry } from "../../src/registry";
 import type { Service } from "../../src/registry";
+import {
+  decryptPushBody,
+  generateVapidPair,
+  pushService,
+  subscribeFakeBrowser,
+  verifyVapidJwt,
+} from "../harness/push-service";
 import { seedNamespace } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 
@@ -444,11 +460,15 @@ const BASE_ARGS = { query: "weather", secret: "FAKE0000-secret-a" };
 const VISIBLE_VARIANT = { query: "traffic", secret: "FAKE0000-secret-a" };
 const REDACTED_VARIANT = { query: "weather", secret: "FAKE0000-secret-b" };
 
-/** Never real keys: the transport seam is faked, so nothing here signs anything. */
+/** The `sub` claim a push service reads off the VAPID token — the hub's contact, never a secret. */
+const VAPID_SUBJECT = "mailto:owner@example.invalid";
+
+/** Never real keys: the transport seam is faked for every case but one, and a fake signs nothing.
+ *  The one case that runs the real transport generates its own throwaway pair (push-service.ts). */
 const FAKE_VAPID = {
   publicKey: "FAKE0000-vapid-public",
   privateKey: "FAKE0000-vapid-private",
-  subject: "mailto:owner@example.invalid",
+  subject: VAPID_SUBJECT,
 };
 
 /** The three raw responses settle judges, by the shapes ApprovalSettleRow names. */
@@ -486,7 +506,14 @@ type Fixture = {
   principal(slug: string): Principal;
 };
 
-async function fixture(): Promise<Fixture> {
+/**
+ * The two wires the push-decrypt case replaces: a generated VAPID pair in place of the
+ * unusable fake, and the REAL transport in place of the seam's recorder. Nothing else is
+ * overridable — every other case reads the world this fixture builds.
+ */
+type FixtureWiring = { vapid?: ApprovalsConfig["vapid"]; push?: ApprovalsConfig["push"] };
+
+async function fixture(wiring?: FixtureWiring): Promise<Fixture> {
   const ns = await seedNamespace(env.DB, {
     services: [
       { slug: "news", kind: "tunnel" },
@@ -511,15 +538,17 @@ async function fixture(): Promise<Fixture> {
     // The REAL recorder against the real table (§9: siblings are never faked) — the audit
     // assertions below read the rows it wrote, not a spy's array.
     audit: { record: (entry) => record(env.DB, entry) },
-    vapid: FAKE_VAPID,
+    vapid: wiring?.vapid ?? FAKE_VAPID,
     retentionDays: RETENTION_DAYS,
     now: () => clock.now,
-    push: async (subscription, payload) => {
-      sent.push({ endpoint: subscription.endpoint, payload });
-      const answer = pushAnswers.get(subscription.endpoint) ?? 201;
-      if (answer === "reject") throw new Error("fake push service: connection reset");
-      return { status: answer };
-    },
+    push:
+      wiring?.push ??
+      (async (subscription, payload) => {
+        sent.push({ endpoint: subscription.endpoint, payload });
+        const answer = pushAnswers.get(subscription.endpoint) ?? 201;
+        if (answer === "reject") throw new Error("fake push service: connection reset");
+        return { status: answer };
+      }),
   });
 
   return {
@@ -1078,10 +1107,54 @@ describe("§7 · decide, list, and lazy expiry", () => {
 });
 
 describe("§13/§15 · notifying the owner", () => {
-  // PARKED, not skipped: there is no VAPID/RFC 8291 implementation to decrypt yet (see the
-  // header note). The payload half of what it asserts — service, tool, id, and no arguments
-  // — is pinned by the case below it, at the transport seam.
-  it.todo("§13 · the push payload decrypts in-test: the VAPID ES256 JWT verifies against the configured key and subject, and the RFC 8291 body decrypts to service, tool and approval id — and carries no arguments, redacted or otherwise");
+  // The one case in this file that runs the REAL transport (src/push) instead of the seam's
+  // fake, because it is the only one whose subject is the bytes. Everything else here stays
+  // at the seam: what a 404 prunes and which subscriptions a push reaches are decisions of
+  // approvals, not of the encoding.
+  it("§13 · the push payload decrypts in-test: the VAPID ES256 JWT verifies against the configured key and subject, and the RFC 8291 body decrypts to service, tool and approval id — and carries no arguments, redacted or otherwise", async () => {
+    const vapid = { ...(await generateVapidPair()), subject: VAPID_SUBJECT };
+    const pushed = pushService();
+    const fx = await fixture({ vapid, push: pushSender(vapid, pushed.fetch) });
+    const browser = await subscribeFakeBrowser(endpoint("phone"));
+    await fx.approvals.subscribePush(fx.ownerId, browser.subscription);
+
+    const opened = await check(fx, BASE_ARGS);
+    if (opened.outcome !== "required") throw new Error("fixture: a first call must answer required");
+
+    expect(pushed.posted).toHaveLength(1);
+    const [posted] = pushed.posted;
+    expect(posted.endpoint).toBe(endpoint("phone"));
+
+    // The hub's identity to the push service: ES256 over the endpoint's ORIGIN (a token
+    // minted for one service is not reusable at another) claiming the configured subject.
+    const claims = await verifyVapidJwt(posted.headers.Authorization, vapid.publicKey);
+    expect(claims.aud).toBe(new URL(endpoint("phone")).origin);
+    expect(claims.sub).toBe(VAPID_SUBJECT);
+    // The one assertion in this file judged against the WALL clock, and deliberately: the
+    // token's `exp` is minted by the crypto library from `Date.now()`, which no seam here
+    // injects — so comparing it to the injected clock would compare two different times.
+    expect(claims.exp * 1000).toBeGreaterThan(Date.now());
+    // The oracle has teeth: the same token against another VAPID key is a refusal, so the
+    // verification above is the CONFIGURED key's, not any key's.
+    const stranger = await generateVapidPair();
+    await expect(verifyVapidJwt(posted.headers.Authorization, stranger.publicKey)).rejects.toThrow();
+
+    // Nothing readable rests on the third-party service: the id is not in the bytes.
+    expect(new TextDecoder().decode(posted.body)).not.toContain(opened.approvalId);
+
+    // And with the subscription's own keys it opens — to service, tool and id, exactly as
+    // the seam-level case above pins it, and to nothing else (§15).
+    const plaintext = await decryptPushBody(posted, browser);
+    expect(JSON.parse(plaintext)).toEqual({
+      approvalId: opened.approvalId,
+      service: "news",
+      tool: TOOL,
+      url: `${PUBLIC_ORIGIN}/approvals/${opened.approvalId}`,
+    });
+    expect(plaintext).not.toContain("weather");
+    expect(plaintext).not.toContain("FAKE0000-secret-a");
+    expect(plaintext).not.toContain(REDACTED);
+  });
 
   it("§13 · a 404/410 from the push service prunes that subscription row; any other failure leaves it (a flaky push service must not unsubscribe the owner)", async () => {
     const fx = await fixture();

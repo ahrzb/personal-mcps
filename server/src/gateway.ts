@@ -23,17 +23,18 @@
 // and swapping createMcpHandler in later is an edit to `mcpMessage`/`route` alone.
 
 import { adminBackend, BUILTIN_LOG_BODIES } from "./admin";
-import { Approvals } from "./approvals";
-import type { ApprovalClaim, CheckResult } from "./approvals";
-import { config as auditConfig, record } from "./audit";
+import type { ApprovalClaim, Approvals, CheckResult } from "./approvals";
+import { record } from "./audit";
 import type { BodyStub } from "./audit";
 import { archived, CODES, HubError, notPermitted, unavailable } from "./errors";
 import { formatPrincipal } from "./principal";
 import type { Principal } from "./principal";
+import { pushSender } from "./push";
 import { applyRedaction, PMCP_SLUG, Registry } from "./registry";
 import type { Service } from "./registry";
 import { status as tunnelStatus, tunnelBackend } from "./tunnel";
 import { availability, upstreamBackend } from "./upstream";
+import { approvalsFromEnv, vapidFromEnv } from "./wiring";
 import type { Env } from "./index";
 import { AGGREGATED_LIST_DEADLINE_MS } from "./limits";
 
@@ -638,7 +639,7 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
     const forwarded = prepareForward({ ...msg, params: { ...msg.params, name: tool } }, serviceCtx);
     const relayed = await backend.call(service, forwarded, serviceCtx);
     // An MRTR input_required leg restores the pass; anything else leaves it spent.
-    if (claim) await approvalsFor(env).settle(claim, relayed);
+    if (claim) await approvalsFor().settle(claim, relayed);
     // The hub's own outcome vocabulary (§15): a service that answered with a JSON-RPC
     // error was still reached, and `error` — not one of the hub's refusal codes — is
     // what that is.
@@ -691,7 +692,7 @@ async function passGate(
   redactPaths: string[],
   principal: Principal,
 ): Promise<ApprovalClaim> {
-  const gate = approvalsFor(env);
+  const gate = approvalsFor();
   const args = argumentsOf(msg);
 
   let verdict = await gate.check(principal, service, tool, args, redactPaths);
@@ -818,47 +819,14 @@ async function recordCall(
 }
 
 /**
- * The approval gate, wired from the composition root's env. Built per request because
- * every binding it closes over is (D1 especially); the clock is the real one — only
- * tests inject another, and they construct their own.
+ * The approval gate, built per request because every binding it closes over is (D1
+ * especially). The ONE thing this site says for itself is the transport: the gateway is
+ * where `check` opens a pending row, so the gateway is the only construction that can
+ * notify the owner. The keys ride in the closure rather than through the seam, which is
+ * passed only (subscription, payload) — src/push.
  */
-function approvalsFor(env: Env): Approvals {
-  return new Approvals({
-    db: env.DB,
-    publicOrigin: env.PUBLIC_ORIGIN,
-    audit: { record: (entry) => record(env.DB, entry) },
-    vapid: {
-      publicKey: env.VAPID_PUBLIC_KEY,
-      privateKey: env.VAPID_PRIVATE_KEY,
-      subject: env.PUBLIC_ORIGIN,
-    },
-    retentionDays: auditConfig().retentionDays,
-    now: Date.now,
-    push: sendPush,
-  });
-}
-
-/**
- * The Web Push TRANSPORT (§13): one POST per subscription, answering the push service's
- * status so approvals can prune dead endpoints.
- *
- * ponytail: RFC 8291 payload encryption and the VAPID ES256 signature belong to a
- * library (§7 names webpush-webcrypto) that this repo does not depend on yet, so this is
- * a bare POST — real push services will refuse it, which is why push is best-effort by
- * contract and a refusal never fails the request that created the row. The payload
- * carries only what §15 already permits on a third-party service (service, tool, id,
- * link) and never arguments. Swap in the library and this function is the only edit.
- */
-async function sendPush(
-  subscription: { endpoint: string },
-  payload: string,
-): Promise<{ status: number }> {
-  const response = await fetch(subscription.endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", TTL: "60" },
-    body: payload,
-  });
-  return { status: response.status };
+function approvalsFor(): Approvals {
+  return approvalsFromEnv({ push: pushSender(vapidFromEnv()) });
 }
 
 /**

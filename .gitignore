@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 .secrets
 .env
+
+# operator-local token stash — never committed
+.tokens

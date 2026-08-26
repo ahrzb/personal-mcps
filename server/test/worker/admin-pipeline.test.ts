@@ -323,11 +323,6 @@ async function fixture(): Promise<Hub> {
     db: env.DB,
     publicOrigin: ORIGIN,
     audit: { record: async () => {} },
-    vapid: {
-      publicKey: "FAKE0000-vapid-public",
-      privateKey: "FAKE0000-vapid-private",
-      subject: "mailto:fake@pmcp-test.invalid",
-    },
     retentionDays: 7,
     now: Date.now,
   }).subscribePush(ns.owner.userId, {

@@ -1070,13 +1070,6 @@ const UPSTREAM_TOOLS = [
 /** The obviously-fake headers sealed into the credential envelope — see buildFixture. */
 const FAKE_UPSTREAM_HEADERS = { "X-Fixture-Token": "FAKE0000-upstream-header" };
 
-/** VAPID keys the seeding gate never signs anything with: it wires no push transport. */
-const FAKE_VAPID = {
-  publicKey: "FAKE0000-vapid-public",
-  privateKey: "FAKE0000-vapid-private",
-  subject: "mailto:fake@pmcp-test.invalid",
-};
-
 /** A method the hub serves on neither shape — the -32601 rows' `other`. */
 const UNSERVED_METHOD = "resources/list";
 
@@ -1111,7 +1104,6 @@ function seedingGate(now: () => number): Approvals {
     db: env.DB,
     publicOrigin: ORIGIN,
     audit: { record: async () => {} },
-    vapid: FAKE_VAPID,
     retentionDays: 7,
     now,
   });

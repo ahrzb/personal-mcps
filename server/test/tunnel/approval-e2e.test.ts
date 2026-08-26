@@ -91,7 +91,11 @@ export type CasLeg = "A" | "B" | "C";
  *   approvals.check, so a leg is fired at its first step's index and this step's POSITION
  *   is its whole effect. Two consecutive `checked` steps therefore enter in one tick,
  *   which is what "both check the same pass before either claims" means on a cooperative
- *   runtime.
+ *   runtime — and which of the two then WINS the claim is the runtime's answer, not the
+ *   row's: the legs are identical calls and the winner is decided by the scheduling of
+ *   six D1/DO round trips. Their outcomes are compared as a multiset for that reason
+ *   (entryCohorts); a row must not encode an ordering whose only expression is which
+ *   letter it wrote first.
  * · `claimed` is a BARRIER, not a per-leg release: the runner waits until the named leg
  *   has settled or a frame has reached the service, which is as close to "past the claim"
  *   as an observer outside approvals can get. On a multi-leg row a later `claimed` can
@@ -460,8 +464,15 @@ export async function runCasInterleaving(
   const answers = new Map<CasLeg, Answer>();
   for (const [leg, entry] of legs) answers.set(leg, await entry.promise);
 
-  for (const [leg, expected] of Object.entries(row.outcomes) as [CasLeg, CasOutcome][]) {
-    expect(outcomeOf(answers.get(leg)), `"${row.name}": leg ${leg}`).toBe(expected);
+  // Per leg where a step ordered the legs; as a MULTISET inside a cohort the runner cannot
+  // order (entryCohorts) — "one of these executed and the rest were refused" is the claim
+  // §7 step 1 makes, and naming the winner is a claim about workerd's scheduler.
+  for (const cohort of entryCohorts(row, start)) {
+    const seen = cohort.map((leg) => outcomeOf(answers.get(leg))).sort();
+    const expected = cohort.map((leg) => row.outcomes[leg] as CasOutcome).sort();
+    expect(seen, `"${row.name}": leg${cohort.length > 1 ? "s" : ""} ${cohort.join("+")}`).toEqual(
+      expected,
+    );
   }
   // The exactly-once oracle, counted by the executing end and by nothing else.
   expect(servedCalls(fixture), `"${row.name}": invocations`).toBe(row.invocations);
@@ -469,6 +480,31 @@ export async function runCasInterleaving(
   expect((await approvalRow(fixture, trackedId)).status, `"${row.name}": final status`).toBe(
     row.finalStatus,
   );
+}
+
+/**
+ * The legs of a row grouped by what the runner can actually order. `checked` is the only
+ * step that does not await (see CasStep), so legs whose entries are separated by nothing
+ * but `checked` steps are fired in ONE tick: identical calls racing the same CAS, where
+ * which one wins is the runtime's scheduling of six D1 and DO round trips and not
+ * anything §7 says. Their outcomes are therefore compared as a multiset. Legs separated
+ * by any other step were really ordered — a barrier, a decision, a socket going away —
+ * and keep their per-leg assignment, which is what stops the owner-decides-between-two-
+ * legs rows from going green on a hub that dispatched before the decision.
+ */
+function entryCohorts(row: CasInterleavingRow, start: Map<CasLeg, number>): CasLeg[][] {
+  const ordered = [...row.legs].sort((a, b) => (start.get(a) ?? 0) - (start.get(b) ?? 0));
+  const cohorts: CasLeg[][] = [];
+  let previous = -1;
+  for (const leg of ordered) {
+    const at = start.get(leg) ?? 0;
+    const sameTick =
+      previous >= 0 && row.schedule.slice(previous + 1, at + 1).every((step) => step.at === "checked");
+    if (sameTick) cohorts[cohorts.length - 1].push(leg);
+    else cohorts.push([leg]);
+    previous = at;
+  }
+  return cohorts;
 }
 
 /** §9 rule 2 as a checked property of the table: `twin` resolves HERE, as a lookup, and
@@ -746,7 +782,6 @@ function approvals(now: () => number = Date.now): Approvals {
     db: env.DB,
     publicOrigin: ORIGIN,
     audit: { record: (entry) => record(env.DB, entry) },
-    vapid: { publicKey: "", privateKey: "", subject: ORIGIN },
     retentionDays: auditConfig().retentionDays,
     now,
   });

@@ -108,16 +108,16 @@ export type PushSubscriptionJson = {
  * environment therefore lives in wiring.ts, not here, and every production site goes
  * through `wiring.approvalsFromEnv`. The fields: the control-plane D1 binding;
  * the canonical public origin (the root owns the origin, this module owns the
- * `/approvals/<id>` path built on it); the audit recorder, which is AWAITED — a
- * failed audit write fails the request; and the VAPID keypair from Worker
- * secrets (`subject` is the `mailto:`/URL claim pushed services require).
+ * `/approvals/<id>` path built on it); and the audit recorder, which is AWAITED
+ * — a failed audit write fails the request. The VAPID identity is not here: it
+ * is closed over by the `push` sender (see push.ts), so this module never holds
+ * a key it does not use.
  */
 export type ApprovalsConfig = {
   db: D1Database;
   /** Scheme + host only, no trailing slash — e.g. "https://mcp.example.com". */
   publicOrigin: string;
   audit: { record(entry: AuditEntry): Promise<void> };
-  vapid: { publicKey: string; privateKey: string; subject: string };
   /**
    * Retention in days, resolved once by the composition root (AUDIT_RETENTION_DAYS
    * env var or limits.RETENTION_DAYS): approval rows age out on audit's schedule

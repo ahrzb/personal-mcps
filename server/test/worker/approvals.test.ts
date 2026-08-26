@@ -463,14 +463,6 @@ const REDACTED_VARIANT = { query: "weather", secret: "FAKE0000-secret-b" };
 /** The `sub` claim a push service reads off the VAPID token — the hub's contact, never a secret. */
 const VAPID_SUBJECT = "mailto:owner@example.invalid";
 
-/** Never real keys: the transport seam is faked for every case but one, and a fake signs nothing.
- *  The one case that runs the real transport generates its own throwaway pair (push-service.ts). */
-const FAKE_VAPID = {
-  publicKey: "FAKE0000-vapid-public",
-  privateKey: "FAKE0000-vapid-private",
-  subject: VAPID_SUBJECT,
-};
-
 /** The three raw responses settle judges, by the shapes ApprovalSettleRow names. */
 const RAW_RESPONSES: Record<ApprovalSettleRow["raw"], JsonRpcResponse> = {
   result_complete: { jsonrpc: "2.0", id: 1, result: { resultType: "complete", content: [] } },
@@ -507,11 +499,11 @@ type Fixture = {
 };
 
 /**
- * The two wires the push-decrypt case replaces: a generated VAPID pair in place of the
- * unusable fake, and the REAL transport in place of the seam's recorder. Nothing else is
- * overridable — every other case reads the world this fixture builds.
+ * The one wire the push-decrypt case replaces: the REAL transport in place of the seam's
+ * recorder (it closes over its own generated VAPID pair). Nothing else is overridable —
+ * every other case reads the world this fixture builds.
  */
-type FixtureWiring = { vapid?: ApprovalsConfig["vapid"]; push?: ApprovalsConfig["push"] };
+type FixtureWiring = { push?: ApprovalsConfig["push"] };
 
 async function fixture(wiring?: FixtureWiring): Promise<Fixture> {
   const ns = await seedNamespace(env.DB, {
@@ -538,7 +530,6 @@ async function fixture(wiring?: FixtureWiring): Promise<Fixture> {
     // The REAL recorder against the real table (§9: siblings are never faked) — the audit
     // assertions below read the rows it wrote, not a spy's array.
     audit: { record: (entry) => record(env.DB, entry) },
-    vapid: wiring?.vapid ?? FAKE_VAPID,
     retentionDays: RETENTION_DAYS,
     now: () => clock.now,
     push:
@@ -1114,7 +1105,7 @@ describe("§13/§15 · notifying the owner", () => {
   it("§13 · the push payload decrypts in-test: the VAPID ES256 JWT verifies against the configured key and subject, and the RFC 8291 body decrypts to service, tool and approval id — and carries no arguments, redacted or otherwise", async () => {
     const vapid = { ...(await generateVapidPair()), subject: VAPID_SUBJECT };
     const pushed = pushService();
-    const fx = await fixture({ vapid, push: pushSender(vapid, pushed.fetch) });
+    const fx = await fixture({ push: pushSender(vapid, pushed.fetch) });
     const browser = await subscribeFakeBrowser(endpoint("phone"));
     await fx.approvals.subscribePush(fx.ownerId, browser.subscription);
 

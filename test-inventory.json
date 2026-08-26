@@ -523,6 +523,7 @@
     "§7 step 1–2 · check decides without consuming §7 step 4 · a row already stored `expired` re-requests without a second approval.expired": "passed"
   },
   "server/test/worker/auth-matrix.test.ts": {
+    "§12 — the bootstrap route exists only while its secret does §12 · anonymous POST /api/auth/sign-up/email cannot create a user": "passed",
     "§12 — the bootstrap route exists only while its secret does §12 · with BOOTSTRAP_SECRET unset, every request 404s — indistinguishable from an unknown path": "passed",
     "§12 — the bootstrap route exists only while its secret does §12 · with the secret set, a wrong secret is refused": "passed",
     "§12 — the bootstrap route exists only while its secret does §12 · with the secret set, the correct secret is admitted (the twin)": "passed",
@@ -950,6 +951,8 @@
     "§13 · CSRF on every mutating POST 3. §13 · a token minted under a different cookie session is 403, handler not invoked": "passed",
     "§13 · CSRF on every mutating POST 4. §13 · every mutating form the pages render carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one": "passed",
     "§13 · CSRF on every mutating POST 5. §13 · /audit renders no mutating form and needs no token (no mutations, no CSRF surface)": "passed",
+    "§13 · the bare root sends people where they can act GET / with an owner cookie → 302 /services": "passed",
+    "§13 · the bare root sends people where they can act GET / with no session → 302 /login": "passed",
     "§4/§13 · cookie sessions are the only page credential 6. §4 · a bearer-sourced (device-flow) session is refused on /account · a browser session renders it (the twin — the guard is about provenance, not about being logged out)": "passed",
     "§4/§13 · cookie sessions are the only page credential 7. §7 · an Authorization: Bearer header with no cookie opens no page — bearer tokens are never consulted on page routes": "passed",
     "§4/§13 · cookie sessions are the only page credential 8. §13 · /approvals/<id> for another namespace's approval refuses · the owner's own id renders (owner-only, and indistinguishable from a nonexistent id)": "passed",

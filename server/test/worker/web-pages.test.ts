@@ -230,7 +230,6 @@ async function openApproval(ns: SeededNamespace, slug: string): Promise<string> 
     db: env.DB,
     publicOrigin: ORIGIN,
     audit: { record: (entry) => record(env.DB, entry) },
-    vapid: { publicKey: "FAKE0000-vapid-public", privateKey: "FAKE0000-vapid-private", subject: ORIGIN },
     retentionDays: 7,
     now: Date.now,
   });
@@ -484,6 +483,22 @@ const times = (invocations: Map<string, unknown[]>, name: string): number =>
 /* ------------------------------------------------------------------ *
  * The cases
  * ------------------------------------------------------------------ */
+
+describe("§13 · the bare root sends people where they can act", () => {
+  // `/` names no segment, so it must not 404: a signed-in owner lands on their services,
+  // an anonymous visitor on sign-in. Both are 302s, driven through the real composition root.
+  it("GET / with an owner cookie → 302 /services", async () => {
+    const response = await call(new Request(`${ORIGIN}/`, { headers: { Cookie: world.session.cookie } }));
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/services");
+  });
+
+  it("GET / with no session → 302 /login", async () => {
+    const response = await call(new Request(`${ORIGIN}/`));
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe("/login");
+  });
+});
 
 describe("§13 · CSRF on every mutating POST", () => {
   it("1. §13 · a mutating POST with no CSRF field is 403 AND the substituted ops handler was never invoked (a rejected-but-executed mutation is the bug this case exists for)", async () => {

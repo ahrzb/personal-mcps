@@ -553,11 +553,6 @@ function approvalsAt(now: () => number, retentionDays = RETENTION_DAYS): Approva
     db: env.DB,
     publicOrigin: ORIGIN,
     audit: { record: (entry) => record(env.DB, entry) },
-    vapid: {
-      publicKey: "FAKE0000-vapid-public",
-      privateKey: "FAKE0000-vapid-private",
-      subject: ORIGIN,
-    },
     retentionDays,
     now,
     // No transport: a sweep fixture must not depend on a push service answering.

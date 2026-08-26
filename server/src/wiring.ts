@@ -34,12 +34,11 @@ import type { VapidKeys } from "./push";
  * everywhere, and is therefore said nowhere but here.
  */
 export function approvalsFromEnv(overrides: Partial<ApprovalsConfig> = {}): Approvals {
-  // deps: cloudflare:workers env (DB, PUBLIC_ORIGIN) · audit.record · audit.config · vapidFromEnv
+  // deps: cloudflare:workers env (DB, PUBLIC_ORIGIN) · audit.record · audit.config
   return new Approvals({
     db: env.DB,
     publicOrigin: env.PUBLIC_ORIGIN,
     audit: { record: (entry) => record(env.DB, entry) },
-    vapid: vapidFromEnv(),
     retentionDays: auditConfig().retentionDays,
     now: Date.now,
     ...overrides,
@@ -49,9 +48,8 @@ export function approvalsFromEnv(overrides: Partial<ApprovalsConfig> = {}): Appr
 /**
  * The VAPID identity a hub pushes under (§13), from the secrets that hold it. The ONE read
  * of VAPID_PRIVATE_KEY in the worker, which is what makes "where does the signing key
- * flow" answerable by listing this function's callers: the config above, and the transport
- * the gateway closes over (push.pushSender). The shape is push.ts's, because that module
- * is what signs with it.
+ * flow" answerable by listing this function's one caller: the transport the gateway closes
+ * over (push.pushSender). The shape is push.ts's, because that module is what signs with it.
  */
 export function vapidFromEnv(): VapidKeys {
   // deps: cloudflare:workers env (VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, PUBLIC_ORIGIN)

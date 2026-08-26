@@ -17,6 +17,7 @@ import {
   anonymousNotFound,
   authRoutes,
   bootstrapRoute,
+  requireOwnerSession,
   resolvePrincipal,
   unauthorized,
   USERNAME_CHARSET,
@@ -325,6 +326,15 @@ function buildRouter(): Hono<{ Bindings: Env }> {
   // bytes. "Indistinguishable from route-not-found" is only true if it is the same
   // Response, so identity builds it and this is where the router agrees to use it.
   app.notFound(() => anonymousNotFound());
+
+  // Bare `/` is the one URL a person types by hand; it names no segment, so without this it
+  // falls through to the anonymous 404. A read-only peek at the cookie session (the same
+  // seam every page gates on, which returns on a real owner session and throws the login
+  // bounce otherwise) sends a signed-in owner to their services and everyone else to sign
+  // in. Not a ROUTES segment — "" is no username — so the §16 walk is untouched.
+  app.get("/", async (c) =>
+    c.redirect(await requireOwnerSession(c.req.raw).then(() => "/services", () => "/login"), 302),
+  );
 
   // Every segment the route table names, mounted from the table itself — and each mount
   // CLAIMS its whole subtree (see `claim`), which is what the §16 router walk observes.

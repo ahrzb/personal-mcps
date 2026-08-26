@@ -718,11 +718,6 @@ async function openPendingApproval(ns: SeededNamespace): Promise<string> {
     db: env.DB,
     publicOrigin: "https://admin-ops.pmcp-test.invalid",
     audit: { record: async () => {} },
-    vapid: {
-      publicKey: "FAKE0000-vapid-public",
-      privateKey: "FAKE0000-vapid-private",
-      subject: "mailto:fake@pmcp-test.invalid",
-    },
     retentionDays: 7,
     now: Date.now,
   });

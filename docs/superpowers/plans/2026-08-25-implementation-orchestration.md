@@ -126,7 +126,7 @@ the failure is a spec question, not an execution one.
 | D6 | Tunnel DO + contracts + approval e2e | workflow | **gated ✓** (`f4370c9`+`eb0d5f1`) |
 | D7 | First deploy + live wire (initialize, smoke.ts, thin tunnel client) | workflow + inline | **gated ✓** (`042aa96`, SMOKE PASS 22/22 live) |
 | D8 | CLI + JS/Python clients, against the live hub | workflow | **gated ✓** (`80860c2`+`c308190` spec, SMOKE PASS 24/24 live) |
-| D9 | Web surface wiring + Web Push | workflow | in flight |
+| D9 | Web surface wiring + Web Push | workflow | **gated ✓** (`59264a5`, deploy `b0853623`, SMOKE PASS 25/25 live) |
 | D10 | Final sweep (zero-todo, cross-module PSD, cost actuals) | workflow + inline | outline |
 
 Order is dependency-driven: nothing waits on anything it doesn't consume. D2–D3
@@ -788,3 +788,48 @@ check and (manual, once) a real push notification to a real browser.
   service-list/account-list (the CONTRACT_FAMILIES consumers row is
   owner-authored data); the yaml-package swap stays a one-line upgrade.
   Committed `80860c2`; D9 launched immediately.
+- 2026-08-26 13:25 — **D9 gated, plus the user-driven profiles dispatch — one
+  combined gate. The suite is at zero: 899/899, no todo, no skip, no fail**
+  (D10's first criterion met a dispatch early); pytest 58; tsc 0; deployed
+  `b0853623`; SMOKE PASS 25/25 against production including the page leg.
+  D9 (workflow `wf_1d5bdd17-f9a`, 5 agents, ~1.14M tokens): all eight pages
+  get real loaders in pages/model.ts (fixture seam retired, templates
+  byte-untouched as fenced); web.ts's five mutations share one mutation()
+  gate; index.ts mounts from a MOUNTS table so §16's walk derives
+  RESERVED_ROUTES (13 segments — styles.css rides the bundle via a Text rule;
+  spec §2 amended `f69a4c1`); identity.callAuth is §4's custodianship as a
+  function; wiring.ts reads VAPID_PRIVATE_KEY in exactly one place. Push is
+  real VAPID ES256 + encrypted body, proven by a suite that plays the push
+  service (wrong key REJECTS; plaintext exactly {approvalId, service, tool,
+  url}; ciphertext opaque). Production VAPID pair regenerated in the tested
+  raw-scalar form (the format blocker closed). KNOWN CEILING recorded in
+  push.ts: webpush-webcrypto speaks draft-04 aesgcm, not RFC 8291 — Apple
+  Web Push will refuse; D10 decides (library swap vs accept). PSD: 9
+  findings, 6 designs applied incl. two repairs of PRE-EXISTING breakage my
+  own operator commits caused (users.mts made `../users` ambiguous;
+  developer .env leaked BOOTSTRAP_SECRET into the unset-row) — lesson
+  absorbed: owner-convenience commits get a suite run too. Escalations
+  parked to D10: dead ApprovalsConfig.vapid field (11 sites, locked files);
+  audit-page chevron (template-locked); manifest icons; /device §5.4 gap;
+  /account's three unsourceable fields; AUDIT_SCAN_ROWS ceiling.
+  **THE SHIPPED BUG:** the pages lane's highest blocker — credential forms
+  post form-encoded, better-auth accepts only JSON, so web login 415s — was
+  gated as a D10 work item, and the USER HIT IT LIVE the same hour (account
+  `ahrzb` exists, created via pnpm users). Promoted immediately: a login-fix
+  agent is in flight (hub-side translation routes over identity.callAuth,
+  plus the missing oracle class). Root cause written into testing-strategy
+  §9 rule 4: the CSRF walk excluded /login, the parity walk excluded
+  better-auth forms — two principled exclusions intersecting to an unwalked
+  front door; henceforth exclusions are enumerated and spent, and every
+  rendered form gets a submitted-as-the-browser case, third-party action or
+  not. Profiles dispatch (`wf_d7bed4f4-d1d`, spec-first `ac4b335`, committed
+  `5f5da04`): ~/.config/pmcp/config.toml with [profiles.*] tables via a
+  hand-rolled TOML subset; --profile > PMCP_PROFILE > file default >
+  "default"; per-profile login/logout; 15 cases. Operator setup done: config
+  file holds prod+local, .dev.vars created (dev-only secrets incl. a local
+  VAPID pair), .env DELETED (it was overriding profiles — env always wins),
+  smoke joined applyProfile post-gate. Inventory: 34 flips + 15 additions,
+  0 removals, 0 regressions. approval-e2e CAS case 9 flaked once more under
+  concurrent-agent load (cleared unchanged) — the D10 investigation stands.
+  Commits: `ac4b335`+`f69a4c1` (spec), `5f5da04` (profiles), `59264a5` (D9),
+  this entry + strategy rule + inventory close the gate.

@@ -29,6 +29,17 @@
     "§4 direction D · the dispatcher answers to the command table §4 · every non-auth row of COMMANDS has argv here — a subcommand added to the table without a way to run it would leave its `ops` unwitnessed": "passed",
     "§4 direction D · the dispatcher answers to the command table §9 · `apply` executes the planner's steps in plan order — deletes before creates before updates before grants — so the ops its row claims are also the sequence a namespace actually receives": "passed"
   },
+  "cli/test/config.test.ts": {
+    "§10 · the flat config.json left over from before profiles §10 · an existing flat `config.json` reads as profile `default` and is superseded by the next write: the session survives the upgrade, config.toml appears, and the json is left behind untouched": "passed",
+    "§10 · what `login` and `logout` write §10 · `login --profile local` writes url+token into that profile ALONE: the other profile keeps its token, the top-level default is untouched, and a hand-written `bootstrap_secret` survives the write": "passed",
+    "§10 · what `login` and `logout` write §10 · `logout` clears the active profile's token and only that one: the other hub stays logged in, and the hand-written `bootstrap_secret` beside the cleared token survives": "passed",
+    "§10 · what `login` and `logout` write §10 · the first-ever write also sets the top-level default — a machine with one profile should not need the flag twice — and the second login leaves that default alone": "passed",
+    "§10 · which profile is active §10 · a profile that is logged out fails as not-logged-in and NAMES it, and a profile that does not exist fails before any request — a `--profile` typo never reaches a hub as somebody else": "passed",
+    "§10 · which profile is active §10 · the environment stays flat and profile-free: PMCP_URL and PMCP_TOKEN override whatever the active profile resolved, so a one-off command against another hub needs no file at all": "passed",
+    "§10 · which profile is active §10 · the precedence chain end to end: `--profile` beats PMCP_PROFILE beats the file's top-level `profile` key beats the name `default` — four hubs, and each invocation reaches exactly one of them": "passed",
+    "§12 · the `pnpm users` bridge §12 · a leading `--profile <name>` is consumed before users.ts sees argv, and fills PMCP_URL and BOOTSTRAP_SECRET from that profile — the operator stops exporting two variables to talk to the dev box": "passed",
+    "§12 · the `pnpm users` bridge §12 · the environment wins where it already spoke, and a machine with no config file is left exactly as it was — today's env-only invocation keeps working": "passed"
+  },
   "cli/test/plan.test.ts": {
     "parseDesired · defaults and grammar (§9, §15) §15 · log_bodies defaults by kind (tunnel true, proxy false), and an explicit value overrides the kind default in both directions": "passed",
     "parseDesired · defaults and grammar (§9, §15) §9 · `reader:approval` splits into approval mode; bare `reader` is allow — role names carry no colon, so the split is unambiguous": "passed",
@@ -64,6 +75,14 @@
     "planChanges · the steps a difference produces (§8, §9) §9 · proxy-only fields (endpoint, auth, forward_identity, roles) are diffed like any other field": "passed",
     "planChanges · the steps a difference produces (§8, §9) §9 · server-only service and server-only account → service_delete /account_delete, both flagged destructive (grants cascade, tokens deleted)": "passed",
     "planChanges · the steps a difference produces (§8, §9) §9/§15 · a change in redact, redact_results, or log_bodies alone plans a service_update — either kind": "passed"
+  },
+  "cli/test/toml.test.ts": {
+    "emitToml · the file the CLI writes back §10 · a round trip keeps every key, the ones this subset knows nothing about included: a hand-written key beside `bootstrap_secret` survives the login that rewrites the file": "passed",
+    "emitToml · the file the CLI writes back §10 · emit is canonical: `profile` first, then one table per profile in a stable order with `url`, `token`, `bootstrap_secret` in that order — the file a human reads twice looks the same twice": "passed",
+    "parseToml · §10's config file format §10 · a `#` inside a quoted value belongs to the value: a token or a URL fragment is never truncated into half a credential": "passed",
+    "parseToml · §10's config file format §10 · a line the subset does not understand is refused by LINE NUMBER and by nothing else — the message never echoes the line, because every line of this file is a live credential": "passed",
+    "parseToml · §10's config file format §10 · quoted strings are the only values there are: a bare word, a number, or a bare `true` is a refusal rather than a guess": "passed",
+    "parseToml · §10's config file format §10 · the whole vocabulary in one file: a top-level key, `[profiles.<name>]` tables, `#` comments both on their own line and trailing a value, blank lines and stray indentation": "passed"
   },
   "cli/test/yaml.test.ts": {
     "parseYaml · §9's file format §9 · block mappings nest by indentation, flow lists and block lists mean the same thing, and `#` comments never reach a value": "passed",
@@ -468,7 +487,7 @@
   "server/test/worker/approvals.test.ts": {
     "§13/§15 · notifying the owner §13 · a 404/410 from the push service prunes that subscription row; any other failure leaves it (a flaky push service must not unsubscribe the owner)": "passed",
     "§13/§15 · notifying the owner §13 · subscribePush upserts on endpoint — the same browser re-subscribing replaces its row, never duplicates it": "passed",
-    "§13/§15 · notifying the owner §13 · the push payload decrypts in-test: the VAPID ES256 JWT verifies against the configured key and subject, and the RFC 8291 body decrypts to service, tool and approval id — and carries no arguments, redacted or otherwise": "todo",
+    "§13/§15 · notifying the owner §13 · the push payload decrypts in-test: the VAPID ES256 JWT verifies against the configured key and subject, and the RFC 8291 body decrypts to service, tool and approval id — and carries no arguments, redacted or otherwise": "passed",
     "§13/§15 · notifying the owner §15 · notifyOwner never throws: a push endpoint that rejects, hangs or 500s still leaves the pending row created and the -32003-shaped result returned": "passed",
     "§7 · decide, list, and lazy expiry §7 · a past-expiry pending row reads as expired on every path and is flipped once — a second read writes no second approval.expired": "passed",
     "§7 · decide, list, and lazy expiry §7 · decide flips a pending row and writes its audit row; approving starts nothing — the agent's identical retry is what executes": "passed",
@@ -828,19 +847,19 @@
     "§7 step 2 · resolution at request time §7 step 2 · a zero-grant account resolves to empty roleNames — the gateway's scoped-404 signal, distinct from the row above · twin: one grant makes it non-empty": "passed"
   },
   "server/test/worker/routes.test.ts": {
-    "§2 · the router walk ≡ the reserved usernames 1. §2 · every segment the running worker serves is in RESERVED_ROUTES — walked, not listed": "todo",
-    "§2 · the router walk ≡ the reserved usernames 2. §2 · every RESERVED_ROUTES entry except \"mcp\" is served by the running worker (the other direction: a reservation with no mount is drift too, just the harmless-looking kind)": "todo",
-    "§2 · the router walk ≡ the reserved usernames 3. §2 · \"mcp\" is reserved by fiat though served only as a second segment — the one member of the set the walk cannot produce, named here so the asymmetry is deliberate": "todo",
-    "§2 · the router walk ≡ the reserved usernames 4. §2 · the walk can tell served from unserved: a control name that is not a route classifies \"fallthrough\", never \"served\" (without this, case 1 passes vacuously)": "todo",
-    "§2 · the router walk ≡ the reserved usernames 5. §12 · with BOOTSTRAP_SECRET unset, /internal is indistinguishable from an unknown path — so the walk runs with it SET; this case pins both halves and the reason": "todo",
-    "§2 · the router walk ≡ the reserved usernames 6. §2 · RESERVED_ROUTES is ROUTES ∪ {\"mcp\"} — derived, so adding a route reserves its name with no second edit anywhere": "todo",
-    "§2 · usernames may not collide with routes 7. §12 · provisioning a user named for a reserved segment is refused · the same request with a non-reserved name of the same charset succeeds (the twin)": "todo",
-    "§2 · usernames may not collide with routes 8. §2 · a username outside [a-z0-9-] is refused at the route, before any namespace lookup": "todo",
-    "§2 · usernames may not collide with routes 9. §2 · manifest.webmanifest and sw.js are reserved even though the dot already puts them outside the username charset — belt and braces, and the case says so": "todo",
-    "§2/§7 · what the fallthrough serves 10. §7 · /<reserved>/mcp never reaches the gateway — the mounted group owns the segment, so a user could not shadow a page even if the reservation were missed": "todo",
-    "§2/§7 · what the fallthrough serves 11. §2 · an unmatched top-level segment falls through to the namespace route · an unmatched deeper path 404s (the fallthrough is one segment wide, not a catch-all)": "todo",
-    "§2/§7 · what the fallthrough serves 12. §7 · /<user>/mcp and /<user>/mcp/<slug> are the only consumer shapes — a third segment 404s rather than resolving a slug with a suffix": "todo",
-    "§2/§7 · what the fallthrough serves 13. §8 · /api/whoami answers under the reserved \"api\" segment and is never read as a username's namespace (the CLI contract's one non-MCP route)": "todo"
+    "§2 · the router walk ≡ the reserved usernames 1. §2 · every segment the running worker serves is in RESERVED_ROUTES — walked, not listed": "passed",
+    "§2 · the router walk ≡ the reserved usernames 2. §2 · every RESERVED_ROUTES entry except \"mcp\" is served by the running worker (the other direction: a reservation with no mount is drift too, just the harmless-looking kind)": "passed",
+    "§2 · the router walk ≡ the reserved usernames 3. §2 · \"mcp\" is reserved by fiat though served only as a second segment — the one member of the set the walk cannot produce, named here so the asymmetry is deliberate": "passed",
+    "§2 · the router walk ≡ the reserved usernames 4. §2 · the walk can tell served from unserved: a control name that is not a route classifies \"fallthrough\", never \"served\" (without this, case 1 passes vacuously)": "passed",
+    "§2 · the router walk ≡ the reserved usernames 5. §12 · with BOOTSTRAP_SECRET unset, /internal is indistinguishable from an unknown path — so the walk runs with it SET; this case pins both halves and the reason": "passed",
+    "§2 · the router walk ≡ the reserved usernames 6. §2 · RESERVED_ROUTES is ROUTES ∪ {\"mcp\"} — derived, so adding a route reserves its name with no second edit anywhere": "passed",
+    "§2 · usernames may not collide with routes 7. §12 · provisioning a user named for a reserved segment is refused · the same request with a non-reserved name of the same charset succeeds (the twin)": "passed",
+    "§2 · usernames may not collide with routes 8. §2 · a username outside [a-z0-9-] is refused at the route, before any namespace lookup": "passed",
+    "§2 · usernames may not collide with routes 9. §2 · manifest.webmanifest and sw.js are reserved even though the dot already puts them outside the username charset — belt and braces, and the case says so": "passed",
+    "§2/§7 · what the fallthrough serves 10. §7 · /<reserved>/mcp never reaches the gateway — the mounted group owns the segment, so a user could not shadow a page even if the reservation were missed": "passed",
+    "§2/§7 · what the fallthrough serves 11. §2 · an unmatched top-level segment falls through to the namespace route · an unmatched deeper path 404s (the fallthrough is one segment wide, not a catch-all)": "passed",
+    "§2/§7 · what the fallthrough serves 12. §7 · /<user>/mcp and /<user>/mcp/<slug> are the only consumer shapes — a third segment 404s rather than resolving a slug with a suffix": "passed",
+    "§2/§7 · what the fallthrough serves 13. §8 · /api/whoami answers under the reserved \"api\" segment and is never read as a username's namespace (the CLI contract's one non-MCP route)": "passed"
   },
   "server/test/worker/upstream-credentials.test.ts": {
     "§5 · the envelope at rest §5 · a sentinel header stored through setHeaders appears nowhere in the service row — the column holds ciphertext": "passed",
@@ -926,25 +945,25 @@
     "§7 — the failure table: one code out, the class in §7/§15 · no answer inside limits.CALL_TIMEOUT_MS → -32000, class timeout, on ONE dial aborted at the budget": "passed"
   },
   "server/test/worker/web-pages.test.ts": {
-    "§13 · CSRF on every mutating POST 1. §13 · a mutating POST with no CSRF field is 403 AND the substituted ops handler was never invoked (a rejected-but-executed mutation is the bug this case exists for)": "todo",
-    "§13 · CSRF on every mutating POST 2. §13 · the same POST carrying the token the page rendered succeeds and the handler ran exactly once (the allow-twin of 1 — without it, `throw 403` passes)": "todo",
-    "§13 · CSRF on every mutating POST 3. §13 · a token minted under a different cookie session is 403, handler not invoked": "todo",
-    "§13 · CSRF on every mutating POST 4. §13 · every mutating form the pages render carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one": "todo",
-    "§13 · CSRF on every mutating POST 5. §13 · /audit renders no mutating form and needs no token (no mutations, no CSRF surface)": "todo",
-    "§4/§13 · cookie sessions are the only page credential 6. §4 · a bearer-sourced (device-flow) session is refused on /account · a browser session renders it (the twin — the guard is about provenance, not about being logged out)": "todo",
-    "§4/§13 · cookie sessions are the only page credential 7. §7 · an Authorization: Bearer header with no cookie opens no page — bearer tokens are never consulted on page routes": "todo",
-    "§4/§13 · cookie sessions are the only page credential 8. §13 · /approvals/<id> for another namespace's approval refuses · the owner's own id renders (owner-only, and indistinguishable from a nonexistent id)": "todo",
-    "§4/§13 · cookie sessions are the only page credential 9. §13 · /manifest.webmanifest and /sw.js are served without a session — installability is not gated, and the PWA shell holds nothing to gate": "todo",
-    "§7/§13 · the OAuth callback shell 20. §7 · /oauth/upstream/callback without an owner session is refused before any upstream code runs and stores nothing · with the session and a live single-use state it completes (the twin; every other state failure is upstream-credentials.test.ts's table)": "todo",
-    "§8 · parity direction B — forms and schemas are one source 16. §8 · every form rendered on /services and /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)": "todo",
-    "§8 · parity direction B — forms and schemas are one source 17. §8 · each form's field set equals schemaKeysOf(ops[name]) — both sides derived, so a schema change with no form change fails here rather than at a user's keyboard": "todo",
-    "§8 · parity direction B — forms and schemas are one source 18. §8 · /account renders no ops-backed form at all — the pinned parity exception: credentials ride better-auth's endpoints and are never reachable from a pmcp tool": "todo",
-    "§8 · parity direction B — forms and schemas are one source 19. §8 · every page mutation reaches an ops handler (or better-auth): no page route mutates D1 on its own — the no-web-only-capability invariant, checked by substituting handlers across the ops table rather than by reading web.ts": "todo",
-    "§8/§13 · one paging contract, two presentations 10. §8 · the page's \"N events match\" line is audit.query's `total`, not the rendered row count — they differ whenever a page is not the last one": "todo",
-    "§8/§13 · one paging contract, two presentations 11. §13 · desktop page numbers and mobile \"Load more\" walk the same offset/limit contract to the same final row set": "todo",
-    "§8/§13 · one paging contract, two presentations 12. §13 · Export JSONL emits exactly `total` lines for the current filters": "todo",
-    "§8/§13 · one paging contract, two presentations 13. §13 · the export applies the page's filters verbatim — a filtered export is a strict subset of the unfiltered one over the same seed": "todo",
-    "§8/§13 · one paging contract, two presentations 14. §15 · an exported row carries its recorded bodies post-redaction, with stubs rendered as typed placeholders · never the bytes a blob stub stands for": "todo",
-    "§8/§13 · one paging contract, two presentations 15. §13 · a row's client session id links back to this same view as ?session=… and that link returns exactly the rows sharing the session": "todo"
+    "§13 · CSRF on every mutating POST 1. §13 · a mutating POST with no CSRF field is 403 AND the substituted ops handler was never invoked (a rejected-but-executed mutation is the bug this case exists for)": "passed",
+    "§13 · CSRF on every mutating POST 2. §13 · the same POST carrying the token the page rendered succeeds and the handler ran exactly once (the allow-twin of 1 — without it, `throw 403` passes)": "passed",
+    "§13 · CSRF on every mutating POST 3. §13 · a token minted under a different cookie session is 403, handler not invoked": "passed",
+    "§13 · CSRF on every mutating POST 4. §13 · every mutating form the pages render carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one": "passed",
+    "§13 · CSRF on every mutating POST 5. §13 · /audit renders no mutating form and needs no token (no mutations, no CSRF surface)": "passed",
+    "§4/§13 · cookie sessions are the only page credential 6. §4 · a bearer-sourced (device-flow) session is refused on /account · a browser session renders it (the twin — the guard is about provenance, not about being logged out)": "passed",
+    "§4/§13 · cookie sessions are the only page credential 7. §7 · an Authorization: Bearer header with no cookie opens no page — bearer tokens are never consulted on page routes": "passed",
+    "§4/§13 · cookie sessions are the only page credential 8. §13 · /approvals/<id> for another namespace's approval refuses · the owner's own id renders (owner-only, and indistinguishable from a nonexistent id)": "passed",
+    "§4/§13 · cookie sessions are the only page credential 9. §13 · /manifest.webmanifest and /sw.js are served without a session — installability is not gated, and the PWA shell holds nothing to gate": "passed",
+    "§7/§13 · the OAuth callback shell 20. §7 · /oauth/upstream/callback without an owner session is refused before any upstream code runs and stores nothing · with the session and a live single-use state it completes (the twin; every other state failure is upstream-credentials.test.ts's table)": "passed",
+    "§8 · parity direction B — forms and schemas are one source 16. §8 · every form rendered on /services and /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)": "passed",
+    "§8 · parity direction B — forms and schemas are one source 17. §8 · each form's field set equals schemaKeysOf(ops[name]) — both sides derived, so a schema change with no form change fails here rather than at a user's keyboard": "passed",
+    "§8 · parity direction B — forms and schemas are one source 18. §8 · /account renders no ops-backed form at all — the pinned parity exception: credentials ride better-auth's endpoints and are never reachable from a pmcp tool": "passed",
+    "§8 · parity direction B — forms and schemas are one source 19. §8 · every page mutation reaches an ops handler (or better-auth): no page route mutates D1 on its own — the no-web-only-capability invariant, checked by substituting handlers across the ops table rather than by reading web.ts": "passed",
+    "§8/§13 · one paging contract, two presentations 10. §8 · the page's \"N events match\" line is audit.query's `total`, not the rendered row count — they differ whenever a page is not the last one": "passed",
+    "§8/§13 · one paging contract, two presentations 11. §13 · desktop page numbers and mobile \"Load more\" walk the same offset/limit contract to the same final row set": "passed",
+    "§8/§13 · one paging contract, two presentations 12. §13 · Export JSONL emits exactly `total` lines for the current filters": "passed",
+    "§8/§13 · one paging contract, two presentations 13. §13 · the export applies the page's filters verbatim — a filtered export is a strict subset of the unfiltered one over the same seed": "passed",
+    "§8/§13 · one paging contract, two presentations 14. §15 · an exported row carries its recorded bodies post-redaction, with stubs rendered as typed placeholders · never the bytes a blob stub stands for": "passed",
+    "§8/§13 · one paging contract, two presentations 15. §13 · a row's client session id links back to this same view as ?session=… and that link returns exactly the rows sharing the session": "passed"
   }
 }

@@ -19,8 +19,7 @@
     "server/src",
     "server/dev",
     "server/test",
-    "cli/src",
-    "cli/test",
+    "cli",
     "clients/js/src",
     "clients/js/test",
     "scripts"

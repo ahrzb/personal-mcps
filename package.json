@@ -3,7 +3,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "contracts:update": "vitest run --project worker contracts -u"
+    "contracts:update": "vitest run --project worker contracts -u",
+    "pmcp": "node --experimental-strip-types cli/pmcp.mts"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.0.0",
@@ -19,6 +20,7 @@
     "@sentry/cloudflare": "^10.71.0",
     "better-auth": "^1.7.1",
     "hono": "^4.13.3",
+    "webpush-webcrypto": "^1.0.5",
     "ws": "^8.21.3"
   }
 }

@@ -16,7 +16,9 @@
  * discovered between check and claim leaves the pass `approved`); MRTR legs riding one
  * approval; the redaction union over a real cached catalog; and catalog-miss refused
  * -32001 (decided 2026-08-25 — indistinguishable from ungranted, so a probing agent
- * cannot map its own grant patterns).
+ * cannot map its own grant patterns); and the healing arc, where a service with a COLD
+ * catalog and no socket refuses -32000 — availability outranking that same catalog check —
+ * and the identical call opens a pending once it re-registers.
  *
  * WHY THE INTERLEAVINGS ARE A TABLE, AND WHY THEY ARE DETERMINISTIC. workerd is
  * cooperative: firing fifty identical calls and hoping they collide tests the scheduler,
@@ -175,7 +177,7 @@ export const casInterleavings: readonly CasInterleavingRow[] = [
   //   otherwise one column would have to describe two rows.
   // · `-32001` is in `CasOutcome` and in no row here. A catalog miss is refused before any
   //   release point and leaves no approval row at all, so it has neither a schedule to
-  //   express nor a `finalStatus` to name — cases 22 and 23 own it. Same for the MRTR
+  //   express nor a `finalStatus` to name — case 22 owns it. Same for the MRTR
   //   restore: this table has no column for the service's ANSWER kind, so
   //   `input_required`-restores-the-row lives in cases 16-19, where the fake service's
   //   behavior is set directly.
@@ -530,7 +532,9 @@ const ACCOUNT = "agent";
 const TOOL = "search";
 
 /** Declared by `reader`, absent from the catalog: the ONE way to reach §7's catalog-miss
- *  refusal without the filter answering first (cases 22-23). */
+ *  refusal without the filter answering first (case 22 — case 23 reaches the same
+ *  missing-schema world with the socket GONE, where availability answers -32000 before the
+ *  catalog is consulted at all). */
 const PHANTOM_TOOL = "vanished";
 
 /** The arguments every leg of every row sends — legs are identical calls by construction. */
@@ -593,7 +597,18 @@ afterEach(async () => {
   for (const namespace of seeded.splice(0)) await namespace.teardown();
 });
 
+/** The fixture every case is built from: the seeded world with a live socket serving the
+ *  catalog. */
 async function seedFixture(): Promise<Fixture> {
+  const fixture = await seedUnconnected();
+  await goOnline(fixture);
+  return fixture;
+}
+
+/** The seeded world with NO socket yet. Split out for the one case that dials its own
+ *  (case 23, whose registration serves an empty catalog); every other case wants
+ *  {@link seedFixture}. */
+async function seedUnconnected(): Promise<Fixture> {
   const ns = await seedNamespace(env.DB, {
     username: uniqueSlug("appr"),
     services: [
@@ -614,32 +629,37 @@ async function seedFixture(): Promise<Fixture> {
     ],
   });
   seeded.push(ns);
-  const fixture: Fixture = {
+  return {
     ns,
     service: ns.services[SERVICE_SLUG],
     sockets: [],
     fake: undefined as unknown as FakeService,
   };
-  await goOnline(fixture);
-  return fixture;
 }
 
 /** Dial (or re-dial) the service's socket and wait until its catalog is cached. */
 async function goOnline(fixture: Fixture): Promise<void> {
+  await dial(fixture, [SEARCH_TOOL]);
+  await untilStatus(fixture.service.id, "online");
+  const cached = await untilCataloged(await serviceRow(fixture));
+  expect(cached.map((tool) => tool.name), "the fixture's catalog never reached the DO").toContain(TOOL);
+}
+
+/** One registration declaring `reader` and serving `tools`, recorded on the fixture so the
+ *  invocation count spans it and `afterEach` closes it. Waiting is the caller's. */
+async function dial(fixture: Fixture, tools: Tool[]): Promise<FakeService> {
   const service = await connectFakeService({
     origin: ORIGIN,
     token: fixture.ns.tokens.svc.token,
     // `vanished` is declared and never served: the grant matches it, the catalog does not.
     roles: { reader: [TOOL, PHANTOM_TOOL] },
-    tools: [SEARCH_TOOL],
+    tools,
     behavior: { mode: "answer", result: ANSWER },
   });
   opened.push(service);
   fixture.sockets.push(service);
   fixture.fake = service;
-  await untilStatus(fixture.service.id, "online");
-  const cached = await untilCataloged(await serviceRow(fixture));
-  expect(cached.map((tool) => tool.name), "the fixture's catalog never reached the DO").toContain(TOOL);
+  return service;
 }
 
 /** Close the current socket and wait until the hub reports the service offline. */
@@ -1185,10 +1205,53 @@ describe("§7 the redaction union and the catalog", () => {
     expect(await approvalRows(fixture)).toHaveLength(1);
   }, CASE_BUDGET_MS);
 
-  // Row 23 (never-connected → -32001) was DELETED at the D6 gate (2026-08-26): it
-  // contradicted the availability-first decision — a never-connected service answers
-  // -32000 before the gate reads anything, which case 12 pins on this same fixture.
-  // Its valuable half, the healing arc (refused while never-connected → the service
-  // registers → the identical call opens a pending), moves to D7's oracle stage as a
-  // corrected, adversarially-verified row.
+  // Why the fixture registers for real and takes the CATALOG cold rather than skipping the
+  // socket: a service that has never held one has an empty `roles_json` (declared roles are
+  // written only by registration), so the granted `reader` resolves to the empty pattern set
+  // and §7 step 3's filter answers -32001 first — the ordering would be unobservable, and
+  // that world is order.table's "granted-undeclared role → -32001" already.
+  //
+  // Why the answer is -32000: §7 orders known availability ahead of the step-2 catalog rule
+  // ("The gate consults known availability first … before any approval row is read, created,
+  // or consumed"), so a cold catalog plus a gone socket must answer -32000 and never case
+  // 22's catalog-miss -32001. Case 12's warm-catalog road cannot show it: with a warm catalog
+  // either ordering yields -32000.
+  //
+  // One case and not two, because the healing half closes the arc: the same refusal that
+  // created no row is followed by the IDENTICAL call opening one.
+  it("23. §7 · availability outranks the catalog: a service that registered `reader` but served an EMPTY catalog and then went offline is refused -32000 — never case 22's -32001 — with no approval row created · then it reconnects serving the catalog and the IDENTICAL call opens a pending -32003 carrying an approvalId — exactly one row, and the service still executed nothing", async () => {
+    // The cold road: a REAL registration writes `roles_json` (so the filter admits the
+    // call), the catalog it serves is empty, and only then does the socket go away.
+    const fixture = await seedUnconnected();
+    await dial(fixture, []);
+    await untilStatus(fixture.service.id, "online");
+    const session = await seedOwnerSession(fixture.ns.owner);
+    const listed = await rpc(fixture, session.token, SERVICE_SLUG, {
+      jsonrpc: "2.0",
+      id: CONSUMER_ID,
+      method: "tools/list",
+      params: {},
+    });
+    // The precondition the case rests on, read through the hub itself and off the OWNER's
+    // unfiltered view: with a warm catalog both orderings answer -32000 and the claim below
+    // would be vacuous — that world is case 12.
+    expect((listed.body.result as { tools: Tool[] }).tools, "the catalog was not cold").toEqual([]);
+    await goOffline(fixture);
+
+    const refused = await accountCall(fixture);
+
+    expect(refused.body.error?.code, "the catalog check answered ahead of availability").toBe(-32000);
+    expect(await approvalRows(fixture), "no row was read, created or consumed").toEqual([]);
+
+    // The healing half: the service returns with its catalog and the IDENTICAL call — same
+    // account, same arguments, only the world between them changed — opens the pending the
+    // refusal never created.
+    await goOnline(fixture);
+    const gated = await accountCall(fixture);
+
+    expect(gated.body.error?.code).toBe(-32003);
+    expect((await approvalRow(fixture, approvalIdOf(gated))).status).toBe("pending");
+    expect(await approvalRows(fixture), "exactly one row").toHaveLength(1);
+    expect(servedCalls(fixture), "the service still executed nothing").toBe(0);
+  }, CASE_BUDGET_MS);
 });

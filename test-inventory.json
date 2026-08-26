@@ -105,7 +105,8 @@
     "§7 the CAS claim under deterministic interleavings 9b. §9 rule 2 · every row either executes a leg itself or its `twin` resolves to a row of this table that does — the invariant a hub dispatching nothing at all cannot satisfy, and the only thing standing between this table and a perfect exactly-once score for doing nothing": "passed",
     "§7 the redaction union and the catalog 20. §7 · the stored args_json masks the UNION over the live catalog: schema `writeOnly` paths from the DO's cached inputSchema plus config `redact` paths, while the service still receives the real values": "passed",
     "§7 the redaction union and the catalog 21. §7 · args_hash is post-redaction: two calls differing only in a redacted field share one approval row — twin: differing in a visible field, they do not (case 5)": "passed",
-    "§7 the redaction union and the catalog 22. §7 · a tool absent from the cached catalog is refused -32001 — the same code as ungranted and unknown, with no pending row created; twin: the catalogued tool opens one (case 1)": "passed"
+    "§7 the redaction union and the catalog 22. §7 · a tool absent from the cached catalog is refused -32001 — the same code as ungranted and unknown, with no pending row created; twin: the catalogued tool opens one (case 1)": "passed",
+    "§7 the redaction union and the catalog 23. §7 · availability outranks the catalog: a service that registered `reader` but served an EMPTY catalog and then went offline is refused -32000 — never case 22's -32001 — with no approval row created · then it reconnects serving the catalog and the IDENTICAL call opens a pending -32003 carrying an approvalId — exactly one row, and the service still executed nothing": "passed"
   },
   "server/test/tunnel/hibernation.test.ts": {
     "§6 across an evictDurableObject boundary §3/§15 · no credential material survives the boundary: after eviction the attachment and DO storage carry the token ID and nothing matching a pmcp_ secret or an Authorization value": "passed",
@@ -698,6 +699,8 @@
     "§7 step 3 — the fixed order, filter first §7 step 3 · granted-undeclared role → -32001, and an empty tools/list, not a 404": "passed",
     "§7 step 3 — the fixed order, filter first §7 step 3 · ungranted + archived → -32001, never -32002 (filter runs before archived)": "passed",
     "§7 step 3 — the fixed order, filter first §7 step 3 · ungranted + known-offline → -32001 (filter runs before availability)": "passed",
+    "§7's dispatch table, amended 2026-08-26 — the MCP handshake §7 · `initialize` answers protocolVersion, capabilities and serverInfo — the same answer on both endpoint shapes": "passed",
+    "§7's dispatch table, amended 2026-08-26 — the MCP handshake §7 · `notifications/initialized` — the message every client sends next — is absorbed with a bodyless 202": "passed",
     "the table's own invariants §7 · the three -32001 sources answer identically to one another; `data` is present only on -32003": "passed",
     "the table's own invariants §9 rule 2 · every refusal row names an allow-twin present in this table": "passed",
     "the table's own invariants §9 rule 3 · every row names the stage that produced its answer — swapping two stages fails naming the row": "passed"

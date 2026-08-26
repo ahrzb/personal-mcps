@@ -5,11 +5,11 @@
 // the SDK never appears in sibling modules); the aggregated `<slug>_<tool>` split; the
 // pinned check order filter → archived → approval → availability (§7's list, with the
 // availability-first decision folding its last two into one test — see callTool);
-// server/discover; `_meta` hygiene and client-metadata capture; the ONE redaction map per
-// call; and the ONE mapping from HubError to JSON-RPC wire errors. It HIDES the wire
-// entirely: sibling modules throw the HubError vocabulary errors.ts owns and never see a
-// JSON-RPC error code, and backends never see an unfiltered tool name, an archived
-// service, or an unapproved gated call.
+// server/discover and the `initialize` handshake; `_meta` hygiene and client-metadata
+// capture; the ONE redaction map per call; and the ONE mapping from HubError to JSON-RPC
+// wire errors. It HIDES the wire entirely: sibling modules throw the HubError vocabulary
+// errors.ts owns and never see a JSON-RPC error code, and backends never see an
+// unfiltered tool name, an archived service, or an unapproved gated call.
 //
 // What it does NOT own: §7 step 1's HTTP-level door. Content-Type, the Origin rule, the
 // 401 with WWW-Authenticate, the scoped-visibility 404 and the resolution of the caller
@@ -157,9 +157,10 @@ function approvalRequired(check: Extract<CheckResult, { outcome: "required" }>):
  * The door is index.mcpEntry's, not this function's, and `principal` is the proof: by the
  * time a request arrives here Content-Type, the Origin rule, the caller's resolution and
  * (scoped) the service's visibility to that caller have all been decided ONCE, at the
- * composition root. What is left is JSON-RPC — this function answers `server/discover`
- * itself with hub capabilities, routes tools/list and tools/call into the pipeline below,
- * refuses every other method with -32601, and answers 200 whether or not it refused. (The
+ * composition root. What is left is JSON-RPC — this function answers `server/discover` and
+ * the `initialize` handshake itself, routes tools/list and tools/call into the pipeline
+ * below, refuses every other method with -32601, absorbs every notification with a 202
+ * (`notifications/initialized` included), and answers 200 whether or not it refused. (The
  * SDK's legacy-stateless lane would serve 2025-era clients from the same wiring; it is
  * comment-level only, like the rest of the SDK seam.)
  */
@@ -186,7 +187,7 @@ export async function mcpMessage(
   }
 }
 
-/** §7 step 3's method table: three served methods, everything else -32601. */
+/** §7 step 3's method table: four served methods, everything else -32601. */
 async function route(
   env: Env,
   ownerId: string,
@@ -197,9 +198,11 @@ async function route(
   const id = msg.id ?? null;
   switch (msg.method) {
     // Answered by the hub on BOTH shapes: a slug in the URL is not resolved, dialed, or
-    // filtered for it.
+    // filtered for either of them.
     case "server/discover":
       return { jsonrpc: "2.0", id, result: hubCapabilities() };
+    case "initialize":
+      return { jsonrpc: "2.0", id, result: handshake() };
     case "tools/list": {
       if (slug !== undefined) {
         return { jsonrpc: "2.0", id, result: toolsResult(await listScoped(env, ownerId, slug, ctx)) };
@@ -232,12 +235,34 @@ async function route(
 function hubCapabilities(): Record<string, unknown> {
   return {
     supportedVersions: [PROTOCOL_VERSION],
-    capabilities: { tools: { listChanged: false } },
+    capabilities: CAPABILITIES,
     resultType: "complete",
     ttlMs: 0,
     cacheScope: "private",
   };
 }
+
+/**
+ * The `initialize` answer (§7's dispatch table, amended 2026-08-26): the handshake every
+ * standards-compliant MCP client opens with. STATELESS — nothing is remembered between
+ * this message and the next, which is why the follow-up `notifications/initialized` needs
+ * no case of its own: mcpMessage absorbs every notification with a 202 ahead of this
+ * table. One revision is offered because the hub speaks one (§7); a client that wants
+ * another reads the same answer `server/discover` gives and decides for itself.
+ */
+function handshake(): Record<string, unknown> {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    capabilities: CAPABILITIES,
+    // ponytail: a literal version, because nothing in this repo produces a build stamp for
+    // it and a client only displays the string. Wire it to one if a release ever mints one.
+    serverInfo: { name: "Personal MCP Hub", version: "0" },
+  };
+}
+
+/** What this hub can do, in one place because two answers publish it: tools, and never a
+ *  list-changed notification — a stateless endpoint holds no session to notify. */
+const CAPABILITIES = { tools: { listChanged: false } } as const;
 
 /** The one MCP revision this hub speaks (§7: stateless 2026-07-28 endpoints). */
 const PROTOCOL_VERSION = "2026-07-28";

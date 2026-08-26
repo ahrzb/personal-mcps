@@ -8,9 +8,13 @@
 // ungranted account must not learn a service is archived); an unknown aggregated prefix
 // and a name with no `_` at all both answer -32001, indistinguishable from
 // not-permitted; the aggregated name splits at the FIRST `_` (slugs contain no
-// underscore, §7); `server/discover` is answered by the hub itself; every other method
-// is -32601. Plus the 2026-08-25 availability-first decision: a service the hub already
-// knows cannot execute fails -32000 with no pending row, no push, and no pass consumed.
+// underscore, §7); `server/discover` is answered by the hub itself, and every other method
+// is -32601. Plus the 2026-08-25 availability-first
+// decision: a service the hub already knows cannot execute fails -32000 with no pending
+// row, no push, and no pass consumed. §7's 2026-08-26 amendment (`initialize` and the
+// `notifications/initialized` behind it) is pinned by two cases BESIDE the table — neither
+// message is ordered against anything the table ranks, and what a client needs from the
+// handshake is the answer's content, which no row column can hold.
 //
 // Why a table: four green unit tests compose into a wrong order. The order is one spec
 // sentence, and a suite that spends sixteen hand-written tests on it amplifies every edit
@@ -139,7 +143,12 @@ export type OrderRow = {
   /** e.g. "§7 step 3 · ungranted + archived → -32001, not -32002". */
   title: string;
   endpoint: "aggregated" | "scoped";
-  /** `other` stands for any method outside the served set — the -32601 rows. */
+  /**
+   * `other` stands for any method outside the served set — the -32601 rows. The 2026-08-26
+   * amendment's two messages are absent by design: `initialize` is ordered against nothing
+   * this table ranks, and `notifications/initialized` is absorbed 202 with no body, which
+   * is not a JSON-RPC answer at all. Both have their own cases beside the table.
+   */
   method: "tools/call" | "tools/list" | "server/discover" | "other";
   toolName: string;
   principal: "owner" | "account";
@@ -709,6 +718,10 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
     twin: "§7 · `server/discover` is answered by the hub on both endpoint shapes, no service resolved",
   },
+  // §7's 2026-08-26 amendment (`initialize`, and the `notifications/initialized` that
+  // follows it) is NOT in this table: neither message is ordered against filter, archived,
+  // the gate or availability, which is the only thing a row here can express. Both are
+  // pinned by their own cases below, where the answer's CONTENT is readable.
 ];
 
 /**
@@ -1000,6 +1013,32 @@ async function openViaEndpoint(row: OrderRow, ns: SeededNamespace): Promise<stri
   return approvalId;
 }
 
+// ── the handshake's own world ─────────────────────────────────────────────────────────
+
+/** The smallest namespace the two handshake cases need: one account holding a grant on one
+ *  tunneled slug, so the DOOR admits the scoped shape too (§7 step 2's 404 is decided before
+ *  the body is read). No upstream and no push subscription — `initialize` resolves no
+ *  service and can reach neither. */
+async function seedHandshakeNamespace(): Promise<SeededNamespace> {
+  return seedNamespace(env.DB, {
+    services: [{ slug: NEWS, kind: "tunnel" }],
+    accounts: [{ slug: AGENT, grants: { [NEWS]: [{ role: ROLE, mode: "allow" }] }, tokens: [{ as: TOKEN }] }],
+  });
+}
+
+/** One JSON-RPC message at one URL, through the real worker entry. */
+async function rpc(url: string, token: string, message: Record<string, unknown>): Promise<JsonRpcResponse> {
+  const response = await worker.fetch(
+    new Request(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(message),
+    }),
+    env as unknown as Env,
+  );
+  return (await response.json()) as JsonRpcResponse;
+}
+
 // ── the fixture's vocabulary ──────────────────────────────────────────────────────────
 
 /** The hub's own origin, as the worker under test knows it. */
@@ -1037,6 +1076,15 @@ const FAKE_VAPID = {
 
 /** A method the hub serves on neither shape — the -32601 rows' `other`. */
 const UNSERVED_METHOD = "resources/list";
+
+/** The handshake params a compliant client opens with. Obviously-fake client identity; the
+ *  params the hub is free to ignore are still the ones it will actually receive, and a
+ *  fixture that sent `{}` would let an implementation that reads them wrongly pass. */
+const CLIENT_HANDSHAKE = {
+  protocolVersion: "2026-07-28",
+  capabilities: {},
+  clientInfo: { name: "pmcp-fixture-client", version: "0.0.0-FAKE0000" },
+};
 
 /** `env.DB` is typed `unknown` (test/env.d.ts); this names the sliver the runner uses. */
 type D1Like = {
@@ -1174,14 +1222,70 @@ describe("§7 step 3 — the fixed order, filter first", () => {
 });
 
 describe("§7 — availability-first inside the approval gate (decided 2026-08-25)", () => {
-  // The catalog-miss case left this file with its row: §7's availability-first sentence
-  // outranks the catalog check, and this project can seed no connected tunnel, so the case
-  // is tunnel/approval-e2e.test.ts's case 22 — where it already lives, over a real socket.
+  // One half of the decision is NOT in this file: §7's availability-first sentence
+  // outranks the catalog check, and this project can seed no connected tunnel, so that
+  // case is tunnel/approval-e2e.test.ts's case 23 — a service whose catalog is cold and
+  // whose socket is gone, answered -32000 and not case 22's catalog-miss -32001, over a
+  // real socket. (Case 22 itself is the ONLINE catalog miss and makes no availability
+  // claim; it was the wrong pointer here until D7's oracle stage.)
   runOrderTable(SECTIONS[1]);
 });
 
 describe("§7 — name splitting and methods", () => {
   runOrderTable(SECTIONS[2]);
+});
+
+describe("§7's dispatch table, amended 2026-08-26 — the MCP handshake", () => {
+  // Beside the table rather than in it: an OrderRow can observe four things (200, error-vs-
+  // result, the `data` keys, the four effect deltas), so a row could say "not -32601" and
+  // nothing about protocolVersion, capabilities or serverInfo — the whole point of the
+  // amendment, and what every standards-compliant client actually reads. These two cases
+  // read the answer instead.
+  //
+  // What they do NOT reach: the door. index.mcpEntry decides Content-Type, the Origin rule,
+  // the principal and scoped visibility before the body is read, so "the amendment moved
+  // `initialize` out of -32601 and not out from behind the door" is auth-matrix.test.ts's —
+  // its `bodyFor` sends `tools/list` on every /mcp* row, leaving the door table
+  // method-monomorphic and that gap real.
+  it("§7 · `initialize` answers protocolVersion, capabilities and serverInfo — the same answer on both endpoint shapes", async () => {
+    const ns = await seedHandshakeNamespace();
+    const token = ns.tokens[TOKEN].token;
+    const aggregated = `${ORIGIN}/${ns.owner.username}/mcp`;
+
+    // The revision the hub is on, read off its own `server/discover` the way
+    // contracts.test.ts's `wireRevision` reads it — never transcribed here, so a bump
+    // reaches this assertion through the hub instead of through an edit.
+    const discovered = await rpc(aggregated, token, { jsonrpc: "2.0", id: 1, method: "server/discover", params: {} });
+    const revision = (discovered.result as { supportedVersions: string[] }).supportedVersions[0];
+
+    for (const url of [aggregated, `${aggregated}/${NEWS}`]) {
+      const answer = await rpc(url, token, { jsonrpc: "2.0", id: 1, method: "initialize", params: CLIENT_HANDSHAKE });
+      expect(answer.error, `${url}: the handshake was refused`).toBeUndefined();
+      const result = answer.result as {
+        protocolVersion?: unknown;
+        capabilities?: unknown;
+        serverInfo?: { name?: unknown };
+      };
+      expect(result.protocolVersion, `${url}: protocolVersion`).toBe(revision);
+      expect(result.capabilities, `${url}: capabilities`).toEqual({ tools: { listChanged: false } });
+      expect(result.serverInfo?.name, `${url}: serverInfo carries a name`).toBeTruthy();
+    }
+  });
+
+  it("§7 · `notifications/initialized` — the message every client sends next — is absorbed with a bodyless 202", async () => {
+    const ns = await seedHandshakeNamespace();
+    const response = await worker.fetch(
+      new Request(`${ORIGIN}/${ns.owner.username}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${ns.tokens[TOKEN].token}` },
+        // No `id`: that is what makes it a notification, and there is nothing to answer to.
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      }),
+      env as unknown as Env,
+    );
+    expect(response.status, "a notification is absorbed, never answered").toBe(202);
+    expect(await response.text(), "202 carries no body").toBe("");
+  });
 });
 
 describe("the table's own invariants", () => {

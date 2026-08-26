@@ -6,6 +6,11 @@
     "lib": ["ES2022", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    // Node's own type stripping resolves a relative import only WITH its extension, so a
+    // script meant to be run as `node --experimental-strip-types scripts/*.ts` must spell
+    // `./x.ts`. Free of consequence here: noEmit is on, so nothing is ever written with an
+    // extension TypeScript would have had to rewrite.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "jsxImportSource": "hono/jsx",
     "skipLibCheck": true

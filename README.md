@@ -89,9 +89,18 @@ pnpm smoke        # probes the deployed hub end to end
 
 ## Using the CLI
 
+No clone needed — the repo is an npm package whose one bin is `pmcp`
+(Node ≥ 22.18 / 23.6):
+
 ```bash
-pnpm pmcp login   # device flow: opens <hub>/device, approve in a signed-in browser
+npm install -g "github:ahrzb/personal-mcps"
 ```
+
+```bash
+pmcp login        # device flow: opens <hub>/device, approve in a signed-in browser
+```
+
+Inside a clone, `pnpm pmcp <command>` runs the same CLI.
 
 Hubs are named by profiles in `~/.config/pmcp/config.toml`; pick one with
 `--profile <name>` or `PMCP_PROFILE`, and the flat env vars `PMCP_URL` /

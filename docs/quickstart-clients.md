@@ -12,20 +12,35 @@ package roots).
 
 ## 0. One-time setup
 
-You need a hub you can sign in to, and the CLI:
+You need a hub you can sign in to. The CLI installs straight from the git repo —
+no clone needed (any Node with default type stripping, ≥ 22.18 / 23.6):
 
 ```bash
-pnpm pmcp login
+npm install -g "github:ahrzb/personal-mcps"
+```
+
+(One-off alternative: `npx github:ahrzb/personal-mcps <command>`. Inside a clone,
+`pnpm pmcp <command>` is the same CLI.)
+
+Tell it where the hub is — an env var, or a profile in
+`~/.config/pmcp/config.toml` — and sign in:
+
+```bash
+export PMCP_URL=https://personal-mcps.ahrzb.workers.dev
+```
+
+```bash
+pmcp login
 ```
 
 Create the service and capture its token — the `pmcp_svc_…` value is shown once:
 
 ```bash
-pnpm pmcp service create mybot
+pmcp service create mybot
 ```
 
-(Lost it? Mint another with `pnpm pmcp token issue --service mybot` and revoke the
-old one with `pnpm pmcp token list` / `token revoke`.)
+(Lost it? Mint another with `pmcp token issue --service mybot` and revoke the
+old one with `pmcp token list` / `token revoke`.)
 
 Give the bot its environment (any machine, no inbound ports needed):
 
@@ -119,11 +134,11 @@ Declaring none means only owner tokens or grants of the built-in `all` role can
 reach the service. Grant a role to a service account:
 
 ```bash
-pnpm pmcp diff      # preview against the YAML access config
+pmcp diff      # preview against the YAML access config
 ```
 
 ```bash
-pnpm pmcp apply
+pmcp apply
 ```
 
 ## 4. Who is calling?
@@ -172,7 +187,7 @@ const schema = sensitive(jsonSchema, ["credentials.token"]);
 Issue a service-account key (shown once, `pmcp_sa_…`):
 
 ```bash
-pnpm pmcp token issue --account claude
+pmcp token issue --account claude
 ```
 
 Point Claude Code at the service:
@@ -186,7 +201,7 @@ Or call it from anywhere that speaks streamable HTTP MCP — the endpoint is
 can see:
 
 ```bash
-pnpm pmcp tools
+pmcp tools
 ```
 
 ## 7. Lifecycle — what serve() does on failure

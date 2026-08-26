@@ -1,6 +1,10 @@
+#!/usr/bin/env node
 // cli/pmcp.mts — the executable face of cli/src/main.ts, nothing else lives here.
 // Run through the repo script:  pnpm pmcp <command …>   (flags that collide with
-// pnpm's own go after a `--`:  pnpm pmcp -- apply --yes).
+// pnpm's own go after a `--`:  pnpm pmcp -- apply --yes), or without a clone via
+// the root package's bin:  npx github:ahrzb/personal-mcps <command …>  (needs a
+// Node whose type stripping is on by default, ≥22.18 / ≥23.6 — the shebang runs
+// this .mts file as-is).
 import { main } from "./src/main.ts";
 
 // `exitCode`, not `exit()`: process.exit() tears the loop down mid-flight, and on Windows

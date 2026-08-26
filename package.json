@@ -4,7 +4,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "contracts:update": "vitest run --project worker contracts -u",
-    "pmcp": "node --experimental-strip-types cli/pmcp.mts"
+    "pmcp": "node --experimental-strip-types cli/pmcp.mts",
+    "users": "node --experimental-strip-types scripts/users.mts"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.0.0",

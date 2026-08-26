@@ -32,6 +32,7 @@ import {
   USERNAME_CHARSET,
 } from "./identity";
 import type { Principal, TokenKind } from "./identity";
+import { listConnections, revokeConnection } from "./oauth";
 import { PMCP_SLUG, Registry, RegistryRefusal, SLUG_CHARSET, writeOnlyPaths } from "./registry";
 import type { GrantEntry, RoleDeclaration, ServiceAccount, ServiceDetail } from "./registry";
 import { CLOSE_ARCHIVED, CLOSE_REVOKED, sever, status, wipe } from "./tunnel";
@@ -261,7 +262,7 @@ function invalid(message: string): HubError {
  * per family and no name echoed: a namespace's contents are not a caller's to enumerate
  * through error prose, and the caller already knows what they asked for.
  */
-function absent(family: "service" | "service account" | "token"): HubError {
+function absent(family: "service" | "service account" | "token" | "connection"): HubError {
   return invalid(`no such ${family} in this namespace`);
 }
 
@@ -1122,6 +1123,52 @@ export const ops: Record<string, AdminOp> = {
   }),
 
   /**
+   * §19/§8: the OAuth clients connected to this namespace — client name and id, the
+   * service account each is bound to, created/last-used. Never a token, a client secret,
+   * or a JWT: a connection is a binding, and a binding holds no credential (oauth.ts's
+   * `Connection` shape). Read-only, fronting oauth.listConnections exactly as every other
+   * read here fronts its own module.
+   */
+  connection_list: defineOp({
+    schema: { description: "List the OAuth clients connected to this namespace.", fields: {} },
+    async run(ownerId) {
+      // deps: oauth.listConnections
+      return { connections: await listConnections(ownerId) };
+    },
+  }),
+
+  /**
+   * `{ id }` — revoke one OAuth connection by id (§19.6/§8): the `/oauth/connections`
+   * Revoke button fronts this. oauth.revokeConnection sets `revoked_at` (immediate at the
+   * door) and deletes the provider's `oauthConsent` row so a refresh cannot resurrect it;
+   * this op adds its own `admin.connection_revoke` row (via `summarise`, like every other
+   * mutating op) plus the domain event `oauth.revoked` beside it — oauth.ts writes no audit
+   * row of its own (see its header), so both live here. An id naming no connection in this
+   * namespace — nonexistent or another namespace's — is the one uniform refusal.
+   */
+  connection_revoke: defineOp({
+    schema: {
+      description: "Revoke one OAuth connection. Immediate at the door.",
+      fields: { id: { kind: "text", description: "The connection's id, as connection_list reports it." } },
+    },
+    async run(ownerId, parsed) {
+      // deps: oauth.revokeConnection · audit.record
+      const { id } = parsed as { id: string };
+      const revoked = await revokeConnection(ownerId, id);
+      if (revoked === null) throw absent("connection");
+      await summarise(ownerId, "connection_revoke", { connectionId: revoked.id, clientId: revoked.clientId });
+      await record(db(), {
+        ownerId,
+        principal: formatPrincipal(await owner(ownerId)),
+        event: "oauth.revoked",
+        outcome: "ok",
+        detail: { connectionId: revoked.id, clientId: revoked.clientId },
+      });
+      return { id: revoked.id };
+    },
+  }),
+
+  /**
    * `{ principal?, service?, event?, tool?, session?, since?, until?, limit?, offset? }`
    * → `{ rows, total }`, newest first (§8) — the ops-table front over audit.query, which
    * pins the filter semantics and defaults. Rows carry the recorded body fields when
@@ -1239,8 +1286,19 @@ function opNamed(name: string): AdminOp | undefined {
  * credentials are unaffected: they are identity's `token` table, which needs no
  * better-auth.
  */
+/**
+ * §19.3's one spelling of a namespace's OAuth resource identifier — `https://<origin>/<user>/mcp`,
+ * scheme+host from PUBLIC_ORIGIN, path included. provisionUser writes it, deleteUser removes it,
+ * and 0005's back-fill embeds the identical string (as a literal, a .sql migration having no way
+ * to read the var). The PRM (§19.2) and the door's `aud` check (§19.6) name the same value; one
+ * function here is what keeps them one string with one spelling.
+ */
+function oauthResourceIdentifier(username: string): string {
+  return `${env.PUBLIC_ORIGIN}/${username}/mcp`;
+}
+
 export async function provisionUser(username: string): Promise<{ userId: string }> {
-  // deps: better-auth (user create) · crypto · audit.record
+  // deps: better-auth (user create) · crypto · audit.record · D1 `oauthResource`
   if (!USERNAME_CHARSET.test(username)) {
     throw new Error(`username must match [a-z0-9-]: "${username}"`);
   }
@@ -1255,6 +1313,18 @@ export async function provisionUser(username: string): Promise<{ userId: string 
        VALUES (?, ?, ?, 0, ?, ?, ?, ?)`,
     )
     .bind(userId, username, `${username}@users.local`, now, now, username, username)
+    .run();
+  // §19.3: one oauthProvider `oauthResource` row per namespace, identifier
+  // https://<origin>/<user>/mcp — the SAME string the PRM names as `resource`, the door
+  // checks as `aud`, and 0005 back-fills for users that predate §19. Written on the
+  // provisioning path (not lazily on first request) because its failure mode is silent: a
+  // brand-new user with no row can never complete an authorization, and MCP clients always
+  // send `resource` (the provider refuses `invalid_target` before consent otherwise). The
+  // row's minimal shape — id/identifier/name, every policy column null — is deliberate:
+  // null `allowedScopes`/`disabled` inherit the plugin defaults at issuance.
+  await db()
+    .prepare(`INSERT INTO "oauthResource" ("id", "identifier", "name") VALUES (?, ?, ?)`)
+    .bind(crypto.randomUUID(), oauthResourceIdentifier(username), username)
     .run();
   await record(db(), {
     ownerId: userId,
@@ -1288,6 +1358,16 @@ export async function deleteUser(username: string): Promise<void> {
   for (const service of services) {
     await ops.service_delete.handler(user.id, { slug: service.slug });
   }
+  // §19.3: the namespace's `oauthResource` row carries no FK to `user` (better-auth owns the
+  // table and generates no owner column), so the user-row cascade below cannot reach it. This
+  // is that teardown, by the identifier provisionUser wrote — the other half of the pinned
+  // pair, whose failure mode (a stranded resource row a recreated username would inherit) is
+  // as silent as a missing write. oauth_binding rows DO cascade (owner_id FK, §19.4), so they
+  // are gone with the user row and need no line here.
+  await db()
+    .prepare(`DELETE FROM "oauthResource" WHERE "identifier" = ?`)
+    .bind(oauthResourceIdentifier(username))
+    .run();
   await db().prepare(`DELETE FROM "user" WHERE "id" = ?`).bind(user.id).run();
   await record(db(), {
     ownerId: user.id,

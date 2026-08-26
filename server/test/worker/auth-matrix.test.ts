@@ -49,9 +49,11 @@ import type { Env } from "../../src/index";
 import { AUTH_BASE_PATH, requireOwnerSession, resolvePrincipal } from "../../src/identity";
 import type { Principal, TokenKind } from "../../src/identity";
 import type { JsonRpcResponse } from "../../src/gateway";
+import { TOKEN_LAST_USED_STAMP_MS } from "../../src/limits";
+import { revokeConnection, upsertBinding } from "../../src/oauth";
 import { PMCP_SLUG, Registry } from "../../src/registry";
 import { seedNamespace, seedOwnerSession } from "../harness/seed";
-import type { SeededNamespace } from "../harness/seed";
+import type { SeededNamespace, SeededSession } from "../harness/seed";
 
 /**
  * Which surface the row aims at. The four are one table because they share ONE resolution
@@ -814,8 +816,19 @@ export function runTableInvariants(): void {
       const row = rowTitled(title);
       return bytesOf(await call(requestFor(row), envFor(row)));
     };
-    // §7 step 1: "**401** … regardless of whether `<user>` exists". Two rows, one answer.
-    expect(await answerTo(TITLES.noHeaderOnSelf)).toEqual(await answerTo(TITLES.noHeaderOnAbsent));
+    // §7 step 1 / §19.2: "**401** … regardless of whether `<user>` exists". Under §19 the
+    // 401's `WWW-Authenticate` names the per-namespace `resource_metadata`, derived from the
+    // request PATH and looked up nowhere — so the ONLY thing that differs between two 401s is
+    // the username the caller itself named in the URL (which is no existence signal: the
+    // caller typed it). Normalizing each answer's own namespace out leaves the two byte-
+    // identical, which is exactly §19.8's "same bytes whether `<user>` exists or not"; the
+    // same-username-live-vs-absent form of the property is the door block's `§19.8/§7 · …
+    // byte-identical` case. Everything else here — status, body, every other header — is
+    // asserted equal by the substitution touching only the username.
+    const withoutNamespace = (bytes: string, username: string) => bytes.split(username).join("<ns>");
+    expect(
+      withoutNamespace(await answerTo(TITLES.noHeaderOnSelf), fixture.self.owner.username),
+    ).toEqual(withoutNamespace(await answerTo(TITLES.noHeaderOnAbsent), ABSENT_USERNAME));
 
     // §7 step 1: "…**404** (namespaces don't leak existence) … indistinguishable from
     // route-not-found". The third answer is a path this worker does not route at all.
@@ -1545,3 +1558,519 @@ function bearerCall(
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
+
+// ─────────────────────────────── §19: the OAuth door ───────────────────────────────
+//
+// §19.6/§19.8, the OAuth leg of the same door §7 step 1 owns: a JWT-shaped bearer becomes a
+// `service_account` principal indistinguishable from that account's `pmcp_sa_` key, or one of
+// many 401s. These are agent-written cases, NOT AUTH_MATRIX_ROWS (strategy §9 rule 1: agents
+// author no oracle rows), beside the §12 sign-up and §4 credential-family blocks — for the same
+// reason: the OAuth surface is a surface of ours whether or not a row of the owner's table names
+// it, and the plan's oracle-style titles for the door are copied here VERBATIM.
+//
+// Every valid token is minted through the REAL provider flow (register → authorize → consent →
+// token), never hand-forged: a hub-signed access token is one only the authorization server can
+// produce, so the fixture drives it exactly as claude.ai would, with cookies and no Authorization
+// header (§19.7), then binds the client with the same `oauth.upsertBinding` seam the consent page
+// uses. The refusal cases each reach a state the door must reject — a foreign audience, an expired
+// exp, a missing `mcp` scope, a scoped-URL audience, a tampered signature, no binding, a revoked
+// one, a deleted account — each beside its live allow-twin (the same valid token, or the account's
+// key). The crown jewel is `§7/§19.6 · no OAuth-leg failure resolves as the owner`: a JWT-shaped
+// bearer that fails on anything is a 401, never a fall-through to the session lookup.
+
+const OAUTH2 = `${ORIGIN}/api/auth/oauth2`;
+/** claude.ai's real redirect URI shape (§19.6): https, non-loopback, so the provider's "web"
+ *  application-type policy accepts it. */
+const OAUTH_REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback";
+/** RFC 7636 Appendix B's PKCE pair — a real verifier and its S256 challenge, not a secret. */
+const PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+const PKCE_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+/** The door fixture's two proxied services — one the account has a grant on, one it does not.
+ *  Proxied to an unreachable upstream: the pipeline is reached (past the door) and answers the
+ *  SAME bytes for either carrier, which is all these cases read. */
+const DOOR_GRANTED = "news";
+const DOOR_UNGRANTED = "solo";
+const DOOR_UPSTREAM = "https://upstream.invalid/mcp";
+
+/** §19.3's namespace resource identifier — the aggregated URL a token's `aud` must equal. */
+function oauthResourceFor(username: string): string {
+  return `${ORIGIN}/${username}/mcp`;
+}
+
+/** A minted access token and the client it was issued to. */
+type OAuthClient = { token: string; clientId: string };
+
+/** Register a public client through anonymous DCR (§19.3) and return its server-assigned id. */
+async function registerOAuthClient(send: (request: Request) => Promise<Response>): Promise<string> {
+  const response = await send(
+    new Request(`${OAUTH2}/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "pmcp door test",
+        redirect_uris: [OAUTH_REDIRECT_URI],
+        token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+      }),
+    }),
+  );
+  const id = ((await response.json()) as { client_id?: string }).client_id;
+  if (id === undefined) throw new Error(`registerOAuthClient: ${response.status}`);
+  return id;
+}
+
+/** The provider answers its redirects as `{ redirect, url }` (accept: application/json) —
+ *  `redirect_uri` is the OpenAPI spelling; read whichever it gives. */
+function redirectUrlOf(body: unknown): string {
+  const value = body as { url?: string; redirect_uri?: string };
+  return value.url ?? value.redirect_uri ?? "";
+}
+
+/**
+ * The whole authorization-code + PKCE flow as claude.ai runs it, driven through the provider's
+ * own endpoints with the owner's cookie and NO Authorization header (§19.7): register → authorize
+ * (→ the signed consent query) → provider `/oauth2/consent` (→ the code) → token. `resource: null`
+ * omits RFC 8707 and yields an opaque token; a scope other than "mcp" and a scoped resource are how
+ * the refusal cases reach the state the door must reject. `send` is the composition-root `call` by
+ * default; the §19.7 case passes a guarded one that records any Authorization header.
+ */
+async function driveOAuth(opts: {
+  cookie: string;
+  scope?: string;
+  resource: string | null;
+  send?: (request: Request) => Promise<Response>;
+}): Promise<OAuthClient> {
+  const send = opts.send ?? ((request: Request) => call(request));
+  const clientId = await registerOAuthClient(send);
+  const params: Record<string, string> = {
+    client_id: clientId,
+    redirect_uri: OAUTH_REDIRECT_URI,
+    response_type: "code",
+    scope: opts.scope ?? "mcp",
+    code_challenge: PKCE_CHALLENGE,
+    code_challenge_method: "S256",
+  };
+  if (opts.resource !== null) params.resource = opts.resource;
+  const authorize = await send(
+    new Request(`${OAUTH2}/authorize?${new URLSearchParams(params)}`, {
+      headers: { cookie: opts.cookie, accept: "application/json" },
+    }),
+  );
+  const oauthQuery = redirectUrlOf(await authorize.json()).split("?")[1] ?? "";
+  const consent = await send(
+    new Request(`${OAUTH2}/consent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: opts.cookie, origin: ORIGIN, accept: "application/json" },
+      body: JSON.stringify({ accept: true, oauth_query: oauthQuery }),
+    }),
+  );
+  const code = new URL(redirectUrlOf(await consent.json())).searchParams.get("code");
+  if (code === null) throw new Error("driveOAuth: consent issued no code");
+  const tokenBody: Record<string, string> = {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: OAUTH_REDIRECT_URI,
+    client_id: clientId,
+    code_verifier: PKCE_VERIFIER,
+  };
+  if (opts.resource !== null) tokenBody.resource = opts.resource;
+  // The provider's token endpoint accepts application/x-www-form-urlencoded ONLY.
+  const token = await send(
+    new Request(`${OAUTH2}/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(tokenBody).toString(),
+    }),
+  );
+  const accessToken = ((await token.json()) as { access_token?: string }).access_token;
+  if (accessToken === undefined) throw new Error(`driveOAuth: token exchange ${token.status}`);
+  return { token: accessToken, clientId };
+}
+
+/** Bind a client to a service account through the consent page's own seam (§19.5). */
+async function bindClient(ownerId: string, clientId: string, serviceAccountId: string): Promise<{ id: string }> {
+  const upsert = await upsertBinding({ ownerId, clientId, serviceAccountId });
+  if (upsert === null) throw new Error("bindClient: the account is not in that namespace");
+  return { id: upsert.id };
+}
+
+/** One JSON-RPC request at an MCP endpoint, with an optional bearer. */
+function mcpCall(url: string, token: string | null, method: string, params?: unknown): Promise<Response> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (token !== null) headers.authorization = `Bearer ${token}`;
+  return call(
+    new Request(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) }),
+    }),
+  );
+}
+
+/** Flip one character of a JWT's signature segment: the claims are untouched (right aud, iss,
+ *  scope), only the signature no longer verifies against the hub's JWKS — a token signed by an
+ *  unknown key, still exactly three base64url segments. */
+function tamperSignature(jwt: string): string {
+  const [header, payload, signature] = jwt.split(".");
+  const flipped = (signature[0] === "A" ? "B" : "A") + signature.slice(1);
+  return `${header}.${payload}.${flipped}`;
+}
+
+/** GET /api/auth/token with a cookie session (§19.2): a correctly-signed, correctly-issued
+ *  hub JWT that is NOT an access token — no `mcp` scope, `aud` the origin root, not a namespace. */
+async function mintSessionJwt(cookie: string): Promise<string> {
+  const response = await call(new Request(`${ORIGIN}${AUTH_BASE_PATH}/token`, { headers: { cookie } }));
+  const token = ((await response.json()) as { token?: string }).token;
+  if (token === undefined) throw new Error(`/api/auth/token: ${response.status}`);
+  return token;
+}
+
+/** The coarse `last_used_at` stamp on one binding row, read straight from D1. */
+async function bindingLastUsed(id: string): Promise<number | null> {
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT "last_used_at" AS n FROM oauth_binding WHERE "id" = ?`)
+    .bind(id)
+    .first<{ n: number | null }>();
+  return row?.n ?? null;
+}
+
+/**
+ * The door fixture: one namespace with a granted and an ungranted proxied service, an `agent`
+ * account holding a `pmcp_sa_` key and a live OAuth binding, and a SECOND namespace whose token's
+ * audience is deliberately foreign to the first.
+ */
+type DoorFixture = {
+  self: SeededNamespace;
+  user: string;
+  ownerId: string;
+  agentId: string;
+  session: SeededSession;
+  validClient: OAuthClient;
+  agentKey: string;
+  /** A fully valid access token for ANOTHER namespace — its `aud` names `foreign`, not `self`. */
+  foreignAudToken: string;
+};
+let door: DoorFixture;
+
+describe("§19.6/§19.8 — the OAuth door", () => {
+  beforeAll(async () => {
+    const self = await seedNamespace(env.DB, {
+      services: [
+        { slug: DOOR_GRANTED, kind: "proxy", upstreamUrl: DOOR_UPSTREAM, roles: { reader: ["get.*"] } },
+        { slug: DOOR_UNGRANTED, kind: "proxy", upstreamUrl: DOOR_UPSTREAM, roles: { reader: ["get.*"] } },
+      ],
+      accounts: [
+        {
+          slug: "agent",
+          grants: { [DOOR_GRANTED]: [{ role: "reader", mode: "allow" }] },
+          tokens: [{ as: "key" }],
+        },
+      ],
+    });
+    const session = await seedOwnerSession(self.owner);
+    const validClient = await driveOAuth({ cookie: session.cookie, resource: oauthResourceFor(self.owner.username) });
+    await bindClient(self.owner.userId, validClient.clientId, self.accounts.agent.id);
+
+    // A real, live token for a DIFFERENT namespace — the audience-mismatch cases present it here.
+    const foreign = await seedNamespace(env.DB, { accounts: [{ slug: "agent" }] });
+    const foreignSession = await seedOwnerSession(foreign.owner);
+    const foreignClient = await driveOAuth({
+      cookie: foreignSession.cookie,
+      resource: oauthResourceFor(foreign.owner.username),
+    });
+    await bindClient(foreign.owner.userId, foreignClient.clientId, foreign.accounts.agent.id);
+
+    door = {
+      self,
+      user: self.owner.username,
+      ownerId: self.owner.userId,
+      agentId: self.accounts.agent.id,
+      session,
+      validClient,
+      agentKey: self.tokens.key.token,
+      foreignAudToken: foreignClient.token,
+    };
+  });
+
+  it("§19.6 · a valid OAuth access token resolves to sa:<slug> and reaches tools/call · the same account's pmcp_sa_ key resolves identically (the twin — nothing downstream branches on carrier)", async () => {
+    const aggregated = `${ORIGIN}/${door.user}/mcp`;
+    // Resolves to the SERVICE ACCOUNT — the aggregated listing carries no builtin (only an
+    // owner's does, §8) — and it is the SAME listing the account's own key produces.
+    const oauthTools = await servedTools(await mcpCall(aggregated, door.validClient.token, "tools/list"));
+    const keyTools = await servedTools(await mcpCall(aggregated, door.agentKey, "tools/list"));
+    expect(oauthTools, "the OAuth token was refused at the door").not.toBeNull();
+    expect(oauthTools?.some(namesTheBuiltin)).toBe(false);
+    expect(oauthTools).toEqual(keyTools);
+    // Reaches tools/call on the granted service — past the door, the SAME bytes either carrier.
+    const scoped = `${ORIGIN}/${door.user}/mcp/${DOOR_GRANTED}`;
+    const oauthCall = await mcpCall(scoped, door.validClient.token, "tools/call", { name: "get.thing", arguments: {} });
+    const keyCall = await mcpCall(scoped, door.agentKey, "tools/call", { name: "get.thing", arguments: {} });
+    expect(oauthCall.status).toBe(200);
+    expect(await oauthCall.text()).toEqual(await keyCall.text());
+  });
+
+  it("§19.6/§8 · an OAuth-resolved principal on /<user>/mcp/pmcp gets the same 404 a pmcp_sa_ key gets — the namespace-wide audience resolves, and the refusal comes from grants, not from the door", async () => {
+    const url = `${ORIGIN}/${door.user}/mcp/${PMCP_SLUG}`;
+    const oauth = await mcpCall(url, door.validClient.token, "tools/list");
+    const key = await mcpCall(url, door.agentKey, "tools/list");
+    expect(oauth.status).toBe(404);
+    // Byte-identical to the key's 404: the audience resolved, and a service account holds no
+    // `pmcp` grant (§8), so the refusal is the anonymous 404, not a door 401.
+    expect(await bytesOf(oauth)).toEqual(await bytesOf(key));
+  });
+
+  it("§19.6 · a namespace-audience JWT reaches /<user>/mcp/<slug> and is filtered by that account's grants · the same account's pmcp_sa_ key behaves identically on the same URL (the twin — the audience is namespace-wide, so neither carrier is weaker)", async () => {
+    // The granted slug: the namespace-wide audience reaches the scoped service, past the door.
+    const granted = `${ORIGIN}/${door.user}/mcp/${DOOR_GRANTED}`;
+    const oauthGranted = await mcpCall(granted, door.validClient.token, "tools/list");
+    const keyGranted = await mcpCall(granted, door.agentKey, "tools/list");
+    expect(oauthGranted.status).toBe(200);
+    expect(await oauthGranted.text()).toEqual(await keyGranted.text());
+    // A slug the account holds no grant on: the same 404 the key gets — grants filter, not the door.
+    const ungranted = `${ORIGIN}/${door.user}/mcp/${DOOR_UNGRANTED}`;
+    const oauthUngranted = await mcpCall(ungranted, door.validClient.token, "tools/list");
+    const keyUngranted = await mcpCall(ungranted, door.agentKey, "tools/list");
+    expect(oauthUngranted.status).toBe(404);
+    expect(await bytesOf(oauthUngranted)).toEqual(await bytesOf(keyUngranted));
+  });
+
+  it("§19.8 · no Authorization on /<user>/mcp → 401 whose WWW-Authenticate names resource_metadata for that namespace and scope \"mcp\"", async () => {
+    const response = await mcpCall(`${ORIGIN}/${door.user}/mcp`, null, "tools/list");
+    expect(response.status).toBe(401);
+    const challenge = response.headers.get("WWW-Authenticate") ?? "";
+    expect(challenge).toContain(
+      `resource_metadata="${ORIGIN}/.well-known/oauth-protected-resource/${door.user}/mcp"`,
+    );
+    expect(challenge).toContain('scope="mcp"');
+  });
+
+  it("§19.8/§7 · the 401 challenge on a live namespace and on a nonexistent one are byte-identical", async () => {
+    // The SAME username, its existence toggled: the challenge is derived from the path and
+    // looked up nowhere, so seeding and then deleting the namespace cannot move a byte of it.
+    const ns = await seedNamespace(env.DB, {});
+    const url = `${ORIGIN}/${ns.owner.username}/mcp`;
+    const live = await bytesOf(await mcpCall(url, null, "tools/list"));
+    await ns.teardown();
+    const absent = await bytesOf(await mcpCall(url, null, "tools/list"));
+    expect(live).toEqual(absent);
+  });
+
+  it("§19.8 · a JWT whose aud names another namespace is 401 on this one, never a 404 — audience is a resolution failure, not a namespace judgment", async () => {
+    const response = await mcpCall(`${ORIGIN}/${door.user}/mcp`, door.foreignAudToken, "tools/list");
+    expect(response.status).toBe(401);
+    expect(response.headers.has("WWW-Authenticate")).toBe(true);
+    // A 404 would be the answer for a RESOLVED principal on a foreign namespace; a wrong audience
+    // resolves nobody, so it is the 401 no-token gets, learning nothing about either namespace.
+    expect(response.status).not.toBe(404);
+  });
+
+  it("§19.6 · a JWT whose aud is the scoped URL /<user>/mcp/<slug> rather than the namespace's canonical aggregated URL is refused on BOTH endpoint shapes — namespace-wide means exactly one string", async () => {
+    const scopedResource = `${ORIGIN}/${door.user}/mcp/${DOOR_GRANTED}`;
+    // No PRM or oauthResource for a scoped URL exists in production (§19.9); inserting one here
+    // is the only way to MINT a token whose aud is the scoped URL — the state the door must
+    // refuse. Binding the client proves the refusal is the AUDIENCE, not a missing binding.
+    await (env.DB as D1Like)
+      .prepare(`INSERT INTO "oauthResource" ("id", "identifier", "name") VALUES (?, ?, ?)`)
+      .bind(crypto.randomUUID(), scopedResource, `${door.user}/${DOOR_GRANTED}`)
+      .run();
+    try {
+      const client = await driveOAuth({ cookie: door.session.cookie, resource: scopedResource });
+      await bindClient(door.ownerId, client.clientId, door.agentId);
+      const aggregated = await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list");
+      const scoped = await mcpCall(scopedResource, client.token, "tools/list");
+      expect(aggregated.status).toBe(401);
+      expect(scoped.status).toBe(401);
+    } finally {
+      await (env.DB as D1Like)
+        .prepare(`DELETE FROM "oauthResource" WHERE "identifier" = ?`)
+        .bind(scopedResource)
+        .run();
+    }
+  });
+
+  it("§19.6 · a JWT signed by an unknown key is refused · a real access token from the hub's own authorization server is accepted (the twin — the acceptance test is the claims, not the signer)", async () => {
+    const refused = await mcpCall(`${ORIGIN}/${door.user}/mcp`, tamperSignature(door.validClient.token), "tools/list");
+    expect(refused.status).toBe(401);
+    // The twin: the untampered token, identical claims, verifies and is accepted.
+    const accepted = await mcpCall(`${ORIGIN}/${door.user}/mcp`, door.validClient.token, "tools/list");
+    expect(accepted.status).toBe(200);
+  });
+
+  it("§19.6/§19.2 · a JWT minted from a live cookie session at /api/auth/token is refused at /<user>/mcp — hub-signed is not sufficient", async () => {
+    const sessionJwt = await mintSessionJwt(door.session.cookie);
+    const response = await mcpCall(`${ORIGIN}/${door.user}/mcp`, sessionJwt, "tools/list");
+    expect(response.status).toBe(401);
+  });
+
+  it("§7/§19.6 · \"JWT-shaped\" is exactly three non-empty base64url segments — a two- or four-segment bearer takes the session path, a three-segment base64url string that verifies as nothing takes the OAuth path and 401s (both directions)", async () => {
+    const aggregated = `${ORIGIN}/${door.user}/mcp`;
+    // A better-auth session bearer is ONE segment — not JWT-shaped — so it takes the session
+    // path and resolves to the OWNER, whose aggregated listing carries the builtin (§8).
+    const asOwner = await mcpCall(aggregated, door.session.token, "tools/list");
+    expect(asOwner.status).toBe(200);
+    expect((await servedTools(asOwner))?.some(namesTheBuiltin)).toBe(true);
+    // A three-segment access token takes the OAuth path and resolves to the SERVICE ACCOUNT
+    // (no builtin) — the other direction, observable in WHO each carrier resolves to.
+    const asAccount = await mcpCall(aggregated, door.validClient.token, "tools/list");
+    expect(asAccount.status).toBe(200);
+    expect((await servedTools(asAccount))?.some(namesTheBuiltin)).toBe(false);
+    // Two- and four-segment bearers are not JWT-shaped → session path → refused (junk).
+    expect((await mcpCall(aggregated, "aa.bb", "tools/list")).status).toBe(401);
+    expect((await mcpCall(aggregated, "aa.bb.cc.dd", "tools/list")).status).toBe(401);
+    // Exactly three base64url segments that verify as nothing → OAuth path → 401.
+    expect((await mcpCall(aggregated, "aaa.bbb.ccc", "tools/list")).status).toBe(401);
+  });
+
+  it("§7/§19.6 · no OAuth-leg failure resolves as the owner — a JWT-shaped bearer never reaches the session lookup, whatever it fails on (the leg is terminal, fail-closed)", async () => {
+    const sessionJwt = await mintSessionJwt(door.session.cookie);
+    // Each is JWT-shaped and fails the OAuth leg on a DIFFERENT thing; none may fall through to
+    // the session lookup and resolve as the owner — an owner resolution is a 200 tools/list, so
+    // a terminal leg answers every one with a 401.
+    const failing = [
+      sessionJwt, // hub-signed, wrong aud + no mcp scope
+      tamperSignature(door.validClient.token), // signature does not verify
+      door.foreignAudToken, // another namespace's audience
+      "aaa.bbb.ccc", // verifies as nothing
+    ];
+    for (const token of failing) {
+      const response = await mcpCall(`${ORIGIN}/${door.user}/mcp`, token, "tools/list");
+      expect(response.status, "a JWT-shaped bearer resolved past its OAuth-leg failure").toBe(401);
+    }
+  });
+
+  it("§19.6 · an expired JWT is refused with the challenge", async () => {
+    const ns = await seedNamespace(env.DB, { accounts: [{ slug: "agent" }] });
+    const cookie = (await seedOwnerSession(ns.owner)).cookie;
+    const resource = oauthResourceFor(ns.owner.username);
+    // Born expired: a negative access-token TTL on this namespace's resource, so the minted
+    // token's exp is already past when the door verifies it. Restored in `finally`.
+    await (env.DB as D1Like)
+      .prepare(`UPDATE "oauthResource" SET "accessTokenTtl" = ? WHERE "identifier" = ?`)
+      .bind(-3600, resource)
+      .run();
+    try {
+      const client = await driveOAuth({ cookie, resource });
+      await bindClient(ns.owner.userId, client.clientId, ns.accounts.agent.id);
+      const response = await mcpCall(`${ORIGIN}/${ns.owner.username}/mcp`, client.token, "tools/list");
+      expect(response.status).toBe(401);
+      expect(response.headers.has("WWW-Authenticate")).toBe(true);
+    } finally {
+      await (env.DB as D1Like)
+        .prepare(`UPDATE "oauthResource" SET "accessTokenTtl" = NULL WHERE "identifier" = ?`)
+        .bind(resource)
+        .run();
+    }
+  });
+
+  it("§19.6 · a JWT lacking the \"mcp\" scope is refused", async () => {
+    // scope=offline_access only, correct aud, bound — so the ONLY thing missing is the mcp scope.
+    const client = await driveOAuth({ cookie: door.session.cookie, scope: "offline_access", resource: oauthResourceFor(door.user) });
+    await bindClient(door.ownerId, client.clientId, door.agentId);
+    const response = await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list");
+    expect(response.status).toBe(401);
+  });
+
+  it("§19.8 · a JWT with no oauth_binding row is refused with the challenge (unknown client)", async () => {
+    // Minted and correctly signed for this namespace, but never bound to any account.
+    const client = await driveOAuth({ cookie: door.session.cookie, resource: oauthResourceFor(door.user) });
+    const response = await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list");
+    expect(response.status).toBe(401);
+    expect(response.headers.has("WWW-Authenticate")).toBe(true);
+  });
+
+  it("§19.8 · a binding revoked between two calls refuses the second — revocation is immediate, not exp-bound", async () => {
+    const client = await driveOAuth({ cookie: door.session.cookie, resource: oauthResourceFor(door.user) });
+    const binding = await bindClient(door.ownerId, client.clientId, door.agentId);
+    expect((await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list")).status).toBe(200);
+    await revokeConnection(door.ownerId, binding.id);
+    expect((await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list")).status).toBe(401);
+  });
+
+  it("§19.8 · deleting the bound service account refuses the next call (the FK cascade is the revocation)", async () => {
+    const ns = await seedNamespace(env.DB, { accounts: [{ slug: "agent" }] });
+    const cookie = (await seedOwnerSession(ns.owner)).cookie;
+    const client = await driveOAuth({ cookie, resource: oauthResourceFor(ns.owner.username) });
+    await bindClient(ns.owner.userId, client.clientId, ns.accounts.agent.id);
+    expect((await mcpCall(`${ORIGIN}/${ns.owner.username}/mcp`, client.token, "tools/list")).status).toBe(200);
+    // The binding's service_account_id FK is ON DELETE CASCADE (§19.4): deleting the account
+    // removes the binding, so the door's per-call read finds nothing.
+    await new Registry(env.DB).deleteAccount(ns.accounts.agent.id);
+    expect((await mcpCall(`${ORIGIN}/${ns.owner.username}/mcp`, client.token, "tools/list")).status).toBe(401);
+  });
+
+  it("§19.6 · an opaque access token (no RFC 8707 resource on the token request) is refused with the challenge", async () => {
+    // No `resource` → the provider issues an OPAQUE token (one segment, not a JWT), which the
+    // hub cannot validate in-worker and so refuses at the door.
+    const client = await driveOAuth({ cookie: door.session.cookie, resource: null });
+    const response = await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list");
+    expect(response.status).toBe(401);
+    expect(response.headers.has("WWW-Authenticate")).toBe(true);
+  });
+
+  it("§19.6 · a successful OAuth call stamps oauth_binding.last_used_at at most once per TOKEN_LAST_USED_STAMP_MS", async () => {
+    const client = await driveOAuth({ cookie: door.session.cookie, resource: oauthResourceFor(door.user) });
+    const binding = await bindClient(door.ownerId, client.clientId, door.agentId);
+    expect(await bindingLastUsed(binding.id)).toBeNull(); // fresh binding, never used
+    await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list");
+    const first = await bindingLastUsed(binding.id);
+    expect(first).not.toBeNull();
+    // A second call moments later — well within the coarse window — must not advance the stamp.
+    await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list");
+    expect(await bindingLastUsed(binding.id)).toBe(first);
+    expect(Date.now() - (first ?? 0)).toBeLessThan(TOKEN_LAST_USED_STAMP_MS);
+  });
+
+  it("§8/§19.2 · /api/whoami's 401 carries the bare Bearer challenge — no resource_metadata, because it is not an MCP resource", async () => {
+    const response = await call(new Request(`${ORIGIN}/api/whoami`));
+    expect(response.status).toBe(401);
+    expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");
+  });
+
+  it("§8/§19.6 · /api/whoami refuses a JWT-shaped bearer with 401 and runs neither the OAuth leg nor a session lookup for it · a pmcp_sa_ key still answers sa:<slug> (the twin — the leg lives only on /<user>/mcp*)", async () => {
+    // A valid access token for `self`'s namespace, presented where there is no namespace to bind
+    // its audience to: refused, with the bare Bearer challenge — no OAuth leg, no session lookup.
+    const jwt = await call(new Request(`${ORIGIN}/api/whoami`, { headers: { authorization: `Bearer ${door.validClient.token}` } }));
+    expect(jwt.status).toBe(401);
+    expect(jwt.headers.get("WWW-Authenticate")).toBe("Bearer");
+    // The twin: the account's key still resolves on the same route.
+    const key = await call(new Request(`${ORIGIN}/api/whoami`, { headers: { authorization: `Bearer ${door.agentKey}` } }));
+    expect(key.status).toBe(200);
+    expect(((await key.json()) as { principal: string }).principal).toBe("sa:agent");
+  });
+
+  it("§19.7 · D11's allowlist admits an Authorization header under /api/auth only at /sign-out and /device/* · a bearer on /api/auth/token is refused there like every unlisted path (the twin — the gate is an allowlist, so a plugin's new endpoint is refused without being named)", async () => {
+    const bearer = "pmcp-not-a-real-credential-FAKE0000";
+    // /api/auth/token — jwt()'s side-effect endpoint (§19.2) — is not on the allowlist: 403.
+    const token = await call(new Request(`${ORIGIN}${AUTH_BASE_PATH}/token`, { headers: { authorization: `Bearer ${bearer}` } }));
+    expect(token.status).toBe(403);
+    // The twin: the allowlisted /sign-out and /device/code admit a bearer past the gate.
+    const signOut = await call(new Request(`${ORIGIN}${AUTH_BASE_PATH}/sign-out`, { method: "POST", headers: { authorization: `Bearer ${bearer}` } }));
+    expect(signOut.status).not.toBe(403);
+    const deviceCode = await call(
+      new Request(`${ORIGIN}${AUTH_BASE_PATH}/device/code`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+        body: JSON.stringify({ client_id: "pmcp-cli" }),
+      }),
+    );
+    expect(deviceCode.status).not.toBe(403);
+  });
+
+  it("§19.7 · the OAuth flow needs no allowlist entry — a full round-trip completes with no Authorization header on any /api/auth request, because every supported client is public (§19.3)", async () => {
+    const withAuthorization: string[] = [];
+    const guarded = (request: Request): Promise<Response> => {
+      if (new URL(request.url).pathname.startsWith(AUTH_BASE_PATH) && request.headers.get("Authorization") !== null) {
+        withAuthorization.push(request.url);
+      }
+      return call(request);
+    };
+    const client = await driveOAuth({ cookie: door.session.cookie, resource: oauthResourceFor(door.user), send: guarded });
+    await bindClient(door.ownerId, client.clientId, door.agentId);
+    // The whole round-trip carried no Authorization header to any /api/auth request…
+    expect(withAuthorization).toEqual([]);
+    // …and the token it produced reaches the door as a service account.
+    expect((await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list")).status).toBe(200);
+  });
+});

@@ -28,12 +28,15 @@ import { env } from "cloudflare:workers";
 import { betterAuth } from "better-auth";
 import { bearer } from "better-auth/plugins/bearer";
 import { deviceAuthorization } from "better-auth/plugins/device-authorization";
+import { jwt } from "better-auth/plugins/jwt";
 import { twoFactor } from "better-auth/plugins/two-factor";
 import { username as usernamePlugin } from "better-auth/plugins/username";
 import { dash } from "@better-auth/infra";
+import { oauthProvider } from "@better-auth/oauth-provider";
 import { Hono } from "hono";
 import { deleteUser, provisionUser } from "./admin";
 import { record } from "./audit";
+import { PROTECTED_RESOURCE_PATH, resolveOAuthPrincipal } from "./oauth";
 import { formatPrincipal, TOKEN_PREFIX } from "./principal";
 import type { Principal } from "./principal";
 import {
@@ -98,6 +101,41 @@ function auth() {
       // §13: ~10 minutes, down from better-auth's 30-minute default.
       deviceAuthorization({ expiresIn: `${DEVICE_CODE_TTL_MS / 1000}s` }),
       bearer(),
+      // §19.1: jwt() mints the hub-signed access tokens the door verifies against
+      // /api/auth/jwks, and oauthProvider() throws `jwt_config` without it. issuer is
+      // PUBLIC_ORIGIN so a client reading authorization_servers: [PUBLIC_ORIGIN] probes
+      // exactly /.well-known/oauth-authorization-server and the document's own issuer is
+      // byte-identical (§19.2). keyPairConfig stays the default EdDSA/Ed25519 — the D12
+      // probe confirmed it signs on workerd, so no move to ES256 (§19.3).
+      jwt({ jwt: { issuer: env.PUBLIC_ORIGIN } }),
+      // §19: the hub as an inbound authorization server. Every option here is pinned by
+      // §19.3; nothing else is set, so the provider's own defaults carry the rest — and
+      // those defaults ARE §19's requirements: the AS metadata advertises
+      // response_types_supported ["code"], response_modes_supported ["query"],
+      // code_challenge_methods_supported ["S256"] and
+      // authorization_response_iss_parameter_supported true with no option to flip.
+      //   · scopes: one functional scope + offline_access (refresh tokens, so a connector
+      //     survives access-token expiry); NO openid — a connection is not a login, so no
+      //     id_tokens and no /.well-known/openid-configuration to serve.
+      //   · DCR on and unauthenticated: the only mechanism both Claude surfaces take with
+      //     nothing typed by the owner. A registered client authorizes NOTHING without the
+      //     owner signing in and consenting (server-assigned client_id + exact redirect
+      //     matching, both §19.3 probe observations, are what make that true).
+      //   · loginPage/consentPage: the hub owns every pixel (§19.5); the provider ships none.
+      //   · enforcePerClientResources false: the door enforces `aud` once, where the
+      //     traffic is, rather than a second weaker copy linked at registration (§19.3).
+      oauthProvider({
+        scopes: ["mcp", "offline_access"],
+        loginPage: "/login",
+        consentPage: "/oauth/consent",
+        allowDynamicClientRegistration: true,
+        allowUnauthenticatedClientRegistration: true,
+        // §19.5 step 3: the consent page reads the client's display name through
+        // /oauth2/public-client-prelogin, whose own gate is the provider-signed
+        // oauth_query. Without this the endpoint 400s before the signature check.
+        allowPublicClientPrelogin: true,
+        enforcePerClientResources: false,
+      }),
       // Dash (better-auth's hosted dashboard) rides ONLY where its key is deployed:
       // the plugin phones home, so dev and tests — where the secret is absent —
       // construct exactly the plugin list above and nothing more.
@@ -107,11 +145,13 @@ function auth() {
 }
 
 /**
- * The resolved caller identity that every downstream decision keys on — PRODUCED here
- * (resolvePrincipal and nothing else), never constructed anywhere else. The type and its
- * canonical string live in principal.ts, a leaf, so a module that only has to name a
- * caller does not inherit better-auth and `cloudflare:workers`; both are re-exported here
- * because this is still where a principal comes from.
+ * The resolved caller identity that every downstream decision keys on — PRODUCED by
+ * resolvePrincipal here, plus §19's one delegated producer: oauth.ts's binding leg, which
+ * resolveCredential routes every JWT-shaped bearer through and which yields only
+ * `service_account` principals (never a user). The type and its canonical string live in
+ * principal.ts, a leaf, so a module that only has to name a caller does not inherit
+ * better-auth and `cloudflare:workers`; both are re-exported here because this is still
+ * where a principal enters the pipeline.
  */
 export type { Principal };
 export { formatPrincipal };
@@ -165,13 +205,16 @@ export type TokenInfo = {
  * twin. Production callers omit it.
  */
 export async function resolvePrincipal(req: Request, now?: () => number): Promise<Principal> {
-  // deps: better-auth · D1 `token` · D1 `service_account` · D1 `user` · crypto.subtle
+  // deps: better-auth · oauth.resolveOAuthPrincipal · D1 `token` · D1 `service_account` · D1 `user` · crypto.subtle
   // Credential FIRST, namespace second — that order IS the anti-enumeration rule: an
   // unauthenticated probe never reaches a lookup that could answer differently for a
-  // username that exists, so its 401 is the same 401 either way.
-  const principal = await resolveCredential(req, now ?? Date.now);
-  if (principal === null) throw unauthorized();
-  const owner = await ownerIdFor(namespaceOf(req));
+  // username that exists, so its 401 is the same 401 either way. The namespace is read once,
+  // here: the OAuth leg checks the token's `aud` against it (§19.6), and the 401 challenge
+  // names its per-namespace resource_metadata (§19.2) — both from the path, never a lookup.
+  const namespace = namespaceOf(req);
+  const principal = await resolveCredential(req, now ?? Date.now, namespace);
+  if (principal === null) throw unauthorized(namespace);
+  const owner = await ownerIdFor(namespace);
   // One `throw` for "the namespace is someone else's" and "the namespace is nobody's":
   // a resolved caller learns only that there is nothing here for them.
   if (owner === null || owner !== namespaceIdOf(principal)) throw anonymousNotFound();
@@ -180,12 +223,20 @@ export async function resolvePrincipal(req: Request, now?: () => number): Promis
 
 /**
  * §7 step 1's resolution proper, with no namespace judgment: the prefix dispatch, and
- * nothing else. Shared by resolvePrincipal — which adds the namespace — and by
+ * nothing else. Shared by resolvePrincipal — which adds the namespace judgment — and by
  * `/api/whoami`, whose URL carries no namespace to add (§8: "Resolution mirrors §7
  * step 1"). Answers null for every way a request fails to name somebody, so no caller
  * can accidentally tell two failures apart.
+ *
+ * `namespace` is the addressed username on `/<user>/mcp*` and `null` on the namespaceless
+ * `/api/whoami` — the OAuth leg (§19.6) needs it to bind a token's audience, so where there
+ * is no namespace a JWT-shaped bearer names nobody and is refused without either leg running.
  */
-async function resolveCredential(req: Request, now: () => number): Promise<Principal | null> {
+async function resolveCredential(
+  req: Request,
+  now: () => number,
+  namespace: string | null,
+): Promise<Principal | null> {
   const presented = bearerToken(req);
   if (presented === null) return null;
   // A service credential means nothing on a consumer surface, and — the mutation this
@@ -195,8 +246,34 @@ async function resolveCredential(req: Request, now: () => number): Promise<Princ
   if (presented.startsWith(TOKEN_PREFIX.service_account)) {
     return serviceAccountFor(presented, now);
   }
+  // §19.6: a JWT-shaped bearer is a credential regime of its own — answered by the OAuth
+  // leg ALONE, and that leg is TERMINAL. Whatever it fails on (bad signature, wrong issuer
+  // or audience, expired, missing `mcp` scope, no binding, revoked, deleted account), the
+  // answer is `null` and control NEVER reaches the session lookup below — a fall-through
+  // would promote a refused token to the OWNER, the exact §18-decision-23 inversion §19.6
+  // step 3 forbids. Fail closed by STRUCTURE: every OAuth outcome returns from this branch.
+  if (isJwtShaped(presented)) {
+    return namespace === null ? null : resolveOAuthPrincipal(presented, namespace, now);
+  }
   return sessionUserFor(presented);
 }
+
+/**
+ * §19.6's predicate, pinned at the byte level: a bearer is JWT-shaped when it is EXACTLY
+ * three non-empty `.`-separated segments, each drawn from the base64url alphabet. It routes
+ * between two credential regimes — the OAuth leg above and the session lookup below — so
+ * nothing looser will do ("contains a dot", "decodes to JSON"); a fuzzy version of it is a
+ * way to route a credential into the wrong regime. A `pmcp_`-prefixed token never reaches
+ * here (the prefixes answer first), and a better-auth session token is one segment, so the
+ * two live credentials this predicate must not misroute both fall on the correct side of it.
+ */
+function isJwtShaped(bearer: string): boolean {
+  const segments = bearer.split(".");
+  return segments.length === 3 && segments.every((segment) => JWT_SEGMENT.test(segment));
+}
+
+/** One base64url segment: non-empty (`+`), and nothing outside `[A-Za-z0-9_-]`. */
+const JWT_SEGMENT = /^[A-Za-z0-9_-]+$/;
 
 /**
  * The `pmcp_sa_` leg: the token row must be of kind `service_account` BY COLUMN,
@@ -260,16 +337,42 @@ async function ownerIdFor(name: string): Promise<string | null> {
 }
 
 /**
- * The 401 every unresolved consumer request gets, with the `WWW-Authenticate: Bearer`
- * §7 step 1 attaches to the surface (and §18 decision 13 keeps as the OAuth-discovery
- * upgrade path). One builder, so the row on an existing username and the row on an
- * absent one are the same bytes — which is the property, not the status.
+ * The 401 every unresolved consumer request gets, with the `WWW-Authenticate` challenge §7
+ * step 1 attaches to the surface (and §18 decision 13 kept as the OAuth-discovery upgrade
+ * path, now realized by §19). One builder, so the row on an existing username and the row on
+ * an absent one are the same bytes — which is the property, not the status.
+ *
+ * `namespace` is the addressed username on `/<user>/mcp*`, and absent on the surfaces that
+ * are not MCP resources (`/api/whoami`, §8; the composition root's transport-hygiene
+ * refusals). See `challengeFor` for what each spells.
  */
-export function unauthorized(): Response {
+export function unauthorized(namespace?: string): Response {
   return new Response("Unauthorized", {
     status: 401,
-    headers: { "WWW-Authenticate": "Bearer", "Content-Type": "text/plain; charset=utf-8" },
+    headers: {
+      "WWW-Authenticate": challengeFor(namespace),
+      "Content-Type": "text/plain; charset=utf-8",
+    },
   });
+}
+
+/**
+ * The `WWW-Authenticate` value, per surface (§19.2/§19.8). With a namespace it is the §19.2
+ * discovery challenge: `error="invalid_token"`, the per-namespace `resource_metadata` (the
+ * PRM a client fetches to find the authorization server), and the one functional `scope`.
+ * The namespace comes from the request PATH and is looked up NOWHERE — so the challenge is
+ * the same bytes whether that namespace exists or not (§19.8's anti-enumeration property),
+ * and the only thing that varies between two challenges is the username the caller itself
+ * named in the URL. That segment is already known to be `[a-z0-9-]` — the composition root
+ * refused anything else with the anonymous 404 before the door ran — so no unvalidated text
+ * reaches this header (§19.2's ordering property, the reason this is not a header-injection
+ * surface). Without a namespace the answer is the bare `Bearer`: `/api/whoami` is not an MCP
+ * resource and has no metadata to name (§8).
+ */
+function challengeFor(namespace?: string): string {
+  if (namespace === undefined || namespace === "") return "Bearer";
+  const resourceMetadata = `${env.PUBLIC_ORIGIN}${PROTECTED_RESOURCE_PATH.replace(":user", namespace)}`;
+  return `Bearer error="invalid_token", resource_metadata="${resourceMetadata}", scope="mcp"`;
 }
 
 /**
@@ -913,8 +1016,10 @@ export function whoamiRoute(): unknown {
   const app = new Hono();
   app.get("/whoami", async (c) => {
     // resolveCredential, not resolvePrincipal: there is no `<user>` in this URL to prove
-    // anything about — which is the whole reason whoami exists (§8).
-    const principal = await resolveCredential(c.req.raw, Date.now);
+    // anything about — which is the whole reason whoami exists (§8). `namespace: null` is
+    // that absence made explicit: a JWT-shaped bearer has no audience to bind here, so it is
+    // refused without running the OAuth leg, and the 401 carries the bare `Bearer` challenge.
+    const principal = await resolveCredential(c.req.raw, Date.now, null);
     if (principal === null) return unauthorized();
     return c.json({
       principal: formatPrincipal(principal),

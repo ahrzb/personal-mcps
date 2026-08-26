@@ -42,6 +42,8 @@ import { Approvals } from "../../src/approvals";
 import { query, record } from "../../src/audit";
 import type { AuditEntry, AuditRow } from "../../src/audit";
 import type { BackendCtx, Tool } from "../../src/gateway";
+import { upsertBinding } from "../../src/oauth";
+import { tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, writeOnlyPaths } from "../../src/registry";
 import type { Service } from "../../src/registry";
 import { seedNamespace } from "../harness/seed";
@@ -376,6 +378,30 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
     declaresOutputSchema: false,
     sample: { id: "fixture:token.sa" },
   },
+  // §19/§8: "the OAuth clients connected to this namespace … never a token, a client
+  // secret, or a JWT." A read like `service_list`/`account_list` — empty input succeeds.
+  {
+    op: "connection_list",
+    slugArg: "none",
+    writes: "read",
+    sideEvents: [],
+    cascade: [],
+    declaresOutputSchema: false,
+    sample: {},
+  },
+  // §19.6/§8: "`connection_revoke` takes `{ id }` … writes an `admin.connection_revoke`
+  // audit row." The sample is a row id no static cell can hold — `fixture:binding.oauth`
+  // opens one through `oauth.upsertBinding`, the same seam the consent page writes through
+  // (resolveSample, below), exactly like `fixture:token.sa` resolves token_revoke's.
+  {
+    op: "connection_revoke",
+    slugArg: "none",
+    writes: "mutating",
+    sideEvents: ["oauth.revoked"],
+    cascade: [],
+    declaresOutputSchema: false,
+    sample: { id: "fixture:binding.oauth" },
+  },
   // §8: "→ `{ rows, total }`, newest first … Read-only; like everything else, `pmcp audit`
   // is sugar over this tool." Defaults cover limit/offset, so the empty input succeeds.
   {
@@ -499,6 +525,10 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
 
     it("§8 · approval_decide's own row sits beside approvals' `approval.approved` — two writers, one call", async () => {
       await expectSideEvents(rows, "approval_decide");
+    });
+
+    it("§19.6 · connection_revoke's own row sits beside `oauth.revoked` — two events, one call", async () => {
+      await expectSideEvents(rows, "connection_revoke");
     });
 
     it("§8 · token_issue's row names kind and referent, never the plaintext key", async () => {
@@ -696,8 +726,10 @@ function slugFieldOf(sample: Record<string, unknown>): string {
 }
 
 /**
- * The two `fixture:<handle>` samples resolved against the seeded namespace — row ids no
- * static cell can hold (the table's preamble names both).
+ * The three `fixture:<handle>` samples resolved against the seeded namespace — row ids no
+ * static cell can hold (the table's preamble names the first two; `binding.oauth` is
+ * `connection_revoke`'s own, opened the same way `approval.pending` is: through the write
+ * seam that actually produces one, rather than an INSERT this file invents).
  */
 async function resolveSample(
   sample: Record<string, unknown>,
@@ -707,8 +739,26 @@ async function resolveSample(
   for (const [field, value] of Object.entries(resolved)) {
     if (value === "fixture:token.sa") resolved[field] = ns.tokens[SA_TOKEN].id;
     if (value === "fixture:approval.pending") resolved[field] = await openPendingApproval(ns);
+    if (value === "fixture:binding.oauth") resolved[field] = await openOauthBinding(ns);
   }
   return resolved;
+}
+
+/**
+ * A live `oauth_binding` row, opened through `oauth.upsertBinding` — the same seam
+ * `/oauth/consent`'s POST writes through (§19.5) — bound to the fixture's own `claude`
+ * account. `connection_revoke`'s sample calls this once per row it is asked to resolve
+ * (§9 rule 2's allow-twin and the reserved-slug sweep alike each seed their own fixture),
+ * so every call opens its own binding rather than sharing one across namespaces.
+ */
+async function openOauthBinding(ns: SeededNamespace): Promise<string> {
+  const bound = await upsertBinding({
+    ownerId: ns.owner.userId,
+    clientId: `fixture-oauth-client-${ns.owner.userId}`,
+    serviceAccountId: ns.accounts[CLAUDE].id,
+  });
+  if (bound === null) throw new Error("openOauthBinding: the fixture account is not in its own namespace");
+  return bound.id;
 }
 
 /**
@@ -885,6 +935,52 @@ async function listAdminTools(): Promise<Tool[]> {
 }
 
 runAdminOpTable(ADMIN_OP_ROWS);
+
+// ── §19/§8 · connection_list / connection_revoke, beyond the generic table ───────────────
+
+describe("§19/§8 · connections (fronting oauth.ts)", () => {
+  it("§8 · connection_list returns the namespace's bindings and never a token, a client secret, or a JWT", async () => {
+    const ns = await seedFixture();
+    const bindingId = await openOauthBinding(ns);
+    const listed = (await ops.connection_list.handler(ns.owner.userId, {})) as {
+      connections: { id: string; clientId: string; clientName: string | null; accountSlug: string }[];
+    };
+    const row = listed.connections.find((connection) => connection.id === bindingId);
+    expect(row, "the opened binding is not in its own namespace's listing").toBeDefined();
+    expect(row?.accountSlug).toBe(CLAUDE);
+    // Never a credential: no pmcp_(sa|svc)_ token, no JWT-shaped three-segment string, and
+    // no field named "secret" anywhere in the answer (§8: "a connection is a binding, and
+    // a binding holds no credential").
+    const serialized = JSON.stringify(listed);
+    expect(serialized).not.toMatch(tokenPattern(16));
+    expect(serialized).not.toMatch(/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+    expect(serialized.toLowerCase()).not.toContain("secret");
+  });
+
+  it("§8 · connection_revoke revokes by id · an id from another namespace is refused (the twin)", async () => {
+    const ns = await seedFixture();
+    const other = await seedFixture();
+    const bindingId = await openOauthBinding(ns);
+    await expect(
+      ops.connection_revoke.handler(other.owner.userId, { id: bindingId }),
+      "a foreign namespace's id must be refused",
+    ).rejects.toBeDefined();
+    // The twin: the identical id, called by the namespace that actually owns it.
+    await expect(
+      ops.connection_revoke.handler(ns.owner.userId, { id: bindingId }),
+      "the owning namespace's own id must succeed",
+    ).resolves.toBeDefined();
+  });
+
+  it("§8 · connection_revoke writes an admin.connection_revoke audit row", async () => {
+    const ns = await seedFixture();
+    const bindingId = await openOauthBinding(ns);
+    await ops.connection_revoke.handler(ns.owner.userId, { id: bindingId });
+    const written = await adminRows(ns.owner.userId);
+    expect(written.map((row) => row.event)).toContain("admin.connection_revoke");
+    expect(JSON.stringify(written)).not.toMatch(tokenPattern(16));
+  });
+});
 
 // ── §8 · audit_query's filters, each proven to narrow ─────────────────────────────────
 //

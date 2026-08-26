@@ -59,9 +59,11 @@ export type ServedSegment = (typeof import("../../src/index"))["ROUTES"][number]
  *
  * Two probes, because a segment is a subtree and not a page. `/<segment>/mcp` is the shape
  * that the fallthrough would claim, so it is the one that can carry the signature; the bare
- * `/<segment>` is where a mount answers for itself. "not-found" is the answer only when
- * BOTH come back byte-identical to a path the worker routes nowhere — which is exactly the
- * state a segment reserved with nothing mounted on it is in.
+ * `/<segment>` is where a mount answers for itself — EXCEPT for the one entry that claims
+ * nothing at its root (see DOCUMENT_PROBE_PATH), which is probed at its own document path
+ * instead. "not-found" is the answer only when BOTH come back byte-identical to a path the
+ * worker routes nowhere — which is exactly the state a segment reserved with nothing mounted
+ * on it is in.
  */
 export async function probeSegment(segment: ServedSegment | string): Promise<"served" | "fallthrough" | "not-found"> {
   // deps: src/index (exports.default.fetch) · cloudflare:test env (BOOTSTRAP_SECRET set)
@@ -76,11 +78,27 @@ export async function probeSegment(segment: ServedSegment | string): Promise<"se
   // answers 401 WITH `WWW-Authenticate` is identity's consumer refusal, which is reached
   // only once a request has been read as `/<user>/mcp`.
   if (asNamespace.status === 401 && asNamespace.headers.has("WWW-Authenticate")) return "fallthrough";
-  const asPage = await call(new Request(`${ORIGIN}/${segment}`));
+  // §16's per-entry probe-path rule (§19.2): most segments claim their whole subtree and
+  // answer for themselves at `/<segment>`; `.well-known` claims nothing at its root and
+  // serves only exact documents, so the walk observes it at its document path.
+  const asPage = await call(new Request(`${ORIGIN}${DOCUMENT_PROBE_PATH[segment] ?? `/${segment}`}`));
   const unrouted = await bytesOf(await call(new Request(`${ORIGIN}/${UNROUTED_PATH}`)));
   const answers = [await bytesOf(asPage), await bytesOf(asNamespace)];
   return answers.some((answer) => answer !== unrouted) ? "served" : "not-found";
 }
+
+/**
+ * §16's per-entry probe-path rule (§19.2), as data: the segment whose mount serves EXACT
+ * documents and claims nothing at its root, mapped to a document path the walk can observe
+ * it "served" at. `/<seg>` and `/<seg>/mcp` both answer the ONE anonymous 404 for such a
+ * mount, so probing them would call it unserved and redden case 2 on a segment that is, in
+ * fact, served. Only `.well-known` is in this state (§19.2 rejects a distinguishable
+ * "segment 404" as spending a security property on a test convenience); every other segment
+ * claims its subtree and is probed at `/<seg>`. Test 14 pins the rule and its one member.
+ */
+const DOCUMENT_PROBE_PATH: Record<string, string> = {
+  ".well-known": "/.well-known/oauth-authorization-server",
+};
 
 /**
  * The served set as the RUNNING WORKER defines it — the walk's side of the equivalence.
@@ -347,5 +365,146 @@ describe("§2/§7 · what the fallthrough serves", () => {
       }),
     );
     expect(await jsonRpcOf(asNamespace)).toBeNull();
+  });
+});
+
+describe("§19.2 · the .well-known discovery segment", () => {
+  /** The AS-metadata document URL — the one path this segment's mount serves at the root. */
+  const asMetadata = `${ORIGIN}/.well-known/oauth-authorization-server`;
+  /** The per-namespace PRM URL, path-derived, never a lookup. */
+  const prm = (user: string): string => `${ORIGIN}/.well-known/oauth-protected-resource/${user}/mcp`;
+  /** The PRM a fresh namespace derives — the whole document, so a shape check is one compare. */
+  const prmDoc = (user: string) => ({
+    resource: `${ORIGIN}/${user}/mcp`,
+    authorization_servers: [ORIGIN],
+    bearer_methods_supported: ["header"],
+    scopes_supported: ["mcp"],
+  });
+
+  it("14. §2/§16 · \".well-known\" is a served segment and is in RESERVED_ROUTES — the walk probes its document path (/.well-known/oauth-authorization-server), not /<seg>, because this mount serves exact documents and nothing at its root", async () => {
+    expect(RESERVED_ROUTES.has(".well-known")).toBe(true);
+    expect(ROUTES).toContain(".well-known");
+    // Served — but only observable at its document path: the walk's own answer, and the
+    // reason DOCUMENT_PROBE_PATH exists.
+    expect(await probeSegment(".well-known")).toBe("served");
+    // "nothing at its root": bare `/.well-known` and `/.well-known/<seg>` are the anonymous
+    // 404, byte-identical to any unrouted path — which is why probing `/<seg>` would miss it.
+    const unrouted = await bytesOf(await call(new Request(`${ORIGIN}/${UNROUTED_PATH}`)));
+    expect(await bytesOf(await call(new Request(`${ORIGIN}/.well-known`)))).toEqual(unrouted);
+  });
+
+  it("15. §19.2 · GET /.well-known/oauth-protected-resource/<user>/mcp answers the PRM · the same path under an unknown username answers the same document shape (derived from the path, never a lookup)", async () => {
+    const user = fixture.owner.username;
+    const known = await call(new Request(prm(user)));
+    expect(known.status).toBe(200);
+    expect(await known.json()).toEqual(prmDoc(user));
+    // An unknown username gets a well-formed document all the same — no `user` lookup runs,
+    // so there is nothing for it to answer differently (the §7-step-1 anti-enumeration rule
+    // in document form).
+    const ghost = uniqueSlug("ghost");
+    const unknown = await call(new Request(prm(ghost)));
+    expect(unknown.status).toBe(200);
+    expect(await unknown.json()).toEqual(prmDoc(ghost));
+  });
+
+  it("16. §19.2 · the PRM's \"resource\" is the canonical aggregated URL of that namespace — lowercase host, no trailing slash, path included", async () => {
+    const user = fixture.owner.username;
+    const { resource } = (await (await call(new Request(prm(user)))).json()) as { resource: string };
+    expect(resource).toBe(`${ORIGIN}/${user}/mcp`);
+    expect(resource.endsWith("/")).toBe(false);
+    expect(resource).toContain(`/${user}/mcp`);
+    const host = new URL(resource).host;
+    expect(host).toBe(host.toLowerCase());
+  });
+
+  it("17. §19.2 · the PRM names exactly one authorization_servers entry, the origin root", async () => {
+    const { authorization_servers } = (await (await call(new Request(prm(fixture.owner.username)))).json()) as {
+      authorization_servers: string[];
+    };
+    expect(authorization_servers).toEqual([ORIGIN]);
+    // The origin ROOT — no path, no `/api/auth` — so a client reading entry [0] probes
+    // exactly /.well-known/oauth-authorization-server.
+    expect(new URL(authorization_servers[0]).pathname).toBe("/");
+  });
+
+  it("18. §19.2 · GET /.well-known/oauth-protected-resource (no path) is 404 — the root form is deliberately unserved", async () => {
+    const res = await call(new Request(`${ORIGIN}/.well-known/oauth-protected-resource`));
+    expect(res.status).toBe(404);
+    // Unserved means the ONE anonymous 404, not a distinguishable one — byte-identical to an
+    // unrouted path, and carrying no CORS header.
+    expect(await bytesOf(res)).toEqual(await bytesOf(await call(new Request(`${ORIGIN}/${UNROUTED_PATH}`))));
+    expect(res.headers.has("access-control-allow-origin")).toBe(false);
+  });
+
+  it("19. §19.2 · GET /.well-known/oauth-authorization-server answers RFC 8414 metadata whose \"issuer\" is byte-identical to the origin the document was fetched from", async () => {
+    const res = await call(new Request(asMetadata));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { issuer: string };
+    // The document was fetched from ORIGIN; its issuer is that same string, byte for byte —
+    // the whole reason `jwt`'s issuer is set to PUBLIC_ORIGIN (§19.2), so a client MUST NOT
+    // reject the metadata on an issuer mismatch.
+    expect(body.issuer).toBe(ORIGIN);
+  });
+
+  it("20. §19.2 · the AS metadata advertises code_challenge_methods_supported [\"S256\"], response_types [\"code\"], and a registration_endpoint", async () => {
+    const body = (await (await call(new Request(asMetadata))).json()) as {
+      code_challenge_methods_supported: string[];
+      response_types_supported: string[];
+      registration_endpoint: string;
+    };
+    expect(body.code_challenge_methods_supported).toEqual(["S256"]);
+    expect(body.response_types_supported).toEqual(["code"]);
+    expect(typeof body.registration_endpoint).toBe("string");
+    expect(body.registration_endpoint.length).toBeGreaterThan(0);
+  });
+
+  it("21. §19.2 · an unrouted path under /.well-known answers the hub's ONE anonymous 404, byte-identical to any other unrouted path — including /.well-known itself", async () => {
+    const unrouted = await bytesOf(await call(new Request(`${ORIGIN}/${UNROUTED_PATH}`)));
+    // `.well-known` bare, an unknown child, and a suffix past each served document — none is
+    // served, and none is a distinguishable miss.
+    const misses = [
+      ".well-known",
+      ".well-known/not-a-document",
+      ".well-known/oauth-authorization-server/extra",
+      ".well-known/oauth-protected-resource/somebody/notmcp",
+    ];
+    for (const path of misses) {
+      const res = await call(new Request(`${ORIGIN}/${path}`));
+      expect(res.status, path).toBe(404);
+      expect(await bytesOf(res), path).toEqual(unrouted);
+      expect(res.headers.has("access-control-allow-origin"), `${path} carries no CORS header`).toBe(false);
+    }
+  });
+
+  it("22. §2 · a username may not be \".well-known\" · a non-reserved name of the same charset still provisions (the twin)", async () => {
+    // `.well-known` is a reserved route segment now, so §2's collision check refuses it — the
+    // same refusal `login`/`api` get (case 7), for the same reason.
+    const refused = await bootstrap({ op: "create", username: ".well-known" });
+    expect(refused.status).toBe(409);
+    // The twin, without which "refused" is satisfied by a create that never works: a
+    // charset-legal, non-reserved name provisions.
+    const allowed = uniqueSlug("wk");
+    const created = await bootstrap({ op: "create", username: allowed });
+    expect(created.status).toBe(200);
+    expect(((await created.json()) as { username: string }).username).toBe(allowed);
+    await resetNamespace(allowed);
+  });
+
+  it("23. §19.2 · a GET of either well-known document carries Access-Control-Allow-Origin: * · POST /api/auth/oauth2/token carries no CORS header (the twin — public metadata vs the provider's default posture)", async () => {
+    const as = await call(new Request(asMetadata));
+    expect(as.headers.get("access-control-allow-origin")).toBe("*");
+    const doc = await call(new Request(prm(fixture.owner.username)));
+    expect(doc.headers.get("access-control-allow-origin")).toBe("*");
+    // The twin: the provider's own token endpoint keeps its server-side posture and gains no
+    // CORS header — the header lives on the two public metadata documents, never on the mount
+    // or the provider surface.
+    const token = await call(
+      new Request(`${ORIGIN}/api/auth/oauth2/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "grant_type=authorization_code",
+      }),
+    );
+    expect(token.headers.has("access-control-allow-origin")).toBe(false);
   });
 });

@@ -37,10 +37,11 @@ import type { Context } from "hono";
 import { ops } from "./admin";
 import type { AdminOp } from "./admin";
 import type { PushSubscriptionJson } from "./approvals";
-import { exportJsonl } from "./audit";
+import { exportJsonl, record } from "./audit";
 import { HubError } from "./errors";
-import { callAuth, callAuthResponse, requireOwnerSession } from "./identity";
+import { callAuth, callAuthResponse, formatPrincipal, requireOwnerSession } from "./identity";
 import type { OwnerSession } from "./identity";
+import { upsertBinding } from "./oauth";
 import { Registry } from "./registry";
 import type { Service } from "./registry";
 import { beginConnect } from "./upstream";
@@ -49,6 +50,8 @@ import { AccountPage } from "./pages/account";
 import { ApprovalDetail } from "./pages/approval-detail";
 import { ApprovalsPage } from "./pages/approvals";
 import { AuditPage } from "./pages/audit";
+import { ConnectionsPage } from "./pages/connections";
+import { ConsentPage } from "./pages/consent";
 import { Device } from "./pages/device";
 import { Login } from "./pages/login";
 import { ServiceNewPage } from "./pages/service-new";
@@ -60,6 +63,8 @@ import {
   auditFilters,
   auditProps,
   auditQueryOf,
+  connectionsProps,
+  consentProps,
   deviceProps,
   loginProps,
   paths,
@@ -107,6 +112,13 @@ type PageRouter = unknown;
  *   approvals.subscribePush (approvals owns Web Push; this module only subscribes).
  * - /services, /services/new — service management fronting the service_* admin ops;
  *   Connect/Reconnect redirect into the upstream module's OAuth initiation.
+ * - /oauth/consent — §19.5's inbound-OAuth consent screen: the provider redirects an
+ *   authenticated, uncovered authorization request here with a signed query the page
+ *   echoes back verbatim; the POST verifies with the provider's own /oauth2/consent
+ *   BEFORE writing oauth_binding, so a refused request writes nothing.
+ * - /oauth/connections — the bindings the consent screen produced, fronting
+ *   connection_list/connection_revoke; Revoke rides the same generic dispatch as
+ *   /services' own mutations.
  * - /manifest.webmanifest, /sw.js, /styles.css — the PWA shell: installability, push,
  *   and the one stylesheet. The service worker handles push + notificationclick
  *   (opening /approvals/<id>) and never intercepts navigation (the no-SPA pin, §13).
@@ -128,9 +140,10 @@ export function pageRoutes(): PageRouter {
   // derive one from, and its forms post to better-auth, which brings its own defense (§4).
   // The clock is here rather than in the loader because this module holds every clock the
   // pages read (see `context`).
-  app.get(paths.login, (c) =>
-    render(Login(loginProps(new Date().toISOString(), new URL(c.req.url).searchParams))),
-  );
+  app.get(paths.login, (c) => {
+    const url = new URL(c.req.url);
+    return render(Login(loginProps(new Date().toISOString(), url.searchParams, url.search)));
+  });
 
   // /login's three credential forms, translated. better-auth's router accepts
   // `application/json` and nothing else, so the form posts these targets receive would be
@@ -386,6 +399,66 @@ export function pageRoutes(): PageRouter {
   );
 
   app.post("/services/:op", dispatch(paths.services));
+
+  /* -------------------------------- /oauth/consent ------------------------------ */
+  //
+  // §19.5's whole security boundary: the provider redirects an authenticated, uncovered
+  // authorization request here, signed query and all. `requireOwnerSession` is the same
+  // cookie gate every other page uses — a missing session bounces to /login carrying this
+  // page's own URL (query included) as `next=`, which is §19.5 step 1's "carries the query
+  // through" for a browser that reloaded here after its cookie expired mid-flow.
+
+  app.get(paths.oauthConsent, async (c) => {
+    const session = await requireOwnerSession(c.req.raw);
+    const ctx = await context(c.req.raw, session);
+    const props = await consentProps(ctx, c.req.raw);
+    // null means the provider's own signature check on the query failed (edited, expired,
+    // or an unknown client) — nothing to render, and nothing was ever going to be written.
+    if (props === null) return new Response("Bad Request", { status: 400, headers: TEXT });
+    return render(ConsentPage(props));
+  });
+
+  // The consent decision: §13's strictest mutation gate (session, form, CSRF, body), because
+  // this POST both writes a binding and authorizes a client. It VERIFIES BEFORE IT WRITES
+  // (§19.5 step 4): the provider's own `/oauth2/consent` is called FIRST, carrying the
+  // session, and only on ITS success does anything land in `oauth_binding` or the ledger —
+  // a provider refusal (an edited `oauth_query`, an expired one) writes nothing at all.
+  app.post(
+    paths.oauthConsent,
+    mutation(async (c, session, form) => {
+      const oauthQuery = field(form, "oauth_query") ?? "";
+      const accept = field(form, "decision") === "accept";
+      // The provider answers `{ redirect: true, url }` at runtime — its OpenAPI schema
+      // documents `redirect_uri`, but `url` is what the endpoint actually returns (verified
+      // against the running provider), so both are read and whichever it gave wins.
+      const answered = await callAuth<{ url?: unknown; redirect_uri?: unknown }>(c.req.raw, "/oauth2/consent", {
+        accept,
+        oauth_query: oauthQuery,
+      });
+      const redirectUri = answered?.url ?? answered?.redirect_uri;
+      if (typeof redirectUri !== "string") {
+        return new Response("Bad Request", { status: 400, headers: TEXT });
+      }
+      if (accept) {
+        const refused = await bindConsentedAccount(session, oauthQuery, field(form, "service_account") ?? "");
+        if (refused !== null) return refused;
+      }
+      // The hub performs the final browser redirect (§19.5 step 4) — the provider already
+      // validated `redirect_uri` at authorize time (§19.3), so nothing here re-checks it.
+      return c.redirect(redirectUri, 303);
+    }),
+  );
+
+  /* ------------------------------- /oauth/connections --------------------------- */
+
+  app.get(paths.oauthConnections, async (c) => {
+    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
+    return render(ConnectionsPage(await connectionsProps(ctx)));
+  });
+
+  // Revoke, fronting connection_revoke exactly like /services fronts its own ops (§8's
+  // parity direction B): the final path segment names the op, `id` rides the query string.
+  app.post("/oauth/connections/:op", dispatch(paths.oauthConnections));
 
   /* -------------------------------- the shell --------------------------------- */
 
@@ -797,6 +870,46 @@ async function connectRedirect(
   // that a connect started, and `upstream.oauth_connected` records how it ended. A page
   // that wrote its own ledger entry would be the web-only capability §8 forbids.
   return c.redirect(String(started.value), 303);
+}
+
+/**
+ * The consent POST's write half (§19.5 step 4), reached ONLY after the provider's own
+ * `/oauth2/consent` has already accepted the request — this function never runs on a
+ * refusal, so it never has to undo one. Resolves the CHOSEN account by slug scoped to the
+ * signed-in owner (`Registry.getAccount`, the same scoping every op uses) — a slug naming
+ * no account in THIS namespace, foreign or invented, is one refusal, and upsertBinding's own
+ * ownership check is the second independent proof of the same fact. `null` means it
+ * succeeded; a Response means the whole POST answers that instead, writing nothing.
+ */
+async function bindConsentedAccount(
+  session: OwnerSession,
+  oauthQuery: string,
+  accountSlug: string,
+): Promise<Response | null> {
+  const clientId = new URLSearchParams(oauthQuery).get("client_id") ?? "";
+  const account =
+    clientId === "" || accountSlug === ""
+      ? null
+      : await new Registry(env.DB).getAccount(session.user.userId, accountSlug);
+  if (account === null) return new Response("Bad Request", { status: 400, headers: TEXT });
+  const bound = await upsertBinding({
+    ownerId: session.user.userId,
+    clientId,
+    serviceAccountId: account.id,
+  });
+  // Unreachable in practice — `account` was already scoped to this owner above, which is
+  // the one thing upsertBinding refuses on — but the null case is answered rather than
+  // asserted away, the same defensive posture domain() takes for a refusal it does not
+  // expect either.
+  if (bound === null) return new Response("Bad Request", { status: 400, headers: TEXT });
+  await record(env.DB, {
+    ownerId: session.user.userId,
+    principal: formatPrincipal(session.user),
+    event: bound.action === "consented" ? "oauth.consented" : "oauth.rebound",
+    outcome: "ok",
+    detail: { clientId, account: accountSlug },
+  });
+  return null;
 }
 
 /** A form control's value as a string, or null — a File is not an answer to any field

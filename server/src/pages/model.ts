@@ -181,6 +181,11 @@ export const paths = {
   approvals: "/approvals",
   /** Read-only view over audit.query with its exact filters. */
   audit: "/audit",
+  /** §19.5's consent screen — an external client's authorization request, and the
+   *  service-account picker that decides how much power it gets. */
+  oauthConsent: "/oauth/consent",
+  /** §19.6/§8's connections list, with Revoke. */
+  oauthConnections: "/oauth/connections",
 
   /* --- the PWA shell (§13) --- */
 
@@ -256,6 +261,10 @@ export const paths = {
   /** service_disconnect — wipes the stored bundle, keeps everything else (§8). */
   serviceDisconnect(slug: string): string {
     return `/services/service_disconnect${query({ slug })}`;
+  },
+  /** connection_revoke (§8/§19.6) — the /oauth/connections Revoke button. */
+  connectionRevoke(id: string): string {
+    return `/oauth/connections/connection_revoke${query({ id })}`;
   },
 
   /* --- confirm dialogs as addressable state --- */
@@ -813,6 +822,69 @@ export type AuditProps = ShellProps & {
 };
 
 /* ------------------------------------------------------------------ *
+ * /oauth/consent (§19.5)
+ * ------------------------------------------------------------------ */
+
+/** One entry of the service-account `<select>`, defaulted to nothing (§19.5). */
+export type ConsentAccountOption = { slug: string; name: string };
+
+/**
+ * /oauth/consent — chromeless, like /login and /device: reached from the provider's own
+ * redirect, not from inside the signed-in app. Every field here is either the SIGNED
+ * `oauth_query` echoed verbatim (§19.5 step 2 — this page cannot invent, drop or edit a
+ * parameter) or a value read out of the SAME verified query, through the provider's own
+ * `/oauth2/public-client-prelogin` (which re-checks the signature, §19.5 step 2's blocking
+ * probe observation).
+ */
+export type ConsentProps = PageProps & {
+  csrfToken: string;
+  /** The whole signed query, byte-for-byte — the hidden field this form echoes back. */
+  oauthQuery: string;
+  /** The client's own self-chosen name — untrusted, rendered as text, never markup. `null`
+   *  when the client registered without one. */
+  clientName: string | null;
+  /** §19.3: no `userId` on the client's row means it registered itself through the
+   *  anonymous DCR endpoint — the "registered itself, identity unverified" marker. */
+  clientSelfRegistered: boolean;
+  /** The ORIGIN of `redirect_uri` — the one attacker-controlled string that actually
+   *  decides where the authorization code goes (§19.5 step 3). */
+  redirectOrigin: string;
+  /** The requested scopes, space-split — today always exactly `["mcp"]` or with
+   *  `offline_access` beside it (§19.3). */
+  scopes: string[];
+  /** The namespace the token will be audience-bound to, read off the request's `resource`. */
+  namespace: string;
+  /** Every service account in the namespace — `account_list` unchanged (§8's parity
+   *  invariant). Empty is the first-run path, not an edge case (§19.5's empty state). */
+  accounts: ConsentAccountOption[];
+};
+
+/* ------------------------------------------------------------------ *
+ * /oauth/connections (§19.6/§8/§13)
+ * ------------------------------------------------------------------ */
+
+/** One row of the connections list — `connection_list`'s own shape (oauth.ts's
+ *  `Connection`), unchanged (§8's parity invariant): never a token, a client secret, or a
+ *  JWT, because a connection is a binding and a binding holds no credential. */
+export type ConnectionRow = {
+  id: string;
+  clientId: string;
+  clientName: string | null;
+  accountSlug: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+};
+
+/**
+ * /oauth/connections — chromeless like /oauth/consent: a settings page reached from a
+ * link, not part of the four-section shell (§13 names no nav slot for it).
+ */
+export type ConnectionsProps = PageProps & {
+  csrfToken: string;
+  connections: ConnectionRow[];
+};
+
+/* ------------------------------------------------------------------ *
  * The page set
  * ------------------------------------------------------------------ */
 
@@ -1354,15 +1426,38 @@ function sessionRow(row: BetterAuthSession, current: string): SessionRow {
  * from. Its whole input is the query string better-auth's redirect left behind, and
  * the render instant its caller stamps (web.ts holds the clock; nothing in this file
  * reads one).
+ *
+ * `rawSearch` is `web.ts`'s own `new URL(req.url).search` — the ORIGINAL bytes, never
+ * reparsed through `query` and re-serialized — because §19.5 step 1's landing target for
+ * the OAuth flow is the SIGNED query the provider built, and `URLSearchParams.toString()`
+ * re-encodes (`+` for space, its own escaping) rather than reproducing what was signed.
  */
-export function loginProps(now: string, query: URLSearchParams): LoginProps {
+export function loginProps(now: string, query: URLSearchParams, rawSearch: string): LoginProps {
   return {
     step: loginStep(query),
     now,
-    // identity's login redirect carries where the browser was going; a hidden field
-    // is how it survives the round trip.
-    redirectTo: query.get("next"),
+    // §19.5 step 1: when /login was reached via the provider's own signed authorize
+    // redirect, the post-login landing is a CONSTANT — the hub's own oauth2/authorize,
+    // with the signed query appended as the ONLY thing taken from the request. This page
+    // never reads a destination out of that query — no next=, no return_to= — which is
+    // exactly why the check below runs BEFORE `query.get("next")` is ever consulted:
+    // identity's own login redirect (an ordinary deep link, e.g. from /approvals/<id>)
+    // carries no `sig`/`client_id` pair, so nothing here changes for it.
+    redirectTo: oauthRedirectTarget(query, rawSearch) ?? query.get("next"),
   };
+}
+
+/**
+ * §19.5 step 1's one detection rule: a `sig` alongside a `client_id` on /login's OWN query
+ * is the provider's signed authorize request (identity's plain deep-link redirect never
+ * sets either) — nothing here re-verifies the signature, because this page only BUILDS the
+ * landing URL and never acts on the query itself; the provider's `/oauth2/authorize` is
+ * what verifies it, the moment the browser lands back there. `rawSearch` already carries
+ * the leading `?`, so the result is `${AUTH_BASE_PATH}/oauth2/authorize?<verbatim query>`.
+ */
+function oauthRedirectTarget(query: URLSearchParams, rawSearch: string): string | null {
+  if (!query.has("sig") || !query.has("client_id")) return null;
+  return `${paths.auth.base}/oauth2/authorize${rawSearch}`;
 }
 
 /** Which of /login's three forms to draw, and what to say under the offending control.
@@ -1434,6 +1529,92 @@ async function deviceStep(ctx: PageContext, req: Request): Promise<DeviceStep> {
       expiresAt: new Date(Date.parse(ctx.now) + DEVICE_CODE_TTL_MS).toISOString(),
     },
   };
+}
+
+/* ------------------------------------- /oauth/consent (§19.5) ------------------------------------- */
+
+/**
+ * /oauth/consent — the whole read, off the SIGNED query string the provider redirected the
+ * browser here with and nothing else. `req.url`'s raw search string IS `oauth_query`
+ * (§19.5 step 2: "the page cannot invent, drop or edit a parameter"), so it is read here
+ * ONCE, echoed back unread by anything downstream, and handed to the provider's own
+ * `/oauth2/public-client-prelogin` — which re-verifies the signature (§19.5 step 2's
+ * blocking probe observation: "public-client-prelogin wants client_id alongside
+ * oauth_query"). `null` means that verification failed — an edited or expired query, or an
+ * unknown client — and the caller (web.ts) answers a plain 400 rather than rendering a
+ * page whose every field would be unverified.
+ *
+ * `clientSelfRegistered` is read directly off `oauthClient` rather than through an admin op:
+ * no op fronts it (nothing else in this hub needs it), it names no capability an agent or
+ * the CLI could invoke instead, and it is display-only — so it joins /account's better-auth
+ * reads and /audit's stats as a named exception to "every loader reads through admin.ops"
+ * rather than a silent one.
+ */
+export async function consentProps(ctx: PageContext, req: Request): Promise<ConsentProps | null> {
+  // deps: identity.callAuth (public-client-prelogin) · admin.ops (account_list) · D1 `oauthClient`
+  const oauthQuery = new URL(req.url).search.slice(1);
+  const requested = new URLSearchParams(oauthQuery);
+  const clientId = requested.get("client_id") ?? "";
+  if (oauthQuery === "" || clientId === "") return null;
+  // The provider's own OAuth-shaped field name (schemaToOAuth's rendering) — `client_name`,
+  // never `name`; the DCR body's own field is spelled the same way.
+  const client = await callAuth<{ client_name?: unknown }>(req, "/oauth2/public-client-prelogin", {
+    client_id: clientId,
+    oauth_query: oauthQuery,
+  });
+  if (client === null) return null;
+  const listed = await read<{ accounts: { slug: string; name: string }[] }>(ctx, "account_list");
+  return {
+    now: ctx.now,
+    csrfToken: ctx.csrfToken,
+    oauthQuery,
+    clientName: typeof client.client_name === "string" && client.client_name !== "" ? client.client_name : null,
+    clientSelfRegistered: await isDcrClient(clientId),
+    redirectOrigin: originOf(requested.get("redirect_uri") ?? ""),
+    scopes: (requested.get("scope") ?? "").split(" ").filter((s) => s !== ""),
+    namespace: namespaceOfResource(requested.get("resource") ?? ""),
+    accounts: listed.accounts.map((account) => ({ slug: account.slug, name: account.name })),
+  };
+}
+
+/** §19.3's DCR marker: no `userId` on the client's row means it registered itself through
+ *  the anonymous DCR endpoint — nobody was signed in to vouch for it at registration. */
+async function isDcrClient(clientId: string): Promise<boolean> {
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT "userId" FROM "oauthClient" WHERE "clientId" = ?`)
+    .bind(clientId)
+    .first<{ userId: string | null }>();
+  return row === null || row.userId === null || row.userId === "";
+}
+
+/** A URL's origin, or the string itself when it does not parse — display-only, and a
+ *  malformed redirect_uri is refused by the provider long before this page ever renders. */
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
+/** The namespace named by an RFC 8707 `resource` (`https://<origin>/<user>/mcp`) — the
+ *  path's first segment, or "" when the value is absent or does not parse. */
+function namespaceOfResource(resource: string): string {
+  try {
+    return new URL(resource).pathname.split("/").filter(Boolean)[0] ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/* ------------------------------------- /oauth/connections (§19.6/§8) ------------------------------------- */
+
+/** /oauth/connections — `connection_list` unchanged (§8's parity invariant): the page shows
+ *  nothing the CLI or an agent holding an admin token could not also read. */
+export async function connectionsProps(ctx: PageContext): Promise<ConnectionsProps> {
+  // deps: admin.ops (connection_list)
+  const listed = await read<{ connections: ConnectionRow[] }>(ctx, "connection_list");
+  return { now: ctx.now, csrfToken: ctx.csrfToken, connections: listed.connections };
 }
 
 /* ---------------------------------- shared ------------------------------------ */

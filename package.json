@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@better-auth/infra": "^0.4.2",
+    "@better-auth/oauth-provider": "1.7.1",
     "@sentry/cloudflare": "^10.71.0",
     "better-auth": "^1.7.1",
     "hono": "^4.13.3",

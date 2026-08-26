@@ -35,6 +35,7 @@
 // ponytail: no argv, no flags, no dry-run mode. Two env vars and a fixed walk — a knob
 // nobody has asked for is a knob that goes stale. Add one when a second caller appears.
 
+import { createHash, randomBytes } from "node:crypto";
 import { applyProfile, main as cli } from "../cli/src/main.ts";
 import { caller, HubTransport } from "../clients/js/src/index.ts";
 
@@ -50,6 +51,15 @@ const ROLE = "reader";
 const TOOL = "echo";
 /** The RFC 8628 client id cli/src/main.ts presents — the same string, on purpose. */
 const DEVICE_CLIENT_ID = "pmcp-cli";
+/** §19's throwaway OAuth client's one redirect URI — never actually dereferenced (the walk
+ *  reads the code off the Location header with `redirect: "manual"`), so it only has to be a
+ *  well-formed, non-loopback https URL, which is what a "web" DCR client's redirect must be
+ *  (§19.3). `.invalid` is RFC 2606's reserved never-resolves TLD. */
+const OAUTH_REDIRECT_URI = "https://smoke.invalid/callback";
+/** The service account §19's OAuth binding is made to — its OWN, separate from `ACCOUNT`,
+ *  so the scoped call below is never coupled to the approval-mode grant the main flow
+ *  leaves on `ACCOUNT` by the time this step runs. */
+const OAUTH_ACCOUNT = "smoke-oauth-agent";
 /** The one call the walk makes through the tunnel. Reused verbatim on the approval retry —
  *  §7 binds an approval to the canonical JSON of `arguments`, so the retry must be
  *  byte-identical to match the row. */
@@ -303,6 +313,206 @@ async function main(): Promise<number> {
       const events = rows.map((row) => String(asRecord(row, "audit row").event));
       return `${rows.length} rows for ${SERVICE}, ${calls.length} tools/call — ${JSON.stringify(unique(events))}`;
     });
+
+    await step(
+      "SMOKE · §19 · the full OAuth round-trip mints a JWT that reaches tools/call as sa:<slug> on both endpoint shapes, and revoking it stops the next call",
+      async () => {
+        // One step, one atomic leg: a mid-walk failure here must not print as a run of
+        // separate passing steps — it is one claim, "the OAuth connector flow works end to
+        // end against this deployment", or it is not.
+        const resource = `${ORIGIN}/${USERNAME}/mcp`;
+
+        // Discovery, anonymous — no Authorization header anywhere in this walk (§19.7): if
+        // it needed one, the allowlist argument the whole flow rests on would be wrong.
+        const prm = await getPublicJson(`${ORIGIN}/.well-known/oauth-protected-resource/${USERNAME}/mcp`);
+        expect(prm.resource === resource, `PRM resource ${String(prm.resource)}`);
+        expect(
+          asArray(prm.authorization_servers)[0] === ORIGIN,
+          `PRM authorization_servers ${JSON.stringify(prm.authorization_servers)}`,
+        );
+        const asMeta = await getPublicJson(`${ORIGIN}/.well-known/oauth-authorization-server`);
+        expect(asMeta.issuer === ORIGIN, `AS metadata issuer ${String(asMeta.issuer)}`);
+
+        // DCR: a fresh public client, server-assigned id — no session, no bearer, nothing
+        // typed by an operator (§19.3).
+        const registered = await postJson(`${ORIGIN}/api/auth/oauth2/register`, {
+          client_name: "pmcp-smoke-oauth",
+          redirect_uris: [OAUTH_REDIRECT_URI],
+          token_endpoint_auth_method: "none",
+        });
+        const clientId = asString(registered.client_id, "client_id");
+
+        // PKCE S256, required of every client (§19.3).
+        const verifier = base64url(randomBytes(48));
+        const challenge = base64url(createHash("sha256").update(verifier).digest());
+        const state = base64url(randomBytes(16));
+
+        // ANONYMOUS authorize — no session at all (§19.5 step 1). This leg's failure modes
+        // are deployment-only: real cookie flags, better-auth's own origin check on the
+        // /login POST, a signed query surviving an actual redirect chain on the deployed
+        // origin — none of which miniflare's web-pages.test.ts can witness, so the walk is
+        // the one place it is driven for real rather than reused from the earlier `sign in`
+        // step's cookie.
+        const authorizeUrl = `${ORIGIN}/api/auth/oauth2/authorize?${new URLSearchParams({
+          response_type: "code",
+          client_id: clientId,
+          redirect_uri: OAUTH_REDIRECT_URI,
+          code_challenge: challenge,
+          code_challenge_method: "S256",
+          scope: "mcp",
+          resource,
+          state,
+        }).toString()}`;
+        const anonymousAuthorize = await fetch(authorizeUrl, { redirect: "manual" });
+        const loginLocation = anonymousAuthorize.headers.get("location") ?? "";
+        expect(
+          anonymousAuthorize.status >= 300 && anonymousAuthorize.status < 400 && loginLocation.includes("/login"),
+          `anonymous authorize → ${anonymousAuthorize.status} ${loginLocation}`,
+        );
+
+        // /login itself: its OWN rendered callbackURL — the post-sign-in landing the page
+        // built from the signed query, never a `next=`/`return_to=` this walk supplies
+        // (§19.5 step 1's whole point — the login page never reads a destination out of
+        // the query it was handed).
+        const loginPageUrl = new URL(loginLocation, ORIGIN).toString();
+        const loginHtml = await (await fetch(loginPageUrl)).text();
+        const callbackUrl = hiddenField(loginHtml, "callbackURL");
+        expect(callbackUrl.includes("/oauth2/authorize"), `login page callbackURL ${callbackUrl}`);
+
+        // Sign in as the bootstrap user through the PAGE's own translation route
+        // (`/login/sign-in/username`, form-encoded — better-auth's router itself takes only
+        // JSON) — not `mutation`'s gate: there is no session yet to derive a CSRF token
+        // from, which is exactly why this POST is guarded by the browser's SameSite cookie
+        // semantics and the origin check instead (web.ts's own doc on the credential
+        // family). The Set-Cookie on its redirect is a FRESH session, captured here rather
+        // than reused from the walk's earlier `sign in` step.
+        const signedIn = await fetch(`${ORIGIN}/login/sign-in/username`, {
+          method: "POST",
+          redirect: "manual",
+          headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: ORIGIN },
+          body: new URLSearchParams({ username: USERNAME, password, callbackURL: callbackUrl }),
+        });
+        const browserCookie = signedIn.headers
+          .getSetCookie()
+          .map((header) => header.split(";")[0])
+          .join("; ");
+        expect(browserCookie !== "", "sign-in through /login set no session cookie");
+        const backToAuthorize = signedIn.headers.get("location") ?? "";
+        expect(
+          signedIn.status >= 300 && signedIn.status < 400 && backToAuthorize.includes("/oauth2/authorize"),
+          `login POST → ${signedIn.status} ${backToAuthorize}`,
+        );
+
+        // Back at `authorize`, now WITH the fresh session and no covering consent — §19.5
+        // step 2, the provider re-running the SAME signed query it built at step 1.
+        const toConsent = await fetch(new URL(backToAuthorize, ORIGIN).toString(), {
+          redirect: "manual",
+          headers: { Cookie: browserCookie },
+        });
+        const consentLocation = toConsent.headers.get("location") ?? "";
+        expect(
+          toConsent.status >= 300 && toConsent.status < 400 && consentLocation.includes("/oauth/consent"),
+          `authorize (signed in) → ${toConsent.status} ${consentLocation}`,
+        );
+
+        // The consent page itself: its own CSRF token, and the oauth_query it can only
+        // echo — never invent, drop or edit (§19.5 step 2).
+        const consentPageUrl = new URL(consentLocation, ORIGIN).toString();
+        const consentHtml = await (await fetch(consentPageUrl, { headers: { Cookie: browserCookie } })).text();
+        const csrf = hiddenField(consentHtml, "csrf");
+        const oauthQuery = hiddenField(consentHtml, "oauth_query");
+
+        // A service account THIS step creates and grants, so the scoped call below rides on
+        // a grant this step controls — never on whatever approval state the main flow left
+        // `ACCOUNT` in.
+        await owner("account_create", { slug: OAUTH_ACCOUNT });
+        await owner("grant_set", { account: OAUTH_ACCOUNT, service: SERVICE, roles: [ROLE] });
+
+        const consentPost = await fetch(`${ORIGIN}/oauth/consent`, {
+          method: "POST",
+          redirect: "manual",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Cookie: browserCookie,
+            // Clears better-auth's cookie-request origin check downstream, the same reason
+            // the device-approval POST above carries it.
+            Origin: ORIGIN,
+          },
+          body: new URLSearchParams({ csrf, oauth_query: oauthQuery, service_account: OAUTH_ACCOUNT, decision: "accept" }),
+        });
+        const codeLocation = consentPost.headers.get("location") ?? "";
+        expect(
+          consentPost.status >= 300 && consentPost.status < 400 && codeLocation.startsWith(OAUTH_REDIRECT_URI),
+          `consent → ${consentPost.status} ${codeLocation}`,
+        );
+        const redirectParams = new URL(codeLocation).searchParams;
+        const code = redirectParams.get("code") ?? "";
+        expect(code !== "", "consent redirect carried no code");
+        // §19.3: every redirect names the issuer, so Claude Code's v2 runtime does not fail
+        // the sign-in on an unexpected one.
+        expect(redirectParams.get("iss") === ORIGIN, `redirect iss ${redirectParams.get("iss")}`);
+
+        // /oauth2/token: the verifier and the SAME resource an MCP client sends on both
+        // legs (§19.6 step 2) — omitting either is the opaque-token failure mode this walk
+        // is not the one testing.
+        const tokenAnswer = await postJson(`${ORIGIN}/api/auth/oauth2/token`, {
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: OAUTH_REDIRECT_URI,
+          client_id: clientId,
+          code_verifier: verifier,
+          resource,
+        });
+        const accessToken = asString(tokenAnswer.access_token, "access_token");
+        expect(jwtShaped(accessToken), "the minted access token is not JWT-shaped (§7/§19.6's own predicate)");
+        const aud = jwtPayload(accessToken).aud;
+        const audValues = Array.isArray(aud) ? aud : [aud];
+        expect(audValues.includes(resource), `access token aud ${JSON.stringify(aud)}`);
+
+        // The aggregated endpoint, and the SAME token scoped to the tunneled service — the
+        // audience is namespace-wide (§19.6 step 3), so both endpoint shapes accept it.
+        const aggregate = asRecord(await mcp(`${ORIGIN}/${USERNAME}/mcp`, accessToken, "tools/list"), "tools/list result");
+        const aggregateNames = asArray(aggregate.tools).map((tool) => String(asRecord(tool, "catalog entry").name));
+        expect(aggregateNames.includes(`${SERVICE}_${TOOL}`), `aggregated tools/list ${JSON.stringify(aggregateNames)}`);
+        const scoped = asRecord(
+          await mcp(`${ORIGIN}/${USERNAME}/mcp/${SERVICE}`, accessToken, "tools/call", {
+            name: TOOL,
+            arguments: CALL_ARGS,
+          }),
+          "scoped tools/call result",
+        );
+        const structured = asRecord(scoped.structuredContent, "structuredContent");
+        expect(structured.principal === `sa:${OAUTH_ACCOUNT}`, `scoped call principal ${String(structured.principal)}`);
+
+        // The audit trail names the bound ACCOUNT, never the client or the token (§19.6
+        // step 5 — nothing downstream branches on how the credential arrived).
+        const rows = asArray((await owner("audit_query", { principal: `sa:${OAUTH_ACCOUNT}` })).rows);
+        const calls = rows.filter((row) => asRecord(row, "audit row").event === "tools/call");
+        expect(calls.length > 0, `audit_query found no tools/call rows for sa:${OAUTH_ACCOUNT}`);
+
+        // Revoke — immediate at the door (§19.6): the connection's next call gets the SAME
+        // 401 challenge as no token at all.
+        const connections = asArray((await owner("connection_list")).connections);
+        const connection = connections.find(
+          (row) => asRecord(row, "connection row").accountSlug === OAUTH_ACCOUNT,
+        );
+        if (connection === undefined) throw new Error(`connection_list carries no row for ${OAUTH_ACCOUNT}`);
+        await owner("connection_revoke", { id: String(asRecord(connection, "connection row").id) });
+
+        const refused = await fetch(`${ORIGIN}/${USERNAME}/mcp`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        });
+        expect(refused.status === 401, `post-revoke call → ${refused.status}`);
+        expect(
+          (refused.headers.get("WWW-Authenticate") ?? "").includes("resource_metadata"),
+          `post-revoke challenge: ${refused.headers.get("WWW-Authenticate") ?? ""}`,
+        );
+
+        return `client ${clientId} → aud ${resource}; aggregate+scoped tools/call both as sa:${OAUTH_ACCOUNT}; ${calls.length} audit row(s); revoked → 401 with challenge`;
+      },
+    );
   } catch {
     // The step that failed already printed why; the walk stops and cleanup still runs.
   }
@@ -438,6 +648,14 @@ async function postJson(url: string, body: unknown, bearer?: string): Promise<Re
 
 async function getJson(url: string, bearer: string): Promise<Record<string, unknown>> {
   const response = await fetch(url, { headers: { Authorization: `Bearer ${bearer}` } });
+  if (!response.ok) throw new Error(`GET ${url} → ${response.status}`);
+  return asRecord(await response.json(), `GET ${url} response`);
+}
+
+/** One anonymous GET — §19.2's two well-known documents carry no credential and want
+ *  none: a browser-side client fetching them cross-origin is the supported discovery path. */
+async function getPublicJson(url: string): Promise<Record<string, unknown>> {
+  const response = await fetch(url);
   if (!response.ok) throw new Error(`GET ${url} → ${response.status}`);
   return asRecord(await response.json(), `GET ${url} response`);
 }
@@ -630,6 +848,45 @@ function asString(value: unknown, what: string): string {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+// ── §19: the OAuth walk's own small readers (no HTML parser dependency, §4) ────────────
+
+/**
+ * One hidden `<input>`'s value off rendered HTML, by name — consent.tsx renders
+ * `<input type="hidden" name="…" value="…" />` in that order, and only ECHOES its two
+ * fields (csrf, oauth_query) rather than rebuilding them. Hono JSX escapes attribute values
+ * as HTML, so the raw match is entity-decoded before use.
+ */
+function hiddenField(html: string, name: string): string {
+  const match = new RegExp(`name="${name}" value="([^"]*)"`).exec(html);
+  if (match === null) throw new Error(`no hidden field named ${name} on the consent page`);
+  return match[1]
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+/** Bytes to the base64url this walk's PKCE verifier/challenge and state are spelled in. */
+function base64url(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64url");
+}
+
+/** §7/§19.6's own predicate for "JWT-shaped" — exactly three non-empty base64url segments —
+ *  mirrored here as a sanity check on what the token endpoint minted, not a re-test of the
+ *  door's dispatch (auth-matrix.test.ts owns that). */
+function jwtShaped(token: string): boolean {
+  const segments = token.split(".");
+  return segments.length === 3 && segments.every((segment) => segment !== "" && /^[A-Za-z0-9_-]+$/.test(segment));
+}
+
+/** A JWT's payload segment, decoded and parsed — no signature check: the walk reads `aud`
+ *  off a token it just minted from its own deployment, not one it must not trust. */
+function jwtPayload(token: string): Record<string, unknown> {
+  const [, payload] = token.split(".");
+  return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
 }
 
 function messageOf(err: unknown): string {

@@ -35,41 +35,41 @@ what §14 assumed:
   takes `oauthProvider()` and serves its own protected-resource documents, which is
   five lines of JSON interpolated from a path parameter.
 
-**The verify side is not free, and the first version of this paragraph said it was.**
-That claim — `verifyAccessTokenRequest` and `verifyJwsAccessToken` from
-`better-auth/oauth2`, JWKS cached in-process, no D1 read on the hot path — is false
-against the installed tree, and it is corrected here rather than quietly dropped because
-§19.6's door leg and its lifetime argument both leaned on it. What 1.7.1 actually
-exports:
+**The verify side, settled by the D12 probe (2026-08-26).** This paragraph was wrong
+twice before it was run. The first draft named `verifyAccessTokenRequest` /
+`verifyJwsAccessToken` from `better-auth/oauth2` and cached JWKS in-process with no
+hot-path D1 read; a revision then declared those symbols nonexistent and reduced the door
+to a `verifyJWT`-vs-`jose` choice marked "blocking probe observation." The probe ran each
+call against the installed 1.7.1 tree under workerd — and the *first* draft had the symbol
+right. What the tree actually exports, verified by running it:
 
-- `better-auth/oauth2` exports **no verification primitive at all**. Its whole surface is
-  the *outbound* social-provider helpers (`generateState`, `parseState`,
-  `handleOAuthUserInfo`, `decryptOAuthToken`, …). Neither named symbol exists anywhere in
-  the package; they were written into §14's estimate from a newer API surface than the one
-  this spec pins.
-- `better-auth/plugins/jwt` exports `verifyJWT`, `resolveSigningKey`, `signJWT` and
-  `getJwtToken`. `verifyJWT(token, options?)` returns the payload or **`null`** — it never
-  throws a decision, which suits a door leg that must fail closed — and it already
-  enforces two of the door's own rules: it refuses anything that is not exactly three
-  `.`-separated segments, and it verifies `iss`/`aud` against `options.jwt.issuer` /
-  `options.jwt.audience`, defaulting both to `baseURL`. Two costs ride with it: it
-  resolves the public key **through the auth adapter** (a D1 read of `jwks` per call, not
-  an in-process cache), and it reads its auth context out of AsyncLocalStorage, so it is
-  callable only inside a better-auth endpoint context. `resolveSigningKey` takes a
-  `GenericEndpointContext` and is likewise not reachable from a plain Hono handler.
-- `jose` is in the tree today only as better-auth's own transitive dependency. Verifying
-  with `createRemoteJWKSet` + `jwtVerify` against the hub's `/api/auth/jwks` is the
-  variant that genuinely caches in-process and costs zero D1 reads — at the price of one
-  direct dependency and one self-`fetch` per isolate per cache window.
+- `better-auth/oauth2` **does** re-export the resource-server verifiers —
+  `verifyJwsAccessToken`, `verifyBearerToken`, `verifyAccessTokenRequest`,
+  `requestToResourceInput` — via `export * from "@better-auth/core/oauth2"` (source in
+  `@better-auth/core/oauth2/verify.ts`), alongside the outbound social-provider helpers.
+  The door's primitive is **`verifyJwsAccessToken(token, { jwksFetch, verifyOptions: {
+  issuer, audience } })`**. Called with a **function** `jwksFetch` source it verifies
+  signature, `iss`, `aud` and `exp` with **pure `jose` local verification and zero D1 or
+  adapter reads** — the module-level 5-minute cache exists only for *string URL* sources,
+  which this path does not use. The probe minted a hub-signed JWT via `/api/auth/token`,
+  verified it, and confirmed a wrong `aud` is rejected (`JWTClaimValidationFailed`). **No
+  direct `jose` dependency is added** — `verifyJwsAccessToken` already ships through
+  better-auth. `verifyBearerToken` / `verifyAccessTokenRequest` are *not* the door's
+  primitive: they accept only a *string* `jwksUrl` (a self-`fetch`) or introspection; only
+  the lower-level `verifyJwsAccessToken` takes a function source, so it is the one the door
+  uses.
+- `verifyJWT` from `better-auth/plugins/jwt` is confirmed **unusable from a Hono handler**:
+  called outside a better-auth endpoint context it throws `No auth context found` (it reads
+  its auth context out of AsyncLocalStorage and resolves the key through the adapter).
+  That was the one fact the probe was to decide, and it decides *against* `verifyJWT` for
+  the door, which runs in the composition root and not inside a provider endpoint.
 
-Which of the two the door takes is a **blocking probe observation**, not a decision this
-spec makes: both satisfy every rule §19.6 states, and the choice turns on one fact
-(whether `verifyJWT` can be driven from a Hono handler at all) that is far cheaper to
-observe than to argue. What the spec does pin, because §19.6's revocation argument
-depends on it and neither variant changes it: the door reads `oauth_binding` on **every**
-call regardless, so verification is never the only per-request cost and a path that adds
-one D1 read is a bounded regression, not a correctness one. No lifetime shortening
-follows from either answer.
+So the door verifies with `verifyJwsAccessToken` and a function `jwksFetch` source, checks
+the `mcp` scope itself, and then reads `oauth_binding` (§19.6 step 4) — **one** D1 read per
+call, the same one a `pmcp_sa_` key already pays, with verification adding none. The
+earlier "a path that adds one D1 read is a bounded regression" hedge is void: there is no
+extra read on the verify side, and §19.6's revocation argument holds with the binding row
+as the sole per-request cost.
 
 ### 19.2 Routes and documents
 
@@ -387,8 +387,8 @@ need no `trustedOrigins` entry.
 Lifetimes: access tokens keep the provider's ordinary hour, refresh tokens 30 days with
 rotation. The usual objection to a JWT — that the fast path never re-checks revocation —
 does not apply here, because step 4 reads the binding row on every call. That read is
-the same one-per-request D1 cost a `pmcp_sa_` key already pays — plus, depending on
-which verify path the probe selects, at most one more for the signing key (§19.1) — and
+the same one-per-request D1 cost a `pmcp_sa_` key already pays — and the *only* one, since
+`verifyJwsAccessToken` verifies locally against the JWKS with no adapter read (§19.1) — and
 it buys immediate
 revocation: **the connection is revoked when the binding says so**, mid-session, without
 waiting for `exp`. Revoking additionally deletes the provider's `oauthConsent` row, so

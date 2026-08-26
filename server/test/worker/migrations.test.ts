@@ -30,9 +30,18 @@
 
 import { applyD1Migrations, env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+// §19.3's provisioning seam is exercised directly here: the oauthResource write on create
+// and its teardown on delete are integration behavior over the real schema, not a module
+// this file otherwise pins. It is the one import that couples migrations.test.ts to a src
+// module, and it is deliberate — §19.3's write and back-fill have silent failure modes.
+import { deleteUser, provisionUser } from "../../src/admin";
 import type { ApprovalStatus } from "../../src/approvals";
 import { APPROVAL_WINDOW_MS, OAUTH_STATE_TTL_MS } from "../../src/limits";
 import type { ServiceKind } from "../../src/registry";
+
+/** PUBLIC_ORIGIN as the worker env carries it (wrangler.jsonc) — the origin half of every
+ *  §19 oauthResource identifier, so the test reads the SAME value provisionUser and 0005 do. */
+const ORIGIN = (env as unknown as { PUBLIC_ORIGIN: string }).PUBLIC_ORIGIN;
 
 /**
  * The two behavior-bearing CHECK vocabularies of §5, named from the modules that own
@@ -60,7 +69,11 @@ export type SchemaTable =
   | "token"
   | "audit"
   | "push_subscription"
-  | "upstream_oauth_state";
+  | "upstream_oauth_state"
+  // §19.4: the hub's own §19 table, and the ONLY §19 table pinned here — the eight
+  // better-auth/oauthProvider tables 0005 generates stay camelCase and outside SCHEMA_TABLES,
+  // exactly as `user`/`session` already do.
+  | "oauth_binding";
 
 /**
  * One constraint, stated as the write it refuses beside the write it accepts.
@@ -864,6 +877,75 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     rejected: { expires_at: null },
     accepted: { expires_at: 1_700_000_000_000 + OAUTH_STATE_TTL_MS },
   },
+
+  // ——— oauth_binding (§19.4) ———
+  // The hub's own §19 table: one OAuth client ↔ one service account. Its two FKs are the
+  // revocation mechanism (§19.6/§19.8 — a deleted account or user takes the binding with it),
+  // and UNIQUE(owner_id, client_id) is what makes re-consent an UPDATE, not a second row.
+  {
+    title: "§19.4 · oauth_binding.id PRIMARY KEY refuses a duplicate id · twin stores a distinct id",
+    table: "oauth_binding",
+    kind: "unique",
+    column: "id",
+    rejected: { id: "oab_FAKE0000_dup" },
+    accepted: { id: "oab_FAKE0000_other" },
+  },
+  {
+    title: "§19.4 · oauth_binding.owner_id NOT NULL refuses null · twin stores under the seeded owner",
+    table: "oauth_binding",
+    kind: "not_null",
+    column: "owner_id",
+    rejected: { owner_id: null },
+    accepted: {},
+  },
+  {
+    title: "§19.4 · oauth_binding.owner_id FK refuses an absent user · twin stores under the seeded owner",
+    table: "oauth_binding",
+    kind: "foreign_key",
+    column: "owner_id",
+    rejected: { owner_id: "usr_FAKE0000_absent" },
+    accepted: {},
+  },
+  {
+    title: "§19.4 · oauth_binding.client_id NOT NULL refuses null — the door resolves authority from (owner, client_id) · twin stores a client id",
+    table: "oauth_binding",
+    kind: "not_null",
+    column: "client_id",
+    rejected: { client_id: null },
+    accepted: { client_id: "oab-client-twin" },
+  },
+  {
+    title: "§19.4 · oauth_binding.service_account_id NOT NULL refuses null · twin stores the seeded account",
+    table: "oauth_binding",
+    kind: "not_null",
+    column: "service_account_id",
+    rejected: { service_account_id: null },
+    accepted: {},
+  },
+  {
+    title: "§19.4 · oauth_binding.service_account_id FK refuses an absent account — the account is what the connection binds to · twin stores the seeded account",
+    table: "oauth_binding",
+    kind: "foreign_key",
+    column: "service_account_id",
+    rejected: { service_account_id: "sa_FAKE0000_absent" },
+    accepted: {},
+  },
+  {
+    title: "§19.4 · oauth_binding.created_at NOT NULL refuses null · twin stores a timestamp",
+    table: "oauth_binding",
+    kind: "not_null",
+    column: "created_at",
+    rejected: { created_at: null },
+    accepted: { created_at: 1_700_000_000_000 },
+  },
+  {
+    title: "§19.4 · oauth_binding UNIQUE (owner_id, client_id) refuses a second binding for one client in one namespace · twin stores a different client_id",
+    table: "oauth_binding",
+    kind: "unique",
+    column: "(owner_id, client_id)",
+    rejected: { client_id: "oab-dup-client" },
+    accepted: { client_id: "oab-dup-client-2" },
+  },
 ];
 
 /** Rows are OWNER-AUTHORED, as above (strategy §9 rule 1). */
@@ -1078,6 +1160,17 @@ function baseRow(table: SchemaTable, ctx: FixtureCtx): Record<string, unknown> {
         created_at: now,
         expires_at: now + OAUTH_STATE_TTL_MS,
       };
+    case "oauth_binding":
+      return {
+        // Fresh id AND fresh client_id per call: the UNIQUE(owner_id, client_id) row's
+        // duplicate must be the tuple the row NAMES, never the id or a stale client that
+        // happened to collide (the mis-transcribed-row failure this file's header warns of).
+        id: `oab_FAKE0000_${crypto.randomUUID()}`,
+        owner_id: ctx.ownerId,
+        client_id: `client-${crypto.randomUUID()}`,
+        service_account_id: ctx.accountId,
+        created_at: now,
+      };
   }
 }
 
@@ -1112,6 +1205,10 @@ function ctxFilter(table: SchemaTable, ctx: FixtureCtx): { sql: string; params: 
       return { sql: "ref_id = ? OR ref_id = ?", params: [ctx.serviceId, ctx.accountId] };
     case "audit":
       return { sql: "owner_id = ?", params: [ctx.ownerId] };
+    // Both of its parents at once (like upstream_oauth_state): a cascade must be seen whichever
+    // FK carried the row away — owner_id (user delete) or service_account_id (account delete).
+    case "oauth_binding":
+      return { sql: "owner_id = ? AND service_account_id = ?", params: [ctx.ownerId, ctx.accountId] };
   }
 }
 
@@ -1210,6 +1307,7 @@ const SCHEMA_TABLES = new Set<string>([
   "audit",
   "push_subscription",
   "upstream_oauth_state",
+  "oauth_binding",
 ]);
 
 function stripSqlComments(sql: string): string {
@@ -1433,6 +1531,216 @@ describe("§10 · applying the set", () => {
       // makes this line visibly stale instead of silently testing N−1 (which is what the
       // `approval` insert it replaces had quietly become).
       await insertRow("upstream_oauth_state", buildRow("upstream_oauth_state", ctx, {}));
+    },
+  );
+});
+
+// ————————————————————————————————————————————————————————————————————————
+// §19 · inbound OAuth (0005). The oauth_binding constraints and the FK cascade to it are
+// covered by the constraint/cascade tables above (oauth_binding is in SCHEMA_TABLES). These
+// cases pin what those tables cannot: that 0005 as a whole applies and re-applies cleanly,
+// that the eight generated tables are present, and — the two §19.3 seams with silent failure
+// modes — that provisioning writes the per-namespace oauthResource row and the migration
+// back-fills one for every pre-existing user.
+
+/** The eight tables 0005's generated half brings (jwks + the seven provider tables). Named
+ *  literally so a regenerated migration that drops one fails THIS case loudly (§19.4). */
+const PROVIDER_TABLES = [
+  "jwks",
+  "oauthClient",
+  "oauthResource",
+  "oauthClientResource",
+  "oauthRefreshToken",
+  "oauthAccessToken",
+  "oauthConsent",
+  "oauthClientAssertion",
+] as const;
+
+/** The §19.3 identifier for a namespace — the same string provisionUser writes, the PRM
+ *  names, and the door checks as `aud`, built from the SAME origin the worker env carries. */
+function resourceIdentifier(username: string): string {
+  return `${ORIGIN}/${username}/mcp`;
+}
+
+async function tableNames(): Promise<Set<string>> {
+  const rows = await db()
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    .all<{ name: string }>();
+  return new Set(rows.results.map((r) => r.name));
+}
+
+/** A user row carrying a username (unlike seedFixture's, which has none), so 0005's
+ *  `WHERE username IS NOT NULL` back-fill has something to target. Returns the username. */
+async function seedNamedUser(): Promise<string> {
+  const username = `oauser-${crypto.randomUUID().slice(0, 8)}`;
+  const now = Date.now();
+  await insertRow("user", {
+    id: `usr_FAKE0000_${crypto.randomUUID()}`,
+    name: username,
+    email: `${username}@fixture.invalid`,
+    emailVerified: 0,
+    createdAt: now,
+    updatedAt: now,
+    username,
+    displayUsername: username,
+  });
+  return username;
+}
+
+describe("§19.4 · 0005 applies", () => {
+  /** Same reverse-order full wipe as §10's, block-scoped so the fresh-apply case can replay
+   *  0005 from true scratch under the pool's per-test storage isolation. */
+  async function dropEverything(): Promise<void> {
+    const rows = await db()
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+      .all<{ name: string }>();
+    const names = rows.results.map((t) => t.name).filter((name) => !name.startsWith("_cf_"));
+    for (const name of names.reverse()) {
+      await db().prepare(`DROP TABLE IF EXISTS "${name}"`).run();
+    }
+  }
+
+  it("§19.4 · 0005_oauth.sql applies on a fresh database and re-applying is a no-op", async () => {
+    await dropEverything();
+    await applyD1Migrations(env.DB, env.TEST_MIGRATIONS); // fresh apply, all migrations
+    const afterFirst = [...(await tableNames())].sort();
+    await applyD1Migrations(env.DB, env.TEST_MIGRATIONS); // second run: bookkeeping skips 0005
+    const afterSecond = [...(await tableNames())].sort();
+    expect(afterSecond).toEqual(afterFirst);
+    // 0005's own tables are among them, and the hand-written table actually works.
+    expect(afterFirst).toContain("oauth_binding");
+    for (const t of PROVIDER_TABLES) expect(afterFirst).toContain(t);
+    const ctx = await seedFixture();
+    await insertRow("oauth_binding", buildRow("oauth_binding", ctx, {}));
+  });
+
+  it(
+    "§19.4 · the provider's eight generated tables exist after 0005 — named here so a regenerated migration that drops one fails loudly",
+    async () => {
+      const present = await tableNames();
+      for (const t of PROVIDER_TABLES) expect(present.has(t)).toBe(true);
+    },
+  );
+
+  it(
+    "§19.4 · oauth_binding is in SCHEMA_TABLES and its (owner_id, client_id) uniqueness bites",
+    async () => {
+      expect(SCHEMA_TABLES.has("oauth_binding")).toBe(true);
+      const ctx = await seedFixture();
+      await insertRow("oauth_binding", buildRow("oauth_binding", ctx, { client_id: "same-client" }));
+      // Same (owner_id, client_id), distinct id: the tuple UNIQUE bites, not the primary key.
+      await expect(
+        insertRow("oauth_binding", buildRow("oauth_binding", ctx, { client_id: "same-client" })),
+      ).rejects.toThrow();
+      // Twin: a different client_id under the same owner stores.
+      await insertRow("oauth_binding", buildRow("oauth_binding", ctx, { client_id: "other-client" }));
+    },
+  );
+
+  it(
+    "§19.4 · deleting a service account deletes its oauth_binding rows (ON DELETE CASCADE)",
+    async () => {
+      const ctx = await seedFixture();
+      await insertRow("oauth_binding", buildRow("oauth_binding", ctx, {}));
+      expect(await countFor("oauth_binding", ctx)).toBe(1);
+      await db().prepare("DELETE FROM service_account WHERE id = ?").bind(ctx.accountId).run();
+      expect(await countFor("oauth_binding", ctx)).toBe(0);
+    },
+  );
+
+  it(
+    "§19.4 · deleting a user deletes its oauth_binding rows and its oauthResource row",
+    async () => {
+      // A real provisioned namespace (user + oauthResource), plus an account and a binding.
+      const username = `oauser-${crypto.randomUUID().slice(0, 8)}`;
+      const { userId } = await provisionUser(username);
+      const accountId = `sa_FAKE0000_${crypto.randomUUID()}`;
+      await insertRow("service_account", {
+        id: accountId,
+        owner_id: userId,
+        slug: `sa-${crypto.randomUUID()}`,
+        name: "Bound Account",
+        created_at: Date.now(),
+      });
+      await insertRow("oauth_binding", {
+        id: `oab_FAKE0000_${crypto.randomUUID()}`,
+        owner_id: userId,
+        client_id: `client-${crypto.randomUUID()}`,
+        service_account_id: accountId,
+        created_at: Date.now(),
+      });
+      const bindingsBefore = await db()
+        .prepare('SELECT COUNT(*) AS c FROM oauth_binding WHERE owner_id = ?')
+        .bind(userId)
+        .first<{ c: number }>();
+      expect(bindingsBefore?.c).toBe(1);
+
+      await deleteUser(username); // the §19.3 teardown path
+
+      const bindingsAfter = await db()
+        .prepare('SELECT COUNT(*) AS c FROM oauth_binding WHERE owner_id = ?')
+        .bind(userId)
+        .first<{ c: number }>();
+      expect(bindingsAfter?.c).toBe(0); // owner_id FK cascade
+      const resourceAfter = await db()
+        .prepare('SELECT COUNT(*) AS c FROM "oauthResource" WHERE "identifier" = ?')
+        .bind(resourceIdentifier(username))
+        .first<{ c: number }>();
+      expect(resourceAfter?.c).toBe(0); // no FK — deleteUser's own teardown removes it
+    },
+  );
+
+  it(
+    "§19.3 · provisioning a user writes one oauthResource row whose identifier is https://<origin>/<user>/mcp — the same string the PRM names and the door checks as aud",
+    async () => {
+      const username = `oauser-${crypto.randomUUID().slice(0, 8)}`;
+      await provisionUser(username);
+      const rows = await db()
+        .prepare('SELECT "identifier" FROM "oauthResource" WHERE "identifier" = ?')
+        .bind(resourceIdentifier(username))
+        .all<{ identifier: string }>();
+      expect(rows.results).toEqual([{ identifier: `${ORIGIN}/${username}/mcp` }]);
+    },
+  );
+
+  it(
+    "§19.3 · 0005 back-fills an oauthResource row for every user that existed before it — after the migration no user is without one",
+    async () => {
+      await dropEverything();
+      const migrations = env.TEST_MIGRATIONS;
+      // 0001..0004 only: `oauthResource` does not exist yet, so these users predate §19.
+      await applyD1Migrations(env.DB, migrations.slice(0, migrations.length - 1));
+      const usernames = [await seedNamedUser(), await seedNamedUser(), await seedNamedUser()];
+      // A username-less user exists too — it owns no namespace, so the back-fill must skip it.
+      await seedFixture();
+      await applyD1Migrations(env.DB, migrations); // 0005: creates oauthResource and back-fills
+
+      // Matched by the namespace suffix `/<user>/mcp`, ORIGIN-agnostically: a .sql migration
+      // cannot read PUBLIC_ORIGIN, so it embeds the deployment's origin as a LITERAL (prod's
+      // workers.dev). Under test PUBLIC_ORIGIN is .dev.vars's localhost, so the row's origin is
+      // the prod literal, not env's — the back-fill's job here is that every pre-existing user
+      // gets exactly one row for its own namespace, which the suffix pins without asserting an
+      // origin the test environment deliberately does not share. provisionUser's env-based
+      // identifier is pinned exactly by the §19.3 provisioning case above.
+      for (const username of usernames) {
+        const row = await db()
+          .prepare(`SELECT COUNT(*) AS c FROM "oauthResource" WHERE "identifier" LIKE ?`)
+          .bind(`%/${username}/mcp`)
+          .first<{ c: number }>();
+        expect(row?.c).toBe(1);
+      }
+      // No username-bearing user is left without a row (and the username-less fixture user got
+      // none — it owns no namespace).
+      const orphans = await db()
+        .prepare(
+          `SELECT COUNT(*) AS c FROM "user" u
+             WHERE u."username" IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM "oauthResource" r
+                  WHERE r."identifier" LIKE '%/' || u."username" || '/mcp')`,
+        )
+        .first<{ c: number }>();
+      expect(orphans?.c).toBe(0);
     },
   );
 });

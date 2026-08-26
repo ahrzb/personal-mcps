@@ -100,6 +100,13 @@ function replyFor(op: string): Record<string, unknown> {
       return { id: "tok_FAKE", token: "pmcp_svc_FAKE0000000000000000000000000000" };
     case "audit_query":
       return { rows: [], total: 0 };
+    case "connection_list":
+      // One row exercises the print path, lastUsedAt: null its "never" fallback (§19).
+      return {
+        connections: [
+          { id: "conn_FAKE", clientId: "client_FAKE", clientName: "Claude", accountSlug: "bot", createdAt: 0, lastUsedAt: null },
+        ],
+      };
     default:
       return {};
   }
@@ -173,6 +180,8 @@ const ARGV: Record<string, string[]> = {
   "token issue": ["token", "issue", "--account", "bot"],
   "token list": ["token", "list"],
   "token revoke": ["token", "revoke", "tok_FAKE"],
+  connections: ["connections"],
+  "connection revoke": ["connection", "revoke", "conn_FAKE"],
   audit: ["audit", "--service", "news"],
   "audit --export jsonl": ["audit", "--export", "jsonl"],
   connect: ["connect", "notion"],

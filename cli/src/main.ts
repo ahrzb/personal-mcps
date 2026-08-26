@@ -909,6 +909,41 @@ export async function connect(ctx: CliContext, service: string): Promise<number>
   return 0;
 }
 
+/**
+ * One connection command, normalized from `pmcp connection(s) …` argv (§10, §19). `list`
+ * has no sub-argv of its own — `pmcp connections` is the whole command, mirroring `pmcp
+ * ls` — while `revoke` takes the connection id `connections` prints.
+ */
+export type ConnectionCommand = { sub: "list" } | { sub: "revoke"; id: string };
+
+/**
+ * `pmcp connections | connection revoke <id>` — sugar over connection_list /
+ * connection_revoke (§8/§19, §10): the OAuth clients (claude.ai and friends) connected to
+ * this namespace via §19's inbound authorization server — a DISTINCT thing from `connect`'s
+ * outbound upstream-OAuth URL above. `list` prints each live binding: the client's name (its
+ * id, when it registered without one, §19.3), the service account it is bound to, and its
+ * created/last-used timestamps — never a token, a client secret, or a JWT, because a
+ * connection is a binding and a binding holds no credential (§8). `revoke` is immediate at
+ * the door (§19.6): the connection's next call gets the 401 challenge, and the client's
+ * consent is gone too, so a refresh cannot resurrect it silently.
+ */
+export async function connection(ctx: CliContext, cmd: ConnectionCommand): Promise<number> {
+  // deps: mcpCall
+  if (cmd.sub === "revoke") {
+    await adminOp(ctx, "connection_revoke", { id: cmd.id });
+    process.stdout.write(`revoked ${cmd.id}\n`);
+    return 0;
+  }
+  for (const row of ((await adminOp(ctx, "connection_list")).connections ?? []) as Record<string, any>[]) {
+    process.stdout.write(
+      `${String(row.id).padEnd(24)} ${String(row.clientName ?? row.clientId).padEnd(24)} → ${String(
+        row.accountSlug ?? "",
+      )}  created ${String(row.createdAt ?? "")} last used ${String(row.lastUsedAt ?? "never")}\n`,
+    );
+  }
+  return 0;
+}
+
 // ── the command table (§8 parity, direction D) ─────────────────────────────────────────
 
 // The table itself lives in ./commands.ts — a module with no imports, so the parity suite
@@ -928,7 +963,7 @@ export type { CliCommand } from "./commands.ts";
  * traces never reach the user.
  */
 export async function main(argv: string[]): Promise<number> {
-  // deps: resolveContext · auth · ls · tools · call · service · account · approval · token · audit · diff · apply · connect
+  // deps: resolveContext · auth · ls · tools · call · service · account · approval · token · audit · diff · apply · connect · connection
   const [command, ...rest] = argv;
   const flags = readFlags(rest);
   const words = flags.words;
@@ -1000,6 +1035,10 @@ export async function main(argv: string[]): Promise<number> {
         });
       case "connect":
         return await connect(ctx, required(words[0], "service"));
+      case "connections":
+        return await connection(ctx, { sub: "list" });
+      case "connection":
+        return await connection(ctx, connectionCommand(words));
       default:
         process.stderr.write(`unknown command: ${command}\n`);
         return 1;
@@ -1174,6 +1213,14 @@ function serviceCommand(words: string[], flags: ReturnType<typeof readFlags>): S
     return { sub, slug: required(slug, "slug") };
   }
   throw new Error("usage: pmcp service <create|archive|unarchive|delete|disconnect|set-auth> <slug>");
+}
+
+/** `pmcp connection revoke <id>` is the only sub-form — `pmcp connections` (no `s`-less
+ *  parent) is dispatched directly and never reaches this parser. */
+function connectionCommand(words: string[]): ConnectionCommand {
+  const [sub, id] = words;
+  if (sub === "revoke") return { sub: "revoke", id: required(id, "connection id") };
+  throw new Error("usage: pmcp connection revoke <id>");
 }
 
 function accountCommand(words: string[], flags: ReturnType<typeof readFlags>): AccountCommand {

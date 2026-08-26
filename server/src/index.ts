@@ -24,6 +24,12 @@ import {
   whoamiRoute,
 } from "./identity";
 import type { Principal } from "./identity";
+import {
+  AUTH_SERVER_METADATA_PATH,
+  PROTECTED_RESOURCE_PATH,
+  authServerMetadata,
+  protectedResourceMetadata,
+} from "./oauth";
 import { HUB_PRINCIPAL } from "./principal";
 import { PMCP_SLUG, Registry } from "./registry";
 import { handleConnect } from "./tunnel";
@@ -117,6 +123,7 @@ export const ROUTES = [
   "api", // hub-owned JSON: GET /api/whoami (§8) and better-auth under /api/auth (§4)
   "connect", // tunnel WebSocket upgrade: wss://<origin>/connect (§6)
   "internal", // bootstrap user management: /internal/users, BOOTSTRAP_SECRET-gated (§12)
+  ".well-known", // oauth: the two §19.2 discovery documents — the dot keeps it out of the username charset, and it joins the reservation so the §16 walk stays total
   "manifest.webmanifest", // web: PWA manifest (§13) — a dot keeps it out of the username charset anyway
   "sw.js", // web: install+push service worker (§13)
   "styles.css", // web: the one stylesheet every page's shell links (§13)
@@ -393,7 +400,9 @@ const MOUNTS: Record<ServedSegment, Mount> = {
   oauth: (app, segment) => {
     app.get(CLIENT_METADATA_PATH, (c) => clientMetadata(new URL(c.env.PUBLIC_ORIGIN)));
     app.get(OAUTH_CALLBACK_PATH, (c) => handleCallback(c.req.raw));
-    claim(app, segment, () => segmentNotFound(segment));
+    // §19.5's pages (/oauth/consent, /oauth/connections) ride the page router like every
+    // other page-serving segment; pageRoutes' own 404 is the tail for anything else here.
+    claim(app, segment, (c) => (pages() as PageApp).fetch(c.req.raw, c.env));
   },
 
   // §6: the reverse connection's one door. GET only — an upgrade is a GET — and the
@@ -414,6 +423,19 @@ const MOUNTS: Record<ServedSegment, Mount> = {
       if (!secret) return anonymousNotFound();
       return bootstrapApp(secret).fetch(c.req.raw, c.env);
     });
+  },
+
+  // §19.2's two OAuth discovery documents — the AS metadata at the origin root and the
+  // per-namespace PRM. Deliberately does NOT `claim` its subtree: this mount serves EXACTLY
+  // these two paths and NOTHING else under /.well-known, so every other path there falls
+  // through to the ONE anonymous 404 (`app.notFound`), byte-identical to any unrouted path
+  // and carrying no CORS header. Distinguishing served-from-reserved by probing /<seg> would
+  // spend that anti-enumeration property; the §16 walk probes this entry's DOCUMENT path
+  // instead (routes.test.ts's per-entry rule). `oauth.ts` owns the documents; this is only
+  // the wiring, so — like the `oauth`/`api` mounts — the path strings are the module's.
+  ".well-known": (app) => {
+    app.get(AUTH_SERVER_METADATA_PATH, () => authServerMetadata());
+    app.get(PROTECTED_RESOURCE_PATH, (c) => protectedResourceMetadata(c.req.param("user")));
   },
 };
 

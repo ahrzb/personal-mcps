@@ -1230,6 +1230,424 @@ describe("§15 · the two auth events the ledger records", () => {
   });
 });
 
+describe("§19.5 · the consent screen", () => {
+  it("§19.5 · GET /oauth/consent without a cookie session bounces to /login carrying the signed oauth_query", async () => {
+    // A shape a real signed query has (client_id + sig + exp) is enough to prove the
+    // session gate fires first and carries the WHOLE thing through — the gate itself
+    // (identity.requireOwnerSession) never reads what the query means.
+    const signedQuery = "client_id=fixture-client&redirect_uri=https%3A%2F%2Fclaude.example%2Fcallback&sig=deadbeef&exp=9999999999";
+    const response = await call(new Request(`${ORIGIN}${paths.oauthConsent}?${signedQuery}`));
+    expect(response.status).toBe(302);
+    const location = response.headers.get("Location") ?? "";
+    expect(location).toMatch(/^\/login\?/);
+    // `.searchParams.get` already decodes once — identity's loginRedirect encoded the
+    // whole path+search exactly once, so this is the original bytes, not a second decode.
+    const next = new URL(location, ORIGIN).searchParams.get("next") ?? "";
+    expect(next).toBe(`${paths.oauthConsent}?${signedQuery}`);
+  });
+
+  it("§19.5 · the post-login redirect target is the hub's own /api/auth/oauth2/authorize — a next= or return_to= parameter added to the login query changes nothing about where the browser lands", async () => {
+    const { clientId } = await registerOAuthClient();
+    const authorized = await call(new Request(authorizeUrl(clientId)));
+    expect(authorized.status).toBe(302);
+    const location = authorized.headers.get("Location") ?? "";
+    expect(location).toMatch(/^\/login\?/);
+    // An attacker (or a careless client) tacking on next=/return_to=: neither is ever read.
+    const tampered = `${location}&next=%2Fevil&return_to=%2Fevil2`;
+    const html = await anonymousPage(tampered);
+    const callbackUrl = /name="callbackURL"\s+value="([^"]*)"/.exec(html)?.[1];
+    expect(callbackUrl, "no callbackURL field rendered").not.toBeUndefined();
+    const decoded = decodeEntities(callbackUrl ?? "");
+    expect(decoded.startsWith(`${paths.auth.base}/oauth2/authorize?`)).toBe(true);
+    expect(decoded).toContain(`client_id=${clientId}`);
+    expect(decoded).not.toContain("/evil");
+  });
+
+  it("§19.5 · the consent page renders the client's name, the requested scopes, the namespace, and a service-account picker listing every account in the namespace", async () => {
+    const { clientId } = await registerOAuthClient({ client_name: "Acme Connector" });
+    const { html } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    expect(html).toContain("Acme Connector");
+    expect(html).toContain(">mcp<");
+    expect(html).toContain(world.ns.owner.username);
+    expect(html).toContain('value="agent"');
+  });
+
+  it("§19.5 · the consent page names the redirect_uri's ORIGIN — the string that decides where the code goes is shown to the owner, not just the client's self-chosen name", async () => {
+    const { clientId } = await registerOAuthClient();
+    const { html } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    expect(html).toContain(new URL(OAUTH_REDIRECT_URI).origin);
+  });
+
+  it('§19.5 · a self-registered (DCR) client\'s name carries the "registered itself, identity unverified" marker · a pre-registered client does not (the twin)', async () => {
+    const dcr = await registerOAuthClient({ client_name: "Anon Client" });
+    const preRegistered = await registerOAuthClient({ client_name: "Known Client" }, world.session.cookie);
+    const resource = oauthResourceFor(world.ns.owner.username);
+    const dcrHtml = (await reachConsent(dcr.clientId, world.session.cookie, { resource })).html;
+    const knownHtml = (await reachConsent(preRegistered.clientId, world.session.cookie, { resource })).html;
+    expect(dcrHtml).toContain("registered itself");
+    expect(knownHtml).not.toContain("registered itself");
+  });
+
+  it("§19.5 · a client name containing markup is rendered as text — the consent screen displays attacker-supplied strings and escapes every one", async () => {
+    const { clientId } = await registerOAuthClient({ client_name: "<script>alert(1)</script>" });
+    const { html } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("§19.5 · a namespace with zero service accounts renders the picker's empty state naming /services and disables submit — consent is impossible until an account exists · the same page with one account submits (the twin)", async () => {
+    const empty = await seedNamespace(env.DB, {});
+    const emptySession = await seedOwnerSession(empty.owner);
+    const emptyClient = await registerOAuthClient();
+    const emptyHtml = (
+      await reachConsent(emptyClient.clientId, emptySession.cookie, { resource: oauthResourceFor(empty.owner.username) })
+    ).html;
+    expect(emptyHtml).toContain(paths.services);
+    expect(submitButtonHtml(emptyHtml, "accept")).toContain("disabled");
+
+    // The twin: the fixture namespace has an account, so the same button is submittable.
+    const fullClient = await registerOAuthClient();
+    const fullHtml = (
+      await reachConsent(fullClient.clientId, world.session.cookie, { resource: oauthResourceFor(world.ns.owner.username) })
+    ).html;
+    expect(submitButtonHtml(fullHtml, "accept")).not.toContain("disabled");
+  });
+
+  it("§19.5 · the consent form echoes the signed oauth_query byte-for-byte in a hidden field", async () => {
+    const { clientId } = await registerOAuthClient();
+    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    const field = /name="oauth_query"\s+value="([^"]*)"/.exec(html)?.[1];
+    expect(field, "no oauth_query hidden field rendered").not.toBeUndefined();
+    expect(decodeEntities(field ?? "")).toBe(oauthQuery);
+  });
+
+  it("§19.5 · POST /oauth/consent without a CSRF token is refused and writes no binding · the same POST with one binds and redirects (the twin)", async () => {
+    const { clientId } = await registerOAuthClient();
+    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    const refused = await post(
+      paths.oauthConsent,
+      { oauth_query: oauthQuery, decision: "accept", service_account: "agent" },
+      {},
+    );
+    expect(refused.status).toBe(403);
+    expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
+
+    const csrf = csrfOf(html);
+    const accepted = await post(
+      paths.oauthConsent,
+      { oauth_query: oauthQuery, decision: "accept", service_account: "agent" },
+      { csrf },
+    );
+    expect(accepted.status, await accepted.text()).toBe(303);
+    expect(await bindingFor(world.ns.owner.userId, clientId)).not.toBeNull();
+  });
+
+  it("§19.5 · POST /oauth/consent with an edited oauth_query is refused by the signature check and writes no binding", async () => {
+    const { clientId } = await registerOAuthClient();
+    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    const csrf = csrfOf(html);
+    const edited = new URLSearchParams(oauthQuery);
+    edited.set("client_id", `${clientId}-tampered`);
+    const refused = await post(
+      paths.oauthConsent,
+      { oauth_query: edited.toString(), decision: "accept", service_account: "agent" },
+      { csrf },
+    );
+    expect(refused.status).toBeGreaterThanOrEqual(400);
+    expect(refused.status).toBeLessThan(500);
+    expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
+  });
+
+  it("§19.5 · accepting writes one oauth_binding row bound to the chosen account and an oauth.consented audit row", async () => {
+    const { clientId } = await registerOAuthClient();
+    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    const csrf = csrfOf(html);
+    const before = await query(env.DB, world.ns.owner.userId, { event: "oauth.consented" });
+    const accepted = await post(
+      paths.oauthConsent,
+      { oauth_query: oauthQuery, decision: "accept", service_account: "agent" },
+      { csrf },
+    );
+    expect(accepted.status, await accepted.text()).toBe(303);
+    const binding = await bindingFor(world.ns.owner.userId, clientId);
+    expect(binding).not.toBeNull();
+    expect(binding?.serviceAccountId).toBe(world.ns.accounts.agent.id);
+    const after = await query(env.DB, world.ns.owner.userId, { event: "oauth.consented" });
+    expect(after.total).toBe(before.total + 1);
+  });
+
+  it("§19.5 · consenting again with a different account UPDATEs the same row and writes oauth.rebound — never a second row", async () => {
+    const ns = await seedNamespace(env.DB, { accounts: [{ slug: "one" }, { slug: "two" }] });
+    const session = await seedOwnerSession(ns.owner);
+    const { clientId } = await registerOAuthClient();
+    const { html, oauthQuery } = await reachConsent(clientId, session.cookie, {
+      resource: oauthResourceFor(ns.owner.username),
+    });
+    const csrf = csrfOf(html);
+    const first = await post(
+      paths.oauthConsent,
+      { oauth_query: oauthQuery, decision: "accept", service_account: "one" },
+      { csrf, cookie: session.cookie },
+    );
+    expect(first.status, await first.text()).toBe(303);
+    const afterFirst = await bindingFor(ns.owner.userId, clientId);
+    expect(afterFirst?.serviceAccountId).toBe(ns.accounts.one.id);
+
+    // The SAME signed query, posted again with a different chosen account — the provider's
+    // own /oauth2/consent accepts a re-post of it (it only re-verifies the signature).
+    const second = await post(
+      paths.oauthConsent,
+      { oauth_query: oauthQuery, decision: "accept", service_account: "two" },
+      { csrf, cookie: session.cookie },
+    );
+    expect(second.status, await second.text()).toBe(303);
+    const afterSecond = await bindingFor(ns.owner.userId, clientId);
+    expect(afterSecond?.serviceAccountId).toBe(ns.accounts.two.id);
+    expect(afterSecond?.id).toBe(afterFirst?.id);
+    expect(await countBindings(ns.owner.userId, clientId)).toBe(1);
+    const rebound = await query(env.DB, ns.owner.userId, { event: "oauth.rebound" });
+    expect(rebound.total).toBe(1);
+  });
+
+  it("§19.5 · denying writes no binding and redirects to the client with access_denied", async () => {
+    const { clientId } = await registerOAuthClient();
+    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    const csrf = csrfOf(html);
+    const denied = await post(paths.oauthConsent, { oauth_query: oauthQuery, decision: "deny" }, { csrf });
+    expect(denied.status, await denied.text()).toBe(303);
+    expect(denied.headers.get("Location")).toContain("error=access_denied");
+    expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
+  });
+
+  it("§19.5 · a consent POST naming a service account in another namespace is refused", async () => {
+    await seedNamespace(env.DB, { accounts: [{ slug: "outsider" }] });
+    const { clientId } = await registerOAuthClient();
+    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    const csrf = csrfOf(html);
+    const refused = await post(
+      paths.oauthConsent,
+      { oauth_query: oauthQuery, decision: "accept", service_account: "outsider" },
+      { csrf },
+    );
+    expect(refused.status).toBeGreaterThanOrEqual(400);
+    expect(refused.status).toBeLessThan(500);
+    expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
+  });
+
+  it("§13/§19 · /oauth/connections lists each binding's client, bound account, created and last-used · Revoke without a CSRF token is refused (the twin)", async () => {
+    const { clientId } = await registerOAuthClient({ client_name: "Listed Client" });
+    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    const csrf = csrfOf(html);
+    const accepted = await post(
+      paths.oauthConsent,
+      { oauth_query: oauthQuery, decision: "accept", service_account: "agent" },
+      { csrf },
+    );
+    expect(accepted.status, await accepted.text()).toBe(303);
+
+    const listed = await page(paths.oauthConnections);
+    expect(listed).toContain("Listed Client");
+    expect(listed).toContain("agent");
+
+    const binding = await bindingFor(world.ns.owner.userId, clientId);
+    expect(binding).not.toBeNull();
+    const target = paths.connectionRevoke(binding?.id ?? "");
+    const refused = await post(target, {}, {});
+    expect(refused.status).toBe(403);
+    expect((await bindingFor(world.ns.owner.userId, clientId))?.revokedAt).toBeNull();
+
+    // The twin: the same target, the page's own CSRF token.
+    const accepted2 = await post(target, {}, { csrf: csrfOf(listed) });
+    expect(accepted2.status).toBe(303);
+    expect((await bindingFor(world.ns.owner.userId, clientId))?.revokedAt).not.toBeNull();
+  });
+
+  it("§19.6 · Revoke sets revoked_at, deletes the provider's consent row, and writes oauth.revoked", async () => {
+    const { clientId } = await registerOAuthClient();
+    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    const csrf = csrfOf(html);
+    await post(
+      paths.oauthConsent,
+      { oauth_query: oauthQuery, decision: "accept", service_account: "agent" },
+      { csrf },
+    );
+    const binding = await bindingFor(world.ns.owner.userId, clientId);
+    expect(binding).not.toBeNull();
+    expect(await consentRowExists(world.ns.owner.userId, clientId)).toBe(true);
+
+    const connectionsHtml = await page(paths.oauthConnections);
+    const before = await query(env.DB, world.ns.owner.userId, { event: "oauth.revoked" });
+    const revoked = await post(
+      paths.connectionRevoke(binding?.id ?? ""),
+      {},
+      { csrf: csrfOf(connectionsHtml) },
+    );
+    expect(revoked.status, await revoked.text()).toBe(303);
+
+    const after = await bindingFor(world.ns.owner.userId, clientId);
+    expect(after?.revokedAt).not.toBeNull();
+    expect(await consentRowExists(world.ns.owner.userId, clientId)).toBe(false);
+    const revokedRows = await query(env.DB, world.ns.owner.userId, { event: "oauth.revoked" });
+    expect(revokedRows.total).toBe(before.total + 1);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * §19: driving the provider itself — DCR, authorize, the consent page
+ * ------------------------------------------------------------------ */
+
+const OAUTH2 = `${ORIGIN}/api/auth/oauth2`;
+
+/** Any https, non-loopback redirect URI — the provider's "web" application-type policy
+ *  accepts it, and exact-match redirect_uri enforcement is oauth-provider.test.ts's, not
+ *  this file's business. */
+const OAUTH_REDIRECT_URI = "https://claude.example/callback";
+
+/** RFC 7636 Appendix B's S256 challenge — a real value, not a secret; PKCE is required of
+ *  every client (§19.3) so every authorize call in this file carries one. */
+const PKCE_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+
+/**
+ * Registers a public client through anonymous DCR (§19.3). `cookie`, when given, makes this
+ * a "pre-registered" client instead: the registration endpoint accepts an optional session
+ * and writes its `userId` when one rides along — the DCR-marker twin (case 5) is built from
+ * this one difference, read back by consentProps' `isDcrClient`.
+ */
+async function registerOAuthClient(
+  fields: Record<string, unknown> = {},
+  cookie?: string,
+): Promise<{ clientId: string }> {
+  const response = await call(
+    new Request(`${OAUTH2}/register`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        // A cookie-bearing write needs the hub's own Origin, exactly like every other
+        // cookie-carrying call this file makes through identity's door (crossOrigin's rule).
+        ...(cookie === undefined ? {} : { cookie, origin: ORIGIN }),
+      },
+      body: JSON.stringify({
+        client_name: "Test Connector",
+        redirect_uris: [OAUTH_REDIRECT_URI],
+        token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        ...fields,
+      }),
+    }),
+  );
+  const body = (await response.json().catch(() => ({}))) as { client_id?: string };
+  if (typeof body.client_id !== "string") throw new Error(`registerOAuthClient: ${response.status}`);
+  return { clientId: body.client_id };
+}
+
+/** `/api/auth/oauth2/authorize` for one client, PKCE included — the query every case in
+ *  this section starts from, `extra` widening it (a `resource` naming the namespace). */
+function authorizeUrl(clientId: string, extra: Record<string, string> = {}): string {
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: OAUTH_REDIRECT_URI,
+    response_type: "code",
+    scope: "mcp",
+    code_challenge: PKCE_CHALLENGE,
+    code_challenge_method: "S256",
+    ...extra,
+  });
+  return `${OAUTH2}/authorize?${params}`;
+}
+
+/** §19.3's one spelling of a namespace's OAuth resource identifier — the same string
+ *  admin.provisionUser writes and the PRM names, built here rather than imported (a test
+ *  fixture's own business, not a module this file otherwise depends on). */
+function oauthResourceFor(username: string): string {
+  return `${ORIGIN}/${username}/mcp`;
+}
+
+/**
+ * Drives GET `/api/auth/oauth2/authorize` with a session cookie all the way to the hub's
+ * own `/oauth/consent` (§19.5 step 2) and returns its rendered HTML alongside the RAW signed
+ * query the redirect carried — the same bytes the hidden field must echo (case 8).
+ */
+async function reachConsent(
+  clientId: string,
+  cookie: string,
+  extra: Record<string, string> = {},
+): Promise<{ html: string; oauthQuery: string }> {
+  const authorized = await call(new Request(authorizeUrl(clientId, extra), { headers: { Cookie: cookie } }));
+  expect(authorized.status, "authorize did not redirect to consent").toBe(302);
+  const location = authorized.headers.get("Location") ?? "";
+  expect(location, `authorize did not land on /oauth/consent: ${location}`).toMatch(/^\/oauth\/consent\?/);
+  const oauthQuery = location.split("?")[1] ?? "";
+  const response = await call(new Request(`${ORIGIN}${location}`, { headers: { Cookie: cookie } }));
+  const html = await response.text();
+  expect(response.status, html).toBe(200);
+  return { html, oauthQuery };
+}
+
+/** One `oauth_binding` row, read straight off D1 — the ground truth the consent POST and
+ *  Revoke are checked against, exactly like `stateRows`/`connectionOf` read theirs. */
+async function bindingFor(
+  ownerId: string,
+  clientId: string,
+): Promise<{ id: string; serviceAccountId: string; revokedAt: number | null } | null> {
+  const row = await (env.DB as D1Like)
+    .prepare(
+      `SELECT "id", "service_account_id", "revoked_at" FROM oauth_binding WHERE "owner_id" = ? AND "client_id" = ?`,
+    )
+    .bind(ownerId, clientId)
+    .first<{ id: string; service_account_id: string; revoked_at: number | null }>();
+  return row === null ? null : { id: row.id, serviceAccountId: row.service_account_id, revokedAt: row.revoked_at ?? null };
+}
+
+/** How many `oauth_binding` rows one (owner, client) pair has — "never a second row". */
+async function countBindings(ownerId: string, clientId: string): Promise<number> {
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT COUNT(*) AS n FROM oauth_binding WHERE "owner_id" = ? AND "client_id" = ?`)
+    .bind(ownerId, clientId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/** Whether the provider's own consent row still exists — Revoke deletes it so a refresh
+ *  cannot resurrect a revoked connection (§19.6). */
+async function consentRowExists(ownerId: string, clientId: string): Promise<boolean> {
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT 1 AS ok FROM "oauthConsent" WHERE "clientId" = ? AND "userId" = ?`)
+    .bind(clientId, ownerId)
+    .first<{ ok: number }>();
+  return row !== null;
+}
+
+/** The rendered `<button name="decision" value="…">` element itself, so a case can check
+ *  whether IT (not the form, not the page) carries `disabled`. */
+function submitButtonHtml(html: string, value: string): string {
+  const match = new RegExp(`<button[^>]*name="decision"[^>]*value="${value}"[^>]*>`).exec(html);
+  if (match === null) throw new Error(`the page rendered no submit button valued "${value}"`);
+  return match[0];
+}
+
 /* ------------------------------------------------------------------ *
  * Reading the pages back
  * ------------------------------------------------------------------ */

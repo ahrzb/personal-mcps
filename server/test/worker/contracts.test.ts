@@ -2006,6 +2006,28 @@ describe("§4 direction D · CLI subcommands → ops", () => {
       new Set(["auth", "oauth-consent", "jsonl-export"]),
     );
   });
+
+  it('§8 parity D · every CLI command fronts an admin op or a pinned exception — "connections" and "connection revoke" front connection_list/connection_revoke', () => {
+    // §19/§8: the OAuth connections page has a CLI front too — unlike the consent SCREEN it
+    // manages (the next case), these two rows are grants-shaped and front a real op each,
+    // no exception needed.
+    const connections = COMMANDS.find((command) => command.name === "connections");
+    const revoke = COMMANDS.find((command) => command.name === "connection revoke");
+    expect(connections?.ops).toEqual(["connection_list"]);
+    expect(revoke?.ops).toEqual(["connection_revoke"]);
+    expect(Object.keys(ops)).toEqual(expect.arrayContaining(["connection_list", "connection_revoke"]));
+  });
+
+  it("§8 parity · /oauth/consent is a pinned parity exception and has no admin op", () => {
+    // §19.5/§8 (amended 2026-08-26): the inbound consent screen mints authority through a
+    // browser-only interaction and is folded into §8's exception list for the same reason
+    // as the pre-existing upstream-OAuth consent redirect — no admin op fronts it, named or
+    // otherwise, and no CLI command names it either. connection_list/connection_revoke (the
+    // case above) cover everything the /oauth/connections page around it can do; the consent
+    // screen itself is the part with no tool.
+    expect(Object.keys(ops)).not.toContain("oauth_consent");
+    expect(COMMANDS.some((command) => command.name.includes("consent"))).toBe(false);
+  });
 });
 
 describe("§9 · fixture governance", () => {

@@ -65,6 +65,11 @@ export const COMMANDS: readonly CliCommand[] = [
   // The consent REDIRECT is browser-only (§8); the command itself only checks the slug
   // and prints the URL.
   { name: "connect", ops: ["service_get"], exception: "oauth-consent" },
+  // §19/§8: the OAuth clients connected to this namespace (inbound OAuth, distinct from
+  // `connect`'s outbound upstream flow above). No exception here — unlike the consent
+  // SCREEN it manages, this pair is grants-shaped and fronts a real op each.
+  { name: "connections", ops: ["connection_list"] },
+  { name: "connection revoke", ops: ["connection_revoke"] },
   { name: "diff", ops: ["service_list", "account_list"] },
   {
     name: "apply",

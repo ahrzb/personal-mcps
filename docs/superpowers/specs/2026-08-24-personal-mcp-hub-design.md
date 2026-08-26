@@ -1029,8 +1029,33 @@ capability. The converse holds too: every UI capability is reachable from the CL
 way to manage services and grants declaratively; the imperative `pmcp service` family
 covers the one-off actions the UI does with buttons.
 
-Config: `~/.config/pmcp/config.json` (server URL + session token). `PMCP_TOKEN` env var
-overrides the stored token — session or service-account tokens only (`pmcp_svc_` tokens
+Config: `~/.config/pmcp/config.toml` *(amended 2026-08-26; was config.json — an
+existing flat `config.json` is read once as profile `default` and superseded by the
+next write)*, holding named **profiles** — a profile is one hub identity: `url`,
+`token`, and optionally `bootstrap_secret` (operator-written by hand, never by the
+CLI; §12's script reads it):
+
+```toml
+profile = "default"        # active when nothing else selects one
+
+[profiles.default]
+url = "https://hub.example"
+token = "…"                # written by `pmcp login`, cleared by `pmcp logout`
+
+[profiles.local]
+url = "http://localhost:8787"
+token = "…"
+bootstrap_secret = "…"     # dev-only; hand-written, survives login/logout
+```
+
+Profile selection precedence: `--profile <name>` flag > `PMCP_PROFILE` env var > the
+file's top-level `profile` key > the name `default` (neutral on purpose — the CLI's
+users are not only developers with environments). `login --profile <name>` writes
+`url`+`token` into that profile alone; the top-level default is set only when the
+write creates the file, and is otherwise never touched implicitly. `logout` clears
+the active profile's token only. Environment variables stay flat and profile-free:
+`PMCP_TOKEN` and `PMCP_URL` override whatever the active profile resolved — session
+or service-account tokens only (`pmcp_svc_` tokens
 are rejected by every consumer surface). With a service-account key, `tools`/`call`
 work within grants; `ls` and every other admin-backed command fail (`ls` is sugar over
 `pmcp_service_list`, and service accounts can never hold `pmcp` grants, §8). The hub's
@@ -1097,6 +1122,13 @@ pnpm users list
 pnpm users delete <username>
 pnpm users reset-password <username>
 ```
+
+The script itself reads only `PMCP_URL` and `BOOTSTRAP_SECRET` from the environment
+(the master key never rides argv). Its `pnpm users` entry resolves a §10 profile
+first — `--profile <name>` (consumed before the subcommand) or `PMCP_PROFILE`, then
+the config file's default — filling those two variables from the profile's `url` and
+`bootstrap_secret` wherever the environment hasn't already set them; an explicit
+environment variable always wins *(amended 2026-08-26)*.
 
 This seeds the first user and is the only user management surface for now. 2FA/passkey
 enrollment happens through better-auth's endpoints after first login (minimal pages, §13).

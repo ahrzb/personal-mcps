@@ -65,6 +65,29 @@ const OAUTH_ACCOUNT = "smoke-oauth-agent";
  *  byte-identical to match the row. */
 const CALL_ARGS = { text: "smoke" } as const;
 
+/**
+ * Where a better-auth redirect points, read from EITHER a real 302's `Location` OR the
+ * `{ redirect: true, url }` JSON envelope it returns instead when the request looks like a
+ * programmatic fetch. §19's `/oauth2/authorize` gates on `handleRedirect`, which 302s only a
+ * genuine browser NAVIGATION (`Sec-Fetch-Mode: navigate`) and hands every other caller the
+ * envelope — and node's `fetch` cannot send `navigate` (undici forces `Sec-Fetch-Mode: cors`),
+ * so this walk always gets the envelope where a browser would get the 302. The DESTINATION is
+ * identical either way (`/login?<signed>`, then `/oauth/consent`, then the client's redirect
+ * with the code); only the transport status differs, and no deployment can change that. Reads
+ * the body via `clone()` so the caller can still consume it. */
+async function redirectTarget(res: Response): Promise<string> {
+  const location = res.headers.get("location");
+  if (location != null && location !== "") return location;
+  if (res.status === 200) {
+    const body = (await res
+      .clone()
+      .json()
+      .catch(() => null)) as { redirect?: boolean; url?: string } | null;
+    if (body?.redirect === true && typeof body.url === "string") return body.url;
+  }
+  return "";
+}
+
 async function main(): Promise<number> {
   let password = "";
   let session = "";
@@ -364,9 +387,9 @@ async function main(): Promise<number> {
           state,
         }).toString()}`;
         const anonymousAuthorize = await fetch(authorizeUrl, { redirect: "manual" });
-        const loginLocation = anonymousAuthorize.headers.get("location") ?? "";
+        const loginLocation = await redirectTarget(anonymousAuthorize);
         expect(
-          anonymousAuthorize.status >= 300 && anonymousAuthorize.status < 400 && loginLocation.includes("/login"),
+          loginLocation.includes("/login"),
           `anonymous authorize → ${anonymousAuthorize.status} ${loginLocation}`,
         );
 
@@ -397,9 +420,13 @@ async function main(): Promise<number> {
           .map((header) => header.split(";")[0])
           .join("; ");
         expect(browserCookie !== "", "sign-in through /login set no session cookie");
-        const backToAuthorize = signedIn.headers.get("location") ?? "";
+        // The post-login destination is the callbackURL the login page already built from the
+        // signed query (§19.5 step 1) — so a successful sign-in returns exactly it, whether as
+        // a 302 Location or the fetch envelope. Falls back to the scraped callbackURL when the
+        // sign-in answers success without echoing a redirect at all.
+        const backToAuthorize = (await redirectTarget(signedIn)) || callbackUrl;
         expect(
-          signedIn.status >= 300 && signedIn.status < 400 && backToAuthorize.includes("/oauth2/authorize"),
+          signedIn.status < 400 && backToAuthorize.includes("/oauth2/authorize"),
           `login POST → ${signedIn.status} ${backToAuthorize}`,
         );
 
@@ -409,9 +436,9 @@ async function main(): Promise<number> {
           redirect: "manual",
           headers: { Cookie: browserCookie },
         });
-        const consentLocation = toConsent.headers.get("location") ?? "";
+        const consentLocation = await redirectTarget(toConsent);
         expect(
-          toConsent.status >= 300 && toConsent.status < 400 && consentLocation.includes("/oauth/consent"),
+          consentLocation.includes("/oauth/consent"),
           `authorize (signed in) → ${toConsent.status} ${consentLocation}`,
         );
 
@@ -440,9 +467,9 @@ async function main(): Promise<number> {
           },
           body: new URLSearchParams({ csrf, oauth_query: oauthQuery, service_account: OAUTH_ACCOUNT, decision: "accept" }),
         });
-        const codeLocation = consentPost.headers.get("location") ?? "";
+        const codeLocation = await redirectTarget(consentPost);
         expect(
-          consentPost.status >= 300 && consentPost.status < 400 && codeLocation.startsWith(OAUTH_REDIRECT_URI),
+          codeLocation.startsWith(OAUTH_REDIRECT_URI),
           `consent → ${consentPost.status} ${codeLocation}`,
         );
         const redirectParams = new URL(codeLocation).searchParams;

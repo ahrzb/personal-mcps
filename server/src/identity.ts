@@ -78,7 +78,21 @@ export const USERNAME_CHARSET = /^[a-z0-9-]+$/;
  * as SQLite text/integers (dates as ISO-8601 TEXT, booleans as 0/1), and D1 has no
  * interactive transactions, so nothing here may be wrapped in one.
  */
+let cachedAuth: ReturnType<typeof buildAuth> | undefined;
 function auth() {
+  // Built ONCE per isolate, not per request. D12's jwt()+oauthProvider() made each
+  // betterAuth() construction ~5.6x heavier (~0.85ms→~4.8ms CPU plus proportional
+  // allocation), and auth() is called on most request paths; rebuilding it every call
+  // pressured isolates into Cloudflare Error 1102 ("exceeded resource limits") under load.
+  // `env` (cloudflare:workers) is a per-isolate-stable binding proxy, so capturing it at the
+  // first build is correct, and better-auth is designed to be constructed once and reused.
+  return (cachedAuth ??= buildAuth());
+}
+
+/** The single betterAuth construction, isolated so `cachedAuth` takes THIS call's exact return
+ *  type — `database: env.DB as never` makes the generic `ReturnType<typeof betterAuth>`
+ *  unassignable, so the memo must be typed off the builder, not off betterAuth itself. */
+function buildAuth() {
   return betterAuth({
     database: env.DB as never,
     secret: env.BETTER_AUTH_SECRET,

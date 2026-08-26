@@ -22,7 +22,7 @@
 
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { PMCP_SLUG, Registry } from "../../src/registry";
+import { PMCP_SLUG, Registry, RegistryRefusal } from "../../src/registry";
 import type {
   AccessMode,
   GrantEntry,
@@ -709,6 +709,38 @@ describe("§7 · config-declared redaction paths", () => {
     expect(await registry.redactPathsFor(svc, "search_all", "args")).toEqual(["query"]);
     expect(await registry.redactPathsFor(svc, "unmatched_tool", "args")).toEqual([]);
     expect(await registry.redactPathsFor(svc, "get_news", "results")).toEqual([]);
+  });
+
+  it("§7/§15 · a `redact` / `redact_results` KEY that does not compile is refused at write time exactly like a role pattern — createService and updateService both throw RegistryRefusal and store nothing. A key that compiles nowhere matches no tool at all, so a one-character typo silently masks NOTHING and the argument it named is persisted in full into the approval `args_json` and the audit body columns; the refusal type is the same one roles get, because an owner's config mistake must reach them as invalid params rather than a -32603 with no cause · twin: the same key with its group closed stores and answers for the tool it names", async () => {
+    const ns = await seedNamespace(env.DB, {
+      services: [{ slug: "svc", kind: "tunnel", redact: { "get_.*": ["password"] } }],
+    });
+    const registry = new Registry(env.DB);
+    const ownerId = ns.owner.userId;
+    const typo = "get_(.*"; // one unclosed group — the fail-open key the finding is about
+
+    const draft = { ownerId, slug: "created", name: "created", kind: "tunnel" as const };
+    await expect(registry.createService({ ...draft, redact: { [typo]: ["password"] } })).rejects.toThrow(
+      RegistryRefusal,
+    );
+    await expect(
+      registry.createService({ ...draft, redactResults: { [typo]: ["session.cookie"] } }),
+    ).rejects.toThrow(RegistryRefusal);
+    expect(await registry.getService(ownerId, "created")).toBeNull();
+
+    const svc = await detail(registry, ns, "svc");
+    await expect(registry.updateService(svc.id, { redact: { [typo]: ["password"] } })).rejects.toThrow(
+      RegistryRefusal,
+    );
+    await expect(
+      registry.updateService(svc.id, { redactResults: { [typo]: ["session.cookie"] } }),
+    ).rejects.toThrow(RegistryRefusal);
+    // Nothing landed partially: the map the row already held still answers for its tool.
+    expect(await registry.redactPathsFor(svc, "get_news", "args")).toEqual(["password"]);
+
+    // The twin, one character away: a closed group is a pattern, so it stores AND masks.
+    const twin = await registry.createService({ ...draft, redact: { "get_(.*)": ["password"] } });
+    expect(await registry.redactPathsFor(twin, "get_news", "args")).toEqual(["password"]);
   });
 });
 

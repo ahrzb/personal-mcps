@@ -45,12 +45,18 @@ import { REGISTRATION_DEADLINE_MS } from "../../src/limits";
 import type { ServiceConnection } from "../../src/tunnel";
 
 /**
- * The tunnel project's shadow of the three `cloudflare:test` helpers this directory drives
- * a Durable Object with — server/test/env.d.ts declares the base set (env,
+ * The tunnel project's shadow of the `cloudflare:test` helpers this directory drives a
+ * Durable Object with — server/test/env.d.ts declares the base set (env,
  * applyD1Migrations, the scheduled controller) and this augments it, in the file whose
  * subject IS the platform. Stubs are `unknown` here rather than the plugin's
  * `DurableObjectStub<O>`: this repo declares no `@cloudflare/workers-types`, so
  * {@link ServiceConnectionStub} below is the one place a stub gets a name.
+ *
+ * `abortAllDurableObjects` is declared here and driven elsewhere (pipeline-tunnel's
+ * DO-failure case): unlike eviction it does NOT drain in-flight requests, which is the
+ * only in-process way to a real DO RPC failure under a waiting consumer — §6's "forcibly
+ * restarted" branch. It is a platform helper like the other three, so it is shadowed
+ * beside them rather than in the file that happens to call it.
  */
 declare module "cloudflare:test" {
   export function runInDurableObject<O, R>(
@@ -62,6 +68,7 @@ declare module "cloudflare:test" {
     stub: unknown,
     options?: { webSockets?: "close" | "hibernate" },
   ): Promise<void>;
+  export function abortAllDurableObjects(): Promise<void>;
 }
 
 /**

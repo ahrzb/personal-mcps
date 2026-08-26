@@ -9,8 +9,9 @@
 // Content-Type requirement and the if-present-must-match Origin rule (403), §8's
 // `/api/whoami` mirror of the same resolution, §4/§13's session-scope guards (a
 // bearer-sourced device-flow session never reaches `/account`, and `/account` demands
-// recent auth), and §12's bootstrap route being 404-shaped while BOOTSTRAP_SECRET is
-// unset.
+// recent auth), §12's bootstrap route being 404-shaped while BOOTSTRAP_SECRET is
+// unset, and — since §7's 2026-08-26 amendment — that the `initialize` handshake is a
+// message behind that same door rather than a public preamble to it.
 //
 // Why a table and not thirty tests: this is the densest change-amplification risk in the
 // system — one sentence of §7 step 1 touches every row of it. Rows are data, the assertion
@@ -45,7 +46,7 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import type { Env } from "../../src/index";
-import { requireOwnerSession, resolvePrincipal } from "../../src/identity";
+import { AUTH_BASE_PATH, requireOwnerSession, resolvePrincipal } from "../../src/identity";
 import type { Principal, TokenKind } from "../../src/identity";
 import type { JsonRpcResponse } from "../../src/gateway";
 import { PMCP_SLUG, Registry } from "../../src/registry";
@@ -64,17 +65,32 @@ import type { SeededNamespace } from "../harness/seed";
  * invisible to a service account — ungranted, nonexistent, and the reserved `pmcp` no
  * account may ever hold a grant on (§8) — because §7 step 2 pins all three to ONE answer,
  * beside the granted slug that is their allow-twin.
+ *
+ * `method` is what the row's JSON-RPC body ASKS for, and exists because the door is
+ * decided before the body is read: without it this table is method-monomorphic, and §7's
+ * 2026-08-26 amendment (`initialize` answered by the Worker rather than refused -32601)
+ * would be pinned by nobody as being subject to the door at all. Absent means `tools/list`,
+ * which is what every row written before the amendment sends.
  */
 export type AuthSurface =
-  | { route: "mcp-aggregated"; namespace: "self" | "foreign" | "absent" }
+  | { route: "mcp-aggregated"; namespace: "self" | "foreign" | "absent"; method?: McpMethod }
   | {
       route: "mcp-scoped";
       namespace: "self" | "foreign" | "absent";
       slug: "granted" | "ungranted" | "absent" | "pmcp";
+      method?: McpMethod;
     }
   | { route: "whoami" }
   | { route: "account"; recentAuth: boolean }
   | { route: "bootstrap"; secret: "unset" | "correct" | "wrong" };
+
+/**
+ * The two consumer methods this table can ask for. Not the whole dispatch table (§7 serves
+ * four): a door row is about who gets THROUGH, and the two that matter here are the one
+ * every pre-amendment row already sends and the one the amendment added. What each method
+ * then ANSWERS is order.table.test.ts's.
+ */
+export type McpMethod = "tools/list" | "initialize";
 
 /**
  * What the request carries. `kind` is the token table's own column (§4: kind is checked
@@ -124,12 +140,13 @@ export type AuthCarrier = "authorization-bearer" | "cookie" | "query-string";
  */
 export type AuthOutcome =
   /**
-   * `principal` is `"none"` for the one surface that answers without resolving a
-   * principal at all: §12's `/internal/users` is guarded by a shared secret, not by
+   * `principal` is `"none"` wherever the answer names no principal. Two cases, one word:
+   * §12's `/internal/users` is guarded by a shared secret rather than by
    * `resolvePrincipal`, so naming a `Principal["kind"]` there would assert a resolution
-   * that never happens. "Allow" still means what it means everywhere else — the surface
-   * admitted the request — which keeps the twin law (a refusal names an ALLOW row) total
-   * over the table.
+   * that never happens; and §7's `initialize` DOES resolve one at the door and then
+   * answers statelessly, so its result names nobody either. "Allow" still means what it
+   * means everywhere else — the surface admitted the request — which keeps the twin law (a
+   * refusal names an ALLOW row) total over the table.
    */
   | { verdict: "allow"; principal: Principal["kind"] | "none" }
   | { verdict: "refuse"; status: 401 | 403 | 404; wwwAuthenticate: boolean }
@@ -657,6 +674,79 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: false },
     twin: "§12 · with the secret set, the correct secret is admitted (the twin)",
   },
+
+  // ── §7 step 1, amended 2026-08-26: the handshake is behind the same door ──────────────
+  // The amendment moved `initialize` out of -32601 — "the MCP handshake every
+  // standards-compliant client opens with … answered statelessly on both endpoint shapes"
+  // — and every other `mcp-*` row of this table sends `tools/list`, which left the door
+  // METHOD-MONOMORPHIC: nothing here said the handshake is a message like any other rather
+  // than a public preamble. The mutation that shape invites is the natural one, because the
+  // answer genuinely needs no caller — answer `initialize` before resolving anyone — and it
+  // passes every row above while handing an anonymous prober the hub's protocol version,
+  // its capabilities, its serverInfo, and (by 200-versus-404) whether a username exists,
+  // which is precisely what §7 step 1's anti-enumeration sentence forbids.
+  //
+  // Five rows: the four credentials of the anchor block re-asked as a handshake, plus one
+  // scoped row, because §7 step 2's visibility 404 is decided at the same door and a
+  // handshake that preceded it would leak slug existence the same way.
+  {
+    title: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+    surface: { route: "mcp-aggregated", namespace: "self", method: "initialize" },
+    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    carrier: "authorization-bearer",
+    contentType: "application/json",
+    origin: "absent",
+    expect: { verdict: "allow", principal: "none" },
+    twin: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+  },
+  // §7 step 1: "any request that doesn't resolve to a valid principal → **401**" — a
+  // request, not a request whose method the hub happens to need state for.
+  {
+    title: "§7 step 1 · an anonymous `initialize` is refused 401 + WWW-Authenticate — the handshake is not a public preamble",
+    surface: { route: "mcp-aggregated", namespace: "self", method: "initialize" },
+    credential: { sort: "absent" },
+    carrier: "authorization-bearer",
+    contentType: "application/json",
+    origin: "absent",
+    expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
+    twin: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+  },
+  // The fall-through floor, re-asked: a bearer matching no prefix and no session.
+  {
+    title: "§7 step 1 · an `initialize` under a bearer matching no prefix and no session is refused with the same 401",
+    surface: { route: "mcp-aggregated", namespace: "self", method: "initialize" },
+    credential: { sort: "garbage" },
+    carrier: "authorization-bearer",
+    contentType: "application/json",
+    origin: "absent",
+    expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
+    twin: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+  },
+  // §7 step 1's never-fall-through rule on the handshake: a `pmcp_svc_` key is a perfectly
+  // valid credential on /connect (§6) and nothing at all here, whatever it asks for.
+  {
+    title: "§7 step 1 · an `initialize` under a live `pmcp_svc_` key is refused 401 — the wrong-kind credential never falls through on the handshake either",
+    surface: { route: "mcp-aggregated", namespace: "self", method: "initialize" },
+    credential: { sort: "token", kind: "service", state: "live", owner: "self" },
+    carrier: "authorization-bearer",
+    contentType: "application/json",
+    origin: "absent",
+    expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
+    twin: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+  },
+  // §7 step 2, on the shape the amendment also serves: visibility is decided before the
+  // body is read, so a handshake at an ungranted slug is the namespace's ordinary 404 —
+  // never a handshake that confirms the slug and then refuses the calls.
+  {
+    title: "§7 step 2 · an `initialize` at a scoped slug the caller holds no grants on gets the namespace's 404 — the handshake never precedes visibility",
+    surface: { route: "mcp-scoped", namespace: "self", slug: "ungranted", method: "initialize" },
+    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    carrier: "authorization-bearer",
+    contentType: "application/json",
+    origin: "absent",
+    expect: { verdict: "refuse", status: 404, wwwAuthenticate: false },
+    twin: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+  },
 ];
 
 /**
@@ -1008,11 +1098,33 @@ function cookieFor(row: AuthMatrixRow): string {
 /** The body a row's surface expects: a JSON-RPC message, a bootstrap op, or none. */
 function bodyFor(row: AuthMatrixRow): string | undefined {
   if (row.surface.route === "bootstrap") return JSON.stringify({ op: "list" });
-  if (row.surface.route.startsWith("mcp")) {
-    return JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-  }
-  return undefined;
+  const method = mcpMethodOf(row.surface);
+  if (method === undefined) return undefined;
+  // The handshake carries the params a real client sends; `tools/list` carries none, which
+  // is what every row written before the amendment sent and still sends.
+  const params = method === "initialize" ? { params: CLIENT_HANDSHAKE } : {};
+  return JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...params });
 }
+
+/** The JSON-RPC method a row asks for, or undefined on the surfaces that speak no
+ *  JSON-RPC at all (whoami, /account, bootstrap). */
+function mcpMethodOf(surface: AuthSurface): McpMethod | undefined {
+  if (surface.route !== "mcp-aggregated" && surface.route !== "mcp-scoped") return undefined;
+  return surface.method ?? "tools/list";
+}
+
+/**
+ * The `initialize` params a compliant MCP client opens with — the CLIENT's own declared
+ * revision and an obviously-fake identity, not the hub's (nothing the door decides may
+ * depend on either). Sent in full rather than as `{}` because a row that sent an empty
+ * params object would let an implementation that misreads them pass; what the hub ANSWERS
+ * is order.table.test.ts's, which carries the same fixture for that side.
+ */
+const CLIENT_HANDSHAKE = {
+  protocolVersion: "2026-07-28",
+  capabilities: {},
+  clientInfo: { name: "pmcp-auth-matrix-client", version: "0.0.0-FAKE0000" },
+};
 
 /** The row's request, built fresh each time — a body is read once, and rows re-ask. */
 function requestFor(row: AuthMatrixRow): Request {
@@ -1072,6 +1184,22 @@ function envFor(row: AuthMatrixRow): Partial<Env> {
 async function expectAdmittedAs(row: AuthMatrixRow, response: Response): Promise<void> {
   if (row.expect.verdict !== "allow") throw new Error("not an allow row");
   const expected = row.expect.principal;
+  if (mcpMethodOf(row.surface) === "initialize") {
+    // §7's amended dispatch answers the handshake STATELESSLY: the door resolved a
+    // principal, and the answer names none — so `principal: "none"` is this row's honest
+    // word, and "admitted" means the handshake HAPPENED. Read the way a client reads it,
+    // because every refusal on this surface is also a 200 (§7: refusals are payloads, not
+    // statuses) — including the `-32601` this amendment moved `initialize` out of, which a
+    // status check alone would accept as admission.
+    expect(expected, `${row.title}: the handshake names no principal`).toBe("none");
+    const body = (await response.json()) as JsonRpcResponse;
+    expect(body.error, `${row.title}: the handshake was refused behind a 200`).toBeUndefined();
+    expect(
+      (body.result as { protocolVersion?: unknown } | undefined)?.protocolVersion,
+      `${row.title}: the answer carries no protocolVersion`,
+    ).toBeTruthy();
+    return;
+  }
   if (expected === "none") {
     // §12's route resolves nobody: "admitted" is the route answering at all.
     expect(response.status).toBe(200);
@@ -1179,6 +1307,7 @@ const SECTION_ANCHORS = [
   "§8 · a `pmcp_sa_` key resolves to the service-account principal in the owner's namespace",
   "§4 · a password session with recent auth reaches /account (the twin)",
   "§12 · with BOOTSTRAP_SECRET unset, every request 404s — indistinguishable from an unknown path",
+  "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
 ] as const;
 
 /** The sections as slices, computed once — a malformed anchor list fails at import. */
@@ -1240,6 +1369,179 @@ describe("§12 — the bootstrap route exists only while its secret does", () =>
   });
 });
 
+describe("§7 step 1, amended 2026-08-26 — the handshake is behind the same door", () => {
+  runAuthMatrix(SECTIONS[6]);
+});
+
 describe("the table's own invariants", () => {
   runTableInvariants();
 });
+
+/**
+ * §4's session-scope guard, at the door the /account wrappers do not stand in front of.
+ *
+ * The rows above pin that a device-flow session cannot reach `/account`, and identity's
+ * `requireOwnerSession` earns that by reading Cookie ONLY. But better-auth's own credential
+ * endpoints are live on the same public `/api/auth` mount, and §4's `bearer()` plugin
+ * rewrites any `Authorization` header into a session for better-auth's middleware — so a
+ * request straight at the mount never routes through a wrapper at all, and the Cookie-only
+ * guard never runs. §4's harm sentence is exactly that path: "a stolen CLI token cannot
+ * enroll new credentials and become persistent account takeover".
+ *
+ * Deliberately NOT table rows: AUTH_MATRIX_ROWS is the owner-authored oracle (strategy §9
+ * rule 1, "agents … never rows"). These are agent-written regression cases, beside the §12
+ * sign-up case above — which exists for the same reason, about the same mount: what
+ * better-auth serves under it is a surface of ours whether or not a row describes it.
+ *
+ * The actor is the real credential: `fixture.sessions.device` came out of the whole RFC
+ * 8628 exchange, so a hub with no guard admits it. A fabricated token would be refused by
+ * anything and would pin nothing. Last in the file on purpose — under red these calls
+ * genuinely revoke sessions the rows above spend.
+ */
+describe("§4 — the credential family is out of a bearer's reach on better-auth's own mount", () => {
+  /**
+   * The family members these cases drive, as method + endpoint beneath AUTH_BASE_PATH.
+   * Two are §4's own words ("session revocation"; TOTP removal), and the third is the
+   * session LISTING — its rows carry session tokens (web.ts reads `{ id, token }` off it),
+   * so a bearer that reaches it walks away with the browser cookie's session and the
+   * cookie-only guard has been routed around rather than enforced. The destructive members
+   * (`/update-user`, `/delete-user`) are guarded and deliberately not driven: red would
+   * have run them against the fixture.
+   *
+   * The last two are the account-LINKING core, and they are here because a guard written
+   * as a list of family names cannot see them: better-auth serves `/list-accounts` and
+   * `/unlink-account` on this mount from its core, under no plugin this hub configured, so
+   * a guard that enumerates has to have been told about them. §4's harm sentence is these
+   * two exactly — the login methods behind the account are what "enroll new credentials
+   * and become persistent account takeover" means. `/unlink-account` is driven with a body
+   * better-auth rejects on purpose: under red the guard is not there, and a valid body
+   * would have taken the fixture owner's password login away with it.
+   */
+  const CREDENTIAL_CALLS: readonly {
+    method: "GET" | "POST";
+    endpoint: string;
+    body?: Record<string, unknown>;
+  }[] = [
+    { method: "POST", endpoint: "/revoke-sessions", body: {} },
+    { method: "POST", endpoint: "/two-factor/disable", body: { password: "FAKE0000-not-a-password" } },
+    { method: "GET", endpoint: "/list-sessions" },
+    { method: "GET", endpoint: "/list-accounts" },
+    { method: "POST", endpoint: "/unlink-account", body: { providerId: "credential" } },
+  ];
+
+  for (const { method, endpoint, body } of CREDENTIAL_CALLS) {
+    it(`§4 · a device-flow bearer is refused at ${AUTH_BASE_PATH}${endpoint} — the mount is gated, not merely the wrappers`, async () => {
+      const response = await call(bearerCall(method, endpoint, fixture.sessions.device.token, body));
+      expect(response.status).toBe(403);
+      // No challenge: a credential that is refused for its SCOPE is not one to retry with a
+      // better token, and §7 attaches `WWW-Authenticate` to the consumer surfaces alone.
+      expect(response.headers.has("WWW-Authenticate")).toBe(false);
+      // §15: the refusal carries no credential material back out.
+      expect(await response.text()).not.toContain(fixture.sessions.device.token);
+    });
+  }
+
+  // The carrier is what the gate reads, not the session's source — which is the whole
+  // reason it is structural. A password session is the ONE session §4 lets near credential
+  // management, and even it may only arrive as the signed cookie the /account rows above
+  // present (their allow-twin, not duplicated here).
+  it("§4 · a password-sourced session presented as a bearer is refused there too — the same session's cookie is what /account accepts", async () => {
+    const response = await call(bearerCall("POST", "/revoke-sessions", fixture.sessions.fresh.token, {}));
+    expect(response.status).toBe(403);
+    expect(await response.text()).not.toContain(fixture.sessions.fresh.token);
+  });
+
+  // §9 rule 2's twin, and the regression the fix must not become: §4 limits a CLI session's
+  // SCOPE, it does not reject the credential. The device token this suite just had refused
+  // three times still resolves everywhere the CLI needs it — §8's whoami and §7's consumer
+  // endpoint — which is also proof the refusals above are not a token that had simply died.
+  it("§4/§8 · the same device-flow bearer still reads /api/whoami and still reaches /<user>/mcp", async () => {
+    const token = fixture.sessions.device.token;
+    const whoami = await call(
+      new Request(`${ORIGIN}/api/whoami`, { headers: { authorization: `Bearer ${token}` } }),
+    );
+    expect(whoami.status).toBe(200);
+    expect(((await whoami.json()) as { principal: string }).principal).toBe(
+      `user:${fixture.self.owner.username}`,
+    );
+    const mcp = await call(
+      new Request(`${ORIGIN}/${fixture.self.owner.username}/mcp`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      }),
+    );
+    expect(mcp.status).toBe(200);
+  });
+
+  // Strategy §9 rule 4a, the device flow's half — but the exclusion runs the OTHER way from
+  // sign-out. A device APPROVAL is how a second session comes to exist, so admitting a bearer
+  // there lets a stolen CLI token self-approve a fresh owner session that outlives revocation
+  // of the stolen one (§4's persistent-takeover sentence, reached through this very door). So
+  // the claim and the approval are cookie-only: a bearer is REFUSED at both, exactly like any
+  // other family member, while the anonymous `/device/code` leg it needs first is not. The
+  // legitimate path is the cookie one `deviceFlowSession` drives — which the whole fixture
+  // already rests on, since `fixture.sessions.device` is minted through it — so the debt this
+  // exclusion owes is paid there rather than re-driven here.
+  it("§4/§14 · a session bearer is refused at the `/device` approval legs — approving a device is not something a bearer may do", async () => {
+    const token = fixture.sessions.fresh.token;
+    const codes = (await (
+      await call(
+        new Request(`${ORIGIN}${AUTH_BASE_PATH}/device/code`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ client_id: DEVICE_CLIENT_ID }),
+        }),
+      )
+    ).json()) as { user_code: string };
+    // The bare `/device` claim and the approval POST both sit outside the allowlist — the
+    // guard answers 403 before better-auth ever sees the code, so a bearer cannot even claim.
+    const claimed = await call(
+      bearerCall("GET", `/device?user_code=${encodeURIComponent(codes.user_code)}`, token),
+    );
+    expect(claimed.status).toBe(403);
+    expect(claimed.headers.has("WWW-Authenticate")).toBe(false);
+    const approved = await call(
+      bearerCall("POST", "/device/approve", token, { userCode: codes.user_code }),
+    );
+    expect(approved.status).toBe(403);
+    expect(await approved.text()).not.toContain(token);
+  });
+
+  // Strategy §9 rule 4a — an exclusion is a debt owed to another case: the guard's list
+  // deliberately leaves `/sign-out` out, because `pmcp logout` posts it with exactly this
+  // header (cli/src/main.ts) and a session that destroys only itself escalates nothing. So
+  // the exclusion is SPENT here rather than asserted in prose, and the postcondition is the
+  // logout the CLI is entitled to: the token that just signed out resolves to nobody.
+  // Last in the file — this case ends the session every case above spends.
+  it("§4/§10 · /sign-out is deliberately outside the family — `pmcp logout` still posts it as a bearer, and the session is gone afterwards", async () => {
+    const token = fixture.sessions.device.token;
+    const signedOut = await call(bearerCall("POST", "/sign-out", token, {}));
+    expect(signedOut.status).not.toBe(403);
+    expect(signedOut.ok).toBe(true);
+    const after = await call(
+      new Request(`${ORIGIN}/api/whoami`, { headers: { authorization: `Bearer ${token}` } }),
+    );
+    expect(after.status).toBe(401);
+  });
+});
+
+/**
+ * One request at better-auth's own mount, carrying a session token the way a stolen one
+ * arrives: `Authorization: Bearer`, and no cookie anywhere.
+ */
+function bearerCall(
+  method: "GET" | "POST",
+  endpoint: string,
+  token: string,
+  body?: Record<string, unknown>,
+): Request {
+  return new Request(`${ORIGIN}${AUTH_BASE_PATH}${endpoint}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}

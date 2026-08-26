@@ -65,14 +65,58 @@ export const CODES = {
 } as const;
 
 /**
- * -32000. `failureClass` is the dispatching layer's own name for what went wrong —
- * "offline" / "timeout" for a tunnel, upstream.ts's five classes for a proxy — and rides
- * `auditDetail` to the ledger. Omitted where the caller genuinely cannot classify.
+ * The generic half of every -32000: what a consumer is told happened, which is nothing
+ * beyond "not right now" (§7 — the class never leaves the ledger). Declared ABOVE its
+ * reader, like everything else this module's temporal-dead-zone note is about.
+ */
+const UNAVAILABLE = "service unavailable";
+
+/**
+ * The failure classes that CERTAINLY dispatched nothing — the whole of the exception to
+ * the disclosure rule in `unavailable`, and the reason each is in it: "offline" (a tunnel
+ * with no live socket: nothing was sent and the hub has no outbox), "catalog_unreachable"
+ * (a cached-catalog read, which never reaches the service at all), "needs_reconnect" (a
+ * stored credential the hub already knows is dead, so no dial is attempted).
+ *
+ * A SET rather than the inverse list, and that asymmetry is the safety rule: an unknown
+ * class discloses. Over-warning costs a consumer one avoidable retry decision;
+ * under-warning is §15's at-most-once lie, and a class added to a dispatching layer
+ * without a thought here must fail in the harmless direction.
+ */
+const DISPATCHED_NOTHING: ReadonlySet<string> = new Set([
+  "offline",
+  "catalog_unreachable",
+  "needs_reconnect",
+]);
+
+/**
+ * -32000, and the ONE place the hub decides what a -32000 says. `failureClass` is the
+ * dispatching layer's own name for what went wrong — "offline" / "timeout" /
+ * "disconnected" for a tunnel, upstream.ts's five classes for a proxy — and does two
+ * things: it rides `auditDetail` to the ledger, and it decides §15's at-most-once
+ * disclosure through the table above. A class that certainly dispatched nothing keeps the
+ * bare "service unavailable"; every other class appends ": the call may have executed".
+ *
+ * The MESSAGE is where that disclosure has to live, and the message is the whole of what
+ * a caller may vary: §7 makes dispatch failures indistinguishable by code, and -32000 is
+ * pinned to carry no `data` (contracts/errors.json), so a consumer deciding whether a
+ * retry is safe has nowhere else to read it. Deciding it here rather than at the throw
+ * sites is the same rule the three payload-free factories below follow — two backends
+ * asking the same question of the world must not answer a consumer differently.
+ *
+ * No class at all is the bare message: the caller genuinely cannot classify, and a warning
+ * about a dispatch nobody claims happened would be noise rather than caution.
  */
 export const unavailable = (failureClass?: string): HubError => {
-  const err = new HubError(CODES.unavailable, "service unavailable");
+  const err = new HubError(
+    CODES.unavailable,
+    failureClass === undefined || DISPATCHED_NOTHING.has(failureClass)
+      ? UNAVAILABLE
+      : `${UNAVAILABLE}: the call may have executed`,
+  );
   if (failureClass !== undefined) err.auditDetail = { failureClass };
   return err;
 };
+
 export const notPermitted = (): HubError => new HubError(CODES.notPermitted, "tool not permitted");
 export const archived = (): HubError => new HubError(CODES.archived, "service archived");

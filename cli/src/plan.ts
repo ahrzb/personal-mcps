@@ -297,7 +297,9 @@ function pathMap(value: unknown, path: string): Record<string, string[]> {
  * role list. Warns: a grant naming a role a *tunneled* service hasn't declared
  * yet (the file may legitimately be ahead of the first connection; the built-in
  * `all` is exempt). Hard errors: the same on a *proxied* service (its roles
- * live in this very file); the reserved `pmcp` slug anywhere — as a service key
+ * live in this very file); a `redact` / `redact_results` key that does not compile as a
+ * pattern, on either kind (a mask that matches no tool masks nothing, §7); the reserved
+ * `pmcp` slug anywhere — as a service key
  * or inside a grants block (`builtin` rows are likewise excluded from the
  * delete computation); the same role granted in both modes for one (account,
  * service); and a kind change on an existing slug (kind is immutable, §8 — the
@@ -464,7 +466,24 @@ function serviceProblems(service: DesiredService, existing: CurrentService | und
     problems.push(`${path}: kind is immutable (${existing.kind} on the server, ${service.kind} in the file)`);
   }
   if (service.kind === "proxy") problems.push(...roleDeclarationProblems(path, service.roles ?? {}));
+  problems.push(...redactKeyProblems(`${path}.redact`, service.redact));
+  problems.push(...redactKeyProblems(`${path}.redact_results`, service.redactResults));
   return problems;
+}
+
+/**
+ * The redaction maps' keys are tool names or patterns in the same language `roles:` uses
+ * (§7) — on EITHER kind, since redaction is not proxy-only — so they get the same compile
+ * check, and for a sharper reason: a key that compiles nowhere matches no tool, so the file
+ * reads as masking a password that the hub then persists in full into the approval record
+ * and the audit bodies (§7, §15). Refusing here is what makes `pmcp apply` fail on the
+ * operator's terminal instead of in an audit row. The message names the service and the
+ * offending key and nothing else from the file — a diff is printed where others can read it.
+ */
+function redactKeyProblems(path: string, map: Record<string, string[]>): string[] {
+  return Object.keys(map)
+    .filter((key) => !compiles(key))
+    .map((key) => `${path}: "${key}" does not compile`);
 }
 
 /**
@@ -488,14 +507,20 @@ function roleDeclarationProblems(path: string, roles: Record<string, string[]>):
         problems.push(`${path}.roles.${role}: a pattern is at most ${ROLE_PATTERN_MAX_LENGTH} characters`);
         continue;
       }
-      try {
-        new RegExp(`^(?:${pattern === "*" ? ".*" : pattern})$`);
-      } catch {
-        problems.push(`${path}.roles.${role}: "${pattern}" does not compile`);
-      }
+      if (!compiles(pattern)) problems.push(`${path}.roles.${role}: "${pattern}" does not compile`);
     }
   }
   return problems;
+}
+
+/** The one compile decision, shared by the `roles:` block and the redaction keys above. */
+function compiles(pattern: string): boolean {
+  try {
+    new RegExp(`^(?:${pattern === "*" ? ".*" : pattern})$`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

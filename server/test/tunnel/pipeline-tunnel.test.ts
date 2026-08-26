@@ -11,7 +11,9 @@
  * `/<user>/mcp/<slug>`, prefixed and unprefixed; role filtering bounding both the
  * listing and the call; `_meta` hygiene as the SERVICE observes it (consumer-supplied
  * `hub/*` keys stripped then the hub's own set — overwrite, never merge; the consumer's
- * clientCapabilities mirrored, `{}` when absent; everything else untouched); that
+ * clientCapabilities mirrored, `{}` when absent; everything else untouched); that a
+ * service's `notifications/tools/list_changed` reaches the consumer's next listing, and
+ * that a re-list drawing nothing leaves the previous one standing; that
  * JSON-RPC ids never cross the socket in either direction; that `writeOnly` is stripped
  * from served outputSchemas while inputSchemas keep theirs; the 30 s call deadline
  * mapping to -32000; and the audit chokepoint — every tools/call resolves into exactly
@@ -45,19 +47,20 @@
  * constant, and the fake service's release gates make ordering explicit.
  */
 
-// deps: harness/seed · harness/fake-service · harness/tunnel-do (backendCtx, untilStatus, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env) · src/gateway (JsonRpcRequest, JsonRpcResponse, Tool) · src/tunnel (tunnelBackend) · src/audit (query) · src/registry (Registry, buildToolFilter) · src/limits (CALL_TIMEOUT_MS)
+// deps: harness/seed · harness/fake-service · harness/tunnel-do (backendCtx, untilStatus, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env) · src/gateway (JsonRpcRequest, JsonRpcResponse, Tool) · src/tunnel (tunnelBackend) · src/audit (query) · src/registry (Registry, buildToolFilter) · src/limits (CALL_TIMEOUT_MS) · src/errors (CODES)
 
-import { env } from "cloudflare:test";
+import { abortAllDurableObjects, env } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
 import { query } from "../../src/audit";
 import type { AuditRow } from "../../src/audit";
+import { CODES } from "../../src/errors";
 import type { JsonRpcRequest, JsonRpcResponse, Tool } from "../../src/gateway";
 import { CALL_TIMEOUT_MS } from "../../src/limits";
 import { REDACTED, Registry } from "../../src/registry";
 import type { Service } from "../../src/registry";
 import { tunnelBackend } from "../../src/tunnel";
-import { connectFakeService, waitFor } from "../harness/fake-service";
+import { connectFakeService, tick, waitFor } from "../harness/fake-service";
 import type { FakeService, ToolBehavior } from "../harness/fake-service";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace, SeededService } from "../harness/seed";
@@ -350,6 +353,14 @@ const PURGE_TOOL: Tool = {
   inputSchema: { type: "object", properties: {} },
 };
 
+/** A tool the seeded catalog does not hold, so a listing that serves it can only have been
+ *  re-read after the service said its tool set changed (case 6a). */
+const DIGEST_TOOL: Tool = {
+  name: "digest",
+  description: "catalogued only by the re-list",
+  inputSchema: { type: "object", properties: {} },
+};
+
 /** What the fake service answers by default: both result carriers, the structured one
  *  carrying the planted secret. */
 const ANSWER = {
@@ -497,6 +508,31 @@ function callMessage(name: string, args: Record<string, unknown> = { q: "hello" 
 /** The tools a listing answer served. */
 function servedTools(answer: Answer): Tool[] {
   return ((answer.body.result ?? {}) as { tools?: Tool[] }).tools ?? [];
+}
+
+/**
+ * The scoped listing's tool names, polled until they are `expected` — the re-list a
+ * `notifications/tools/list_changed` provokes is a hub round trip, so "has the catalog
+ * changed yet" is a scheduling question and never a duration (fake-service.tick's doc).
+ * Answers the LAST listing either way, so a change that never lands fails as an assertion
+ * naming both sides rather than as a test timeout with nothing to read. The polled thing
+ * stays a consumer-facing listing: peeking at the DO's storage would answer a different
+ * question than the one case 6a asks.
+ */
+async function untilListed(
+  fixture: Fixture,
+  credential: string,
+  expected: readonly string[],
+): Promise<string[]> {
+  let names: string[] = [];
+  // waitFor's own default budget, spelled here because the predicate is a round trip.
+  for (let turn = 0; turn < 250; turn++) {
+    const listed = await rpc(fixture, credential, SERVICE_SLUG, listMessage());
+    names = servedTools(listed).map((tool) => tool.name);
+    if (names.join() === expected.join()) return names;
+    await tick();
+  }
+  return names;
 }
 
 /** Every `tools/call` frame a socket received, verbatim — `invocations` is a projection of
@@ -661,6 +697,44 @@ describe("§7 both endpoint shapes, one pipeline", () => {
     );
     expect(cached, "the cache is the verbatim oracle").toEqual(SEARCH_TOOL);
   });
+
+  it("6a. §6 · a registered service's notifications/tools/list_changed reaches the consumer: the hub re-lists over that same socket and the NEXT tools/list serves the new set — the added tool present, the withdrawn one gone — with no reconnect and no second registration; and the twin, a re-list that draws no catalog, leaves the previous listing standing rather than emptying it (invalidation is a re-read, never a delete — §6 lifecycle 2)", async () => {
+    const fixture = await seedFixture();
+    // The owner, whose listing no grant bounds: role filtering is case 4's claim, and only
+    // an unfiltered listing can show the whole catalog change.
+    const credential = (await seedOwnerSession(fixture.ns.owner)).token;
+    const before = servedTools(await rpc(fixture, credential, SERVICE_SLUG, listMessage()));
+    expect(before.map((tool) => tool.name)).toEqual([TOOL, UNGRANTED_TOOL]);
+
+    // The real actor: the service itself, saying its tool set changed over its own socket.
+    // Nothing reconnects and nothing re-registers, so the cache is the only thing that can
+    // make the next listing differ.
+    const warmed = fixture.fake.lists.length;
+    await fixture.fake.notifyToolsListChanged([SEARCH_TOOL, DIGEST_TOOL]);
+
+    const after = [TOOL, DIGEST_TOOL.name];
+    expect(await untilListed(fixture, credential, after)).toEqual(after);
+    // Re-LISTED: the new catalog came from a tools/list the hub issued, not from the
+    // notification's own payload (§6 — the notification carries no tools).
+    expect(
+      fixture.fake.lists.length,
+      "the catalog changed without the hub asking the service again",
+    ).toBeGreaterThan(warmed);
+
+    // The twin, one state later on the same socket: the service can no longer list, so the
+    // re-list draws no catalog at all. A stale catalog serves better than an empty one, so
+    // the previous listing stands — an invalidation that emptied the cache first would
+    // serve nothing here.
+    fixture.fake.setListBehavior({ mode: "error", error: { code: CODES.internal, message: "not ready" } });
+    const relisted = fixture.fake.lists.length;
+    await fixture.fake.notifyToolsListChanged([PURGE_TOOL]);
+    expect(
+      await waitFor(() => fixture.fake.lists.length > relisted),
+      "the second notification never re-listed",
+    ).toBe(true);
+    const stale = servedTools(await rpc(fixture, credential, SERVICE_SLUG, listMessage()));
+    expect(stale.map((tool) => tool.name)).toEqual(after);
+  });
 });
 
 describe("§7 `_meta` hygiene, observed at the service", () => {
@@ -759,6 +833,31 @@ describe("§7 `_meta` hygiene, observed at the service", () => {
     // Not merely on the call frame: nothing the hub ever sent this socket carries it.
     expect(fixture.fake.frames.some((frame) => String(frame.id) === String(CONSUMER_ID))).toBe(false);
   });
+
+  it("12a. §7 · \"relayed verbatim\" stops at the JSON-RPC error grammar: a service answering with an `error` member that is not an error OBJECT reaches the consumer as a well-formed one (code number, message string), while a well-formed service error passes through untouched — the service is the untrusted side of that socket", async () => {
+    const fixture = await seedFixture();
+    const credential = fixture.ns.tokens[ACCOUNT].token;
+
+    // The twin first: a service error the hub can read is the consumer's, verbatim.
+    fixture.fake.setBehavior(TOOL, { mode: "error", error: { code: -32050, message: "no such city" } });
+    const wellFormed = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    expect(wellFormed.body.error).toMatchObject({ code: -32050, message: "no such city" });
+
+    // And the ill-formed one, which only a raw frame can express: park the call, then
+    // answer its wire id with an `error` that is a bare string.
+    fixture.fake.setBehavior(TOOL, { mode: "hang" });
+    const pending = rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    expect(await waitFor(() => fixture.fake.callCount(TOOL) > 1), "the call never left").toBe(true);
+    const parked = fixture.fake.invocations[fixture.fake.invocations.length - 1];
+    await fixture.fake.sendRaw({ jsonrpc: "2.0", id: parked.wireId, error: "boom" });
+    const answer = await pending;
+
+    expect(typeof answer.body.error?.code, "the service's bytes sat in the error slot").toBe("number");
+    expect(typeof answer.body.error?.message).toBe("string");
+    // Still an ERROR row: the call reached the service and failed there (§15's vocabulary),
+    // which is what separates this from a refusal.
+    expect((await callRows(fixture))[0].outcome).toBe("error");
+  });
 });
 
 describe("§15 deadline, disconnect, and the audit chokepoint", () => {
@@ -793,6 +892,54 @@ describe("§15 deadline, disconnect, and the audit chokepoint", () => {
     expect(dropped.body.error?.code).toBe(-32000);
     // Immediately: the pending map drains on close rather than waiting for the budget.
     expect(Date.now() - startedAt, "the consumer waited for the deadline").toBeLessThan(CALL_TIMEOUT_MS);
+  });
+
+  it("14a. §15 · a frame already on the wire is never reported as certainly-did-not-execute: the dropped call's -32000 discloses that it MAY have run and its row records the disconnect, while the next call — with the socket gone, so nothing left — discloses nothing and records `offline`", async () => {
+    const fixture = await seedFixture();
+    const credential = fixture.ns.tokens[ACCOUNT].token;
+
+    fixture.fake.setBehavior(TOOL, { mode: "drop" });
+    const dropped = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+
+    // The service RECEIVED it before dropping — which is what makes "certainly did not
+    // execute" a lie about this call, and §15's at-most-once question a real one.
+    expect(fixture.fake.callCount(TOOL)).toBe(1);
+    expect(dropped.body.error?.code).toBe(-32000);
+    expect(dropped.body.error?.message, "the consumer cannot tell this from an offline refusal").toMatch(
+      /may have executed/,
+    );
+    // The ledger keeps the classes apart — §15's "was it offline or did it time out",
+    // which one -32000 on the wire cannot answer and this column is the only place that can.
+    const [droppedRow] = await callRows(fixture);
+    expect(droppedRow.detail).toMatchObject({ failureClass: "disconnected" });
+
+    // The twin, one state later on the same fixture: the socket is gone, so the frame
+    // never leaves and the consumer is told nothing about execution.
+    await untilStatus(fixture.service.id, "offline");
+    const offline = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    expect(offline.body.error?.code).toBe(-32000);
+    expect(offline.body.error?.message).not.toMatch(/may have executed/);
+    expect(fixture.fake.callCount(TOOL), "nothing was queued for the absent service").toBe(1);
+  });
+
+  it("14b. §10/§15 · a DO RPC that fails under a waiting consumer refuses -32000 with a failure class in the row, never the unclassified -32603: a forcibly restarted instance is downtime, and the ledger is where §15's at-most-once question about that call is answered", async () => {
+    const fixture = await seedFixture();
+    const credential = fixture.ns.tokens[ACCOUNT].token;
+    fixture.fake.setBehavior(TOOL, { mode: "hang" });
+
+    const pending = rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    expect(await waitFor(() => fixture.fake.callCount(TOOL) > 0), "the call never left").toBe(true);
+    // The one in-process way to a real DO failure: the instance is reset under the
+    // in-flight RPC, which is §6's "forcibly restarted" branch — no stub is mocked.
+    await abortAllDurableObjects();
+    const answer = await pending;
+
+    expect(answer.body.error?.code).toBe(-32000);
+    const [row] = await callRows(fixture);
+    expect(row.outcome).toBe("-32000");
+    expect(row.detail, "the row lost the failure class").toMatchObject({
+      failureClass: "do_unreachable",
+    });
   });
 
   it("15. §15 · an offline service fails -32000 on call while its cached tools/list still lists tools — the pair that keeps \"unavailable\" from meaning \"invisible\"", async () => {

@@ -31,7 +31,7 @@
 import { applyD1Migrations, env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { ApprovalStatus } from "../../src/approvals";
-import { APPROVAL_WINDOW_MS } from "../../src/limits";
+import { APPROVAL_WINDOW_MS, OAUTH_STATE_TTL_MS } from "../../src/limits";
 import type { ServiceKind } from "../../src/registry";
 
 /**
@@ -43,7 +43,15 @@ import type { ServiceKind } from "../../src/registry";
  */
 export type CheckedVocabulary = { kind: ServiceKind; status: ApprovalStatus };
 
-/** The tables §5 defines as ours; better-auth's own tables are not this file's subject. */
+/**
+ * The tables §5 defines as ours; better-auth's own tables are not this file's subject.
+ * `upstream_oauth_state` is 0004's — declared for §7's upstream-OAuth connect flow rather
+ * than listed in §5's own table list, but it is a control-plane table of ours like every
+ * other name here, so it is pinned like every other name here. 0004's file header carries
+ * a `ponytail:` note calling it unpinned and naming exactly the four places to add it
+ * (SchemaTable, SCHEMA_TABLES, baseRow, ctxFilter); that note is answered as of the rows
+ * below and is stale where it still stands.
+ */
 export type SchemaTable =
   | "service"
   | "service_account"
@@ -51,7 +59,8 @@ export type SchemaTable =
   | "approval"
   | "token"
   | "audit"
-  | "push_subscription";
+  | "push_subscription"
+  | "upstream_oauth_state";
 
 /**
  * One constraint, stated as the write it refuses beside the write it accepts.
@@ -709,6 +718,152 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     rejected: { user_id: "usr_FAKE0000_absent" },
     accepted: {},
   },
+
+  // ——— upstream_oauth_state (§5, §7) ———
+  // 0004's table: the connect flow's one-time `state` record, "bound to {owner, service,
+  // expected AS issuer + token endpoint, PKCE verifier} and to the initiating cookie
+  // session". Every column is one clause of that sentence, and every clause is NOT NULL —
+  // an absent one would leave the callback resolving a binding it cannot check. Two
+  // absences are the design and so have no row: no CHECK anywhere (there is no closed
+  // vocabulary here — `issuer` and `token_endpoint` are whatever the discovered AS said),
+  // and `session_id` carries no FK (better-auth owns `session`, and a signed-out session
+  // must not silently delete a live state row — the callback refuses it instead).
+  //
+  // `state` is a bare TEXT PRIMARY KEY, so it gets a duplicate row and NOT a null one:
+  // SQLite's long-standing rowid-table quirk admits NULL into a non-INTEGER PRIMARY KEY,
+  // and a row asserting otherwise would be pinning the fixture rather than the schema. The
+  // uniqueness IS the security property — a `state` that could repeat is a nonce that is
+  // not one — which is why the row that does exist is the duplicate.
+  //
+  // Every fixture value below is spelled FAKE / .invalid, `code_verifier` most of all: it
+  // is stored in plaintext by design (0004's header), and §15's rule is that it must never
+  // appear in a log line — which includes this file's own test output.
+  {
+    title: "§5/§7 · upstream_oauth_state.state PRIMARY KEY refuses a second row for one nonce — a `state` that can repeat is not a nonce · twin stores a distinct state",
+    table: "upstream_oauth_state",
+    kind: "unique",
+    column: "state",
+    rejected: { state: "oas_FAKE0000_dup" },
+    accepted: { state: "oas_FAKE0000_other" },
+  },
+  {
+    title: "§5 · upstream_oauth_state.owner_id NOT NULL refuses null · twin stores under the seeded owner",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "owner_id",
+    rejected: { owner_id: null },
+    accepted: {},
+  },
+  {
+    title: "§5 · upstream_oauth_state.owner_id FK refuses an absent user · twin stores under the seeded owner",
+    table: "upstream_oauth_state",
+    kind: "foreign_key",
+    column: "owner_id",
+    rejected: { owner_id: "usr_FAKE0000_absent" },
+    accepted: {},
+  },
+  {
+    title: "§5 · upstream_oauth_state.service_id NOT NULL refuses null · twin stores the seeded service",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "service_id",
+    rejected: { service_id: null },
+    accepted: {},
+  },
+  {
+    title: "§5 · upstream_oauth_state.service_id FK refuses an absent service · twin stores the seeded service",
+    table: "upstream_oauth_state",
+    kind: "foreign_key",
+    column: "service_id",
+    rejected: { service_id: "svc_FAKE0000_absent" },
+    accepted: {},
+  },
+  // "identity.OwnerSession.sessionId — only the browser session that began the flow may
+  // complete it (§7)". No FK by design, so the twin doubles as the evidence that a session
+  // id no `session` row carries still STORES: the binding is checked at the callback.
+  {
+    title: "§5/§7 · upstream_oauth_state.session_id NOT NULL refuses null · twin stores a session id no row carries — no FK, so the binding is the callback's check",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "session_id",
+    rejected: { session_id: null },
+    accepted: { session_id: "ses_FAKE0000_gone" },
+  },
+  // "RFC 9207's `iss` is compared against THIS, never against the callback's own claim."
+  {
+    title: "§5/§7 · upstream_oauth_state.issuer NOT NULL refuses null — the `iss` check has nothing to compare against without it · twin stores an issuer",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "issuer",
+    rejected: { issuer: null },
+    accepted: { issuer: "https://as.pmcp-test.invalid" },
+  },
+  // "the mix-up defense: the code is redeemed here alone" — one shared callback URL across
+  // every authorization server, so an absent endpoint would mean redeeming wherever the
+  // callback's own response pointed.
+  {
+    title: "§5/§7 · upstream_oauth_state.token_endpoint NOT NULL refuses null — the mix-up defense is this column · twin stores an endpoint",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "token_endpoint",
+    rejected: { token_endpoint: null },
+    accepted: { token_endpoint: "https://as.pmcp-test.invalid/token" },
+  },
+  {
+    title: "§5 · upstream_oauth_state.client_id NOT NULL refuses null · twin stores the CIMD url",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "client_id",
+    rejected: { client_id: null },
+    accepted: { client_id: "https://hub.pmcp-test.invalid/oauth/client.json" },
+  },
+  {
+    title: "§5/§7 · upstream_oauth_state.code_verifier NOT NULL refuses null — PKCE with no verifier is no PKCE · twin stores an obviously fake verifier",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "code_verifier",
+    rejected: { code_verifier: null },
+    accepted: { code_verifier: "FAKE0000-not-a-real-pkce-verifier" },
+  },
+  {
+    title: "§5 · upstream_oauth_state.redirect_uri NOT NULL refuses null — it is replayed at redemption · twin stores the callback url",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "redirect_uri",
+    rejected: { redirect_uri: null },
+    accepted: { redirect_uri: "https://hub.pmcp-test.invalid/oauth/upstream/callback" },
+  },
+  // 0/1: whether the AS metadata declared authorization_response_iss_parameter_supported.
+  // §7's `iss` check is CONDITIONAL on it, so the twin stores the 0 that turns it off —
+  // the value a NOT NULL exists to keep from being guessed at from a null.
+  {
+    title: "§5/§7 · upstream_oauth_state.issuer_advertised NOT NULL refuses null — the `iss` check is conditional on it, so an absent condition would be re-derived from the response · twin stores 0",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "issuer_advertised",
+    rejected: { issuer_advertised: null },
+    accepted: { issuer_advertised: 0 },
+  },
+  {
+    title: "§5 · upstream_oauth_state.created_at NOT NULL refuses null · twin stores a timestamp",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "created_at",
+    rejected: { created_at: null },
+    accepted: { created_at: 1_700_000_000_000 },
+  },
+  // "created_at + limits.OAUTH_STATE_TTL_MS", and enforced at READ time by handleCallback —
+  // never by this schema and never by the sweep. The twin is the anchor plus the TTL BY
+  // NAME, for approval.expires_at's reason: a ten-minute window written at second scale
+  // reads as a 600 ms one to the next agent.
+  {
+    title: "§5/§7 · upstream_oauth_state.expires_at NOT NULL refuses null — the callback's read-time expiry check has nothing to interpret without it · twin stores a timestamp",
+    table: "upstream_oauth_state",
+    kind: "not_null",
+    column: "expires_at",
+    rejected: { expires_at: null },
+    accepted: { expires_at: 1_700_000_000_000 + OAUTH_STATE_TTL_MS },
+  },
 ];
 
 /** Rows are OWNER-AUTHORED, as above (strategy §9 rule 1). */
@@ -720,26 +875,32 @@ export const cascadeRows: readonly CascadeRow[] = [
   // record of record is pruned by retention, never by a cascade), so a delete that emptied
   // those tables would be a schema someone quietly changed.
   {
-    title: "§5 · deleting the user cascades service, service_account, grant_, approval and push_subscription · token and audit rows survive",
+    title: "§5 · deleting the user cascades service, service_account, grant_, approval, push_subscription and upstream_oauth_state · token and audit rows survive",
     parent: "user",
-    cascades: ["service", "service_account", "grant_", "approval", "push_subscription"],
+    cascades: ["service", "service_account", "grant_", "approval", "push_subscription", "upstream_oauth_state"],
     survives: ["token", "audit"],
   },
   // §5/§8: service_delete's D1 half is exactly these two child tables. Deleting the
   // service's token rows is admin's cascade (deleteTokensFor), which is where it gets
   // audited — an FK added to token later would move that removal out of audited code, and
   // this row is what notices.
+  // 0004's two FKs both cascade, so a deleted service takes its half-finished connect flows
+  // with it: a `state` row outliving its service would resolve a callback against a binding
+  // whose service no longer exists.
   {
-    title: "§5/§8 · deleting a service cascades its grant_ and approval rows · its token rows survive — ref_id has no FK, so deletion stays admin's cascade",
+    title: "§5/§8 · deleting a service cascades its grant_, approval and upstream_oauth_state rows · its token rows survive — ref_id has no FK, so deletion stays admin's cascade",
     parent: "service",
-    cascades: ["grant_", "approval"],
+    cascades: ["grant_", "approval", "upstream_oauth_state"],
     survives: ["token", "audit", "service_account", "push_subscription"],
   },
+  // The other side of the same FK pair: upstream_oauth_state references `user` and
+  // `service` and NOT `service_account`, so an account delete leaves an owner's in-flight
+  // connect flow alone.
   {
-    title: "§5/§8 · deleting a service_account cascades its grant_ and approval rows · its token rows survive, and the service it was granted on is untouched",
+    title: "§5/§8 · deleting a service_account cascades its grant_ and approval rows · its token and upstream_oauth_state rows survive, and the service it was granted on is untouched",
     parent: "service_account",
     cascades: ["grant_", "approval"],
-    survives: ["token", "audit", "service", "push_subscription"],
+    survives: ["token", "audit", "service", "push_subscription", "upstream_oauth_state"],
   },
 ];
 
@@ -898,6 +1059,25 @@ function baseRow(table: SchemaTable, ctx: FixtureCtx): Record<string, unknown> {
         keys_json: '{"p256dh":"FAKE0000","auth":"FAKE0000"}',
         created_at: now,
       };
+    case "upstream_oauth_state":
+      return {
+        // Fresh per call, like every other primary key here: the `unique` row's duplicate
+        // must be the column the row NAMES, never the id that happened to collide.
+        state: `oas_FAKE0000_${crypto.randomUUID()}`,
+        owner_id: ctx.ownerId,
+        service_id: ctx.serviceId,
+        session_id: `ses_FAKE0000_${crypto.randomUUID()}`,
+        issuer: "https://as.pmcp-test.invalid",
+        token_endpoint: "https://as.pmcp-test.invalid/token",
+        client_id: "https://hub.pmcp-test.invalid/oauth/client.json",
+        // Plaintext by design (0004's header) and therefore spelled FAKE with force: this
+        // value is printed by any failing case in this file.
+        code_verifier: "FAKE0000-not-a-real-pkce-verifier",
+        redirect_uri: "https://hub.pmcp-test.invalid/oauth/upstream/callback",
+        issuer_advertised: 1,
+        created_at: now,
+        expires_at: now + OAUTH_STATE_TTL_MS,
+      };
   }
 }
 
@@ -922,6 +1102,10 @@ function ctxFilter(table: SchemaTable, ctx: FixtureCtx): { sql: string; params: 
     case "grant_":
     case "approval":
       return { sql: "service_account_id = ? AND service_id = ?", params: [ctx.accountId, ctx.serviceId] };
+    // Both of its parents at once: a cascade case must see the row go whichever FK carried
+    // it away, and scoping by one parent alone would read the other's delete as "survived".
+    case "upstream_oauth_state":
+      return { sql: "owner_id = ? AND service_id = ?", params: [ctx.ownerId, ctx.serviceId] };
     case "push_subscription":
       return { sql: "user_id = ?", params: [ctx.ownerId] };
     case "token":
@@ -946,6 +1130,7 @@ async function seedCascadeChildren(ctx: FixtureCtx): Promise<void> {
   await insertRow("grant_", buildRow("grant_", ctx, {}));
   await insertRow("approval", buildRow("approval", ctx, {}));
   await insertRow("push_subscription", buildRow("push_subscription", ctx, {}));
+  await insertRow("upstream_oauth_state", buildRow("upstream_oauth_state", ctx, {}));
   await insertRow("token", buildRow("token", ctx, { kind: "service", ref_id: ctx.serviceId }));
   await insertRow("token", buildRow("token", ctx, { kind: "service_account", ref_id: ctx.accountId }));
   await insertRow("audit", buildRow("audit", ctx, {}));
@@ -1024,6 +1209,7 @@ const SCHEMA_TABLES = new Set<string>([
   "token",
   "audit",
   "push_subscription",
+  "upstream_oauth_state",
 ]);
 
 function stripSqlComments(sql: string): string {
@@ -1214,9 +1400,12 @@ describe("§10 · applying the set", () => {
   it("§10 · every migration applies to an empty database in order (the fresh-install path)", async () => {
     await dropEverything();
     await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
-    // Every migration landed, in order: 0001's `user`, 0002's `service`, 0003's `approval`.
+    // Every migration landed, in order: 0001's `user`, 0002's `service`, 0003's `approval`,
+    // 0004's `upstream_oauth_state` — the last one named explicitly, because it is the only
+    // table whose absence the OTHER inserts here would not notice.
     const ctx = await seedFixture();
     await insertRow("approval", buildRow("approval", ctx, {}));
+    await insertRow("upstream_oauth_state", buildRow("upstream_oauth_state", ctx, {}));
   });
 
   it("§10 · re-application is a no-op: a second run applies nothing and leaves the schema identical", async () => {
@@ -1235,12 +1424,15 @@ describe("§10 · applying the set", () => {
     async () => {
       await dropEverything();
       const migrations = env.TEST_MIGRATIONS;
-      await applyD1Migrations(env.DB, migrations.slice(0, migrations.length - 1)); // 1..N-1: auth + hub
+      await applyD1Migrations(env.DB, migrations.slice(0, migrations.length - 1)); // 1..N-1: auth + hub + approval
       const ctx = await seedFixture(); // rows written under N-1
-      await applyD1Migrations(env.DB, migrations); // N: approval, on top of live data
+      await applyD1Migrations(env.DB, migrations); // N: upstream_oauth_state, on top of live data
       expect(await countFor("service", ctx)).toBe(1);
       expect(await countFor("service_account", ctx)).toBe(1);
-      await insertRow("approval", buildRow("approval", ctx, {})); // N's own table works too
+      // N's own table — 0004's today, and named rather than derived, so a migration 0005
+      // makes this line visibly stale instead of silently testing N−1 (which is what the
+      // `approval` insert it replaces had quietly become).
+      await insertRow("upstream_oauth_state", buildRow("upstream_oauth_state", ctx, {}));
     },
   );
 });

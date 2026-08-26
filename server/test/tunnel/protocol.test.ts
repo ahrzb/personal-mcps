@@ -50,7 +50,7 @@
 // deps: harness/seed · harness/fake-service · harness/tunnel-do (connectionStub, liveSockets, stillOpen, backendCtx) · cloudflare:test (runDurableObjectAlarm) · src/tunnel (handleConnect, ServiceConnection, CLOSE_REPLACED, CLOSE_ROW_GONE, CLOSE_PROTOCOL, HUB_METHODS) · src/errors (CODES) · src/registry (Registry.upsertDeclaredRoles, RoleDeclaration, validateSchemaIndirection) · src/audit (query) · src/limits (REGISTRATION_DEADLINE_MS)
 
 import { env, runDurableObjectAlarm } from "cloudflare:test";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { query } from "../../src/audit";
 import type { AuditRow } from "../../src/audit";
 import { CODES } from "../../src/errors";
@@ -69,7 +69,7 @@ import { connectFakeService, waitFor } from "../harness/fake-service";
 import type { FakeService, FakeServiceOptions } from "../harness/fake-service";
 import { seedNamespace, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
-import { backendCtx, connectionStub, liveSockets, stillOpen } from "../harness/tunnel-do";
+import { backendCtx, connectionStub, liveSockets, stillOpen, untilCataloged } from "../harness/tunnel-do";
 
 /**
  * The close codes this module *issues*, derived from the exported vocabulary rather than
@@ -690,6 +690,76 @@ describe("§6 registration", () => {
       UNSOUND_TOOL.name,
       WALKABLE_TOOL.name,
     ]);
+  });
+
+  it("4d. §6/§7 · a warm that draws no catalog does not wedge the service there: the registration stands and the service reads ONLINE with nothing cached (so every call refuses -32001), the failure is logged where an operator finds it, and the NEXT demand re-lists — the catalog heals without a reconnect (allow-twin: case 3, where the first warm lands and no re-list ever happens)", async () => {
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const fixture = await seedFixture();
+      // A service that registers before it can list — the error reply is a JSON-RPC
+      // answer the hub cannot read as a tool list, which is one of the two ways §6
+      // lifecycle 2's "a warm that goes unanswered" happens.
+      const service = await connect(fixture, {
+        listBehavior: { mode: "error", error: { code: CODES.internal, message: "not ready" } },
+      });
+      expect(await service.registered).toEqual({ ok: true });
+      expect(await waitFor(() => service.lists.length > 0), "the warm never went out").toBe(true);
+
+      const row = await serviceRow(fixture);
+      // Online and serving nothing: with no catalog entry there is no derivable redaction
+      // map, which is §7's -32001 at the gate — the wedge this case exists for.
+      expect(await status(fixture.service.id)).toBe("online");
+      expect(await tunnelBackend.listTools(row, backendCtx())).toEqual([]);
+      expect(await tunnelBackend.sensitivePaths(row, WALKABLE_TOOL.name)).toBeNull();
+      // §15 hygiene: the slug so an operator can find the service, and no credential.
+      expect(warnings.some((line) => line.includes(fixture.service.slug)), warnings.join(" | ")).toBe(true);
+      expect(warnings.join(" ")).not.toContain(fixture.token);
+
+      // The service can list now. Nothing reconnects and nothing re-registers: the only
+      // thing that may heal the catalog is the hub re-listing on demand.
+      service.setListBehavior({ mode: "answer" });
+      const asked = service.lists.length;
+      expect(await tunnelBackend.listTools(row, backendCtx()), "a re-list may not block the read").toEqual([]);
+      expect(await waitFor(() => service.lists.length > asked), "the demand never re-listed").toBe(true);
+      expect(await untilCataloged(row)).toEqual([WALKABLE_TOOL]);
+      expect(await tunnelBackend.sensitivePaths(row, WALKABLE_TOOL.name)).toEqual({
+        args: ["token"],
+        results: [],
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("4e. §6 · that re-list is ONE frame in flight, never one per demand: with a service that receives its re-list and never answers, N concurrent demands against the absent catalog put a single hub-originated tools/list on the wire — the demand path is tools/call's (sensitivePaths), so a wedged service would otherwise park a waiter per consumer call and hold the DO awake for as long as consumers keep calling (allow-twin: case 4d, where the one re-list lands and the catalog heals)", async () => {
+    const fixture = await seedFixture();
+    // The absent-catalog state case 4d is about: registered, warmed, and the warm drew
+    // nothing the hub could read as a tool list.
+    const service = await connect(fixture, {
+      listBehavior: { mode: "error", error: { code: CODES.internal, message: "not ready" } },
+    });
+    expect(await service.registered).toEqual({ ok: true });
+    expect(await waitFor(() => service.lists.length > 0), "the warm never went out").toBe(true);
+    const warmed = service.lists.length;
+
+    // Now the service RECEIVES its re-list and never answers it — the in-flight state every
+    // later demand must add nothing to. `error` would resolve and hide the whole question.
+    service.setListBehavior({ mode: "hang" });
+    const row = await serviceRow(fixture);
+    // Five is arbitrary; what the case needs is more than one, at once — which is what a
+    // tools/call storm against a wedged service looks like from the DO's side.
+    const served = await Promise.all(
+      Array.from({ length: 5 }, () => tunnelBackend.listTools(row, backendCtx())),
+    );
+
+    expect(served, "a re-list may not block the read").toEqual(served.map(() => []));
+    // Given time to be wrong: "only one arrived" is an absence, so it is waited on rather
+    // than read off the array the moment the demands returned.
+    expect(await waitFor(() => service.lists.length > warmed + 1, 15)).toBe(false);
+    expect(service.lists.length - warmed, "one re-list per demand, not one in flight").toBe(1);
   });
 
   it("5. §6 · a socket silent past limits.REGISTRATION_DEADLINE_MS is closed 4004 when the pending alarm fires (fired, never slept)", async () => {

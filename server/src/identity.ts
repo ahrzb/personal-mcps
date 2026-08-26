@@ -676,7 +676,9 @@ export function deleteTokensForStatement(refId: string): D1Stmt {
  * Successful passkey sign-ins stamp our last_used_at extension column; logins and
  * device approvals write audit rows. Mounted by the composition root under the
  * reserved auth paths; the credential family here is deliberately never exposed as
- * pmcp tools.
+ * pmcp tools, and a request carrying an `Authorization` header reaches only the two
+ * endpoints it has business at (BEARER_ADMITTED below — §4's session-scope guard, standing
+ * at the mount rather than only at the hub's wrappers).
  */
 export function authRoutes(): unknown {
   // deps: better-auth · audit.record · D1 `passkey`
@@ -684,11 +686,84 @@ export function authRoutes(): unknown {
   // One catch-all: which endpoints exist under here is better-auth's plugin list to
   // decide, not a route table of ours to keep in sync with it.
   app.all("/*", async (c) => {
+    // §4's session-scope guard, enforced HERE because this is the seam it is a property
+    // of — see BEARER_ADMITTED.
+    if (c.req.raw.headers.get("Authorization") !== null && !admitsBearer(c.req.url)) {
+      return credentialFamilyForbidden();
+    }
     const response = await auth().handler(c.req.raw);
     await recordAuthEvent(c.req.raw, response);
     return response;
   });
   return app;
+}
+
+/**
+ * The whole of what an `Authorization` header may reach under this mount — the ONE list,
+ * read by the one guard above. Everything else here is §4's credential family by
+ * construction, and answers the 403 below.
+ *
+ * Why a guard at the mount and not at `requireOwnerSession`: that function reads Cookie only
+ * and is therefore already right, but it only runs on routes the hub wraps (`/account`,
+ * `/login`). better-auth's own endpoints are live on this public mount too, and §4's
+ * `bearer()` plugin rewrites any `Authorization` header into a session before better-auth's
+ * middleware — so a request straight at the mount routes through no wrapper, and the
+ * cookie-only rule never gets a say. §4's harm sentence is exactly that path: "a stolen CLI
+ * token cannot enroll new credentials and become persistent account takeover".
+ *
+ * Why an ALLOWLIST, when the family is what §4 names: a list of family members is a copy of
+ * better-auth's route table, and one we would owe a re-read of its changelog at every
+ * upgrade — wrong FAIL-OPEN in the meantime, since an endpoint we have not heard of is one
+ * a bearer walks straight through. It was already wrong: core `/link-social`,
+ * `/unlink-account` and `/list-accounts` are served on this mount under today's config and
+ * were in no family list, which is §4's harm sentence verbatim. Two names that fail closed
+ * owe a growing dependency nothing.
+ *
+ * Why exactly these three. `/sign-out` is `pmcp logout` (cli/src/main.ts), which posts it
+ * over its bearer and destroys only itself. `/device/code` and `/device/token` are the RFC
+ * 8628 exchange's ANONYMOUS legs — the CLI polls them with no `Authorization` at all, so the
+ * guard never fires on them regardless; they are named here only so a caller that does attach
+ * a bearer is not refused, and admitting them escalates nothing (a code issued to nobody, and
+ * a redemption that returns `authorization_pending` until an approval a bearer cannot give).
+ * Everything else under this mount is what a session may then DO to the credentials behind it,
+ * and a bearer never gets that — reads included (`/list-sessions` rows carry session tokens,
+ * which web.ts reads `{ id, token }` off, so a bearer that reached it would walk away with the
+ * browser session this guard protects).
+ *
+ * Why the APPROVAL legs are NOT here. `/device` (the claim of a user code) and
+ * `/device/approve` / `/device/deny` are the browser's half: a signed-in owner approving a
+ * new device is how a SECOND session comes to exist. Admitting a bearer there is §4's harm
+ * sentence exactly — a stolen CLI token drives `code → claim → approve → token` and mints a
+ * fresh owner session that survives revocation of the stolen one, persistent takeover through
+ * the very door this guard is. So they stay cookie-only: §13's `/device` page and every
+ * in-hub caller reach them through `callAuthResponse`, which carries Cookie and never
+ * `Authorization`; the CLI never claims or approves (the human does, in the browser).
+ *
+ * Admission is by SUB-PATH and covers the subtree — `/device/code` matches `/device/code`
+ * and any `/device/code/*` a future better-auth adds — but NOT the bare `/device` claim,
+ * which shares no admitted sub-path with either token leg.
+ */
+const BEARER_ADMITTED = ["sign-out", "device/code", "device/token"] as const;
+
+/** Whether a request URL under this mount is one an `Authorization` header may reach. */
+function admitsBearer(url: string): boolean {
+  const path = new URL(url).pathname;
+  const sub = path.startsWith(AUTH_BASE_PATH) ? path.slice(AUTH_BASE_PATH.length) : path;
+  return BEARER_ADMITTED.some((name) => sub === `/${name}` || sub.startsWith(`/${name}/`));
+}
+
+/**
+ * The family's refusal: 403, no body but the word, and no `WWW-Authenticate` — the caller
+ * presented a credential that this surface will not accept from this carrier at all, so
+ * there is no better token to challenge for (§7 gives that header to the consumer surfaces
+ * alone). Nothing about the request is echoed: §15's hygiene rule covers error responses,
+ * and the one thing this request certainly carries is a session token.
+ */
+function credentialFamilyForbidden(): Response {
+  return new Response("Forbidden", {
+    status: 403,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
 }
 
 /**

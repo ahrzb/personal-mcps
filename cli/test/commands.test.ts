@@ -29,9 +29,10 @@
 //   table under test) · node:fs + node:os (the one YAML file `diff`/`apply` read) · a
 //   stubbed global fetch (the recording seam) · vitest
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COMMANDS } from "../src/commands";
 import { main } from "../src/main";
@@ -228,6 +229,143 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
     const code = await main(["service", "--yes", "delete", "news"]);
     expect(code).toBe(0);
     expect(recorded).toEqual(["service_delete"]);
+  });
+
+  // §10's two duration flags — the CLI's only TRANSLATED argument values, and so the only
+  // ones where a misreading is silent on both sides of the wire. §10 documents the human
+  // spellings (`--since 7d`, `--expires 90d`); the hub declares integers of two different
+  // units (audit_query's since/until are epoch MS, token_issue's expires_in is SECONDS of
+  // lifetime — `declared` below reads both from the contract). Nothing but the CLI can
+  // close that gap: the hub has no duration grammar to fall back on. The four cases below
+  // walk every accepted spelling of both flags to the wire, and pin that an unaccepted one
+  // fails LOCALLY — a frame the hub would refuse is a frame this CLI must never send.
+
+  /** The `pmcp` tools/call frames one run put on the wire — name and arguments verbatim. */
+  type PmcpFrame = { name: string; arguments: Record<string, unknown> };
+
+  /**
+   * A stubbed hub that RECORDS each `pmcp` frame instead of only its op name, so a case
+   * can read the argument values the dispatcher chose. `refusal`, when given, is answered
+   * in place of a result — the JSON-RPC error shape a real hub returns — which is how the
+   * refusal cases observe what the CLI does with one without this file claiming to know
+   * that the hub refuses. The claim that it does is the CONTRACT's (`declared` below),
+   * not the stub's.
+   */
+  function recordingHub(refusal?: { code: number; message: string }): PmcpFrame[] {
+    const frames: PmcpFrame[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+      if (String(url).endsWith("/api/whoami")) {
+        return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+      }
+      const message = JSON.parse(init?.body ?? "{}") as {
+        method?: string;
+        params?: { name?: string; arguments?: Record<string, unknown> };
+      };
+      if (message.method !== "tools/call" || !String(url).endsWith(`/${NAMESPACE}/mcp/pmcp`)) {
+        return json({ jsonrpc: "2.0", id: 1, result: {} });
+      }
+      const name = String(message.params?.name);
+      frames.push({ name, arguments: message.params?.arguments ?? {} });
+      if (refusal !== undefined) return json({ jsonrpc: "2.0", id: 1, error: refusal });
+      return json({ jsonrpc: "2.0", id: 1, result: { structuredContent: replyFor(name) } });
+    });
+    return frames;
+  }
+
+  /**
+   * One field of one op as `contracts/admin-ops.json` declares it — the cross-language
+   * oracle (strategy §4: `server/test/worker/contracts.test.ts` is its only writer, the
+   * CLI consumes it read-only). This is what makes "the hub refuses this frame" a fact
+   * about the hub rather than about the stub above.
+   */
+  function declared(op: string, field: string): Record<string, unknown> {
+    const path = fileURLToPath(new URL("../../contracts/admin-ops.json", import.meta.url));
+    const fixture = JSON.parse(readFileSync(path, "utf8")) as {
+      inputSchemas: Record<string, { properties?: Record<string, Record<string, unknown>> }>;
+    };
+    const declaration = fixture.inputSchemas[op]?.properties?.[field];
+    if (declaration === undefined) throw new Error(`contracts/admin-ops.json declares no ${op}.${field}`);
+    return declaration;
+  }
+
+  /** JSON-RPC's own "invalid params", the code admin.ts refuses a mistyped field with. */
+  const INVALID_PARAMS = -32602;
+
+  /** One day in ms, spelled out here rather than imported: the test is the second opinion. */
+  const DAY_MS = 86_400_000;
+
+  it("§10 · `pmcp audit --since 7d --until 1d` reaches the wire as the epoch-MS integers audit_query declares: the duration is resolved against this machine's clock, because the hub has no grammar that would resolve it there", async () => {
+    const frames = recordingHub();
+    // The call spans an interval, so each instant is pinned to the window it could have
+    // been stamped in rather than to an exact reading of a clock nothing here froze.
+    const before = Date.now();
+    expect(await main(["audit", "--since", "7d", "--until", "1d", "--limit", "5"])).toBe(0);
+    const after = Date.now();
+    expect(frames.map((frame) => frame.name)).toEqual(["audit_query"]);
+    // The whole key set, so a flag that stopped reaching the frame at all cannot pass by
+    // satisfying a looser assertion about the ones that remain.
+    expect(Object.keys(frames[0].arguments).sort()).toEqual(["limit", "since", "until"]);
+    const { since, until, limit } = frames[0].arguments as Record<string, number>;
+    // "7d" means seven days AGO — an instant behind now, not a span and not a future one.
+    expect(since).toBeGreaterThanOrEqual(before - 7 * DAY_MS);
+    expect(since).toBeLessThanOrEqual(after - 7 * DAY_MS);
+    expect(until).toBeGreaterThanOrEqual(before - DAY_MS);
+    expect(until).toBeLessThanOrEqual(after - DAY_MS);
+    expect(Number.isInteger(since), `since is ${JSON.stringify(since)}`).toBe(true);
+    expect(Number.isInteger(until), `until is ${JSON.stringify(until)}`).toBe(true);
+    expect(limit).toBe(5);
+    // What makes an integer the RIGHT answer here is the hub's own declaration of these
+    // fields, not this file's opinion of them.
+    expect(declared("audit_query", "since")).toMatchObject({ type: "integer" });
+    expect(declared("audit_query", "until")).toMatchObject({ type: "integer" });
+    expect(declared("audit_query", "limit")).toMatchObject({ type: "integer" });
+  });
+
+  it("§10 · a bare epoch and an ISO-8601 instant are `--since`'s other two spellings, and a value that is none of the three fails LOCALLY: exit 1 with NOTHING on the wire, never a frame the hub is left to refuse", async () => {
+    const accepted = recordingHub();
+    expect(await main(["audit", "--since", "1750000000000", "--until", "2026-08-26T00:00:00Z"])).toBe(0);
+    expect(accepted.map((frame) => frame.arguments)).toEqual([
+      { since: 1_750_000_000_000, until: Date.parse("2026-08-26T00:00:00Z") },
+    ]);
+
+    const rejected = recordingHub();
+    expect(await main(["audit", "--since", "7 days"])).toBe(1);
+    expect(rejected).toEqual([]);
+  });
+
+  it("§10 · a refusal the hub DOES send is reported rather than absorbed, and a refused page is not retried: `audit --export jsonl` is the one command that re-queries, and it stops at the first error", async () => {
+    const frames = recordingHub({ code: INVALID_PARAMS, message: '"tool" has the wrong type' });
+    expect(await main(["audit", "--tool", "echo", "--export", "jsonl"])).toBe(1);
+    expect(frames).toHaveLength(1);
+  });
+
+  it("§10 · `pmcp token issue --expires 90d` reaches the wire as the SECONDS integer token_issue declares — a LIFETIME, not an instant, and a different unit from audit's — while `never` and a bare count are the other two members of that union", async () => {
+    const relative = recordingHub();
+    expect(await main(["token", "issue", "--account", "bot", "--expires", "90d"])).toBe(0);
+    expect(relative.map((frame) => frame.arguments)).toEqual([
+      { kind: "service_account", slug: "bot", expires_in: 90 * 24 * 60 * 60 },
+    ]);
+
+    const never = recordingHub();
+    expect(await main(["token", "issue", "--account", "bot", "--expires", "never"])).toBe(0);
+    expect(never.map((frame) => frame.arguments)).toEqual([
+      { kind: "service_account", slug: "bot", expires_in: "never" },
+    ]);
+
+    const bare = recordingHub();
+    expect(await main(["token", "issue", "--service", "news", "--expires", "3600"])).toBe(0);
+    expect(bare.map((frame) => frame.arguments)).toEqual([
+      { kind: "service", slug: "news", expires_in: 3600 },
+    ]);
+
+    // Same local refusal as `--since`: an untranslatable lifetime never becomes a token.
+    const rejected = recordingHub();
+    expect(await main(["token", "issue", "--account", "bot", "--expires", "90 days"])).toBe(1);
+    expect(rejected).toEqual([]);
+
+    expect(declared("token_issue", "expires_in")).toMatchObject({
+      oneOf: [{ type: "integer" }, { const: "never" }],
+    });
   });
 
   it("§7 · `pmcp call` partitions its words by SHAPE: the aggregated `<slug>_<tool>` name composes with key=value arguments, and a word that is neither is an error rather than a silently dropped argument", async () => {

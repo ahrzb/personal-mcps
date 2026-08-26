@@ -72,8 +72,14 @@ export type UpstreamFailureClass =
 
 /**
  * The one shape any upstream failure leaves this module in. `code` is always -32000 and
- * `message` the generic "service unavailable"; `data` is never set, so nothing
- * upstream-derived can reach a consumer through the gateway's JSON-RPC mapping.
+ * `data` is never set, so nothing upstream-derived can reach a consumer through the
+ * gateway's JSON-RPC mapping. `message` is errors.unavailable's — the generic "service
+ * unavailable", plus §15's at-most-once disclosure for every class but the one that
+ * certainly dispatched nothing (`needs_reconnect`, where a dead bundle is never spent on a
+ * round trip). This module does not decide that sentence: a proxied timeout and a tunneled
+ * one are the same fact about the world, so both read it off the one class→semantics table
+ * beside the factory.
+ *
  * `failureClass` (plus `upstreamStatus` for non-2xx answers) exists solely for the
  * gateway to copy into the tools/call audit row's `detail` — it is never serialized into
  * the error response. Thrown by `listTools` and `call`; the aggregated tools/list treats
@@ -195,9 +201,14 @@ async function dial(
 
 /** The one shape every upstream failure leaves this module in — see UpstreamError. */
 function failure(failureClass: UpstreamFailureClass, upstreamStatus?: number): UpstreamError {
+  // The MESSAGE comes from the factory, never from a literal here: what a -32000 discloses
+  // about at-most-once is one decision for the whole hub (errors.unavailable), and a
+  // literal on this line is how the tunnel and the proxy came to answer identical semantics
+  // differently. Only the shape is this module's — a distinct class the callers match on.
+  //
   // `declare readonly` fields carry no constructor, so the class is stamped after
   // construction — the assignment site is here and nowhere else.
-  return Object.assign(new UpstreamError(-32000, "service unavailable"), {
+  return Object.assign(new UpstreamError(-32000, unavailable(failureClass).message), {
     failureClass,
     upstreamStatus,
     // The audit row's `detail`, built where the class is known (HubError.auditDetail):

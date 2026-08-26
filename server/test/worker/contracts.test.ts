@@ -3,8 +3,9 @@
 // WHAT THIS SUITE PINS: that every wire shape the spec deliberately COPIES across a
 // language boundary — whoami, the error vocabulary, the tunnel frames, close code →
 // required client behavior, the bootstrap bodies, the admin op names and schemas, the two
-// rows the diff planner reads, and the audit body stubs §15 defers to this directory — is
-// one shape, not several that happen to agree today.
+// rows the diff planner reads, the MCP handshake every standards-compliant consumer opens
+// with (§7's 2026-08-26 amendment), and the audit body stubs §15 defers to this directory
+// — is one shape, not several that happen to agree today.
 // The mechanism is deliberately dumb: the server's REAL emission is captured and
 // deep-equalled against a checked-in JSON fixture, and every consumer (cli, clients/js,
 // clients/py, scripts) reads that same file read-only. Plain JSON is the point — neither
@@ -17,11 +18,11 @@
 // to an ops key — total in both directions, so an op nobody can reach fails here too.
 // Directions A and B live where their other halves live (admin-ops, web-pages).
 //
-// PROJECT: `worker` — real D1, every sibling real, no sockets. Correct because seven of
-// the eight families are HTTP or in-process emissions (a whoami response, a JSON-RPC error
-// object, an ops schema, a D1-backed row, a recorded audit body) and because per-file
-// storage isolation lets this file seed whatever namespace each emission needs without
-// coordinating with anyone. The eighth — the tunnel frames and close codes — is producible
+// PROJECT: `worker` — real D1, every sibling real, no sockets. Correct because eight of
+// the nine families are HTTP or in-process emissions (a whoami response, a JSON-RPC error
+// object, a handshake answer, an ops schema, a D1-backed row, a recorded audit body) and
+// because per-file storage isolation lets this file seed whatever namespace each emission
+// needs without coordinating with anyone. The ninth — the tunnel frames and close codes — is producible
 // here too, without a socket, because tunnel.ts exports its wire vocabulary
 // (CLOSE_REPLACED / CLOSE_ROW_GONE / CLOSE_PROTOCOL / HUB_METHODS beside the SeverCode
 // pair): the fixture is emitted from the exports, and `tunnel/protocol.test.ts` locks the
@@ -161,11 +162,17 @@ export type ContractFamily = {
  * the oracle it is later measured by.
  */
 export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
-  // Eight families (strategy §4), NINE rows: the planner-rows family names two boundaries
+  // Nine families, TEN rows: the planner-rows family names two boundaries
   // the planner reads separately — `service_list` and `account_list` — and this row type
   // pins one file per row, which the "every fixture is claimed by exactly one row"
   // governance case depends on. Splitting them here rather than fusing the fixtures keeps
   // both properties true at once; contracts/README's table stays the count of FAMILIES.
+  //
+  // Strategy §4 and contracts/README.md both still say EIGHT: the ninth is the MCP
+  // handshake family below, added when §7's 2026-08-26 amendment made `initialize` an
+  // answer of ours rather than a -32601. Both documents owe it a line, and neither is
+  // this file's to write (§9 rule 1 — the strategy and the fixture governance are the
+  // owner's), so the disagreement is recorded here rather than silently reconciled.
   //
   // `consumers` is empty on four rows and that emptiness is the finding, not an omission:
   // whoami, the error vocabulary, the admin ops and the planner rows are produced and
@@ -176,6 +183,18 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
     file: "contracts/whoami.json",
     spec: "§8",
     emission: "GET /api/whoami through exports.default.fetch, once under a device-flow session token, once under a live pmcp_sa_ key, and once under a pmcp_svc_ bearer for the 401 body and its WWW-Authenticate header",
+    consumers: [],
+    producer: "worker",
+  },
+  // §7's amended dispatch table: the handshake is the FIRST thing any standards-compliant
+  // MCP client sends, and the answer it reads before deciding whether it can talk to this
+  // hub at all — a copied shape with no shared declaration in exactly the sense the others
+  // are, except that the consumer copies live in third-party clients rather than in this
+  // repository. `consumers` is empty for that reason and not for the usual one.
+  {
+    file: "contracts/initialize.json",
+    spec: "§7",
+    emission: "the initialize result POST /<user>/mcp really answers a live pmcp_sa_ key — protocolVersion, capabilities, serverInfo — beside the request a compliant client opens with, whose protocolVersion is read off the hub's own server/discover rather than transcribed",
     consumers: [],
     producer: "worker",
   },
@@ -291,6 +310,7 @@ function snapshotPath(file: string): string {
  */
 const EMISSIONS: Record<string, () => Promise<unknown>> = {
   "contracts/whoami.json": whoamiEmission,
+  "contracts/initialize.json": initializeEmission,
   "contracts/errors.json": errorsEmission,
   "contracts/tunnel-frames.json": tunnelFramesEmission,
   "contracts/close-codes.json": closeCodesEmission,
@@ -514,6 +534,75 @@ async function whoamiEmission(): Promise<unknown> {
     },
   );
 }
+
+/**
+ * §7's handshake, amended 2026-08-26: the message every standards-compliant MCP client
+ * opens with, and the answer it reads before it decides whether it can speak to this hub.
+ *
+ * Both halves are here for the same reason tunnel-frames.json carries the `hub/register`
+ * REQUEST beside the ack — the hub does not produce the client's message, but the shape it
+ * ACCEPTS is half the contract, and a fixture holding only the answer would let the request
+ * side drift with nothing to notice. The request's `protocolVersion` is read off the hub's
+ * own `server/discover` (wireRevision) rather than transcribed, so a revision bump reaches
+ * this fixture through the hub; `capabilities: {}` is the legacy-lane declaration §7 names
+ * ("a legacy-lane consumer that sent none gets `{}`") — an empty declaration is a
+ * declaration; and `clientInfo` is pinned as two KEYS with string types, because every
+ * client's own name and version differ and this directory pins nothing that varies.
+ *
+ * On the answering side only `serverInfo.version` is a type token: the hub's NAME is what a
+ * consumer displays and does not move, while gateway's version string is a placeholder
+ * waiting for a build stamp (its own `ponytail:` comment says so) — pinning that value
+ * would make wiring one a contract break.
+ */
+async function initializeEmission(): Promise<unknown> {
+  const revision = await wireRevision();
+  const answered = await inNamespace(
+    { accounts: [{ slug: FIXTURE_ACCOUNT, tokens: [{ as: "key" }] }] },
+    async (ns) => {
+      const answer = await rpc(
+        ns.owner.username,
+        ns.tokens.key.token,
+        null,
+        handshakeRequest(revision),
+      );
+      const body = answer.body as JsonRpcResponse;
+      if (body.error !== undefined) {
+        throw new Error(`the handshake was refused: ${JSON.stringify(body.error)}`);
+      }
+      return body.result as Record<string, unknown>;
+    },
+  );
+  return {
+    // No `id`: a correlation id is the client's own, and a fixture pins nothing per-run.
+    request: {
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: {
+        protocolVersion: revision,
+        capabilities: {},
+        clientInfo: pinTypes(FIXTURE_CLIENT_INFO, ["name", "version"]),
+      },
+    },
+    result: {
+      ...answered,
+      serverInfo: pinTypes(answered.serverInfo as Record<string, unknown>, ["version"]),
+    },
+  };
+}
+
+/** The handshake a compliant client opens with, at the revision the hub publishes. */
+function handshakeRequest(revision: string): JsonRpcRequest {
+  return {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: revision, capabilities: {}, clientInfo: FIXTURE_CLIENT_INFO },
+  };
+}
+
+/** The identity a fixture client declares — obviously fake, and pinned in the fixture as a
+ *  type rather than a value, because it is the CLIENT's and every client's differs. */
+const FIXTURE_CLIENT_INFO = { name: "pmcp-contracts-client", version: "0.0.0-FAKE0000" };
 
 /**
  * §7's five codes as the pipeline really emits them, each reduced to what is DURABLE: the
@@ -1048,6 +1137,7 @@ describe("§4 · whoami — the CLI↔server contract", () => {
 });
 
 const WHOAMI = "contracts/whoami.json";
+const INITIALIZE = "contracts/initialize.json";
 const ERRORS = "contracts/errors.json";
 const TUNNEL_FRAMES = "contracts/tunnel-frames.json";
 const CLOSE_CODES = "contracts/close-codes.json";
@@ -1056,6 +1146,255 @@ const ADMIN_OPS = "contracts/admin-ops.json";
 const SERVICE_LIST = "contracts/service-list.json";
 const ACCOUNT_LIST = "contracts/account-list.json";
 const AUDIT_STUBS = "contracts/audit-body-stubs.json";
+
+describe("§4 · the MCP handshake — the shape every consumer meets first", () => {
+  it("§7 · initialize.json's result carries the revision the hub PUBLISHES on server/discover — one revision, read off a second surface, so a bump can never reach the handshake without reaching the fixture", async () => {
+    // File-vs-emission is the snapshot case's job. What this case adds is the cross-surface
+    // agreement: §7 gives the hub one revision, and `server/discover` and the handshake are
+    // two independent answers of it.
+    const pinned = fixture(INITIALIZE).result as Record<string, unknown>;
+    expect(pinned.protocolVersion).toBe(await wireRevision());
+    // …and the request the client sends declares the same one, which is what makes the two
+    // halves of this family one handshake rather than two shapes that share a file.
+    const request = fixture(INITIALIZE).request as { params: Record<string, unknown> };
+    expect(request.params.protocolVersion).toBe(pinned.protocolVersion);
+  }, CASE_BUDGET_MS);
+
+  it("§7 · initialize.json advertises the tools capability with listChanged FALSE — a stateless endpoint holds no session to notify, so a client that subscribed would wait forever; the same object server/discover publishes, never a second spelling of it", async () => {
+    const pinned = fixture(INITIALIZE).result as { capabilities: unknown };
+    expect(pinned.capabilities).toEqual({ tools: { listChanged: false } });
+    // The hub's two published answers agree, because one constant serves both (§7).
+    const discovered = await inNamespace(
+      { accounts: [{ slug: FIXTURE_ACCOUNT, tokens: [{ as: "key" }] }] },
+      async (ns) => {
+        const answer = await rpc(ns.owner.username, ns.tokens.key.token, null, {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "server/discover",
+        });
+        return ((answer.body as JsonRpcResponse).result as { capabilities: unknown }).capabilities;
+      },
+    );
+    expect(pinned.capabilities).toEqual(discovered);
+  }, CASE_BUDGET_MS);
+
+  it("§7 · initialize.json pins serverInfo's two KEYS with the version left a type token, and carries no per-run value anywhere — the hub's name is what a consumer displays, a build stamp is not a wire contract", () => {
+    const server = (fixture(INITIALIZE).result as { serverInfo: Record<string, unknown> })
+      .serverInfo;
+    expect(Object.keys(server).sort()).toEqual(["name", "version"]);
+    expect(server.name).toBeTruthy();
+    expect(server.version).toBe(TYPE_TOKEN.string);
+    // The client's own identity is the same decision on the other side of the exchange.
+    const declared = (fixture(INITIALIZE).request as { params: { clientInfo: Record<string, unknown> } })
+      .params.clientInfo;
+    expect(declared).toEqual({ name: TYPE_TOKEN.string, version: TYPE_TOKEN.string });
+  });
+});
+
+/**
+ * §5 decision 20 / §7's client-metadata capture, driven the way the metadata actually
+ * arrives — and in THIS file because the three columns are a copied shape with no shared
+ * declaration in exactly the sense the fixtures pin: gateway.ts writes them off the wire,
+ * audit.ts stores them, and the /audit page, the JSONL export and `audit_query.session`
+ * read them back, with nothing but agreement holding the four together.
+ *
+ * The flow is the real one: the handshake declaring `clientInfo`, the
+ * `notifications/initialized` behind it, then a `tools/call`. The identity rides that call's
+ * `_meta` and not the handshake's params, because the wire is stateless (§7: `initialize`
+ * is answered by the Worker and remembered by nothing, so there is no session for a
+ * handshake to have populated) — a 2026-07-28 consumer therefore re-declares itself per
+ * request under the reserved `io.modelcontextprotocol/clientInfo` key. §15 keeps
+ * `tools/list` and the handshake out of audit entirely, so the `tools/call` row is where
+ * "the persisted metadata" can be looked at at all.
+ *
+ * The two `_meta` key names are spelled here because gateway.ts keeps them module-private
+ * (its SESSION_ID_META_KEYS allowlist is one line, deliberately). That makes these cases
+ * the LOCK rather than a transcription: rename either key hub-side and this goes red,
+ * which is the whole reason the spelling is driven through the wire instead of imported.
+ */
+describe("§4/§5 d20 · the identity a consumer declares reaches the ledger", () => {
+  it("§7 · a real consumer flow — the handshake declaring clientInfo, then a tools/call carrying that identity in the stateless wire's `_meta` — lands name, version and session id on the tools/call audit row, and audit_query.session finds that row by it", async () => {
+    const { identified, bySession } = await clientMetaWorld();
+    expect(identified.client).toEqual({
+      name: FIXTURE_CLIENT_INFO.name,
+      version: FIXTURE_CLIENT_INFO.version,
+      sessionId: FIXTURE_CLIENT_SESSION_ID,
+    });
+    // §5 decision 20's other half: the captured id is a FILTER, which is the only thing
+    // besides display it may ever be used for.
+    expect(bySession.map((row) => row.id)).toEqual([identified.id]);
+  }, CASE_BUDGET_MS);
+
+  it("§7 · the same call with no declared identity records no client fields at all — the columns are copied off the wire and never fabricated (the twin without which recording a constant would satisfy the row above)", async () => {
+    const { anonymous } = await clientMetaWorld();
+    // Absent, not empty-and-present: audit.toRow omits a member an event does not have, so
+    // a reader never has to tell `null` from `undefined` for one absence.
+    expect(anonymous.client).toBeUndefined();
+    // …and it is the same call otherwise: a row was written, with the same tool and outcome.
+    expect([anonymous.event, anonymous.tool]).toEqual(["tools/call", FIXTURE_TOOL]);
+  }, CASE_BUDGET_MS);
+});
+
+/**
+ * The client-metadata world: one namespace, one credentialled proxied upstream, two calls
+ * behind one handshake — identified and anonymous. Memoized like every other capture here,
+ * because both cases ask the same seeded question.
+ */
+let clientMetaCapture: Promise<ClientMetaWorld> | undefined;
+
+type ClientMetaWorld = { identified: AuditRow; anonymous: AuditRow; bySession: AuditRow[] };
+
+function clientMetaWorld(): Promise<ClientMetaWorld> {
+  return (clientMetaCapture ??= captureClientMeta());
+}
+
+async function captureClientMeta(): Promise<ClientMetaWorld> {
+  // Read before the namespace is seeded: wireRevision seeds one of its own under the same
+  // fixed username, and the two may not overlap.
+  const revision = await wireRevision();
+  return inNamespace(
+    {
+      services: [
+        {
+          slug: FIXTURE_PROXY,
+          kind: "proxy",
+          roles: { reader: [FIXTURE_TOOL] },
+          upstreamUrl: upstreamUrlFor(healthyUpstream({ structuredContent: { ok: true } })),
+          upstreamAuthMode: "headers",
+        },
+      ],
+      accounts: [
+        {
+          slug: FIXTURE_ACCOUNT,
+          grants: { [FIXTURE_PROXY]: [{ role: "reader", mode: "allow" }] },
+          tokens: [{ as: "key" }],
+        },
+      ],
+    },
+    async (ns) => {
+      const proxied = await new Registry(env.DB).getService(ns.owner.userId, FIXTURE_PROXY);
+      await setHeaders(proxied as Service, { Authorization: "Bearer FAKE0000-upstream" });
+      const as = (message: JsonRpcRequest) =>
+        rpc(ns.owner.username, ns.tokens.key.token, FIXTURE_PROXY, message);
+
+      // What a client does before its first call, in order.
+      await as(handshakeRequest(revision));
+      await as({ jsonrpc: "2.0", method: "notifications/initialized" });
+
+      const call = (meta?: Record<string, unknown>) =>
+        as({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: {
+            name: FIXTURE_TOOL,
+            arguments: { q: "hello" },
+            ...(meta === undefined ? {} : { _meta: meta }),
+          },
+        });
+
+      await call({
+        // The reserved wire key for a consumer's self-declaration, and §7's one-entry
+        // vendor session-id allowlist. Both spelled here because gateway keeps them
+        // private; see this describe's header.
+        "io.modelcontextprotocol/clientInfo": FIXTURE_CLIENT_INFO,
+        "claudecode/sessionId": FIXTURE_CLIENT_SESSION_ID,
+      });
+      const identified = await lastRow(ns);
+      const bySession = (
+        await query(env.DB, ns.owner.userId, {
+          event: "tools/call",
+          session: FIXTURE_CLIENT_SESSION_ID,
+        })
+      ).rows;
+
+      await call();
+      return { identified, anonymous: await lastRow(ns), bySession };
+    },
+  );
+}
+
+/** The vendor session id a fixture client declares — obviously fake, never a real one. */
+const FIXTURE_CLIENT_SESSION_ID = "FAKE0000-client-session";
+
+/**
+ * Strategy §10's aggregated tool-name code contract, at the seam that serves the names.
+ *
+ * §7 composes an aggregated name as `<slug>_<tool>`: the slug half is ours and pinned to
+ * `[a-z0-9-]`, and the tool half is whatever an upstream or a registered service calls
+ * itself. Real consumers refuse names outside `^[a-zA-Z0-9_-]{1,128}$`, so the composition
+ * is where an otherwise-healthy service becomes a tool list a client rejects — §10 records
+ * exactly that as a code contract, and notes that the spec's own `get.news` example
+ * violates the charset.
+ *
+ * The fixture is that example: an upstream serving one in-charset tool and one dotted one.
+ */
+describe("§4/§10 · aggregated tool names against the consumer charset", () => {
+  it("§10 · every name an aggregated tools/list serves matches ^[a-zA-Z0-9_-]{1,128}$ — the charset real consumers accept — while the in-charset tool beside it is still served, so \"serve nothing\" cannot satisfy this", async () => {
+    const served = await aggregatedNames();
+    // The allow half first: a hub that dropped the whole listing would otherwise pass.
+    expect(served).toContain(`${FIXTURE_PROXY}_${FIXTURE_TOOL}`);
+    const refusedByConsumers = served.filter((name) => !CONSUMER_TOOL_NAME.test(name));
+    expect(
+      refusedByConsumers,
+      "these names reach a consumer that will refuse them (strategy §10's code contract)",
+    ).toEqual([]);
+  }, CASE_BUDGET_MS);
+});
+
+/**
+ * The charset a consumer accepts, from strategy §10 — spelled here rather than referenced
+ * from limits.ts because no production constant exists: nothing validates these names
+ * today, which is what the case above is measuring.
+ */
+const CONSUMER_TOOL_NAME = /^[a-zA-Z0-9_-]{1,128}$/;
+
+/** §10's own example of a name that violates the consumer charset. */
+const OUT_OF_CHARSET_TOOL = "get.news";
+
+/** The names one aggregated tools/list really serves, over an upstream that offers both an
+ *  in-charset tool and §10's dotted example. */
+async function aggregatedNames(): Promise<string[]> {
+  return inNamespace(
+    {
+      services: [
+        {
+          slug: FIXTURE_PROXY,
+          kind: "proxy",
+          // `.*` rather than the two names, so the declaration is not what decides the
+          // outcome: everything the upstream offers reaches the composition.
+          roles: { reader: [".*"] },
+          upstreamUrl: upstreamUrlFor({
+            ...healthyUpstream(),
+            tools: [
+              { name: FIXTURE_TOOL, inputSchema: { type: "object", properties: {} } },
+              { name: OUT_OF_CHARSET_TOOL, inputSchema: { type: "object", properties: {} } },
+            ],
+          }),
+          upstreamAuthMode: "headers",
+        },
+      ],
+      accounts: [
+        {
+          slug: FIXTURE_ACCOUNT,
+          grants: { [FIXTURE_PROXY]: [{ role: "reader", mode: "allow" }] },
+          tokens: [{ as: "key" }],
+        },
+      ],
+    },
+    async (ns) => {
+      const proxied = await new Registry(env.DB).getService(ns.owner.userId, FIXTURE_PROXY);
+      await setHeaders(proxied as Service, { Authorization: "Bearer FAKE0000-upstream" });
+      const answer = await rpc(ns.owner.username, ns.tokens.key.token, null, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      const result = (answer.body as JsonRpcResponse).result as { tools?: { name: string }[] };
+      return (result.tools ?? []).map((tool) => tool.name);
+    },
+  );
+}
 
 describe("§4 · error vocabulary", () => {
   it("§7 · errors.json code set equals the five codes the pipeline emits (-32000/-32001/-32002/-32003/-32601) and admits no sixth", async () => {

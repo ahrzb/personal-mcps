@@ -7,7 +7,8 @@
 // URL renders which template; CSRF issuance, and the ORDER in which a mutation is gated
 // (`mutation` — session, form, CSRF, then the body, written once so no handler can be
 // spelled without it); where cookie-session gating is applied
-// (identity.requireOwnerSession, with recent-auth on /account); the CREDENTIAL
+// (identity.requireOwnerSession, with recent-auth on /account — the page AND every
+// credential POST it renders, both through that one wrapper); the CREDENTIAL
 // TRANSLATION routes, which are the only reason a credential form works at all —
 // better-auth's router takes `application/json` and nothing else, so a form posted at one
 // of its endpoints is answered 415 and the hub owns those targets instead (see "The
@@ -205,19 +206,20 @@ export function pageRoutes(): PageRouter {
 
   /* --------------------------------- /account --------------------------------- */
 
-  // §4/§13's one recent-auth surface: a session minted by the device flow never
-  // qualifies, and a browser session older than better-auth's freshness window is sent
-  // through a fresh sign-in. Both refusals are identity's, thrown as a redirect.
+  // §4/§13's recent-auth surface, whose other half is every credential POST below: a
+  // session minted by the device flow never qualifies, and a browser session older than
+  // better-auth's freshness window is sent through a fresh sign-in. Both refusals are
+  // identity's, thrown as a redirect.
   app.get(paths.account, async (c) => {
     const session = await requireOwnerSession(c.req.raw, { recent: true });
     const ctx = await context(c.req.raw, session);
     return render(AccountPage(await accountProps(ctx, c.req.raw)));
   });
 
-  // /account's credential forms, translated the same way /login's are and gated the
-  // ordinary way: each is a `mutation`, so session and CSRF are proven before any of this
-  // runs. The pinned parity exception is untouched — none of them names an op, and none of
-  // them reaches D1 except through better-auth (§8).
+  // /account's credential forms, translated the same way /login's are and gated the way
+  // /account itself is: each is a `credential`, so session, RECENT AUTHENTICATION (§4) and
+  // CSRF are all proven before any of this runs. The pinned parity exception is untouched —
+  // none of them names an op, and none of them reaches D1 except through better-auth (§8).
   app.post(
     paths.auth.totpEnable,
     credential("/two-factor/enable", "two_factor_enable", (form) => ({
@@ -456,15 +458,23 @@ async function csrfTokenFor(sessionToken: string): Promise<string> {
  * spelled. It is also the one place a further cross-cutting check (an origin rule, a rate
  * limit) has to go.
  *
+ * `gate` is what a stricter mutation asks the session gate for, and today that is §4's
+ * recent authentication — `credential` below passes it, so every credential POST is held
+ * to the same freshness /account's own render is. It rides HERE rather than at those five
+ * routes because the gate is this wrapper's call to make: a route that named its own would
+ * be a second place the order is written, and a route that forgot is the day-old-cookie
+ * takeover §4 exists to refuse.
+ *
  * GETs and the OAuth callback are outside its scope: a read mutates nothing, and the
  * callback's replay defense is the single-use `state`, owned by upstream.
  */
 function mutation(
   handle: (c: Context, session: OwnerSession, form: FormData) => Promise<Response>,
+  gate?: { recent: boolean },
 ): (c: Context) => Promise<Response> {
   // deps: identity.requireOwnerSession · checkCsrf
   return async (c) => {
-    const session = await requireOwnerSession(c.req.raw);
+    const session = await requireOwnerSession(c.req.raw, gate);
     const form = await c.req.formData();
     const refused = await checkCsrf(session.sessionId, form);
     if (refused !== null) return refused;
@@ -546,6 +556,13 @@ async function signInTranslation(
  * `mutation` like every other page POST and the gate order is not restated here either.
  * `op` is the name the redirect-back flash reports the outcome under, exactly as an
  * ops-backed mutation reports its op key.
+ *
+ * ONE thing it asks of that gate beyond the ordinary: `recent: true`. §4 puts recent
+ * authentication on credential MANAGEMENT, not on the page that displays it, so gating only
+ * the /account render would leave a day-old cookie plus a password able to enrol a second
+ * factor or revoke a session — and a browser posts these targets directly. It is spelled
+ * once, here, because every credential route is spelled through this function: that is what
+ * makes "all of them" true of the family rather than of the five that exist today.
  */
 function credential(
   endpoint: string,
@@ -560,7 +577,7 @@ function credential(
       noticeUrl(paths.account, op, succeeded ? { value: null } : { reason: await refusalOf(answered) }),
       succeeded ? answered : null,
     );
-  });
+  }, { recent: true });
 }
 
 /**

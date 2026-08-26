@@ -207,7 +207,9 @@ export const PMCP_SLUG = "pmcp";
  * anchored (`foo|bar` never matches `foox`). An un-escaped `*` not already
  * preceded by `.` reads as `.*`, so glob-style `get_*` and regex-style `get_.*`
  * mean the same thing. Never throws: a pattern that fails to compile matches
- * nothing (validateRoles is where compilation failures are reported).
+ * nothing — which is why every WRITE path reports compilation failures instead
+ * (validateRoles for a declaration, assertRedactKeys for a redaction map): a
+ * pattern that reaches storage uncompilable would silently match no tool.
  */
 export function matchesPattern(pattern: string, tool: string): boolean {
   // deps: none
@@ -676,7 +678,8 @@ export class Registry {
    * slug), and kind/field mismatches: a proxied draft needs upstreamUrl and a
    * declaration that passes validateRoles, and a tunneled draft carries none of
    * the PROXY_ONLY fields — the same set, and the same check, updateService
-   * refuses to patch.
+   * refuses to patch. Either kind's `redact` / `redact_results` keys must compile
+   * as patterns (assertRedactKeys): storing one that cannot is fail-open masking.
    * An absent `logBodies` resolves here, by kind (tunnel true, proxy false,
    * §15) — the stored column is always concrete, never "default".
    */
@@ -693,6 +696,8 @@ export class Registry {
     assertKindFields(draft.kind, draft);
     const roles = draft.roles ?? {};
     assertRoles(roles);
+    assertRedactKeys("redact", draft.redact);
+    assertRedactKeys("redactResults", draft.redactResults);
     if (await this.getService(draft.ownerId, draft.slug)) {
       throw new RegistryRefusal("slug", "already exists in this namespace");
     }
@@ -752,7 +757,8 @@ export class Registry {
    * createService refuses on a tunneled draft, through the same check (tunneled
    * declarations arrive via upsertDeclaredRoles) — and get the same validation
    * as create; redact/redactResults paths and logBodies are writable for
-   * either kind. Flipping
+   * either kind — the redaction keys through create's compile check too, so a
+   * patch can no more store an uncompilable mask than a draft can. Flipping
    * upstreamAuthMode clears the stored credential envelope in the same write —
    * the mode column and the envelope kind can never disagree; the audit row
    * for that wipe is the caller's. Throws on an unknown id.
@@ -763,6 +769,8 @@ export class Registry {
     if (!row) throw new Error(`no service with id "${serviceId}"`);
     assertKindFields(row.kind, patch);
     if (patch.roles !== undefined) assertRoles(patch.roles);
+    assertRedactKeys("redact", patch.redact);
+    assertRedactKeys("redactResults", patch.redactResults);
 
     const columns: string[] = [];
     const values: unknown[] = [];
@@ -1172,6 +1180,24 @@ function assertSlug(slug: string): void {
 function assertRoles(decl: RoleDeclaration): void {
   const violations = validateRoles(decl);
   if (violations.length > 0) throw new RegistryRefusal("roles", violations.join("; "));
+}
+
+/**
+ * The redaction maps' half of the same rule, as the throw both write paths owe their
+ * caller: a `redact` / `redact_results` key is a tool name or a pattern in the ONE
+ * pattern language (§7), so a key that does not compile matches no tool at all. Stored
+ * quietly it is fail-open — the argument it was written to mask lands in full in the
+ * approval `args_json` and the audit body columns (§15) — so it is refused as loudly as
+ * a role pattern, through the same compile helper and the same refusal type.
+ */
+function assertRedactKeys(field: "redact" | "redactResults", map: Record<string, string[]> | undefined): void {
+  const broken = Object.keys(map ?? {}).filter((key) => compilePattern(key) === null);
+  if (broken.length > 0) {
+    throw new RegistryRefusal(
+      field,
+      `has a key that does not compile as a pattern: ${broken.map((key) => `"${key}"`).join(", ")}`,
+    );
+  }
 }
 
 /**

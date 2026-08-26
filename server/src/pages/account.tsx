@@ -123,6 +123,26 @@ const AddPasskeyButton: FC = () => (
   </button>
 );
 
+/**
+ * The password every credential change on this page is asked for. It is a control rather
+ * than a courtesy: the route behind each of these forms reads `password` and better-auth
+ * refuses the change without it, so a form drawn without this field is a button that
+ * cannot work whatever the owner types.
+ *
+ * The input is WRAPPED by its label rather than pointed at by `for`, so it needs no id:
+ * the two-factor card renders twice into one document (wide and narrow), and an id would
+ * have to be unique per instance — a duplicate points every label at one input. Wrapping
+ * makes that hazard not exist rather than making each caller manage it. `.field` moves
+ * onto the label and `.label` onto a span so the rendered boxes are the ones styles.css
+ * already lays out.
+ */
+const PasswordField: FC<{ autofocus?: boolean }> = ({ autofocus }) => (
+  <label class="field">
+    <span class="label">Password</span>
+    <input type="password" name="password" required autofocus={autofocus} />
+  </label>
+);
+
 const TwoFactorCard: FC<{
   twoFactor: TwoFactorSummary;
   enrollment: TotpEnrollment | null;
@@ -180,11 +200,18 @@ const TwoFactorCard: FC<{
           <div class="card-title">Two-factor authentication</div>
           <div class="card-desc">Add a second factor from an authenticator app.</div>
         </div>
-        <form method="post" action={paths.auth.totpEnable} class="actions actions--start">
+        {/* ponytail: the password sits inline rather than behind a confirm dialog like
+            Disable's. Enabling destroys nothing, and the dialog route would need an
+            AccountConfirm arm (model.ts) this card has no other use for — add one if a
+            third password-gated control ever appears here. */}
+        <form method="post" action={paths.auth.totpEnable} class="form">
           <input type="hidden" name="csrf" value={csrfToken} />
-          <button type="submit" class="btn btn--primary">
-            Enable two-factor
-          </button>
+          <PasswordField />
+          <div class="actions actions--start">
+            <button type="submit" class="btn btn--primary">
+              Enable two-factor
+            </button>
+          </div>
         </form>
       </div>
     );
@@ -211,8 +238,9 @@ const TwoFactorCard: FC<{
           nowrap content width) — MobileAccount stacks them full-width instead, so wide and
           narrow render as two separate rows rather than one flexing row. */}
       <div class="actions actions--start wide-only">
-        <form method="post" action={paths.auth.backupCodesGenerate}>
+        <form method="post" action={paths.auth.backupCodesGenerate} class="form">
           <input type="hidden" name="csrf" value={csrfToken} />
+          <PasswordField />
           <button type="submit" class="btn btn--outline btn--sm">
             Regenerate backup codes
           </button>
@@ -226,8 +254,9 @@ const TwoFactorCard: FC<{
           `display: none` at wide widths, so the flex layout lives on a nested div instead. */}
       <div class="narrow-only">
         <div style="display: flex; flex-direction: column; gap: var(--space-5);">
-          <form method="post" action={paths.auth.backupCodesGenerate}>
+          <form method="post" action={paths.auth.backupCodesGenerate} class="form">
             <input type="hidden" name="csrf" value={csrfToken} />
+            <PasswordField />
             <button type="submit" class="btn btn--outline btn--block">
               Regenerate backup codes
             </button>
@@ -411,12 +440,7 @@ const ConfirmDialog: FC<{ confirm: AccountConfirm; csrfToken: string; sessions: 
     body = (
       <form method="post" action={paths.auth.totpDisable} class="form">
         <input type="hidden" name="csrf" value={csrfToken} />
-        <div class="field">
-          <label class="label" for="disable-two-factor-password">
-            Password
-          </label>
-          <input type="password" id="disable-two-factor-password" name="password" required autofocus />
-        </div>
+        <PasswordField autofocus />
         <div class="actions">
           <a class="btn btn--ghost" href={paths.account}>
             Cancel

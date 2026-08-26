@@ -1255,6 +1255,55 @@ describe("§7 — the failure table: one code out, the class in", () => {
   runUpstreamFailureTable(UPSTREAM_FAILURE_ROWS);
 });
 
+/**
+ * §15's at-most-once question, asked of the PROXIED backend — the half the table above
+ * cannot ask, because its columns are the code, the `data`, the audit class and the dial
+ * counts, and the disclosure lives in none of them.
+ *
+ * §7 makes every dispatch failure indistinguishable BY CODE, so the message is the only
+ * half of a -32000 left to answer "is a retry safe?" — the code is shared with every other
+ * dispatch failure and -32000 is pinned to carry no `data` (contracts/errors.json). A
+ * proxied timeout and a tunneled one are the same fact about the world (a frame left the
+ * hub and drew no readable answer), so a consumer whose retry rule depends on which backend
+ * a slug happens to use is reading the very distinction §7 hides. The tunneled half is
+ * pinned in tunnel/pipeline-tunnel.test.ts case 14a; this is its proxied twin.
+ *
+ * The refusal twin is the class that CERTAINLY dispatched nothing: a bundle already flagged
+ * needs_reconnect is never spent on a round trip, so nothing was sent and nothing may have
+ * run. Without it, an implementation that warns on every -32000 passes the first half.
+ */
+describe("§7/§15 — what one -32000 may disclose", () => {
+  it("§7/§15 · a proxied upstream that never answers refuses -32000 whose MESSAGE discloses that the call may have executed — the same disclosure a tunneled timeout carries, since one code out is all §7 leaves to say it with; the twin, a service whose stored bundle is already dead, discloses nothing because no dial was attempted", async () => {
+    const hung = await buildHeadersWorld({ id: uniqueSlug("hang"), mode: { kind: "hang" } });
+
+    const timedOut = await callThrough(hung);
+    expect(timedOut.body.error?.code).toBe(-32000);
+    expect(
+      timedOut.body.error?.message,
+      "the consumer cannot tell a forwarded call that may have run from one that never left",
+    ).toMatch(/may have executed/);
+    // Still nothing upstream-derived: the disclosure is the hub's own sentence about its
+    // own dispatch, never a word the upstream said.
+    expect(timedOut.body.error?.data).toBeUndefined();
+
+    // The twin. A failed refresh is the one thing that flips a service (§7), so the state
+    // is reached by provoking one rather than by writing a column.
+    const as: AsScenario = { id: uniqueSlug("as"), quirks: ["stale_first_token", "refresh_fails"] };
+    const dead = await buildOAuthWorld(uniqueSlug("dead"), as, 1);
+    await callThrough(dead);
+    expect(await connectionStatus(dead.service), "the fixture never reached the dead state").toBe(
+      "needs_reconnect",
+    );
+
+    const refused = await callThrough(dead);
+    expect(refused.body.error?.code).toBe(-32000);
+    expect(
+      refused.body.error?.message,
+      "a credential the hub knows is dead costs zero dials, so nothing can have executed",
+    ).not.toMatch(/may have executed/);
+  }, CASE_BUDGET_MS);
+});
+
 // Every case here fans out over a HANGING upstream, so each costs at least
 // AGGREGATED_LIST_DEADLINE_MS — well past vitest's default budget. Stated once for the
 // block, derived from the constants rather than written as a number.

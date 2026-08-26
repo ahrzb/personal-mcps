@@ -60,6 +60,18 @@ export type ToolBehavior =
   | { mode: "drop" };
 
 /**
+ * What the service does with the NEXT `tools/list` — the catalog warm's other half, and
+ * the only way a fixture reaches the states §6 lifecycle 2 is about. `answer` is the
+ * default every other fixture assumes; `error` and `hang` are the two ways a warm draws no
+ * catalog at all (an error reply the hub cannot read as a tool list, and a list that never
+ * comes back), which is what leaves a never-connected DO online with nothing cached.
+ */
+export type ListBehavior =
+  | { mode: "answer" }
+  | { mode: "error"; error: { code: number; message: string } }
+  | { mode: "hang" };
+
+/**
  * One observed inbound frame, captured verbatim before interpretation — the oracle's row.
  * `meta` is the forwarded request's `_meta` exactly as it arrived, which is what proves
  * §7's strip-then-set hygiene at the only place it can be proven: the service's side.
@@ -91,6 +103,8 @@ export type FakeServiceOptions = {
   tools?: Tool[];
   /** Default behavior for tools with no per-tool entry; absent means `answer` with an empty result. */
   behavior?: ToolBehavior;
+  /** What `tools/list` does, from the registration warm onwards; absent means `answer`. */
+  listBehavior?: ListBehavior;
   /**
    * Suppress the `hub/register` frame entirely — the only way to observe the 10 s
    * registration deadline (close 4004) and pre-register traffic rejection (§6).
@@ -174,6 +188,7 @@ export class FakeService {
   private readonly options: FakeServiceOptions;
   private tools: Tool[];
   private readonly behaviors = new Map<string, ToolBehavior>();
+  private listBehavior: ListBehavior;
   /** Calls parked by `hang`, in arrival order — what `release` answers, oldest first.
    *  Keyed by nothing: two concurrent calls on the same tool are two entries, so a double
    *  dispatch shows up on `invocations` rather than as one stranded frame that times out. */
@@ -190,6 +205,7 @@ export class FakeService {
     this.socket = socket;
     this.options = options;
     this.tools = options.tools ?? [];
+    this.listBehavior = options.listBehavior ?? { mode: "answer" };
     (this as { registered: Promise<RegisterOutcome> }).registered = new Promise((resolve, reject) => {
       this.settleRegistered = resolve;
       this.failRegistered = reject;
@@ -233,6 +249,16 @@ export class FakeService {
   setBehavior(tool: string, behavior: ToolBehavior): void {
     // deps: none
     this.behaviors.set(tool, behavior);
+  }
+
+  /**
+   * Change what the next `tools/list` does. The lever for the failed-warm pair: a service
+   * that registers while it cannot list yet, and then can — with no reconnect in between,
+   * so what heals the catalog is the hub's own re-list rather than a fresh registration.
+   */
+  setListBehavior(behavior: ListBehavior): void {
+    // deps: none
+    this.listBehavior = behavior;
   }
 
   /**
@@ -332,8 +358,17 @@ export class FakeService {
 
   private serveList(frame: Record<string, unknown>): void {
     const wireId = String(frame.id);
+    // BEFORE the branch, like serveCall: "the hub asked" and "the hub was answered" are
+    // different questions, and a warm that draws no catalog is still a list that arrived.
     (this.lists as { wireId: string; seq: number }[]).push({ wireId, seq: ++this.seq });
-    this.reply({ jsonrpc: "2.0", id: wireId, result: { tools: this.tools } });
+    switch (this.listBehavior.mode) {
+      case "answer":
+        return this.reply({ jsonrpc: "2.0", id: wireId, result: { tools: this.tools } });
+      case "error":
+        return this.reply({ jsonrpc: "2.0", id: wireId, error: this.listBehavior.error });
+      case "hang":
+        return;
+    }
   }
 
   private serveCall(frame: Record<string, unknown>): void {

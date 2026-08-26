@@ -466,6 +466,16 @@ async function listScoped(env: Env, ownerId: string, slug: string, ctx: BackendC
  * and logged as an ops event, never an audit row — while the aggregate itself always
  * succeeds. Served outputSchemas get the same `writeOnly` strip as the scoped list
  * (§7). Tunneled lists come from DO cache and cannot miss the deadline.
+ *
+ * The composed name is also the one name the HUB mints, so this is where it is checked:
+ * a `<slug>_<tool>` outside CONSUMER_TOOL_NAME is dropped from the listing and named once
+ * on the ops log as `pmcp/unlistable` (a tool name is catalog metadata, not a secret,
+ * §15). The cost stays proportional — an out-of-charset tool costs only itself, never its
+ * service's other nine, and never the aggregate. Two ceilings, deliberate: the SCOPED
+ * listing serves the upstream's own names unvalidated, because nothing is composed there
+ * and the name is the service's to answer for; and tools/call is untouched, so an
+ * unlisted name that still resolves upstream keeps working — real consumers refuse the
+ * listing ENTRY, not the call, and the contract governs what the listing serves.
  */
 async function listAggregated(env: Env, ownerId: string, ctx: BackendCtx): Promise<{ tools: Tool[]; unavailable: string[] }> {
   // deps: registry.listServicesFor · registry.resolveAccess · selectBackend · virtualPmcpService
@@ -487,7 +497,12 @@ async function listAggregated(env: Env, ownerId: string, ctx: BackendCtx): Promi
           slug: service.slug,
           tools: filter
             .filterList(catalog)
-            .map((tool) => ({ ...served(tool), name: `${service.slug}_${tool.name}` })),
+            .map((tool) => ({ ...served(tool), name: `${service.slug}_${tool.name}` }))
+            .filter((tool) => {
+              if (CONSUMER_TOOL_NAME.test(tool.name)) return true;
+              console.warn(`pmcp/unlistable: ${tool.name}`);
+              return false;
+            }),
         };
       } catch (err) {
         // Two failure classes, two OPERATOR signals. A HubError is somebody else's
@@ -511,6 +526,14 @@ async function listAggregated(env: Env, ownerId: string, ctx: BackendCtx): Promi
     unavailable: listed.filter((entry) => "unavailable" in entry).map((entry) => entry.slug),
   };
 }
+
+/**
+ * The tool-name charset real consumers accept (strategy §10 — the spec's own `get.news`
+ * example violates it). Not a hub limit, which is why it is not in limits.ts: it is the
+ * CONSUMER's rule, and the aggregated composition above is the only place the hub mints a
+ * name that has to satisfy it.
+ */
+const CONSUMER_TOOL_NAME = /^[a-zA-Z0-9_-]{1,128}$/;
 
 /** One service's contribution to the fan-out: what it served, or that it could not. The
  *  union is the partition — no caller re-derives which is which from a container shape. */

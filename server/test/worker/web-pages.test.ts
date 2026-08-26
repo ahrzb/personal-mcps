@@ -3,8 +3,15 @@
 // nowhere else: the CSRF gate (with the ops handler provably not run — a 403 that still
 // mutated is the failure this file exists to catch), cookie-session-only access with
 // `/approvals/<id>` owner-only, the one paging contract behind two presentations
-// (`{ rows, total }`) with the JSONL export's line count equal to `total`, and parity
-// DIRECTION B: every mutating form's fields are exactly the fronted op's schema keys.
+// (`{ rows, total }`) with the JSONL export's line count equal to `total`, parity
+// DIRECTION B: every mutating form's fields are exactly the fronted op's schema keys — and
+// §4's recent-auth gate on /account's credential MUTATIONS, not merely on its read.
+//
+// Two more, both because a form nobody submits is a contract nobody checked (§9 rule 4b):
+// /device's approve/deny form is POSTED, as a browser posts it, through the whole RFC 8628
+// flow to the CLI's redemption; and the two §15 auth events a page can cause — `auth.login`
+// and `auth.device_approved` — are read back out of the audit store and held to §15's
+// hygiene. The ledger is read through audit.query, never off the table.
 //
 // Direction B is derived on BOTH sides, which is why this file exports no row table and
 // declares none: one side is walked out of the rendered HTML, the other read off
@@ -27,7 +34,7 @@
 // Not pinned here, on purpose: every page's HTML (§7 — all HTML is incidental). Assertions
 // name form fields, row counts, and status codes; never markup, copy, or layout.
 
-// deps: harness/seed · src/index (exports.default.fetch) · src/admin (ops — one handler substituted to prove non-execution) · src/audit · src/approvals · src/identity (session minting) · applyD1Migrations
+// deps: harness/seed · src/index (exports.default.fetch) · src/admin (ops — one handler substituted to prove non-execution) · src/audit · src/approvals · src/identity (session minting) · src/principal (tokenPattern) · applyD1Migrations
 
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -40,6 +47,7 @@ import { requireOwnerSession } from "../../src/identity";
 import worker from "../../src/index";
 import type { Env } from "../../src/index";
 import { paths } from "../../src/pages/model";
+import { tokenPattern } from "../../src/principal";
 import { Registry } from "../../src/registry";
 import type { Service } from "../../src/registry";
 import { beginConnect } from "../../src/upstream";
@@ -276,7 +284,31 @@ async function seedAuditRows(ownerId: string): Promise<void> {
  */
 async function deviceFlowToken(ownerCookie: string): Promise<string> {
   const asOwner = { "content-type": "application/json", origin: ORIGIN, cookie: ownerCookie };
-  const codes = (await (
+  const codes = await requestDeviceCodes();
+  await call(new Request(`${ORIGIN}/api/auth/device?user_code=${codes.userCode}`, { headers: asOwner }));
+  await call(
+    new Request(`${ORIGIN}/api/auth/device/approve`, {
+      method: "POST",
+      headers: asOwner,
+      body: JSON.stringify({ userCode: codes.userCode }),
+    }),
+  );
+  const redeemed = await redeemDeviceCode(codes.deviceCode);
+  // The error names the refusal, never the body: a redemption's body is a session token
+  // when it works, and a failure message is not the place to find out (§15).
+  if (!redeemed.access_token) throw new Error(`device token failed: ${redeemed.error ?? "no token"}`);
+  return redeemed.access_token;
+}
+
+/**
+ * One fresh device-flow request, as the CLI makes it: better-auth issues the PAIR, and both
+ * halves are needed to walk the flow — the user code is what the owner types into /device,
+ * the device code is what the CLI redeems afterwards. Unclaimed until a signed-in browser
+ * verifies the user code, which is why /device's own render is a step of the flow and not
+ * merely a page (better-auth refuses approve and deny alike on an unclaimed code).
+ */
+async function requestDeviceCodes(): Promise<{ deviceCode: string; userCode: string }> {
+  const requested = (await (
     await call(
       new Request(`${ORIGIN}/api/auth/device/code`, {
         method: "POST",
@@ -285,28 +317,28 @@ async function deviceFlowToken(ownerCookie: string): Promise<string> {
       }),
     )
   ).json()) as { device_code: string; user_code: string };
-  await call(new Request(`${ORIGIN}/api/auth/device?user_code=${codes.user_code}`, { headers: asOwner }));
-  await call(
-    new Request(`${ORIGIN}/api/auth/device/approve`, {
-      method: "POST",
-      headers: asOwner,
-      body: JSON.stringify({ userCode: codes.user_code }),
-    }),
-  );
+  return { deviceCode: requested.device_code, userCode: requested.user_code };
+}
+
+/**
+ * The CLI's half of RFC 8628, which is where a device decision becomes observable: an
+ * approved code redeems to a session token, a denied one to `access_denied` and nothing
+ * else. The whole answer is handed back rather than asserted here, because "what came back"
+ * is exactly what the approve and deny cases differ on.
+ */
+async function redeemDeviceCode(deviceCode: string): Promise<{ access_token?: string; error?: string }> {
   const redeemed = await call(
     new Request(`${ORIGIN}/api/auth/device/token`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        device_code: codes.device_code,
+        device_code: deviceCode,
         client_id: DEVICE_CLIENT_ID,
       }),
     }),
   );
-  const body = (await redeemed.json()) as { access_token?: string };
-  if (!body.access_token) throw new Error(`device token failed: ${JSON.stringify(body)}`);
-  return body.access_token;
+  return (await redeemed.json().catch(() => ({}))) as { access_token?: string; error?: string };
 }
 
 /* ------------------------------------------------------------------ *
@@ -417,6 +449,101 @@ function submissionOf(body: string): Record<string, string> {
   }
   return fields;
 }
+
+/**
+ * Every form on a page that posts to `target`, as the controls it rendered. PLURAL because
+ * a card the page draws twice — the wide row and the narrow stack are two real forms — is
+ * two submissions a browser can make, and a control missing from either is a click that
+ * cannot work.
+ */
+function formsPostingTo(html: string, target: string): Record<string, string>[] {
+  const found: Record<string, string>[] = [];
+  for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
+    if (decodeEntities(attributeOf(form[1], "action") ?? "") !== target) continue;
+    found.push(submissionOf(form[2]));
+  }
+  return found;
+}
+
+/**
+ * One rendered form, filled the way a human fills it: a value typed into a control THE PAGE
+ * DREW. A field the page renders no control for is a field no browser can send however the
+ * server-side seam reads it, so the assertion is here rather than in the case — filling a
+ * name the form never carried is the exact bug this refuses to paper over (§9 rule 4b).
+ */
+function typedInto(
+  form: Record<string, string>,
+  typed: Record<string, string>,
+): Record<string, string> {
+  for (const name of Object.keys(typed)) {
+    expect(Object.keys(form), `the rendered form carries no "${name}" control`).toContain(name);
+  }
+  return { ...form, ...typed };
+}
+
+/**
+ * One rendered form the instant a particular submit BUTTON is clicked: the action the page
+ * named, and every control that submission carries — the hidden ones `submissionOf` walks
+ * plus the clicked button's own name/value. A submit button is a form control like any
+ * other, and on /device's decision form it is the only place the decision is written
+ * (device.tsx draws Approve and Deny as two buttons on one form), so a submission walked out
+ * of the <input>s alone would post no decision at all and the case would prove nothing.
+ * Throws rather than returning null: a page that renders no such button is a page whose
+ * form the walk can no longer describe.
+ */
+function clickedSubmission(
+  html: string,
+  value: string,
+): { action: string; fields: Record<string, string> } {
+  for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
+    if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
+    for (const button of form[2].matchAll(/<button\b([^>]*)>/g)) {
+      const name = attributeOf(button[1], "name");
+      if (name === null || attributeOf(button[1], "value") !== value) continue;
+      return {
+        action: decodeEntities(attributeOf(form[1], "action") ?? ""),
+        fields: { ...submissionOf(form[2]), [name]: value },
+      };
+    }
+  }
+  throw new Error(`the page rendered no posting form with a submit button valued "${value}"`);
+}
+
+/**
+ * Age one browser session past better-auth's freshness window — the passage of time, and
+ * the one state no seam can express (requireOwnerSession takes no clock, and a production
+ * affordance for "make this session old" is precisely what must not exist). The column is
+ * better-auth's own and holds ISO-8601 text, since its SQLite adapter stores dates as
+ * strings, so the write speaks that.
+ */
+async function ageSession(token: string): Promise<void> {
+  await (env.DB as D1Like)
+    .prepare(`UPDATE "session" SET "createdAt" = ? WHERE "token" = ?`)
+    .bind(new Date(Date.now() - AGED_SESSION_MS).toISOString(), token)
+    .run();
+}
+
+/** Comfortably past better-auth's one-day `freshAge`, and nowhere near session expiry. */
+const AGED_SESSION_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Make one owner's second factor LIVE. No hub route can: /account never renders the
+ * mid-enrollment card (model.ts's `accountProps` says why), so the verify step that flips
+ * this column in production needs a code derived from a secret no page ever shows. The
+ * column is better-auth's own, and the row it makes live is the one the rendered enable
+ * form just created — everything asserted after it still goes through that page's own form
+ * and the real route.
+ */
+async function enrollTwoFactor(userId: string): Promise<void> {
+  await (env.DB as D1Like)
+    .prepare(`UPDATE "user" SET "twoFactorEnabled" = 1 WHERE "id" = ?`)
+    .bind(userId)
+    .run();
+}
+
+/** Obviously fake, and never the seeded password: what a credential POST carries when the
+ *  case is about the SESSION rather than about the secret. */
+const WRONG_PASSWORD = "FAKE0000-not-the-seeded-password";
 
 /** Every page that renders a credential form — /login's three cards, the signed-in shell's
  *  Sign out, /account's two-factor controls, and the destructive confirm dialog. */
@@ -922,6 +1049,185 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     expect(after).toContain("current");
     expect((await get(paths.account, doomed.cookie)).status).toBe(302);
   });
+
+  it("26. §4 · a browser session past better-auth's freshness window can post NONE of /account's credential targets — the recent-auth gate sits on the mutations, not only on the read (the actor is a day-old cookie carrying its own real CSRF token)", async () => {
+    // A namespace of this case's own: two sign-ins for one owner, one of them aged, so
+    // ageing one session cannot age the twin it is being compared against. It holds a
+    // service because /services is where both tokens below are read from, and a namespace
+    // with nothing in it renders no mutating form to read one off.
+    const owner = await seedNamespace(env.DB, { services: [{ slug: "news", kind: "tunnel" }] });
+    const stale = await seedOwnerSession(owner.owner);
+    await ageSession(stale.token);
+    const fresh = await seedOwnerSession(owner.owner);
+    // Each session's OWN token, taken off a page it can still render (/services carries no
+    // recency gate). Without it the refusal below could be the CSRF check answering, and
+    // the case would pass against a hub that never looked at the session's age at all.
+    const staleCsrf = csrfOf(await page(paths.services, stale.cookie));
+    const freshCsrf = csrfOf(await page(paths.services, fresh.cookie));
+    // The read is already gated; it is here as the answer every mutation must match.
+    const read = await get(paths.account, stale.cookie);
+    expect(read.status).toBe(302);
+    expect(read.headers.get("Location")).toMatch(/^\/login(\?|$)/);
+
+    expect(ACCOUNT_CREDENTIAL_TARGETS.length, "no credential target to walk").toBeGreaterThan(0);
+    for (const target of ACCOUNT_CREDENTIAL_TARGETS) {
+      // A wrong password throughout, so no target's success can move the next one's world —
+      // and so both legs differ in exactly one thing: how old the session is.
+      const body = { password: WRONG_PASSWORD };
+      const refused = await formPost(target, { csrf: staleCsrf, ...body }, stale.cookie);
+      expect(refused.status, `POST ${target} on a stale session`).toBe(302);
+      expect(refused.headers.get("Location"), `POST ${target}`).toMatch(/^\/login(\?|$)/);
+      // The twin: the same target, the same body, a session signed in moments ago. It
+      // reaches better-auth and is refused there on the password's merits — a redirect
+      // back to /account, never a redirect to sign in again.
+      const answered = await formPost(target, { csrf: freshCsrf, ...body }, fresh.cookie);
+      expect(answered.status, `POST ${target} on a fresh session`).toBe(303);
+      expect(answered.headers.get("Location"), `POST ${target}`).toContain(paths.account);
+    }
+  });
+
+  it("27. §4/§13 · /account's Enable two-factor and Regenerate backup codes render the password control the credential seam reads — each form, filled and submitted exactly as the page drew it, is ACCEPTED by better-auth instead of refused for a field no browser could send", async () => {
+    const owner = await seedNamespace(env.DB, {});
+    const session = await seedOwnerSession(owner.owner);
+
+    // Not enrolled, so the two-factor card draws its enable form and nothing else.
+    const enable = formsPostingTo(await page(paths.account, session.cookie), paths.auth.totpEnable);
+    expect(enable.length, "/account rendered no Enable two-factor form").toBeGreaterThan(0);
+    for (const form of enable) {
+      const answered = await formPost(
+        paths.auth.totpEnable,
+        typedInto(form, { password: SEEDED_OWNER_PASSWORD }),
+        session.cookie,
+      );
+      expect(answered.status).toBe(303);
+      // `done=`, not `failed=`: better-auth accepted the password this form carried. The
+      // refusal leg is case 26's, where a wrong one comes back as `failed=`.
+      expect(answered.headers.get("Location")).toContain("done=");
+    }
+
+    // The enable above created the two-factor row; this makes it live, which is the only
+    // state in which the page draws its backup-code control at all.
+    await enrollTwoFactor(owner.owner.userId);
+    const regenerate = formsPostingTo(
+      await page(paths.account, session.cookie),
+      paths.auth.backupCodesGenerate,
+    );
+    expect(regenerate.length, "/account rendered no Regenerate backup codes form").toBeGreaterThan(0);
+    for (const form of regenerate) {
+      const answered = await formPost(
+        paths.auth.backupCodesGenerate,
+        typedInto(form, { password: SEEDED_OWNER_PASSWORD }),
+        session.cookie,
+      );
+      expect(answered.status).toBe(303);
+      expect(answered.headers.get("Location")).toContain("done=");
+    }
+  });
+});
+
+describe("§13 · the device decision, submitted the way the owner submits it", () => {
+  // The debt `BROWSER_ONLY_TARGETS` owes for excluding "decide" from the parity walks (§9
+  // rule 4a): this form fronts no op, so cases 16/17 cannot describe it and cases 28/29
+  // walk it end to end instead. Both legs run the WHOLE flow — the CLI's code request, the
+  // owner's page render (which is what CLAIMS the code), the form post, and the CLI's
+  // redemption — because the decision is only observable at the far end of it.
+
+  it("28. §13 · /device's Approve button, posted form-encoded to the action the page rendered, decides the code: the redirect says approved and the CLI's redemption mints a session that /api/whoami answers as the owner", async () => {
+    const codes = await requestDeviceCodes();
+    const rendered = await page(`${paths.device}?user_code=${encodeURIComponent(codes.userCode)}`);
+    const submission = clickedSubmission(rendered, "approve");
+    // The target the page named, not one this case spelled (§9 rule 4b).
+    expect(submission.action).toBe(paths.deviceDecide);
+    // The hidden controls a browser would carry: the page's own CSRF token and the code
+    // being decided. Without them this POST is a cross-site post, and case 1's gate answers.
+    expect(Object.keys(submission.fields)).toContain("csrf");
+    expect(submission.fields.user_code).toBe(codes.userCode);
+
+    const answered = await formPost(submission.action, submission.fields, world.session.cookie);
+    expect(answered.status, await answered.text()).toBe(303);
+    expect(answered.headers.get("Location")).toBe(`${paths.device}?decided=approved`);
+
+    // The far end of the flow: the CLI redeems the code it was issued and gets a real
+    // session — the thing §13 warns the owner they are handing over.
+    const redeemed = await redeemDeviceCode(codes.deviceCode);
+    expect(redeemed.error, "the approved code was refused at redemption").toBeUndefined();
+    expect(typeof redeemed.access_token).toBe("string");
+    const whoami = await call(
+      new Request(`${ORIGIN}/api/whoami`, {
+        headers: { Authorization: `Bearer ${redeemed.access_token ?? ""}` },
+      }),
+    );
+    expect(whoami.status).toBe(200);
+    expect(await whoami.json()).toMatchObject({ principal: `user:${world.ns.owner.username}` });
+  });
+
+  it("29. §13 · the Deny button on the same rendered form ends the flow the other way — the redirect says denied and the CLI's redemption is refused access_denied with no token (the twin of 28: one form, one gate, two outcomes)", async () => {
+    const codes = await requestDeviceCodes();
+    const rendered = await page(`${paths.device}?user_code=${encodeURIComponent(codes.userCode)}`);
+    const submission = clickedSubmission(rendered, "deny");
+    expect(submission.action).toBe(paths.deviceDecide);
+
+    const answered = await formPost(submission.action, submission.fields, world.session.cookie);
+    expect(answered.status, await answered.text()).toBe(303);
+    expect(answered.headers.get("Location")).toBe(`${paths.device}?decided=denied`);
+
+    const redeemed = await redeemDeviceCode(codes.deviceCode);
+    expect(redeemed.access_token, "a denied code still minted a session").toBeUndefined();
+    expect(redeemed.error).toBe("access_denied");
+  });
+});
+
+describe("§15 · the two auth events the ledger records", () => {
+  it("30. §15 · a real sign-in through /login's own form writes exactly one auth.login row, attributed to the user who signed in — and the row carries no body, no token material and nothing the form submitted", async () => {
+    // An owner of this case's own, never signed in before: `seedNamespace` provisions the
+    // row and `seedOwnerCredential` gives it a password, and neither is a login — so the
+    // count below is this sign-in and nothing else.
+    const owner = await seedNamespace(env.DB, {});
+    await seedOwnerCredential(owner.owner.userId);
+    const answered = await formPost(actionFor(await anonymousPage(paths.login), "username"), {
+      username: owner.owner.username,
+      password: SEEDED_OWNER_PASSWORD,
+      callbackURL: paths.services,
+    });
+    expect(answered.status, await answered.text()).toBe(303);
+    const cookie = sessionCookieOf(answered);
+    expect(cookie, "the sign-in set no session cookie").not.toBeNull();
+
+    const recorded = await query(env.DB, owner.owner.userId, { event: "auth.login" });
+    expect(recorded.total, "the sign-in wrote no auth.login row").toBe(1);
+    expect(recorded.rows[0]).toMatchObject({
+      event: "auth.login",
+      principal: `user:${owner.owner.username}`,
+      outcome: "ok",
+    });
+    // The session token the sign-in just minted, and the password that bought it: neither
+    // belongs in the ledger, and both were in the request that produced this row.
+    hygienic(recorded.rows[0], [SEEDED_OWNER_PASSWORD, (cookie ?? "").split("=")[1] ?? ""]);
+  });
+
+  it("31. §15 · approving a device through /device's own form writes exactly one auth.device_approved row, attributed to the browser session that approved it — and the row holds neither the codes nor the session it minted", async () => {
+    const owner = await seedNamespace(env.DB, {});
+    const session = await seedOwnerSession(owner.owner);
+    const codes = await requestDeviceCodes();
+    const rendered = await page(
+      `${paths.device}?user_code=${encodeURIComponent(codes.userCode)}`,
+      session.cookie,
+    );
+    const submission = clickedSubmission(rendered, "approve");
+    const answered = await formPost(submission.action, submission.fields, session.cookie);
+    expect(answered.status, await answered.text()).toBe(303);
+    const minted = await redeemDeviceCode(codes.deviceCode);
+    expect(typeof minted.access_token).toBe("string");
+
+    const recorded = await query(env.DB, owner.owner.userId, { event: "auth.device_approved" });
+    expect(recorded.total, "the approval wrote no auth.device_approved row").toBe(1);
+    expect(recorded.rows[0]).toMatchObject({
+      event: "auth.device_approved",
+      principal: `user:${owner.owner.username}`,
+      outcome: "ok",
+    });
+    hygienic(recorded.rows[0], [codes.deviceCode, codes.userCode, minted.access_token ?? ""]);
+  });
 });
 
 /* ------------------------------------------------------------------ *
@@ -943,11 +1249,27 @@ const BETTER_AUTH_ACTIONS: ReadonlySet<string> = new Set(
 );
 
 /**
+ * Every credential mutation /account fronts, DERIVED from `paths.auth` rather than listed:
+ * a translation target under the /account prefix is one of §4's credential-management
+ * endpoints, and a sixth added there is walked by case 26 without this or the case being
+ * edited. The /login targets are not here and must not be — they have no session to gate
+ * with, which is the whole reason they stand outside `mutation`.
+ */
+const ACCOUNT_CREDENTIAL_TARGETS: readonly string[] = Object.values<string>(paths.auth).filter(
+  (path) => path.startsWith(`${paths.account}/`),
+);
+
+/**
  * Every mutating target that fronts no ops key, by name. Three are §8's pinned browser
  * interactions — the consent redirect, the per-browser push subscription, and the device
  * decision — and the rest are better-auth's own endpoints, which the shell's Sign out puts
  * on every page. A target outside this set and outside admin.ops is exactly the drift
  * cases 16 and 17 exist to catch.
+ *
+ * An exclusion here is a debt owed to another case, never a hole (§9 rule 4a). Two of the
+ * three are paid in this file: "decide" by cases 28 and 29, which submit that form both
+ * ways and follow the flow to the CLI's redemption, and the better-auth targets by case
+ * 24's walk. "connect" and "push" are the ones still owed.
  */
 const BROWSER_ONLY_TARGETS: ReadonlySet<string> = new Set([
   "connect",
@@ -958,7 +1280,7 @@ const BROWSER_ONLY_TARGETS: ReadonlySet<string> = new Set([
 
 /** Every session-backed page, rendered — the walk's input for case 4. */
 async function sessionPages(): Promise<Record<string, string>> {
-  const deviceCode = await requestDeviceCode();
+  const { userCode } = await requestDeviceCodes();
   const rendered: Record<string, string> = {};
   for (const path of [
     paths.services,
@@ -967,25 +1289,11 @@ async function sessionPages(): Promise<Record<string, string>> {
     paths.approval(world.approvalId),
     paths.audit,
     paths.account,
-    `${paths.device}?user_code=${encodeURIComponent(deviceCode)}`,
+    `${paths.device}?user_code=${encodeURIComponent(userCode)}`,
   ]) {
     rendered[path] = await page(path);
   }
   return rendered;
-}
-
-/** A live user code, claimed by the owner's session so /device renders its confirm step. */
-async function requestDeviceCode(): Promise<string> {
-  const requested = (await (
-    await call(
-      new Request(`${ORIGIN}/api/auth/device/code`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ client_id: DEVICE_CLIENT_ID }),
-      }),
-    )
-  ).json()) as { user_code: string };
-  return requested.user_code;
 }
 
 /** /audit under a set of filters, spelled the way a link on the page spells it. */
@@ -1049,6 +1357,35 @@ async function exportLines(filters: Record<string, string | number>): Promise<Au
     .filter((line) => line.trim() !== "")
     .map((line) => JSON.parse(line) as AuditRow);
 }
+
+/**
+ * §15's hygiene on one recorded row, checked the way a reader of the ledger can check it.
+ * An auth event is a FACT about a credential, never a copy of one, so three things hold at
+ * once: the row carries no body columns at all (`auth.*` events have no bodies to carry —
+ * only `tools/call` rows do), nothing in it matches token material or names an
+ * `Authorization` header, and none of the secrets the request that produced it carried
+ * survives into it. `secrets` is what THAT request held — asserted non-empty, because a
+ * blank needle finds nothing and passes.
+ */
+function hygienic(row: AuditRow, secrets: string[]): void {
+  expect(row.args, `${row.event} recorded an args body`).toBeUndefined();
+  expect(row.result, `${row.event} recorded a result body`).toBeUndefined();
+  expect(row.detail, `${row.event} recorded a detail`).toBeUndefined();
+  const serialized = JSON.stringify(row);
+  expect(serialized, `${row.event} carries token material`).not.toMatch(TOKEN_MATERIAL);
+  expect(serialized.toLowerCase(), `${row.event} names an Authorization header`).not.toContain(
+    "authorization",
+  );
+  for (const secret of secrets) {
+    expect(secret.length, "an empty secret proves nothing").toBeGreaterThan(0);
+    expect(serialized, `${row.event} carries a value its own request submitted`).not.toContain(secret);
+  }
+}
+
+/** Token MATERIAL rather than the §5 display prefix — the length floor is what separates
+ *  them (hygiene.test.ts states the whole reasoning); the prefixes come from the leaf that
+ *  mints them, never transcribed here. */
+const TOKEN_MATERIAL = tokenPattern(16);
 
 /** One form's action, as the page rendered it — how case 19 posts to a target it
  *  discovered rather than to one it spelled. */

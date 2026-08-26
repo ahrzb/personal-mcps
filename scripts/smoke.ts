@@ -112,15 +112,27 @@ async function main(): Promise<number> {
 
     await step("CLI device flow (§14) approved with the web session", async () => {
       // The /device PAGE is a later dispatch; the flow underneath it is better-auth's own
-      // endpoints, and that is what the CLI speaks. GET /api/auth/device claims the code
-      // for the signed-in user (approve refuses an unclaimed one), and the approval POST
-      // is the browser's half, driven here with the smoke session.
+      // endpoints, and that is what the CLI speaks. The claim and the approval are the
+      // browser's half — §4's mount guard admits a bearer only at the anonymous `/device/code`
+      // and `/device/token` legs, never at the claim or the approval (a bearer that could
+      // approve would mint a second owner session), so these two are driven over the COOKIE
+      // the sign-in set, exactly as the /device page does through callAuthResponse. The
+      // approval POST carries Origin so it clears better-auth's cookie-request origin check.
       const requested = await postJson(`${ORIGIN}/api/auth/device/code`, { client_id: DEVICE_CLIENT_ID });
       const userCode = asString(requested.user_code, "user_code");
       const deviceCode = asString(requested.device_code, "device_code");
-      await getJson(`${ORIGIN}/api/auth/device?user_code=${encodeURIComponent(userCode)}`, session);
-      const approved = await postJson(`${ORIGIN}/api/auth/device/approve`, { userCode }, session);
-      expect(approved.success === true, `approve answered ${JSON.stringify(approved)}`);
+      const claimed = await fetch(
+        `${ORIGIN}/api/auth/device?user_code=${encodeURIComponent(userCode)}`,
+        { headers: { Cookie: sessionCookie } },
+      );
+      expect(claimed.ok, `device claim over cookie → ${claimed.status}`);
+      const approveResponse = await fetch(`${ORIGIN}/api/auth/device/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: sessionCookie, Origin: ORIGIN },
+        body: JSON.stringify({ userCode }),
+      });
+      const approved = asRecord(await approveResponse.json().catch(() => ({})), "device approve response");
+      expect(approveResponse.ok && approved.success === true, `approve answered ${approveResponse.status} ${JSON.stringify(approved)}`);
       const granted = await postJson(`${ORIGIN}/api/auth/device/token`, {
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
         device_code: deviceCode,

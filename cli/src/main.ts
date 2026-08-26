@@ -704,11 +704,13 @@ export async function approval(ctx: CliContext, cmd: ApprovalCommand): Promise<n
 
 /**
  * One token command, normalized from `pmcp token …` argv: `issue` targets a
- * service account or a (tunneled) service by slug; `expires` passes through
- * verbatim ("90d", "never" — defaults differ by kind, §5).
+ * service account or a (tunneled) service by slug; `expires` arrives ALREADY
+ * RESOLVED by main's expiresIn to what token_issue declares — a count of
+ * SECONDS of lifetime, or the literal `never` — so the human spelling "90d"
+ * never reaches this type (defaults differ by kind, §5).
  */
 export type TokenCommand =
-  | { sub: "issue"; kind: "service_account" | "service"; slug: string; expires?: string }
+  | { sub: "issue"; kind: "service_account" | "service"; slug: string; expires?: number | "never" }
   | { sub: "list" }
   | { sub: "revoke"; id: string };
 
@@ -748,8 +750,10 @@ export async function token(ctx: CliContext, cmd: TokenCommand): Promise<number>
 /**
  * Filters for `pmcp audit`, mirroring audit_query's parameters (§8) with CLI
  * sugar main resolves before the call: `account` becomes principal
- * `"sa:<slug>"`; `since`/`until` accept relative durations ("7d") or ISO
- * instants. `limit` is the page (and export chunk) size, server default 100.
+ * `"sa:<slug>"`; `since`/`until` arrive ALREADY RESOLVED by main's instantMs to
+ * the epoch MS audit_query declares, so the human spellings it accepts (a "7d"
+ * duration ago, an ISO instant, a bare epoch) never reach this type. `limit` is
+ * the page (and export chunk) size, server default 100.
  */
 export type AuditFilters = {
   account?: string;
@@ -757,8 +761,8 @@ export type AuditFilters = {
   event?: string;
   tool?: string;
   session?: string;
-  since?: string;
-  until?: string;
+  since?: number;
+  until?: number;
   limit?: number;
 };
 
@@ -981,8 +985,8 @@ export async function main(argv: string[]): Promise<number> {
             event: flags.value("event"),
             tool: flags.value("tool"),
             session: flags.value("session"),
-            since: flags.value("since"),
-            until: flags.value("until"),
+            since: instantMs("since", flags.value("since")),
+            until: instantMs("until", flags.value("until")),
             limit: flags.value("limit") === undefined ? undefined : Number(flags.value("limit")),
           },
           { exportJsonl: flags.value("export") === "jsonl" },
@@ -1069,6 +1073,59 @@ function required(value: string | undefined, what: string): string {
   return value;
 }
 
+/**
+ * The CLI's one duration grammar — `<count><unit>` over seconds, minutes, hours, days
+ * (§10 spells `--since 7d` and `--expires 90d` with it) — as a span in milliseconds, or
+ * undefined for a value that is not one. Deliberately unopinionated about the miss: the
+ * two flags below differ in what ELSE they accept and in what unit they must end up, and
+ * only they know that.
+ */
+const DURATION = /^(\d+)([smhd])$/;
+const DURATION_UNIT_MS = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
+
+function durationMs(value: string): number | undefined {
+  // deps: none
+  const match = DURATION.exec(value);
+  return match === null ? undefined : Number(match[1]) * DURATION_UNIT_MS[match[2] as keyof typeof DURATION_UNIT_MS];
+}
+
+/**
+ * `--since` / `--until` → the epoch-MS integer audit_query declares (§8). Resolved HERE
+ * and not forwarded, because the hub's field is an integer and it has no duration grammar
+ * to resolve one with: a duration is that long AGO, an all-digits value is the epoch it
+ * already spells, and anything else is read as an ISO-8601 instant. A value that is none
+ * of the three is a LOCAL error naming the flag — a frame the hub would answer with
+ * `invalid params` is one this CLI must never put on the wire.
+ */
+function instantMs(flag: "since" | "until", value: string | undefined): number | undefined {
+  // deps: none
+  if (value === undefined) return undefined;
+  const ago = durationMs(value);
+  if (ago !== undefined) return Date.now() - ago;
+  if (/^\d+$/.test(value)) return Number(value);
+  const instant = Date.parse(value);
+  if (Number.isNaN(instant)) {
+    throw new Error(`--${flag} wants a duration ago (7d, 12h, 30m, 45s), an ISO-8601 instant, or epoch ms — got \`${value}\``);
+  }
+  return instant;
+}
+
+/**
+ * `--expires` → the SECONDS-of-lifetime integer token_issue declares, or the literal
+ * `never` (§8). A duration here is a LIFETIME from now rather than an instant, and the
+ * unit is seconds where audit's is milliseconds — which is exactly why the two flags
+ * share the grammar above and nothing else. An all-digits value is the second count it
+ * already spells; anything else is the same local error, raised before a key is minted.
+ */
+function expiresIn(value: string | undefined): number | "never" | undefined {
+  // deps: none
+  if (value === undefined || value === "never") return value;
+  const lifetime = durationMs(value);
+  if (lifetime !== undefined) return lifetime / 1_000;
+  if (/^\d+$/.test(value)) return Number(value);
+  throw new Error(`--expires wants a duration (90d, 12h, 30m, 45s), a count of seconds, or \`never\` — got \`${value}\``);
+}
+
 /** `<slug>_<tool>` → its two halves; the first underscore is the split (§7). */
 function splitAggregated(target: string): { service: string; tool: string } {
   const underscore = target.indexOf("_");
@@ -1136,8 +1193,11 @@ function tokenCommand(words: string[], flags: ReturnType<typeof readFlags>): Tok
   if (sub === "issue") {
     const account = flags.value("account");
     const service = flags.value("service");
-    if (account !== undefined) return { sub: "issue", kind: "service_account", slug: account, expires: flags.value("expires") };
-    if (service !== undefined) return { sub: "issue", kind: "service", slug: service, expires: flags.value("expires") };
+    // Resolved before either branch, so an untranslatable lifetime fails the same way for
+    // both kinds — and before anything is minted.
+    const expires = expiresIn(flags.value("expires"));
+    if (account !== undefined) return { sub: "issue", kind: "service_account", slug: account, expires };
+    if (service !== undefined) return { sub: "issue", kind: "service", slug: service, expires };
     throw new Error("pmcp token issue needs --account <slug> or --service <slug>");
   }
   throw new Error("usage: pmcp token <issue|list|revoke>");

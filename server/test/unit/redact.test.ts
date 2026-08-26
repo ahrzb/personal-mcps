@@ -1007,6 +1007,56 @@ function valueAtPath(body: unknown, path: string): unknown {
 
 describe("§7 · writeOnlyPaths — the walk, direction-blind (table)", () => {
   runWriteOnlyWalkTable(writeOnlyWalkRows);
+
+  // The table's array row spells `items` in its SINGLE form — one subschema for every
+  // element. JSON Schema's other spelling is the TUPLE: `items` as an ARRAY of
+  // subschemas, one per position. registry.samePathSubschemas answers for it in a branch
+  // of its own (`Array.isArray(items)`) that no row above reaches, and what that branch
+  // decides is whether a positionally-declared field is walked at all. Silence there is
+  // FAIL-OPEN, not merely incomplete: a credential declared at a tuple position would
+  // yield no path, so the gateway would mask nothing and the value would land verbatim in
+  // the approval `args_json` and the audit body columns (§15) — the one failure this
+  // file's header calls silent everywhere and catastrophic once.
+  //
+  // A case rather than a row, deliberately: the rows are owner-authored (strategy §9 rule
+  // 1), and this asks the sentence they already state — "an array whose ELEMENTS carry
+  // the mark is masked at the array's own path (the grammar has no index segment)" — of
+  // the spelling they do not use. The `paths` here are the array row's paths, unchanged.
+  it("§7 · `items` in its TUPLE form walks exactly like the single form: a mark at ANY position yields the same path, since the grammar has no index segment to tell the positions apart", () => {
+    /** A two-position tuple under the property `pair` — the shape all four reads share. */
+    const tuple = (...positions: unknown[]) => ({
+      type: "object",
+      properties: { pair: { type: "array", items: positions } },
+    });
+    const marked = { type: "object", properties: { apiKey: { type: "string", writeOnly: true } } };
+    const plain = { type: "object", properties: { label: { type: "string" } } };
+
+    // Position 0 and position 1 answer identically — the index is not part of the path.
+    expect(new Set(writeOnlyPaths(tuple(marked, plain)))).toEqual(new Set(["pair.apiKey"]));
+    expect(new Set(writeOnlyPaths(tuple(plain, marked)))).toEqual(new Set(["pair.apiKey"]));
+    // The twin (§9 rule 2): the same tuple with nothing marked yields nothing, so the
+    // walk is reading the marker rather than enumerating every field it can reach.
+    expect(writeOnlyPaths(tuple(plain, plain))).toEqual([]);
+    // A tuple ENTRY that is itself marked masks the array whole, at the array's own path
+    // — the same collapse a marked single-form `items` gets.
+    expect(new Set(writeOnlyPaths(tuple({ type: "string", writeOnly: true }, { type: "string" })))).toEqual(
+      new Set(["pair"]),
+    );
+    // One name declared at both positions, marked at only one: the positions UNION, for
+    // the reason branches do — over-masking is safe and under-masking is the leak.
+    const sameName = tuple(
+      { type: "object", properties: { token: { type: "string" } } },
+      { type: "object", properties: { token: { type: "string", writeOnly: true } } },
+    );
+    expect(new Set(writeOnlyPaths(sameName))).toEqual(new Set(["pair.token"]));
+
+    // The walk's contract is stated over walkable schemas only, so every shape read above
+    // has to be one the refuse-line accepts — the same precondition the table asserts of
+    // its own rows.
+    for (const schema of [tuple(marked, plain), tuple(plain, marked), tuple(plain, plain), sameName]) {
+      expect(validateSchemaIndirection(schema)).toEqual([]);
+    }
+  });
 });
 
 describe("§7 · writeOnlyPaths — indirection the walk RESOLVES (table)", () => {

@@ -518,6 +518,26 @@ describe("planChanges · severities, every refusal beside its allow-twin (§9)",
     expect(twin.errors).toEqual([]);
   });
 
+  it("§7/§9 · a `redact` or `redact_results` KEY that does not compile is a hard error on EITHER kind — the same rule the proxy `roles:` block gets, because both are the one pattern language over tool names. A key that compiles nowhere matches no tool, so the file reads as masking a password that the hub then persists in full; `pmcp apply` refusing locally is what keeps that from being discovered in an audit row. The message names the service and the key and never the declared paths — a diff runs on shared terminals; twin: the same key with its group closed plans cleanly", () => {
+    const typo = "get_(.*"; // one unclosed group
+    const kinds: Record<string, unknown>[] = [{}, { kind: "proxy", endpoint: "https://x/mcp" }];
+    for (const kind of kinds) {
+      for (const key of ["redact", "redact_results"]) {
+        const plan = planChanges(
+          parseDesired(doc({ news: { ...kind, [key]: { [typo]: ["credentials.token"] } } })),
+          state(),
+        );
+        expect(plan.errors.some((error) => error.includes("news")), `${key} on ${JSON.stringify(kind)}`).toBe(true);
+        expect(plan.errors.join(" ")).not.toContain("credentials.token");
+      }
+    }
+    const twin = planChanges(
+      parseDesired(doc({ news: { redact: { "get_(.*)": ["credentials.token"] } } })),
+      state(),
+    );
+    expect(twin.errors).toEqual([]);
+  });
+
   it("§7/§8 · a `services:` key outside the slug grammar `[a-z0-9-]` is a hard error, an underscore especially: §7's aggregated `<slug>_<tool>` split depends on slugs having no `_`, so a service slugged `news_x` makes `news_x_get` ambiguous with service `news`'s tool `x_get` — tool-name confusion across two services in one namespace; twin: the same slug hyphenated (`news-x`) is accepted", () => {
     const underscored = planChanges(parseDesired(doc({ news_x: {} })), state());
     expect(underscored.errors.some((error) => error.includes("news_x"))).toBe(true);

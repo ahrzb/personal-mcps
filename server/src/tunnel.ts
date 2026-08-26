@@ -19,7 +19,9 @@
  * owns the hibernation discipline: socket identity rides serializeAttachment, in-flight
  * correlation lives in an in-memory Map with 30 s timeouts (safe because an unresolved
  * inbound request blocks hibernation), and the tools/list catalog is cached in DO SQLite
- * so it survives disconnects and deploys (invalidated by notifications/tools/list_changed).
+ * so it survives disconnects and deploys (invalidated by notifications/tools/list_changed,
+ * and re-listed on the next demand when a registration's warm never landed one — an
+ * online service serving no catalog refuses every call, so it may not be a terminal state).
  *
  * One MECHANIC is published rather than hidden, because a test leans on it: the
  * correlation deadline is armed ONCE per hub-originated request, as a single ambient
@@ -37,7 +39,7 @@
 
 import { DurableObject, env } from "cloudflare:workers";
 import { record } from "./audit";
-import { CODES, unavailable } from "./errors";
+import { CODES, HubError, unavailable } from "./errors";
 import type { BackendCtx, JsonRpcRequest, JsonRpcResponse, ServiceBackend, Tool } from "./gateway";
 import { formatPrincipal } from "./principal";
 import { resolveServiceToken } from "./identity";
@@ -126,21 +128,29 @@ export const CLOSE_POLICY: Readonly<
 export type SeverCode = typeof CLOSE_REVOKED | typeof CLOSE_ARCHIVED;
 
 /**
+ * Why a forward produced no answer — the §15 at-most-once question, in three words.
+ * Exactly ONE of them means the frame certainly did not execute: `offline`, where nothing
+ * was sent and the hub has no outbox. The other two are both "it LEFT and drew no readable
+ * answer", told apart only for the operator reading the ledger: `timeout` is the budget
+ * expiring (and an answer this hub cannot parse, which is the same silence), `disconnected`
+ * is the socket dying under a frame already on the wire.
+ */
+export type ForwardFailure = "offline" | "timeout" | "disconnected";
+
+/**
  * Outcome of ServiceConnection.forward — the worker↔DO seam for one forwarded call.
- * Both failure reasons map to -32000 at the backend, but they stay distinct because
- * "timeout" means the call may already have executed (every tools/call is at-most-once,
- * §15) while "offline" means it certainly did not: nothing was sent, and the hub has no
- * outbox. "Timeout" is therefore the reason for every frame that LEFT and drew no
- * readable answer — an answer past the budget, and an answer this hub cannot parse alike.
- * The backend carries the reason onto the thrown HubError as its `auditDetail`, which is
- * how it reaches the tools/call row.
+ * Every failure reason maps to -32000 at the backend, but they stay distinct because only
+ * `offline` means the call certainly did not execute; the backend hands the reason to
+ * errors.unavailable, which puts it on the thrown HubError as its `auditDetail` and — for
+ * the two that may have run — as the may-have-executed clause of its message, which is how
+ * it reaches the tools/call row and the consumer.
  *
  * `response` is ESTABLISHED, never asserted: answerOf parses it out of the inbound frame,
  * so `ok: true` really does mean a JSON-RPC response with exactly one of result/error.
  */
 export type ForwardResult =
   | { ok: true; response: JsonRpcResponse }
-  | { ok: false; reason: "offline" | "timeout" };
+  | { ok: false; reason: ForwardFailure };
 
 /**
  * Worker half of `wss://<host>/connect`: authenticates the `pmcp_svc_` bearer, resolves
@@ -228,22 +238,29 @@ export const tunnelBackend: ServiceBackend = {
    * unfiltered, because role filtering is the gateway's job.
    */
   async listTools(service, ctx) {
-    // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.listTools
-    return connectionFor(service.id).listTools();
+    // deps: viaConnection · ServiceConnection.listTools
+    return cachedCatalog(service.id);
   },
 
   /**
    * Forwards one request over the live registered socket and returns the service's
    * response verbatim (the gateway re-addresses it to the consumer). Before the frame
    * leaves it is stamped with the §6 fields a self-contained hub-originated request must
-   * carry — see `stamped`. Offline, unregistered, or 30 s without an answer throws
-   * HubError -32000; the hub never queues, and a timed-out call may still have executed
-   * (at-most-once, §15).
+   * carry — see `stamped`. Offline, unregistered, 30 s without an answer, a socket that
+   * died under the frame, or a DO that could not be reached at all: all throw HubError
+   * -32000, and the hub never queues. Which of them it was is not lost — the class rides
+   * errors.unavailable into the audit row and, for everything but the offline case, tells
+   * the consumer the call may still have executed (at-most-once, §15).
    */
   async call(service, msg, ctx) {
-    // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.forward · errors.unavailable
-    const outcome = await connectionFor(service.id).forward(stamped(msg, ctx));
-    // Both reasons are one -32000 on the wire; which one it was rides the error's
+    // deps: viaConnection · ServiceConnection.forward · errors.unavailable
+    // A stub that breaks may have broken AFTER the frame left, so the DO's own failure is
+    // a dispatch failure like any other rather than an unclassified -32603 (§10's code
+    // contract: map any DO-stub throw to -32000).
+    const outcome = await viaConnection(service.id, "do_unreachable", (connection) =>
+      connection.forward(stamped(msg, ctx)),
+    );
+    // Every reason is one -32000 on the wire; which one it was rides the error's
     // auditDetail into the tools/call row, which is the only place §15's at-most-once
     // question — did this call certainly not execute, or may it have? — can be answered.
     if (!outcome.ok) throw unavailable(outcome.reason);
@@ -260,11 +277,12 @@ export const tunnelBackend: ServiceBackend = {
    * services included) OR cached flagged schema-unsound (its schema tripped
    * validateSchemaIndirection at catalog warm, §7): the gateway answers -32001
    * (indistinguishable from
-   * not-permitted, §7) and nothing downstream runs. Never touches the live socket.
+   * not-permitted, §7) and nothing downstream runs. Answers from the cache: the one thing
+   * it can put on the live socket is listTools's own re-warm, which nothing here awaits.
    */
   async sensitivePaths(service, tool) {
-    // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.listTools · registry.writeOnlyPaths
-    const entry = (await connectionFor(service.id).listTools()).find((t) => t.name === tool);
+    // deps: viaConnection · ServiceConnection.listTools · registry.writeOnlyPaths
+    const entry = (await cachedCatalog(service.id)).find((t) => t.name === tool);
     if (entry === undefined) return null;
     if (schemaViolations(entry).length > 0) return null;
     return {
@@ -273,6 +291,52 @@ export const tunnelBackend: ServiceBackend = {
     };
   },
 };
+
+/** The DO's cached catalog as the worker half reads it — the one place both backend
+ *  methods that need it go through, so the RPC contract below is applied once. */
+function cachedCatalog(serviceId: Service["id"]): Promise<Tool[]> {
+  // deps: viaConnection · ServiceConnection.listTools
+  return viaConnection(serviceId, "catalog_unreachable", (connection) => connection.listTools());
+}
+
+/**
+ * One DO RPC on the consumer's path, inside §7's pinned contract. A stub call can fail for
+ * reasons that are nothing to do with the service — the instance forcibly restarted, the
+ * namespace refusing, the RPC itself breaking — and none of those is a HubError, so without
+ * this the gateway maps them to -32603 with the cause discarded and the tools/call row
+ * loses its failure class. §10 names it as a code contract for exactly that reason: map any
+ * DO-stub throw to -32000. A HubError from inside the DO is already in the contract and
+ * passes through untouched.
+ *
+ * NOT applied to sever/wipe: those are owner-side cascades whose failure must reach the
+ * owner as a failed admin op, and "service unavailable" is not what a failed teardown is.
+ */
+async function viaConnection<T>(
+  serviceId: Service["id"],
+  reason: DispatchFailure,
+  rpc: (connection: ServiceConnection) => Promise<T>,
+): Promise<T> {
+  // deps: connectionFor · errors.unavailable
+  try {
+    return await rpc(connectionFor(serviceId));
+  } catch (err) {
+    if (err instanceof HubError) throw err;
+    // The operator's line for a hub-side fault: the service id and the class, never a
+    // credential and never a frame (§15). The exception itself is Workers Logs' business.
+    console.error(`pmcp/do-rpc: ${reason} for ${serviceId}`, err);
+    throw unavailable(reason);
+  }
+}
+
+/**
+ * Why a tunneled dispatch failed, in the vocabulary the tools/call row records — the
+ * forward's three reasons plus the two the DO seam itself can fail with. All five are one
+ * -32000 on the wire (§7 makes dispatch failures indistinguishable BY CODE); the ledger is
+ * where they stay apart, and errors.unavailable is where each one's at-most-once disclosure
+ * is decided — this module hands over the class and reads no message of its own, because a
+ * proxied timeout and a tunneled one are the same fact and must not answer differently.
+ */
+type DispatchFailure = ForwardFailure | "do_unreachable" | "catalog_unreachable";
 
 /**
  * One catalog entry's §7 indirection violations, both schemas at once — the refuse-line
@@ -375,10 +439,25 @@ export async function wipe(serviceId: Service["id"]): Promise<void> {
  * service is refused -32000 before any approval row is read, created, or consumed, §7)
  * and again between check and claim, so an offline service never consumes an approval —
  * and the status column behind service_list / /services. Cheap and side-effect-free.
+ *
+ * A DO this hub cannot reach at all reads "offline" rather than throwing: it is the
+ * truthful answer to the question asked (a service whose connection cannot be consulted is
+ * certainly not known-online), and it keeps a broken instance from taking out a listing.
+ * The refusal it produces at the approval gate is the same -32000 an offline service gets.
+ *
+ * The POLICY is this function's — swallow to "offline" where the dispatch path throws — but
+ * the MECHANISM is viaConnection's, so the seam has one try/catch and one operator log line
+ * instead of a near-duplicate in a second grammar. It swallows viaConnection's HubError
+ * passthrough too, deliberately: this probe has no consumer to reach, so a refusal the DO
+ * already classified has nowhere to go, and "cannot be consulted" is the same answer
+ * however the consultation failed. The passthrough exists for the dispatch path, where the
+ * refusal IS the consumer's answer.
  */
 export async function status(serviceId: Service["id"]): Promise<"online" | "offline"> {
-  // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.status
-  return connectionFor(serviceId).status();
+  // deps: viaConnection · ServiceConnection.status
+  return viaConnection(serviceId, "do_unreachable", (connection) => connection.status()).catch(
+    () => "offline" as const,
+  );
 }
 
 /**
@@ -423,8 +502,16 @@ export class ServiceConnection extends DurableObject {
    * this map can only vanish when it is already empty or the DO is forcibly restarted —
    * and a forced restart fails the call to a caller who retries (§6). Every entry is armed
    * with the 30 s timeout; webSocketClose/Error drain that socket's share immediately.
+   *
+   * `method` is what was ASKED, kept because this map is the only durable-enough place to
+   * ask "is a re-warm already in flight on this socket" (rewarm) — a field would be lost at
+   * the first hibernation, and an entry here cannot be, since an unresolved inbound request
+   * blocks hibernation.
    */
-  private pending = new Map<string, { ws: WebSocket; resolve: (outcome: ForwardResult) => void }>();
+  private pending = new Map<
+    string,
+    { ws: WebSocket; method: string; resolve: (outcome: ForwardResult) => void }
+  >();
 
   /**
    * The upgrade receiver — the only traffic that enters as HTTP, and only from
@@ -557,8 +644,11 @@ export class ServiceConnection extends DurableObject {
    * The cache warm: one hub-originated `tools/list`, and the §7 indirection refuse-line
    * applied LOUDLY to what comes back — each offending tool is named to the service in a
    * warning frame and logged, while the registration itself stands, so one exotic schema
-   * never bricks a service. A warm that goes unanswered leaves the previous cache in
-   * place: a stale catalog serves better than an empty one (§6 lifecycle 2).
+   * never bricks a service. A warm that draws no catalog — unanswered, or answered with
+   * something that is not a tool list — leaves the previous cache in place (a stale catalog
+   * serves better than an empty one, §6 lifecycle 2) and is LOGGED: for a service that
+   * never had a catalog the cache stays empty, which reads online while refusing every call
+   * -32001, and listTools re-lists on the next demand to get out of it.
    */
   private async warmCatalog(ws: WebSocket, attachment: ConnectionAttachment): Promise<void> {
     // Parking here is safe, and the reason is not local: the answer arrives as a SEPARATE
@@ -572,9 +662,16 @@ export class ServiceConnection extends DurableObject {
       method: "tools/list",
       params: { _meta: withProtocolFields() },
     });
-    if (!outcome.ok) return;
-    const tools = catalogOf(outcome.response);
-    if (tools === null) return;
+    const tools = outcome.ok ? catalogOf(outcome.response) : null;
+    if (tools === null) {
+      // §15 hygiene: the slug so an operator can find the service, and the failure class —
+      // never the answer's body. Loud because nothing else about this state is: the
+      // registration succeeded and the service reads online.
+      console.warn(
+        `pmcp/catalog-warm-failed: ${attachment.slug}: ${outcome.ok ? "answer was not a tool list" : outcome.reason}`,
+      );
+      return;
+    }
     await this.ctx.storage.put(CATALOG_KEY, tools);
     for (const tool of tools) {
       const violations = schemaViolations(tool);
@@ -635,10 +732,12 @@ export class ServiceConnection extends DurableObject {
    * walks, both directions §7; serving-time `writeOnly` stripping on outputSchemas
    * is the gateway's job, never done here — the cache stays the verbatim oracle).
    * Empty for a
-   * service that has never completed a registration. Never touches the socket.
+   * service that has never completed a registration. ALWAYS answers from storage and never
+   * waits on the socket — but it does fire the re-warm below when the cache is absent while
+   * a registered socket is live, which is the only way out of a failed first warm.
    */
   async listTools(): Promise<Tool[]> {
-    // deps: DO ctx.storage `catalog`
+    // deps: DO ctx.storage `catalog` · warmCatalog
     // ponytail: ONE durable key holding the whole catalog, absent until a registration
     // warms it — which is exactly the never-connected answer, with no table and no
     // migration to own; a SQLite-backed class stores it in SQLite either way. It is
@@ -646,7 +745,46 @@ export class ServiceConnection extends DurableObject {
     // these very schemas at read time (sensitivePaths) rather than stored beside them.
     // Upgrade path, if a catalog ever grows past what one value should carry: rows keyed by
     // tool name, with this method's contract unchanged.
-    return (await this.ctx.storage.get<Tool[]>(CATALOG_KEY)) ?? [];
+    const cached = await this.ctx.storage.get<Tool[]>(CATALOG_KEY);
+    if (cached === undefined) this.rewarm();
+    return cached ?? [];
+  }
+
+  /**
+   * The recovery from a warm that never landed: an ABSENT key under a live registered
+   * socket means this connection has never produced a catalog, so ask again — on demand,
+   * because demand is the only thing that makes the answer worth anything. A service with a
+   * genuinely empty tool set is not this: a warm that landed stored `[]`, which is present.
+   *
+   * Derived from the cache rather than remembered in a field, for the same reason the
+   * schema-unsound flag is: an in-memory mark is lost at the first hibernation, which is
+   * precisely when a wedged service would sit longest. Fired and not awaited — a tools/list
+   * read must never wait out CALL_TIMEOUT_MS on a service that cannot answer — so the
+   * demand that finds the gap serves the empty catalog and the one after it is served the
+   * warm one; a rejection is swallowed for the same reason warmCatalog's failure is
+   * survivable, and the next demand simply asks again.
+   *
+   * ONE at a time, and that bound is the point: this runs on DEMAND, and the demand is
+   * tools/call's (sensitivePaths reads the same cache), so a wedged service that never
+   * answers would otherwise draw one hub-originated tools/list per consumer call — each
+   * parking a waiter for CALL_TIMEOUT_MS, and each keeping the instance awake, unbounded in
+   * exactly the state this recovery was written for. The guard is READ OFF `pending` rather
+   * than kept in a field of its own, which is the same no-in-memory-marks rule as above and
+   * costs nothing here: a pending request cannot be hibernated away, so the map is as
+   * durable as the in-flight request it is answering about.
+   */
+  private rewarm(): void {
+    const ws = this.live();
+    // Offline: nothing to ask, and the reconnect's own hub/register warms it (§6).
+    if (ws === null) return;
+    const attachment = attachmentOf(ws);
+    if (attachment === null) return;
+    // The only tools/list this DO ever originates is a warm — forward() carries consumer
+    // tools/call and nothing else — so one on this socket IS a warm still in flight.
+    for (const waiter of this.pending.values()) {
+      if (waiter.ws === ws && waiter.method === "tools/list") return;
+    }
+    void this.warmCatalog(ws, attachment).catch(() => undefined);
   }
 
   /**
@@ -682,6 +820,7 @@ export class ServiceConnection extends DurableObject {
       }, CALL_TIMEOUT_MS);
       this.pending.set(id, {
         ws,
+        method: msg.method,
         resolve: (outcome) => {
           clearTimeout(timer);
           this.pending.delete(id);
@@ -713,13 +852,21 @@ export class ServiceConnection extends DurableObject {
     waiter.resolve(answer === null ? { ok: false, reason: "timeout" } : { ok: true, response: answer });
   }
 
-  /** Every waiter this socket was carrying fails at once — it is gone, so no answer to
-   *  those correlations can ever arrive. Waiters on any other socket are untouched. */
+  /**
+   * Every waiter this socket was carrying fails at once — it is gone, so no answer to
+   * those correlations can ever arrive. Waiters on any other socket are untouched.
+   *
+   * `disconnected`, never `offline`: every entry in this map is a frame that was already
+   * SENT (request() registers it and sends in the same synchronous step, and a send that
+   * threw removes it again), so each of these calls may already have executed at the
+   * service. Reporting them as the certainly-did-not-execute reason is the exact
+   * at-most-once lie §15 exists to audit — and the consumer, told nothing left, retries.
+   */
   private drain(ws: WebSocket): void {
     for (const [id, waiter] of [...this.pending]) {
       if (waiter.ws !== ws) continue;
       this.pending.delete(id);
-      waiter.resolve({ ok: false, reason: "offline" });
+      waiter.resolve({ ok: false, reason: "disconnected" });
     }
   }
 
@@ -883,7 +1030,28 @@ function answerOf(frame: Frame): JsonRpcResponse | null {
   const id = idOf(frame);
   return carriesResult
     ? { jsonrpc: "2.0", id, result: frame.result }
-    : { jsonrpc: "2.0", id, error: frame.error as JsonRpcResponse["error"] };
+    : { jsonrpc: "2.0", id, error: errorMemberOf(frame.error) };
+}
+
+/**
+ * The service's `error` member, NORMALIZED rather than cast. The gateway relays a service's
+ * error to the consumer verbatim (§7), so whatever sits here becomes a JSON-RPC error
+ * object on a consumer's wire — and JsonRpcResponse says error shapes come from the
+ * gateway's own table, which a cast quietly makes untrue for the one member the untrusted
+ * side of this socket writes. A member that is not an object, or whose `code`/`message` are
+ * not an integer and a string, is replaced whole by the generic internal error: the answer
+ * still counts as an error — the call DID reach the service and DID fail there, which is
+ * the audit row's "error" outcome — it simply cannot put arbitrary bytes in the error slot.
+ * `data` is free-form by JSON-RPC and passes through, but only alongside a well-formed rest.
+ */
+function errorMemberOf(raw: unknown): JsonRpcResponse["error"] {
+  const carrier = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+  const { code, message } = carrier;
+  if (!Number.isInteger(code) || typeof message !== "string") {
+    return { code: CODES.internal, message: "service error" };
+  }
+  const error = { code: code as number, message };
+  return "data" in carrier ? { ...error, data: carrier.data } : error;
 }
 
 /** A `tools/list` answer's catalog, or null when the service answered with an error or

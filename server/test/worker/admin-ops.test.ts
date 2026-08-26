@@ -6,9 +6,12 @@
 // never per-tool"); the audit discipline of each op (§8: every mutating op writes exactly
 // one `admin.<tool>` row, reads write none, and the side events some ops write beside
 // their own); the D1-side atomicity of the deleting cascades (§15: both rows gone or
-// neither); and parity direction A (§8's parity invariant) — every op renders as a `pmcp`
+// neither); parity direction A (§8's parity invariant) — every op renders as a `pmcp`
 // tool from its ONE schema, total in both directions, so the MCP front and the web form
-// can never drift apart.
+// can never drift apart; and, past the table, the one op whose ANSWER turns on values the
+// table cannot express — `audit_query`'s `principal` / `since` / `until`, each proven to
+// narrow, because a sample that passes no filter cannot tell a clause that is applied
+// from one that is silently dropped.
 //
 // Project: `worker` — real D1, every sibling module real, no sockets. The ops are D1
 // writes, so they belong where D1 is real. The half of each deleting cascade that closes
@@ -36,8 +39,8 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { adminBackend, ops } from "../../src/admin";
 import { Approvals } from "../../src/approvals";
-import { query } from "../../src/audit";
-import type { AuditEntry } from "../../src/audit";
+import { query, record } from "../../src/audit";
+import type { AuditEntry, AuditRow } from "../../src/audit";
 import type { BackendCtx, Tool } from "../../src/gateway";
 import { PMCP_SLUG, writeOnlyPaths } from "../../src/registry";
 import type { Service } from "../../src/registry";
@@ -882,3 +885,163 @@ async function listAdminTools(): Promise<Tool[]> {
 }
 
 runAdminOpTable(ADMIN_OP_ROWS);
+
+// ── §8 · audit_query's filters, each proven to narrow ─────────────────────────────────
+//
+// The ops table above calls `audit_query` with `{}` — enough to prove the op is a read
+// that writes no `admin.*` row, and blind to every filter it declares. §8 gives the tool
+// nine parameters and audit.whereClause turns each into one AND-ed clause; a clause
+// dropped, or bound to the wrong column, is invisible to a sample that never passes one:
+// the op still answers `{ rows, total }` and the row set is merely WIDER than it should
+// be. Widening is the failure mode that matters — `pmcp audit --account claude` and the
+// /audit page's principal link both promise "this actor alone", and a filter that
+// silently ignored its value would show one namespace's whole ledger under another
+// agent's name.
+//
+// Here through the same seam the ops-table row uses (`ops.audit_query.handler`), against
+// rows written by audit.record — the module's only writer, the one every production path
+// goes through. `principal` gets its own describe because it selects; `since`/`until` get
+// theirs because they bound, and a bound is only observable against a ledger that spans
+// more than one instant (each case asserts that precondition rather than assuming it).
+//
+// Not here: `service`/`event`/`tool`/`session`, which the /audit filter walk already
+// passes values for (web-pages.test.ts), and `limit`/`offset`, whose defaults §8 pins and
+// whose paging the same page's cases drive.
+
+/** The op's answer, in the shape §8 pins — `{ rows, total }`, newest first. */
+type AuditPage = { rows: AuditRow[]; total: number };
+
+/** One read through the ops seam, exactly as an MCP `tools/call` on `pmcp` reaches it. */
+async function auditQuery(ns: SeededNamespace, filters: Record<string, unknown>): Promise<AuditPage> {
+  return (await ops.audit_query.handler(ns.owner.userId, filters)) as AuditPage;
+}
+
+/**
+ * The two agent principals this block writes under. Spelled as §8's `sa:<slug>` form, the
+ * same string `pmcp audit --account claude` resolves to, so a case that passed a bare slug
+ * would be testing a spelling no caller uses.
+ */
+const AGENT = `sa:${CLAUDE}`;
+const OTHER_AGENT = "sa:scratch-agent";
+
+/**
+ * The third principal in this namespace, and the one nothing here wrote: `admin
+ * .provisionUser` records the namespace's creation under it (seed harness FINDINGS 3), so
+ * every seeded ledger starts with a row the filter cases can be read against. Spelled as
+ * the literal admin.ts writes and audit.AuditEntry documents — the vocabulary is durable
+ * (§7), the module holding it exports no name for it, and inventing one here would be a
+ * second spelling rather than a reference.
+ */
+const BOOTSTRAP = "bootstrap";
+
+/**
+ * Three `tools/call` rows — two under one agent, one under another — through audit.record,
+ * awaited one at a time. The awaits are load-bearing twice over: they are how a real
+ * request path writes (record() is awaited, §15 — a call the ledger cannot attest to must
+ * not succeed), and each one is a D1 round trip, which is what lets the hub-stamped `ts`
+ * of the three rows differ at all. The seeded namespace's own `bootstrap` row is left
+ * where it is: it is a third principal nobody here wrote, so the principal cases have a
+ * row they cannot have accidentally shaped.
+ */
+async function seedLedger(ns: SeededNamespace): Promise<void> {
+  for (const principal of [AGENT, AGENT, OTHER_AGENT]) {
+    await record(env.DB, {
+      ownerId: ns.owner.userId,
+      principal,
+      event: "tools/call",
+      service: NEWS,
+      tool: "get_news",
+      outcome: "ok",
+    });
+  }
+}
+
+describe("§8 — audit_query's `principal` selects one actor's rows", () => {
+  it("§8 · `principal` returns that actor's rows and only those — the unfiltered read is strictly wider, so the filter selects rather than merely shrinks", async () => {
+    const ns = await seedFixture();
+    await seedLedger(ns);
+    const all = await auditQuery(ns, {});
+
+    const mine = await auditQuery(ns, { principal: AGENT });
+    expect(mine.rows.map((row) => row.principal), "every row is the named actor's").toEqual([AGENT, AGENT]);
+    expect(mine.total, "and `total` counts the FILTERED match set, not the table").toBe(2);
+    expect(mine.total).toBeLessThan(all.total);
+
+    // The allow-twin (§9 rule 2): the rows the first filter excluded are still reachable
+    // under their own principal, so "narrowed" is not "lost".
+    const other = await auditQuery(ns, { principal: OTHER_AGENT });
+    expect(other.rows.map((row) => row.principal)).toEqual([OTHER_AGENT]);
+    const bootstrap = await auditQuery(ns, { principal: BOOTSTRAP });
+    expect(bootstrap.total, "the row the seed's own provisioning wrote").toBeGreaterThan(0);
+    // Totality over the namespace: three principals, and between them every row. A clause
+    // bound to the wrong column would leave this sum short or over.
+    expect(mine.total + other.total + bootstrap.total).toBe(all.total);
+  });
+
+  it("§8 · a principal nobody acted under answers `{ rows: [], total: 0 }` — no matches is an empty page, never an error", async () => {
+    const ns = await seedFixture();
+    await seedLedger(ns);
+    expect(await auditQuery(ns, { principal: "sa:FAKE0000-never-acted" })).toEqual({ rows: [], total: 0 });
+  });
+});
+
+describe("§8 — audit_query's `since` and `until` bound the ledger", () => {
+  it("§8 · `since` is an INCLUSIVE lower bound: the oldest row's own stamp still returns everything, the newest row's stamp drops what came before it, and one ms past the newest returns nothing", async () => {
+    const ns = await seedFixture();
+    await seedLedger(ns);
+    const all = await auditQuery(ns, {});
+    const { oldest, newest } = span(all);
+
+    expect(
+      (await auditQuery(ns, { since: oldest })).total,
+      "inclusive: the boundary row is inside its own bound",
+    ).toBe(all.total);
+
+    const late = await auditQuery(ns, { since: newest });
+    expect(late.total, "and the bound actually narrows").toBeLessThan(all.total);
+    expect(late.rows.every((row) => row.ts >= newest), "every returned row is at or after the bound").toBe(true);
+
+    expect((await auditQuery(ns, { since: newest + 1 })).total, "past the last row: nothing matches").toBe(0);
+  });
+
+  it("§8 · `until` is an INCLUSIVE upper bound, symmetrically: the newest row's stamp returns everything, the oldest row's stamp drops what came after it, and one ms before the oldest returns nothing", async () => {
+    const ns = await seedFixture();
+    await seedLedger(ns);
+    const all = await auditQuery(ns, {});
+    const { oldest, newest } = span(all);
+
+    expect((await auditQuery(ns, { until: newest })).total, "inclusive at the top end too").toBe(all.total);
+
+    const early = await auditQuery(ns, { until: oldest });
+    expect(early.total).toBeLessThan(all.total);
+    expect(early.rows.every((row) => row.ts <= oldest), "every returned row is at or before the bound").toBe(true);
+
+    expect((await auditQuery(ns, { until: oldest - 1 })).total, "before the first row: nothing matches").toBe(0);
+  });
+
+  it("§8 · the two bounds AND together into one window — an inverted window (`since` after `until`) matches nothing rather than falling back to either bound alone", async () => {
+    const ns = await seedFixture();
+    await seedLedger(ns);
+    const all = await auditQuery(ns, {});
+    const { oldest, newest } = span(all);
+
+    expect((await auditQuery(ns, { since: oldest, until: newest })).total, "the whole span").toBe(all.total);
+    // Two clauses, both applied: either one alone would return rows here.
+    expect((await auditQuery(ns, { since: newest, until: oldest })).total).toBe(0);
+  });
+});
+
+/**
+ * The ledger's first and last stamps, with the precondition every bounding case rests on
+ * asserted here once: a ledger written inside a single millisecond has no interior for a
+ * bound to cut at, and a case that assumed otherwise would go green without narrowing
+ * anything. workerd advances the clock at I/O, and seedLedger's awaits are that I/O — if
+ * this ever stops holding, it fails HERE, naming the assumption rather than the filter.
+ */
+function span(page: AuditPage): { oldest: number; newest: number } {
+  const stamps = page.rows.map((row) => row.ts);
+  const oldest = Math.min(...stamps);
+  const newest = Math.max(...stamps);
+  expect(newest, "the seeded ledger spans a single instant — a bound would narrow nothing").toBeGreaterThan(oldest);
+  return { oldest, newest };
+}

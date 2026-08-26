@@ -125,8 +125,8 @@ the failure is a spec question, not an execution one.
 | D5 | Upstream proxy, cron, hygiene | workflow | **gated ✓** (`d036455`) |
 | D6 | Tunnel DO + contracts + approval e2e | workflow | **gated ✓** (`f4370c9`+`eb0d5f1`) |
 | D7 | First deploy + live wire (initialize, smoke.ts, thin tunnel client) | workflow + inline | **gated ✓** (`042aa96`, SMOKE PASS 22/22 live) |
-| D8 | CLI + JS/Python clients, against the live hub | workflow | in flight |
-| D9 | Web surface wiring + Web Push | workflow | outline |
+| D8 | CLI + JS/Python clients, against the live hub | workflow | **gated ✓** (`80860c2`+`c308190` spec, SMOKE PASS 24/24 live) |
+| D9 | Web surface wiring + Web Push | workflow | in flight |
 | D10 | Final sweep (zero-todo, cross-module PSD, cost actuals) | workflow + inline | outline |
 
 Order is dependency-driven: nothing waits on anything it doesn't consume. D2–D3
@@ -422,9 +422,11 @@ editing `contracts/*.json` is a gate failure.
 
 **Named debt D9 must collect:** `audit.exportJsonl` is implemented (D5) but
 pinned by no oracle row anywhere — its consumer is §13's /audit Export action;
-author its rows when that lands. Also weigh surfacing the `hub`-namespace
-`cron.swept` rows somewhere an owner can see (they are invisible to
-owner-scoped /audit by design — trade stated at the HUB_NAMESPACE export).
+web-pages todos 12–15 are exactly those rows (pre-authored, so D9 flips them
+rather than authoring). `cron.swept` visibility: weighed at the D8 gate and
+RESOLVED as stays-invisible-by-design — hub-namespace rows are outside
+owner-scoped /audit, the trade is recorded at the HUB_NAMESPACE export, and
+no owner-facing need has appeared; revisit only if one does.
 The parked approvals push-decrypt todo lands here too: webpush-webcrypto is
 this dispatch's sanctioned dependency (§13 names it), the gateway's bare-POST
 push transport becomes real RFC 8291/VAPID, and the approvals suite's parked
@@ -462,12 +464,11 @@ check and (manual, once) a real push notification to a real browser.
   incl. the D2 array-items redaction rows debt and the 0004 migrations-pin
   owner rows.
 - [ ] Close the loop with the user: findings, cost actuals vs estimates, what
-  to harden next (real service migrations, custom domain). Parked decision to
-  revisit: better-auth Dash (@better-auth/infra) — user tried connecting it
-  2026-08-26; optional cloud dashboard, NOT needed for auth to work, and it
-  phones home from the auth path with an API key, against the no-phone-home
-  stance (telemetry already disabled). Weigh deliberately if wanted:
-  dash() plugin + BETTER_AUTH_API_KEY via wrangler secret + redeploy.
+  to harden next (real service migrations, custom domain). Dash decision
+  RESOLVED 2026-08-26 (no longer parked): dash() wired production-only —
+  identity.ts adds the plugin solely when env.BETTER_AUTH_API_KEY is set, so
+  dev and tests never phone home; user accepted the exception, key set as a
+  wrangler secret, proven live.
 
 ---
 
@@ -743,3 +744,42 @@ check and (manual, once) a real push notification to a real browser.
   403-archived) is undecidable on Node's bare WebSocket — the full client's
   raw-upgrade path owns it (D8). Committed `042aa96`; D8 launched
   immediately.
+- 2026-08-26 11:15 — **D8 gated.** Workflow `wf_c98880bb-7a5`: 10 agents; the
+  psd-fix stage died on a transient API refusal and was re-run via cached
+  resume (9 agents replayed free; the retry leg ~362k tokens). Landed: the
+  pmcp CLI (pure planner, command table driven end-to-end by a
+  recording-fetch suite, subset YAML parser proven by planning §9's own
+  example, device-flow login), both client libraries (JS
+  HubTransport/serve/caller with the ws raw-upgrade 401/403 split; Python
+  port 58 cases with a public terminal/closed() surface), the bootstrap CLI,
+  smoke at 24 steps riding the real client, the 5 contracts parity todos
+  green. thin-serve.ts deleted — its own header's ceiling ("the fork ends
+  when this file is deleted"), net -363 lines. PSD: 16 findings applied;
+  notable: the constructor stays §11's {url, token, roles} with a
+  module-level `seams` object (the ESM twin of Python's monkeypatched module
+  attrs); commands.ts witnessed by real main(argv) runs against a recording
+  fetch; confirm() refuses off-TTY instead of applying nothing and exiting 0.
+  Gate (owner) actions: `ws` + @types/node + @types/ws declared and
+  types/ambient.d.ts deleted (4 small type fixes); `pydantic` declared in
+  clients/py (same undeclared-direct-import gap as ws); spec §9 wildcard
+  example fixed (`c308190`) and yaml.test.ts's SPEC_EXAMPLE made truly
+  verbatim — it had silently dropped linear and the home grant, and its
+  title said "four services" while asserting three; thin-serve citations in
+  policy-rows.ts/test_transport.py annotated as historical; Direction-D
+  classification ACCEPTED as authored (tools/list & tools/call rows map to
+  the gateway method they front; unmapped = {login, logout, whoami});
+  cron.swept visibility RESOLVED stays-invisible (recorded at D9's header).
+  Suite 850/34/0, tsc 0, pytest 58, SMOKE PASS 24/24 — no deploy: D8
+  touched no server/src file, production still runs D7's worker. Inventory:
+  61 flips, 88 additions, 9 removals all audited (aggregate placeholders
+  row-registered per the standing amendment, plus verifier-CONFIRMED
+  re-authorings: the constructor row's https-only claim was false against
+  the fake hub's http dial; the empty-grants row contradicted the
+  empty-plan sentence), 0 regressions. WATCH: approval-e2e CAS case 9
+  ("two identical legs both check the same approved pass") flaked ONCE
+  under a reporter-mode full run, passed twice directly and once isolated —
+  a deterministic-interleaving case that can flake is a harness bug if it
+  recurs. Debt → D10: CLI-side fixture consumer for
+  service-list/account-list (the CONTRACT_FAMILIES consumers row is
+  owner-authored data); the yaml-package swap stays a one-line upgrade.
+  Committed `80860c2`; D9 launched immediately.

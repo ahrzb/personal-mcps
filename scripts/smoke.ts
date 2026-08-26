@@ -481,15 +481,24 @@ async function main(): Promise<number> {
 
         // /oauth2/token: the verifier and the SAME resource an MCP client sends on both
         // legs (§19.6 step 2) — omitting either is the opaque-token failure mode this walk
-        // is not the one testing.
-        const tokenAnswer = await postJson(`${ORIGIN}/api/auth/oauth2/token`, {
-          grant_type: "authorization_code",
-          code,
-          redirect_uri: OAUTH_REDIRECT_URI,
-          client_id: clientId,
-          code_verifier: verifier,
-          resource,
+        // is not the one testing. The token endpoint is form-encoded (RFC 6749 §4.1.3), the
+        // shape a real OAuth client sends; JSON is refused 415, so this is not postJson.
+        const tokenResponse = await fetch(`${ORIGIN}/api/auth/oauth2/token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: OAUTH_REDIRECT_URI,
+            client_id: clientId,
+            code_verifier: verifier,
+            resource,
+          }),
         });
+        if (!tokenResponse.ok) {
+          throw new Error(`token endpoint → ${tokenResponse.status} ${(await tokenResponse.text()).slice(0, 200)}`);
+        }
+        const tokenAnswer = (await tokenResponse.json()) as Record<string, unknown>;
         const accessToken = asString(tokenAnswer.access_token, "access_token");
         expect(jwtShaped(accessToken), "the minted access token is not JWT-shaped (§7/§19.6's own predicate)");
         const aud = jwtPayload(accessToken).aud;

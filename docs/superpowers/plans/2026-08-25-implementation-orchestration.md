@@ -124,8 +124,8 @@ the failure is a spec question, not an execution one.
 | D4 | Gateway, admin, approvals | workflow | **gated ✓** (`ffe2c4a`) |
 | D5 | Upstream proxy, cron, hygiene | workflow | **gated ✓** (`d036455`) |
 | D6 | Tunnel DO + contracts + approval e2e | workflow | **gated ✓** (`f4370c9`+`eb0d5f1`) |
-| D7 | First deploy + live wire (initialize, smoke.ts, thin tunnel client) | workflow + inline | in flight |
-| D8 | CLI + JS/Python clients, against the live hub | workflow | outline |
+| D7 | First deploy + live wire (initialize, smoke.ts, thin tunnel client) | workflow + inline | **gated ✓** (`042aa96`, SMOKE PASS 22/22 live) |
+| D8 | CLI + JS/Python clients, against the live hub | workflow | in flight |
 | D9 | Web surface wiring + Web Push | workflow | outline |
 | D10 | Final sweep (zero-todo, cross-module PSD, cost actuals) | workflow + inline | outline |
 
@@ -720,3 +720,26 @@ check and (manual, once) a real push notification to a real browser.
   contracts parity todos wait for D8's CLI by design; spec §7 amended with
   the initialize method (D7 implements it). Committed `f4370c9` (fixtures) +
   `eb0d5f1` (implementation); D7 launched immediately.
+- 2026-08-26 04:40 — **D7 gated — the shift-left milestone: SMOKE PASS, 22/22
+  steps against the production hub.** Workflow `wf_d6167336-02f`: 8 agents, 0
+  errors, ~1.1M tokens. The initialize handshake landed with its values pinned
+  by a mutation-proven case (the PSD pass caught that the first two oracle
+  rows asserted only "not -32601" — green under `result: {}` — deleted them
+  and wrote a case reading the revision off server/discover, never a
+  transcription); notifications/initialized got a real 202 case; approval-e2e
+  case 23 reborn correctly (availability outranks the catalog; falsifiability
+  proven by mutation since D6 had already shipped the ordering).
+  scripts/thin-serve.ts (moved out of clients/js/src by PSD — no second
+  working serve beside the throwing product API) verified against a
+  hand-rolled WebSocket harness covering every close-codes.json behavior.
+  Inventory: 3 pure additions, zero anything else. Then the inline half:
+  deployed `73904cdd`, ran scripts/smoke.ts against production — bootstrap,
+  auth, tokens, MCP handshake, a REAL tunneled service from this machine
+  through the edge into the production DO, grant, list/call over the live
+  socket, the full approval walk executing exactly once, 9 audit rows, full
+  cleanup. **Deploy+smoke is now the proven standing gate step.** Debt noted:
+  initialize's answer values want an owner-run contracts family (flagged by
+  two agents independently); §6's upgrade-matrix split (401-fatal vs
+  403-archived) is undecidable on Node's bare WebSocket — the full client's
+  raw-upgrade path owns it (D8). Committed `042aa96`; D8 launched
+  immediately.

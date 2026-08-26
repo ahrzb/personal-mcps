@@ -463,6 +463,11 @@ check and (manual, once) a real push notification to a real browser.
   a completeness critic ("which spec § has no green case pointing at it?"),
   incl. the D2 array-items redaction rows debt and the 0004 migrations-pin
   owner rows.
+- [ ] Set root `"type": "module"` and re-verify everything: Node asks for it
+  on every script run and Vite asks for it for fake-upstream.ts; deferred
+  while dispatches were mutating the repo (a module-semantics flip is
+  disjoint with nothing). Until then the operator scripts carry
+  `--disable-warning=MODULE_TYPELESS_PACKAGE_JSON`; drop the flag with it.
 - [ ] Close the loop with the user: findings, cost actuals vs estimates, what
   to harden next (real service migrations, custom domain). Dash decision
   RESOLVED 2026-08-26 (no longer parked): dash() wired production-only —

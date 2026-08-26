@@ -4,9 +4,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "contracts:update": "vitest run --project worker contracts -u",
-    "pmcp": "node --experimental-strip-types --env-file-if-exists=.env cli/pmcp.mts",
-    "users": "node --experimental-strip-types --env-file-if-exists=.env scripts/users.mts",
-    "smoke": "node --experimental-strip-types --env-file-if-exists=.env scripts/smoke.ts"
+    "pmcp": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env cli/pmcp.mts",
+    "users": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env scripts/users.mts",
+    "smoke": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env scripts/smoke.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.0.0",

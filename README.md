@@ -49,7 +49,7 @@ opened anywhere.
 | [clients/py](clients/py) | Python service-author library (`pmcp-client`, standalone `uv` project) |
 | [contracts](contracts) | Checked-in wire fixtures (close codes, tunnel frames) shared by hub and both clients |
 | [scripts](scripts) | `users.mts` (bootstrap user management), `smoke.ts` (post-deploy probe), `test-inventory.mjs` |
-| [docs/superpowers/specs](docs/superpowers/specs) | **The source of truth.** [Design spec](docs/superpowers/specs/2026-08-24-personal-mcp-hub-design.md) (§-references throughout the code point here) and the [testing strategy](docs/superpowers/specs/2026-08-25-testing-strategy.md) |
+| [docs/specs](docs/specs/README.md) | **The source of truth.** The design spec (§-references throughout the code point here) and the testing strategy, one file per section — [docs/specs/README.md](docs/specs/README.md) is the index |
 | [docs/superpowers/plans](docs/superpowers/plans) | Implementation ledgers |
 | [docs/superpowers/postmortems](docs/superpowers/postmortems) | One file per escaped bug |
 
@@ -122,9 +122,10 @@ lists every command. Spec §10 is the full contract.
 
 ## Documentation
 
-Start with the [design spec](docs/superpowers/specs/2026-08-24-personal-mcp-hub-design.md) —
-the code cites it by section (§6 tunnel protocol, §7 proxy, §10 CLI, §11 client
-libraries…). The [testing strategy](docs/superpowers/specs/2026-08-25-testing-strategy.md)
+Start with the [spec index](docs/specs/README.md) — the design spec is one file per
+section there, and the code cites it by section (§6 tunnel protocol, §7 proxy, §10 CLI,
+§11 client libraries…). The testing strategy, split the same way in
+[docs/specs/testing](docs/specs/testing),
 explains how the suite is built; [test-inventory.json](test-inventory.json) is the
 generated map of every test. To write and connect a bot, read the
 [client quickstart](docs/quickstart-clients.md).

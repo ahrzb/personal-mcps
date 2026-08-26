@@ -317,8 +317,14 @@ export function runServiceTokenTable(rows: readonly ServiceTokenRow[]): void {
     it(row.title, async () => {
       const { request, serviceId } = await buildRow(row);
       const resolved = await resolveServiceToken(request);
-      if (row.expect === "service_id") expect(resolved).toEqual({ serviceId });
-      else expect(resolved).toBeNull();
+      if (row.expect === "service_id") {
+        // The bound service id, and the token ROW's id beside it — the upgrade needs the
+        // latter for §8's onlyIfTokenId and reads it here rather than re-hashing the
+        // plaintext itself. The row's oracle is still "resolves", not the id's value: a
+        // row cannot know the id seed minted.
+        expect(resolved).toMatchObject({ serviceId });
+        expect(typeof resolved?.tokenId, "the verdict carried no token id").toBe("string");
+      } else expect(resolved).toBeNull();
     });
   }
 }
@@ -397,6 +403,9 @@ describe("§5 · minting and plaintext-once", () => {
     const ns = await seedResolveNamespace();
     expect(await resolveServiceToken(bearerRequest(ns.tokens.svc.token))).toEqual({
       serviceId: ns.services[SERVICE_SLUG].id,
+      // The token ROW's id rides the verdict so the upgrade never re-reads the plaintext
+      // (§8's onlyIfTokenId needs it) — an id, never the secret.
+      tokenId: ns.tokens.svc.id,
     });
   });
 
@@ -434,7 +443,10 @@ describe("§8 · revoke versus delete", () => {
     const ns = await seedResolveNamespace();
     const upgrade = () => resolveServiceToken(bearerRequest(ns.tokens.svc.token));
 
-    expect(await upgrade()).toEqual({ serviceId: ns.services[SERVICE_SLUG].id });
+    expect(await upgrade()).toEqual({
+      serviceId: ns.services[SERVICE_SLUG].id,
+      tokenId: ns.tokens.svc.id,
+    });
     expect(await revokeToken(ns.owner.userId, ns.tokens.svc.id)).toBe(true);
     expect(await upgrade()).toBeNull();
   });

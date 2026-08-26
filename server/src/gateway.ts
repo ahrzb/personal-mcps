@@ -33,7 +33,7 @@ import type { Principal } from "./principal";
 import { applyRedaction, PMCP_SLUG, Registry } from "./registry";
 import type { Service } from "./registry";
 import { status as tunnelStatus, tunnelBackend } from "./tunnel";
-import { availability, upstreamBackend, UpstreamError } from "./upstream";
+import { availability, upstreamBackend } from "./upstream";
 import type { Env } from "./index";
 import { AGGREGATED_LIST_DEADLINE_MS } from "./limits";
 
@@ -627,17 +627,13 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
     refusal = err;
     outcome = err instanceof HubError ? String(err.code) : "error";
     bodies = {};
-    // §7: every upstream failure class collapses into one -32000, and the real class
+    // §7: every dispatch failure class collapses into one -32000, and the real class
     // survives ONLY here — which is what lets an owner tell expired static headers from a
-    // down upstream. The class name and the bare status NUMBER are all that may cross:
-    // the status text, the headers (WWW-Authenticate especially) and the body are never
-    // echoed to a consumer and never recorded (§15's hygiene rule, extended to `detail`).
-    if (err instanceof UpstreamError) {
-      detail = {
-        failureClass: err.failureClass,
-        ...(err.upstreamStatus === undefined ? {} : { upstreamStatus: err.upstreamStatus }),
-      };
-    }
+    // down upstream, or a tunnel that was offline from one that timed out (§15's
+    // at-most-once). ONE rule for every backend: whichever layer knew the cause attached
+    // it to the error, and this function decides nothing about what a backend is allowed
+    // to record. §15's hygiene travels with the field (HubError.auditDetail).
+    if (err instanceof HubError) detail = err.auditDetail;
   }
   await recordCall(env, {
     ownerId,

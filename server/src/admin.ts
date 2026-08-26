@@ -375,8 +375,8 @@ async function summarise(
  * worse answer. Nothing is swallowed: the verdict lands in the op's own audit row, which
  * is where an owner reads what a change actually did.
  *
- * ponytail: tunnel.ts is D6's and every function it exports throws today, so a tunneled
- * eviction currently always records `unreachable`. Nothing here changes when it lands.
+ * ponytail: with tunnel.ts landed (D6), a reachable DO records `ok`; `unreachable` is
+ * now the genuine transport-failure verdict this seam was built to absorb.
  */
 async function evict(work: () => Promise<void>): Promise<"ok" | "unreachable"> {
   try {

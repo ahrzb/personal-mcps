@@ -18,13 +18,18 @@
 // unset. The file stays the hygiene file: everything else it owns is a property of D1, and
 // this is the one place a planted secret can leave the worker instead of landing in it.
 //
-// Project: `worker` — real D1, every sibling module real, no sockets. Every body path a
-// socket-free test can reach is reachable here: proxied services (fake upstream over
-// miniflare.outboundService) and the builtin `pmcp` service, whose logBodies is fixed ON
-// (gateway.virtualPmcpService). The tunneled live-socket body path is pinned once, in
-// tunnel/pipeline-tunnel.test.ts and tunnel/approval-e2e.test.ts, and is deliberately not
-// re-pinned here; what this file owns of the tunneled side is the ROW contract — the
-// `log_bodies` default written at create, and the flip.
+// Project: `worker` — real D1, every sibling module real, and one socket: case 14a's, and
+// only case 14a's. Every other body path here is reachable without one: proxied services
+// (fake upstream over miniflare.outboundService) and the builtin `pmcp` service, whose
+// logBodies is fixed ON (gateway.virtualPmcpService). The tunneled live-socket body path is
+// pinned once, in tunnel/pipeline-tunnel.test.ts and tunnel/approval-e2e.test.ts, and is
+// deliberately not re-pinned here; what this file owns of the tunneled side is the ROW
+// contract — the `log_bodies` default written at create, and the flip — plus the one law
+// whose only producer is a warmed catalog (case 14a: a schema-unsound tool has no
+// redaction map, and §7 puts the availability check ahead of that map, so the service has
+// to be genuinely online). That socket is dialled and closed inside the case, and it uses
+// no tunnel-project harness: `tunnel` runs serial and un-isolated precisely because live
+// sockets outlive per-file isolation, and nothing here may depend on that.
 //
 // Isolation, load-bearing: the sentinel sweep reads every table of the whole database, so
 // it is only meaningful because storage isolation is per test FILE — the sweep sees
@@ -608,6 +613,7 @@ const PLANTED = {
   case13InputResponse: "FAKE0000-case13-input-response",
   case13RequestState: "FAKE0000-case13-request-state",
   case14aUnmappedArg: "FAKE0000-case14a-unmapped-arg",
+  case14aResultSecret: "FAKE0000-case14a-result-secret",
   case20Password: "FAKE0000-case20-password",
   case21Password: "FAKE0000-case21-password",
   case22First: "FAKE0000-case22-first",
@@ -1288,34 +1294,38 @@ describe("§15 · what may reach the two body columns", () => {
   }, CASE_BUDGET_MS);
 
   it('14a. §7 · a call on a SCHEMA-UNSOUND tool — one whose schema tripped §7\'s indirection refuse-line at catalog warm, so it has no derivable redaction map and sensitivePaths answers null — records no body in either column · the same call on the same tool with a walkable schema records both, masked (the allow-twin, and the reason "no redaction map" can never quietly degrade into "record it raw"). Which schemas are refused is unit/redact.test.ts\'s; that the warm stays loud and registration survives is tunnel/protocol.test.ts\'s; this row owns only what reaches D1.', async () => {
-    // STATED CEILING, and a promise someone will collect on. The producer this title names —
-    // a cached tool flagged schema-unsound at catalog warm — lives behind
-    // tunnel.sensitivePaths, which is a D6 skeleton, and this project has no sockets to warm
-    // a catalog with. What the row OWNS is the law that follows from a null map, so it is
-    // driven through the one null-producer that exists socket-free: adminBackend answers
-    // null for a name it does not know. D6 MUST repoint this fixture at the real producer
-    // when tunnel.sensitivePaths lands — it is recorded as named D6 debt.
+    // The D6 debt this row recorded is PAID: the producer is now the real one the title
+    // names — a tool cached schema-unsound at catalog warm, answered null by
+    // tunnel.sensitivePaths — rather than adminBackend's unknown-name null that stood in
+    // for it while tunnel.ts was a skeleton. That costs this file its one socket (see the
+    // header): §7's availability check precedes the redaction map, so an OFFLINE tunneled
+    // service is refused -32000 and never reaches the law this row owns. Everything else
+    // here is unchanged, the assertions included.
     //
-    // The builtin is the right vehicle for a second reason: its logBodies is fixed ON, so
-    // "no body" here has exactly one explanation — the null map — and none of the flag.
-    const world = await seedPmcpWorld();
+    // A tunneled service is the right vehicle for a second reason: its log_bodies defaults
+    // ON (§15), so "no body" has exactly one explanation — the null map — and none of the
+    // flag.
+    const world = await seedUnsoundTunnelWorld();
+    try {
+      const refused = await callTool(world.ns, world.credential, SERVICE, UNSOUND_TOOL, {
+        note: PLANTED.case14aUnmappedArg,
+      });
+      expect(refused.body.error?.code, "a null map refuses as not-permitted (§7)").toBe(-32001);
+      const unmapped = await lastCallRow(world.ns.owner.userId);
+      expect(unmapped.args, "no derivable map, no body").toBeUndefined();
+      expect(unmapped.result, "in either column").toBeUndefined();
 
-    const refused = await callTool(world.ns, world.credential, PMCP_SLUG, "no_such_tool", {
-      note: PLANTED.case14aUnmappedArg,
-    });
-    expect(refused.body.error?.code, "a null map refuses as not-permitted (§7)").toBe(-32001);
-    const unmapped = await lastCallRow(world.ns.owner.userId);
-    expect(unmapped.args, "no derivable map, no body").toBeUndefined();
-    expect(unmapped.result, "in either column").toBeUndefined();
-
-    // The allow-twin, on a walkable schema: both columns land, masked at the marked path.
-    await issueKey(world);
-    const mapped = await lastCallRow(world.ns.owner.userId);
-    expect(mapped.args, "the twin records arguments").toBeDefined();
-    expect(
-      (mapped.result?.structuredContent as Record<string, unknown>).token,
-      "…and a masked result",
-    ).toBe(REDACTED);
+      // The allow-twin, on a walkable schema: both columns land, masked at the marked path.
+      await callTool(world.ns, world.credential, SERVICE, TOOL, { q: "visible-case14a-arg" });
+      const mapped = await lastCallRow(world.ns.owner.userId);
+      expect(mapped.args, "the twin records arguments").toBeDefined();
+      expect(
+        (mapped.result?.structuredContent as Record<string, unknown>).token,
+        "…and a masked result",
+      ).toBe(REDACTED);
+    } finally {
+      await world.close();
+    }
   }, CASE_BUDGET_MS);
 });
 
@@ -1523,6 +1533,113 @@ function healthyUpstream(structuredContent: Record<string, unknown> = {}): Upstr
     result: { structuredContent },
   };
 }
+
+/**
+ * Case 14a's world, and the only place this file holds a socket. A tunneled service, ONLINE
+ * over a real `/connect` upgrade, whose cached catalog holds one tool §7's indirection
+ * refuse-line rejects and one it can walk — the producer the case's title names, which no
+ * socket-free surface can stand in for (the case says why). The account holds the built-in
+ * `all` so the FILTER admits both tools and the refusal under test is the redaction map's.
+ *
+ * The catalog is warm when the pipeline serves both tools: an observable, polled, never a
+ * sleep. `close` is the caller's obligation — a leaked socket outlives this file.
+ */
+async function seedUnsoundTunnelWorld(): Promise<BodyWorld & { close(): Promise<void> }> {
+  const ns = await seedNamespace(env.DB, {
+    services: [{ slug: SERVICE, kind: "tunnel", tokens: [{ as: "svc" }] }],
+    accounts: [
+      {
+        slug: ACCOUNT,
+        grants: { [SERVICE]: [{ role: "all", mode: "allow" }] },
+        tokens: [{ as: TOKEN }],
+      },
+    ],
+  });
+  const credential = ns.tokens[TOKEN].token;
+  const close = await dialTunneledService(ns.tokens.svc.token);
+  for (let turn = 0; turn < 250; turn++) {
+    const listed = await rpc(ns, credential, SERVICE, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    if (((listed.body.result?.tools ?? []) as Tool[]).length === CASE_14A_CATALOG.length) {
+      return { ns, credential, close };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  await close();
+  throw new Error("case 14a's catalog never warmed");
+}
+
+/**
+ * One real service on the other end of §6's wire: it dials `/connect` through the running
+ * worker, completes `hub/register`, serves the catalog and answers calls. Deliberately
+ * hand-rolled rather than borrowed from `harness/fake-service`, whose header pins it to the
+ * `tunnel` project — one case's socket must not import that project's assumptions.
+ */
+async function dialTunneledService(token: string): Promise<() => Promise<void>> {
+  const response = await worker.fetch(
+    new Request(`${ORIGIN}/connect`, {
+      headers: { Upgrade: "websocket", Authorization: `Bearer ${token}` },
+    }),
+    env as unknown as Env,
+  );
+  const socket = response.webSocket;
+  if (response.status !== 101 || socket === null) {
+    throw new Error(`/connect refused the upgrade: ${response.status}`);
+  }
+  socket.accept();
+  socket.addEventListener("message", (event) => {
+    const frame = JSON.parse(String((event as MessageEvent).data)) as { id?: unknown; method?: unknown };
+    if (frame.method === "tools/list") {
+      socket.send(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: { tools: CASE_14A_CATALOG } }));
+    } else if (frame.method === "tools/call") {
+      // The marked field the twin's row must store masked — planted, and hunted by the
+      // file-wide sweep like every other secret this suite invents.
+      socket.send(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: frame.id,
+          result: { structuredContent: { token: PLANTED.case14aResultSecret } },
+        }),
+      );
+    }
+  });
+  socket.send(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: "register",
+      method: "hub/register",
+      params: { clientVersion: "hygiene/0", protocolVersion: "2026-07-28", roles: {} },
+    }),
+  );
+  return async () => {
+    try {
+      socket.close(1000, "case teardown");
+    } catch {
+      // already gone
+    }
+  };
+}
+
+/** The tool whose schema trips §7's indirection refuse-line — an external `$ref` the walk
+ *  cannot resolve, so a `writeOnly` mark could be hiding behind it. WHICH constructs are
+ *  refused is unit/redact.test.ts's; here it only has to be one of them. */
+const UNSOUND_TOOL = "publish";
+
+/** Case 14a's catalog: the unsound tool, and its walkable twin whose result carries one
+ *  `writeOnly`-marked field. */
+const CASE_14A_CATALOG: Tool[] = [
+  {
+    name: UNSOUND_TOOL,
+    inputSchema: {
+      type: "object",
+      properties: { payload: { $ref: "https://example.invalid/schema.json#/payload" } },
+    },
+  },
+  {
+    name: TOOL,
+    inputSchema: schemaMarking([]),
+    outputSchema: schemaMarking(["token"]),
+  },
+];
 
 /** A namespace whose owner can call the builtin — `pmcp` is owner-only (§8), so the
  *  credential is a real signed-in session's bearer token. */

@@ -280,7 +280,10 @@ export function anonymousNotFound(): Response {
 /**
  * Validates the `pmcp_svc_` bearer on the /connect WebSocket upgrade — the only
  * surface where a service token means anything. Returns the token's bound service id
- * (the DO addressing key), or null for anything less than a fully valid credential:
+ * (the DO addressing key) and the token ROW's id — §8's `onlyIfTokenId` rule needs the
+ * latter, and answering it here is what keeps the plaintext, and the hashing scheme that
+ * finds the row, from having a second custody site outside this module (§15). Null for
+ * anything less than a fully valid credential:
  * missing/foreign prefix, unknown token, wrong kind, revoked, or expired —
  * one answer, so the upgrade's 401 leaks nothing about which check failed. Expiry is
  * judged here, at upgrade time only: an established socket outlives its token's
@@ -294,7 +297,7 @@ export function anonymousNotFound(): Response {
 export async function resolveServiceToken(
   req: Request,
   now: () => number = Date.now,
-): Promise<{ serviceId: string } | null> {
+): Promise<{ serviceId: string; tokenId: string } | null> {
   // deps: D1 `token` · crypto.subtle
   // One `return null` vocabulary and no thrown error: nothing below distinguishes which
   // check failed, so the upgrade's 401 cannot either. The query-string case needs no
@@ -315,7 +318,7 @@ export async function resolveServiceToken(
   const at = now();
   if (row.expires_at != null && row.expires_at <= at) return null;
   await stampLastUsed(row, at);
-  return { serviceId: row.ref_id };
+  return { serviceId: row.ref_id, tokenId: row.id };
 }
 
 /** The `token` columns every resolve reads — snake_case, as the table spells them. */

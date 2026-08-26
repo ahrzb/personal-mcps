@@ -200,6 +200,13 @@ function failure(failureClass: UpstreamFailureClass, upstreamStatus?: number): U
   return Object.assign(new UpstreamError(-32000, "service unavailable"), {
     failureClass,
     upstreamStatus,
+    // The audit row's `detail`, built where the class is known (HubError.auditDetail):
+    // the class, plus the bare status NUMBER where the upstream answered one — never the
+    // status text, the headers, or the body.
+    auditDetail: {
+      failureClass,
+      ...(upstreamStatus === undefined ? {} : { upstreamStatus }),
+    },
   });
 }
 

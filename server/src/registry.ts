@@ -622,6 +622,19 @@ export class Registry {
    * missing slug and for the reserved `pmcp` slug alike (the builtin is
    * virtual; admin materializes it). Never throws for absence.
    */
+  /**
+   * The same row by its opaque id — the read the /connect upgrade makes, which knows only
+   * the id resolveServiceToken hands back, and the one the tunnel DO re-checks with when
+   * a registration write fails. Registry's vocabulary, not the column format: `archived`
+   * is a boolean and `kind` a ServiceKind, so the `archived_at` timestamp stays owned
+   * here. Null when the row is gone; the virtual `pmcp` builtin has none.
+   */
+  async serviceById(serviceId: string): Promise<ServiceDetail | null> {
+    // deps: D1 `service`
+    const row = await this.row(serviceId);
+    return row ? toDetail(row) : null;
+  }
+
   async getService(ownerId: string, slug: string): Promise<ServiceDetail | null> {
     // deps: D1 `service`
     if (slug === PMCP_SLUG) return null;

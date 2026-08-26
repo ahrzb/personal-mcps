@@ -8,7 +8,9 @@
 // the same module's other export: extending it is what makes a class's methods callable
 // as RPC from the worker half, a plain class serving `fetch` alone.
 //
-// `D1Like`/`D1Stmt`/`DurableObjectNamespaceLike` are the OTHER half: the one declaration
+// `D1Like`/`D1Stmt`/`DurableObjectNamespaceLike`/`DurableObjectStateLike`, the
+// `WebSocketPair` constructor and the platform's additions to `WebSocket`/`Response` (the
+// attachment pair, the 101 socket) are the OTHER half: the one declaration
 // of what each binding is in this repo. They are platform shapes, not any module's, so
 // registry, identity and admin all spell D1 by the same name and there is exactly one
 // place for it to be wrong in — the widest shape any of them actually calls (prepare +
@@ -26,12 +28,62 @@ declare module "cloudflare:workers" {
 
   /** The Durable Object base class — it supplies `ctx`, and extending it is what makes a
    *  class's methods reachable as RPC. Shaped to what the tunnel DO actually touches:
-   *  the durable KV read behind its cached catalog. */
+   *  see DurableObjectStateLike. */
   export class DurableObject {
-    protected ctx: {
-      storage: { get<T>(key: string): Promise<T | undefined> };
-    };
+    protected ctx: DurableObjectStateLike;
   }
+
+  /** The worker's own exported entrypoints as a loopback service binding — the running
+   *  router reached from inside the same isolate. Test-side only in this repo (the router
+   *  walk, the tunnel harness dialling /connect); no src module calls itself. */
+  export const exports: { default: { fetch(request: Request): Promise<Response> } };
+}
+
+/**
+ * The Durable Object's own context, as the tunnel DO uses it: SQLite-backed storage (the
+ * durable KV face plus `sql` — a new_sqlite_classes DO has both, and only the smoke suite
+ * touches the latter, to observe that the class really is SQLite-backed), the storage alarm
+ * behind §6's registration deadline, and the WebSocket hibernation API.
+ */
+type DurableObjectStateLike = {
+  storage: {
+    get<T>(key: string): Promise<T | undefined>;
+    put(key: string, value: unknown): Promise<void>;
+    /** Everything stored, for the one sweep that has to look at ALL of it: §15's rule that
+     *  no credential material is at rest in a store nothing else audits. */
+    list<T = unknown>(): Promise<Map<string, T>>;
+    delete(key: string): Promise<boolean>;
+    deleteAll(): Promise<void>;
+    setAlarm(scheduledTime: number): Promise<void>;
+    getAlarm(): Promise<number | null>;
+    sql: { exec<T = Record<string, unknown>>(query: string, ...bindings: unknown[]): { toArray(): T[] } };
+  };
+  /** Hands a socket to the runtime so it survives hibernation; `tags` are the runtime's
+   *  own filter for getWebSockets, never an identity (§6 puts identity in the attachment). */
+  acceptWebSocket(ws: WebSocket, tags?: string[]): void;
+  getWebSockets(tag?: string): WebSocket[];
+};
+
+/** The pair of ends `new WebSocketPair()` mints: `0` travels back to the client in a 101
+ *  response, `1` is the end the DO accepts. */
+declare const WebSocketPair: { new (): { 0: WebSocket; 1: WebSocket } };
+
+/** The platform's additions to the DOM WebSocket: `accept()` for a socket handled without
+ *  hibernation (the test-side client end), and the attachment pair §6's connection identity
+ *  rides through hibernation. */
+interface WebSocket {
+  accept(): void;
+  serializeAttachment(value: unknown): void;
+  deserializeAttachment(): unknown;
+}
+
+/** A 101 response carries the client end of the pair — the platform's one extension to
+ *  Response, on both the init and the read side. */
+interface ResponseInit {
+  webSocket?: WebSocket | null;
+}
+interface Response {
+  readonly webSocket: WebSocket | null;
 }
 
 /** One prepared statement. `run` reports D1's `meta.changes` — what an UPDATE's "did it

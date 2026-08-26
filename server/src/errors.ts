@@ -22,6 +22,16 @@
 export class HubError extends Error {
   code: number;
   data?: unknown;
+  /**
+   * What this refusal contributes to the `tools/call` audit row's `detail` (§7, §15) —
+   * set by whichever layer knew the real cause, copied verbatim by the gateway, and never
+   * serialized to a consumer (toWire sends `code`, `message` and `data` alone). It is how
+   * one -32000 on the wire can still tell an owner which failure class it was: an upstream
+   * status vs a dead bundle, a tunnel that was offline vs one that timed out — the
+   * at-most-once question §15 exists to let the ledger answer. §15's hygiene applies like
+   * anywhere else: classes and bare numbers, never a status line, header, or body.
+   */
+  auditDetail?: Record<string, unknown>;
   /** `message` must already respect log hygiene (§15): no secrets, no upstream bodies. */
   constructor(code: number, message: string, data?: unknown) {
     // deps: none
@@ -54,6 +64,15 @@ export const CODES = {
   internal: -32603,
 } as const;
 
-export const unavailable = (): HubError => new HubError(CODES.unavailable, "service unavailable");
+/**
+ * -32000. `failureClass` is the dispatching layer's own name for what went wrong —
+ * "offline" / "timeout" for a tunnel, upstream.ts's five classes for a proxy — and rides
+ * `auditDetail` to the ledger. Omitted where the caller genuinely cannot classify.
+ */
+export const unavailable = (failureClass?: string): HubError => {
+  const err = new HubError(CODES.unavailable, "service unavailable");
+  if (failureClass !== undefined) err.auditDetail = { failureClass };
+  return err;
+};
 export const notPermitted = (): HubError => new HubError(CODES.notPermitted, "tool not permitted");
 export const archived = (): HubError => new HubError(CODES.archived, "service archived");

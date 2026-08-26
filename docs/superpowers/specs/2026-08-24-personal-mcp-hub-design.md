@@ -962,8 +962,8 @@ service_accounts:
       news: [reader]        # exact role names; warned (not rejected) if the service
                             # hasn't declared them yet
       notion: [editor]
-      home: ["*:approval"]  # ':approval' suffix = approval mode (§2) — role names have
-                            # no colon, so the suffix is unambiguous; bare = allow
+      home: ["control:approval"]  # ':approval' suffix = approval mode (§2) — role names
+                            # have no colon, so the suffix is unambiguous; bare = allow
   cron:
     name: Nightly jobs
     grants:

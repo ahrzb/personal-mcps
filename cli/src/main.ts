@@ -3,8 +3,10 @@
  *
  * This module OWNS the CLI's presentation layer: the argv grammar (command and
  * flag spelling, `--json` vs `key=value` tool arguments, the `<slug>_<tool>`
- * aggregated-name split), the config file (`~/.config/pmcp/config.json` —
- * server origin + session token) and the PMCP_URL / PMCP_TOKEN override order,
+ * aggregated-name split), the config file (`~/.config/pmcp/config.toml` — named
+ * profiles, each one hub identity), which profile is ACTIVE (`--profile` >
+ * PMCP_PROFILE > the file's `profile` key > `default`) and the flat PMCP_URL /
+ * PMCP_TOKEN override order on top of it,
  * every table/plan/confirmation rendering and exit-code decision, and the
  * CLI's copies of the pinned wire shapes below. It HIDES the transport:
  * every command except the auth family is presentation sugar over MCP
@@ -31,6 +33,8 @@ import { dirname, join } from "node:path";
 import { COMMANDS as COMMAND_TABLE } from "./commands.ts";
 import { parseDesired, planChanges } from "./plan.ts";
 import type { CurrentAccount, CurrentService, CurrentState, DesiredGrant, Plan } from "./plan.ts";
+import { emitToml, parseToml } from "./toml.ts";
+import type { PmcpConfig, PmcpProfile } from "./toml.ts";
 import { parseYaml } from "./yaml.ts";
 
 /**
@@ -142,43 +146,101 @@ export type CliContext = {
   namespace: string;
 };
 
-/** Where the session lives between invocations (§10). */
+/** Where the profiles live between invocations (§10). */
 function configPath(): string {
-  return join(homedir(), ".config", "pmcp", "config.json");
-}
-
-function readConfig(): { url?: string; token?: string } {
-  const path = configPath();
-  if (!existsSync(path)) return {};
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as { url?: string; token?: string };
-  } catch {
-    return {};
-  }
-}
-
-function writeConfig(config: { url?: string; token?: string }): void {
-  const path = configPath();
-  mkdirSync(dirname(path), { recursive: true });
-  // 0600: the file holds a live session bearer.
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  return join(homedir(), ".config", "pmcp", "config.toml");
 }
 
 /**
- * Builds the per-invocation context: stored config overlaid by PMCP_URL /
- * PMCP_TOKEN, then one GET /api/whoami to learn principal and namespace (§10 —
- * this is how a service-account key learns whose namespace it lives in). A
- * `pmcp_svc_`-prefixed token is refused here with a clear message — every
- * consumer surface rejects service tokens, so failing early beats a confusing
- * server 401; no token at all fails with a "run pmcp login" hint.
+ * The file as it was before profiles: one flat `{ url, token }`. Read once as profile
+ * `default` and superseded by the next write (§10) — never rewritten, never deleted, so a
+ * downgrade still finds the session it left behind.
  */
-async function resolveContext(): Promise<CliContext> {
+function legacyConfigPath(): string {
+  return join(homedir(), ".config", "pmcp", "config.json");
+}
+
+function readConfig(): PmcpConfig {
+  // A malformed config.toml is NOT swallowed: parseToml names the line, and main's handler
+  // prints it. Silently resolving to "not logged in" would send the user to `pmcp login`
+  // for a typo three lines up. The legacy json is best-effort — it is on its way out.
+  if (existsSync(configPath())) return parseToml(readFileSync(configPath(), "utf8"));
+  if (!existsSync(legacyConfigPath())) return { profiles: {} };
+  try {
+    const flat = JSON.parse(readFileSync(legacyConfigPath(), "utf8")) as { url?: string; token?: string };
+    return {
+      profile: "default",
+      profiles: {
+        default: { ...(flat.url === undefined ? {} : { url: flat.url }), ...(flat.token === undefined ? {} : { token: flat.token }) },
+      },
+    };
+  } catch {
+    return { profiles: {} };
+  }
+}
+
+function writeConfig(config: PmcpConfig): void {
+  const path = configPath();
+  mkdirSync(dirname(path), { recursive: true });
+  // 0600: the file holds a live session bearer — one per profile.
+  writeFileSync(path, emitToml(config), { mode: 0o600 });
+}
+
+/**
+ * Which profile this invocation acts on: the `--profile` flag, else PMCP_PROFILE, else the
+ * file's own top-level `profile`, else the name `default` — neutral on purpose, since the
+ * CLI's users are not only developers with environments (§10).
+ */
+function activeProfile(config: PmcpConfig, flag?: string): string {
+  return flag ?? process.env.PMCP_PROFILE ?? config.profile ?? "default";
+}
+
+/** The active profile's stored values — `{}` when the file has no table by that name. */
+function profileOf(config: PmcpConfig, name: string): PmcpProfile {
+  return config.profiles[name] ?? {};
+}
+
+/**
+ * The `pnpm users` bridge, called by scripts/users.mts: consumes a leading
+ * `--profile <name>`, fills PMCP_URL and BOOTSTRAP_SECRET from that profile wherever the
+ * environment has not already spoken, and returns the rest of argv. It lives here because
+ * the precedence lives here — scripts/users.ts stays env-only, which is its tested
+ * contract (§12), and gains a config file it never reads.
+ */
+export function applyProfile(argv: string[]): string[] {
+  // deps: readConfig · node:process
+  const rest = [...argv];
+  const flag = rest[0] === "--profile" ? rest.splice(0, 2)[1] : undefined;
+  const config = readConfig();
+  const profile = profileOf(config, activeProfile(config, flag));
+  for (const [variable, key] of [["PMCP_URL", "url"], ["BOOTSTRAP_SECRET", "bootstrap_secret"]] as const) {
+    // The environment wins where it is already set; an empty value is not set (users.ts
+    // reads it the same way), and `undefined` is never assigned — process.env would spell
+    // it as the string "undefined".
+    if ((process.env[variable] ?? "") === "" && (profile[key] ?? "") !== "") process.env[variable] = profile[key];
+  }
+  return rest;
+}
+
+/**
+ * Builds the per-invocation context: the ACTIVE profile's stored url/token overlaid
+ * by the flat PMCP_URL / PMCP_TOKEN (the environment is profile-free, §10), then one
+ * GET /api/whoami to learn principal and namespace (§10 — this is how a service-account
+ * key learns whose namespace it lives in). A `pmcp_svc_`-prefixed token is refused here
+ * with a clear message — every consumer surface rejects service tokens, so failing early
+ * beats a confusing server 401; no token at all fails with a "run pmcp login" hint that
+ * names the profile, since a `--profile` typo and an expired session look identical
+ * otherwise.
+ */
+async function resolveContext(profileName?: string): Promise<CliContext> {
   // deps: node:fs · node:os · node:process · fetch GET /api/whoami
-  const stored = readConfig();
+  const config = readConfig();
+  const name = activeProfile(config, profileName);
+  const stored = profileOf(config, name);
   const origin = (process.env.PMCP_URL ?? stored.url ?? "").replace(/\/+$/, "");
   const token = process.env.PMCP_TOKEN ?? stored.token ?? "";
   if (origin === "") throw new Error("no hub url: run `pmcp login --url https://…` or set PMCP_URL");
-  if (token === "") throw new Error("not logged in: run `pmcp login`");
+  if (token === "") throw new Error(`not logged in (profile ${name}): run \`pmcp login\``);
   if (token.startsWith("pmcp_svc_")) {
     throw new Error("a pmcp_svc_ service token is refused by every consumer surface: use a session or a pmcp_sa_ key");
   }
@@ -328,24 +390,30 @@ const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 
 /**
  * The auth family — the only commands that are not MCP-tool sugar (§10) and
- * the only writer of `~/.config/pmcp/config.json`. `login` runs the RFC 8628
+ * the only writer of `~/.config/pmcp/config.toml`. `login` runs the RFC 8628
  * device flow against better-auth's endpoints: prints the user code and the
  * /device URL, polls until approved (~10 min device-code lifetime, §13), then
- * stores origin + session token; `url` (or PMCP_URL) picks the hub. `logout`
- * revokes the session server-side and clears the stored token. `whoami` prints
- * the pinned WhoamiResponse from GET /api/whoami — it works with a
- * service-account key too. Exit 0 on success, 1 on any failure.
+ * stores origin + session token IN THE ACTIVE PROFILE ALONE; `url` (or PMCP_URL)
+ * picks the hub. `logout` revokes the session server-side and clears that one
+ * profile's token. Every other key in the file — the other profiles, the
+ * top-level default, a hand-written `bootstrap_secret` — is carried through
+ * both writes untouched (§10, §12). `whoami` prints the pinned WhoamiResponse
+ * from GET /api/whoami — it works with a service-account key too. Exit 0 on
+ * success, 1 on any failure.
  */
 export async function auth(
   cmd: { sub: "login"; url?: string } | { sub: "logout" } | { sub: "whoami" },
+  profileName?: string,
 ): Promise<number> {
   // deps: fetch (better-auth device-authorization + session endpoints, GET /api/whoami) · node:fs · node:os
   if (cmd.sub === "whoami") {
-    const ctx = await resolveContext();
+    const ctx = await resolveContext(profileName);
     process.stdout.write(`${ctx.principal}\nnamespace ${ctx.namespace}\n`);
     return 0;
   }
-  const stored = readConfig();
+  const config = readConfig();
+  const name = activeProfile(config, profileName);
+  const stored = profileOf(config, name);
   if (cmd.sub === "logout") {
     const origin = process.env.PMCP_URL ?? stored.url;
     const token = process.env.PMCP_TOKEN ?? stored.token;
@@ -356,7 +424,10 @@ export async function auth(
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => undefined);
     }
-    writeConfig({ url: origin, token: "" });
+    // The token, and nothing else: the url stays, the secret beside it stays, and the
+    // other profiles are still logged in.
+    (config.profiles[name] ??= {}).token = "";
+    writeConfig(config);
     process.stdout.write("logged out\n");
     return 0;
   }
@@ -383,8 +454,15 @@ export async function auth(
     });
     const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (response.ok && typeof body.access_token === "string") {
-      writeConfig({ url: origin, token: body.access_token });
-      const ctx = await resolveContext();
+      const profile = (config.profiles[name] ??= {});
+      profile.url = origin;
+      profile.token = body.access_token;
+      // The top-level default is set only when this write CREATES the file (§10): a
+      // machine with one profile should not have to name it twice, and a machine with
+      // several must never have its default moved by a login it did not ask that of.
+      if (config.profile === undefined && !existsSync(configPath())) config.profile = name;
+      writeConfig(config);
+      const ctx = await resolveContext(name);
       process.stdout.write(`logged in as ${ctx.principal} on ${origin}\n`);
       return 0;
     }
@@ -851,15 +929,19 @@ export async function main(argv: string[]): Promise<number> {
   const flags = readFlags(rest);
   const words = flags.words;
   try {
-    if (command === "login") return await auth({ sub: "login", url: flags.value("url") });
-    if (command === "logout") return await auth({ sub: "logout" });
-    if (command === "whoami") return await auth({ sub: "whoami" });
+    // `--profile <name>` is a value flag on every command, long form only (§10): it picks
+    // the identity BEFORE anything is resolved, which is why it is read here and not by a
+    // command's own normalizer.
+    const profile = flags.value("profile");
+    if (command === "login") return await auth({ sub: "login", url: flags.value("url") }, profile);
+    if (command === "logout") return await auth({ sub: "logout" }, profile);
+    if (command === "whoami") return await auth({ sub: "whoami" }, profile);
     if (command === undefined || command === "help" || command === "--help") {
       process.stdout.write(`${COMMAND_TABLE.map((entry) => `pmcp ${entry.name}`).join("\n")}\n`);
       return command === undefined ? 1 : 0;
     }
 
-    const ctx = await resolveContext();
+    const ctx = await resolveContext(profile);
     switch (command) {
       case "ls":
         return await ls(ctx);

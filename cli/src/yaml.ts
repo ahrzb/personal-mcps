@@ -2,7 +2,7 @@
  * cli/src/yaml.ts — §9's config file FORMAT: text → JSON values, and nothing else.
  *
  * A module of its own, with no imports, for the same reason commands.ts is one: main.ts
- * reaches for node:fs and node:os to read `~/.config/pmcp/config.json`, and a suite that
+ * reaches for node:fs and node:os to read `~/.config/pmcp/config.toml`, and a suite that
  * checks the parser has no business loading that. It also keeps plan.ts's header true —
  * "It HIDES YAML from everything else" — by making the split `yaml.ts` text→JSON,
  * `plan.ts` JSON→meaning, main.ts neither.

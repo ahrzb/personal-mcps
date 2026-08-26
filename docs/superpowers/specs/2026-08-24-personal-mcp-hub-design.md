@@ -36,7 +36,9 @@ Web Push for approvals, §13).
   Usernames are `[a-z0-9-]`, minus a reserved list, since they become top-level URL
   segments: every top-level route segment the Worker serves is reserved — currently
   `login`, `device`, `account`, `audit`, `approvals`, `services`, `oauth`, `api`,
-  `connect`, `internal`, plus `mcp`. Adding a top-level route extends this set; the
+  `connect`, `internal`, the three shell assets `manifest.webmanifest`, `sw.js`,
+  `styles.css` *(amended 2026-08-26: the stylesheet became a served segment)*, plus
+  `mcp`. Adding a top-level route extends this set; the
   implementation must derive the reserved list from the route table (or enforce the
   equivalence with a test that walks the router), so the two can never drift.
 - **Service** — a registered MCP service. Identified by `(owner, slug)` — slugs are

@@ -2,12 +2,16 @@
 // CSRF discipline for every form the hub serves. Deliberately the shallowest module in
 // the server — any depth here would be a web-only capability, which the parity
 // invariant (§8) forbids: every mutation a page performs calls an admin ops handler or
-// a better-auth endpoint (/account alone rides better-auth directly — the pinned
-// exception), so zero business logic lives here. What this module owns and hides: which
+// a better-auth endpoint (/login and /account ride better-auth — the pinned exception),
+// so zero business logic lives here. What this module owns and hides: which
 // URL renders which template; CSRF issuance, and the ORDER in which a mutation is gated
 // (`mutation` — session, form, CSRF, then the body, written once so no handler can be
 // spelled without it); where cookie-session gating is applied
-// (identity.requireOwnerSession, with recent-auth on /account); the chunked streaming
+// (identity.requireOwnerSession, with recent-auth on /account); the CREDENTIAL
+// TRANSLATION routes, which are the only reason a credential form works at all —
+// better-auth's router takes `application/json` and nothing else, so a form posted at one
+// of its endpoints is answered 415 and the hub owns those targets instead (see "The
+// credential family" below, and pages/model's `paths.auth`); the chunked streaming
 // JSONL export framing (never buffered); the web-app manifest and the minimal install+push
 // service worker (no SPA, no offline rendering); and the stylesheet the shell links. Every
 // clock the pages read is here too: `context` stamps `now` once per request, and /login —
@@ -16,8 +20,9 @@
 // Where the props come from is NOT here: pages/model.ts owns every read AND every
 // props-builder, all eight of them, so a handler below is a gate, a loader call, and a
 // render — and the ops table is reached through that one seam on the read side and through
-// `dispatch` on the write side. better-auth is reached through identity's `callAuth`, its
-// one custodian (§4), and never dialled from this module directly.
+// `dispatch` on the write side. better-auth is reached through identity's `callAuth` /
+// `callAuthResponse`, its one custodian (§4), and never dialled from this module directly —
+// the translation routes above call better-auth exactly the way /account's loader reads it.
 //
 // Two things this module deliberately does not have. There is no route table export: a
 // page's URL is `paths`'s to spell (pages/model.ts) and the composition root mounts this
@@ -33,7 +38,7 @@ import type { AdminOp } from "./admin";
 import type { PushSubscriptionJson } from "./approvals";
 import { exportJsonl } from "./audit";
 import { HubError } from "./errors";
-import { callAuth, requireOwnerSession } from "./identity";
+import { callAuth, callAuthResponse, requireOwnerSession } from "./identity";
 import type { OwnerSession } from "./identity";
 import { Registry } from "./registry";
 import type { Service } from "./registry";
@@ -126,6 +131,53 @@ export function pageRoutes(): PageRouter {
     render(Login(loginProps(new Date().toISOString(), new URL(c.req.url).searchParams))),
   );
 
+  // /login's three credential forms, translated. better-auth's router accepts
+  // `application/json` and nothing else, so the form posts these targets receive would be
+  // answered 415 by its endpoints — these read the form, call better-auth as JSON through
+  // identity's one door, and hand its Set-Cookie headers on (pages/model's `paths.auth`
+  // states the whole arrangement).
+  //
+  // They are the one family of POSTs OUTSIDE `mutation`, and it is not a bypass: there is
+  // no session here to gate with and none to derive a CSRF token from — which is exactly
+  // why web-pages case 4 excludes /login from its walk. What guards them instead is the
+  // pair below: the browser's SameSite session-cookie semantics, so a cross-site post
+  // carries no session to ride, and `crossOrigin` — an Origin header, when the browser
+  // sends one, that must be the hub's own (index.ts's consumer rule, same shape).
+  app.post(paths.auth.signIn, (c) =>
+    signInTranslation(c, "/sign-in/username", (form) => ({
+      username: field(form, "username") ?? "",
+      password: field(form, "password") ?? "",
+    })),
+  );
+
+  app.post(paths.auth.totpVerify, (c) =>
+    signInTranslation(c, "/two-factor/verify-totp", (form) => ({ code: field(form, "code") ?? "" }), "totp"),
+  );
+
+  app.post(paths.auth.backupCodeVerify, (c) =>
+    signInTranslation(
+      c,
+      "/two-factor/verify-backup-code",
+      (form) => ({ code: field(form, "code") ?? "" }),
+      "backup-code",
+    ),
+  );
+
+  // Sign out — the shell's form (layout.tsx), on every signed-in page. It needs
+  // translating for a reason that looks like it should not apply: the form has NO controls
+  // at all, so a browser posts an empty body under a form content type, and better-auth
+  // refuses that too. It is also the one target here with no CSRF token, because
+  // LayoutProps carries none to render one from; what stands in its place is `crossOrigin`
+  // — the same origin rule better-auth applied while this form still posted to it.
+  app.post(paths.auth.signOut, async (c) => {
+    if (crossOrigin(c.req.raw)) return new Response("Forbidden", { status: 403, headers: TEXT });
+    const answered = await callAuthResponse(c.req.raw, "/sign-out", {});
+    // One destination either way: a sign-out that failed and one that worked look the same
+    // to whoever clicked it, and /login is where both of them are. The cleared cookie, when
+    // there is one, rides along.
+    return redirectWith(paths.login, answered);
+  });
+
   /* ---------------------------------- /device --------------------------------- */
 
   app.get(paths.device, async (c) => {
@@ -161,6 +213,49 @@ export function pageRoutes(): PageRouter {
     const ctx = await context(c.req.raw, session);
     return render(AccountPage(await accountProps(ctx, c.req.raw)));
   });
+
+  // /account's credential forms, translated the same way /login's are and gated the
+  // ordinary way: each is a `mutation`, so session and CSRF are proven before any of this
+  // runs. The pinned parity exception is untouched — none of them names an op, and none of
+  // them reaches D1 except through better-auth (§8).
+  app.post(
+    paths.auth.totpEnable,
+    credential("/two-factor/enable", "two_factor_enable", (form) => ({
+      password: field(form, "password") ?? "",
+    })),
+  );
+
+  app.post(
+    paths.auth.totpDisable,
+    credential("/two-factor/disable", "two_factor_disable", (form) => ({
+      password: field(form, "password") ?? "",
+    })),
+  );
+
+  app.post(
+    paths.auth.backupCodesGenerate,
+    credential("/two-factor/generate-backup-codes", "backup_codes_generate", (form) => ({
+      password: field(form, "password") ?? "",
+    })),
+  );
+
+  app.post(
+    paths.auth.passkeyDelete,
+    credential("/passkey/delete-passkey", "passkey_remove", (form) => ({
+      id: field(form, "id") ?? "",
+    })),
+  );
+
+  // The one translation that is more than a rename: the page knows a session by the `id`
+  // its listing shows, and better-auth's revoke takes the session's TOKEN. Reading the
+  // listing again here is what maps one to the other — and is also why AccountProps'
+  // session shape can keep leaving `token` out of the props entirely (§15).
+  app.post(
+    paths.auth.sessionRevoke,
+    credential("/revoke-session", "session_revoke", async (form, req) => ({
+      token: (await sessionTokenFor(req, field(form, "id") ?? "")) ?? "",
+    })),
+  );
 
   /* ---------------------------------- /audit ---------------------------------- */
 
@@ -389,6 +484,160 @@ async function checkCsrf(sessionToken: string, form: FormData): Promise<Response
   if (presented !== null && presented.length === expected.length && presented === expected) return null;
   return new Response("Forbidden", { status: 403, headers: TEXT });
 }
+
+/* ------------------------------------------------------------------ *
+ * The credential family: form-encoded in, JSON at better-auth
+ * ------------------------------------------------------------------ */
+
+/**
+ * ONE fact makes this section exist: better-auth's router accepts `application/json` and
+ * nothing else, so every `<form method="post">` the credential pages render — which is how
+ * a server-rendered page submits anything — is answered 415 UNSUPPORTED_MEDIA_TYPE by its
+ * endpoints. The templates are §13's contract and are not the thing to change, so the hub
+ * owns the targets instead (pages/model's `paths.auth`) and each one is a translation:
+ * read the form, call better-auth as JSON through identity's one door
+ * (`callAuthResponse`), carry its Set-Cookie headers to the browser, redirect.
+ *
+ * Nothing about §4's custody moves: better-auth is still reached only through identity,
+ * and the credential family is still fronted by no pmcp tool. What moved is the URL in
+ * the `action=`, and the reason is a content type.
+ *
+ * /login's three forms, translated. `step` is which challenge card the refusal returns to,
+ * and its absence is the credentials card. The whole outcome of a sign-in is in the
+ * RESPONSE headers rather than the body, which is why this holds the Response.
+ */
+async function signInTranslation(
+  c: Context,
+  endpoint: string,
+  body: (form: FormData) => Record<string, unknown>,
+  step?: "totp" | "backup-code",
+): Promise<Response> {
+  // deps: identity.callAuthResponse
+  if (crossOrigin(c.req.raw)) return new Response("Forbidden", { status: 403, headers: TEXT });
+  const form = await c.req.formData();
+  const landing = landingOf(form);
+  const answered = await callAuthResponse(c.req.raw, endpoint, body(form));
+  if (answered === null || !answered.ok) {
+    // §15: one sentence, naming no submitted value — the password reaches no URL, no log
+    // and no rendered page — and the SAME sentence whichever half was wrong, which is also
+    // the answer that tells a prober nothing about which usernames exist.
+    return redirectWith(
+      loginUrl({
+        step,
+        error: step === undefined ? WRONG_CREDENTIALS : WRONG_CODE,
+        username: step === undefined ? field(form, "username") : null,
+        next: landing,
+      }),
+      null,
+    );
+  }
+  const outcome = (await answered.json().catch(() => ({}))) as { twoFactorRedirect?: boolean };
+  // A two-factor challenge is a SUCCESS with a different destination: better-auth has just
+  // set the challenge cookie, and /login's TOTP card is where the code gets typed. Both
+  // legs carry the Set-Cookie headers, because on both legs the answer IS a cookie.
+  return redirectWith(
+    outcome.twoFactorRedirect ? loginUrl({ step: "totp", next: landing }) : landing,
+    answered,
+  );
+}
+
+/**
+ * /account's credential forms — the same translation with a session behind it, so it is a
+ * `mutation` like every other page POST and the gate order is not restated here either.
+ * `op` is the name the redirect-back flash reports the outcome under, exactly as an
+ * ops-backed mutation reports its op key.
+ */
+function credential(
+  endpoint: string,
+  op: string,
+  body: (form: FormData, req: Request) => Record<string, unknown> | Promise<Record<string, unknown>>,
+): (c: Context) => Promise<Response> {
+  // deps: mutation · identity.callAuthResponse
+  return mutation(async (c, _session, form) => {
+    const answered = await callAuthResponse(c.req.raw, endpoint, await body(form, c.req.raw));
+    const succeeded = answered !== null && answered.ok;
+    return redirectWith(
+      noticeUrl(paths.account, op, succeeded ? { value: null } : { reason: await refusalOf(answered) }),
+      succeeded ? answered : null,
+    );
+  });
+}
+
+/**
+ * A finished credential POST's redirect, carrying better-auth's own `Set-Cookie` headers
+ * on to the browser. That forwarding is the entire reason these routes hold a Response
+ * rather than `callAuth`'s parsed body: a sign-in whose cookies are dropped has signed
+ * nobody in, and a two-factor challenge whose cookie is dropped cannot be answered.
+ */
+function redirectWith(to: string, from: Response | null): Response {
+  const headers = new Headers({ Location: to });
+  for (const cookie of from?.headers.getSetCookie() ?? []) headers.append("Set-Cookie", cookie);
+  return new Response(null, { status: 303, headers });
+}
+
+/**
+ * Where a finished sign-in lands: the form's own `callbackURL` — which is how /login
+ * carries a deep link through the round trip (LoginProps.redirectTo) — accepted only as a
+ * hub-relative path. A form field is a caller's input, and honouring an absolute one would
+ * make /login an open redirect for anyone who can get a browser to post here.
+ */
+function landingOf(form: FormData): string {
+  const target = field(form, "callbackURL") ?? "";
+  return target.startsWith("/") && !target.startsWith("//") ? target : paths.services;
+}
+
+/** /login under a set of query fields; an absent or empty one leaves no trace. */
+function loginUrl(fields: Record<string, string | null | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [name, value] of Object.entries(fields)) {
+    if (value === null || value === undefined || value === "") continue;
+    search.set(name, value);
+  }
+  const rendered = search.toString();
+  return rendered === "" ? paths.login : `${paths.login}?${rendered}`;
+}
+
+/**
+ * The origin rule the /login routes stand on, since they stand outside `mutation`'s CSRF
+ * gate — there is no session yet to derive a token from, which is exactly why web-pages
+ * case 4 excludes /login from its walk. If-present-must-match, the same shape and the same
+ * reasoning as the consumer surface's rule (index.ts): a non-browser client sends no
+ * Origin and passes, a same-site form post sends the hub's own, and the cross-site post
+ * this refuses is the one that would otherwise ride a browser's ambient cookies. The other
+ * half of the defense is not code: better-auth's session cookie is SameSite, so a
+ * cross-site post carries no session to ride in the first place.
+ */
+function crossOrigin(req: Request): boolean {
+  const origin = req.headers.get("Origin");
+  return origin !== null && origin !== env.PUBLIC_ORIGIN;
+}
+
+/** The one line a refused credential change shows: better-auth's own `message` and nothing
+ *  else out of the body. A message names a field ("[body.password] Invalid input"), never a
+ *  submitted value — and the rest of the body is not a notice's business (§15). */
+async function refusalOf(response: Response | null): Promise<string> {
+  const body = (await response?.json().catch(() => null)) as { message?: unknown } | null;
+  return typeof body?.message === "string" ? body.message : "The change was refused.";
+}
+
+/**
+ * The session TOKEN behind one of /account's listed session ids. The page knows a session
+ * by the id its listing shows and better-auth's revoke takes the token, so the listing is
+ * read again here to pair them — which is what lets AccountProps' session shape keep
+ * leaving `token` out of the props entirely (§15: a shape that named it is one careless
+ * spread away from rendering it). The token exists in this function and dies with it.
+ */
+async function sessionTokenFor(req: Request, id: string): Promise<string | null> {
+  // deps: identity.callAuth
+  const listed = await callAuth<{ id: string; token: string }[]>(req, "/list-sessions");
+  if (!Array.isArray(listed)) return null;
+  return listed.find((session) => session.id === id)?.token ?? null;
+}
+
+/** The two refusals /login ever shows. Deliberately not better-auth's own wording: these
+ *  are the only strings on this surface, and neither distinguishes which half was wrong. */
+const WRONG_CREDENTIALS = "That username and password did not match.";
+const WRONG_CODE = "That code did not work. Try again.";
 
 /* ------------------------------------------------------------------ *
  * The write side: one dispatch into the ops table

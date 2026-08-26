@@ -5,7 +5,8 @@
 // deviceAuthorization, bearer; passkey arrives with its separate package, see auth() —
 // and every table better-auth manages are hidden here;
 // no other module touches better-auth — a page that needs an answer from it asks through
-// `callAuth`, which is that rule as a function rather than as a promise) and our hashed-token
+// `callAuth`, or through `callAuthResponse` when the answer is in the headers rather than the
+// body, which is that rule as a function rather than as a promise) and our hashed-token
 // table for machines.
 // Hidden with them: the whole token scheme — minting and matching principal.TOKEN_PREFIX
 // (the wire spelling is a leaf so §15's scrubbers can hunt it without importing this), 256-bit
@@ -765,21 +766,57 @@ export async function callAuth<T>(
   endpoint: string,
   body?: Record<string, unknown>,
 ): Promise<T | null> {
+  // deps: callAuthResponse
+  // The cookie is this function's whole premise — its callers ask better-auth about the
+  // CALLER, and a question with nobody in it has no answer worth a round trip.
+  if (req.headers.get("Cookie") === null) return null;
+  const response = await callAuthResponse(req, endpoint, body);
+  if (response === null || !response.ok) return null;
+  return (await response.json().catch(() => ({}))) as T;
+}
+
+/**
+ * The same call, answered with better-auth's RESPONSE rather than its body — because some
+ * of what better-auth answers with is not in the body at all. A sign-in's whole outcome is
+ * its `Set-Cookie` headers, and the pages that translate a browser's form post into this
+ * JSON call (web.ts's credential routes) have to hand those headers on to the browser or
+ * they have signed nobody in. Everything else is `callAuth`'s: this is the raw door, and
+ * reading it is the caller's job.
+ *
+ * Unlike `callAuth` a cookie is OPTIONAL here, which is the other half of why this exists:
+ * a sign-in is precisely the request that arrives without one. Null means the call could
+ * not be made at all; a refusal comes back as a Response with its status.
+ */
+export async function callAuthResponse(
+  req: Request,
+  endpoint: string,
+  body?: Record<string, unknown>,
+): Promise<Response | null> {
   // deps: authRoutes · better-auth · cloudflare:workers env (PUBLIC_ORIGIN)
   const cookie = req.headers.get("Cookie");
-  if (cookie === null) return null;
   const app = authRoutes() as { fetch(request: Request): Promise<Response> };
-  const response = await app
+  // Deliberately NOT a pass-through of the caller's headers — the cookie is the only thing
+  // better-auth is entitled to see from the browser here — plus ONE header this call states
+  // about itself. better-auth refuses a cookie-bearing write that carries no `Origin`
+  // (MISSING_OR_NULL_ORIGIN, its CSRF rule for browsers), and that is every call made
+  // through here on a signed-in page: /account's credential writes, /device's approve and
+  // deny. The origin is the hub's own because the caller IS the hub — this request was
+  // built three lines up, on PUBLIC_ORIGIN, out of a form the route already vouched for
+  // (web.ts gates each one with either the CSRF token or its own origin rule). Forwarding
+  // the browser's header instead would hand better-auth a value nothing here has checked.
+  return app
     .fetch(
       new Request(`${env.PUBLIC_ORIGIN}${AUTH_BASE_PATH}${endpoint}`, {
         method: body === undefined ? "GET" : "POST",
-        headers: { cookie, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+        headers: {
+          origin: env.PUBLIC_ORIGIN,
+          ...(cookie === null ? {} : { cookie }),
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       }),
     )
     .catch(() => null);
-  if (response === null || !response.ok) return null;
-  return (await response.json().catch(() => ({}))) as T;
 }
 
 /**

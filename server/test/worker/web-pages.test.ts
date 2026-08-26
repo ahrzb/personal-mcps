@@ -45,7 +45,7 @@ import type { Service } from "../../src/registry";
 import { beginConnect } from "../../src/upstream";
 import { upstreamUrlFor } from "../harness/fake-upstream";
 import type { AsScenario, UpstreamScenario } from "../harness/fake-upstream";
-import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
+import { seedNamespace, seedOwnerCredential, seedOwnerSession, SEEDED_OWNER_PASSWORD, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace, SeededSession } from "../harness/seed";
 
 /**
@@ -359,6 +359,95 @@ function post(
 }
 
 /**
+ * One form as a BROWSER submits it: `application/x-www-form-urlencoded`, which is exactly
+ * the content type better-auth's router refuses (its endpoints allow `application/json`
+ * only). `post` above sends multipart FormData and is refused the same way, so the two
+ * helpers are not interchangeable — this one is what the credential cases are about.
+ */
+function formPost(
+  target: string,
+  fields: Record<string, string>,
+  cookie?: string,
+): Promise<Response> {
+  return call(
+    new Request(`${ORIGIN}${target}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        // A same-site form post carries one, and the credential routes have their own
+        // origin rule (they stand outside the CSRF gate — /login has no session yet).
+        Origin: ORIGIN,
+        ...(cookie === undefined ? {} : { Cookie: cookie }),
+      },
+      body: new URLSearchParams(fields).toString(),
+    }),
+  );
+}
+
+/** One page fetched with NO cookie at all — the state a human who cannot sign in is in. */
+async function anonymousPage(path: string): Promise<string> {
+  const response = await call(new Request(`${ORIGIN}${path}`));
+  expect(response.status, `GET ${path}`).toBe(200);
+  return response.text();
+}
+
+/**
+ * The session cookie a response set, or null. Matched by the NAME better-auth chose rather
+ * than a spelled one (the `__Secure-` prefix depends on the origin), read off the fixture's
+ * own cookie; a cleared cookie (`name=`) is not a session and answers null.
+ */
+function sessionCookieOf(response: Response): string | null {
+  const name = world.session.cookie.split("=")[0];
+  return (
+    response.headers
+      .getSetCookie()
+      .map((header) => header.split(";")[0])
+      .find((pair) => pair.startsWith(`${name}=`) && pair.length > name.length + 1) ?? null
+  );
+}
+
+/** One rendered form as a browser would submit it untouched: every named control under the
+ *  value the page put there — hidden fields carry real ones (the CSRF token, the redirect
+ *  target, a row id) and typed fields carry "". */
+function submissionOf(body: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const control of body.matchAll(/<input\b([^>]*)>/g)) {
+    const name = attributeOf(control[1], "name");
+    if (name === null) continue;
+    fields[name] = decodeEntities(attributeOf(control[1], "value") ?? "");
+  }
+  return fields;
+}
+
+/** Every page that renders a credential form — /login's three cards, the signed-in shell's
+ *  Sign out, /account's two-factor controls, and the destructive confirm dialog. */
+async function credentialPages(cookie: string): Promise<string[]> {
+  return [
+    await anonymousPage(paths.login),
+    await anonymousPage(`${paths.login}?step=totp`),
+    await anonymousPage(`${paths.login}?step=backup-code`),
+    await page(paths.services, cookie),
+    await page(paths.account, cookie),
+    await page(paths.accountConfirm("disable-two-factor"), cookie),
+  ];
+}
+
+/** The confirm link /account renders beside one session's Revoke button, or null when it
+ *  rendered none — built from `paths` so the page and the walk cannot spell it differently. */
+function revokeLinkFor(html: string, sessionId: string): string | null {
+  const link = paths.accountConfirm("revoke-session", sessionId);
+  return html.includes(link.replace(/&/g, "&amp;")) ? link : null;
+}
+
+/** The session id behind a cookie — identity's own answer, the same one /account badges. */
+async function sessionIdOf(cookie: string): Promise<string> {
+  const { sessionId } = await requireOwnerSession(
+    new Request(`${ORIGIN}${paths.account}`, { headers: { Cookie: cookie } }),
+  );
+  return sessionId;
+}
+
+/**
  * Substitutes counting handlers into the ops table for the length of one case and restores
  * them there — the mechanism the "was it invoked" cases rest on. The substitute records
  * its input and does NOTHING else, so a page that mutated D1 on its own would leave a
@@ -432,17 +521,22 @@ describe("§13 · CSRF on every mutating POST", () => {
   });
 
   it("4. §13 · every mutating form the pages render carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one", async () => {
-    // Two exclusions, both structural rather than convenient. /login is not walked at all:
-    // there is no session yet to derive a token from. And a form that posts to
+    // Three exclusions, all structural rather than convenient. /login is not walked at
+    // all: there is no session yet to derive a token from. A form that posts to
     // better-auth's own mount is outside this module's gate by design — §4 gives that
     // surface its own origin defense, which is also why /login's forms carry no token.
-    // Everything that reaches a hub route is walked.
+    // And Sign out is the SHELL's form rather than any page's: layout.tsx renders it into
+    // every signed-in page and LayoutProps carries no csrfToken to put in it, so what
+    // stands in for the token there is the origin rule better-auth itself applied while
+    // that form still posted to better-auth (pages/model's `paths.auth` says so).
+    // Everything else that reaches a hub route is walked.
     let hubForms = 0;
     for (const [path, html] of Object.entries(await sessionPages())) {
       for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
         if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
         const action = decodeEntities(attributeOf(form[1], "action") ?? "");
         if (action.startsWith(`${paths.auth.base}/`)) continue;
+        if (action === paths.auth.signOut) continue;
         hubForms += 1;
         expect(/name="csrf"\s+value="[^"]+"/.test(form[2]), `${action} on ${path} carries no CSRF field`).toBe(true);
       }
@@ -694,15 +788,142 @@ describe("§7/§13 · the OAuth callback shell", () => {
   });
 });
 
+describe("§4/§13 · the credential forms speak the browser's content type", () => {
+  /** The owner these cases sign in as. Their own namespace, so a sign-in, a failed
+   *  attempt or a revoked session cannot move any other case's world. */
+  let signer: SeededNamespace;
+
+  beforeAll(async () => {
+    signer = await seedNamespace(env.DB, {});
+    await seedOwnerCredential(signer.owner.userId);
+  });
+
+  it("21. §13 · /login's own sign-in form, submitted as a browser submits it (application/x-www-form-urlencoded), lands a session cookie and a redirect — better-auth's endpoints allow application/json only, so a form posted straight at one answers 415 and no human ever signs in", async () => {
+    const action = actionFor(await anonymousPage(paths.login), "username");
+    const answered = await formPost(action, {
+      username: signer.owner.username,
+      password: SEEDED_OWNER_PASSWORD,
+      // Deliberately NOT the default landing page: /services is also where a missing or
+      // refused callbackURL falls back to, so asserting it would pass either way. This is
+      // the deep link /login carries through the round trip (LoginProps.redirectTo).
+      callbackURL: paths.audit,
+    });
+    expect(answered.status, await answered.text()).toBe(303);
+    expect(answered.headers.get("Location")).toBe(paths.audit);
+    const cookie = sessionCookieOf(answered);
+    expect(cookie, "the sign-in set no session cookie").not.toBeNull();
+    // The cookie is a real session, not merely a header: it opens a page that requires one.
+    const opened = await get(paths.services, cookie ?? "");
+    expect(opened.status).toBe(200);
+    expect(await opened.text()).toContain(signer.owner.username);
+  });
+
+  it("22. §15 · a wrong password re-renders /login with its field error and NO session cookie (the refusal twin of 21) — and the password appears in neither the redirect nor the page", async () => {
+    const action = actionFor(await anonymousPage(paths.login), "username");
+    const wrong = "FAKE0000-not-the-seeded-password";
+    const answered = await formPost(action, {
+      username: signer.owner.username,
+      password: wrong,
+      callbackURL: paths.services,
+    });
+    expect(answered.status).toBe(303);
+    const to = answered.headers.get("Location") ?? "";
+    expect(to.startsWith(paths.login)).toBe(true);
+    expect(sessionCookieOf(answered)).toBeNull();
+    expect(to).not.toContain(wrong);
+    const rerendered = await anonymousPage(to);
+    // The credentials card, redrawn with its error and the username echoed back so only
+    // the password is retyped (LoginStep's "credentials" arm).
+    expect(rerendered).toContain("field-error");
+    expect(rerendered).toContain(signer.owner.username);
+    expect(rerendered).not.toContain(wrong);
+  });
+
+  it("23. §4 · the TOTP and backup-code challenge forms are translated too: each posts form-encoded to a hub route that answers a redirect back to its own /login step, never better-auth's 415", async () => {
+    for (const [step, op] of [
+      ["totp", "verify-totp"],
+      ["backup-code", "verify-backup-code"],
+    ] as const) {
+      const action = actionFor(await anonymousPage(`${paths.login}?step=${step}`), op);
+      const answered = await formPost(action, { code: "000000", callbackURL: paths.services });
+      expect(answered.status, `POST ${action}`).toBe(303);
+      // No challenge is pending, so this is the refusal leg: back to the same card, with a
+      // message and without a session.
+      const to = answered.headers.get("Location") ?? "";
+      expect(to).toContain(`step=${step}`);
+      expect(sessionCookieOf(answered)).toBeNull();
+    }
+  });
+
+  it("24. §13 · every credential form the pages render posts to a route this worker serves as a form — walked out of the rendered HTML, so a target that would answer 415 or 404 cannot be rendered", async () => {
+    // A session of this case's own: `sign-out` is one of the walked targets, and a
+    // successful one would end the session every other post in the walk rides.
+    const walker = await seedOwnerSession(world.ns.owner);
+    const targets = new Map<string, Record<string, string>>();
+    for (const html of await credentialPages(walker.cookie)) {
+      for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
+        if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
+        const action = decodeEntities(attributeOf(form[1], "action") ?? "");
+        const op = action.split("?")[0].split("/").filter(Boolean).pop() ?? "";
+        if (!BETTER_AUTH_ACTIONS.has(op)) continue;
+        targets.set(action, submissionOf(form[2]));
+      }
+    }
+    expect(targets.size, "no credential form was rendered to walk").toBeGreaterThan(0);
+    // Sign out last, for the reason above.
+    const walk = [...targets].sort(
+      ([a], [b]) => Number(a === paths.auth.signOut) - Number(b === paths.auth.signOut),
+    );
+    for (const [action, fields] of walk) {
+      const answered = await formPost(action, fields, walker.cookie);
+      expect(answered.status, `POST ${action}`).not.toBe(415);
+      expect(answered.status, `POST ${action}`).not.toBe(404);
+      expect(answered.status, `POST ${action}`).toBeLessThan(500);
+    }
+  });
+
+  it("25. §4 · /account's Revoke walks end to end as a browser walks it — the confirm link, the rendered form, the form-encoded POST — and the session it named is gone from the listing afterwards while the current one stays", async () => {
+    const doomed = await seedOwnerSession(world.ns.owner);
+    // Resolved BEFORE the revoke: afterwards the cookie names no session, which is the
+    // postcondition rather than a way to ask for the id.
+    const doomedId = await sessionIdOf(doomed.cookie);
+    const listed = await page(paths.account);
+    const confirm = revokeLinkFor(listed, doomedId);
+    expect(confirm, "/account rendered no revoke link for the second session").not.toBeNull();
+    const dialog = await page(confirm ?? "");
+    const answered = await formPost(
+      actionFor(dialog, "revoke-session"),
+      submissionOf(dialog),
+      world.session.cookie,
+    );
+    expect(answered.status).toBe(303);
+    // The redirect-back flash says which it was, so a refusal fails HERE with its reason
+    // rather than three lines later as an unexplained listing.
+    expect(answered.headers.get("Location")).toContain("done=");
+    const after = await page(paths.account);
+    expect(after).not.toContain(doomedId);
+    // The twin: the revoke took one session, not the listing — the current one is still
+    // here and still opens the page, while the revoked cookie is now nobody's.
+    expect(after).toContain("current");
+    expect((await get(paths.account, doomed.cookie)).status).toBe(302);
+  });
+});
+
 /* ------------------------------------------------------------------ *
  * Reading the pages back
  * ------------------------------------------------------------------ */
 
-/** The better-auth endpoints the credential forms post to, as their final path segment —
- *  read off `paths.auth` rather than spelled, so a remount moves both sides together. */
+/**
+ * The better-auth endpoints the credential forms post to, as their final path segment —
+ * read off `paths.auth` rather than spelled, so a remount moves both sides together. Every
+ * member EXCEPT `base` is a target: most are now hub-owned translation routes rather than
+ * better-auth's own mount (better-auth's router allows `application/json` only, so a
+ * server-rendered form cannot post to one), and each keeps the final segment of the
+ * endpoint it fronts — which is what makes the final segment still name the endpoint.
+ */
 const BETTER_AUTH_ACTIONS: ReadonlySet<string> = new Set(
   Object.values<string>(paths.auth)
-    .filter((path) => path.startsWith(`${paths.auth.base}/`))
+    .filter((path) => path !== paths.auth.base)
     .map((path) => path.split("/").pop() ?? ""),
 );
 

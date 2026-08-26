@@ -285,27 +285,53 @@ export const paths = {
   },
 
   /**
-   * better-auth's mount (§4). The credential family is deliberately never a pmcp
-   * tool and never a hub-owned route, so /login and /account post straight here.
-   * The spellings are pinned in this one place: if the plugin set is remounted,
-   * no template changes.
+   * The credential family (§4) — deliberately never a pmcp tool, and, since
+   * 2026-08-26, deliberately not better-auth's own URLs either. WHY, because it would
+   * otherwise read as a regression: better-auth's router accepts `application/json`
+   * and nothing else, so a `<form method="post">` aimed at one of its endpoints is
+   * answered 415 UNSUPPORTED_MEDIA_TYPE — a human could not sign in at all. Every
+   * target below that a FORM posts to is therefore a HUB-OWNED translation route
+   * (web.ts): it reads the form body, calls better-auth as JSON through identity's
+   * `callAuthResponse` — §4's sole-custodian seam is still the only door — hands
+   * better-auth's own `Set-Cookie` headers back to the browser, and redirects. The
+   * templates are unchanged and the custody rule is unchanged; only the `action=` moved.
+   *
+   * Each hub path KEEPS the final segment of the endpoint it fronts, so a target still
+   * names its endpoint (`…/verify-totp` is `/two-factor/verify-totp`) — the same
+   * final-segment convention the ops-backed targets above follow, one rule for both.
+   *
+   * `signOut` is translated too, and its case is worth stating because it looks like it
+   * should not need to be: the shell's form has NO controls, so a browser posts it with
+   * an empty body — and better-auth answers that 415 as well (verified against a running
+   * worker, 2026-08-26). "Sign out" was exactly as broken as "Sign in". It is the one
+   * target that reaches its hub route without a CSRF token, because layout.tsx renders it
+   * inside every page's shell and LayoutProps carries none to render; what stands in its
+   * place is the same origin rule better-auth itself applied while the form still posted
+   * there (web.ts's `crossOrigin`), so nothing was traded away.
+   *
+   * Two stay on better-auth's mount: `signInPasskey` and `passkeyRegister` are WebAuthn
+   * ceremonies, never a form post in the first place, so there is no form body to
+   * translate at all (see login.tsx's deliberately inert passkey button).
    */
   auth: {
-    /** Where the composition root mounts the group — the prefix every path below
-     *  carries. identity's, not this file's: the mount and the base path better-auth
-     *  itself routes on are one decision (identity.AUTH_BASE_PATH). */
+    /** Where the composition root mounts better-auth — the prefix the two untranslated
+     *  paths below carry, and the prefix identity's `callAuth` builds on. identity's, not
+     *  this file's: the mount and the base path better-auth itself routes on are one
+     *  decision (identity.AUTH_BASE_PATH). */
     base: AUTH_BASE_PATH,
-    signIn: "/api/auth/sign-in/username",
+    signIn: "/login/sign-in/username",
     signInPasskey: "/api/auth/sign-in/passkey",
-    signOut: "/api/auth/sign-out",
-    totpVerify: "/api/auth/two-factor/verify-totp",
-    backupCodeVerify: "/api/auth/two-factor/verify-backup-code",
-    totpEnable: "/api/auth/two-factor/enable",
-    totpDisable: "/api/auth/two-factor/disable",
-    backupCodesGenerate: "/api/auth/two-factor/generate-backup-codes",
+    signOut: "/login/sign-out",
+    /** /login's challenge card posts here, and so would /account's enrollment card —
+     *  which cannot render today (see accountProps's note on `enrollment`). */
+    totpVerify: "/login/two-factor/verify-totp",
+    backupCodeVerify: "/login/two-factor/verify-backup-code",
+    totpEnable: "/account/two-factor/enable",
+    totpDisable: "/account/two-factor/disable",
+    backupCodesGenerate: "/account/two-factor/generate-backup-codes",
     passkeyRegister: "/api/auth/passkey/generate-register-options",
-    passkeyDelete: "/api/auth/passkey/delete-passkey",
-    sessionRevoke: "/api/auth/revoke-session",
+    passkeyDelete: "/account/passkey/delete-passkey",
+    sessionRevoke: "/account/revoke-session",
   },
 } as const;
 
@@ -1256,6 +1282,10 @@ export async function accountProps(ctx: PageContext, req: Request): Promise<Acco
     callAuth<{ user?: { twoFactorEnabled?: boolean } }>(req, "/get-session"),
     callAuth<BetterAuthSession[]>(req, "/list-sessions"),
   ]);
+  // better-auth's listing, defended: the shape is better-auth's own to change, and
+  // /account showing an empty list is a better answer than a 500 (callAuth's contract
+  // reads a bodiless success as `{}`, which is not a listing).
+  const rows = (Array.isArray(sessions) ? sessions : []).map((row) => sessionRow(row, ctx.sessionId));
   return {
     ...(await shell(ctx, "account")),
     csrfToken: ctx.csrfToken,
@@ -1265,12 +1295,34 @@ export async function accountProps(ctx: PageContext, req: Request): Promise<Acco
     enrollment: null,
     revealedBackupCodes: null,
     passkeys: [],
-    // better-auth's listing, defended: the shape is better-auth's own to change, and
-    // /account showing an empty list is a better answer than a 500 (callAuth's contract
-    // reads a bodiless success as `{}`, which is not a listing).
-    sessions: (Array.isArray(sessions) ? sessions : []).map((row) => sessionRow(row, ctx.sessionId)),
-    confirm: null,
+    sessions: rows,
+    confirm: accountConfirm(ctx.query, rows),
   };
+}
+
+/**
+ * Which destructive dialog /account is rendering, read off its own query string — the
+ * `?confirm=…` link every Remove/Revoke/Disable control on the page already points at
+ * (`paths.accountConfirm`). Server-rendered state, so the confirm step works with
+ * scripting off; a `confirm` that names no row on the page is no dialog at all rather
+ * than a dialog about nothing, which is also what keeps a guessed id from drawing one.
+ *
+ * `remove-passkey` can never match: the passkey plugin is not installed, so `passkeys`
+ * is always empty (see this function's caller). It is spelled anyway, because the
+ * missing arm would otherwise read as an oversight rather than as that ceiling.
+ */
+function accountConfirm(query: URLSearchParams, sessions: SessionRow[]): AccountConfirm | null {
+  const id = query.get("id") ?? "";
+  switch (query.get("confirm")) {
+    case "disable-two-factor":
+      return { kind: "disable-two-factor" };
+    case "revoke-session": {
+      const row = sessions.find((session) => session.id === id && !session.current);
+      return row === undefined ? null : { kind: "revoke-session", id, client: row.client };
+    }
+    default:
+      return null;
+  }
 }
 
 /** The session fields /account draws, as better-auth's own listing spells them.
@@ -1315,10 +1367,16 @@ export function loginProps(now: string, query: URLSearchParams): LoginProps {
 
 /** Which of /login's three forms to draw, and what to say under the offending control.
  *  better-auth answers a password POST with either a session or a two-factor challenge,
- *  and the query string is how that answer comes back to a server-rendered page. */
+ *  and the query string is how that answer comes back to a server-rendered page.
+ *
+ *  TWO spellings, and the second is not a convenience: web.ts's credential routes send
+ *  `?step=`, while login.tsx's own "Use a backup code instead" link sends `?method=`
+ *  (its `switchMethod`, a locked template). One of the two would otherwise silently draw
+ *  the sign-in card instead of the card the owner asked for, which is a dead link in the
+ *  middle of the challenge — so both are read here rather than one of them being wrong. */
 function loginStep(query: URLSearchParams): LoginStep {
   const error = query.get("error");
-  const step = query.get("step");
+  const step = query.get("step") ?? query.get("method");
   if (step === "totp" || step === "backup-code") return { kind: step, error };
   return { kind: "credentials", username: query.get("username") ?? "", error };
 }

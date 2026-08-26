@@ -129,6 +129,7 @@ the failure is a spec question, not an execution one.
 | D9 | Web surface wiring + Web Push | workflow | **gated ✓** (`59264a5`, deploy `b0853623`, SMOKE PASS 25/25 live) |
 | D10 | Final sweep (zero-todo, cross-module PSD, cost actuals) | workflow + inline | **gated ✓** (`13a8179`+`c6f8ee9`, deploy `4d3bf3d7`, SMOKE PASS 25/25 live) |
 | D11 | Remediation: D10 sweep's 9 findings + 12 coverage gaps | workflow ×2 + inline | **gated ✓** (`35a5268`+`3a3a67a`, deploy `d0879ada`, SMOKE PASS 25/25 live) |
+| D12 | Inbound OAuth — the hub as an authorization server (§19) | probe + workflow (7 agents) + inline gate | **gated ✓** (`be94c17` fixture, `f4ffd75` impl, `b52e563`+`3a9526c` fixes, deploy `c31c4be0`, SMOKE PASS 26/26 live) |
 
 Order is dependency-driven: nothing waits on anything it doesn't consume. D2–D3
 could overlap in principle (disjoint suites) but share `server/src/registry.ts`, so
@@ -920,3 +921,41 @@ check and (manual, once) a real push notification to a real browser.
   nothing prunes stale audit rows past retention (out of D11 scope). All Opus
   per the subagent-model rule. Next: D12 — inbound OAuth — off the READY spec
   (`26d5d12`); its plan opens with a blocking better-auth probe stage.
+- 2026-08-26 — **D12 gated — the hub is an inbound OAuth authorization server.**
+  A claude.ai connector can now attach without a pasted key: discover the AS off
+  `/<user>/mcp`'s 401, run code+PKCE in the owner's browser, consent to a service
+  account, present a hub-signed JWT the door resolves to `sa:<slug>` —
+  indistinguishable from that account's `pmcp_sa_` key from the moment it lands
+  (§18 decision 23). The blocking probe ran first and settled §19.1: the verify
+  primitive is `verifyJwsAccessToken` from `better-auth/oauth2` (the symbol the
+  first spec draft wrongly said didn't exist) with a FUNCTION `jwksFetch` source —
+  local verify, zero extra D1 reads, no direct `jose` dep; `verifyJWT` is unusable
+  outside an endpoint context. Six GREEN, one AMBER (that §19.1 correction), no
+  RED; the probe also closed open questions 1 (the `oauthResource` row is
+  necessary) and 5 (Ed25519 works on workerd). Implementation ran A→B→C→D→E, each
+  group red-first from the plan's oracle titles, then a two-agent adversarial PSD
+  (both PASS: the door leg is provably terminal — no JWT-shaped bearer reaches the
+  session lookup, structural not enumerative; `oauth.ts` hides that better-auth is
+  the AS). Three integration-seam blockers surfaced by the groups and fixed inline
+  by the orchestrator (each an unowned seam: the `oauth` mount's page fallback, the
+  missing `allowPublicClientPrelogin`, and `cli/test/commands.test.ts`'s ARGV
+  mirror). Gate: suite 1041/1041 (35 files), tsc 0, pytest 58/58, inventory +74 /
+  0 removed / 0 downgraded, migration 0005 applies fresh + no-op re-applies.
+  **The live smoke earned its keep**: it caught a production **Error 1102**
+  ("Worker exceeded resource limits") on the create path that the vitest suite
+  could never see (miniflare enforces no resource limits) — root-caused by
+  benchmark to D12's `jwt()`+`oauthProvider()` making each `betterAuth()`
+  construction ~5.6x heavier (~0.65→~4.30 ms) while `auth()` rebuilt it per
+  request; fixed by memoizing `auth()` per isolate (`buildAuth()`, 29x cheaper
+  repeated construction, worker suite 624/624 green — env from `cloudflare:workers`
+  is per-isolate-stable). Two smoke-only fixes for real provider behavior: the
+  `/oauth2/authorize` `{redirect,url}` envelope a `fetch` gets vs the 302 a browser
+  gets, and the form-encoded `/oauth2/token` exchange (JSON is 415). Deploy
+  `c31c4be0`, **SMOKE PASS 26/26 live** — the full round-trip mints a JWT reaching
+  `tools/call` on both endpoint shapes as `sa:<slug>`, and revoking it 401s the
+  next call. The contracts fixture landed alone (`be94c17`) per the CI rule.
+  Candidate recorded, not a postmortem (the gate caught it pre-user): the vitest
+  suite cannot catch Workers resource-limit regressions — the live smoke is the
+  only net, so bundle/construction-cost growth needs a deliberate watch. All
+  subagents Opus/Sonnet per the model rule. Next: D13 (§20, the MCP data model) —
+  NOT started at the owner's instruction.

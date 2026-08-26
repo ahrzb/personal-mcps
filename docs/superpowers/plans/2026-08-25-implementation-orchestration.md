@@ -128,6 +128,7 @@ the failure is a spec question, not an execution one.
 | D8 | CLI + JS/Python clients, against the live hub | workflow | **gated ✓** (`80860c2`+`c308190` spec, SMOKE PASS 24/24 live) |
 | D9 | Web surface wiring + Web Push | workflow | **gated ✓** (`59264a5`, deploy `b0853623`, SMOKE PASS 25/25 live) |
 | D10 | Final sweep (zero-todo, cross-module PSD, cost actuals) | workflow + inline | **gated ✓** (`13a8179`+`c6f8ee9`, deploy `4d3bf3d7`, SMOKE PASS 25/25 live) |
+| D11 | Remediation: D10 sweep's 9 findings + 12 coverage gaps | workflow ×2 + inline | **gated ✓** (`35a5268`+`3a3a67a`, deploy `d0879ada`, SMOKE PASS 25/25 live) |
 
 Order is dependency-driven: nothing waits on anything it doesn't consume. D2–D3
 could overlap in principle (disjoint suites) but share `server/src/registry.ts`, so
@@ -892,3 +893,30 @@ check and (manual, once) a real push notification to a real browser.
   as `5d8a112` (README + client quickstart, user request). Every dispatch
   D0–D10 is now gated ✓; open threads live in the D11 plan (incl. the
   inbound OAuth server for claude.ai connectors) and the postmortem index.
+- 2026-08-26 — **D11 gated — the D10 sweep's debt is paid.** Two Opus
+  workflows: the remediation wave (`wf_c65b03d1-52b`, 4 fix + 4 gap + 1 PSD)
+  fixed §4's recent-auth-on-credential-POSTs, the bearer→credential-family
+  reach, redaction fail-open, and four tunnel findings, and authored the 12
+  coverage gaps red-first; then a PSD-remediation wave (`wf_d918fc31-904`, 5
+  fix + 1 PSD) turned that review's own findings into fixes — the bearer guard
+  inverted from a fail-OPEN denylist of better-auth's route table to a
+  fail-CLOSED allowlist, the "may have executed" disclosure unified into one
+  errors.ts class→semantics table both dispatch backends read, an unbounded
+  re-warm bounded to one in flight, the §10 aggregated-tool-name charset gate
+  implemented, PasswordField's per-caller id dropped, and the 100%-dead
+  `pmcp --since/--until/--expires` duration flags made real. The second PSD
+  found ONE blocker and verified it end-to-end: the first allowlist admitted
+  the whole `/device` subtree, so a stolen CLI token could self-approve a
+  SECOND owner session surviving revocation of the first (§4's persistent
+  takeover, reached through the door the fix closed). Fixed inline — allowlist
+  narrowed to `/sign-out` + the anonymous `/device/code`·`/device/token` legs,
+  claim/approve/deny cookie-only, smoke.ts moved to cookie approval — and
+  mutation-checked (reverting the allowlist reddens the retargeted case).
+  Gate: suite 967/967 (34 files, 907→967: 60 passing adds + 3 cascade-case
+  rewordings for `upstream_oauth_state`, no removed coverage), tsc 0, pytest
+  58/58, deploy `d0879ada`, SMOKE PASS 25/25 live (the device step now drives
+  cookie approval on prod). The `initialize` fixture landed as its own commit
+  `3a3a67a` per the contracts rule. Candidate finding recorded, not fixed:
+  nothing prunes stale audit rows past retention (out of D11 scope). All Opus
+  per the subagent-model rule. Next: D12 — inbound OAuth — off the READY spec
+  (`26d5d12`); its plan opens with a blocking better-auth probe stage.

@@ -1,0 +1,15 @@
+{
+  "name": "@personal-mcps/client",
+  "version": "0.0.0",
+  "description": "Keep an MCP server reachable through a personal-mcps hub's reverse tunnel.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahrzb/personal-mcps.git",
+    "directory": "clients/js"
+  },
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
+}

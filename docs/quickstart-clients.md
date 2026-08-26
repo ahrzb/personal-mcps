@@ -6,9 +6,9 @@ through the hub's reverse tunnel. You write the server with the official MCP SDK
 socket. Python and TypeScript are twins — same options, same lifecycle, same
 close-code policy (spec §6, §11).
 
-Neither library is published to a registry yet: the Python package installs from
-[clients/py](../clients/py) as an editable/path dependency, and the TypeScript one
-is imported from [clients/js/src](../clients/js/src) inside this workspace.
+Neither library is published to a registry yet — both install straight from this
+git repo ([clients/py](../clients/py) and [clients/js](../clients/js) are the
+package roots).
 
 ## 0. One-time setup
 
@@ -37,7 +37,13 @@ export PMCP_SERVICE_TOKEN=pmcp_svc_...   # from service create
 ## 1. Python
 
 ```bash
-pip install -e path/to/personal-mcps/clients/py   # or: uv add --editable .../clients/py
+pip install "git+https://github.com/ahrzb/personal-mcps.git#subdirectory=clients/py"
+```
+
+or with uv:
+
+```bash
+uv add "pmcp-client @ git+https://github.com/ahrzb/personal-mcps.git#subdirectory=clients/py"
 ```
 
 Requires Python ≥ 3.12. Build the server with the official `mcp` SDK, then hand it
@@ -84,10 +90,17 @@ from the token.
 
 ## 2. TypeScript
 
-From inside this workspace:
+```bash
+pnpm add "github:ahrzb/personal-mcps#path:clients/js"
+```
+
+(npm cannot install a subdirectory of a git repo — use pnpm, or clone and depend
+on `clients/js` by path.) The package ships TypeScript source: Node ≥ 23.6 runs
+it natively via type stripping; older Nodes need `--experimental-strip-types` or
+a bundler.
 
 ```ts
-import { serve } from "../clients/js/src/index.ts"; // @personal-mcps/client
+import { serve } from "@personal-mcps/client";
 
 // `server` is your MCP server from @modelcontextprotocol/server v2
 // (McpServer or Server) — register tools on it with the SDK as usual.

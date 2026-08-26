@@ -6,13 +6,11 @@
 # step crosses the boundary, and a Python library that needed a pnpm install to be
 # tested would defeat the point of copying the wire shapes in the first place (§4).
 #
-# RUNNER STAGE. `uv sync --group dev` has been run: the environment and `uv.lock` exist
-# and `uv run pytest` collects the whole outline. Every source function still raises
-# `NotImplementedError` and every test module is skipped at the module level
-# (`pytestmark = pytest.mark.skip(reason="outline")`), so the suite reports pending and
-# nothing here can go green by accident. The lists below stay unpinned deliberately —
-# the lock file is the pin, and version floors land with the first test that depends on
-# one.
+# IMPLEMENTED. `uv sync --group dev` has been run: the environment and `uv.lock` exist
+# and `uv run pytest` runs the suite green — every outline function and every test
+# body from the RUNNER STAGE has been filled in. The lists below stay unpinned
+# deliberately — the lock file is the pin, and version floors land with the first
+# test that depends on one.
 
 [project]
 name = "pmcp-client"
@@ -36,6 +34,9 @@ dependencies = [
     # reconnect loop both run on. Pinned to the asyncio backend everywhere; see the
     # pytest section below for why the test lane pins it too.
     "anyio",
+    # Imported directly (Secret[T]'s json_schema_extra marking) — declared even though
+    # mcp already brings it, so this library never rides a transitive dependency.
+    "pydantic",
 ]
 
 [dependency-groups]

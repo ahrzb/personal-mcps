@@ -34,11 +34,21 @@
 // chosen, so two files never collide. Every hub is closed in a teardown — a leaked
 // listener outlives the case that made it.
 //
+// (RESOLVED at implementation: the reconnect SCHEDULE is observed through the library's
+// module-level `seams.sleep` recorder rather than through fake timers — the transport's waits are
+// then values a fixture reads, and this harness's real socket I/O never races a frozen
+// clock. Fake timers remain the right tool for the ~25 s ping cadence, which is a timer
+// this harness watches on the wire.)
+//
 // deps: `ws` (real WebSocketServer, real upgrade handling) · node:http (the server the
 //   upgrade rides on) · clients/js/src/index.ts Roles (declaration shape only) — no MCP
 //   SDK, no server module, nothing from `contracts/` (the fixture is the TEST's oracle,
 //   not this harness's input)
 
+import { createServer } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
+import type { Socket } from "node:net";
+import { WebSocket, WebSocketServer } from "ws";
 import type { Roles } from "../src/index";
 
 /**
@@ -63,7 +73,15 @@ export type UpgradeOutcome = { kind: "accept" } | { kind: "reject"; status: numb
  */
 export type RegisterOutcome =
   | { kind: "accept" }
-  | { kind: "reject"; error: { code: number; message: string } };
+  | { kind: "reject"; error: { code: number; message: string } }
+  /**
+   * Answer with this exact frame, with the OBSERVED request id filled in — the seam
+   * contracts-consumer.test.ts needs to replay `contracts/tunnel-frames.json`'s own ack
+   * and rejection rather than a paraphrase of them. The id is the one thing a fixture
+   * cannot pin (contracts/README: "nothing that varies per run"), and a reply that
+   * correlates to nothing would leave registration unanswered until the 10 s deadline.
+   */
+  | { kind: "replay"; frame: Record<string, unknown> };
 
 /**
  * How the hub ends a live connection — the second half of §6's policy input. `replaced`
@@ -129,13 +147,10 @@ export type FakeHubOptions = {
   upgrades?: readonly UpgradeOutcome[];
   /** The register answer per connection, consumed and repeated the same way. Omitted means accept. */
   registrations?: readonly RegisterOutcome[];
-  /**
-   * Whether the server verifies the dial is a well-formed WebSocket upgrade before
-   * applying `upgrades`. On by default and rarely turned off: a harness that answered a
-   * plain GET with 101 would let a transport that never upgraded pass.
-   */
-  requireUpgrade?: boolean;
 };
+
+/** How long an observation wait may go unanswered before the case fails instead of hanging. */
+const OBSERVATION_DEADLINE_MS = 5_000;
 
 /**
  * A live fake hub — one LISTENER, many connections. Unlike the fake service on the server
@@ -145,26 +160,98 @@ export type FakeHubOptions = {
  */
 export class FakeHub {
   /** The https origin a fixture hands the transport: `http://127.0.0.1:<port>`. The wss address is the client's to derive (§6), and asserting that derivation is what `Dial.path` is for. */
-  readonly origin!: string;
+  readonly origin: string;
 
   /**
    * Every upgrade attempt this listener saw, in arrival order — the redial oracle. A
    * refusal row asserts this stops growing; a retry row asserts it keeps growing, and on
    * which schedule.
    */
-  readonly dials!: readonly Dial[];
+  readonly dials: Dial[] = [];
 
   /**
    * Every frame received across every connection, in arrival order. `hub/register`
    * re-sends appear here once per connection, which is how §6's "re-sent on every
    * (re)connect" is observed from outside the transport.
    */
-  readonly frames!: readonly ReceivedFrame[];
+  readonly frames: ReceivedFrame[] = [];
+
+  /** Every protocol PING this listener observed, by arrival time — §6's liveness sentence,
+   *  witnessed on the wire rather than inferred from the client's own report. */
+  readonly pings: number[] = [];
+
+  private readonly server: Server;
+  private readonly wss: WebSocketServer;
+  private readonly open = new Set<WebSocket>();
+  private upgrades: readonly UpgradeOutcome[];
+  private readonly registrations: readonly RegisterOutcome[];
+  private connections = 0;
+  private watchers: (() => void)[] = [];
+
+  constructor(server: Server, port: number, options: FakeHubOptions) {
+    this.server = server;
+    this.origin = `http://127.0.0.1:${port}`;
+    this.upgrades = options.upgrades ?? [{ kind: "accept" }];
+    this.registrations = options.registrations ?? [{ kind: "accept" }];
+    this.wss = new WebSocketServer({ noServer: true });
+
+    this.server.on("upgrade", (request: IncomingMessage, socket: Socket, head: Buffer) => {
+      // Recorded at ARRIVAL: a refused dial counts exactly like an accepted one.
+      this.dials.push({
+        seq: this.dials.length + 1,
+        path: request.url ?? "",
+        authorization: request.headers.authorization,
+        at: Date.now(),
+      });
+      this.notify();
+      // A harness that answered a plain GET with 101 would let a transport that never
+      // upgraded pass, so the well-formedness check has no off switch.
+      if ((request.headers.upgrade ?? "").toLowerCase() !== "websocket") return refuse(socket, 426);
+      const outcome = next(this.upgrades, this.dials.length - 1);
+      if (outcome.kind === "reject") return refuse(socket, outcome.status);
+      this.wss.handleUpgrade(request, socket, head, (ws) => this.accept(ws));
+    });
+  }
+
+  /** One accepted connection: record its frames, answer its registration, nothing else. */
+  private accept(ws: WebSocket): void {
+    const connection = ++this.connections;
+    this.open.add(ws);
+    ws.on("ping", () => {
+      this.pings.push(Date.now());
+      this.notify();
+    });
+    ws.on("close", () => this.open.delete(ws));
+    ws.on("error", () => this.open.delete(ws));
+    ws.on("message", (data: unknown) => {
+      let message: Record<string, unknown>;
+      try {
+        const parsed: unknown = JSON.parse(String(data));
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return;
+        message = parsed as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      this.frames.push({ seq: this.frames.length + 1, connection, message });
+      this.notify();
+      if (message.method !== "hub/register") return;
+      const outcome = next(this.registrations, connection - 1);
+      // The id is echoed AS RECEIVED: a reply that correlates to nothing would leave
+      // registration unanswered until the deadline.
+      const reply =
+        outcome.kind === "accept"
+          ? { jsonrpc: "2.0", id: message.id, result: { ok: true } }
+          : outcome.kind === "reject"
+            ? { jsonrpc: "2.0", id: message.id, error: outcome.error }
+            : { ...outcome.frame, id: message.id };
+      ws.send(JSON.stringify(reply));
+    });
+  }
 
   /** How many sockets are open right now — the invariant behind "a refused upgrade leaves nothing connected". */
   connectionCount(): number {
     // deps: none
-    throw new Error("unimplemented");
+    return this.open.size;
   }
 
   /**
@@ -177,30 +264,35 @@ export class FakeHub {
    */
   async nextDial(n: number): Promise<Dial> {
     // deps: none
-    throw new Error("unimplemented");
+    await this.until(() => this.dials.length >= n, `dial ${n}`);
+    return this.dials[n - 1];
   }
 
   /** The frame counterpart of nextDial, with the same rationale and the same bounded failure. */
   async nextFrame(n: number): Promise<ReceivedFrame> {
     // deps: none
-    throw new Error("unimplemented");
+    await this.until(() => this.frames.length >= n, `frame ${n}`);
+    return this.frames[n - 1];
+  }
+
+  /** The ping counterpart — §6's liveness cadence, waited on as an observation like the rest. */
+  async nextPing(n: number): Promise<number> {
+    // deps: none
+    await this.until(() => this.pings.length >= n, `ping ${n}`);
+    return this.pings[n - 1];
   }
 
   /**
-   * Rewrite the remaining upgrade script mid-test. The seam the healing rows need: the
-   * fixture refuses 403 until the client is provably retrying, then flips to accept and
-   * asserts the very next dial connects — §6's unarchive path, expressed as a change in
-   * the world rather than as a second hub.
+   * Rewrite the remaining upgrade script mid-test. The seam the healing row needs: it
+   * refuses 403 until the client is provably retrying, then flips to accept and asserts the
+   * very next dial connects — §6's unarchive path, expressed as a change in the world
+   * rather than as a second hub.
    */
   setUpgrades(outcomes: readonly UpgradeOutcome[]): void {
     // deps: none
-    throw new Error("unimplemented");
-  }
-
-  /** The registration counterpart of setUpgrades — a declaration refused once and accepted after. */
-  setRegistrations(outcomes: readonly RegisterOutcome[]): void {
-    // deps: none
-    throw new Error("unimplemented");
+    // The script is consumed by dial ORDINAL, so a rewrite mid-flight has to start from
+    // where the client is, not from the beginning of time.
+    this.upgrades = [...Array.from({ length: this.dials.length }, () => outcomes[0]), ...outcomes];
   }
 
   /**
@@ -212,7 +304,7 @@ export class FakeHub {
    */
   async send(frame: Record<string, unknown>): Promise<void> {
     // deps: ws (WebSocket.send)
-    throw new Error("unimplemented");
+    for (const ws of this.open) ws.send(JSON.stringify(frame));
   }
 
   /**
@@ -224,7 +316,18 @@ export class FakeHub {
    */
   async end(ending: Ending): Promise<void> {
     // deps: ws (WebSocket.close, socket destroy for `drop`)
-    throw new Error("unimplemented");
+    for (const ws of [...this.open]) {
+      if (ending.kind === "replaced") {
+        ws.send(JSON.stringify({ jsonrpc: "2.0", method: "hub/replaced" }));
+        ws.close(4000, "replaced");
+      } else if (ending.kind === "close") {
+        ws.close(ending.code, ending.reason);
+      } else {
+        // A bare TCP sever with no close frame at all — what a hub deploy looks like.
+        ws.terminate();
+      }
+      this.open.delete(ws);
+    }
   }
 
   /**
@@ -235,7 +338,32 @@ export class FakeHub {
    */
   async close(): Promise<void> {
     // deps: ws · node:http (server.close)
-    throw new Error("unimplemented");
+    for (const ws of [...this.open]) ws.terminate();
+    this.open.clear();
+    this.wss.close();
+    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+  }
+
+  /** Every observation wait, with the bounded failure that keeps a hang from being a hang. */
+  private until(done: () => boolean, what: string): Promise<void> {
+    if (done()) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const deadline = setTimeout(() => {
+        this.watchers = this.watchers.filter((watcher) => watcher !== check);
+        reject(new Error(`the fake hub never observed ${what} (within ${OBSERVATION_DEADLINE_MS} ms)`));
+      }, OBSERVATION_DEADLINE_MS);
+      const check = (): void => {
+        if (!done()) return;
+        clearTimeout(deadline);
+        this.watchers = this.watchers.filter((watcher) => watcher !== check);
+        resolve();
+      };
+      this.watchers.push(check);
+    });
+  }
+
+  private notify(): void {
+    for (const watcher of [...this.watchers]) watcher();
   }
 }
 
@@ -246,7 +374,17 @@ export class FakeHub {
  */
 export async function startFakeHub(options?: FakeHubOptions): Promise<FakeHub> {
   // deps: ws (WebSocketServer) · node:http (createServer, listen on port 0)
-  throw new Error("unimplemented");
+  const server = createServer((_request, response) => {
+    response.statusCode = 426;
+    response.end("Upgrade Required");
+  });
+  const port = await new Promise<number>((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      resolve(typeof address === "object" && address !== null ? address.port : 0);
+    });
+  });
+  return new FakeHub(server, port, options ?? {});
 }
 
 /**
@@ -258,3 +396,17 @@ export async function startFakeHub(options?: FakeHubOptions): Promise<FakeHub> {
  * table a second oracle.
  */
 export type RegisteredDeclaration = { roles: Roles; protocolVersion: string };
+
+/** The scripted answer for the nth event; the last entry repeats forever. */
+function next<T>(script: readonly T[], index: number): T {
+  return script[Math.min(index, script.length - 1)];
+}
+
+/** A refused upgrade, answered as a REAL HTTP status on the raw socket. */
+function refuse(socket: Socket, status: number): void {
+  const phrase = { 401: "Unauthorized", 403: "Forbidden", 426: "Upgrade Required", 500: "Internal Server Error" }[
+    status
+  ] ?? "Refused";
+  socket.write(`HTTP/1.1 ${status} ${phrase}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+  socket.destroy();
+}

@@ -43,7 +43,12 @@ import type { AdminOp } from "../../src/admin";
 import { query } from "../../src/audit";
 import type { AuditRow, BodyStub } from "../../src/audit";
 import type { JsonRpcRequest, JsonRpcResponse, Tool } from "../../src/gateway";
-import { AUDIT_BODY_CAP_BYTES } from "../../src/limits";
+import {
+  AUDIT_BODY_CAP_BYTES,
+  ROLE_NAME_MAX_LENGTH,
+  ROLE_PATTERN_MAX_LENGTH,
+  ROLE_PATTERNS_MAX,
+} from "../../src/limits";
 import { tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, Registry } from "../../src/registry";
 import type { Service } from "../../src/registry";
@@ -68,6 +73,16 @@ import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 import { HUB_ERRORS } from "../../../cli/src/main";
 import type { ApprovalRequiredData, WhoamiResponse } from "../../../cli/src/main";
+// The command table is imported from its own module, not from main.ts: the mapping is
+// data, and this suite has no reason to pull the CLI's node:fs config reading into workerd.
+import { COMMANDS } from "../../../cli/src/commands";
+import {
+  parseDesired,
+  planChanges,
+  ROLE_NAME_MAX_LENGTH as PLANNER_ROLE_NAME_MAX_LENGTH,
+  ROLE_PATTERN_MAX_LENGTH as PLANNER_ROLE_PATTERN_MAX_LENGTH,
+  ROLE_PATTERNS_MAX as PLANNER_ROLE_PATTERNS_MAX,
+} from "../../../cli/src/plan";
 import type { CurrentService, PlanStep } from "../../../cli/src/plan";
 import type { BootstrapRequest, BootstrapResponse } from "../../../scripts/users";
 
@@ -1475,27 +1490,183 @@ async function captureUnderCap(): Promise<AuditRow> {
 }
 
 /**
- * BLOCKED, and recorded rather than worked around (2026-08-26). Both parity directions read
- * the CLI, and the CLI is still a skeleton: `cli/src/plan.ts`'s planChanges throws
- * `unimplemented`, so there are no emitted steps to map, and `cli/src/main.ts` exposes its
- * subcommands only as TYPES (ServiceCommand["sub"] and friends) — this file's deps line
- * names a "cli main command table" that does not exist as a value yet.
+ * UNBLOCKED 2026-08-26 — the note this replaces recorded both directions as waiting on a
+ * skeleton, and the refusals it recorded still hold: nothing below transcribes a mapping
+ * into this file. Direction C runs the REAL planner over one file-and-server pair chosen
+ * to exercise its whole vocabulary, and reads the steps it actually emitted; direction D
+ * reads `cli/src/commands.ts`'s table, which is the value main.ts dispatches through.
  *
- * The two ways to make these green today were both refused. Running planChanges anyway
- * would assert against a thrown error; transcribing the subcommand→op mapping HERE would
- * make this file its own oracle, which is the exact drift the fixtures exist to prevent —
- * §4's parity claim is only worth anything if the left-hand set is derived from the CLI.
- * They stay `it.todo` with their titles intact until the planner lands.
+ * That table lives beside main.ts rather than in it so this suite reads DATA and not the
+ * CLI: main.ts reads `~/.config/pmcp/config.json` through node:fs, which inside workerd is
+ * a compatibility shim nothing here should depend on. `plan.ts` is pure and imports cleanly.
+ *
+ * The asymmetry that leaves — direction C runs the real planner while direction D reads a
+ * table nothing ties to the dispatcher — is closed in the `cli` project, not here:
+ * `cli/test/commands.test.ts` drives `main(argv)` per row against a recording `fetch` and
+ * asserts the ops actually reached for equal the row's. Both halves are needed; this one
+ * says the row names ops the hub serves, that one says the row is true of the CLI.
  */
+
+/**
+ * One file-and-server pair that provokes every step kind the planner has: a server-only
+ * service and account (deletes), a file-only pair (creates), a changed field (update), and
+ * both archive transitions — plus a grant. Written as the YAML shape rather than as
+ * PlanStep literals on purpose: a literal here would be this file transcribing the
+ * planner's output, which is exactly the drift direction C exists to catch.
+ *
+ * Both KINDS are here, and that is load-bearing rather than thorough: `endpoint`, `auth`,
+ * `forward_identity` and `roles` are emitted only for a proxied service, so a tunnel-only
+ * fixture would leave half of service_create's and service_update's argument surface
+ * unmeasured against the real op schema — and `grant_set`'s `:approval` re-joining likewise
+ * needs one grant that carries the suffix.
+ */
+function plannerSteps(): PlanStep[] {
+  const desired = parseDesired({
+    services: {
+      fresh: {},
+      keep: { name: "Renamed" },
+      parked: { archived: true },
+      revived: {},
+      // Created: the proxy half of service_create's arguments.
+      notion: {
+        kind: "proxy",
+        endpoint: "https://mcp.notion.com/mcp",
+        auth: "oauth",
+        forward_identity: true,
+        roles: { writer: ["create_.*"] },
+      },
+      // Updated: the same fields on the other op, reached by moving the endpoint.
+      linear: { kind: "proxy", endpoint: "https://mcp.linear.app/mcp", roles: { writer: ["create_.*"] } },
+    },
+    service_accounts: { agent: { grants: { keep: ["reader"], notion: ["writer:approval"] } } },
+  });
+  const server = (slug: string, over: Partial<CurrentService> = {}): CurrentService => ({
+    slug,
+    kind: "tunnel",
+    name: slug,
+    description: "",
+    archived: false,
+    builtin: false,
+    roles: { reader: [".*"] },
+    redact: {},
+    redactResults: {},
+    logBodies: true,
+    ...over,
+  });
+  return planChanges(desired, {
+    services: [
+      server("gone"),
+      server("keep"),
+      server("parked"),
+      server("revived", { archived: true }),
+      server("linear", {
+        kind: "proxy",
+        endpoint: "https://old.linear.app/mcp",
+        auth: "headers",
+        forwardIdentity: false,
+        logBodies: false,
+        roles: { writer: ["create_.*"] },
+      }),
+    ],
+    accounts: [{ slug: "stale", name: "stale", description: "", grants: {} }],
+  }).steps;
+}
+
 describe("§4 direction C · planner steps → ops", () => {
-  it.todo("§4 · every PlanStep.tool the planner can emit is a key of ops");
-  it.todo("§4 · every emitted step's args cover its op schema's required fields");
+  it("§4 · every PlanStep.tool the planner can emit is a key of ops", () => {
+    const emitted = [...new Set(plannerSteps().map((step) => step.tool))].sort();
+    // The fixture provokes all eight, so this is a real cover and not a vacuous subset
+    // check — and every one of them must be a tool the hub actually serves.
+    expect(emitted).toEqual([
+      "account_create",
+      "account_delete",
+      "grant_set",
+      "service_archive",
+      "service_create",
+      "service_delete",
+      "service_unarchive",
+      "service_update",
+    ]);
+    for (const tool of emitted) expect(Object.keys(ops), `${tool} is not an op`).toContain(tool);
+  });
+
+  it("§4 · every emitted step's args cover its op schema's required fields", async () => {
+    const schemas = Object.fromEntries((await servedOps()).map((tool) => [tool.name, tool.inputSchema]));
+    for (const step of plannerSteps()) {
+      const schema = schemas[step.tool] as { required?: string[]; properties?: Record<string, unknown> };
+      for (const field of schema.required ?? []) {
+        expect(Object.keys(step.args), `${step.tool} omits the required ${field}`).toContain(field);
+      }
+      // The other half of "ready to forward verbatim": these schemas reject
+      // additionalProperties, so an argument the op does not declare is a refused call.
+      for (const key of Object.keys(step.args)) {
+        expect(Object.keys(schema.properties ?? {}), `${step.tool} sends an undeclared ${key}`).toContain(key);
+      }
+    }
+  }, CASE_BUDGET_MS);
+});
+
+describe("§9 · the planner's copy of the role-declaration rules", () => {
+  it("§6/§9 · the caps cli/src/plan.ts validates a proxy `roles:` block against are limits.ts's, by name — the planner's early refusal exists so `pmcp apply` never dies mid-plan, and a copy that drifted low would call a file valid that the hub then rejects AFTER the destructive delete phase has run", () => {
+    // plan.ts deliberately re-implements registry.validateRoles rather than importing it
+    // (§9: the planner never depends on the server, which is why the fixtures exist at
+    // all). A second implementation is only safe with a lock, and this case is it — the
+    // same by-name reading server/test/unit/pattern.test.ts does on the server's side.
+    expect(PLANNER_ROLE_NAME_MAX_LENGTH).toBe(ROLE_NAME_MAX_LENGTH);
+    expect(PLANNER_ROLE_PATTERN_MAX_LENGTH).toBe(ROLE_PATTERN_MAX_LENGTH);
+    expect(PLANNER_ROLE_PATTERNS_MAX).toBe(ROLE_PATTERNS_MAX);
+    // …and the copy still refuses what the server would: a declaration one pattern over
+    // the shared cap is a hard error in the plan, not a call the hub gets to reject.
+    const overCap = planChanges(
+      parseDesired({
+        services: {
+          notion: {
+            kind: "proxy",
+            endpoint: "https://mcp.notion.com/mcp",
+            roles: { writer: Array.from({ length: ROLE_PATTERNS_MAX + 1 }, (_, index) => `t_${index}`) },
+          },
+        },
+      }),
+      { services: [], accounts: [] },
+    );
+    expect(overCap.errors.length).toBeGreaterThan(0);
+  });
 });
 
 describe("§4 direction D · CLI subcommands → ops", () => {
-  it.todo("§4 · every non-auth CLI subcommand maps to an ops key");
-  it.todo("§4 · every ops key is reachable from some CLI subcommand — the reverse direction, so an op nobody can run fails here");
-  it.todo("§8 · the pinned parity exceptions (auth/credential family, the OAuth consent redirect, the JSONL export) are the ONLY unmapped names, listed explicitly rather than skipped");
+  it("§4 · every non-auth CLI subcommand maps to an ops key", () => {
+    for (const command of COMMANDS) {
+      if (command.exception === "auth") continue;
+      // Either it fronts admin ops, or it fronts the gateway method that IS the tool
+      // surface (`pmcp tools` / `pmcp call`) — nothing else is a legal row.
+      if (command.ops.length === 0) {
+        expect(command.method, `${command.name} fronts neither an op nor an MCP method`).toBeDefined();
+        expect(["tools/list", "tools/call"], command.name).toContain(command.method);
+        continue;
+      }
+      for (const op of command.ops) expect(Object.keys(ops), `${command.name} → ${op}`).toContain(op);
+    }
+  });
+
+  it("§4 · every ops key is reachable from some CLI subcommand — the reverse direction, so an op nobody can run fails here", () => {
+    const reachable = [...new Set(COMMANDS.flatMap((command) => command.ops))];
+    assertTotalMapping("CLI subcommands ↔ ops", reachable, Object.keys(ops), []);
+  });
+
+  it("§8 · the pinned parity exceptions (auth/credential family, the OAuth consent redirect, the JSONL export) are the ONLY unmapped names, listed explicitly rather than skipped", () => {
+    // "Unmapped" means fronting no op AND no gateway method — a name with nothing behind
+    // it on the hub. §8 pins three exceptions and the auth family is the only one of them
+    // that is a CLI command in its own right; the other two ride commands that DO front an
+    // op (`connect` → service_get, `audit --export jsonl` → audit_query) and are flagged
+    // there, so the exception is visible without the name going missing from the mapping.
+    const unmapped = COMMANDS.filter((command) => command.ops.length === 0 && command.method === undefined);
+    expect(unmapped.map((command) => command.name).sort()).toEqual(["login", "logout", "whoami"]);
+    expect(new Set(unmapped.map((command) => command.exception))).toEqual(new Set(["auth"]));
+    // All three pinned exceptions are named in the table, so none can be silently dropped.
+    expect(new Set(COMMANDS.flatMap((command) => (command.exception === undefined ? [] : [command.exception])))).toEqual(
+      new Set(["auth", "oauth-consent", "jsonl-export"]),
+    );
+  });
 });
 
 describe("§9 · fixture governance", () => {

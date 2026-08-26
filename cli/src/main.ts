@@ -6,7 +6,7 @@
  * aggregated-name split), the config file (`~/.config/pmcp/config.json` —
  * server origin + session token) and the PMCP_URL / PMCP_TOKEN override order,
  * every table/plan/confirmation rendering and exit-code decision, and the
- * CLI's copies of the three pinned wire shapes below. It HIDES the transport:
+ * CLI's copies of the pinned wire shapes below. It HIDES the transport:
  * every command except the auth family is presentation sugar over MCP
  * tools/call through the official MCP client (@modelcontextprotocol/client —
  * implementation-time only, never imported here), so no command is a
@@ -15,9 +15,23 @@
  * file reads, tool calls, prompts — and hands the planner plain data. Grants
  * have no imperative family on purpose: they are managed declaratively via
  * diff/apply, or through `pmcp call pmcp grant_set` like any other tool.
+ *
+ * ponytail: the "official MCP client" is not installed and no dependency may be
+ * added (§4 pins better-auth as the only one), so the two seams below speak the
+ * hub's stateless POST endpoint with `fetch` — one JSON-RPC message per request,
+ * exactly what §7 serves. Swap them for the SDK client the day it is a dependency;
+ * nothing above them knows the difference.
  */
 
-import type { CurrentState, Plan } from "./plan";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+// The extension is spelled out so `node --experimental-strip-types cli/src/main.ts` can
+// resolve it — Node's own type stripping resolves a relative import only WITH one.
+import { COMMANDS as COMMAND_TABLE } from "./commands.ts";
+import { parseDesired, planChanges } from "./plan.ts";
+import type { CurrentAccount, CurrentService, CurrentState, DesiredGrant, Plan } from "./plan.ts";
+import { parseYaml } from "./yaml.ts";
 
 /**
  * COPIED wire shape — the GET /api/whoami response, pinned by §8 as the
@@ -38,6 +52,49 @@ export type ApprovalRequiredData = {
   approvalId: string;
   approvalUrl: string;
   expiresAt: string;
+};
+
+/**
+ * COPIED wire shape — one `service_list` / `service_get` row (§8's pinned cross-front
+ * shape, the server's own `ServiceRow`; contracts/service-list.json is the lock).
+ * Deliberately duplicated (no shared package) and deliberately FLAT where the server's is
+ * a discriminated union: the CLI branches on `kind` at runtime, so the per-kind fields are
+ * optional here rather than three types. Declared once so `ls`, `account`, and the diff
+ * planner's read share one decoding instead of three private ones — a field renamed
+ * server-side then fails to compile here rather than emptying a column.
+ */
+export type ServiceRow = {
+  slug: string;
+  name: string;
+  description: string;
+  archived: boolean;
+  logBodies: boolean;
+  roles: Record<string, string[]>;
+  redact: Record<string, string[]>;
+  redactResults: Record<string, string[]>;
+  kind: "tunnel" | "proxy" | "builtin";
+  /** builtin rows only — the virtual `pmcp` service, which the planner never plans against */
+  builtin?: boolean;
+  /** tunneled rows only */
+  status?: "online" | "offline";
+  /** proxied rows only */
+  endpoint?: string;
+  auth?: "headers" | "oauth";
+  forwardIdentity?: boolean;
+  /** proxied `auth: oauth` rows only — the upstream connection state */
+  connection?: string;
+};
+
+/**
+ * COPIED wire shape — one `account_list` row, grants inline as the flat
+ * `role[:approval]` strings `grant_set` takes (§8 pins that there is no separate
+ * grant-read tool; contracts/account-list.json is the lock).
+ */
+export type AccountRow = {
+  slug: string;
+  name: string;
+  description: string;
+  grants: Record<string, string[]>;
 };
 
 /**
@@ -66,7 +123,8 @@ export class HubRpcError extends Error {
   constructor(code: number, message: string, data?: unknown) {
     // deps: none
     super(message);
-    throw new Error("unimplemented");
+    this.code = code;
+    this.data = data;
   }
 }
 
@@ -84,6 +142,28 @@ export type CliContext = {
   namespace: string;
 };
 
+/** Where the session lives between invocations (§10). */
+function configPath(): string {
+  return join(homedir(), ".config", "pmcp", "config.json");
+}
+
+function readConfig(): { url?: string; token?: string } {
+  const path = configPath();
+  if (!existsSync(path)) return {};
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as { url?: string; token?: string };
+  } catch {
+    return {};
+  }
+}
+
+function writeConfig(config: { url?: string; token?: string }): void {
+  const path = configPath();
+  mkdirSync(dirname(path), { recursive: true });
+  // 0600: the file holds a live session bearer.
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+}
+
 /**
  * Builds the per-invocation context: stored config overlaid by PMCP_URL /
  * PMCP_TOKEN, then one GET /api/whoami to learn principal and namespace (§10 —
@@ -94,7 +174,32 @@ export type CliContext = {
  */
 async function resolveContext(): Promise<CliContext> {
   // deps: node:fs · node:os · node:process · fetch GET /api/whoami
-  throw new Error("unimplemented");
+  const stored = readConfig();
+  const origin = (process.env.PMCP_URL ?? stored.url ?? "").replace(/\/+$/, "");
+  const token = process.env.PMCP_TOKEN ?? stored.token ?? "";
+  if (origin === "") throw new Error("no hub url: run `pmcp login --url https://…` or set PMCP_URL");
+  if (token === "") throw new Error("not logged in: run `pmcp login`");
+  if (token.startsWith("pmcp_svc_")) {
+    throw new Error("a pmcp_svc_ service token is refused by every consumer surface: use a session or a pmcp_sa_ key");
+  }
+  const response = await fetch(`${origin}/api/whoami`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error(`whoami → ${response.status}: the token is not valid for ${origin}`);
+  const me = (await response.json()) as WhoamiResponse;
+  return { origin, token, principal: me.principal, namespace: me.namespace };
+}
+
+/** One JSON-RPC request against a scoped MCP endpoint — the hub is POST-only (§7). */
+async function rpc(ctx: CliContext, path: string, method: string, params?: unknown): Promise<unknown> {
+  const response = await fetch(`${ctx.origin}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${ctx.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) }),
+  });
+  if (!response.ok) throw new Error(`${method} → HTTP ${response.status}`);
+  const body = (await response.json()) as { result?: unknown; error?: { code: number; message: string; data?: unknown } };
+  // §7 answers 200 whether or not it refused: a JSON-RPC error is the refusal.
+  if (body.error !== undefined) throw new HubRpcError(body.error.code, body.error.message, body.error.data);
+  return body.result;
 }
 
 /**
@@ -105,7 +210,8 @@ async function resolveContext(): Promise<CliContext> {
  */
 async function mcpList(ctx: CliContext, slug: string): Promise<unknown[]> {
   // deps: @modelcontextprotocol/client (Streamable HTTP transport) · HubRpcError
-  throw new Error("unimplemented");
+  const result = (await rpc(ctx, `/${ctx.namespace}/mcp/${slug}`, "tools/list")) as { tools?: unknown[] };
+  return result?.tools ?? [];
 }
 
 /**
@@ -122,8 +228,26 @@ async function mcpCall(
   args: Record<string, unknown>,
 ): Promise<unknown> {
   // deps: @modelcontextprotocol/client (Streamable HTTP transport) · HubRpcError
-  throw new Error("unimplemented");
+  return rpc(ctx, `/${ctx.namespace}/mcp/${slug}`, "tools/call", { name: tool, arguments: args });
 }
+
+/** One admin op through the builtin `pmcp` service, unwrapped to its structuredContent (§8). */
+async function adminOp(ctx: CliContext, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const result = (await mcpCall(ctx, PMCP_SLUG, name, args)) as { structuredContent?: Record<string, unknown> };
+  return result?.structuredContent ?? {};
+}
+
+/**
+ * The one reader of a list-shaped op result: `rows<ServiceRow>(await adminOp(…),
+ * "services")`. The typed row is the point — every caller shares ServiceRow / AccountRow
+ * instead of re-deriving a row's shape by hand at each rendering site.
+ */
+function rows<T>(result: Record<string, unknown>, key: string): T[] {
+  return (Array.isArray(result[key]) ? result[key] : []) as T[];
+}
+
+/** The reserved slug §8 pins for the hub's own tools. */
+const PMCP_SLUG = "pmcp";
 
 /**
  * The diff planner's entire view of the server, read in exactly two calls —
@@ -133,7 +257,52 @@ async function mcpCall(
  */
 async function readCurrentState(ctx: CliContext): Promise<CurrentState> {
   // deps: mcpCall
-  throw new Error("unimplemented");
+  const services = rows<ServiceRow>(await adminOp(ctx, "service_list"), "services");
+  const accounts = rows<AccountRow>(await adminOp(ctx, "account_list"), "accounts");
+  return {
+    services: services.map(
+      (row): CurrentService => ({
+        slug: row.slug,
+        // The builtin row reports `kind: "builtin"`; the planner only ever needs to know
+        // that it is not plannable.
+        kind: row.kind === "proxy" ? "proxy" : "tunnel",
+        name: row.name,
+        description: row.description,
+        archived: row.archived,
+        builtin: row.builtin === true,
+        roles: row.roles,
+        redact: row.redact,
+        redactResults: row.redactResults,
+        logBodies: row.logBodies,
+        ...(row.kind === "proxy"
+          ? {
+              endpoint: row.endpoint ?? "",
+              auth: row.auth ?? "headers",
+              forwardIdentity: row.forwardIdentity === true,
+            }
+          : {}),
+      }),
+    ),
+    accounts: accounts.map(
+      (row): CurrentAccount => ({
+        slug: row.slug,
+        name: row.name,
+        description: row.description,
+        // account_list carries grants inline, as the flat `role[:approval]` strings
+        // grant_set takes — the planner works in the split shape.
+        grants: Object.fromEntries(
+          Object.entries(row.grants).map(([service, roles]) => [service, roles.map(splitGrant)]),
+        ),
+      }),
+    ),
+  };
+}
+
+/** `reader:approval` → approval mode; anything else is an allow grant of that name. */
+function splitGrant(role: string): DesiredGrant {
+  return role.endsWith(":approval")
+    ? { role: role.slice(0, -":approval".length), mode: "approval" }
+    : { role, mode: "allow" };
 }
 
 /**
@@ -144,8 +313,18 @@ async function readCurrentState(ctx: CliContext): Promise<CurrentState> {
  */
 function renderPlan(p: Plan): string {
   // deps: none
-  throw new Error("unimplemented");
+  const lines = p.steps.map((step) => `  ${step.destructive ? "!" : "+"} ${step.summary}`);
+  if (lines.length === 0) lines.push("  (no changes)");
+  for (const warning of p.warnings) lines.push(`  warning: ${warning}`);
+  for (const error of p.errors) lines.push(`  ERROR: ${error}`);
+  return lines.join("\n");
 }
+
+// ── the auth family: the only commands that are not MCP-tool sugar ─────────────────────
+
+/** The RFC 8628 client identifier this CLI presents; better-auth records it on the code. */
+const DEVICE_CLIENT_ID = "pmcp-cli";
+const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 
 /**
  * The auth family — the only commands that are not MCP-tool sugar (§10) and
@@ -161,8 +340,83 @@ export async function auth(
   cmd: { sub: "login"; url?: string } | { sub: "logout" } | { sub: "whoami" },
 ): Promise<number> {
   // deps: fetch (better-auth device-authorization + session endpoints, GET /api/whoami) · node:fs · node:os
-  throw new Error("unimplemented");
+  if (cmd.sub === "whoami") {
+    const ctx = await resolveContext();
+    process.stdout.write(`${ctx.principal}\nnamespace ${ctx.namespace}\n`);
+    return 0;
+  }
+  const stored = readConfig();
+  if (cmd.sub === "logout") {
+    const origin = process.env.PMCP_URL ?? stored.url;
+    const token = process.env.PMCP_TOKEN ?? stored.token;
+    if (origin !== undefined && token !== undefined && token !== "") {
+      // Best effort: a session the hub already dropped is still gone locally.
+      await fetch(`${origin}/api/auth/sign-out`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => undefined);
+    }
+    writeConfig({ url: origin, token: "" });
+    process.stdout.write("logged out\n");
+    return 0;
+  }
+
+  const origin = (cmd.url ?? process.env.PMCP_URL ?? stored.url ?? "").replace(/\/+$/, "");
+  if (origin === "") throw new Error("no hub url: pmcp login --url https://…");
+  const requested = await postJson(`${origin}/api/auth/device/code`, { client_id: DEVICE_CLIENT_ID });
+  const userCode = String(requested.user_code ?? "");
+  const deviceCode = String(requested.device_code ?? "");
+  const verification = String(requested.verification_uri_complete ?? requested.verification_uri ?? `${origin}/device`);
+  if (userCode === "" || deviceCode === "") throw new Error("the hub issued no device code");
+  process.stdout.write(`open ${absolute(origin, verification)} and enter the code:\n\n    ${userCode}\n\n`);
+
+  // Poll at the interval the hub asked for, honouring slow_down, until the code dies.
+  let intervalMs = Number(requested.interval ?? 5) * 1000;
+  const deadline = Date.now() + Number(requested.expires_in ?? 600) * 1000;
+  for (;;) {
+    if (Date.now() > deadline) throw new Error("the device code expired before it was approved");
+    await sleep(intervalMs);
+    const response = await fetch(`${origin}/api/auth/device/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grant_type: DEVICE_GRANT_TYPE, device_code: deviceCode, client_id: DEVICE_CLIENT_ID }),
+    });
+    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (response.ok && typeof body.access_token === "string") {
+      writeConfig({ url: origin, token: body.access_token });
+      const ctx = await resolveContext();
+      process.stdout.write(`logged in as ${ctx.principal} on ${origin}\n`);
+      return 0;
+    }
+    if (body.error === "authorization_pending") continue;
+    if (body.error === "slow_down") {
+      intervalMs += 5_000;
+      continue;
+    }
+    throw new Error(`device authorization failed: ${String(body.error ?? response.status)}`);
+  }
 }
+
+async function postJson(url: string, body: unknown): Promise<Record<string, any>> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const parsed = (await response.json().catch(() => ({}))) as Record<string, any>;
+  if (!response.ok) throw new Error(`${url} → ${response.status} ${String(parsed.error_description ?? parsed.error ?? "")}`);
+  return parsed;
+}
+
+function absolute(origin: string, uri: string): string {
+  return uri.startsWith("http") ? uri : `${origin}${uri.startsWith("/") ? "" : "/"}${uri}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ── the sugar: every other command is one or two admin ops ─────────────────────────────
 
 /**
  * `pmcp ls` — the namespace at a glance: every service with kind, status
@@ -174,7 +428,16 @@ export async function auth(
  */
 export async function ls(ctx: CliContext): Promise<number> {
   // deps: mcpCall
-  throw new Error("unimplemented");
+  for (const row of rows<ServiceRow>(await adminOp(ctx, "service_list"), "services")) {
+    const status = row.builtin === true ? "builtin" : row.kind === "proxy" ? row.connection ?? "proxy" : row.status ?? "";
+    const declared = Object.keys(row.roles);
+    process.stdout.write(
+      `${row.slug.padEnd(20)} ${row.kind.padEnd(8)} ${status.padEnd(16)} ${
+        declared.length === 0 ? "-" : declared.join(",")
+      }${row.archived ? "  (archived)" : ""}\n`,
+    );
+  }
+  return 0;
 }
 
 /**
@@ -185,7 +448,10 @@ export async function ls(ctx: CliContext): Promise<number> {
  */
 export async function tools(ctx: CliContext, service: string): Promise<number> {
   // deps: mcpList
-  throw new Error("unimplemented");
+  for (const tool of (await mcpList(ctx, service)) as Record<string, any>[]) {
+    process.stdout.write(`${String(tool.name).padEnd(28)} ${String(tool.description ?? "")}\n`);
+  }
+  return 0;
 }
 
 /**
@@ -203,7 +469,20 @@ export async function call(
   args: Record<string, unknown>,
 ): Promise<number> {
   // deps: mcpCall
-  throw new Error("unimplemented");
+  try {
+    const result = await mcpCall(ctx, target.service, target.tool, args);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  } catch (error) {
+    if (error instanceof HubRpcError && error.code === HUB_ERRORS.approvalRequired) {
+      const data = error.data as ApprovalRequiredData;
+      process.stdout.write(
+        `approval required (${data.approvalId})\n  approve at ${data.approvalUrl}\n  then re-run this exact call before ${data.expiresAt} — the arguments must be identical\n`,
+      );
+      return 1;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -236,7 +515,34 @@ export async function service(
   opts: { yes?: boolean },
 ): Promise<number> {
   // deps: mcpCall · node:readline
-  throw new Error("unimplemented");
+  if (cmd.sub === "create") {
+    const created = await adminOp(ctx, "service_create", {
+      slug: cmd.slug,
+      kind: cmd.kind,
+      ...(cmd.kind === "proxy" ? { endpoint: cmd.endpoint, auth: cmd.auth } : {}),
+    });
+    process.stdout.write(`created ${String((created.service as Record<string, unknown>)?.slug ?? cmd.slug)}\n`);
+    if (cmd.kind !== "tunnel") return 0;
+    // A tunneled service is unusable without its credential (§6): mint it here, print once.
+    const minted = await adminOp(ctx, "token_issue", { kind: "service", slug: cmd.slug });
+    process.stdout.write(`service token (shown once): ${String(minted.token)}\n`);
+    return 0;
+  }
+  if (cmd.sub === "set-auth") {
+    await adminOp(ctx, "service_set_upstream_auth", { slug: cmd.slug, headers: cmd.headers });
+    process.stdout.write(`upstream headers replaced for ${cmd.slug}\n`);
+    return 0;
+  }
+  if (cmd.sub === "delete" && opts.yes !== true) {
+    const confirmed = await confirm(`delete ${cmd.slug}? its grants cascade and its tokens are deleted`);
+    if (!confirmed) return 1;
+  }
+  const op = { archive: "service_archive", unarchive: "service_unarchive", delete: "service_delete", disconnect: "service_disconnect" }[
+    cmd.sub
+  ];
+  await adminOp(ctx, op, { slug: cmd.slug });
+  process.stdout.write(`${cmd.sub} ${cmd.slug}\n`);
+  return 0;
 }
 
 /** One service-account command, normalized from `pmcp account …` argv. */
@@ -258,7 +564,31 @@ export async function account(
   opts: { yes?: boolean },
 ): Promise<number> {
   // deps: mcpCall · node:readline
-  throw new Error("unimplemented");
+  if (cmd.sub === "list") {
+    for (const row of rows<AccountRow>(await adminOp(ctx, "account_list"), "accounts")) {
+      const grants = Object.entries(row.grants)
+        .map(([svc, roles]) => `${svc}=[${roles.join(",")}]`)
+        .join(" ");
+      process.stdout.write(`${row.slug.padEnd(20)} ${grants === "" ? "(no grants)" : grants}\n`);
+    }
+    return 0;
+  }
+  if (cmd.sub === "create") {
+    await adminOp(ctx, "account_create", {
+      slug: cmd.slug,
+      ...(cmd.name === undefined ? {} : { name: cmd.name }),
+      ...(cmd.description === undefined ? {} : { description: cmd.description }),
+    });
+    process.stdout.write(`created ${cmd.slug}\n`);
+    return 0;
+  }
+  if (opts.yes !== true) {
+    const confirmed = await confirm(`delete account ${cmd.slug}? its grants cascade and its tokens are deleted`);
+    if (!confirmed) return 1;
+  }
+  await adminOp(ctx, "account_delete", { slug: cmd.slug });
+  process.stdout.write(`deleted ${cmd.slug}\n`);
+  return 0;
 }
 
 /**
@@ -278,7 +608,20 @@ export type ApprovalCommand =
  */
 export async function approval(ctx: CliContext, cmd: ApprovalCommand): Promise<number> {
   // deps: mcpCall
-  throw new Error("unimplemented");
+  if (cmd.sub !== "list") {
+    const decided = await adminOp(ctx, "approval_decide", { id: cmd.id, decision: cmd.sub });
+    process.stdout.write(`${String(decided.decision ?? cmd.sub)} ${String(decided.id ?? cmd.id)}\n`);
+    return 0;
+  }
+  const listed = await adminOp(ctx, "approval_list", cmd.filter === undefined ? {} : { status: cmd.filter });
+  for (const row of (listed.approvals ?? listed.rows ?? []) as Record<string, any>[]) {
+    process.stdout.write(
+      `${String(row.id).padEnd(24)} ${String(row.status ?? "").padEnd(9)} ${String(row.principal ?? "")} → ${String(
+        row.service ?? "",
+      )}/${String(row.tool ?? "")} ${JSON.stringify(row.arguments ?? {})} expires ${String(row.expiresAt ?? "")}\n`,
+    );
+  }
+  return 0;
 }
 
 /**
@@ -300,7 +643,28 @@ export type TokenCommand =
  */
 export async function token(ctx: CliContext, cmd: TokenCommand): Promise<number> {
   // deps: mcpCall
-  throw new Error("unimplemented");
+  if (cmd.sub === "issue") {
+    const minted = await adminOp(ctx, "token_issue", {
+      kind: cmd.kind,
+      slug: cmd.slug,
+      ...(cmd.expires === undefined ? {} : { expires_in: cmd.expires }),
+    });
+    process.stdout.write(`${String(minted.id)}\n${String(minted.token)}\n`);
+    return 0;
+  }
+  if (cmd.sub === "revoke") {
+    await adminOp(ctx, "token_revoke", { id: cmd.id });
+    process.stdout.write(`revoked ${cmd.id}\n`);
+    return 0;
+  }
+  for (const row of ((await adminOp(ctx, "token_list")).tokens ?? []) as Record<string, any>[]) {
+    process.stdout.write(
+      `${String(row.id).padEnd(24)} ${String(row.prefix ?? "").padEnd(12)} expires ${String(
+        row.expiresAt ?? "never",
+      )} last used ${String(row.lastUsedAt ?? "never")}\n`,
+    );
+  }
+  return 0;
 }
 
 /**
@@ -337,7 +701,62 @@ export async function audit(
   opts: { exportJsonl?: boolean },
 ): Promise<number> {
   // deps: mcpCall
-  throw new Error("unimplemented");
+  const query: Record<string, unknown> = {
+    ...(filters.account === undefined ? {} : { principal: `sa:${filters.account}` }),
+    ...(filters.service === undefined ? {} : { service: filters.service }),
+    ...(filters.event === undefined ? {} : { event: filters.event }),
+    ...(filters.tool === undefined ? {} : { tool: filters.tool }),
+    ...(filters.session === undefined ? {} : { session: filters.session }),
+    ...(filters.since === undefined ? {} : { since: filters.since }),
+    ...(filters.until === undefined ? {} : { until: filters.until }),
+    ...(filters.limit === undefined ? {} : { limit: filters.limit }),
+  };
+  if (opts.exportJsonl !== true) {
+    const page = await adminOp(ctx, "audit_query", query);
+    for (const row of (page.rows ?? []) as Record<string, unknown>[]) {
+      process.stdout.write(
+        `${String(row.at ?? "")} ${String(row.principal ?? "").padEnd(22)} ${String(row.event ?? "").padEnd(18)} ${String(
+          row.service ?? "",
+        )}/${String(row.tool ?? "")} ${String(row.outcome ?? "")}${renderBodies(row)}\n`,
+      );
+    }
+    process.stdout.write(`${Number(page.total ?? 0)} events match\n`);
+    return 0;
+  }
+  // The export re-queries in chunks and writes each as it arrives: the same rows as the
+  // web export, never the whole result set in memory.
+  const size = filters.limit ?? 100;
+  for (let offset = 0; ; offset += size) {
+    const page = await adminOp(ctx, "audit_query", { ...query, limit: size, offset });
+    const rows = (page.rows ?? []) as unknown[];
+    for (const row of rows) process.stdout.write(`${JSON.stringify(row)}\n`);
+    if (rows.length < size) return 0;
+  }
+}
+
+/** A recorded body's detail line — stubs as typed size placeholders, never raw bytes (§15). */
+function renderBodies(row: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const key of ["args", "result"]) {
+    const body = row[key];
+    if (body === undefined || body === null) continue;
+    parts.push(`${key}=${describeBody(body)}`);
+  }
+  return parts.length === 0 ? "" : `  ${parts.join(" ")}`;
+}
+
+function describeBody(body: unknown): string {
+  const stub = (body as { stub?: string; contentType?: string; bytes?: number }).stub;
+  if (stub === "blob") {
+    const info = body as { contentType?: string; bytes?: number };
+    return `‹blob ${String(info.contentType)} · ${formatBytes(info.bytes ?? 0)}›`;
+  }
+  if (stub === "oversize") return `‹oversize · ${formatBytes((body as { bytes?: number }).bytes ?? 0)}›`;
+  return JSON.stringify(body);
+}
+
+function formatBytes(bytes: number): string {
+  return bytes >= 1_000_000 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
 /**
@@ -349,7 +768,9 @@ export async function audit(
  */
 export async function diff(ctx: CliContext, opts: { file: string }): Promise<number> {
   // deps: yaml (parse) · node:fs · plan.parseDesired · plan.planChanges · readCurrentState · renderPlan
-  throw new Error("unimplemented");
+  const plan = planChanges(parseDesired(parseYaml(readFileSync(opts.file, "utf8"))), await readCurrentState(ctx));
+  process.stdout.write(`${renderPlan(plan)}\n`);
+  return plan.errors.length === 0 ? 0 : 1;
 }
 
 /**
@@ -365,7 +786,27 @@ export async function apply(
   opts: { file: string; yes?: boolean },
 ): Promise<number> {
   // deps: yaml (parse) · node:fs · node:readline · plan.parseDesired · plan.planChanges · readCurrentState · renderPlan · mcpCall
-  throw new Error("unimplemented");
+  const plan = planChanges(parseDesired(parseYaml(readFileSync(opts.file, "utf8"))), await readCurrentState(ctx));
+  process.stdout.write(`${renderPlan(plan)}\n`);
+  if (plan.errors.length > 0) return 1;
+  if (plan.steps.length === 0) return 0;
+  if (opts.yes !== true && !(await confirm(`apply ${plan.steps.length} step(s)?`))) return 1;
+  let done = 0;
+  for (const step of plan.steps) {
+    try {
+      await adminOp(ctx, step.tool, step.args);
+      done += 1;
+      process.stdout.write(`  ok ${step.summary}\n`);
+    } catch (error) {
+      // No transaction to roll back: report the completed prefix and stop.
+      process.stdout.write(
+        `  FAILED ${step.summary}: ${error instanceof Error ? error.message : String(error)}\n${done}/${plan.steps.length} steps applied\n`,
+      );
+      return 1;
+    }
+  }
+  process.stdout.write(`${done}/${plan.steps.length} steps applied\n`);
+  return 0;
 }
 
 /**
@@ -378,8 +819,21 @@ export async function apply(
  */
 export async function connect(ctx: CliContext, service: string): Promise<number> {
   // deps: mcpCall
-  throw new Error("unimplemented");
+  const row = ((await adminOp(ctx, "service_get", { slug: service })).service ?? {}) as Record<string, unknown>;
+  if (row.kind !== "proxy" || row.auth !== "oauth") {
+    throw new Error(`${service} is not an \`auth: oauth\` proxied service — nothing to connect`);
+  }
+  process.stdout.write(`${ctx.origin}/services?connect=${encodeURIComponent(service)}\n`);
+  return 0;
 }
+
+// ── the command table (§8 parity, direction D) ─────────────────────────────────────────
+
+// The table itself lives in ./commands.ts — a module with no imports, so the parity suite
+// reads the same data this dispatcher uses without loading the CLI's filesystem access
+// into workerd. Re-exported so a CLI consumer still finds it where the surface lives.
+export { COMMANDS } from "./commands.ts";
+export type { CliCommand } from "./commands.ts";
 
 /**
  * Process entry: parse argv into exactly one family invocation, resolve the
@@ -393,5 +847,240 @@ export async function connect(ctx: CliContext, service: string): Promise<number>
  */
 export async function main(argv: string[]): Promise<number> {
   // deps: resolveContext · auth · ls · tools · call · service · account · approval · token · audit · diff · apply · connect
-  throw new Error("unimplemented");
+  const [command, ...rest] = argv;
+  const flags = readFlags(rest);
+  const words = flags.words;
+  try {
+    if (command === "login") return await auth({ sub: "login", url: flags.value("url") });
+    if (command === "logout") return await auth({ sub: "logout" });
+    if (command === "whoami") return await auth({ sub: "whoami" });
+    if (command === undefined || command === "help" || command === "--help") {
+      process.stdout.write(`${COMMAND_TABLE.map((entry) => `pmcp ${entry.name}`).join("\n")}\n`);
+      return command === undefined ? 1 : 0;
+    }
+
+    const ctx = await resolveContext();
+    switch (command) {
+      case "ls":
+        return await ls(ctx);
+      case "tools":
+        return await tools(ctx, required(words[0], "service"));
+      case "call": {
+        // Partitioned by SHAPE, never by count: a word carrying `=` is an argument
+        // wherever it sits, so `pmcp call news_echo text=hi` is the aggregated name plus
+        // an argument and not a service called `news_echo` with a tool called `text=hi`.
+        const positionals = words.filter((word) => !word.includes("="));
+        if (positionals.length > 2) throw new Error(`\`${positionals[2]}\` is neither a service, a tool, nor key=value`);
+        const target = required(positionals[0], "service");
+        // `<slug>_<tool>` splits at the first underscore — slugs contain none (§7).
+        const split = positionals.length > 1 ? { service: target, tool: positionals[1] } : splitAggregated(target);
+        return await call(ctx, split, toolArguments(words.filter((word) => word.includes("=")), flags));
+      }
+      case "service":
+        return await service(ctx, serviceCommand(words, flags), { yes: flags.has("yes") });
+      case "account":
+        return await account(ctx, accountCommand(words, flags), { yes: flags.has("yes") });
+      case "approvals":
+        return await approval(ctx, {
+          sub: "list",
+          filter: flags.has("pending") ? "pending" : flags.has("history") ? "history" : undefined,
+        });
+      case "approve":
+      case "reject":
+        return await approval(ctx, { sub: command, id: required(words[0], "approval id") });
+      case "token":
+        return await token(ctx, tokenCommand(words, flags));
+      case "audit":
+        return await audit(
+          ctx,
+          {
+            account: flags.value("account"),
+            service: flags.value("service"),
+            event: flags.value("event"),
+            tool: flags.value("tool"),
+            session: flags.value("session"),
+            since: flags.value("since"),
+            until: flags.value("until"),
+            limit: flags.value("limit") === undefined ? undefined : Number(flags.value("limit")),
+          },
+          { exportJsonl: flags.value("export") === "jsonl" },
+        );
+      case "diff":
+        return await diff(ctx, { file: flags.value("file") ?? "mcps.yaml" });
+      case "apply":
+        return await apply(ctx, {
+          file: flags.value("file") ?? "mcps.yaml",
+          yes: flags.has("yes"),
+        });
+      case "connect":
+        return await connect(ctx, required(words[0], "service"));
+      default:
+        process.stderr.write(`unknown command: ${command}\n`);
+        return 1;
+    }
+  } catch (error) {
+    // The hub's own message is safe to show (§15's hygiene); nothing else leaks a stack.
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+/**
+ * The flags that take NO value, so `pmcp service --yes delete news` cannot swallow
+ * `delete` as the value of `--yes` and then fail with an unrelated usage error.
+ */
+const BOOLEAN_FLAGS = new Set(["yes", "pending", "history", "help"]);
+
+/** Short spellings, resolved to the long name the rest of the module reads. */
+const SHORT_FLAGS: Record<string, string> = { f: "file" };
+
+/** argv past the command word, split into positional words and flags. */
+function readFlags(rest: string[]): {
+  words: string[];
+  has(name: string): boolean;
+  value(name: string): string | undefined;
+  repeated(name: string): string[];
+} {
+  const words: string[] = [];
+  const values: [string, string][] = [];
+  const present = new Set<string>();
+  for (let index = 0; index < rest.length; index += 1) {
+    const entry = rest[index];
+    // A single dash is a flag only for a spelling SHORT_FLAGS knows, so a value that
+    // happens to lead with one (`--since -7d`) stays a value.
+    const short = entry.startsWith("-") && !entry.startsWith("--") && SHORT_FLAGS[entry.slice(1).split("=")[0]] !== undefined;
+    const dashes = entry.startsWith("--") ? 2 : short ? 1 : 0;
+    if (dashes === 0) {
+      words.push(entry);
+      continue;
+    }
+    const spelling = entry.slice(dashes);
+    const inline = spelling.indexOf("=");
+    if (inline !== -1) {
+      const name = longName(spelling.slice(0, inline));
+      values.push([name, spelling.slice(inline + 1)]);
+      present.add(name);
+      continue;
+    }
+    const name = longName(spelling);
+    present.add(name);
+    const following = rest[index + 1];
+    if (!BOOLEAN_FLAGS.has(name) && following !== undefined && !following.startsWith("--")) {
+      values.push([name, following]);
+      index += 1;
+    }
+  }
+  return {
+    words,
+    has: (name) => present.has(name),
+    value: (name) => values.find(([key]) => key === name)?.[1],
+    repeated: (name) => values.filter(([key]) => key === name).map(([, value]) => value),
+  };
+}
+
+function longName(spelling: string): string {
+  return SHORT_FLAGS[spelling] ?? spelling;
+}
+
+function required(value: string | undefined, what: string): string {
+  if (value === undefined || value === "") throw new Error(`missing ${what}`);
+  return value;
+}
+
+/** `<slug>_<tool>` → its two halves; the first underscore is the split (§7). */
+function splitAggregated(target: string): { service: string; tool: string } {
+  const underscore = target.indexOf("_");
+  if (underscore === -1) throw new Error(`\`${target}\` is not <service> <tool> or <slug>_<tool>`);
+  return { service: target.slice(0, underscore), tool: target.slice(underscore + 1) };
+}
+
+/** `--json '{…}'`, or repeated `key=value` words, into one arguments object. */
+function toolArguments(words: string[], flags: ReturnType<typeof readFlags>): Record<string, unknown> {
+  const json = flags.value("json");
+  if (json !== undefined) return JSON.parse(json) as Record<string, unknown>;
+  const args: Record<string, unknown> = {};
+  for (const word of words) {
+    const equals = word.indexOf("=");
+    // The caller partitions by shape, so this is a guard rather than a filter: a word the
+    // user typed and this function dropped would be a silently empty argument object.
+    if (equals === -1) throw new Error(`expected key=value, got ${word}`);
+    args[word.slice(0, equals)] = word.slice(equals + 1);
+  }
+  return args;
+}
+
+function serviceCommand(words: string[], flags: ReturnType<typeof readFlags>): ServiceCommand {
+  const [sub, slug] = words;
+  if (sub === "create") {
+    const endpoint = flags.value("proxied");
+    if (endpoint === undefined) return { sub: "create", slug: required(slug, "slug"), kind: "tunnel" };
+    return {
+      sub: "create",
+      slug: required(slug, "slug"),
+      kind: "proxy",
+      endpoint,
+      auth: flags.value("auth") === "oauth" ? "oauth" : "headers",
+    };
+  }
+  if (sub === "set-auth") {
+    const headers: Record<string, string> = {};
+    for (const header of flags.repeated("header")) {
+      const colon = header.indexOf(":");
+      if (colon === -1) throw new Error(`--header wants 'Name: value', got ${header}`);
+      headers[header.slice(0, colon).trim()] = header.slice(colon + 1).trim();
+    }
+    return { sub: "set-auth", slug: required(slug, "slug"), headers };
+  }
+  if (sub === "archive" || sub === "unarchive" || sub === "delete" || sub === "disconnect") {
+    return { sub, slug: required(slug, "slug") };
+  }
+  throw new Error("usage: pmcp service <create|archive|unarchive|delete|disconnect|set-auth> <slug>");
+}
+
+function accountCommand(words: string[], flags: ReturnType<typeof readFlags>): AccountCommand {
+  const [sub, slug] = words;
+  if (sub === "list" || sub === undefined) return { sub: "list" };
+  if (sub === "create") {
+    return { sub: "create", slug: required(slug, "slug"), name: flags.value("name"), description: flags.value("description") };
+  }
+  if (sub === "delete") return { sub: "delete", slug: required(slug, "slug") };
+  throw new Error("usage: pmcp account <list|create|delete> [slug]");
+}
+
+function tokenCommand(words: string[], flags: ReturnType<typeof readFlags>): TokenCommand {
+  const [sub, id] = words;
+  if (sub === "list") return { sub: "list" };
+  if (sub === "revoke") return { sub: "revoke", id: required(id, "token id") };
+  if (sub === "issue") {
+    const account = flags.value("account");
+    const service = flags.value("service");
+    if (account !== undefined) return { sub: "issue", kind: "service_account", slug: account, expires: flags.value("expires") };
+    if (service !== undefined) return { sub: "issue", kind: "service", slug: service, expires: flags.value("expires") };
+    throw new Error("pmcp token issue needs --account <slug> or --service <slug>");
+  }
+  throw new Error("usage: pmcp token <issue|list|revoke>");
+}
+
+/**
+ * One y/n prompt on stdin; anything but y/yes is a refusal — and so is having nobody to
+ * ask. A non-interactive stdin (CI, cron, `pmcp apply < /dev/null`) refuses immediately
+ * instead of waiting for a `data` event that can never come: a destructive command that
+ * silently applied nothing and exited 0 is the worst failure `apply` has.
+ */
+function confirm(question: string): Promise<boolean> {
+  if (process.stdin.isTTY !== true) {
+    process.stdout.write(`${question} — refused: stdin is not a terminal; pass --yes to confirm\n`);
+    return Promise.resolve(false);
+  }
+  process.stdout.write(`${question} [y/N] `);
+  return new Promise<boolean>((resolve) => {
+    process.stdin.setEncoding("utf8");
+    process.stdin.resume();
+    process.stdin.once("data", (chunk: string) => {
+      process.stdin.pause();
+      resolve(/^y(es)?$/i.test(String(chunk).trim()));
+    });
+    // Closed mid-prompt is the same answer as "no", and a defined one.
+    process.stdin.once("end", () => resolve(false));
+  });
 }

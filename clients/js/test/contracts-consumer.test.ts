@@ -30,27 +30,206 @@
  * row, and every policy row names a fixture entry.
  */
 
-// deps: node:fs (fixture reads) · ./transport.test (reconnectPolicyRows, ReconnectPolicyRow) · clients/js/src/index.ts (HubTransport's emitted frames) · contracts/close-codes.json + contracts/tunnel-frames.json (read-only)
+// deps: node:fs (fixture reads) · ./policy-rows (reconnectPolicyRows, unlistedEndingRows, ReconnectPolicyRow — a plain module, NOT a `.test.ts`: importing rows from a collected test file would register its whole suite a second time under this one, see that module's header) · clients/js/src/index.ts (HubTransport's emitted frames) · contracts/close-codes.json + contracts/tunnel-frames.json (read-only)
 
-import { describe, it } from "vitest";
-import type { ReconnectPolicyRow } from "./transport.test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+import { caller, HUB_METHODS, HubTransport, PROTOCOL_VERSION, RegistrationError } from "../src/index";
+import { startFakeHub } from "./fake-hub";
+import type { FakeHub } from "./fake-hub";
+import { reconnectPolicyRows, unlistedEndingRows } from "./policy-rows";
+import type { ReconnectPolicyRow } from "./policy-rows";
+
+/** One fixture, read from disk. Read-only, always — this suite never writes one (§4). */
+function fixture(name: string): Record<string, any> {
+  const path = fileURLToPath(new URL(`../../../contracts/${name}`, import.meta.url));
+  return JSON.parse(readFileSync(path, "utf8")) as Record<string, any>;
+}
+
+const closeCodes = fixture("close-codes.json");
+const tunnelFrames = fixture("tunnel-frames.json");
+
+/** An obviously fake service credential; nothing here authenticates against anything. */
+const TOKEN = "pmcp_svc_FAKE0000000000000000000000000000";
+
+const opened: { hub?: FakeHub; transport?: HubTransport }[] = [];
+
+afterEach(async () => {
+  for (const entry of opened.splice(0)) {
+    await entry.transport?.close().catch(() => {});
+    await entry.hub?.close().catch(() => {});
+  }
+});
+
+/** A few turns of the event loop — long enough for a frame to have arrived if it was sent. */
+async function settle(turns = 20): Promise<void> {
+  for (let turn = 0; turn < turns; turn += 1) await new Promise((resolve) => setTimeout(resolve, 1));
+}
 
 describe("close codes → client behavior · §4, §6", () => {
-  it.todo("§4 · every entry in contracts/close-codes.json — close codes 4000–4004 and the upgrade statuses 401/403 alike — has exactly one row in transport.test.ts's reconnectPolicyRows");
-  it.todo("§4 · every reconnect-policy row names an entry the fixture defines: the table transcribes the oracle and never invents an ending of its own");
-  it.todo("§4 · each row's required behavior agrees with the fixture's behavior word for that entry — the fixture's vocabulary is the vocabulary, so a fifth behavior cannot appear on either side unnoticed");
-  it.todo("§4 · the fixture's behavior vocabulary is closed: every word it uses is one the policy table can express, and no row needs a word it lacks — so a new behavior is a spec change, not a silent addition (finding RESOLVED 2026-08-25: contracts/README.md named FOUR behaviors while the library headers named three, folding max backoff into \"reconnect\". The pinned vocabulary is THREE — stop_fatal, stop_quiet, reconnect — with the fourth word split off as a separate `schedule` attribute, exponential or max_only, which is the shape both row types already carried. README, both client headers and both tables now spell it that one way)");
-  it.todo("§4 · the two axes stay separate: a fixture entry's behavior is one of the three words and never a schedule, and only reconnect entries carry a schedule — so \"retry at max backoff\" cannot re-enter as a behavior");
-  it.todo("§4 · the mapping is total in both directions — stop_quiet ↔ resolve, stop_fatal ↔ reject, reconnect ↔ pending — so neither the fixture nor ReconnectPolicyRow can grow an ending the other cannot say");
+  const keyed = Object.keys(closeCodes.entries as Record<string, unknown>);
+  const rowKeys = reconnectPolicyRows.map((row) => triggerKey(row.trigger));
+
+  it("§4 · every entry in contracts/close-codes.json — close codes 4000–4004 and the upgrade statuses 401/403 alike — has exactly one row in policy-rows.ts's reconnectPolicyRows", () => {
+    for (const key of keyed) {
+      expect(rowKeys.filter((row) => row === key).length, key).toBe(1);
+    }
+  });
+
+  it("§4 · every reconnect-policy row names an entry the fixture defines: the table transcribes the oracle and never invents an ending of its own", () => {
+    for (const key of rowKeys) expect(keyed, key).toContain(key);
+  });
+
+  it("§4 · the escape hatch cannot become one: NO row in unlistedEndingRows names an entry the fixture defines, so the second table can only hold endings the fixture deliberately leaves unkeyed (a rejected registration, a bare drop, a code outside the vocabulary) and never a keyed ending smuggled out of the totality check above", () => {
+    for (const row of unlistedEndingRows) {
+      expect(keyed, row.spec.slice(0, 40)).not.toContain(triggerKey(row.trigger));
+    }
+  });
+
+  it("§4 · each row's required behavior agrees with the fixture's behavior word for that entry — the fixture's vocabulary is the vocabulary, so a fifth behavior cannot appear on either side unnoticed", () => {
+    for (const row of reconnectPolicyRows) {
+      const entry = closeCodes.entries[triggerKey(row.trigger)] as { behavior: string; schedule?: string };
+      expect(behaviorOf(row), triggerKey(row.trigger)).toBe(entry.behavior);
+      expect(row.schedule, triggerKey(row.trigger)).toBe(entry.schedule ?? null);
+    }
+  });
+
+  it("§4 · the fixture's behavior vocabulary is closed: every word it uses is one the policy table can express, and no row needs a word it lacks — so a new behavior is a spec change, not a silent addition (finding RESOLVED 2026-08-25: contracts/README.md named FOUR behaviors while the library headers named three, folding max backoff into \"reconnect\". The pinned vocabulary is THREE — stop_fatal, stop_quiet, reconnect — with the fourth word split off as a separate `schedule` attribute, exponential or max_only, which is the shape both row types already carried. README, both client headers and both tables now spell it that one way)", () => {
+    const expressible = ["stop_fatal", "stop_quiet", "reconnect"];
+    expect([...(closeCodes.behaviors as string[])].sort()).toEqual([...expressible].sort());
+    const used = new Set([...reconnectPolicyRows, ...unlistedEndingRows].map(behaviorOf));
+    for (const word of used) expect(closeCodes.behaviors, word).toContain(word);
+  });
+
+  it("§4 · the two axes stay separate: a fixture entry's behavior is one of the three words and never a schedule, and only reconnect entries carry a schedule — so \"retry at max backoff\" cannot re-enter as a behavior", () => {
+    for (const [key, value] of Object.entries(closeCodes.entries as Record<string, { behavior: string; schedule?: string }>)) {
+      expect(closeCodes.behaviors, key).toContain(value.behavior);
+      expect(closeCodes.schedules, key).not.toContain(value.behavior);
+      if (value.behavior === "reconnect") expect(closeCodes.schedules, key).toContain(value.schedule);
+      else expect(value.schedule, key).toBeUndefined();
+    }
+  });
+
+  it("§4 · the mapping is total in both directions — stop_quiet ↔ resolve, stop_fatal ↔ reject, reconnect ↔ pending — so neither the fixture nor ReconnectPolicyRow can grow an ending the other cannot say", () => {
+    const both = [...reconnectPolicyRows, ...unlistedEndingRows];
+    const settlements = ["pending", "resolve", "reject"];
+    // Every settlement the row type can express is exercised by some row…
+    for (const kind of settlements) {
+      expect(both.some((row) => row.settlement.kind === kind), kind).toBe(true);
+    }
+    // …and every behavior word the fixture has is reachable from a settlement, one to one.
+    for (const word of closeCodes.behaviors as string[]) {
+      expect(both.some((row) => behaviorOf(row) === word), word).toBe(true);
+    }
+    for (const row of both) {
+      expect(settlements).toContain(row.settlement.kind);
+      expect(row.redials).toBe(behaviorOf(row) === "reconnect");
+    }
+  });
 });
 
 describe("tunnel frames · §4, §6", () => {
-  it.todo("§6 · the hub/register frame the library emits deep-equals the fixture's request shape: the method name and the params keys clientVersion, protocolVersion, roles — and no service or slug field, ever, because identity comes exclusively from the token");
-  it.todo("§6 · the protocolVersion the library sends equals the fixture's pinned revision — a revision bump is a fixture commit, owner-run, and this case is what makes the client's copy follow it");
-  it.todo("§6 · the fixture's ok reply, replayed verbatim, completes registration; the fixture's rejection reply, replayed verbatim, produces RegistrationError — the refusal beside its allow-twin, both read from the fixture");
-  it.todo("§6 · the fixture's hub/replaced notification, replayed verbatim, drives the stop-quietly path: the library recognizes the pinned frame, not a paraphrase of it");
-  it.todo("§6 · the set of hub/* control methods in the fixture equals the set the transport consumes internally — a method outside that set reaches the SDK session untouched, so a new control frame cannot be swallowed silently");
+  it("§6 · the hub/register frame the library emits deep-equals the fixture's request shape: the method name and the params keys clientVersion, protocolVersion, roles — and no service or slug field, ever, because identity comes exclusively from the token", async () => {
+    const hub = await startFakeHub();
+    const transport = new HubTransport({ url: hub.origin, token: TOKEN, roles: {} });
+    opened.push({ hub, transport });
+    void transport.start().catch(() => {});
+    const emitted = (await hub.nextFrame(1)).message;
+    const pinned = tunnelFrames.register.request as Record<string, any>;
+    expect(emitted.jsonrpc).toBe(pinned.jsonrpc);
+    expect(emitted.method).toBe(pinned.method);
+    expect(Object.keys(emitted.params as object).sort()).toEqual(Object.keys(pinned.params).sort());
+    for (const forbidden of tunnelFrames.register.forbiddenParamsKeys as string[]) {
+      expect(Object.keys(emitted.params as object), forbidden).not.toContain(forbidden);
+      expect(JSON.stringify(emitted), forbidden).not.toContain(`"${forbidden}"`);
+    }
+  });
+
+  it("§6 · the protocolVersion the library sends equals the fixture's pinned revision — a revision bump is a fixture commit, owner-run, and this case is what makes the client's copy follow it", async () => {
+    const hub = await startFakeHub();
+    const transport = new HubTransport({ url: hub.origin, token: TOKEN });
+    opened.push({ hub, transport });
+    void transport.start().catch(() => {});
+    const emitted = (await hub.nextFrame(1)).message.params as Record<string, unknown>;
+    expect(emitted.protocolVersion).toBe(tunnelFrames.protocolVersion);
+    expect(PROTOCOL_VERSION).toBe(tunnelFrames.protocolVersion);
+  });
+
+  it("§6 · the fixture's ok reply completes registration and the fixture's rejection reply produces RegistrationError — both replayed as the fixture gives them, with only the OBSERVED request id filled in, because a fixture pins no per-run value (contracts/README: \"nothing that varies per run\") and a JSON-RPC reply with no id correlates to nothing, so a byte-for-byte replay would leave registration unanswered until the 10 s deadline and land on close 4004 instead. The refusal beside its allow-twin, both read from the fixture", async () => {
+    const accepting = await startFakeHub({
+      registrations: [{ kind: "replay", frame: tunnelFrames.register.ack as Record<string, unknown> }],
+    });
+    const good = new HubTransport({ url: accepting.origin, token: TOKEN });
+    opened.push({ hub: accepting, transport: good });
+    await expect(good.start()).resolves.toBeUndefined();
+
+    const refusing = await startFakeHub({
+      registrations: [{ kind: "replay", frame: tunnelFrames.register.rejection as Record<string, unknown> }],
+    });
+    const bad = new HubTransport({ url: refusing.origin, token: TOKEN, roles: { All: [] } });
+    opened.push({ hub: refusing, transport: bad });
+    await expect(bad.start()).rejects.toBeInstanceOf(RegistrationError);
+  });
+
+  it("§6 · the fixture's hub/replaced notification, replayed verbatim, drives the stop-quietly path: the library recognizes the pinned frame, not a paraphrase of it", async () => {
+    const hub = await startFakeHub();
+    const transport = new HubTransport({ url: hub.origin, token: TOKEN });
+    opened.push({ hub, transport });
+    const received: unknown[] = [];
+    transport.onmessage = (message) => received.push(message);
+    await transport.start();
+    await hub.send(tunnelFrames.replaced as Record<string, unknown>);
+    await settle();
+    // Recognized means CONSUMED: the pinned notification never reaches the session…
+    expect(received).toEqual([]);
+    // …and the 4000 close it precedes stops this copy quietly.
+    await hub.end({ kind: "close", code: 4000 });
+    await expect(transport.closed).resolves.toBeUndefined();
+  });
+
+  it("§6 · the set of hub/* control methods in the fixture equals the set the transport consumes internally — a method outside that set reaches the SDK session untouched, so a new control frame cannot be swallowed silently", async () => {
+    expect(Object.values(HUB_METHODS).sort()).toEqual(Object.values(tunnelFrames.methods as Record<string, string>).sort());
+    const hub = await startFakeHub();
+    const transport = new HubTransport({ url: hub.origin, token: TOKEN });
+    opened.push({ hub, transport });
+    const received: Record<string, unknown>[] = [];
+    transport.onmessage = (message) => received.push(message as Record<string, unknown>);
+    await transport.start();
+    const stranger = { jsonrpc: "2.0", id: 3, method: "hub/something-new", params: {} };
+    await hub.send(stranger);
+    await settle();
+    expect(received).toEqual([stranger]);
+  });
+
+  it("§7 · the forwarded-call `_meta` keys caller() reads are the fixture's forwardedCall.metaKeys, read from the fixture and never hand-spelled: hub/principal and hub/roles land on principal and roles, and the third pinned key (io.modelcontextprotocol/clientCapabilities) reaches the SDK session untouched. Renaming a key hub-side must fail HERE — silently, caller() would start answering principal \"\" and empty roles, and every service branching on a negative check (`if (!caller.hasRole(\"admin\")) allow`) would flip open", async () => {
+    const [principalKey, rolesKey, capabilitiesKey] = tunnelFrames.forwardedCall.metaKeys as string[];
+    const meta = { [principalKey]: "sa:claude", [rolesKey]: ["reader"], [capabilitiesKey]: { sampling: {} } };
+    const identity = caller(meta);
+    expect(identity.principal).toBe("sa:claude");
+    expect(identity.roles).toEqual(["reader"]);
+    expect(identity.hasRole("reader")).toBe(true);
+
+    const hub = await startFakeHub();
+    const transport = new HubTransport({ url: hub.origin, token: TOKEN });
+    opened.push({ hub, transport });
+    const received: unknown[] = [];
+    transport.onmessage = (message) => received.push(message);
+    await transport.start();
+    const forwarded = { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "get_news", arguments: {}, _meta: meta } };
+    await hub.send(forwarded);
+    await settle();
+    // The third key is not the transport's business: the whole frame arrives untouched.
+    expect(received).toEqual([forwarded]);
+  });
 });
+
+/** A row's required behavior in the fixture's own vocabulary — the join the tables need. */
+function behaviorOf(row: ReconnectPolicyRow): "stop_fatal" | "stop_quiet" | "reconnect" {
+  if (row.settlement.kind === "reject") return "stop_fatal";
+  if (row.settlement.kind === "resolve") return "stop_quiet";
+  return "reconnect";
+}
 
 /**
  * The join key between a policy row and a fixture entry: one canonical string
@@ -62,5 +241,7 @@ describe("tunnel frames · §4, §6", () => {
  */
 export function triggerKey(trigger: ReconnectPolicyRow["trigger"]): string {
   // deps: none
-  throw new Error("unimplemented");
+  if (trigger.kind === "upgrade") return `upgrade:${trigger.status}`;
+  if (trigger.kind === "close") return `close:${trigger.code}`;
+  return trigger.kind;
 }

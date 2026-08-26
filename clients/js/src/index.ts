@@ -16,9 +16,30 @@
 // offline hub — while disconnected the hub is already failing consumer calls with
 // -32000, and outbound notifications are dropped (the hub re-lists tools after
 // every registration, so a dropped list_changed heals itself).
+//
+// ABSORBED from scripts/thin-serve.ts (D7's verified slice): the derived address, the
+// register ceremony, the control/MCP frame split, and the close-code table proven against
+// the live hub. What the slice could not do and this module must — the upgrade matrix's
+// 401-vs-403 split — is why the socket here is `ws` (§4 names it) rather than the platform
+// global: a refused handshake arrives with its HTTP STATUS on `unexpected-response`, and
+// the global WebSocket reports the same refusal as a bare error event.
 
-/** The author's MCP server — `Server` (or `McpServer`) from `@modelcontextprotocol/server` v2; external, never imported here. */
-export type McpServer = unknown;
+import { WebSocket } from "ws";
+
+/**
+ * The author's MCP server — `Server` (or `McpServer`) from `@modelcontextprotocol/server`
+ * v2; external, never imported here, and therefore named by the one method serve() uses
+ * rather than by a type this module cannot see. `connect` is the SDK session's own entry:
+ * it owns the MCP handshake and calls the transport's start() itself.
+ *
+ * Stated structurally on purpose. A wider type (`unknown`, with a runtime probe for
+ * `connect`) would let a wrong object through to a fallback that registers with the hub and
+ * then never assigns `onmessage` — the hub believes the service is healthy while every
+ * forwarded call times out. Failing at the call site instead is the whole difference
+ * between a typo and an unknown-unknown. A hand-rolled session is served by constructing
+ * {@link HubTransport} directly, which is what that class documents.
+ */
+export type McpServer = { connect(transport: HubTransport): Promise<void> };
 
 /** One MCP wire message — `JSONRPCMessage` from `@modelcontextprotocol/server`; external, never imported here. */
 export type JsonRpcMessage = unknown;
@@ -32,6 +53,53 @@ export type JsonRpcMessage = unknown;
  * which serve() surfaces as RegistrationError.
  */
 export type Roles = Record<string, string[]>;
+
+/**
+ * The `hub/*` control-frame method names (contracts/tunnel-frames.json `methods`, the
+ * hub's own `HUB_METHODS` export). Exported because it is exactly the set this transport
+ * CONSUMES: a `hub/` method outside it is ordinary traffic and reaches the SDK session
+ * untouched, so a new control frame cannot be swallowed silently.
+ */
+export const HUB_METHODS = { register: "hub/register", replaced: "hub/replaced" } as const;
+
+/** The pinned MCP revision of the tunnel wire (contracts/tunnel-frames.json). */
+export const PROTOCOL_VERSION = "2026-07-28";
+
+/** What `clientVersion` reports on the register frame — a free string in the fixture. */
+const CLIENT_VERSION = "@personal-mcps/client/0";
+
+/** The wire id of the one request this library ever originates. */
+const REGISTER_ID = "hub-register-1";
+
+/** §6's reconnect schedule: doubling from 1 s to a 60 s cap, jittered from zero. */
+const BACKOFF_BASE_MS = 1_000;
+const BACKOFF_CAP_MS = 60_000;
+
+/** The first attempt whose ceiling is clamped to the cap — the `max_only` schedule's whole
+ *  content: the window stops doubling and stays at the cap (never a floor under the wait). */
+const MAX_ONLY_ATTEMPT = 6;
+
+/** §6 — liveness is WebSocket PROTOCOL pings at this cadence; there is no application heartbeat. */
+const PING_INTERVAL_MS = 25_000;
+
+/**
+ * The two seams the reconnect policy is otherwise unobservable through — the jitter draw
+ * and the wait itself — as MODULE state the loop calls by name, never as constructor
+ * options. Both are production concerns rather than test workarounds: the schedule is full
+ * jitter, so `max_only` and `exponential` overlap at every attempt and are told apart only
+ * at a FIXED draw, and a suite that waited out a real 60 s window is a suite nobody runs.
+ *
+ * Here rather than on the constructor because §11 promises `{url, token, roles}` and
+ * nothing else: an author reading `new HubTransport(…)` should not have to learn about
+ * jitter injection to use the three options that matter. This is the same spelling the
+ * Python twin uses (`pmcp_client._rng` / `._sleep`, replaced with monkeypatch), so the two
+ * libraries state one contract in one shape; a suite replaces these members and restores
+ * them afterwards.
+ */
+export const seams = {
+  rng: (): number => Math.random(),
+  sleep: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)),
+};
 
 export type ServeOptions = {
   /**
@@ -89,7 +157,18 @@ export class RegistrationError extends Error {}
  */
 export async function serve(server: McpServer, options?: ServeOptions): Promise<void> {
   // deps: HubTransport · @modelcontextprotocol/server (Server.connect)
-  throw new Error("unimplemented");
+  // Options resolve BEFORE any I/O: an empty token dialed anyway comes back as upgrade
+  // 401, turning a local config mistake into a revoked-token diagnosis (§10, §11).
+  const url = options?.url ?? process.env.PMCP_URL;
+  const token = options?.token ?? process.env.PMCP_SERVICE_TOKEN;
+  if (url === undefined || url === "") throw new TypeError("no hub url: pass options.url or set PMCP_URL");
+  if (token === undefined || token === "") {
+    throw new TypeError("no service token: pass options.token or set PMCP_SERVICE_TOKEN");
+  }
+  const transport = new HubTransport({ url, token, roles: options?.roles });
+  // The SDK session owns the handshake and calls start() itself.
+  await server.connect(transport);
+  await transport.closed;
 }
 
 /**
@@ -126,7 +205,7 @@ export class HubTransport {
    * CredentialsError / RegistrationError. Never settles on an ordinary
    * disconnect — those reconnect. serve() awaits exactly this.
    */
-  readonly closed!: Promise<void>;
+  readonly closed: Promise<void>;
 
   /** Assigned by the SDK session (Transport contract): called once per inbound MCP message; hub/* control frames are consumed internally and never appear here. */
   onmessage?: (message: JsonRpcMessage) => void;
@@ -137,14 +216,36 @@ export class HubTransport {
   /** Assigned by the SDK session (Transport contract): transport-level errors worth logging; every fatal one also settles `closed`. */
   onerror?: (error: Error) => void;
 
+  private readonly address: string;
+  private readonly token: string;
+  private readonly roles: Roles;
+  private readonly settleClosed: { resolve: () => void; reject: (error: Error) => void };
+  private readonly started = deferred<void>();
+  private socket: WebSocket | null = null;
+  private attempt = 0;
+  private stopped = false;
+  private running = false;
+  private pinger: ReturnType<typeof setInterval> | null = null;
+
   /**
    * `url` is the hub's https origin — a bare origin, no path; anything else is a
    * TypeError here, before any I/O. `token` is the `pmcp_svc_` credential the
    * whole connection authenticates as. No network happens until start().
+   *
+   * These three and nothing else (§11). The reconnect policy's two observation
+   * seams are the module-level {@link seams}, not options here.
    */
   constructor(options: { url: string; token: string; roles?: Roles }) {
     // deps: none
-    throw new Error("unimplemented");
+    this.address = connectAddress(options.url);
+    this.token = options.token;
+    this.roles = options.roles ?? {};
+    const closed = deferred<void>();
+    this.closed = closed.promise;
+    this.settleClosed = { resolve: closed.resolve, reject: closed.reject };
+    // The terminal state is settled by the loop, not necessarily awaited by the caller:
+    // marking it handled keeps a fatal ending from becoming an unhandled rejection.
+    void this.closed.catch(() => {});
   }
 
   /**
@@ -155,7 +256,11 @@ export class HubTransport {
    */
   async start(): Promise<void> {
     // deps: ws
-    throw new Error("unimplemented");
+    if (!this.running) {
+      this.running = true;
+      void this.loop();
+    }
+    return this.started.promise;
   }
 
   /**
@@ -166,7 +271,13 @@ export class HubTransport {
    */
   async send(message: JsonRpcMessage): Promise<void> {
     // deps: ws
-    throw new Error("unimplemented");
+    const socket = this.socket;
+    if (socket === null || socket.readyState !== WebSocket.OPEN) return;
+    try {
+      socket.send(JSON.stringify(message));
+    } catch {
+      // A send onto a dying socket is not a failure of whatever was being answered.
+    }
   }
 
   /**
@@ -175,8 +286,218 @@ export class HubTransport {
    */
   async close(): Promise<void> {
     // deps: ws
-    throw new Error("unimplemented");
+    this.finish();
   }
+
+  // ── the connection lifetime ───────────────────────────────────────────────────────────
+
+  /** One transport is one service lifetime: this loop outlives every socket it opens. */
+  private async loop(): Promise<void> {
+    while (!this.stopped) {
+      const ending = await this.connectOnce();
+      if (this.stopped) return;
+      if (ending.behavior === "stop_quiet") return this.finish();
+      if (ending.behavior === "stop_fatal") return this.fail(ending.error);
+      // A reconnecting ending never settles `closed` and never fires onclose — the SDK
+      // session must not learn that the socket flapped.
+      const attempt = ending.schedule === "max_only" ? MAX_ONLY_ATTEMPT : this.attempt++;
+      // By NAME through `seams`, so the member a test replaced is the one this call reads.
+      await seams.sleep(backoffDelay(attempt, seams.rng));
+    }
+  }
+
+  /** One dial, from the upgrade to the ending — the only place the wire is touched. */
+  private connectOnce(): Promise<Ending> {
+    return new Promise<Ending>((resolve) => {
+      // The credential rides `Authorization: Bearer` and nowhere else: no query string,
+      // no subprotocol (§6, §18 d13).
+      const socket = new WebSocket(this.address, { headers: { Authorization: `Bearer ${this.token}` } });
+      this.socket = socket;
+      let settled = false;
+      const end = (ending: Ending): void => {
+        if (settled) return;
+        settled = true;
+        this.stopPings();
+        socket.removeAllListeners();
+        // Tearing down a socket that never established makes `ws` emit one more error;
+        // with no listener left, an EventEmitter turns that into an uncaught exception —
+        // so the last listener standing swallows it.
+        socket.on("error", () => {});
+        try {
+          socket.terminate();
+        } catch {
+          // already gone
+        }
+        if (this.socket === socket) this.socket = null;
+        resolve(ending);
+      };
+      // A refused upgrade is an HTTP STATUS, and it is the whole 401-vs-403 split: this
+      // event is the reason the library holds a `ws` socket instead of the global one.
+      socket.on("unexpected-response", (_request: unknown, response: { statusCode?: number }) => {
+        end(endingForUpgrade(response?.statusCode ?? 0));
+      });
+      socket.on("open", () => {
+        this.attempt = 0;
+        this.startPings(socket);
+        // `hub/register` is re-sent on EVERY (re)connect, and carries no service or slug:
+        // identity comes from the token alone.
+        void this.send({
+          jsonrpc: "2.0",
+          id: REGISTER_ID,
+          method: HUB_METHODS.register,
+          params: { clientVersion: CLIENT_VERSION, protocolVersion: PROTOCOL_VERSION, roles: this.roles },
+        });
+      });
+      socket.on("message", (data: unknown) => {
+        const frame = parseFrame(data);
+        if (frame === null) return;
+        if (frame.id === REGISTER_ID && (frame.result !== undefined || frame.error !== undefined)) {
+          if (frame.error !== undefined) {
+            return end({
+              behavior: "stop_fatal",
+              error: new RegistrationError(`hub/register rejected: ${messageOf(frame.error)}`),
+            });
+          }
+          this.started.resolve();
+          return;
+        }
+        // The two control frames are consumed here; every other method — `hub/` prefixed
+        // or not — is ordinary MCP traffic for the session.
+        if (frame.method === HUB_METHODS.replaced) return;
+        this.onmessage?.(frame as JsonRpcMessage);
+      });
+      socket.on("error", (error: Error) => {
+        this.onerror?.(new Error(`hub connection failed: ${error?.message ?? "unknown"}`));
+      });
+      socket.on("close", (code: number) => end(endingForClose(code)));
+    });
+  }
+
+  private startPings(socket: WebSocket): void {
+    this.stopPings();
+    this.pinger = setInterval(() => {
+      try {
+        socket.ping();
+      } catch {
+        // the close handler owns a dead socket
+      }
+    }, PING_INTERVAL_MS);
+  }
+
+  private stopPings(): void {
+    if (this.pinger !== null) clearInterval(this.pinger);
+    this.pinger = null;
+  }
+
+  /** The quiet terminal state: replaced, or a local close(). Idempotent. */
+  private finish(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.stopPings();
+    try {
+      this.socket?.close(1000, "client shutdown");
+    } catch {
+      // already closed
+    }
+    this.socket = null;
+    this.started.resolve();
+    this.settleClosed.resolve();
+    this.onclose?.();
+  }
+
+  /** The fatal terminal state: a dead credential or a refused declaration. */
+  private fail(error: Error): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.stopPings();
+    this.socket = null;
+    this.onerror?.(error);
+    this.started.reject(error);
+    this.settleClosed.reject(error);
+    this.onclose?.();
+  }
+}
+
+/**
+ * wss://<host>/connect, DERIVED from the hub's origin — never passed in (§6). The scheme
+ * follows the origin's and is never downgraded: https → wss, and the http a local
+ * `wrangler dev` serves → ws. Anything but a bare origin is a TypeError before any I/O.
+ *
+ * Exported because the derivation is the one part of the handshake a pure test can see:
+ * a fixture hub speaks ws, so "https derives wss" is otherwise unobservable without TLS.
+ */
+export function connectAddress(url: string): string {
+  const origin = new URL(url);
+  if (origin.pathname !== "/" || origin.search !== "" || origin.hash !== "") {
+    throw new TypeError(`expected a bare hub origin, got ${url}`);
+  }
+  if (origin.protocol !== "https:" && origin.protocol !== "http:") {
+    throw new TypeError(`expected an http(s) hub origin, got ${url}`);
+  }
+  return `${origin.protocol === "https:" ? "wss:" : "ws:"}//${origin.host}/connect`;
+}
+
+/** How one connection ended, in the fixture's vocabulary (contracts/close-codes.json). */
+type Ending =
+  | { behavior: "stop_quiet" }
+  | { behavior: "stop_fatal"; error: Error }
+  | { behavior: "reconnect"; schedule: "exponential" | "max_only" };
+
+/**
+ * A refused upgrade → its behavior. Only 401 is fatal; 403 is archived and heals by
+ * retrying; every other status (500 from an edge failure, and anything §6 never mentions)
+ * reconnects, so a transient outage never strands a fleet of bots.
+ */
+function endingForUpgrade(status: number): Ending {
+  if (status === 401) {
+    // The message names the status, never the credential (§15).
+    return { behavior: "stop_fatal", error: new CredentialsError("the hub refused the service credential (401)") };
+  }
+  if (status === 403) return { behavior: "reconnect", schedule: "max_only" };
+  return { behavior: "reconnect", schedule: "exponential" };
+}
+
+/** A close code → its behavior. Unknown means reconnect — the safe default (§6). */
+function endingForClose(code: number): Ending {
+  if (code === 4000) return { behavior: "stop_quiet" };
+  if (code === 4001) {
+    return { behavior: "stop_fatal", error: new CredentialsError("the hub severed the connection (close 4001)") };
+  }
+  if (code === 4002) return { behavior: "reconnect", schedule: "max_only" };
+  return { behavior: "reconnect", schedule: "exponential" };
+}
+
+/** One inbound frame, read as far as the transport needs. */
+type Frame = { id?: unknown; method?: unknown; result?: unknown; error?: unknown };
+
+/** One text frame as a JSON object, or null for anything else (binary included). */
+function parseFrame(data: unknown): Frame | null {
+  try {
+    const parsed: unknown = JSON.parse(String(data));
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Frame) : null;
+  } catch {
+    return null;
+  }
+}
+
+function messageOf(value: unknown): string {
+  if (value instanceof Error) return value.message;
+  if (typeof value === "object" && value !== null) {
+    const message = (value as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return JSON.stringify(value) ?? "unknown";
+}
+
+/** `Promise.withResolvers` in three lines — the ES2024 builtin is outside this repo's `lib`. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 /**
@@ -190,7 +511,9 @@ export class HubTransport {
  */
 export function backoffDelay(attempt: number, rng: () => number): number {
   // deps: none
-  throw new Error("unimplemented");
+  // The cap applies to the CEILING, before the draw — so no delay can exceed it, and the
+  // window still starts at zero at every attempt.
+  return rng() * Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** attempt);
 }
 
 /**
@@ -218,7 +541,14 @@ export type CallerIdentity = {
  */
 export function caller(meta: Record<string, unknown> | undefined): CallerIdentity {
   // deps: none
-  throw new Error("unimplemented");
+  const principal = meta?.["hub/principal"];
+  const granted = meta?.["hub/roles"];
+  const roles = Array.isArray(granted) ? granted.filter((role): role is string => typeof role === "string") : [];
+  return {
+    principal: typeof principal === "string" ? principal : "",
+    roles,
+    hasRole: (role: string) => roles.includes(role) || roles.includes("all"),
+  };
 }
 
 /**
@@ -229,11 +559,24 @@ export function caller(meta: Record<string, unknown> | undefined): CallerIdentit
  * that node — the hub reads the marker in both directions and strips it from
  * outputSchemas served to consumers (§7). Schema-only: runtime values validate
  * and serialize exactly as the wrapped schema does — real values cross the wire,
- * and the HUB masks before anything is persisted or shown (§15).
+ * and the HUB masks before anything is persisted or shown (§15). A value that is
+ * neither is a TypeError, exactly as in {@link sensitive}: returning it unmarked
+ * would ship the secret with nothing to see.
  */
 export function secret<S>(schema: S): S {
   // deps: none
-  throw new Error("unimplemented");
+  // A zod schema carries `.describe()`/`.meta()`; a plain JSON Schema node is an object.
+  // Both are marked the same way — a DERIVED value with writeOnly at this node — because
+  // the hub reads the emitted JSON Schema either way.
+  const node = schema as unknown;
+  if (typeof node === "object" && node !== null) {
+    const zod = node as { meta?: (data: Record<string, unknown>) => unknown };
+    if (typeof zod.meta === "function") return zod.meta({ writeOnly: true }) as S;
+    return { ...(node as Record<string, unknown>), writeOnly: true } as S;
+  }
+  // The same failure posture as sensitive(), for the same reason: a value that cannot be
+  // marked, returned unchanged, ships the field unmarked and tells the author nothing.
+  throw new TypeError("secret(): cannot mark this value — expected a zod schema or a JSON Schema object");
 }
 
 /**
@@ -249,5 +592,22 @@ export function secret<S>(schema: S): S {
  */
 export function sensitive<S extends Record<string, unknown>>(schema: S, paths: string[]): S {
   // deps: none
-  throw new Error("unimplemented");
+  const copy = structuredClone(schema) as Record<string, unknown>;
+  for (const path of paths) mark(copy, path.split("."), path);
+  return copy as S;
+}
+
+/** Sets `writeOnly` at one dot-path of a JSON Schema object, refusing an absent property. */
+function mark(node: Record<string, unknown>, segments: string[], path: string): void {
+  const properties = node.properties;
+  if (typeof properties !== "object" || properties === null) {
+    throw new TypeError(`sensitive(): "${path}" names no property in this schema`);
+  }
+  const [head, ...rest] = segments;
+  const child = (properties as Record<string, unknown>)[head];
+  if (typeof child !== "object" || child === null) {
+    throw new TypeError(`sensitive(): "${path}" names no property in this schema`);
+  }
+  if (rest.length === 0) (child as Record<string, unknown>).writeOnly = true;
+  else mark(child as Record<string, unknown>, rest, path);
 }

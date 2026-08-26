@@ -37,28 +37,120 @@
 
 // deps: none (pure — no fake hub, no fixtures) · clients/js/src/index.ts (caller, secret, sensitive, backoffDelay)
 
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { backoffDelay, caller, secret, sensitive } from "../src/index";
 import type { CallerIdentity } from "../src/index";
 
+/** A tool's schema as a hand-written JSON Schema node — what `sensitive()` takes. */
+function schemaWithSecrets(): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      password: { type: "string" },
+      credentials: { type: "object", properties: { token: { type: "string" }, user: { type: "string" } } },
+    },
+  };
+}
+
 describe("caller() · §7 \"Caller identity forwarding\"", () => {
-  it.todo("§7 · hub/principal and hub/roles are read off _meta into principal and roles, with roles kept exactly as granted (never expanded)");
-  it.todo("§7 · hasRole(x) is true when roles contains x, false for a role not granted — the twin pair in one case");
-  it.todo("§7 · hasRole(anything) is true when roles contains \"all\", so an owner ([\"all\"]) and an all-granted account behave identically in service code");
-  it.todo("§7 · a request that never passed through the hub — _meta absent, or present without hub/* keys — yields principal \"\", empty roles, and a uniformly false hasRole: no error for the author to handle");
-  it.todo("§7 · a consumer-shaped forgery is not this library's problem to detect: what arrives under hub/* is read verbatim, because the hub strips inbound copies before injecting its own (the trust argument lives server-side)");
+  it("§7 · hub/principal and hub/roles are read off _meta into principal and roles, with roles kept exactly as granted (never expanded)", () => {
+    const identity = caller({ "hub/principal": "sa:claude", "hub/roles": ["all"] });
+    expect(identity.principal).toBe("sa:claude");
+    // `all` arrives literally; it is never expanded into the service's declared names.
+    expect(identity.roles).toEqual(["all"]);
+  });
+
+  it("§7 · hasRole(x) is true when roles contains x, false for a role not granted — the twin pair in one case", () => {
+    const identity = caller({ "hub/principal": "sa:cron", "hub/roles": ["reader"] });
+    expect(identity.hasRole("reader")).toBe(true);
+    expect(identity.hasRole("editor")).toBe(false);
+  });
+
+  it("§7 · hasRole(anything) is true when roles contains \"all\", so an owner ([\"all\"]) and an all-granted account behave identically in service code", () => {
+    const owner = caller({ "hub/principal": "user:ada", "hub/roles": ["all"] });
+    const granted = caller({ "hub/principal": "sa:claude", "hub/roles": ["all"] });
+    for (const identity of [owner, granted]) {
+      expect(identity.hasRole("editor")).toBe(true);
+      expect(identity.hasRole("anything-at-all")).toBe(true);
+    }
+  });
+
+  it("§7 · a request that never passed through the hub — _meta absent, or present without hub/* keys — yields principal \"\", empty roles, and a uniformly false hasRole: no error for the author to handle", () => {
+    const expectation: CallerExpectation = { principal: "", roles: [], hasRole: { reader: false, all: false } };
+    for (const meta of [undefined, {}, { "io.modelcontextprotocol/clientCapabilities": {} }]) {
+      const identity = caller(meta);
+      expect(identity.principal).toBe(expectation.principal);
+      expect(identity.roles).toEqual(expectation.roles);
+      for (const [role, answer] of Object.entries(expectation.hasRole)) {
+        expect(identity.hasRole(role)).toBe(answer);
+      }
+    }
+  });
+
+  it("§7 · a consumer-shaped forgery is not this library's problem to detect: what arrives under hub/* is read verbatim, because the hub strips inbound copies before injecting its own (the trust argument lives server-side)", () => {
+    const identity = caller({ "hub/principal": "user:root", "hub/roles": ["all"], "hub/forged": true });
+    expect(identity.principal).toBe("user:root");
+    expect(identity.hasRole("admin")).toBe(true);
+  });
 });
 
 describe("secret() and sensitive() · §7 \"Sensitive-field redaction\", §11", () => {
-  it.todo("§7 · secret(schema) emits writeOnly: true at that node — inside a tool's INPUT shape and its OUTPUT shape alike (the hub reads both directions)");
-  it.todo("§7 · secret() returns a derived schema: the schema passed in is unchanged, and a second call on the same input is independent");
-  it.todo("§7 · secret() is schema-only — a marked field validates and serializes exactly as the wrapped schema does, so real values still cross the wire and the HUB does the masking (§15)");
-  it.todo("§7 · sensitive(schema, [\"password\", \"credentials.token\"]) sets writeOnly at a top-level property and at a dot-path, on an input schema and an output schema alike");
-  it.todo("§7 · sensitive() copies — the original object is not mutated at any depth");
-  it.todo("§7 · a path naming no property in the schema is a TypeError: a silent typo would quietly persist a secret; twin: the correctly spelled path in the same schema marks it");
+  it("§7 · secret(schema) emits writeOnly: true at that node — inside a tool's INPUT shape and its OUTPUT shape alike (the hub reads both directions)", () => {
+    const input = secret({ type: "string", description: "the upstream api key" });
+    const output = secret({ type: "string" });
+    expect(input).toMatchObject({ type: "string", description: "the upstream api key", writeOnly: true });
+    expect(output).toMatchObject({ type: "string", writeOnly: true });
+  });
+
+  it("§7 · secret() returns a derived schema: the schema passed in is unchanged, and a second call on the same input is independent", () => {
+    const original = { type: "string" };
+    const marked = secret(original);
+    expect(original).toEqual({ type: "string" });
+    expect(marked).not.toBe(original);
+    expect(secret(original)).not.toBe(marked);
+  });
+
+  it("§7 · secret() is schema-only — a marked field validates and serializes exactly as the wrapped schema does, so real values still cross the wire and the HUB does the masking (§15)", () => {
+    // A zod-shaped schema: the derived value keeps the parser, so the runtime value is
+    // untouched — marking is metadata, never a transform.
+    const zodLike = {
+      parse: (value: unknown) => value,
+      meta(data: Record<string, unknown>) {
+        return { ...this, ...data };
+      },
+    };
+    const marked = secret(zodLike) as typeof zodLike & { writeOnly?: boolean };
+    expect(marked.writeOnly).toBe(true);
+    expect(marked.parse("hunter2")).toBe("hunter2");
+  });
+
+  it("§7 · sensitive(schema, [\"password\", \"credentials.token\"]) sets writeOnly at a top-level property and at a dot-path, on an input schema and an output schema alike", () => {
+    for (const schema of [schemaWithSecrets(), schemaWithSecrets()]) {
+      const marked = sensitive(schema, ["password", "credentials.token"]) as Record<string, any>;
+      expect(marked.properties.password.writeOnly).toBe(true);
+      expect(marked.properties.credentials.properties.token.writeOnly).toBe(true);
+      // Only the named paths: a neighbour is left alone.
+      expect(marked.properties.credentials.properties.user.writeOnly).toBeUndefined();
+    }
+  });
+
+  it("§7 · sensitive() copies — the original object is not mutated at any depth", () => {
+    const original = schemaWithSecrets();
+    const before = structuredClone(original);
+    sensitive(original, ["password", "credentials.token"]);
+    expect(original).toEqual(before);
+  });
+
+  it("§7 · a path naming no property in the schema is a TypeError: a silent typo would quietly persist a secret; twin: the correctly spelled path in the same schema marks it", () => {
+    expect(() => sensitive(schemaWithSecrets(), ["passwrod"])).toThrow(TypeError);
+    expect(() => sensitive(schemaWithSecrets(), ["credentials.tokne"])).toThrow(TypeError);
+    const marked = sensitive(schemaWithSecrets(), ["password"]) as Record<string, any>;
+    expect(marked.properties.password.writeOnly).toBe(true);
+  });
 });
 
 describe("backoffDelay() · §6 \"Reconnect\"", () => {
-  it.todo("the schedule is the table below — one case per row, no bespoke assertions");
+  runBackoffTable(backoffRows);
 });
 
 /**
@@ -93,7 +185,56 @@ export type BackoffRow = {
  * jitter-from-zero decision, read from the spec alone and never from the
  * implementation.
  */
-export const backoffRows: readonly BackoffRow[] = [];
+export const backoffRows: readonly BackoffRow[] = [
+  {
+    spec: "§6 · attempt 0, draw 0 · the very first retry may be immediate — jitter is drawn from zero, so a hub deploy's reconnect storm spreads out instead of every bot returning in the same second",
+    attempt: 0,
+    rng: 0,
+    expectedMs: 0,
+  },
+  {
+    spec: "§6 · attempt 0, draw just under 1 · the first window's ceiling is the 1 s base and no draw exceeds it — the twin that pins the other end of attempt 0's jitter",
+    attempt: 0,
+    rng: 0.999,
+    expectedMs: 999,
+  },
+  {
+    spec: "§6 · attempt 1, draw just under 1 · one consecutive failure later the ceiling has doubled to 2 s",
+    attempt: 1,
+    rng: 0.999,
+    expectedMs: 1998,
+  },
+  {
+    spec: "§6 · attempt 2, draw 0.5 · the draw scales the WHOLE window — half of the 4 s ceiling, not half of a fixed 4 s delay",
+    attempt: 2,
+    rng: 0.5,
+    expectedMs: 2000,
+  },
+  {
+    spec: "§6 · attempt 5, draw just under 1 · the doubling runs 1→2→4→8→16→32 s, the last ceiling still below the cap",
+    attempt: 5,
+    rng: 0.999,
+    expectedMs: 31968,
+  },
+  {
+    spec: "§6 · attempt 6, draw just under 1 · attempt 6's 64 s is clamped to the 60 s cap — the cap applies to the ceiling BEFORE the jitter is drawn, so no delay can exceed 60 s",
+    attempt: 6,
+    rng: 0.999,
+    expectedMs: 59940,
+  },
+  {
+    spec: "§6 · attempt 40, draw just under 1 · the cap holds arbitrarily far out: reconnect is forever, and the doubling neither overflows nor drifts past 60 s",
+    attempt: 40,
+    rng: 0.999,
+    expectedMs: 59940,
+  },
+  {
+    spec: "§6 · attempt 40, draw 0 · even at the cap the window still starts at zero — max backoff is a ceiling on the wait, never a floor under it",
+    attempt: 40,
+    rng: 0,
+    expectedMs: 0,
+  },
+];
 
 /**
  * The table runner: one case per row, titled with the row's `spec` so a failure
@@ -104,7 +245,11 @@ export const backoffRows: readonly BackoffRow[] = [];
  */
 export function runBackoffTable(rows: readonly BackoffRow[]): void {
   // deps: clients/js/src/index.ts (backoffDelay)
-  throw new Error("unimplemented");
+  for (const row of rows) {
+    it(row.spec, () => {
+      expect(backoffDelay(row.attempt, () => row.rng)).toBe(row.expectedMs);
+    });
+  }
 }
 
 /**

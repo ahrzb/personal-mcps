@@ -1,8 +1,18 @@
 // smoke.ts — the live end-to-end walk against a DEPLOYED hub. One process, one throwaway
 // namespace, every layer the design has: §12's bootstrap route, §4's password sign-in,
-// §8's whoami and admin ops over the `pmcp` MCP surface, §7's handshake and dispatch,
-// §6's reverse tunnel (served from this very process by scripts/thin-serve.ts),
-// §7's approval gate, §15's ledger — and then the teardown, verified.
+// §14's CLI device flow and the `pmcp` commands it authenticates, §8's whoami and admin
+// ops over the `pmcp` MCP surface, §7's handshake and dispatch,
+// §6's reverse tunnel (served from this very process by the REAL client library,
+// clients/js/src/index.ts), §7's approval gate, §15's ledger — and then the teardown,
+// verified.
+//
+// The tunnel leg used to run on scripts/thin-serve.ts, D7's verified slice of the transport.
+// That file is deleted: the library now owns everything it proved (the derived address, the
+// register ceremony, the control-frame split, the close-code table) plus what it could not
+// do (the 401-vs-403 upgrade split), so keeping a second implementation of the same wire
+// alive only to smoke-test the first one was the fork its own header called a known ceiling.
+// What this walk still holds itself is the MCP half — answering tools/list and one
+// tools/call — because it carries no MCP SDK; the library's job starts at the socket.
 //
 //   HUB_ORIGIN=https://… BOOTSTRAP_SECRET=… node --experimental-strip-types scripts/smoke.ts
 //
@@ -24,14 +34,8 @@
 // ponytail: no argv, no flags, no dry-run mode. Two env vars and a fixed walk — a knob
 // nobody has asked for is a knob that goes stale. Add one when a second caller appears.
 
-import { serveThin } from "./thin-serve.ts";
-
-/** Node's globals, spelled locally: this repo has no @types/node, and the walk needs three
- *  members of one object. Erasable, so `--experimental-strip-types` is happy. */
-declare const process: {
-  env: Record<string, string | undefined>;
-  exit(code: number): never;
-};
+import { main as cli } from "../cli/src/main.ts";
+import { caller, HubTransport } from "../clients/js/src/index.ts";
 
 // ── the walk ──────────────────────────────────────────────────────────────────────────
 
@@ -42,6 +46,8 @@ const ACCOUNT = "smoke-agent";
 const SERVICE = "smoke-svc";
 const ROLE = "reader";
 const TOOL = "echo";
+/** The RFC 8628 client id cli/src/main.ts presents — the same string, on purpose. */
+const DEVICE_CLIENT_ID = "pmcp-cli";
 /** The one call the walk makes through the tunnel. Reused verbatim on the approval retry —
  *  §7 binds an approval to the canonical JSON of `arguments`, so the retry must be
  *  byte-identical to match the row. */
@@ -50,6 +56,7 @@ const CALL_ARGS = { text: "smoke" } as const;
 async function main(): Promise<number> {
   let password = "";
   let session = "";
+  let cliSession = "";
   let agentToken = "";
   let serviceToken = "";
   let approvalId = "";
@@ -95,6 +102,38 @@ async function main(): Promise<number> {
       expect(me.principal === `user:${USERNAME}`, `principal ${String(me.principal)}`);
       expect(me.namespace === USERNAME, `namespace ${String(me.namespace)}`);
       return `${String(me.principal)} in namespace ${String(me.namespace)}`;
+    });
+
+    await step("CLI device flow (§14) approved with the web session", async () => {
+      // The /device PAGE is a later dispatch; the flow underneath it is better-auth's own
+      // endpoints, and that is what the CLI speaks. GET /api/auth/device claims the code
+      // for the signed-in user (approve refuses an unclaimed one), and the approval POST
+      // is the browser's half, driven here with the smoke session.
+      const requested = await postJson(`${ORIGIN}/api/auth/device/code`, { client_id: DEVICE_CLIENT_ID });
+      const userCode = asString(requested.user_code, "user_code");
+      const deviceCode = asString(requested.device_code, "device_code");
+      await getJson(`${ORIGIN}/api/auth/device?user_code=${encodeURIComponent(userCode)}`, session);
+      const approved = await postJson(`${ORIGIN}/api/auth/device/approve`, { userCode }, session);
+      expect(approved.success === true, `approve answered ${JSON.stringify(approved)}`);
+      const granted = await postJson(`${ORIGIN}/api/auth/device/token`, {
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        device_code: deviceCode,
+        client_id: DEVICE_CLIENT_ID,
+      });
+      cliSession = asString(granted.access_token, "access_token");
+      return `user code approved, session bearer issued (${cliSession.length} chars, withheld)`;
+    });
+
+    await step("pmcp whoami + ls through the CLI itself", async () => {
+      // The real command table, over the device-flow session: PMCP_TOKEN overrides the
+      // stored config (§10), so the walk never touches ~/.config/pmcp.
+      process.env.PMCP_URL = ORIGIN;
+      process.env.PMCP_TOKEN = cliSession;
+      const whoami = await cli(["whoami"]);
+      const listed = await cli(["ls"]);
+      expect(whoami === 0, `pmcp whoami exited ${whoami}`);
+      expect(listed === 0, `pmcp ls exited ${listed}`);
+      return "pmcp whoami and pmcp ls both exited 0";
     });
 
     await step("pmcp account_create", async () => {
@@ -143,28 +182,23 @@ async function main(): Promise<number> {
       return `pmcp_svc_ key ${String(minted.id)} (value withheld)`;
     });
 
-    await step("thin client connects and registers", async () => {
-      const service = serveThin({
-        url: ORIGIN,
-        token: serviceToken,
-        role: ROLE,
-        tool: {
-          name: TOOL,
-          description: "Echoes its argument back, with the caller the hub asserted.",
-          inputSchema: {
-            type: "object",
-            properties: { text: { type: "string" } },
-            required: ["text"],
-            additionalProperties: false,
-          },
-          // The caller is the point: what comes back proves §7's identity forwarding
-          // survived the whole path, not just that the socket carried bytes.
-          run: (args, caller) => ({ echo: args.text, principal: caller.principal, roles: caller.roles }),
+    await step("client library connects and registers", async () => {
+      const service = serveOneTool(serviceToken, {
+        name: TOOL,
+        description: "Echoes its argument back, with the caller the hub asserted.",
+        inputSchema: {
+          type: "object",
+          properties: { text: { type: "string" } },
+          required: ["text"],
+          additionalProperties: false,
         },
+        // The caller is the point: what comes back proves §7's identity forwarding
+        // survived the whole path, not just that the socket carried bytes.
+        run: (args, who) => ({ echo: args.text, principal: who.principal, roles: who.roles }),
       });
       tunnel = service;
       await deadline(service.registered, 20_000, "hub/register was never accepted");
-      return `registered role ${ROLE} declaring tool ${TOOL}`;
+      return `registered role ${ROLE} declaring tool ${TOOL} through @personal-mcps/client`;
     });
 
     await step("service reports online", async () => {
@@ -338,6 +372,24 @@ async function signIn(username: string, password: string): Promise<string> {
   return token;
 }
 
+/** One JSON POST, optionally as a signed-in user — the device-flow leg's whole transport. */
+async function postJson(url: string, body: unknown, bearer?: string): Promise<Record<string, unknown>> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(bearer === undefined ? {} : { Authorization: `Bearer ${bearer}` }),
+    },
+    body: JSON.stringify(body),
+  });
+  const parsed = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = asRecord(parsed, `POST ${url} body`);
+    throw new Error(`POST ${url} → ${response.status} ${String(detail.error_description ?? detail.error ?? "")}`);
+  }
+  return asRecord(parsed, `POST ${url} response`);
+}
+
 async function getJson(url: string, bearer: string): Promise<Record<string, unknown>> {
   const response = await fetch(url, { headers: { Authorization: `Bearer ${bearer}` } });
   if (!response.ok) throw new Error(`GET ${url} → ${response.status}`);
@@ -383,6 +435,64 @@ async function callTool(bearer: string): Promise<unknown> {
     name: TOOL,
     arguments: CALL_ARGS,
   });
+}
+
+// ── the one tunneled service, served through the real client library ──────────────────
+
+/** The one tool this walk serves. `run` returns the STRUCTURED value; both carriers of the
+ *  2026-07-28 result (text and structuredContent) are built from it. */
+type SmokeTool = {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  run(args: Record<string, unknown>, who: { principal: string; roles: readonly string[] }): unknown;
+};
+
+/**
+ * Run one tool as a tunneled service on `@personal-mcps/client`'s transport. The library
+ * owns everything below the frame — dial, `hub/register`, reconnects, close codes, pings;
+ * this function is only the MCP session the walk has no SDK for, which is exactly the
+ * split §11 draws (`serve(server, …)` is this, with a real SDK server in place of these
+ * twenty lines). HubTransport rather than serve() because the walk needs a shutdown
+ * handle: serve()'s promise is the bot's main loop and hands back nothing to close.
+ */
+function serveOneTool(token: string, tool: SmokeTool): { registered: Promise<void>; close(): Promise<void> } {
+  const transport = new HubTransport({ url: ORIGIN, token, roles: { [ROLE]: [tool.name] } });
+  transport.onmessage = (message) => {
+    const frame = message as { id?: unknown; method?: unknown; params?: unknown };
+    if (typeof frame.method !== "string" || frame.id === undefined) return; // a notification
+    void transport.send(answer(frame, tool));
+  };
+  return { registered: transport.start(), close: () => transport.close() };
+}
+
+/** One hub-originated request answered — the whole MCP surface of this walk. */
+function answer(frame: { id?: unknown; method?: unknown; params?: unknown }, tool: SmokeTool): Record<string, unknown> {
+  const id = frame.id;
+  if (frame.method === "tools/list") {
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: { tools: [{ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }] },
+    };
+  }
+  const params = asRecord(frame.params, "params");
+  if (frame.method !== "tools/call" || params.name !== tool.name) {
+    return { jsonrpc: "2.0", id, error: { code: -32601, message: "method not found" } };
+  }
+  try {
+    // `caller()` is the library's own reader of the hub's `_meta` assertion (§7) — the
+    // affordance a service author would use, exercised here on the live wire.
+    const value = tool.run(asRecord(params.arguments, "arguments"), caller(asRecord(params._meta, "_meta")));
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value },
+    };
+  } catch (err) {
+    // A tool that threw is a TOOL error, not a protocol one.
+    return { jsonrpc: "2.0", id, result: { content: [{ type: "text", text: messageOf(err) }], isError: true } };
+  }
 }
 
 /** A JSON-RPC refusal, carrying §7's code and `data` (the approval fields on -32003). */

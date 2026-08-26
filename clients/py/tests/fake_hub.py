@@ -12,10 +12,10 @@ fatal-vs-retry decision turns on telling them apart — a refused upgrade (an
 HTTP status, before any frame exists), a close code (after establishment), a
 rejected registration (a JSON-RPC error reply), and an ordinary drop. A stub
 that hands the transport a synthesized "401" erases exactly the distinction
-under test. ``dials`` and ``frames`` record at ARRIVAL, before any scripted
-decision runs, so "it re-registered after reconnecting" and "it never redialed"
-are things this harness observed rather than things the transport reported
-about itself.
+under test. ``dials``, ``frames`` and ``pings`` record at ARRIVAL, before any
+scripted decision runs, so "it re-registered after reconnecting", "it never
+redialed" and "it kept the connection alive" are things this harness observed
+rather than things the transport reported about itself.
 
 WHAT IT MUST NOT FAKE (strategy §9): the WebSocket upgrade (401 and 403 are
 real HTTP statuses on a real handshake), the JSON-RPC framing (one message per
@@ -42,19 +42,29 @@ to record dials as they arrive so "it kept retrying" has a witness. Every wait a
 fixture performs is on an observation (:meth:`FakeHub.next_dial`,
 :meth:`FakeHub.next_frame`), never on a duration.
 
-At implementation this module imports: ``websockets`` (the server and its real
-upgrade handling), ``anyio`` (the event waits behind next_dial/next_frame), and
-``json`` (one message per text frame) — no ``mcp`` SDK, no server module, and
-nothing from ``contracts/`` (the fixture is the TEST's oracle, not this
-harness's input). ``pmcp_client`` is deliberately NOT imported: this harness is
-the other end of the wire and must stay ignorant of the library it is testing,
-so the declaration shape below is restated rather than borrowed.
+At implementation this module imports ``websockets`` (the real
+``websockets.asyncio.server`` — real upgrade handling, real close codes) and
+``anyio`` (the event waits behind next_dial/next_frame) and ``json`` (one
+message per text frame) — no ``mcp`` SDK, no server module, and nothing from
+``contracts/`` (the fixture is the TEST's oracle, not this harness's input).
+``pmcp_client`` is deliberately NOT imported: this harness is the other end of
+the wire and must stay ignorant of the library it is testing, so the
+declaration shape below is restated rather than borrowed.
 """
 
 # deps: websockets (real serve/upgrade/close) · anyio (observation waits) · json
 #   (framing) — no pmcp_client, no mcp SDK, no server module, no contracts fixture
 
+import json
+import time
 from typing import Any, NamedTuple
+
+import anyio
+import websockets
+from websockets.frames import Frame, Opcode
+from websockets.asyncio.server import Server as _WsServer
+from websockets.asyncio.server import ServerConnection
+from websockets.asyncio.server import serve as _ws_serve
 
 # What the hub answers to the NEXT upgrade attempt (§6's three outcomes). Scripted
 # rather than derived: this harness holds no credentials to derive 401-vs-403
@@ -73,15 +83,26 @@ UpgradeStatus = int
 # table a second oracle.
 Roles = dict[str, list[str]]
 
+_ACCEPT_STATUS = 101
+
 
 class RegisterOutcome(NamedTuple):
     """What the hub does with ``hub/register``. ``error`` set means a JSON-RPC
     ERROR REPLY — the rejected-declaration ending, which §6 makes terminal
     (RegistrationError) precisely because identical input cannot start
     succeeding. It is deliberately a distinct shape from a close code: a client
-    that conflated the two would retry a declaration forever."""
+    that conflated the two would retry a declaration forever.
+
+    ``frame`` answers with that exact frame instead, with the OBSERVED request id
+    filled in — the seam test_contracts.py needs to REPLAY
+    ``contracts/tunnel-frames.json``'s own ack rather than assert a property of
+    it while the harness synthesizes a paraphrase (the JS harness's ``replay``
+    arm). The id is the one thing a fixture cannot pin (contracts/README:
+    "nothing that varies per run"), and a reply that correlates to nothing would
+    leave registration unanswered until the 10 s deadline."""
 
     error: dict[str, Any] | None = None
+    frame: dict[str, Any] | None = None
 
 
 class Dial(NamedTuple):
@@ -117,6 +138,37 @@ class ReceivedFrame(NamedTuple):
     message: dict[str, Any]
 
 
+#: How long an observation wait may go unanswered before the case fails instead
+#: of hanging (mirrors the JS harness's OBSERVATION_DEADLINE_MS).
+_OBSERVATION_DEADLINE_S = 5.0
+
+
+def _next(script: list[Any], index: int) -> Any:
+    """The scripted answer for the nth event; the last entry repeats forever."""
+    return script[min(index, len(script) - 1)]
+
+
+def _ping_recording_connection(hub: "FakeHub") -> type[ServerConnection]:
+    """The connection class this hub's listener builds: a plain
+    ``ServerConnection`` that also records incoming PING frames.
+
+    ``websockets`` answers pings inside the protocol and surfaces only data
+    frames to ``recv()``, so a keepalive is otherwise invisible to a server
+    handler — and reading it off the CLIENT's ``latency`` would prove the
+    vendored library's ping loop ran, not that §6's cadence is the transport's
+    behavior. ``serve(create_connection=…)`` is the documented seam for exactly
+    this, and it keeps the observation on the harness's side of the wire like
+    every other one here."""
+
+    class PingRecordingConnection(ServerConnection):
+        def process_event(self, event: Any) -> None:
+            if isinstance(event, Frame) and event.opcode is Opcode.PING:
+                hub._record_ping()
+            super().process_event(event)
+
+    return PingRecordingConnection
+
+
 class FakeHub:
     """A live fake hub — one LISTENER, many connections. Unlike the fake service
     on the server side, this one deliberately survives the sockets it accepts:
@@ -139,11 +191,32 @@ class FakeHub:
     #: §6's "re-sent on every (re)connect" is observed from outside the transport.
     frames: list[ReceivedFrame]
 
+    #: Every protocol PING this listener observed, by arrival time — §6's liveness
+    #: sentence, witnessed on the wire like every other observation here rather
+    #: than read back off the transport's own keepalive bookkeeping. The JS
+    #: harness records the same thing on the same side (``FakeHub.pings``).
+    pings: list[float]
+
+    def __init__(
+        self,
+        upgrades: list[UpgradeStatus] | None = None,
+        registrations: list[RegisterOutcome] | None = None,
+    ) -> None:
+        self.origin = ""
+        self.dials = []
+        self.frames = []
+        self.pings = []
+        self._server: _WsServer | None = None
+        self._upgrades: list[UpgradeStatus] = list(upgrades) if upgrades else [_ACCEPT_STATUS]
+        self._registrations: list[RegisterOutcome] = list(registrations) if registrations else [RegisterOutcome()]
+        self._open: list[ServerConnection] = []
+        self._connections = 0
+        self._watchers: list[anyio.Event] = []
+
     def connection_count(self) -> int:
         """How many sockets are open right now — the invariant behind "a refused
         upgrade leaves nothing connected"."""
-        # deps: none
-        raise NotImplementedError
+        return len(self._open)
 
     async def next_dial(self, n: int) -> Dial:
         """Wait until the number of recorded dials reaches ``n``, and return it.
@@ -154,14 +227,24 @@ class FakeHub:
         the recorded-sleep seam sufficient: no test needs wall-clock time to pass
         for a redial to be observed. Raises on a bounded deadline, so a transport
         that never redials fails the case instead of hanging it."""
-        # deps: anyio (Event/move_on_after)
-        raise NotImplementedError
+        await self._until(lambda: len(self.dials) >= n, f"dial {n}")
+        return self.dials[n - 1]
 
     async def next_frame(self, n: int) -> ReceivedFrame:
         """The frame counterpart of :meth:`next_dial`, with the same rationale
         and the same bounded failure."""
-        # deps: anyio (Event/move_on_after)
-        raise NotImplementedError
+        await self._until(lambda: len(self.frames) >= n, f"frame {n}")
+        return self.frames[n - 1]
+
+    async def next_ping(self, n: int) -> float:
+        """The ping counterpart — §6's liveness cadence, waited on as an
+        observation like the rest."""
+        await self._until(lambda: len(self.pings) >= n, f"ping {n}")
+        return self.pings[n - 1]
+
+    def _record_ping(self) -> None:
+        self.pings.append(time.monotonic())
+        self._notify()
 
     def set_upgrades(self, statuses: list[UpgradeStatus]) -> None:
         """Rewrite the remaining upgrade script mid-test — the seam the healing
@@ -169,14 +252,9 @@ class FakeHub:
         then flips to 101 and asserts the very next dial connects: §6's unarchive
         path, expressed as a change in the world rather than as a second hub.
         The list is consumed in order and its last entry repeats forever."""
-        # deps: none
-        raise NotImplementedError
-
-    def set_registrations(self, outcomes: list[RegisterOutcome]) -> None:
-        """The registration counterpart of :meth:`set_upgrades` — a declaration
-        refused once and accepted after, consumed and repeated the same way."""
-        # deps: none
-        raise NotImplementedError
+        # Padded up to the dials already resolved, so the NEXT dial (whose
+        # ordinal is len(self.dials)) is the first to read the new script.
+        self._upgrades = [statuses[0]] * len(self.dials) + list(statuses)
 
     async def send(self, frame: dict[str, Any]) -> None:
         """Send one raw frame on the current connection, bypassing every
@@ -185,8 +263,8 @@ class FakeHub:
         messages in one text frame. A harness that could only send well-formed
         frames could not test that ordinary MCP traffic reaches the read stream
         while unknown control frames do not."""
-        # deps: websockets (send) · json
-        raise NotImplementedError
+        for connection in list(self._open):
+            await connection.send(json.dumps(frame))
 
     async def replace(self) -> None:
         """End the current connection §6's replacement way: the ``hub/replaced``
@@ -194,16 +272,17 @@ class FakeHub:
         act on the notification. One method rather than two so a fixture cannot
         accidentally test the close without the notification that gives it
         meaning. A no-op when nothing is connected."""
-        # deps: websockets (send, close)
-        raise NotImplementedError
+        for connection in list(self._open):
+            await connection.send(json.dumps({"jsonrpc": "2.0", "method": "hub/replaced"}))
+            await connection.close(4000, "replaced")
 
     async def close_connection(self, code: int, reason: str = "") -> None:
         """Close the current connection with a real close code — the trigger
         every 4001/4002/4003/4004 row fires. The listener stays up, because what
         the row pins is whether the client comes back. A no-op when nothing is
         connected."""
-        # deps: websockets (close)
-        raise NotImplementedError
+        for connection in list(self._open):
+            await connection.close(code, reason)
 
     async def drop_connection(self) -> None:
         """Sever the current connection with no close frame at all — what a hub
@@ -211,16 +290,95 @@ class FakeHub:
         likely to be mishandled. Distinct from :meth:`close_connection` because
         no code carries meaning back to the client, so the policy must fall
         through to plain reconnect-with-backoff."""
-        # deps: websockets (transport abort)
-        raise NotImplementedError
+        for connection in list(self._open):
+            connection.transport.abort()
 
     async def aclose(self) -> None:
         """Stop the listener and every socket on it. Idempotent; fixtures call it
         in teardown unconditionally, because a leaked listener holds a port and
         an open task past the end of the case that made it — and in a parallel
         lane that is a failure in some other test."""
-        # deps: websockets (server close/wait_closed)
-        raise NotImplementedError
+        for connection in list(self._open):
+            connection.transport.abort()
+        self._open.clear()
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+
+    # ── the websockets.serve() hooks (bound methods, passed in directly) ──────
+
+    async def _process_request(self, connection: ServerConnection, request: Any) -> Any:
+        """Recorded at ARRIVAL, before the scripted status is applied — see the
+        module docstring on why that ordering matters."""
+        index = len(self.dials)
+        self.dials.append(
+            Dial(
+                seq=index + 1,
+                path=request.path,
+                authorization=request.headers.get("Authorization"),
+                at=time.monotonic(),
+            )
+        )
+        self._notify()
+        status = _next(self._upgrades, index)
+        if status == _ACCEPT_STATUS:
+            return None
+        return connection.respond(status, "refused")
+
+    async def _handle(self, connection: ServerConnection) -> None:
+        """One accepted connection: record its frames, answer its registration,
+        nothing else."""
+        connection_id = self._connections + 1
+        self._connections = connection_id
+        self._open.append(connection)
+        try:
+            while True:
+                try:
+                    raw = await connection.recv()
+                except websockets.ConnectionClosed:
+                    return
+                try:
+                    parsed = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(parsed, dict):
+                    continue
+                self.frames.append(ReceivedFrame(seq=len(self.frames) + 1, connection=connection_id, message=parsed))
+                self._notify()
+                if parsed.get("method") != "hub/register":
+                    continue
+                outcome = _next(self._registrations, connection_id - 1)
+                # The id is echoed AS RECEIVED: a reply that correlates to
+                # nothing would leave registration unanswered until the deadline.
+                if outcome.frame is not None:
+                    reply: dict[str, Any] = {**outcome.frame, "id": parsed.get("id")}
+                elif outcome.error is None:
+                    reply = {"jsonrpc": "2.0", "id": parsed.get("id"), "result": {"ok": True}}
+                else:
+                    reply = {"jsonrpc": "2.0", "id": parsed.get("id"), "error": outcome.error}
+                await connection.send(json.dumps(reply))
+        except websockets.ConnectionClosed:
+            pass
+        finally:
+            if connection in self._open:
+                self._open.remove(connection)
+
+    # ── observation plumbing ──────────────────────────────────────────────────
+
+    async def _until(self, done: Any, what: str) -> None:
+        with anyio.move_on_after(_OBSERVATION_DEADLINE_S) as scope:
+            while not done():
+                event = anyio.Event()
+                self._watchers.append(event)
+                await event.wait()
+        if scope.cancelled_caught and not done():
+            raise TimeoutError(f"the fake hub never observed {what} (within {_OBSERVATION_DEADLINE_S}s)")
+
+    def _notify(self) -> None:
+        watchers, self._watchers = self._watchers, []
+        for event in watchers:
+            event.set()
 
 
 async def start_fake_hub(
@@ -239,5 +397,17 @@ async def start_fake_hub(
     observed rather than assumed. ``registrations`` scripts ``hub/register`` the
     same way. Both omitted means accept everything, which is the shape every
     handshake case starts from."""
-    # deps: websockets (serve on port 0) · anyio
-    raise NotImplementedError
+    hub = FakeHub(upgrades, registrations)
+    server = await _ws_serve(
+        hub._handle,
+        "127.0.0.1",
+        0,
+        process_request=hub._process_request,
+        create_connection=_ping_recording_connection(hub),
+    )
+    hub._server = server
+    sockets = server.sockets
+    assert sockets is not None
+    port = sockets[0].getsockname()[1]
+    hub.origin = f"http://127.0.0.1:{port}"
+    return hub

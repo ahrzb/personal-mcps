@@ -361,6 +361,7 @@ source = { editable = "." }
 dependencies = [
     { name = "anyio" },
     { name = "mcp" },
+    { name = "pydantic" },
     { name = "websockets" },
 ]
 
@@ -374,6 +375,7 @@ dev = [
 requires-dist = [
     { name = "anyio" },
     { name = "mcp" },
+    { name = "pydantic" },
     { name = "websockets" },
 ]
 

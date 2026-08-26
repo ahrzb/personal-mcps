@@ -6,6 +6,8 @@
     "approval_decide",
     "approval_list",
     "audit_query",
+    "connection_list",
+    "connection_revoke",
     "grant_set",
     "service_archive",
     "service_create",
@@ -449,6 +451,27 @@
       "properties": {
         "id": {
           "description": "The token row's id, as token_list reports it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "connection_list": {
+      "type": "object",
+      "description": "List the OAuth clients connected to this namespace.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "connection_revoke": {
+      "type": "object",
+      "description": "Revoke one OAuth connection. Immediate at the door.",
+      "properties": {
+        "id": {
+          "description": "The connection's id, as connection_list reports it.",
           "type": "string"
         }
       },

@@ -1,6 +1,6 @@
 {
-  "name": "@personal-mcps/client",
-  "version": "0.0.0",
+  "name": "@ahrzb/pmcp-client",
+  "version": "0.1.0",
   "description": "Keep an MCP server reachable through a personal-mcps hub's reverse tunnel.",
   "repository": {
     "type": "git",
@@ -8,8 +8,22 @@
     "directory": "clients/js"
   },
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prepublishOnly": "tsc -p tsconfig.build.json"
+  },
   "dependencies": {
     "ws": "^8.21.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

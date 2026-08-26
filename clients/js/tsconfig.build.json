@@ -1,0 +1,16 @@
+{
+  // The publish build only (prepublishOnly): emits dist/index.js + index.d.ts —
+  // consumers get JavaScript plus types, since node never type-strips inside
+  // node_modules. The repo's own suite type-checks src via the root tsconfig.
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}

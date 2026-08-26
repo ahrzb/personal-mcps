@@ -1,0 +1,26 @@
+{
+  "name": "@ahrzb/pmcp",
+  "version": "0.1.0",
+  "description": "CLI for a personal-mcps hub — services, accounts, tokens, approvals, audit, YAML diff/apply.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahrzb/personal-mcps.git",
+    "directory": "cli"
+  },
+  "type": "module",
+  "bin": {
+    "pmcp": "./dist/pmcp.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "prepublishOnly": "node build.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

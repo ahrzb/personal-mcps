@@ -9,3 +9,7 @@ __pycache__/
 
 # operator-local token stash — never committed
 .tokens
+
+# publish-time build outputs (prepublishOnly), never committed
+cli/dist/
+clients/js/dist/

@@ -123,8 +123,8 @@ the failure is a spec question, not an execution one.
 | D3 | Migrations, registry, identity, audit | workflow | **gated ✓** (`c83bb17`) |
 | D4 | Gateway, admin, approvals | workflow | **gated ✓** (`ffe2c4a`) |
 | D5 | Upstream proxy, cron, hygiene | workflow | **gated ✓** (`d036455`) |
-| D6 | Tunnel DO + contracts + approval e2e | workflow | in flight |
-| D7 | First deploy + live wire (initialize, smoke.ts, thin tunnel client) | workflow + inline | outline (shift-left 2026-08-25) |
+| D6 | Tunnel DO + contracts + approval e2e | workflow | **gated ✓** (`f4370c9`+`eb0d5f1`) |
+| D7 | First deploy + live wire (initialize, smoke.ts, thin tunnel client) | workflow + inline | in flight |
 | D8 | CLI + JS/Python clients, against the live hub | workflow | outline |
 | D9 | Web surface wiring + Web Push | workflow | outline |
 | D10 | Final sweep (zero-todo, cross-module PSD, cost actuals) | workflow + inline | outline |
@@ -689,3 +689,34 @@ check and (manual, once) a real push notification to a real browser.
   exportJsonl and push-decrypt debts move with it). **D10** = the old final
   sweep, now a re-run of standing steps rather than a first encounter. D6
   unchanged and in flight.
+- 2026-08-26 02:45 — **D6 gated.** Workflow `wf_ff7f8cbf-d5b`: 11 agents, 0
+  errors, ~2.63M subagent tokens. The platform gate held: SQLite-backed DOs +
+  WebSocket hibernation run under workerd on Windows, and serializeAttachment
+  provably survives evictDurableObject. Tunnel: 154 cases across six suites
+  incl. the full §7 approval walk over a live socket and CAS interleavings;
+  contracts locked to nine committed fixture files (regeneration idempotent;
+  fixture-only commit per README CI rule, landed FIRST so every tree is
+  consistent). Design notes worth keeping: the schema-unsound verdict is
+  DERIVED at read (no cache bit to disagree with itself); the catalog is one
+  durable key; a 1 ms (not 0) wait turn in the harness was load-bearing
+  against false "frame never came" failures. Off-workflow interleaved work
+  (user-driven, committed separately): better-auth Dash wired production-only;
+  Sentry wired with a conditional wrap (SDK instruments unconditionally
+  otherwise), request-body capture off, scrub proven on a live stored event;
+  remote D1 migrated; all seven secrets set incl. a generated VAPID pair;
+  first deploys done — the live hub's auth stack is proven with a real
+  bootstrap→sign-in→whoami→delete round-trip. PSD: 25 findings (9 high), 19
+  fixed, 1 disputed for row-locking reasons with a compensating contract
+  comment (CasStep's checked/claimed semantics — the release-seam design
+  routes to a future owner call). Fix highlights: HubError.auditDetail
+  generalizes the failure-class thread-through (gateway's upstream
+  special-case deleted), resolveServiceToken widened to {serviceId, tokenId},
+  Registry.serviceById, stamped()/prepareForward deduped, shared tunnel-do
+  harness. Gate actions: deleted approval-e2e row 23 (contradicted
+  availability-first; its healing-arc half moves to D7's oracle stage as a
+  new verified row), fixed admin.evict's stale ponytail note. Suite
+  698/104/0, tsc 0; inventory 139 pure flips, 59 additions, 7 removals (6
+  placeholders + the documented row deletion), 0 regressions. **Debt:** 5
+  contracts parity todos wait for D8's CLI by design; spec §7 amended with
+  the initialize method (D7 implements it). Committed `f4370c9` (fixtures) +
+  `eb0d5f1` (implementation); D7 launched immediately.

@@ -539,6 +539,12 @@ Per request:
    never compiled — so an exact-looking role entry `get.news` matches only the tool
    `get.news`, not `getXnews`.
 3. Dispatch:
+   - `initialize` → answered by the Worker (amended 2026-08-26, shift-left D7: the
+     MCP handshake every standards-compliant client opens with — protocolVersion,
+     capabilities, serverInfo — answered statelessly on both endpoint shapes; the
+     follow-up `notifications/initialized` is a notification and is absorbed like
+     every notification, 202 with no body. Before this amendment `initialize` fell
+     to `-32601` and no real MCP client could connect).
    - `server/discover` → answered by the Worker (hub capabilities).
    - `tools/list` → tunneled: served from the DO's **cached** list (kept in DO SQLite,
      so it survives disconnects — deploy-induced reconnect flapping doesn't churn agent

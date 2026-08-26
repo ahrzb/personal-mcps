@@ -127,7 +127,7 @@ the failure is a spec question, not an execution one.
 | D7 | First deploy + live wire (initialize, smoke.ts, thin tunnel client) | workflow + inline | **gated ✓** (`042aa96`, SMOKE PASS 22/22 live) |
 | D8 | CLI + JS/Python clients, against the live hub | workflow | **gated ✓** (`80860c2`+`c308190` spec, SMOKE PASS 24/24 live) |
 | D9 | Web surface wiring + Web Push | workflow | **gated ✓** (`59264a5`, deploy `b0853623`, SMOKE PASS 25/25 live) |
-| D10 | Final sweep (zero-todo, cross-module PSD, cost actuals) | workflow + inline | outline |
+| D10 | Final sweep (zero-todo, cross-module PSD, cost actuals) | workflow + inline | **gated ✓** (`13a8179`+`c6f8ee9`, deploy `4d3bf3d7`, SMOKE PASS 25/25 live) |
 
 Order is dependency-driven: nothing waits on anything it doesn't consume. D2–D3
 could overlap in principle (disjoint suites) but share `server/src/registry.ts`, so
@@ -863,3 +863,32 @@ check and (manual, once) a real push notification to a real browser.
   only in Node 26.7; postmortem closed with deterministic repro), the
   smoke.ts profile bridge, `pnpm dev`, and the staged D10 sweep workflow
   (.claude/workflows/d10-sweep.js). D10 launch HELD at user request.
+- 2026-08-26 — **D10 gated — the dispatch ledger closes.** The seam sweep
+  (.claude/workflows/d10-sweep.js: four Opus lenses over registry↔gateway,
+  gateway↔tunnel, identity↔custody, pages↔web, plus a coverage critic;
+  every finding adversarially refuted, two refuters per blocker) surfaced
+  ONE live blocker: better-auth's /api/auth/sign-up/email was open on the
+  public mount — any anonymous POST self-provisioned a full namespace,
+  bypassing §12's bootstrap gate. Killed same turn: disableSignUp in
+  identity.ts, actor-real regression test, commit `13a8179`, deploy
+  `dc835e60`, live before/after probes (now EMAIL_PASSWORD_SIGN_UP_DISABLED).
+  Postmortem: docs/superpowers/postmortems/2026-08-26-public-signup-open.md
+  (class: boundary-actor — no test had ever POSTed sign-up). By owner
+  decision the sweep's remaining 9 findings (2 auth-seam security, 4 tunnel,
+  redaction fail-open, 2FA-password ceiling) + 12 coverage gaps went to
+  docs/superpowers/plans/2026-08-26-d11-remediation.md, not fixed inline.
+  Inline batch `c6f8ee9`: bare `/` redirects by cookie session (owner →
+  /services, else /login — user request, requireOwnerSession reused, §16
+  walk untouched); dead ApprovalsConfig.vapid removed across 8 files;
+  approval-e2e CAS case 9 root-caused as a test-orchestration race (it
+  asserted WHICH racing leg wins — workerd's call; now multisets within
+  runner-unorderable cohorts, mutation-tested, 11 green runs) — the flake
+  that stalked D6–D9 is closed; package.json type:module (warning flag
+  dropped); .tokens gitignored. Gate: suite 907/907 (34 files), tsc 0,
+  pytest 58/58, inventory +3 / 0 removals / 0 flips, deploy `4d3bf3d7`,
+  SMOKE PASS 25/25 live, anonymous GET / → 302 /login probed on prod.
+  Cost shape: ~17 sweep agents (4 lenses + critic + refuters) + 1 CAS9
+  investigator, all Opus per the subagent-model rule. Docs rode the gate
+  as `5d8a112` (README + client quickstart, user request). Every dispatch
+  D0–D10 is now gated ✓; open threads live in the D11 plan (incl. the
+  inbound OAuth server for claude.ai connectors) and the postmortem index.

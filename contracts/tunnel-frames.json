@@ -1,0 +1,45 @@
+{
+  "protocolVersion": "2026-07-28",
+  "methods": {
+    "register": "hub/register",
+    "replaced": "hub/replaced"
+  },
+  "register": {
+    "request": {
+      "jsonrpc": "2.0",
+      "method": "hub/register",
+      "params": {
+        "clientVersion": "<string>",
+        "protocolVersion": "2026-07-28",
+        "roles": {}
+      }
+    },
+    "forbiddenParamsKeys": [
+      "service",
+      "slug"
+    ],
+    "ack": {
+      "jsonrpc": "2.0",
+      "result": {
+        "ok": true
+      }
+    },
+    "rejection": {
+      "jsonrpc": "2.0",
+      "error": {
+        "code": -32602
+      }
+    }
+  },
+  "replaced": {
+    "jsonrpc": "2.0",
+    "method": "hub/replaced"
+  },
+  "forwardedCall": {
+    "metaKeys": [
+      "hub/principal",
+      "hub/roles",
+      "io.modelcontextprotocol/clientCapabilities"
+    ]
+  }
+}

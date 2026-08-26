@@ -1,0 +1,44 @@
+{
+  "tunnel": {
+    "slug": "contracts-tunnel",
+    "name": "contracts-tunnel",
+    "description": "",
+    "archived": false,
+    "logBodies": true,
+    "roles": {},
+    "redact": {},
+    "redactResults": {},
+    "kind": "tunnel",
+    "createdAt": "<number>",
+    "status": "offline",
+    "lastSeen": null
+  },
+  "proxy": {
+    "slug": "contracts-proxy",
+    "name": "contracts-proxy",
+    "description": "",
+    "archived": false,
+    "logBodies": false,
+    "roles": {},
+    "redact": {},
+    "redactResults": {},
+    "kind": "proxy",
+    "createdAt": "<number>",
+    "endpoint": "<string>",
+    "auth": "oauth",
+    "forwardIdentity": false,
+    "connection": "not_connected"
+  },
+  "builtin": {
+    "slug": "pmcp",
+    "name": "pmcp",
+    "description": "The hub's own management tools.",
+    "kind": "builtin",
+    "builtin": true,
+    "archived": false,
+    "logBodies": true,
+    "roles": {},
+    "redact": {},
+    "redactResults": {}
+  }
+}

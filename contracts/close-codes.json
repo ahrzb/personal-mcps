@@ -1,0 +1,52 @@
+{
+  "behaviors": [
+    "stop_fatal",
+    "stop_quiet",
+    "reconnect"
+  ],
+  "schedules": [
+    "exponential",
+    "max_only"
+  ],
+  "entries": {
+    "close:4000": {
+      "kind": "close",
+      "code": 4000,
+      "behavior": "stop_quiet"
+    },
+    "close:4001": {
+      "kind": "close",
+      "code": 4001,
+      "behavior": "stop_fatal"
+    },
+    "close:4002": {
+      "kind": "close",
+      "code": 4002,
+      "behavior": "reconnect",
+      "schedule": "max_only"
+    },
+    "close:4003": {
+      "kind": "close",
+      "code": 4003,
+      "behavior": "reconnect",
+      "schedule": "exponential"
+    },
+    "close:4004": {
+      "kind": "close",
+      "code": 4004,
+      "behavior": "reconnect",
+      "schedule": "exponential"
+    },
+    "upgrade:401": {
+      "kind": "upgrade",
+      "code": 401,
+      "behavior": "stop_fatal"
+    },
+    "upgrade:403": {
+      "kind": "upgrade",
+      "code": 403,
+      "behavior": "reconnect",
+      "schedule": "max_only"
+    }
+  }
+}

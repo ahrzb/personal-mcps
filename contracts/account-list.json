@@ -1,0 +1,14 @@
+{
+  "account": {
+    "slug": "contracts-agent",
+    "name": "contracts-agent",
+    "description": "",
+    "createdAt": "<number>",
+    "grants": {
+      "contracts-tunnel": [
+        "reader",
+        "writer:approval"
+      ]
+    }
+  }
+}

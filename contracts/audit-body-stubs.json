@@ -1,0 +1,11 @@
+{
+  "blob": {
+    "stub": "blob",
+    "contentType": "image/png",
+    "bytes": "<number>"
+  },
+  "oversize": {
+    "stub": "oversize",
+    "bytes": "<number>"
+  }
+}

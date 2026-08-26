@@ -1,0 +1,51 @@
+{
+  "create": {
+    "request": {
+      "op": "create",
+      "username": "contracts-user"
+    },
+    "response": {
+      "op": "create",
+      "username": "contracts-user",
+      "password": "<string>"
+    }
+  },
+  "list": {
+    "request": {
+      "op": "list"
+    },
+    "response": {
+      "op": "list",
+      "usernames": [
+        "<string>"
+      ]
+    }
+  },
+  "reset-password": {
+    "request": {
+      "op": "reset-password",
+      "username": "contracts-user"
+    },
+    "response": {
+      "op": "reset-password",
+      "username": "contracts-user",
+      "password": "<string>"
+    }
+  },
+  "delete": {
+    "request": {
+      "op": "delete",
+      "username": "contracts-user"
+    },
+    "response": {
+      "op": "delete",
+      "username": "contracts-user"
+    }
+  },
+  "disabled": {
+    "status": 404
+  },
+  "wrongSecret": {
+    "status": 401
+  }
+}

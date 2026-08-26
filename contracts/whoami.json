@@ -1,0 +1,21 @@
+{
+  "user": {
+    "status": 200,
+    "body": {
+      "principal": "user:contracts-user",
+      "namespace": "contracts-user"
+    }
+  },
+  "service_account": {
+    "status": 200,
+    "body": {
+      "principal": "sa:contracts-agent",
+      "namespace": "contracts-user"
+    }
+  },
+  "unauthorized": {
+    "status": 401,
+    "wwwAuthenticate": "Bearer",
+    "body": "Unauthorized"
+  }
+}

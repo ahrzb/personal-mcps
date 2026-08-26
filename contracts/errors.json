@@ -1,0 +1,26 @@
+{
+  "-32000": {
+    "code": -32000,
+    "dataKeys": null
+  },
+  "-32001": {
+    "code": -32001,
+    "dataKeys": null
+  },
+  "-32002": {
+    "code": -32002,
+    "dataKeys": null
+  },
+  "-32003": {
+    "code": -32003,
+    "dataKeys": [
+      "approvalId",
+      "approvalUrl",
+      "expiresAt"
+    ]
+  },
+  "-32601": {
+    "code": -32601,
+    "dataKeys": null
+  }
+}

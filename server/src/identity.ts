@@ -82,7 +82,12 @@ function auth() {
     baseURL: env.PUBLIC_ORIGIN,
     // A Worker never phones home: the bundled telemetry is opt-in, and this says so.
     telemetry: { enabled: false },
-    emailAndPassword: { enabled: true },
+    // Sign-IN by password, never sign-UP: §12 makes BOOTSTRAP_SECRET-gated
+    // POST /internal/users the only way a user is created (§2: "by a repo
+    // script"). Without disableSignUp, better-auth's /sign-up/email is live on
+    // the same public /api/auth mount and self-provisions a full namespace to
+    // any unauthenticated caller — the whole gate, bypassed.
+    emailAndPassword: { enabled: true, disableSignUp: true },
     plugins: [
       // §2's charset, handed to the plugin that would otherwise apply its own (which
       // rejects the hyphen every generated username may carry). One rule for what a

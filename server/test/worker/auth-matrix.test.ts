@@ -1212,6 +1212,32 @@ describe("§4/§13 — session-scope guards on /account", () => {
 
 describe("§12 — the bootstrap route exists only while its secret does", () => {
   runAuthMatrix(SECTIONS[5]);
+
+  // §12/§2: POST /internal/users is "the only user management surface" — so better-auth's
+  // own /sign-up/email, live on the same public /api/auth mount, must NOT self-provision.
+  // Driven as the attacker's request actually arrives: no cookie, no Origin (which is what
+  // skips better-auth's CSRF check), a valid username and a long password — the one input
+  // combination that WOULD create the row if sign-up were open.
+  it("§12 · anonymous POST /api/auth/sign-up/email cannot create a user", async () => {
+    const response = await call(
+      new Request(`${ORIGIN}/api/auth/sign-up/email`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "intruder",
+          email: "intruder@example.com",
+          password: "correct-horse-battery-staple",
+          username: "intruder",
+        }),
+      }),
+    );
+    expect(response.ok).toBe(false);
+    // And the namespace it tried to claim does not exist afterwards.
+    const whoami = await call(
+      new Request(`${ORIGIN}/api/whoami`, { headers: { authorization: "Bearer pmcp_sa_FAKE0000" } }),
+    );
+    expect(whoami.status).toBe(401);
+  });
 });
 
 describe("the table's own invariants", () => {

@@ -1,6 +1,7 @@
 {
   "private": true,
   "scripts": {
+    "dev": "wrangler dev",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "contracts:update": "vitest run --project worker contracts -u",

@@ -7,4 +7,6 @@
 import { applyProfile } from "../cli/src/main.ts";
 import { main } from "./users.ts";
 
-process.exit(await main(applyProfile(process.argv.slice(2))));
+// `exitCode`, not `exit()` — same reason as cli/pmcp.mts: process.exit() after two or more
+// fetch() calls aborts on Windows Node ≤24.19 with a libuv assertion (nodejs/node#56645).
+process.exitCode = await main(applyProfile(process.argv.slice(2)));

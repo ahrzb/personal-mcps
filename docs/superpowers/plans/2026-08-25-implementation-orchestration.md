@@ -462,7 +462,15 @@ check and (manual, once) a real push notification to a real browser.
   registry↔gateway, gateway↔tunnel, identity↔everything, pages-model↔web) +
   a completeness critic ("which spec § has no green case pointing at it?"),
   incl. the D2 array-items redaction rows debt and the 0004 migrations-pin
-  owner rows.
+  owner rows. Script staged 2026-08-26 at `.claude/workflows/d10-sweep.js` —
+  launch as `Workflow({name: "d10-sweep"})`; returns `{seams, coverage}` raw,
+  orchestrator writes the close-out.
+- [ ] Root `/` route (user-ordered 2026-08-26): 302 to `/services` when a
+  cookie session is present, 302 to `/login` when not — today bare `/` falls
+  through the username matcher to a plain-text 404. One spec §13 sentence, one
+  route ahead of the `/:user/mcp` fallthrough (read-only session peek via the
+  existing get-session seam), and the §16 router-walk totality test learns the
+  root path (it asserts served-segments set equality; `/` has no segment).
 - [ ] Set root `"type": "module"` and re-verify everything: Node asks for it
   on every script run and Vite asks for it for fake-upstream.ts; deferred
   while dispatches were mutating the repo (a module-semantics flip is
@@ -833,3 +841,25 @@ check and (manual, once) a real push notification to a real browser.
   concurrent-agent load (cleared unchanged) — the D10 investigation stands.
   Commits: `ac4b335`+`f69a4c1` (spec), `5f5da04` (profiles), `59264a5` (D9),
   this entry + strategy rule + inventory close the gate.
+- 2026-08-26 — **Login-fix gated.** The 415 postmortem's fix: commit
+  `c6abf9d`, deploy `f880d71f`, SMOKE PASS 25/25 live, suite 904/904 (+5:
+  web-pages cases 21-25, red observed first), tsc 0, pytest 58/58. The bug
+  was three-headed with one root — sign-in 415, sign-out 415 on its empty
+  form post, and better-auth's MISSING_OR_NULL_ORIGIN refusing every
+  cookie-bearing internal call (so /device approve/deny was broken too).
+  Fixed at the seams: nine translation routes in web.ts (login family gated
+  by crossOrigin, account family by mutation()), callAuthResponse in
+  identity.ts (sole-custodian rule intact; internal requests state
+  origin: PUBLIC_ORIGIN), 9/11 paths.auth repoints plus two dead-link fixes
+  in model.ts (?confirm=, ?method=). Live proof: 303+Set-Cookie, deep link
+  honoured, evil callbackURL refused, cross-origin POST 403, prod probe
+  answers the old 415 with a field-error 303. Agent-recorded ceilings:
+  passkey plugin absent (buttons inert), 2FA-enable needs a password field
+  the locked template lacks (TOTP enrollment card unreachable), /login TOTP
+  step needs JS, sign-out stands on crossOrigin alone (case 4 names the
+  exclusion). Riding this gate as the owner batch: the postmortem track
+  (docs/superpowers/postmortems/, 3 entries), the libuv exitCode workaround
+  in cli/pmcp.mts + scripts/users.mts (nodejs/node#56645, fixed upstream
+  only in Node 26.7; postmortem closed with deterministic repro), the
+  smoke.ts profile bridge, `pnpm dev`, and the staged D10 sweep workflow
+  (.claude/workflows/d10-sweep.js). D10 launch HELD at user request.

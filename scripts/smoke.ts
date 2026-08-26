@@ -14,7 +14,8 @@
 // What this walk still holds itself is the MCP half — answering tools/list and one
 // tools/call — because it carries no MCP SDK; the library's job starts at the socket.
 //
-//   HUB_ORIGIN=https://… BOOTSTRAP_SECRET=… node --experimental-strip-types scripts/smoke.ts
+//   pnpm smoke [--profile <name>]   — url + bootstrap secret resolve from the §10 config
+//   profile, and flat HUB_ORIGIN / PMCP_URL / BOOTSTRAP_SECRET env vars override it
 //
 // It is a WALK, not a test suite: every step prints what was observed, the first failure
 // stops the walk, cleanup runs regardless, and the exit code is the verdict. Nothing here
@@ -34,12 +35,13 @@
 // ponytail: no argv, no flags, no dry-run mode. Two env vars and a fixed walk — a knob
 // nobody has asked for is a knob that goes stale. Add one when a second caller appears.
 
-import { main as cli } from "../cli/src/main.ts";
+import { applyProfile, main as cli } from "../cli/src/main.ts";
 import { caller, HubTransport } from "../clients/js/src/index.ts";
 
 // ── the walk ──────────────────────────────────────────────────────────────────────────
 
-const ORIGIN = required("HUB_ORIGIN").replace(/\/+$/, "");
+applyProfile(process.argv.slice(2)); // fills PMCP_URL / BOOTSTRAP_SECRET where the env hasn't spoken
+const ORIGIN = ((process.env.HUB_ORIGIN ?? "") !== "" ? required("HUB_ORIGIN") : required("PMCP_URL")).replace(/\/+$/, "");
 const SECRET = required("BOOTSTRAP_SECRET");
 const USERNAME = `smoke-${Date.now()}`;
 const ACCOUNT = "smoke-agent";

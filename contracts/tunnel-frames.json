@@ -11,7 +11,22 @@
       "params": {
         "clientVersion": "<string>",
         "protocolVersion": "2026-07-28",
-        "roles": {}
+        "roles": {
+          "reader": [
+            "search"
+          ],
+          "curator": {
+            "tools": [
+              "publish"
+            ],
+            "prompts": [
+              "digest_.*"
+            ],
+            "resources": [
+              "news://feed/*"
+            ]
+          }
+        }
       }
     },
     "forbiddenParamsKeys": [

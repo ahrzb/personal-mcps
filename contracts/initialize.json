@@ -16,11 +16,27 @@
     "capabilities": {
       "tools": {
         "listChanged": false
+      },
+      "prompts": {
+        "listChanged": false
       }
     },
     "serverInfo": {
       "name": "Personal MCP Hub",
       "version": "<string>"
     }
+  },
+  "scopedCapabilities": {
+    "tools": {
+      "listChanged": false
+    },
+    "prompts": {
+      "listChanged": false
+    },
+    "resources": {
+      "subscribe": false,
+      "listChanged": false
+    },
+    "completions": {}
   }
 }

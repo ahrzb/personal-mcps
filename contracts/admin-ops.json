@@ -87,13 +87,39 @@
           "type": "boolean"
         },
         "roles": {
-          "description": "Proxied only: role name → tool patterns.",
+          "description": "Proxied only: role name → tool patterns, or (§20.3) the per-family object of tool/prompt/resource patterns.",
           "type": "object",
           "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "capabilities": {
+          "description": "Proxied only: which MCP families this upstream serves (default: tools only).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "tools",
+              "prompts",
+              "resources",
+              "completions"
+            ]
           }
         },
         "redact": {
@@ -161,13 +187,39 @@
           "type": "boolean"
         },
         "roles": {
-          "description": "Proxied only: role name → tool patterns.",
+          "description": "Proxied only: role name → tool patterns, or (§20.3) the per-family object of tool/prompt/resource patterns.",
           "type": "object",
           "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "capabilities": {
+          "description": "Proxied only: which MCP families this upstream serves (default: tools only).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "tools",
+              "prompts",
+              "resources",
+              "completions"
+            ]
           }
         },
         "redact": {

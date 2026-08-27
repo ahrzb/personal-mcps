@@ -130,6 +130,7 @@ the failure is a spec question, not an execution one.
 | D10 | Final sweep (zero-todo, cross-module PSD, cost actuals) | workflow + inline | **gated ✓** (`13a8179`+`c6f8ee9`, deploy `4d3bf3d7`, SMOKE PASS 25/25 live) |
 | D11 | Remediation: D10 sweep's 9 findings + 12 coverage gaps | workflow ×2 + inline | **gated ✓** (`35a5268`+`3a3a67a`, deploy `d0879ada`, SMOKE PASS 25/25 live) |
 | D12 | Inbound OAuth — the hub as an authorization server (§19) | probe + workflow (7 agents) + inline gate | **gated ✓** (`be94c17` fixture, `f4ffd75` impl, `b52e563`+`3a9526c` fixes, deploy `c31c4be0`, SMOKE PASS 26/26 live) |
+| D13 | MCP data model beyond tools (§20): prompts, resources, templates, completions | workflow (41 agents, DAG) + inline gate | **gated ✓** (`e6d86c1` fixtures, `902c9a0` impl, deploy `3f653efe`, SMOKE PASS 26/26 live) |
 
 Order is dependency-driven: nothing waits on anything it doesn't consume. D2–D3
 could overlap in principle (disjoint suites) but share `server/src/registry.ts`, so
@@ -959,3 +960,52 @@ check and (manual, once) a real push notification to a real browser.
   only net, so bundle/construction-cost growth needs a deliberate watch. All
   subagents Opus/Sonnet per the model rule. Next: D13 (§20, the MCP data model) —
   NOT started at the owner's instruction.
+- 2026-08-27 — **D13 gated — the hub proxies the MCP data model beyond tools.**
+  Workflow `wf_7a558f86-783`: 41 agents, 0 errors, ~7.69M subagent tokens, run as a
+  dependency DAG per the owner's correction (all five oracle chains fanned out
+  immediately, each author → two adversarial verifier lenses (spec-fidelity,
+  falsifiability) → reconcile; implementation followed the declared edges A → B∥D,
+  C on B's completion while D still ran, E after C). Oracles: 98 locked titles
+  authored, all 98 machine-verified verbatim in the planned files at the green
+  stage; reconciliation strengthened rows in every group (the pattern runner
+  learned title-grouped rows so one locked title can carry both family arms).
+  Implementation deviations, all recorded and accepted: migration
+  **0006_service_capabilities.sql** (one nullable `service.capabilities_json`
+  column — no group owned migrations), `limits.AUDIT_URI_CAP_BYTES`,
+  `audit.REDACTED_QUERY`, fake-upstream's per-family scenario extension + an
+  out-of-band registerOverride channel (431 ceiling on URL-encoded scenarios), and
+  admin.ts's `roles` Field widened to the two-spelling shape (was silently blocking
+  group D through `coerce()`). PSD panel: two lenses (seam, wire) + the §20.2
+  adversarial leak read — **NO-LEAK** (no path puts a resource URI on the
+  aggregated endpoint); 15 findings, 5 highs put to two-refuter votes, survivors
+  all fixed, **0 accepted-without-fix**: the backend seam RE-UNIFIED
+  (DataModelBackend/FamilyBackend deleted, ServiceBackend one seam again — the
+  dispatch's headline question answered structurally), family taxonomy
+  single-sourced in registry, the door's list cases collapsed to one table,
+  recordDispatch unified, the planner's bare-list rule completed (empty-family
+  drop — was replanning `service_update` on every apply for `{tools:[…],prompts:[]}`),
+  `stringList` Field kind advertises + refuses its enum, `scopedCapabilities`
+  pinned into contracts/initialize.json, and errorsEmission's -32601 witness
+  re-sourced to `subscriptions/listen` (§20.2 made `resources/list` real, a
+  pre-existing D13 defect the fixture suite caught). Gate re-run by the
+  orchestrator: suite **1145/1145** (36 files, +104), tsc 0, pytest **68/68**
+  (+10), inventory +107 pure additions / 0 removals / 0 regressions, ownership
+  exact, contracts diff = both role spellings in tunnel-frames + prompts capability
+  and the scopedCapabilities pin in initialize + the roles oneOf/capabilities enum
+  in admin-ops, regeneration idempotent. **Two owner fixes at the gate**, both in
+  migrations.test.ts (no D13 group's file): the §19.3 back-fill case sliced
+  "before 0005" by COUNT (`length - 1`) so 0006's existence silently included
+  0005 — now sliced by name (`findIndex 0005`); the §10 forward-migration case's
+  "N's own table" witness still inserted 0004's table — repointed to 0006's
+  column. Deploy `3f653efe`, remote 0006 applied, **SMOKE PASS 26/26 live**.
+  Debt recorded: §20.4's cacheScope public→private downgrade is implemented on
+  `resources/read` only — the leak read proved the other relays carry no cache
+  semantics for a conforming 2026-07-28 client, so the defensive "every family"
+  spelling is a gap on paper, closable via a shared relay helper; the prompt
+  literal GRAMMAR has no discriminating oracle row (group A's flagged coverage
+  gap — an implementation putting prompts on the resource grammar passes today's
+  rows... except the reconcile pass added exactly that discriminator; verify at
+  next sweep); plan.ts excludes `capabilities` from the update-diff because
+  admin's serviceRow doesn't yet return it (revisit when it does); one uncaught
+  async "WebSocket send() after close()" from hygiene.test.ts:1564 under full-run
+  load (passed, watch). All subagents Opus/Sonnet per the model rule.

@@ -32,7 +32,7 @@ import { dirname, join } from "node:path";
 // resolve it — Node's own type stripping resolves a relative import only WITH one.
 import { COMMANDS as COMMAND_TABLE } from "./commands.ts";
 import { parseDesired, planChanges } from "./plan.ts";
-import type { CurrentAccount, CurrentService, CurrentState, DesiredGrant, Plan } from "./plan.ts";
+import type { CurrentAccount, CurrentService, CurrentState, DesiredGrant, Plan, RoleDeclaration } from "./plan.ts";
 import { emitToml, parseToml } from "./toml.ts";
 import type { PmcpConfig, PmcpProfile } from "./toml.ts";
 import { parseYaml } from "./yaml.ts";
@@ -73,7 +73,7 @@ export type ServiceRow = {
   description: string;
   archived: boolean;
   logBodies: boolean;
-  roles: Record<string, string[]>;
+  roles: RoleDeclaration;
   redact: Record<string, string[]>;
   redactResults: Record<string, string[]>;
   kind: "tunnel" | "proxy" | "builtin";
@@ -563,6 +563,85 @@ export async function call(
   }
 }
 
+// ── §20.6: the data-model commands, gateway sugar of exactly the kind `tools`/`call`
+//    already are — they front an MCP method on the scoped endpoint, never an admin op ─────
+
+/**
+ * `pmcp prompts <service>` — `prompts/list` on the SCOPED endpoint (§20.2/§20.6): only
+ * there does a prompt keep the unprefixed name the service gave it — the aggregated mount
+ * doubly prefixes it `<slug>_<prompt>`, which is not what an operator managing one service
+ * wants to read. One row per prompt, name then description; hub errors pass through as
+ * sent, same as `tools`.
+ */
+export async function prompts(ctx: CliContext, service: string): Promise<number> {
+  // deps: rpc
+  const result = (await rpc(ctx, `/${ctx.namespace}/mcp/${service}`, "prompts/list")) as { prompts?: unknown[] };
+  for (const prompt of (result?.prompts ?? []) as Record<string, any>[]) {
+    process.stdout.write(`${String(prompt.name).padEnd(28)} ${String(prompt.description ?? "")}\n`);
+  }
+  return 0;
+}
+
+/**
+ * `pmcp prompt <service> <name> [key=value …]` — `prompts/get` on the scoped endpoint, the
+ * `key=value` grammar `pmcp call` already speaks landing exactly where the method declares
+ * it: `params.arguments`, beside the prompt's own `name` and nowhere else. Result JSON to
+ * stdout, same rendering as `call`.
+ */
+export async function prompt(
+  ctx: CliContext,
+  service: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<number> {
+  // deps: rpc
+  const result = await rpc(ctx, `/${ctx.namespace}/mcp/${service}`, "prompts/get", { name, arguments: args });
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return 0;
+}
+
+/**
+ * `pmcp resources <service> [--templates]` — `resources/list` on the scoped endpoint, or
+ * `resources/templates/list` when `--templates` is given (§20.2/§20.6). §20.2 keys this
+ * family by `uri`, never by `name` — a resource's `uri` is the word an operator hands to
+ * `pmcp read`, so each row prints that, not the display name; a template row prints the
+ * RAW `uriTemplate`, unexpanded, since that raw string is exactly what §20.3's resource
+ * patterns are matched against.
+ */
+export async function resources(ctx: CliContext, service: string, opts: { templates?: boolean }): Promise<number> {
+  // deps: rpc
+  if (opts.templates === true) {
+    const result = (await rpc(ctx, `/${ctx.namespace}/mcp/${service}`, "resources/templates/list")) as {
+      resourceTemplates?: unknown[];
+    };
+    for (const template of (result?.resourceTemplates ?? []) as Record<string, any>[]) {
+      process.stdout.write(`${String(template.uriTemplate)}\n`);
+    }
+    return 0;
+  }
+  const result = (await rpc(ctx, `/${ctx.namespace}/mcp/${service}`, "resources/list")) as { resources?: unknown[] };
+  for (const resource of (result?.resources ?? []) as Record<string, any>[]) {
+    process.stdout.write(`${String(resource.uri)}\n`);
+  }
+  return 0;
+}
+
+/**
+ * `pmcp read <service> <uri>` — `resources/read` on the SLUG's scoped endpoint, the URI
+ * sent verbatim as `params.uri`: never percent-encoded (it is a param value, not part of
+ * the URL) and never `<slug>_`-prefixed (§20.2 refuses the aggregated endpoint precisely
+ * because a URI cannot take a prefix and still be the URI the service knows). Routed by the
+ * addressed slug alone, never by the URI's own scheme — two services may legitimately serve
+ * the identical URI (§20.2), and which one answers is the URL this function builds, not a
+ * property of the string it carries.
+ */
+export async function read(ctx: CliContext, service: string, uri: string): Promise<number> {
+  // deps: rpc
+  const result = await rpc(ctx, `/${ctx.namespace}/mcp/${service}`, "resources/read", { uri });
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return 0;
+}
+
 /**
  * One imperative service command, normalized from `pmcp service …` argv by
  * main. `create` of a tunneled service is two tool calls — service_create,
@@ -963,7 +1042,7 @@ export type { CliCommand } from "./commands.ts";
  * traces never reach the user.
  */
 export async function main(argv: string[]): Promise<number> {
-  // deps: resolveContext · auth · ls · tools · call · service · account · approval · token · audit · diff · apply · connect · connection
+  // deps: resolveContext · auth · ls · tools · call · prompts · prompt · resources · read · service · account · approval · token · audit · diff · apply · connect · connection
   const [command, ...rest] = argv;
   const flags = readFlags(rest);
   const words = flags.words;
@@ -996,6 +1075,37 @@ export async function main(argv: string[]): Promise<number> {
         // `<slug>_<tool>` splits at the first underscore — slugs contain none (§7).
         const split = positionals.length > 1 ? { service: target, tool: positionals[1] } : splitAggregated(target);
         return await call(ctx, split, toolArguments(words.filter((word) => word.includes("=")), flags));
+      }
+      case "prompts":
+        return await prompts(ctx, required(words[0], "service"));
+      case "prompt": {
+        // Same shape-partitioning as `call`: positionals are service then prompt name, and
+        // every `key=value` word — wherever it sits — is a prompt argument.
+        const positionals = words.filter((word) => !word.includes("="));
+        return await prompt(
+          ctx,
+          required(positionals[0], "service"),
+          required(positionals[1], "prompt name"),
+          toolArguments(words.filter((word) => word.includes("=")), flags),
+        );
+      }
+      case "resources":
+        return await resources(ctx, required(words[0], "service"), { templates: flags.has("templates") });
+      case "read": {
+        if (words.length >= 2) return await read(ctx, words[0], words[1]);
+        // §20.2: resources have no aggregated endpoint, so a lone word here is ambiguous
+        // only in FORM, never in meaning. One that looks like a URI (it carries a scheme)
+        // means the service was left out — this would have addressed the aggregate, which
+        // §20.2 refuses, and the refusal reason travels with it so the operator is not sent
+        // looking for a slug that does not exist. Anything else means the uri was left out,
+        // an ordinary usage error — answering THAT with "scoped-only" would send an
+        // operator who typed too little looking for an endpoint problem that is not there.
+        if (words.length === 1 && words[0].includes("://")) {
+          throw new Error(
+            "pmcp read needs a <service> before the uri — resources are scoped-only, there is no aggregated endpoint for them (§20.2)",
+          );
+        }
+        throw new Error("missing uri: usage is `pmcp read <service> <uri>`");
       }
       case "service":
         return await service(ctx, serviceCommand(words, flags), { yes: flags.has("yes") });
@@ -1054,7 +1164,7 @@ export async function main(argv: string[]): Promise<number> {
  * The flags that take NO value, so `pmcp service --yes delete news` cannot swallow
  * `delete` as the value of `--yes` and then fail with an unrelated usage error.
  */
-const BOOLEAN_FLAGS = new Set(["yes", "pending", "history", "help"]);
+const BOOLEAN_FLAGS = new Set(["yes", "pending", "history", "help", "templates"]);
 
 /** Short spellings, resolved to the long name the rest of the module reads. */
 const SHORT_FLAGS: Record<string, string> = { f: "file" };

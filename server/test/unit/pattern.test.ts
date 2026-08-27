@@ -16,11 +16,23 @@
 // Workers pool would buy nothing. No ordering or isolation constraints exist here —
 // every case is one pure call and rows share no state.
 //
+// ALSO PINS §20.3's family dimension (§18 decision 9 as revised): one pattern language
+// read through three keyspaces. matchesPattern gains a `family` argument, and that
+// argument selects the LITERAL FAST PATH and nothing else — anchoring, the `*` alias and
+// totality are the same in every family. Tools and prompts keep §7's rule (tool-name
+// characters only → compared as a string); resources are literal when they carry no regex
+// metacharacter (`* + ? ( ) [ ] { } | ^ $ \`), because `:` and `/` would otherwise drop
+// every URI pattern into compilation where `.` matches anything. The metacharacter test
+// reads the PATTERN and never the subject, which is what makes a resource TEMPLATE an
+// ordinary string to match against.
+//
 // NOT HERE: how patterns compose across roles into a verdict (unit/filter.test.ts —
-// buildToolFilter is where `all`, unions and allow-beats-approval live), and what a
-// rejected declaration does on the wire — the JSON-RPC error reply and close 4004
-// (tunnel/protocol.test.ts). This file only asks whether a pattern matches and whether
-// a declaration is well-formed.
+// buildToolFilter is where `all`, unions, allow-beats-approval and the per-family
+// declaration shape live), which KEY of a listed item each family matches against —
+// `uri` for resources, `uriTemplate` for templates, `name` for the rest
+// (worker/order.table.test.ts, §20.2) — and what a rejected declaration does on the wire:
+// the JSON-RPC error reply and close 4004 (tunnel/protocol.test.ts). This file only asks
+// whether a pattern matches a string, and whether a declaration is well-formed.
 //
 // FINDING, surfaced by writing this file and RESOLVED 2026-08-25 (strategy §1 — amending
 // the spec is a normal OUTPUT of test authoring): the three caps §6 names — pattern
@@ -32,10 +44,10 @@
 // a row that names `128`) and now name WHICH constant they sit against, so a cap moving
 // is a one-line edit in limits.ts with zero row churn.
 
-// deps: none (no harness — pure seams) · registry.matchesPattern · registry.validateRoles · limits.ROLE_PATTERN_MAX_LENGTH/ROLE_PATTERNS_MAX/ROLE_NAME_MAX_LENGTH · no platform APIs
+// deps: none (no harness — pure seams) · registry.matchesPattern · registry.validateRoles · registry.RoleFamily · limits.ROLE_PATTERN_MAX_LENGTH/ROLE_PATTERNS_MAX/ROLE_NAME_MAX_LENGTH · no platform APIs
 
 import { describe, it, expect } from "vitest";
-import { matchesPattern, validateRoles, type RoleDeclaration } from "../../src/registry";
+import { matchesPattern, validateRoles, type RoleDeclaration, type RoleFamily } from "../../src/registry";
 import { ROLE_NAME_MAX_LENGTH, ROLE_PATTERN_MAX_LENGTH, ROLE_PATTERNS_MAX } from "../../src/limits";
 
 /**
@@ -174,14 +186,254 @@ export function runPatternMatchTable(rows: readonly PatternMatchRow[]): void {
   for (const row of rows) {
     it(`§7 step 2 · ${row.note}`, () => {
       for (const tool of row.matches) {
-        expect(matchesPattern(row.pattern, tool)).toBe(true);
+        expect(matchesPattern(row.pattern, tool, "tools")).toBe(true);
       }
       for (const tool of row.rejects) {
-        expect(matchesPattern(row.pattern, tool)).toBe(false);
+        expect(matchesPattern(row.pattern, tool, "tools")).toBe(false);
       }
     });
   }
 }
+
+/**
+ * One row of the §20.3 FAMILY table: a pattern, the keyspace it is read in, and both
+ * sides of its verdict. Same pairing discipline as PatternMatchRow above (§9 rule 2) —
+ * `matches` and `rejects` sit in one row so no family's oracle can be satisfied by a
+ * grammar that matches nothing.
+ *
+ * `title` carries the row's locked oracle title VERBATIM rather than a note the runner
+ * decorates: a §20.3 row's title names the spec sentence it pins, letter for letter, and
+ * a generated one would paraphrase it. Several rows MAY share one title — a spec sentence
+ * that covers two families ("tool and prompt patterns are literal…") or a rule with two
+ * arms (the anchor, on the literal path and on the compiled one) needs more than one row
+ * to witness, and the runner folds them into that title's single case.
+ */
+export type FamilyPatternRow = {
+  /** The locked `it()` title, used unchanged. */
+  title: string;
+  /** The pattern exactly as a role declaration spells it — never pre-normalized. */
+  pattern: string;
+  /** The keyspace: which literal fast path applies, and nothing else. */
+  family: RoleFamily;
+  /** The grammar arm under test, so a missing arm is visible by reading the column. */
+  branch: "literal" | "anchored-regex" | "glob-alias";
+  /** Subjects this pattern must match in `family` — the allow-twins. */
+  matches: string[];
+  /** Subjects it must not match — the regressions. */
+  rejects: string[];
+};
+
+/**
+ * OWNER-AUTHORED oracle rows (strategy §9 rule 1). Every subject here is a plain string:
+ * a tool name in `tools`, a prompt name in `prompts`, a URI or a `uriTemplate` in
+ * `resources`. The hub never expands a template and never enumerates the URIs one could
+ * produce, so a template is matched as the ordinary string it is.
+ */
+export const familyPatternRows: readonly FamilyPatternRow[] = [
+  // §20.3: "tool and prompt patterns are literal when they are tool-name characters
+  // only" — §7's rule, carried over untouched. `.` is not a metacharacter on this path,
+  // so `get.news` is the tool `get.news` and nothing else.
+  {
+    title:
+      '§20.3 · a tool pattern of tool-name characters still compares literally — "get.news" does not match "getXnews" (the §7 rule is untouched)',
+    pattern: "get.news",
+    family: "tools",
+    branch: "literal",
+    matches: ["get.news"],
+    rejects: ["getXnews"],
+  },
+  // The same sentence's other half — "tool AND prompt patterns" — under the same title,
+  // because it is one rule. Without a prompts row the `family` argument is never READ on
+  // this path: an implementation that routed every family through the RESOURCE rule
+  // answers identically for `get.news` (no metacharacter either way).
+  {
+    title:
+      '§20.3 · a tool pattern of tool-name characters still compares literally — "get.news" does not match "getXnews" (the §7 rule is untouched)',
+    pattern: "digest.daily",
+    family: "prompts",
+    branch: "literal",
+    matches: ["digest.daily"],
+    rejects: ["digestXdaily"],
+  },
+  // The discriminator between the two literal rules, which the rows above cannot be: a
+  // pattern that leaves the tool-name charset (`:`) while carrying no §20.3 metacharacter.
+  // The PROMPT rule must compile it — so `.` is a wildcard here — where the resource rule
+  // would find no metacharacter and compare literally. Proving "some literal path exists"
+  // is not proving THIS family's literal path.
+  {
+    title:
+      '§20.3 · a tool pattern of tool-name characters still compares literally — "get.news" does not match "getXnews" (the §7 rule is untouched)',
+    pattern: "digest:daily.x",
+    family: "prompts",
+    branch: "anchored-regex",
+    matches: ["digest:daily.x", "digest:dailyXx"],
+    rejects: ["digest:dailyx"],
+  },
+  // §18 decision 9 as revised: the tool rule "cannot cover URIs, whose `:` and `/` would
+  // drop every resource pattern into regex compilation where `.` matches anything".
+  // `file:///notes.txt` carries no metacharacter, so it is compared as a string and the
+  // dot stays a dot — the same property the `get.news` row above pins for tools.
+  {
+    title:
+      '§20.3 · a resource pattern with no regex metacharacter compares literally — "file:///notes.txt" does not match "file:///notesXtxt"',
+    pattern: "file:///notes.txt",
+    family: "resources",
+    branch: "literal",
+    matches: ["file:///notes.txt"],
+    rejects: ["file:///notesXtxt"],
+  },
+  // §20.3: "`*` still aliases `.*` in both, so `news://feed/*` means what its author
+  // thinks it means". The `other://` reject is the anchor doing its work at the head.
+  {
+    title:
+      '§20.3 · a resource pattern containing "*" compiles, and "news://feed/*" matches "news://feed/tech" but not "other://feed/tech"',
+    pattern: "news://feed/*",
+    family: "resources",
+    branch: "glob-alias",
+    matches: ["news://feed/tech"],
+    rejects: ["other://feed/tech"],
+  },
+  // The LITERAL arm's exact-length property: `news://a` carries no metacharacter, so this
+  // row is string equality — anchored by construction, and therefore no witness at all for
+  // §7 step 2's `^(?:p)$`. The row below is that witness.
+  {
+    title: '§20.3 · a resource pattern is anchored — "news://a" does not match "xnews://ab"',
+    pattern: "news://a",
+    family: "resources",
+    branch: "literal",
+    matches: ["news://a"],
+    rejects: ["xnews://ab"],
+  },
+  // The anchor where it can actually fail: the COMPILED resource arm, under the same
+  // locked title. `|` forces compilation, and the two rejects kill one anchor each —
+  // "xnews://ab" survives a missing `^`, "news://ab" survives a missing `$`, and both
+  // survive the naive `'^' + p + '$'` whose alternation escapes the wrapping (§7 step 2).
+  // The `tools` keyspace has this witness already (`foo|bar` vs `foox`); the resource
+  // keyspace, whose patterns guard URI reads, had none.
+  {
+    title: '§20.3 · a resource pattern is anchored — "news://a" does not match "xnews://ab"',
+    pattern: "news://a|zz",
+    family: "resources",
+    branch: "anchored-regex",
+    matches: ["news://a", "zz"],
+    rejects: ["xnews://ab", "news://ab"],
+  },
+  // §20.3: "a pattern carrying one compiles and matches it as a regex, so `news://feed/*`
+  // covers `news://feed/{id}` because `*` aliases `.*`". The subject's braces are just
+  // characters `.*` consumes — the hub matches the template, never an expansion of it.
+  {
+    title:
+      '§20.3 · a resource pattern carrying "*" matches a template as a regex — "news://feed/*" covers "news://feed/{id}"',
+    pattern: "news://feed/*",
+    family: "resources",
+    branch: "glob-alias",
+    matches: ["news://feed/{id}"],
+    rejects: [],
+  },
+];
+
+/**
+ * The family-table runner: one case per locked TITLE — rows sharing a title are folded
+ * into it, since a sentence covering two families or a rule with two arms needs more than
+ * one row to witness — so a failure names the §20.3 sentence to re-read (§8) and its
+ * message names the row inside it, without the runner composing a title of its own.
+ */
+export function runFamilyPatternTable(rows: readonly FamilyPatternRow[]): void {
+  // deps: vitest it/expect · registry.matchesPattern
+  const byTitle = new Map<string, FamilyPatternRow[]>();
+  for (const row of rows) byTitle.set(row.title, [...(byTitle.get(row.title) ?? []), row]);
+
+  for (const [title, group] of byTitle) {
+    it(title, () => {
+      for (const row of group) {
+        for (const subject of row.matches) {
+          expect(
+            matchesPattern(row.pattern, subject, row.family),
+            `${row.family} · ${row.branch} · "${row.pattern}" must match "${subject}"`,
+          ).toBe(true);
+        }
+        for (const subject of row.rejects) {
+          expect(
+            matchesPattern(row.pattern, subject, row.family),
+            `${row.family} · ${row.branch} · "${row.pattern}" must not match "${subject}"`,
+          ).toBe(false);
+        }
+      }
+    });
+  }
+}
+
+/**
+ * One probe for one character of §20.3's metacharacter set `* + ? ( ) [ ] { } | ^ $ \`.
+ *
+ * matchesPattern answers a boolean and never says which arm produced it, so the ONLY way
+ * to witness that a character forced compilation is to pick a pattern/subject pair whose
+ * compiled answer DISAGREES with its literal answer. `expected` is always the compiled
+ * answer; a resource grammar that took the literal path for this pattern fails the row.
+ * Three shapes carry that disagreement:
+ *
+ *   - the character makes the compiled regex match a subject the pattern is not equal to
+ *     (`* + ? ] { } | $ \`) — compiled true, literal false;
+ *   - the character makes the pattern uncompilable, and an uncompilable pattern matches
+ *     NOTHING (`( ) [`) — compiled false on the pattern's own spelling, literal true;
+ *   - `^` compiles into an unsatisfiable regex (a start anchor three characters in) —
+ *     same direction as the second shape.
+ *
+ * `.` is deliberately in every pattern and deliberately NOT in the set: it is the wildcard
+ * on the compiled arm and an ordinary character on the literal one, which is what lets the
+ * first shape tell the arms apart at all.
+ */
+type MetacharacterProbe = {
+  /** The character of the set this row is about. */
+  meta: string;
+  pattern: string;
+  subject: string;
+  /** The compiled arm's answer — the literal arm's answer is its negation, by construction. */
+  expected: boolean;
+  why: string;
+};
+
+/** OWNER-AUTHORED (strategy §9 rule 1) — one row per character, none omitted. */
+const metacharacterProbes: readonly MetacharacterProbe[] = [
+  { meta: "*", pattern: "a.b*", subject: "aXbbb", expected: true, why: "* aliases .* and . is a wildcard once compiled" },
+  { meta: "+", pattern: "a.b+", subject: "aXbb", expected: true, why: "b+ repeats only under compilation" },
+  { meta: "?", pattern: "a.b?", subject: "aX", expected: true, why: "b? is optional only under compilation" },
+  { meta: "(", pattern: "a.b(", subject: "a.b(", expected: false, why: "an unbalanced ( cannot compile, and an uncompilable pattern matches nothing" },
+  { meta: ")", pattern: "a.b)", subject: "a.b)", expected: false, why: "an unbalanced ) cannot compile" },
+  { meta: "[", pattern: "a.b[", subject: "a.b[", expected: false, why: "an unterminated [ cannot compile" },
+  { meta: "]", pattern: "a.b]", subject: "aXb]", expected: true, why: "] is in the set even though it compiles harmlessly — the . beside it becomes a wildcard" },
+  { meta: "{", pattern: "a.b{", subject: "aXb{", expected: true, why: "{ forces compilation; the . beside it becomes a wildcard" },
+  { meta: "}", pattern: "a.b}", subject: "aXb}", expected: true, why: "} forces compilation; the . beside it becomes a wildcard" },
+  { meta: "|", pattern: "a.b|zz", subject: "zz", expected: true, why: "the alternation's second branch is reachable only under compilation" },
+  { meta: "^", pattern: "a.b^", subject: "a.b^", expected: false, why: "a start anchor three characters in is unsatisfiable once compiled" },
+  { meta: "$", pattern: "a.b$", subject: "aXb", expected: true, why: "the inner $ is an end assertion, and the . beside it a wildcard" },
+  { meta: "\\", pattern: "a\\.b", subject: "a.b", expected: true, why: "the escape is an escape only under compilation" },
+];
+
+/**
+ * The other half of the same rule: `:` and `/` are NOT in the set, so a URI pattern built
+ * from them alone stays on the literal path in `resources` — where `.` is a dot. The second
+ * row is the discriminator; the first keeps it from being satisfied by a grammar that
+ * matches nothing.
+ *
+ * The third row is the SAME pattern read in the `tools` keyspace, and it is what makes the
+ * `family` argument the discriminator in both directions: `:` and `/` are outside
+ * `^[A-Za-z0-9._-]+$`, so the tool/prompt rule COMPILES this pattern and `.` is a wildcard
+ * there. Without it, a grammar that ignored `family` and applied the resource rule to all
+ * three keyspaces would pass every row in this file — the two rules only ever disagree on
+ * a pattern that leaves the tool-name charset while carrying no §20.3 metacharacter.
+ */
+const literalUriProbes: readonly {
+  pattern: string;
+  subject: string;
+  family: RoleFamily;
+  expected: boolean;
+  why: string;
+}[] = [
+  { pattern: "news://a.b", subject: "news://a.b", family: "resources", expected: true, why: "a literal pattern matches its own spelling" },
+  { pattern: "news://a.b", subject: "news://aXb", family: "resources", expected: false, why: "`:` and `/` are not in the set, so the `.` stays a dot" },
+  { pattern: "news://a.b", subject: "news://aXb", family: "tools", expected: true, why: "the tool/prompt rule is the tool-name charset, which `:` and `/` leave — so this pattern compiles and the `.` is a wildcard" },
+];
 
 /** The validation rules §6 pins, one name per rule so a row says which one it is about. */
 export type ValidationRule =
@@ -365,6 +617,26 @@ function declarationOf(row: RoleValidationRow): RoleDeclaration {
   return row.kind === "declaration" ? row.decl : boundaryDeclaration(row.dimension, row.at);
 }
 
+/**
+ * The tools patterns of one declared role, in whichever of §20.3's two spellings the
+ * declaration used. A bare list IS the tools list, so a reader that understood only one
+ * spelling would turn this file's cap laws into spelling tests.
+ */
+function toolPatternsOf(decl: RoleDeclaration, role: string): string[] {
+  const declared = decl[role];
+  return Array.isArray(declared) ? declared : (declared?.tools ?? []);
+}
+
+/** Every (family, pattern list) pair a declaration holds, both §20.3 spellings flattened. */
+function familyLists(decl: RoleDeclaration): [RoleFamily, string[]][] {
+  const out: [RoleFamily, string[]][] = [];
+  for (const declared of Object.values(decl)) {
+    if (Array.isArray(declared)) out.push(["tools", declared]);
+    else for (const entry of Object.entries(declared) as [RoleFamily, string[]][]) out.push(entry);
+  }
+  return out;
+}
+
 function assertViolations(decl: RoleDeclaration, valid: boolean): void {
   const violations = validateRoles(decl);
   if (valid) {
@@ -444,9 +716,9 @@ export function runRoleValidationTable(rows: readonly RoleValidationRow[]): void
       if (row.dimension === "role-name-length") {
         expect(Object.keys(decl)[0].length).toBe(ROLE_NAME_MAX_LENGTH + over);
       } else if (row.dimension === "pattern-length") {
-        expect(decl.reader[0].length).toBe(ROLE_PATTERN_MAX_LENGTH + over);
+        expect(toolPatternsOf(decl, "reader")[0].length).toBe(ROLE_PATTERN_MAX_LENGTH + over);
       } else {
-        expect(decl.reader.length).toBe(ROLE_PATTERNS_MAX + over);
+        expect(toolPatternsOf(decl, "reader").length).toBe(ROLE_PATTERNS_MAX + over);
       }
     }
   });
@@ -468,7 +740,7 @@ describe("§7 step 2 · matchesPattern — laws", () => {
       for (const tool of allTools) {
         let result: boolean | undefined;
         expect(() => {
-          result = matchesPattern(row.pattern, tool);
+          result = matchesPattern(row.pattern, tool, "tools");
         }).not.toThrow();
         expect(typeof result).toBe("boolean");
       }
@@ -478,9 +750,9 @@ describe("§7 step 2 · matchesPattern — laws", () => {
   it("§7 step 2 · law · matchesPattern is pure · repeated calls with the same arguments agree (no compiled-regex lastIndex leak)", () => {
     for (const row of patternMatchRows) {
       for (const tool of allTools) {
-        const first = matchesPattern(row.pattern, tool);
+        const first = matchesPattern(row.pattern, tool, "tools");
         for (let i = 0; i < 5; i++) {
-          expect(matchesPattern(row.pattern, tool)).toBe(first);
+          expect(matchesPattern(row.pattern, tool, "tools")).toBe(first);
         }
       }
     }
@@ -496,9 +768,9 @@ describe("§6 + §7 step 2 · the two exports agree", () => {
     for (const row of roleValidationRows) {
       const decl = declarationOf(row);
       if (validateRoles(decl).length !== 0) continue;
-      for (const patterns of Object.values(decl)) {
+      for (const [family, patterns] of familyLists(decl)) {
         for (const pattern of patterns) {
-          expect(() => matchesPattern(pattern, "probe_tool")).not.toThrow();
+          expect(() => matchesPattern(pattern, "probe_tool", family)).not.toThrow();
         }
       }
     }
@@ -511,5 +783,61 @@ describe("§6 + §7 step 2 · the two exports agree", () => {
       validateRoles(decl);
       expect(decl).toEqual(before);
     }
+  });
+});
+
+describe("§20.3 · matchesPattern — one language, three keyspaces (table)", () => {
+  runFamilyPatternTable(familyPatternRows);
+});
+
+describe("§20.3 · matchesPattern — which arm ran", () => {
+  // The two halves of §18 decision 9's revised sentence, each asserted through the only
+  // thing matchesPattern exposes: a verdict that differs between the arms.
+  //
+  // The title renders a DOUBLED backslash because that is what the locked oracle row
+  // spells, character for character; §20.3's own prose writes the set with a single `\`,
+  // and metacharacterProbes below is the authority on which characters are in it. The
+  // title is copied, not corrected — see the dispatch's recorded ambiguities.
+  it('§20.3 · the metacharacter set that forces compilation is exactly * + ? ( ) [ ] { } | ^ $ \\\\ — a pattern with ":" or "/" alone stays literal', () => {
+    for (const probe of metacharacterProbes) {
+      expect(
+        matchesPattern(probe.pattern, probe.subject, "resources"),
+        `"${probe.meta}" is in the set · "${probe.pattern}" vs "${probe.subject}" · ${probe.why}`,
+      ).toBe(probe.expected);
+    }
+    for (const probe of literalUriProbes) {
+      expect(
+        matchesPattern(probe.pattern, probe.subject, probe.family),
+        `${probe.family} · "${probe.pattern}" vs "${probe.subject}" · ${probe.why}`,
+      ).toBe(probe.expected);
+    }
+  });
+
+  // §20.3: "The metacharacter test is applied to the PATTERN, never to the subject —
+  // which is what makes resource *templates* answerable." That `{` and `}` really do force
+  // compilation is witnessed by the metacharacter case above (`a.b{`, `a.b}`); here the
+  // point is that compiling changes nothing about what this pattern matches, because an
+  // unquantified brace sequence is a literal in the flagless grammar §7 pins.
+  it('§20.3 · the metacharacter test reads the PATTERN, never the subject — "news://feed/{id}" as a subject is ordinary characters, and the template-shaped pattern "news://feed/{id}" COMPILES ({ and } are metacharacters) yet still matches exactly its own template, an unquantified brace sequence being a literal in the flagless grammar · "news://feed/x" does not match it (the twin)', () => {
+    const template = "news://feed/{id}";
+
+    // The subject's braces are ordinary characters: they never become a pattern of their
+    // own, so a metacharacter-free pattern is compared to the template byte-for-byte.
+    expect(
+      matchesPattern("news://feed/x", template, "resources"),
+      "a template subject is a string, never a glob the hub expands",
+    ).toBe(false);
+
+    // The template-shaped PATTERN carries { and }, so it compiles — and still matches
+    // exactly its own template.
+    expect(matchesPattern(template, template, "resources"), "a template-shaped pattern matches its own template").toBe(
+      true,
+    );
+
+    // The twin: matching its own template is all it does.
+    expect(
+      matchesPattern(template, "news://feed/x", "resources"),
+      "a template-shaped pattern is not a wildcard over the URIs the template could produce",
+    ).toBe(false);
   });
 });

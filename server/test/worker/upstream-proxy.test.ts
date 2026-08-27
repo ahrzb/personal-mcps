@@ -59,13 +59,13 @@ import { describe, expect, it } from "vitest";
 // what they assert, and CASE_BUDGET_MS below is derived from the same names.
 import { query } from "../../src/audit";
 import type { AuditRow } from "../../src/audit";
-import type { BackendCtx, JsonRpcResponse, Tool } from "../../src/gateway";
+import type { BackendCtx, JsonRpcResponse, Prompt, Resource, Tool } from "../../src/gateway";
 import { requireOwnerSession } from "../../src/identity";
 import worker from "../../src/index";
 import type { Env } from "../../src/index";
 import { AGGREGATED_LIST_DEADLINE_MS, CALL_TIMEOUT_MS } from "../../src/limits";
 import { Registry } from "../../src/registry";
-import type { ServiceDetail } from "../../src/registry";
+import type { GrantEntry, RoleDeclaration, ServiceDetail } from "../../src/registry";
 import {
   beginConnect,
   connectionStatus,
@@ -1623,5 +1623,162 @@ describe("§7 — proxied redaction has no schema half", () => {
     const { body } = await callThrough(world, undefined, "not-in-the-catalog");
     expect(body.error?.code, "no map means no refusal here — the upstream decides").not.toBe(-32001);
     expect((await readObservations(upstream.id)).length, "it was forwarded, not refused").toBe(1);
+  });
+});
+
+// ══ §20.2 — the proxied path serves more than tools ═══════════════════════════════════
+//
+// §20 changes nothing about HOW a proxied service answers: `prompts/list` obeys every
+// sentence of §7's `tools/list` bullet (live fetch, same filter, same `<slug>_` prefix,
+// same fan-out, same `_meta`) and §20.5 keeps "proxied services cache nothing at all"
+// exactly as it was. What is worth pinning HERE rather than in order.table.test.ts is the
+// part that is about the PROXIED backend specifically: that the fetch is live, that a
+// failing one costs the aggregate only its own slug, and that a proxied service's virtual
+// roles filter a family the config declares patterns for.
+
+/**
+ * The fake upstream's §20 seam, named here because the harness does not carry it yet —
+ * the same declaration order.table.test.ts and hygiene.test.ts make, narrowed to the two
+ * families this file needs. It lands as one change to `UpstreamScenario` and the deletion
+ * of these lines.
+ */
+type ServingScenario = UpstreamScenario & {
+  prompts?: Prompt[];
+  resources?: Resource[];
+};
+
+/** The prompts a §20 upstream serves — two, so a prefix is a rule rather than a sample. */
+const UPSTREAM_PROMPTS: Prompt[] = [
+  { name: "digest", description: "the daily digest" },
+  { name: "triage", description: "triage the inbox" },
+];
+
+/** The resources it serves: one the declared pattern covers, one it does not. */
+const GRANTED_RESOURCE_URI = "news://feed/tech";
+const UNGRANTED_RESOURCE_URI = "vault://secrets/root";
+const UPSTREAM_RESOURCES: Resource[] = [
+  { uri: GRANTED_RESOURCE_URI, name: "tech feed" },
+  { uri: UNGRANTED_RESOURCE_URI, name: "the vault" },
+];
+
+/** A namespace of proxied services, one per scenario, all credentialed through
+ *  `setHeaders` and all granted to one account. */
+async function buildFamilyWorld(spec: {
+  scenarios: Record<string, ServingScenario>;
+  /** The virtual roles every seeded service declares (§8) — absent means the wildcard. */
+  roles?: RoleDeclaration;
+  grant?: GrantEntry[];
+}): Promise<{
+  ns: SeededNamespace;
+  send(slug: string | null, method: string): Promise<{ status: number; body: JsonRpcResponse; text: string }>;
+}> {
+  const slugs = Object.keys(spec.scenarios);
+  const ns = await seedNamespace(env.DB, {
+    services: slugs.map((slug) => ({
+      slug,
+      kind: "proxy" as const,
+      upstreamUrl: upstreamUrlFor(spec.scenarios[slug]),
+      upstreamAuthMode: "headers" as const,
+      ...(spec.roles === undefined ? {} : { roles: spec.roles }),
+    })),
+    accounts: [
+      {
+        slug: AGENT,
+        grants: Object.fromEntries(
+          slugs.map((slug) => [slug, spec.grant ?? [{ role: "all", mode: "allow" as const }]]),
+        ),
+        tokens: [{ as: TOKEN }],
+      },
+    ],
+  });
+  const registry = new Registry(env.DB);
+  for (const slug of slugs) {
+    const service = await registry.getService(ns.owner.userId, slug);
+    if (service === null) throw new Error(`buildFamilyWorld: "${slug}" vanished`);
+    await setHeaders(service, HEADERS_CREDENTIAL);
+  }
+  const credential = ns.tokens[TOKEN].token;
+  const base = `${ORIGIN}/${ns.owner.username}/mcp`;
+  return {
+    ns,
+    send: (slug, method) =>
+      request(credential, {
+        url: slug === null ? base : `${base}/${slug}`,
+        message: { jsonrpc: "2.0", id: 1, method },
+      }),
+  };
+}
+
+/** The prompt names an answer served, sorted — a parallel fan-out decides no order. */
+function promptNamesOf(body: JsonRpcResponse): string[] {
+  const prompts = (body.result as { prompts?: { name: string }[] } | undefined)?.prompts ?? [];
+  return prompts.map((prompt) => prompt.name).sort();
+}
+
+/** The resource URIs an answer served, sorted. */
+function resourceUrisOf(body: JsonRpcResponse): string[] {
+  const listed = (body.result as { resources?: { uri: string }[] } | undefined)?.resources ?? [];
+  return listed.map((resource) => resource.uri).sort();
+}
+
+describe("§20.2 — prompts and resources on the proxied backend", () => {
+  it("§20.2 · a proxied service's prompts are fetched live and contribute to the aggregated list", async () => {
+    const upstream: ServingScenario = { ...healthy(uniqueSlug("prompts")), prompts: UPSTREAM_PROMPTS };
+    const world = await buildFamilyWorld({ scenarios: { [SLUG]: upstream } });
+
+    const first = await world.send(null, "prompts/list");
+    expect(first.body.error, JSON.stringify(first.body.error)).toBeUndefined();
+    expect(promptNamesOf(first.body)).toEqual(
+      UPSTREAM_PROMPTS.map((prompt) => `${SLUG}_${prompt.name}`).sort(),
+    );
+
+    // LIVE, in the sense §20.5 pins for the proxied kind: nothing is cached, so a second
+    // listing costs a second dial. The tunneled half — a catalog read that never leaves
+    // the DO — is tunnel/**'s.
+    const dials = async () =>
+      (await readObservations(upstream.id)).filter((a) => a.rpcMethod === "prompts/list").length;
+    expect(await dials(), "one dial per listing").toBe(1);
+    await world.send(null, "prompts/list");
+    expect(await dials(), "and again next time — proxied catalogs are never cached").toBe(2);
+  });
+
+  it("§20.2 · a proxied upstream that fails a prompts/list contributes zero prompts and the aggregate still succeeds", async () => {
+    const healthySlug = "alive";
+    const world = await buildFamilyWorld({
+      scenarios: {
+        [healthySlug]: { ...healthy(uniqueSlug("alive")), prompts: UPSTREAM_PROMPTS },
+        [SLUG]: { id: uniqueSlug("dead"), mode: { kind: "status", status: 503 } },
+      },
+    });
+
+    const { body } = await world.send(null, "prompts/list");
+
+    expect(body.error, "the aggregate itself always succeeds (§7's rule, unchanged)").toBeUndefined();
+    expect(promptNamesOf(body), "one service's failure costs the consumer only its own").toEqual(
+      UPSTREAM_PROMPTS.map((prompt) => `${healthySlug}_${prompt.name}`).sort(),
+    );
+    const meta = (body.result as { _meta?: Record<string, unknown> } | undefined)?._meta;
+    expect(meta?.["pmcp/unavailable"], "and the omission is named, never silent").toEqual([SLUG]);
+  });
+
+  it("§20.2 · a proxied service's resources are served on its scoped endpoint and filtered by its virtual roles", async () => {
+    // A proxied service's declaration is its CONFIG (§8's virtual roles), and §20.3 gives
+    // that config a family dimension: the resource patterns are the owner's, written in
+    // the same place the tool patterns already are.
+    const upstream: ServingScenario = {
+      ...healthy(uniqueSlug("resources")),
+      resources: UPSTREAM_RESOURCES,
+    };
+    const world = await buildFamilyWorld({
+      scenarios: { [SLUG]: upstream },
+      roles: { reader: { resources: ["news://feed/*"] } },
+      grant: [{ role: "reader", mode: "allow" }],
+    });
+
+    const { body } = await world.send(SLUG, "resources/list");
+
+    expect(body.error, JSON.stringify(body.error)).toBeUndefined();
+    // Unprefixed and unrewritten (§20.2), and the URI the pattern does not cover is gone.
+    expect(resourceUrisOf(body)).toEqual([GRANTED_RESOURCE_URI]);
   });
 });

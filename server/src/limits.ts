@@ -72,3 +72,12 @@ export const ROLE_NAME_MAX_LENGTH = 64;
  * parsed once by the composition root.
  */
 export const AUDIT_BODY_CAP_BYTES = 16 * 1024;
+
+/**
+ * §20.4 — a resource URI's `tool` column, after its query component is dropped and
+ * replaced with `audit.REDACTED_QUERY`, is capped at this many UTF-8 bytes — like every
+ * other caller-supplied string the hub persists, and unlike AUDIT_BODY_CAP_BYTES: this is
+ * the `tool` column, not a body. No env override exists for it (§15's env knobs are the
+ * body cap and retention alone).
+ */
+export const AUDIT_URI_CAP_BYTES = 1024;

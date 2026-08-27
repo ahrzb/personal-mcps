@@ -42,6 +42,13 @@ export const COMMANDS: readonly CliCommand[] = [
   { name: "ls", ops: ["service_list"] },
   { name: "tools", ops: [], method: "tools/list" },
   { name: "call", ops: [], method: "tools/call" },
+  // §20.6 (added 2026-08-26): gateway sugar of exactly the same kind as the two rows above
+  // — they front an MCP method on the scoped endpoint, not an admin op, so they sit outside
+  // §8's parity list rather than inside it (§10's amendment note).
+  { name: "prompts", ops: [], method: "prompts/list" },
+  { name: "prompt", ops: [], method: "prompts/get" },
+  { name: "resources", ops: [], method: "resources/list" },
+  { name: "read", ops: [], method: "resources/read" },
   // A tunneled service is unusable without its token, so §6's lifecycle makes this create
   // two calls rather than one.
   { name: "service create", ops: ["service_create", "token_issue"] },

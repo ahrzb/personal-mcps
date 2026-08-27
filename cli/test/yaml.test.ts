@@ -21,7 +21,13 @@ import { describe, expect, it } from "vitest";
 import { parseDesired, planChanges } from "../src/plan";
 import { parseYaml } from "../src/yaml";
 
-/** §9's example file, verbatim from the spec — the format's only real specimen. */
+/**
+ * §9's example file, verbatim from the spec — the format's only real specimen, and the
+ * reason the last case below is this file's load-bearing one. Re-copied 2026-08-26 with
+ * §20's amendment to §9 (the `linear:` entry's `capabilities:` list and its per-family
+ * `docs:` role): a stale copy would keep grounding the parser in a document the spec no
+ * longer contains, which is the one failure a verbatim fixture exists to make impossible.
+ */
 const SPEC_EXAMPLE = `services:
   news:                     # kind: tunnel is the default; roles come from registration
     name: News MCP
@@ -43,8 +49,14 @@ const SPEC_EXAMPLE = `services:
     kind: proxy
     endpoint: https://mcp.linear.app/mcp
     auth: oauth             # connected interactively from /services (§7); tokens never here
+    capabilities: [tools, resources]  # §20.2: what a proxied service's scoped handshake
+                            #   advertises (subset of tools/prompts/resources/completions);
+                            #   absent means tools only — advertisement, never access
     roles:
-      reader: ["list_.*", "get_.*"]
+      reader: ["list_.*", "get_.*"]        # bare list = tools, unchanged (§20)
+      docs:                                # per-family form (§20, added 2026-08-26)
+        prompts: ["summarize_.*"]
+        resources: ["linear://docs/*"]     # anchored, \`*\` still aliases \`.*\`
   home:
     name: Home automation
     archived: true          # parked: connections refused, hidden from consumers,
@@ -102,9 +114,25 @@ describe("parseYaml · §9's file format", () => {
       "home:tunnel",
     ]);
     expect(desired.services[1].roles).toEqual({ editor: ["create_page", "update_.*"], reader: ["search", "fetch_.*"] });
+    // §20.3's two spellings, mixed in one declaration exactly as the spec prints them: a
+    // bare list beside the per-family object. Nothing is normalized away on the way in.
+    expect(desired.services[2].roles).toEqual({
+      reader: ["list_.*", "get_.*"],
+      docs: { prompts: ["summarize_.*"], resources: ["linear://docs/*"] },
+    });
     const plan = planChanges(desired, { services: [], accounts: [] });
     expect(plan.errors).toEqual([]);
-    expect(plan.steps.filter((step) => step.tool === "service_create")).toHaveLength(4);
+    const created = plan.steps.filter((step) => step.tool === "service_create");
+    expect(created).toHaveLength(4);
     expect(plan.steps.filter((step) => step.tool === "grant_set")).toHaveLength(4);
+    // §20.2's owner-declared list rides `service_create`'s wire — a grammar that parsed the
+    // key and dropped it would leave `linear`'s scoped handshake advertising tools only,
+    // with `pmcp diff` reporting the namespace in sync forever.
+    const args = (slug: string): Record<string, unknown> =>
+      created.find((step) => step.args.slug === slug)?.args ?? {};
+    expect(args("linear").capabilities).toEqual(["tools", "resources"]);
+    // …and the key is optional: `notion` declares none, so its create carries none rather
+    // than an invented default (§20.2 — absent means tools only, decided by the hub).
+    expect(Object.keys(args("notion"))).not.toContain("capabilities");
   });
 });

@@ -47,9 +47,20 @@
  * Incidental — never asserted as a literal — the delay values themselves (rows
  * name the schedule, and backoffDelay's own numbers are pinned once in
  * api.test.ts) and every message string.
+ *
+ * ADDED 2026-08-26 (§20): the data model beyond tools, which is the library's
+ * whole share of that section — §20.6 pins "no new API beyond the widened
+ * `roles` shape", so what this file gains is the widened declaration passing
+ * through untouched, the one MCP-namespace method the LIBRARY answers instead of
+ * bridging (`server/discover`, §11/§6), and the pass-through of the prompt and
+ * resource families the bridge already carries. The last is a regression pin
+ * rather than new behavior — §20 opens by saying a tunneled service that
+ * declares prompts answers them over the socket TODAY, and the hub is the only
+ * thing that said -32601 — and pinning it here is what keeps a future
+ * frame-inspecting transport from quietly becoming a tools-only one.
  */
 
-// deps: ./fake-hub (in-process `ws` hub: chooses upgrade status, accepts/rejects hub/register, closes with a code) · ./policy-rows (reconnectPolicyRows, unlistedEndingRows, ReconnectPolicyRow) · clients/js/src/index.ts (HubTransport, serve, CredentialsError, RegistrationError, seams — the module-level rng/sleep this file replaces and restores) · contracts/close-codes.json (read-only — see contracts-consumer.test.ts) · vitest fake timers
+// deps: ./fake-hub (in-process `ws` hub: chooses upgrade status, accepts/rejects hub/register, closes with a code) · ./policy-rows (reconnectPolicyRows, unlistedEndingRows, ReconnectPolicyRow) · clients/js/src/index.ts (HubTransport, serve, CredentialsError, RegistrationError, Roles, seams — the module-level rng/sleep this file replaces and restores) · contracts/close-codes.json (read-only — see contracts-consumer.test.ts) · vitest fake timers
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -61,6 +72,7 @@ import {
   seams,
   serve,
 } from "../src/index";
+import type { Roles } from "../src/index";
 import { startFakeHub } from "./fake-hub";
 import type { FakeHub } from "./fake-hub";
 import { reconnectPolicyRows, unlistedEndingRows, type ReconnectPolicyRow } from "./policy-rows";
@@ -439,6 +451,300 @@ describe("the policy itself · §6 upgrade matrix + close codes", () => {
     expect(started.status, "start() never resolved after the hub healed").toBe("resolved");
   });
 });
+
+/**
+ * §20's data model beyond tools, seen from the service author's side: the widened role
+ * declaration going out untouched, the one MCP-namespace method the library answers itself,
+ * and the prompt/resource traffic the bridge carries in both directions.
+ *
+ * Every case here drives `serve()` rather than HubTransport directly, and that is the point
+ * of §20.6's "no new API": the author hands over an SDK server and a declaration and writes
+ * nothing else, so the surface these rows are allowed to touch is exactly the surface an
+ * author has.
+ */
+describe("the data model beyond tools · §20, §11", () => {
+  it("§11/§20.3 · serve({roles}) passes a bare pattern list through to hub/register unchanged", async () => {
+    const hub = await servingAuthor(new AuthorService({ tools: {} }), ROLES);
+    const declared = declaredRoles(hub);
+    expect(declared).toEqual(ROLES);
+    // Unchanged means UNNORMALIZED: `["get_news"]` becoming `{tools: ["get_news"]}` is the
+    // hub's business (§20.3 — normalization happens once, in `registry.validateRoles` and
+    // the filter builder), and a library that did it here would be a second rule that could
+    // disagree with the first.
+    expect(Array.isArray(declared.reader)).toBe(true);
+  }, OBSERVATION_BUDGET_MS);
+
+  it("§11/§20.3 · serve({roles}) passes a per-family object through unchanged — the library normalizes nothing", async () => {
+    const hub = await servingAuthor(new AuthorService({ tools: {}, prompts: {}, resources: {} }), MIXED_ROLES);
+    const declared = declaredRoles(hub);
+    expect(declared).toEqual(MIXED_ROLES);
+    // The two spellings survive SIDE BY SIDE in one declaration (§20.3's own example): the
+    // object is not flattened to its tools, and the bare list beside it is not lifted into
+    // an object. Either repair would make the wire a function of which library sent it.
+    expect(declared.curator).toEqual(MIXED_ROLES.curator);
+    expect(Array.isArray(declared.reader)).toBe(true);
+  }, OBSERVATION_BUDGET_MS);
+
+  it("§11/§20.3 · a roles value the hub will reject is still sent as written; the library surfaces the hub's rejection rather than pre-validating", async () => {
+    useSeams();
+    const hub = await startFakeHub({
+      registrations: [{ kind: "reject", error: { code: -32602, message: "unknown role family" } }],
+    });
+    opened.push({ hub });
+    const served = watch(serve(new AuthorService({ tools: {} }), { url: hub.origin, token: TOKEN, roles: REJECTED_ROLES }));
+    await hub.nextFrame(1);
+    // AS WRITTEN: not repaired into `{tools: […]}`, not dropped, not refused locally. §20.3
+    // gives the family vocabulary exactly one validator and it is the hub's — a library
+    // that pre-validated would be a second one, and the day they disagreed the author would
+    // get a local TypeError for a declaration the hub was perfectly happy with.
+    expect(declaredRoles(hub)).toEqual({ curator: { toolz: ["publish"] } });
+    await settle();
+    // …and what the author sees is the HUB's refusal, surfaced rather than retried: an
+    // identical declaration cannot start succeeding (§6).
+    expect(served.status).toBe("rejected");
+    expect(served.error).toBeInstanceOf(RegistrationError);
+    expect(hub.dials.length).toBe(1);
+  }, OBSERVATION_BUDGET_MS);
+
+  it("§11/§6 · the library answers the hub's server/discover itself with the families the author's SDK actually registered — the author writes nothing, and the request never reaches the SDK", async () => {
+    const service = new AuthorService({ tools: {}, prompts: {}, resources: {} });
+    const hub = await servingAuthor(service);
+    await hub.send({ jsonrpc: "2.0", id: DISCOVER_ID, method: "server/discover" });
+    const answer = await hub.nextFrame(2);
+    expect(answer.message.id).toBe(DISCOVER_ID);
+    expect(familiesIn(answer.message)).toEqual(["prompts", "resources", "tools"]);
+    // The author registered no handler for it and the SDK never saw the request: §11 makes
+    // this the one MCP-namespace method the library handles itself, because it is a
+    // hub↔library control question and the library is what knows which families were
+    // registered.
+    expect(service.reached.map((frame) => frame.method)).not.toContain("server/discover");
+  }, OBSERVATION_BUDGET_MS);
+
+  it("§11/§6 · a service whose SDK registers only tools answers server/discover with tools alone — the declaration is observed, not assumed from the library's own capabilities", async () => {
+    const service = new AuthorService({ tools: {} });
+    const hub = await servingAuthor(service);
+    await hub.send({ jsonrpc: "2.0", id: DISCOVER_ID, method: "server/discover" });
+    const answer = await hub.nextFrame(2);
+    // The library CAN carry all three — the bridge is transparent, and the two round-trip
+    // rows below prove it — so answering with what the LIBRARY can do rather than with what
+    // the AUTHOR registered would make every tools-only service in the field log three
+    // spurious catalog-warm failures at the hub (§6/§20.5). That is the whole reason the
+    // discover leg exists.
+    expect(familiesIn(answer.message)).toEqual(["tools"]);
+    expect(service.reached.map((frame) => frame.method)).not.toContain("server/discover");
+  }, OBSERVATION_BUDGET_MS);
+
+  it("§11/§6 · a service object the library cannot introspect for capabilities answers server/discover with -32601 — the \"capabilities unknown\" signal — and never a successful empty capability set, because a successful answer that omits a family is an UNDECLARE and §20.5 makes an undeclare clear that family's catalog", async () => {
+    // Not a corner case: this package deliberately has no MCP SDK dependency and types the
+    // author's server by the one method serve() calls, so an object with no capability seam
+    // is the ORDINARY object — every service already in the field is one. §11 pins the
+    // answer for it (the -32601 falls through to the hub, which warms tools only, "which is
+    // what keeps every service already in the field working unchanged"), and §20.5 is why
+    // the plausible repair is worse than the fallback: a discover leg that ERRORS changes no
+    // catalog, while a successful `{}` tells the hub this service no longer serves prompts
+    // or resources — clearing both catalogs for a service that is serving them right now.
+    // Failure never empties one; success does. So the absence of a seam must stay a failure.
+    const opaque = { connect: (transport: HubTransport): Promise<void> => transport.start() };
+    useSeams();
+    const hub = await startFakeHub();
+    opened.push({ hub });
+    watch(serve(opaque, { url: hub.origin, token: TOKEN, roles: ROLES }));
+    await hub.nextFrame(1);
+    await hub.send({ jsonrpc: "2.0", id: DISCOVER_ID, method: "server/discover" });
+    // Observed on the frame the HUB sees, never on a library internal: what the hub reads is
+    // the whole of this rule, and an answer that never arrives at all is a correlation
+    // timeout, which §6 classes with -32601 but is not what this row asks for.
+    const answer = await hub.nextFrame(2);
+    expect(answer.message.id).toBe(DISCOVER_ID);
+    expect((answer.message as { error?: { code?: number } }).error?.code).toBe(-32601);
+    expect(answer.message.result, "an empty capability set is an undeclare, not an absence").toBeUndefined();
+  }, OBSERVATION_BUDGET_MS);
+
+  it("§11/§20.1 · a prompts/get request from the hub reaches the author's SDK server and its response returns over the socket", async () => {
+    const service = new AuthorService({ tools: {}, prompts: {} }, { "prompts/get": PROMPT_RESULT });
+    const hub = await servingAuthor(service);
+    const request = {
+      jsonrpc: "2.0",
+      id: 21,
+      method: "prompts/get",
+      params: { name: "digest", arguments: { topic: "ai" } },
+    };
+    await hub.send(request);
+    const relayed = await hub.nextFrame(2);
+    // Both directions verbatim: the request arrives at the author's server exactly as the
+    // hub sent it — `arguments` included, which is what the hub's redact map keys on (§20.3)
+    // — and the answer goes back on the socket the hub asked over.
+    expect(service.reached).toEqual([request]);
+    expect(relayed.message).toEqual({ jsonrpc: "2.0", id: 21, result: PROMPT_RESULT });
+  }, OBSERVATION_BUDGET_MS);
+
+  it("§11/§20.1 · a resources/read request round-trips the same way", async () => {
+    const service = new AuthorService({ tools: {}, resources: {} }, { "resources/read": RESOURCE_RESULT });
+    const hub = await servingAuthor(service);
+    const request = { jsonrpc: "2.0", id: 22, method: "resources/read", params: { uri: RESOURCE_URI } };
+    await hub.send(request);
+    const relayed = await hub.nextFrame(2);
+    expect(service.reached).toEqual([request]);
+    expect(relayed.message).toEqual({ jsonrpc: "2.0", id: 22, result: RESOURCE_RESULT });
+    // The URI the service knows is the URI it is asked for and the URI it answers with:
+    // §20.2 refuses to rewrite one anywhere, which is why resources are scoped-only.
+    expect(JSON.stringify(relayed.message)).toContain(RESOURCE_URI);
+  }, OBSERVATION_BUDGET_MS);
+
+  it("§11/§20.5 · a prompts/list_changed notification emitted by the author's SDK reaches the hub unchanged", async () => {
+    const service = new AuthorService({ tools: {}, prompts: {} });
+    const hub = await servingAuthor(service);
+    const notification = { jsonrpc: "2.0", method: "notifications/prompts/list_changed" };
+    await service.emit(notification);
+    const relayed = await hub.nextFrame(2);
+    // A pass-through, not a feature (§11): the DO routes this frame to invalidate its
+    // `catalog:prompts` key (§20.5), so a library that swallowed or renamed it would leave
+    // the hub serving a stale prompt list until the next registration.
+    expect(relayed.message).toEqual(notification);
+  }, OBSERVATION_BUDGET_MS);
+});
+
+/**
+ * What a §20 case may take. Past the fake hub's own 5 s observation deadline on purpose: a
+ * row that fails because a frame never arrived should report the harness's diagnosis ("the
+ * fake hub never observed frame 2") rather than a bare vitest timeout, and with the two
+ * budgets equal the race decides which one the reader gets.
+ */
+const OBSERVATION_BUDGET_MS = 10_000;
+
+/**
+ * The author's service as `serve()` receives it — §11's "plain MCP server written with the
+ * official SDK", stood in for here because this package deliberately has no SDK dependency
+ * (which is also why the library names it structurally). The Python twin wraps a REAL
+ * `mcp.server.Server` for the capability half; this side cannot, so the capabilities are
+ * handed in.
+ *
+ * Three abilities and no more, one per thing §20 asks of an author's server: report the
+ * families it registered, answer a forwarded request, and emit a notification of its own.
+ * `reached` records at ARRIVAL, before any scripted answer runs, which is what makes "the
+ * request never reaches the SDK" an observation rather than an absence.
+ */
+class AuthorService {
+  /** Every message that reached the session, in arrival order. */
+  readonly reached: Record<string, unknown>[] = [];
+
+  private transport: HubTransport | null = null;
+
+  constructor(
+    /**
+     * What the author's SDK registered, in the SDK's own `ServerCapabilities` shape. Read
+     * through `getCapabilities()` — the twin of the Python SDK's `Server.get_capabilities()`,
+     * which really does derive this from the handlers the author registered (verified against
+     * the installed `mcp` package: the no-argument call is its own default). §11 gives the
+     * LIBRARY the `server/discover` answer precisely because this is what it can see and the
+     * hub cannot.
+     *
+     * RECORDED, not resolved (2026-08-26, reconciliation): §11 names the ANSWER but no
+     * accessor, and this package has no `@modelcontextprotocol/*` dependency anywhere in the
+     * workspace, so the TS SDK's real spelling cannot be checked from this repo. `getCapabilities()`
+     * is chosen as the camelCase twin of the Python SDK's verified name — one seam, one
+     * spelling, two languages, the same decision the module-level `seams` object already
+     * carries — and it is read OPTIONALLY, which is what the row above pins: an author's
+     * object that does not answer to it takes §11's blessed fallback rather than a
+     * fabricated capability set. If the TS SDK turns out to publish a different accessor,
+     * this fake and the library's probe change together and no row's claim moves.
+     */
+    private readonly capabilities: Record<string, unknown>,
+    /** method → the result this server answers it with. A method with no entry is recorded and left unanswered. */
+    private readonly answers: Record<string, unknown> = {},
+  ) {}
+
+  getCapabilities(): Record<string, unknown> {
+    return this.capabilities;
+  }
+
+  async connect(transport: HubTransport): Promise<void> {
+    this.transport = transport;
+    transport.onmessage = (message) => {
+      const frame = message as { id?: unknown; method?: string };
+      this.reached.push(frame as Record<string, unknown>);
+      const answer = this.answers[frame.method ?? ""];
+      if (answer !== undefined && frame.id !== undefined) {
+        void transport.send({ jsonrpc: "2.0", id: frame.id, result: answer });
+      }
+    };
+    await transport.start();
+  }
+
+  /** One notification the author's SDK emits on its own — the outbound half of the bridge. */
+  async emit(frame: Record<string, unknown>): Promise<void> {
+    await this.transport?.send(frame);
+  }
+}
+
+/** One author's service running against one fresh hub, registered — the shape every §20 row
+ *  starts from. The hub is torn down by the shared teardown; the transport is serve()'s own. */
+async function servingAuthor(service: AuthorService, roles?: Roles): Promise<FakeHub> {
+  useSeams();
+  const hub = await startFakeHub();
+  opened.push({ hub });
+  watch(serve(service, { url: hub.origin, token: TOKEN, roles: roles ?? ROLES }));
+  await hub.nextFrame(1);
+  return hub;
+}
+
+/** The declaration the hub really received on the first frame. */
+function declaredRoles(hub: FakeHub): Record<string, unknown> {
+  return (hub.frames[0].message.params as Record<string, unknown>).roles as Record<string, unknown>;
+}
+
+/**
+ * The families one `server/discover` answer names, sorted. Read off `result.capabilities`
+ * and intersected with §20.3's vocabulary, because an SDK's capability object also carries
+ * keys that are not families (`experimental`, `extensions`) — what the hub reads from this
+ * answer is which catalogs to warm, and that is a question about families alone.
+ */
+function familiesIn(frame: Record<string, unknown>): string[] {
+  const result = frame.result as { capabilities?: Record<string, unknown> } | undefined;
+  return Object.keys(result?.capabilities ?? {})
+    .filter((key) => FAMILIES.includes(key))
+    .sort();
+}
+
+/** The capability families §20 knows. `completions` is here so a library that declared it
+ *  unasked is visible, not because any row expects it. */
+const FAMILIES = ["tools", "prompts", "resources", "completions"];
+
+/**
+ * §20.3's two spellings in ONE declaration — the example the spec itself writes. Typed
+ * against the library's own {@link Roles} on purpose: §20.6 pins "no new API beyond the
+ * widened `roles` shape", so a declaration type that still reads `Record<string, string[]>`
+ * is the library's half of this dispatch left undone, and it should fail at the type rather
+ * than pass silently at runtime.
+ */
+const MIXED_ROLES: Roles = {
+  reader: ["get_news", "search_.*"],
+  curator: { tools: ["publish"], prompts: ["digest_.*"], resources: ["news://feed/*"] },
+};
+
+/**
+ * A declaration the HUB rejects — §20.3 makes an unknown family key a violation like any
+ * other. The cast IS the case: an author writing plain JS can produce exactly this, and the
+ * library must send it rather than repair it or refuse it locally.
+ */
+const REJECTED_ROLES = { curator: { toolz: ["publish"] } } as unknown as Roles;
+
+/** The correlation id the hub puts on its own `server/discover` — the hub's id, never one
+ *  the library minted (it originates exactly one request, `hub/register`). */
+const DISCOVER_ID = "hub-discover-1";
+
+/** What the author's server answers a `prompts/get` with: §20.1's message list. Content
+ *  blocks, which is why §15 stubs them in the audit ledger rather than storing the text. */
+const PROMPT_RESULT = {
+  description: "a digest",
+  messages: [{ role: "user", content: { type: "text", text: "headlines" } }],
+};
+
+/** …and a `resources/read`: contents keyed by the URI the service itself knows. */
+const RESOURCE_URI = "news://feed/tech";
+const RESOURCE_RESULT = {
+  contents: [{ uri: RESOURCE_URI, mimeType: "text/plain", text: "headline" }],
+};
 
 /**
  * The table runner: one case per row, titled with the row's `spec`. It stands up

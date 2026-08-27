@@ -33,7 +33,14 @@ import {
 } from "./identity";
 import type { Principal, TokenKind } from "./identity";
 import { listConnections, revokeConnection } from "./oauth";
-import { PMCP_SLUG, Registry, RegistryRefusal, SLUG_CHARSET, writeOnlyPaths } from "./registry";
+import {
+  PMCP_SLUG,
+  Registry,
+  RegistryRefusal,
+  SERVICE_CAPABILITIES,
+  SLUG_CHARSET,
+  writeOnlyPaths,
+} from "./registry";
 import type { GrantEntry, RoleDeclaration, ServiceAccount, ServiceDetail } from "./registry";
 import { CLOSE_ARCHIVED, CLOSE_REVOKED, sever, status, wipe } from "./tunnel";
 import { connectionStatus, disconnect, setHeaders } from "./upstream";
@@ -99,17 +106,37 @@ export type AdminOp = {
  *   advertised a shape nothing checked would be the false abstraction this table exists
  *   to avoid.
  * - `text` / `flag` / `count` — a string (optionally one of `values`), a boolean, an integer.
- * - `roleList` — §9's grant syntax: `name` or `name:approval`, one string per entry.
+ * - `stringList` — a list of strings, each optionally one of `values`: §9's grant syntax
+ *   (`name` or `name:approval`), and §20.2's capability vocabulary, which is a CLOSED set
+ *   and therefore renders as an `enum` an agent and the web form both read — the same
+ *   "what the tool advertises is what the table refuses" the `slug` bullet states.
  * - `headerMap` — name → value, the shape `service_set_upstream_auth` seals.
  * - `pathMap` — tool-or-pattern → dot-paths, the shape `redact` / `redact_results` take (§7).
+ * - `roleDeclaration` — a proxied service's virtual roles (§8, widened by §20.3): role
+ *   name → either a bare pattern list OR the per-family object, mixable across roles in
+ *   one declaration. This layer checks only the SHAPE (registry.RoleDeclaration's own
+ *   union) — never family names, pattern compilation, or the size caps, which is
+ *   registry.validateRoles' job inside `createService`/`updateService` (via `domain`,
+ *   below); a shape this loose still refuses every malformed value `pathMap` used to.
  * - `duration` — seconds, or the literal `never` (§8's `expires_in`).
  */
 type Field = {
-  kind: "slug" | "text" | "flag" | "count" | "roleList" | "headerMap" | "pathMap" | "duration";
+  kind:
+    | "slug"
+    | "text"
+    | "flag"
+    | "count"
+    | "stringList"
+    | "headerMap"
+    | "pathMap"
+    | "roleDeclaration"
+    | "duration";
   /** Rendered into the JSON Schema, so the MCP tool and the web form describe a field once. */
   description: string;
   optional?: true;
-  /** `text` only: the closed set of values, rendered as `enum`. */
+  /** `text` and `stringList` only: the closed set of values, rendered as `enum` (on the
+   *  list kind, the ITEM's enum) and refused by `coerce` — one constant, advertised and
+   *  enforced. */
   values?: readonly string[];
   /** Output schemas only: the hub's internal result-secret marker (§7). */
   writeOnly?: true;
@@ -155,12 +182,23 @@ function render(field: Field): Record<string, unknown> {
       return { ...base, type: nullable("boolean") };
     case "count":
       return { ...base, type: nullable("integer") };
-    case "roleList":
-      return { ...base, type: "array", items: { type: "string" } };
+    case "stringList":
+      return { ...base, type: "array", items: { type: "string", ...(field.values ? { enum: field.values } : {}) } };
     case "headerMap":
       return { ...base, type: "object", additionalProperties: { type: "string" } };
     case "pathMap":
       return { ...base, type: "object", additionalProperties: { type: "array", items: { type: "string" } } };
+    case "roleDeclaration":
+      return {
+        ...base,
+        type: "object",
+        additionalProperties: {
+          oneOf: [
+            { type: "array", items: { type: "string" } },
+            { type: "object", additionalProperties: { type: "array", items: { type: "string" } } },
+          ],
+        },
+      };
     case "duration":
       return { ...base, oneOf: [{ type: "integer" }, { const: "never" }] };
   }
@@ -218,12 +256,21 @@ function coerce(name: string, field: Field, value: unknown): unknown {
       return Number.isInteger(value) ? value : bad();
     case "duration":
       return value === "never" || Number.isInteger(value) ? value : bad();
-    case "roleList":
-      return Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : bad();
+    case "stringList": {
+      if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) bad();
+      const values = field.values;
+      // The same closed set `render` put in the schema, refused where it is declared.
+      if (values && !(value as string[]).every((entry) => values.includes(entry))) {
+        throw invalid(`"${name}" is not one of the values this tool accepts`);
+      }
+      return value;
+    }
     case "headerMap":
       return isStringMap(value) ? value : bad();
     case "pathMap":
       return isPathMap(value) ? value : bad();
+    case "roleDeclaration":
+      return isRoleDeclaration(value) ? value : bad();
   }
 }
 
@@ -236,6 +283,20 @@ function isPathMap(value: unknown): value is Record<string, string[]> {
     plainObject(value) &&
     Object.values(value).every(
       (entry) => Array.isArray(entry) && entry.every((path) => typeof path === "string"),
+    )
+  );
+}
+
+/** §20.3's wire shape, checked for STRUCTURE only — a bare pattern list, or the per-family
+ *  object, per role. registry.validateRoles is the semantic authority (family names,
+ *  pattern compilation, size caps); this only keeps a value neither arm can be out. */
+function isRoleDeclaration(value: unknown): value is RoleDeclaration {
+  return (
+    plainObject(value) &&
+    Object.values(value).every(
+      (declared) =>
+        (Array.isArray(declared) && declared.every((pattern) => typeof pattern === "string")) ||
+        isPathMap(declared),
     )
   );
 }
@@ -532,6 +593,9 @@ function proxyFields(input: Record<string, unknown>): Record<string, unknown> {
     ...(input.auth === undefined ? {} : { upstreamAuthMode: input.auth }),
     ...(input.forward_identity === undefined ? {} : { forwardIdentity: input.forward_identity }),
     ...(input.roles === undefined ? {} : { roles: input.roles as RoleDeclaration }),
+    // §20.2 — proxy-only, like `roles`: a tunnel's capability set comes from its own
+    // registration-time discovery and is never owner-configured.
+    ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities as string[] }),
   };
 }
 
@@ -562,7 +626,20 @@ const SERVICE_FIELDS: Record<string, Field> = {
     description: "Proxied only: send X-Pmcp-* identity headers upstream (default false).",
     optional: true,
   },
-  roles: { kind: "pathMap", description: "Proxied only: role name → tool patterns.", optional: true },
+  roles: {
+    kind: "roleDeclaration",
+    description:
+      "Proxied only: role name → tool patterns, or (§20.3) the per-family object of tool/prompt/resource patterns.",
+    optional: true,
+  },
+  capabilities: {
+    kind: "stringList",
+    // The vocabulary itself is registry's export, not prose: what the tool advertises,
+    // what the /services form offers, and what the hub enforces are one constant (§20.2).
+    values: SERVICE_CAPABILITIES,
+    description: "Proxied only: which MCP families this upstream serves (default: tools only).",
+    optional: true,
+  },
   redact: { kind: "pathMap", description: "Tool-or-pattern → sensitive ARGUMENT paths.", optional: true },
   redact_results: { kind: "pathMap", description: "Tool-or-pattern → sensitive RESULT paths.", optional: true },
   log_bodies: {
@@ -930,7 +1007,7 @@ export const ops: Record<string, AdminOp> = {
       fields: {
         account: { kind: "slug", description: "The service account's slug." },
         service: { kind: "slug", description: "The service's slug." },
-        roles: { kind: "roleList", description: 'Role names, each optionally suffixed ":approval".' },
+        roles: { kind: "stringList", description: 'Role names, each optionally suffixed ":approval".' },
       },
     },
     async run(ownerId, parsed) {
@@ -1235,6 +1312,19 @@ export const adminBackend: ServiceBackend = {
       if (op.outputSchema !== undefined) tool.outputSchema = jsonSchema(op.outputSchema as OpSchema);
       return tool;
     });
+  },
+  // §20.6: the pmcp builtin is tools only — its scoped endpoint answers these three empty
+  // rather than -32601, because an empty family is a different fact from an unimplemented
+  // method (§20.2), and declares neither capability (gateway.capabilitiesFor's own
+  // special case for PMCP_SLUG, so this module states no capability list of its own).
+  async listPrompts(service, ctx) {
+    return [];
+  },
+  async listResources(service, ctx) {
+    return [];
+  },
+  async listResourceTemplates(service, ctx) {
+    return [];
   },
   async call(service, msg, ctx) {
     // deps: ops · errors.notPermitted

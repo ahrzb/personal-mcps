@@ -4,20 +4,24 @@
 // OWNS: the D1 rows for `service`, `service_account`, and `grant_` (row-level
 // primitives only — cascade choreography across tokens, DO sever/wipe, and audit
 // belongs to admin), the role-pattern semantics (anchored ^(?:p)$ compilation,
-// the literal-grammar fast path, `*` as a `.*` alias, the built-in `all` role
-// resolved at request time and never stored, union-of-roles with
+// the PER-FAMILY literal-grammar fast path, `*` as a `.*` alias, the built-in
+// `all` role resolved at request time and never stored, union-of-roles with
 // allow-beats-approval), role-declaration validation shared by hub/register and
-// proxied config, textual drift detection on re-declaration, the `pmcp` slug
+// proxied config, the §20.3 normalization of a declaration into its per-family
+// form and back into the canonical read shape, textual drift detection on
+// re-declaration, the proxied `capabilities` config (§20.2), the `pmcp` slug
 // reservation — and the redaction path grammar: writeOnlyPaths/applyRedaction are
 // the system's ONE definition of how sensitive paths are found and applied, in
 // BOTH directions (§7): tunnel walks cached input and output schemas with the
 // former; approvals and the gateway's audit-body path mask with the latter.
 //
-// HIDES: the roles_json / redact_json / redact_results_json / log_bodies column
-// formats (the tunnel DO hands wire-shaped
-// declarations to upsertDeclaredRoles and never touches the columns), how
-// patterns compile and match, and how grant rows plus a declaration resolve into
-// a ToolFilter. This module never writes audit rows, never maps errors to
+// HIDES: the roles_json / redact_json / redact_results_json / log_bodies /
+// capabilities_json column formats (the tunnel DO hands wire-shaped
+// declarations to upsertDeclaredRoles and never touches the columns), that
+// roles_json stores the NORMALIZED per-family object while every read renders
+// §20.3's canonical form, how patterns compile and match, and how grant rows
+// plus a declaration resolve into a ToolFilter. This module never writes audit
+// rows, never maps errors to
 // JSON-RPC, and never reads or decrypts upstream credential envelopes — its one
 // touch is CLEARING the envelope column when updateService flips the auth mode,
 // a row invariant (mode and envelope kind can never disagree), not a read.
@@ -58,44 +62,83 @@ export type Service = {
 export type AccessMode = "allow" | "approval" | "deny";
 
 /**
+ * §20.3's three keyspaces: one pattern language, read against tool names,
+ * prompt names, and resource URIs. The family selects the pattern list AND the
+ * literal fast path — nothing else about matching differs.
+ */
+export const ROLE_FAMILIES = ["tools", "prompts", "resources"] as const;
+export type RoleFamily = (typeof ROLE_FAMILIES)[number];
+
+/**
+ * What a LISTING is filtered as. Resource templates are matched by their raw
+ * `uriTemplate` against the RESOURCE patterns (§20.2) — the one place where the
+ * pattern list and the item's key are not named by the same word, which is why
+ * this type exists beside RoleFamily instead of being folded into it.
+ */
+export type ListKind = RoleFamily | "resourceTemplates";
+
+/** A role's patterns per family; every key optional (§20.3's wire shape). */
+export type FamilyPatterns = Partial<Record<RoleFamily, string[]>>;
+
+/**
  * A caller's resolved access to one service, produced by resolveAccess and
  * consumed by the gateway. Pure and snapshot-in-time: it holds the union of the
  * principal's granted roles resolved against the declaration as of the resolve
  * call, and does no I/O of its own.
  *
- * Semantics the gateway leans on: check() takes the UNPREFIXED tool name and
- * answers `allow` when any allow-mode role matches (allow beats approval),
- * `approval` when only approval-mode roles match, `deny` otherwise.
- * filterList() drops only `deny` tools — approval-gated tools list like any
- * other, since the agent must see them to call them. An empty roleNames on a
- * service-account principal means the account holds no grants at all on this
- * service (the gateway's scoped-404 signal) — distinct from granted-but-
- * undeclared roles, which appear in roleNames but match nothing (empty
- * tools/list and -32001, a normal state). Owners always carry ["all"].
+ * Semantics the gateway leans on: check() takes the UNPREFIXED subject — a tool
+ * or prompt NAME, a resource URI, a raw uriTemplate — plus the family it is read
+ * in, and answers `allow` when any allow-mode role matches (allow beats
+ * approval), `approval` when only approval-mode roles match, `deny` otherwise.
+ * filterList() drops only `deny` items — approval-gated tools list like any
+ * other, since the agent must see them to call them — and reads the KEY its
+ * `kind` names: `name` for tools and prompts, `uri` for resources,
+ * `uriTemplate` for templates (§20.2: filtering a URI keyspace by a display
+ * string is the bug that rule exists to prevent). Both default to `tools`, the
+ * only family that existed before §20.3 and the only one a caller may leave
+ * unsaid. An empty roleNames on a service-account principal means the account
+ * holds no grants at all on this service (the gateway's scoped-404 signal) —
+ * distinct from granted-but-undeclared roles, which appear in roleNames but
+ * match nothing (empty tools/list and -32001, a normal state). Owners always
+ * carry ["all"].
  */
 export type ToolFilter = {
-  check(tool: string): AccessMode;
-  filterList<T extends { name: string }>(tools: T[]): T[];
+  check(subject: string, family?: RoleFamily): AccessMode;
+  filterList<T extends ListedItem>(items: T[], kind?: ListKind): T[];
   roleNames: string[];   // granted role names, for hub/roles forwarding
 };
 
+/** Any listed item, seen as just the three keys a family may be matched on. */
+type ListedItem = Partial<Record<"name" | "uri" | "uriTemplate", string>>;
+
 /**
- * A role declaration in wire shape — role name to anchored patterns, exactly as
- * hub/register and the YAML `roles:` block carry it. `{}` means "no roles
- * declared": the service is reachable only by owners and `all`-granted accounts.
+ * A role declaration in wire shape — role name to patterns, in either of §20.3's
+ * two spellings: a bare list (which MEANS `{tools: [...]}`, forever, so every
+ * declaration in the field keeps its exact meaning) or the per-family object.
+ * `{}` means "no roles declared": the service is reachable only by owners and
+ * `all`-granted accounts.
  */
-export type RoleDeclaration = Record<string, string[]>;
+export type RoleDeclaration = Record<string, string[] | FamilyPatterns>;
 
 /**
  * What upsertDeclaredRoles found when comparing old and new declarations.
- * A role appears here only when it holds at least one live grant AND its new
- * pattern set is not a subset of the old one (compared as exact strings — never
- * regex-language containment); `patterns` lists the added or changed strings.
- * Empty `widened` means no visible drift. The caller turns a non-empty report
- * into the `connect.roles_widened` audit row — this module never audits.
+ * A (role, family) pair appears here only when the role holds at least one live
+ * grant AND its new pattern set in that family is not a subset of the old one
+ * (compared as exact strings — never regex-language containment); `patterns`
+ * lists the added or changed strings. One entry per (role, FAMILY), because
+ * §20.3 makes an unchanged tools set no longer enough to call a role unchanged:
+ * a role that gains `resources: ["file:///*"]` has just handed every grantee a
+ * keyspace. `family` is ABSENT on a tools widening, by the convention the roles
+ * wire itself uses — a declaration that names no family is the tools one — so a
+ * row that names a family is a row about a NEW keyspace, and every
+ * `connect.roles_widened` written before §20.3 still reads as exactly what it
+ * was. Comparison runs on the NORMALIZED declarations, so restating a bare list
+ * as `{tools: [...]}` is not drift. Empty `widened` means none. The caller turns
+ * a non-empty report into the `connect.roles_widened` audit row — this module
+ * never audits.
  */
 export type DriftReport = {
-  widened: { role: string; patterns: string[] }[];
+  widened: { role: string; family?: RoleFamily; patterns: string[] }[];
 };
 
 /** The grant modes an owner can actually store — `deny` is never a grant. */
@@ -127,12 +170,27 @@ export type ServiceDetail = Service & {
   upstreamUrl: string | null;              // proxied only, null on tunneled
   upstreamAuthMode: "headers" | "oauth" | null;  // proxied only; configuration, not credentials
   forwardIdentity: boolean;                // proxied only; X-Pmcp-* headers upstream
-  declaredRoles: RoleDeclaration;
+  declaredRoles: RoleDeclaration;          // §20.3's canonical form, never the stored one
+  /**
+   * §20.2's owner-declared capability list — proxied only, and what that service's
+   * SCOPED handshake advertises. `null` is "undeclared", which means `tools` only: the
+   * answer every proxied service in the field already gives.
+   */
+  capabilities: ServiceCapability[] | null;
   redact: Record<string, string[]>;        // tool-or-pattern → argument paths (config-declared, §7)
   redactResults: Record<string, string[]>; // same shape, applied to result structuredContent (§7)
   createdAt: number;
   lastConnectedAt: number | null;          // tunneled only, null until first registration
 };
+
+/**
+ * §20.2's capability vocabulary: what a proxied service's owner may declare its
+ * upstream serves. A superset of the role families — `completions` is a method a
+ * service answers, never a keyspace grants are written against — which is why
+ * this list is its own and not ROLE_FAMILIES.
+ */
+export const SERVICE_CAPABILITIES = ["tools", "prompts", "resources", "completions"] as const;
+export type ServiceCapability = (typeof SERVICE_CAPABILITIES)[number];
 
 /**
  * Input to createService. Proxied drafts must carry upstreamUrl and a valid
@@ -149,6 +207,8 @@ export type ServiceDraft = {
   upstreamAuthMode?: "headers" | "oauth";
   forwardIdentity?: boolean;
   roles?: RoleDeclaration;
+  /** §20.2, proxied only; absent means `tools` only. Typed as strings: it arrives from YAML. */
+  capabilities?: string[];
   redact?: Record<string, string[]>;
   redactResults?: Record<string, string[]>;
   /** absent defaults by kind: tunnel true, proxy false (§15) */
@@ -166,6 +226,7 @@ export type ServicePatch = Partial<{
   upstreamAuthMode: "headers" | "oauth";
   forwardIdentity: boolean;
   roles: RoleDeclaration;
+  capabilities: string[];
   redact: Record<string, string[]>;
   redactResults: Record<string, string[]>;
   logBodies: boolean;
@@ -200,26 +261,50 @@ export type AccountDraft = {
 export const PMCP_SLUG = "pmcp";
 
 /**
- * The one pattern-language decision point: does `pattern` match `tool`?
- * A pattern made only of tool-name characters ([A-Za-z0-9._-]) is compared as a
- * literal string, never compiled — `get.news` matches only the tool `get.news`.
+ * The one pattern-language decision point: does `pattern` match `subject` when
+ * read in `family`? The family selects the LITERAL FAST PATH and nothing else —
+ * anchoring, the `*` alias and totality are the same in all three (§20.3).
+ * A literal pattern is compared as a string, never compiled, so `get.news`
+ * matches only the tool `get.news` and `file:///notes.txt` only that URI.
  * Anything else compiles as ^(?:pattern)$ with no flags, so top-level `|` stays
  * anchored (`foo|bar` never matches `foox`). An un-escaped `*` not already
  * preceded by `.` reads as `.*`, so glob-style `get_*` and regex-style `get_.*`
- * mean the same thing. Never throws: a pattern that fails to compile matches
- * nothing — which is why every WRITE path reports compilation failures instead
- * (validateRoles for a declaration, assertRedactKeys for a redaction map): a
- * pattern that reaches storage uncompilable would silently match no tool.
+ * mean the same thing in every family. Never throws: a pattern that fails to
+ * compile matches nothing — which is why every WRITE path reports compilation
+ * failures instead (validateRoles for a declaration, assertRedactKeys for a
+ * redaction map): a pattern that reaches storage uncompilable would silently
+ * match no tool.
  */
-export function matchesPattern(pattern: string, tool: string): boolean {
+export function matchesPattern(pattern: string, subject: string, family: RoleFamily): boolean {
   // deps: none
-  if (LITERAL_PATTERN.test(pattern)) return pattern === tool;
+  if (isLiteralPattern(pattern, family)) return pattern === subject;
   const re = compilePattern(pattern);
-  return re ? re.test(tool) : false;
+  return re ? re.test(subject) : false;
 }
 
-/** The literal-grammar fast path: tool-name characters only, compared as a string. */
+/**
+ * Which arm the pattern takes, and the ONE rule that differs per family (§18
+ * decision 9 as revised). Tool and prompt names live in a closed charset, so the
+ * fast path is that charset. A URI does not: `:` and `/` would drop every
+ * resource pattern into compilation, where `.` matches anything and
+ * `file:///notes.txt` would cover `file:///notesXtxt` — so a resource pattern is
+ * literal unless it carries a regex metacharacter.
+ *
+ * The test reads the PATTERN, never the subject, which is what makes a resource
+ * TEMPLATE an ordinary string to match against: `{` and `}` in `news://feed/{id}`
+ * are just characters of the subject, while a template-SHAPED pattern carries
+ * them and therefore compiles — and still matches exactly its own template,
+ * an unquantified brace sequence being a literal in the flagless grammar §7 pins.
+ */
+function isLiteralPattern(pattern: string, family: RoleFamily): boolean {
+  return family === "resources" ? !RESOURCE_METACHARACTERS.test(pattern) : LITERAL_PATTERN.test(pattern);
+}
+
+/** The literal-grammar fast path for tool and prompt names: that charset only. */
 const LITERAL_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/** §20.3's metacharacter set, exactly: `* + ? ( ) [ ] { } | ^ $ \` — `.` is deliberately not in it. */
+const RESOURCE_METACHARACTERS = /[*+?()[\]{}|^$\\]/;
 
 /** `*` not already escaped or preceded by `.` reads as `.*` (§2/§18 item 9). */
 function aliasStars(pattern: string): string {
@@ -244,10 +329,13 @@ function compilePattern(pattern: string): RegExp | null {
 /**
  * Validates a role declaration against the rules shared by hub/register and
  * proxied config: role names match [a-z0-9_-] within limits.ROLE_NAME_MAX_LENGTH,
- * `all` is reserved (built in, never declarable), every pattern compiles under
- * the pattern language, and the size caps hold (limits.ROLE_PATTERN_MAX_LENGTH
- * per pattern, limits.ROLE_PATTERNS_MAX per role — named constants, so tests
- * never assert literals). Returns
+ * `all` is reserved (built in, never declarable), a per-family object carries
+ * only §20.3's family keys, every pattern compiles under the pattern language,
+ * and the size caps hold (limits.ROLE_PATTERN_MAX_LENGTH per pattern,
+ * limits.ROLE_PATTERNS_MAX per FAMILY LIST — the same two named constants
+ * applied three times, so no new number enters the system). Both spellings are
+ * judged by the same rules, per role rather than per declaration, so one
+ * declaration may mix them. Returns
  * human-readable violations, empty when valid ({} is valid — no roles
  * declared). Pure; callers decide whether violations become a JSON-RPC reply
  * (the tunnel DO) or a config error (admin/YAML).
@@ -255,7 +343,7 @@ function compilePattern(pattern: string): RegExp | null {
 export function validateRoles(decl: RoleDeclaration): string[] {
   // deps: none
   const violations: string[] = [];
-  for (const [name, patterns] of Object.entries(decl)) {
+  for (const [name, declared] of Object.entries(decl)) {
     if (name === "all") {
       violations.push(`role name "all" is reserved`);
       continue;
@@ -263,19 +351,72 @@ export function validateRoles(decl: RoleDeclaration): string[] {
     if (!ROLE_NAME_CHARSET.test(name) || name.length > ROLE_NAME_MAX_LENGTH) {
       violations.push(`role name "${name}" must match [a-z0-9_-]{1,${ROLE_NAME_MAX_LENGTH}}`);
     }
-    if (patterns.length > ROLE_PATTERNS_MAX) {
-      violations.push(`role "${name}" declares more than ${ROLE_PATTERNS_MAX} patterns`);
+    // The wire can spell anything, so every family key and every value is judged here
+    // rather than trusted from the type (which a `hub/register` frame never satisfies) —
+    // starting with the role's own value, since `Object.entries(null)` throws and this
+    // gate answers a violation list, never an exception.
+    if (!Array.isArray(declared) && !isJsonObject(declared)) {
+      violations.push(`role "${name}" must declare a pattern list or a per-family object`);
+      continue;
     }
-    for (const pattern of patterns) {
-      if (pattern.length > ROLE_PATTERN_MAX_LENGTH) {
-        violations.push(`pattern "${pattern}" in role "${name}" exceeds ${ROLE_PATTERN_MAX_LENGTH} characters`);
+    for (const [family, patterns] of Object.entries(normalizeRole(declared))) {
+      if (!(ROLE_FAMILIES as readonly string[]).includes(family)) {
+        violations.push(`role "${name}" declares an unknown family "${family}"`);
+        continue;
       }
-      if (compilePattern(pattern) === null) {
-        violations.push(`pattern "${pattern}" in role "${name}" does not compile`);
+      if (!Array.isArray(patterns)) {
+        violations.push(`family "${family}" in role "${name}" is not a pattern list`);
+        continue;
+      }
+      if (patterns.length > ROLE_PATTERNS_MAX) {
+        violations.push(`role "${name}" declares more than ${ROLE_PATTERNS_MAX} ${family} patterns`);
+      }
+      for (const pattern of patterns) {
+        if (pattern.length > ROLE_PATTERN_MAX_LENGTH) {
+          violations.push(`pattern "${pattern}" in role "${name}" exceeds ${ROLE_PATTERN_MAX_LENGTH} characters`);
+        }
+        if (compilePattern(pattern) === null) {
+          violations.push(`pattern "${pattern}" in role "${name}" does not compile`);
+        }
       }
     }
   }
   return violations;
+}
+
+/**
+ * §20.3's normalization, spelled ONCE for validation, storage, matching and drift
+ * alike: a bare list IS the tools list. Never mutates — the bare arm builds a new
+ * object and the object arm is handed straight back, so every caller may read the
+ * result but none may write it — and an object passes through as it stands,
+ * unknown keys included, because judging those is validateRoles' job and hiding
+ * them here would make an invalid declaration look clean.
+ */
+function normalizeRole(declared: string[] | FamilyPatterns): FamilyPatterns {
+  return Array.isArray(declared) ? { tools: declared } : declared;
+}
+
+/** The whole declaration in normalized form — what `roles_json` stores (§20.3). */
+function normalizeRoles(decl: RoleDeclaration): Record<string, FamilyPatterns> {
+  return Object.fromEntries(Object.entries(decl).map(([role, declared]) => [role, normalizeRole(declared)]));
+}
+
+/**
+ * §20.3's canonical READ shape, the inverse rendering every owner-facing surface
+ * shows: a bare list when the role grants tools and nothing else, the per-family
+ * object otherwise. A function of MEANING, not of history — the spelling a
+ * service happened to register with is deliberately not recoverable, so
+ * `pmcp diff` is stable for every YAML file written before §20.3 and noisy only
+ * where a role genuinely spans families.
+ */
+function canonicalRoles(stored: RoleDeclaration): RoleDeclaration {
+  return Object.fromEntries(
+    Object.entries(stored).map(([role, declared]) => {
+      const families = normalizeRole(declared);
+      const toolsOnly = ROLE_FAMILIES.every((family) => family === "tools" || (families[family] ?? []).length === 0);
+      return [role, toolsOnly ? (families.tools ?? []) : families];
+    }),
+  );
 }
 
 /** The role-name grammar validateRoles reports against. */
@@ -284,26 +425,30 @@ const ROLE_NAME_CHARSET = /^[a-z0-9_-]+$/;
 /**
  * The pure heart of access resolution: grant entries (exactly as stored, or the
  * synthesized owner grant [{role: "all", mode: "allow"}]) plus the service's
- * declaration → a ToolFilter. A granted `all` contributes `.*` without touching
- * the declaration; a granted role absent from it contributes no patterns but
- * still appears in roleNames; per tool, any allow-mode match beats every
- * approval-mode match. Exported as the testable seam for the union and
- * precedence rules — resolveAccess is D1 reads plus this.
+ * declaration → a ToolFilter. A granted `all` contributes `.*` in EVERY family
+ * without touching the declaration; a granted role absent from it contributes no
+ * patterns but still appears in roleNames; a role's families are independent, so
+ * a prompts-only role matches no tool of the same name; per (subject, family),
+ * any allow-mode match beats every approval-mode match. Exported as the testable
+ * seam for the union and precedence rules — resolveAccess is D1 reads plus this.
  */
 export function buildToolFilter(entries: GrantEntry[], declared: RoleDeclaration): ToolFilter {
   // deps: matchesPattern
   const roleNames = entries.map((e) => e.role);
+  // Normalized once, per role: a declaration may mix the two spellings, so sniffing the
+  // shape of the declaration as a whole would read one role right and the next one empty.
+  const byFamily = normalizeRoles(declared);
 
-  function roleMatches(role: string, tool: string): boolean {
-    if (role === "all") return true;
-    const patterns = declared[role];
-    return patterns ? patterns.some((p) => matchesPattern(p, tool)) : false;
+  function roleMatches(role: string, subject: string, family: RoleFamily): boolean {
+    if (role === "all") return true; // §20.3: `all` spans every family, present and future
+    const patterns = byFamily[role]?.[family];
+    return patterns ? patterns.some((p) => matchesPattern(p, subject, family)) : false;
   }
 
-  function check(tool: string): AccessMode {
+  function check(subject: string, family: RoleFamily = "tools"): AccessMode {
     let approved = false;
     for (const entry of entries) {
-      if (!roleMatches(entry.role, tool)) continue;
+      if (!roleMatches(entry.role, subject, family)) continue;
       if (entry.mode === "allow") return "allow"; // allow beats approval, any order
       approved = true;
     }
@@ -312,9 +457,50 @@ export function buildToolFilter(entries: GrantEntry[], declared: RoleDeclaration
 
   return {
     check,
-    filterList: (tools) => tools.filter((t) => check(t.name) !== "deny"),
+    filterList: (items, kind = "tools") => {
+      const subjectKey = LIST_SUBJECT_KEY[kind];
+      const family = LIST_FAMILY[kind];
+      return items.filter((item) => {
+        const subject = item[subjectKey];
+        // An item missing its own key names nothing the caller could have been granted,
+        // so it lists as nothing — the deny side, never a fall-back to another key.
+        return typeof subject === "string" && check(subject, family) !== "deny";
+      });
+    },
     roleNames,
   };
+}
+
+/** §20.2: which key a listed item is matched ON, per family — never `.name` for a URI. */
+const LIST_SUBJECT_KEY = {
+  tools: "name",
+  prompts: "name",
+  resources: "uri",
+  resourceTemplates: "uriTemplate",
+} as const satisfies Record<ListKind, keyof ListedItem>;
+
+/** …and which pattern list judges it: a template is judged by the RESOURCE patterns. */
+const LIST_FAMILY = {
+  tools: "tools",
+  prompts: "prompts",
+  resources: "resources",
+  resourceTemplates: "resources",
+} as const satisfies Record<ListKind, RoleFamily>;
+
+/**
+ * The two tables above, as the accessors every OTHER module asks them through — this
+ * module's header claims the keyspace and the pattern grammar, so a second copy of either
+ * rule anywhere else is a copy with no owner. tunnel.ts reads both: which key an entry must
+ * carry to be worth caching (a row that names nothing no grant could cover would sit
+ * permanently unlistable in front of every reader), and which catalogs one declared
+ * capability owns — the `resources` declaration speaking for resource templates IS this
+ * table's `resourceTemplates → resources` row, read forwards instead of restated backwards.
+ */
+export function subjectKeyOf(kind: ListKind): "name" | "uri" | "uriTemplate" {
+  return LIST_SUBJECT_KEY[kind];
+}
+export function patternFamilyOf(kind: ListKind): RoleFamily {
+  return LIST_FAMILY[kind];
 }
 
 /**
@@ -696,6 +882,7 @@ export class Registry {
     assertKindFields(draft.kind, draft);
     const roles = draft.roles ?? {};
     assertRoles(roles);
+    assertCapabilities(draft.capabilities);
     assertRedactKeys("redact", draft.redact);
     assertRedactKeys("redactResults", draft.redactResults);
     if (await this.getService(draft.ownerId, draft.slug)) {
@@ -715,7 +902,10 @@ export class Registry {
       upstream_auth_mode: draft.upstreamAuthMode ?? null,
       forward_identity: draft.forwardIdentity ? 1 : 0,
       upstream_auth_json: null,
-      roles_json: JSON.stringify(roles),
+      // §20.3: the column holds the normalized per-family object; every READ renders the
+      // canonical form back, so no surface ever sees this shape.
+      roles_json: JSON.stringify(normalizeRoles(roles)),
+      capabilities_json: draft.capabilities === undefined ? null : JSON.stringify(draft.capabilities),
       redact_json: JSON.stringify(draft.redact ?? {}),
       redact_results_json: JSON.stringify(draft.redactResults ?? {}),
       // §15: resolved HERE, by kind, so the stored column is always concrete.
@@ -727,9 +917,9 @@ export class Registry {
     await this.db
       .prepare(
         `INSERT INTO service (id, owner_id, slug, name, description, kind, upstream_url,
-           upstream_auth_mode, forward_identity, roles_json, redact_json, redact_results_json,
-           log_bodies, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           upstream_auth_mode, forward_identity, roles_json, capabilities_json, redact_json,
+           redact_results_json, log_bodies, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         row.id,
@@ -742,6 +932,7 @@ export class Registry {
         row.upstream_auth_mode,
         row.forward_identity,
         row.roles_json,
+        row.capabilities_json,
         row.redact_json,
         row.redact_results_json,
         row.log_bodies,
@@ -769,6 +960,7 @@ export class Registry {
     if (!row) throw new Error(`no service with id "${serviceId}"`);
     assertKindFields(row.kind, patch);
     if (patch.roles !== undefined) assertRoles(patch.roles);
+    assertCapabilities(patch.capabilities);
     assertRedactKeys("redact", patch.redact);
     assertRedactKeys("redactResults", patch.redactResults);
 
@@ -782,7 +974,8 @@ export class Registry {
     if (patch.description !== undefined) set("description", patch.description);
     if (patch.upstreamUrl !== undefined) set("upstream_url", patch.upstreamUrl);
     if (patch.forwardIdentity !== undefined) set("forward_identity", patch.forwardIdentity ? 1 : 0);
-    if (patch.roles !== undefined) set("roles_json", JSON.stringify(patch.roles));
+    if (patch.roles !== undefined) set("roles_json", JSON.stringify(normalizeRoles(patch.roles)));
+    if (patch.capabilities !== undefined) set("capabilities_json", JSON.stringify(patch.capabilities));
     if (patch.redact !== undefined) set("redact_json", JSON.stringify(patch.redact));
     if (patch.redactResults !== undefined) set("redact_results_json", JSON.stringify(patch.redactResults));
     if (patch.logBodies !== undefined) set("log_bodies", patch.logBodies ? 1 : 0);
@@ -1052,15 +1245,19 @@ export class Registry {
     );
     const paths = new Set<string>();
     for (const [key, declared] of Object.entries(config)) {
-      if (matchesPattern(key, tool)) for (const path of declared) paths.add(path);
+      // §20.3: the redaction maps stay family-blind — one key space, matched under the
+      // tool-name grammar, which is also the grammar a prompt name lives in.
+      if (matchesPattern(key, tool, "tools")) for (const path of declared) paths.add(path);
     }
     return [...paths];
   }
 
   /**
-   * The tunnel registration write: stores a service's self-declared roles and
-   * reports drift. The DO hands the wire-shaped declaration straight here — the
-   * stored column format never enters tunnel code. Throws on an invalid
+   * The tunnel registration write: stores a service's self-declared roles —
+   * NORMALIZED, per §20.3, so the column holds one shape whichever spelling
+   * registered — and reports drift. The DO hands the wire-shaped declaration
+   * straight here; the stored column format never enters tunnel code. Throws on
+   * an invalid
    * declaration (never partially writes; callers wanting the violation list
    * for their error reply run validateRoles first), on a proxied service, and
    * on a row that no longer exists (the caller's close-4003 signal). Also
@@ -1082,19 +1279,26 @@ export class Registry {
       .all<{ role: string }>();
     const granted = new Set(results.map((g) => g.role));
 
-    // Textual only (§6): a role absent from either side is the empty set, and a role nobody
-    // holds is silent. Never regex-language containment — a rewritten string IS drift.
+    // Textual only (§6), and per FAMILY (§20.3): a family absent from either side is the
+    // empty set, and a role nobody holds is silent. Never regex-language containment — a
+    // rewritten string IS drift. Both sides are normalized first, so restating a bare list
+    // as `{tools: [...]}` draws no row.
     const widened: DriftReport["widened"] = [];
-    for (const [role, patterns] of Object.entries(roles)) {
+    const normalized = normalizeRoles(roles);
+    for (const [role, families] of Object.entries(normalized)) {
       if (!granted.has(role)) continue;
-      const before = new Set(previous[role] ?? []);
-      const added = [...new Set(patterns.filter((p) => !before.has(p)))];
-      if (added.length > 0) widened.push({ role, patterns: added });
+      for (const family of ROLE_FAMILIES) {
+        const before = new Set(normalizeRole(previous[role] ?? [])[family] ?? []);
+        const added = [...new Set((families[family] ?? []).filter((p) => !before.has(p)))];
+        // The tools entry stays exactly the shape §6 has always reported (see DriftReport):
+        // no family key, because no family named IS the tools family.
+        if (added.length > 0) widened.push({ role, ...(family === "tools" ? {} : { family }), patterns: added });
+      }
     }
 
     await this.db
       .prepare(`UPDATE service SET roles_json = ?, last_connected_at = ? WHERE id = ?`)
-      .bind(JSON.stringify(roles), Date.now(), serviceId)
+      .bind(JSON.stringify(normalized), Date.now(), serviceId)
       .run();
     return { widened };
   }
@@ -1113,6 +1317,7 @@ type ServiceRow = {
   forward_identity: number;
   upstream_auth_json: string | null;
   roles_json: string;
+  capabilities_json: string | null;       // proxy kind only; NULL = undeclared = tools only (§20.2)
   redact_json: string;
   redact_results_json: string;
   log_bodies: number;
@@ -1145,7 +1350,8 @@ function toDetail(row: ServiceRow): ServiceDetail {
     upstreamUrl: row.upstream_url,
     upstreamAuthMode: row.upstream_auth_mode,
     forwardIdentity: row.forward_identity !== 0,
-    declaredRoles: JSON.parse(row.roles_json),
+    declaredRoles: canonicalRoles(JSON.parse(row.roles_json)),
+    capabilities: row.capabilities_json === null ? null : JSON.parse(row.capabilities_json),
     redact: JSON.parse(row.redact_json),
     redactResults: JSON.parse(row.redact_results_json),
     createdAt: row.created_at,
@@ -1183,6 +1389,29 @@ function assertRoles(decl: RoleDeclaration): void {
 }
 
 /**
+ * §20.2's capability list, as the throw both write paths owe their caller: an owner
+ * declaring `resource` or `sampling` has made a typo, and storing it would advertise a
+ * capability no handshake knows how to spell. Absent is legal and means `tools` only —
+ * the answer every proxied service already gives, which is why this check never demands
+ * the key. It gates the HANDSHAKE alone: routing stays grant-filtered whatever is
+ * declared, so a wrong-but-valid declaration misleads feature detection and widens
+ * nothing.
+ */
+function assertCapabilities(capabilities: string[] | undefined): void {
+  if (capabilities === undefined) return;
+  // The value arrives from YAML and from the admin wire, so the list-ness is checked here
+  // rather than trusted from the type — a bare string would otherwise be stored per letter.
+  if (!Array.isArray(capabilities)) throw new RegistryRefusal("capabilities", "must be a list");
+  const unknown = capabilities.filter((entry) => !(SERVICE_CAPABILITIES as readonly string[]).includes(entry));
+  if (unknown.length > 0) {
+    throw new RegistryRefusal(
+      "capabilities",
+      `names ${unknown.map((entry) => `"${entry}"`).join(", ")} — one of ${SERVICE_CAPABILITIES.join(", ")}`,
+    );
+  }
+}
+
+/**
  * The redaction maps' half of the same rule, as the throw both write paths owe their
  * caller: a `redact` / `redact_results` key is a tool name or a pattern in the ONE
  * pattern language (§7), so a key that does not compile matches no tool at all. Stored
@@ -1202,12 +1431,15 @@ function assertRedactKeys(field: "redact" | "redactResults", map: Record<string,
 
 /**
  * The fields only a PROXIED service may carry, named ONCE: the upstream endpoint and its
- * declared auth mode, the identity-forwarding flag, and the role declaration a tunneled
- * service instead sends at registration. Both write paths ask the question through
- * assertKindFields below, so create and patch can never answer it differently — and the
- * next proxy-only field is one edit here rather than two lists that silently disagree.
+ * declared auth mode, the identity-forwarding flag, the role declaration a tunneled
+ * service instead sends at registration, and §20.2's capability list — which a tunnel
+ * likewise never declares in config, because the hub learns its capability set at
+ * registration and an owner-written one could only ever contradict it. Both write paths
+ * ask the question through assertKindFields below, so create and patch can never answer
+ * it differently — and the next proxy-only field is one edit here rather than two lists
+ * that silently disagree.
  */
-const PROXY_ONLY = ["upstreamUrl", "upstreamAuthMode", "forwardIdentity", "roles"] as const;
+const PROXY_ONLY = ["upstreamUrl", "upstreamAuthMode", "forwardIdentity", "roles", "capabilities"] as const;
 
 /** A draft or patch, seen as just the proxy-only fields — all that this check reads. */
 type ProxyOnlyFields = Partial<Record<(typeof PROXY_ONLY)[number], unknown>>;

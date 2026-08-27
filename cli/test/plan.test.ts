@@ -59,6 +59,38 @@ function currentAccount(over: Partial<CurrentAccount> & { slug: string }): Curre
   return { name: over.slug, description: "", grants: {}, ...over };
 }
 
+/**
+ * §20.3's role declaration, both spellings: a bare pattern list means tools and nothing
+ * else, forever, while the per-family object names any of the three keyspaces and may sit
+ * beside a bare list in the same declaration. Spelled here rather than imported because it
+ * is what `DesiredService.roles` and `CurrentService.roles` BECOME with this dispatch — the
+ * two rows that use it are what widens them.
+ */
+type RoleDeclaration = Record<string, string[] | Record<string, string[]>>;
+
+/**
+ * A proxied server row carrying such a declaration. The cast is a seam bridge and not a
+ * claim: `CurrentService.roles` is still spelled tools-only, so it is deletable the day the
+ * type widens, and no assertion below reads through it.
+ *
+ * That day is this dispatch. §20.3's canonical read shape means `service_list` returns the
+ * per-family object whenever a role is not tools-only, so `CurrentService.roles`,
+ * `DesiredService.roles` and main.ts's `ServiceRow.roles` all become active misstatements
+ * of the wire until they are widened to this type — and main.ts documents those declarations
+ * as the lock that makes a server-side shape change "fail to compile here rather than
+ * emptying a column". Deleting this cast is part of implementing the two rows below.
+ */
+function proxyRow(slug: string, roles: RoleDeclaration): CurrentService {
+  return currentService({
+    slug,
+    kind: "proxy",
+    endpoint: "https://x/mcp",
+    auth: "headers",
+    forwardIdentity: false,
+    roles: roles as Record<string, string[]>,
+  });
+}
+
 function state(services: CurrentService[] = [], accounts: CurrentAccount[] = []): CurrentState {
   return { services, accounts };
 }
@@ -125,6 +157,11 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
     expect(proxy.auth).toBe("headers");
     expect(proxy.forwardIdentity).toBe(false);
     expect(proxy.roles).toEqual({});
+    // §20.2's `capabilities` is the one proxy key with NO normalized default: absent means
+    // the handshake advertises tools only, which is the hub's rule to apply, so inventing
+    // `["tools"]` here would make every pre-amendment file diff against the server on the
+    // first `pmcp diff` after this lands.
+    expect(Object.keys(proxy)).not.toContain("capabilities");
   });
 
   it("§9 · `reader:approval` splits into approval mode; bare `reader` is allow — role names carry no colon, so the split is unambiguous", () => {
@@ -170,6 +207,11 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
       { endpoint: "https://x/mcp" },
       { auth: "oauth" },
       { forward_identity: true },
+      // §20.2's owner-declared advertisement is the fifth member of that set, and misplaced
+      // for the same reason: a TUNNELED service's capability set is the one it answered
+      // `server/discover` with (§6), so a `capabilities:` line here would be a claim about
+      // the hub's surface that the hub ignores — the file lying, silently.
+      { capabilities: ["tools", "resources"] },
     ];
     for (const fields of misplaced) {
       const key = Object.keys(fields)[0];
@@ -183,6 +225,7 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
           endpoint: "https://x/mcp",
           auth: "oauth",
           forward_identity: true,
+          capabilities: ["tools", "resources"],
           roles: { reader: ["search"] },
         },
       }),
@@ -191,6 +234,7 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
       endpoint: "https://x/mcp",
       auth: "oauth",
       forwardIdentity: true,
+      capabilities: ["tools", "resources"],
       roles: { reader: ["search"] },
     });
   });
@@ -310,6 +354,67 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
     expect(stepsOf(plan, "service_update")).toEqual([
       { slug: "notion", endpoint: "https://new/mcp", forward_identity: true, roles: { reader: ["search"] } },
     ]);
+  });
+
+  it("§9/§20.3 · the YAML planner accepts a per-family roles block for a proxied service and diffs it field-by-field", () => {
+    const file = (roles: RoleDeclaration): DesiredConfig =>
+      parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", roles } }));
+    // §20.3's own shape: the two spellings mixed across roles in one declaration, and a
+    // resource pattern where `*` still aliases `.*`.
+    const declared: RoleDeclaration = {
+      reader: ["list_.*"],
+      docs: { prompts: ["summarize_.*"], resources: ["linear://docs/*"] },
+    };
+    // The planner normalizes nothing away — both spellings survive the parse verbatim, so
+    // the canonical read shape §20.3 pins is what the diff compares against. It does NOT
+    // follow that it refuses nothing: §20.3's Validation bullet applies to every family
+    // list, and the severities block below walks those refusals.
+    expect(file(declared).services[0].roles).toEqual(declared);
+    expect(planChanges(file(declared), state()).errors).toEqual([]);
+
+    const current = state([proxyRow("notion", declared)]);
+    // Field-by-field, so the same declaration on both sides differs in no field and plans
+    // nothing — a planner that re-rendered the block would plan an update that changes it
+    // to itself, on every run, for every proxied service that has one.
+    expect(planChanges(file(declared), current).steps).toEqual([]);
+    // One family widened is one changed field, carried whole in the op's wire spelling and
+    // beside no other field.
+    const widened: RoleDeclaration = {
+      ...declared,
+      docs: { prompts: ["summarize_.*"], resources: ["linear://docs/*", "linear://specs/*"] },
+    };
+    const plan = planChanges(file(widened), current);
+    expect(plan.errors).toEqual([]);
+    expect(stepsOf(plan, "service_update")).toEqual([{ slug: "notion", roles: widened }]);
+  });
+
+  it("§9/§20.3 · a bare list in YAML plans identically to {tools: [...]} — no spurious diff on a file written before this change", () => {
+    const file = (roles: RoleDeclaration): DesiredConfig =>
+      parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", roles } }));
+    const bare: RoleDeclaration = { reader: ["list_.*", "get_.*"] };
+    const spelled: RoleDeclaration = { reader: { tools: ["list_.*", "get_.*"] } };
+    /**
+     * The same patterns under a DIFFERENT family — identical spelling, opposite meaning
+     * (§20.3: "a role that grants tools grants *nothing* in another family"). It sits here
+     * because it is what "identically to {tools: [...]}" excludes: a comparison that
+     * flattened the object away would call this pair equal too, and a file that moved a
+     * pattern from `tools:` to `prompts:` would plan nothing while the hub kept granting
+     * the tool of that name.
+     */
+    const elsewhere: RoleDeclaration = { reader: { prompts: ["list_.*", "get_.*"] } };
+    // §20.3's canonical read renders a tools-only role as a bare list, which is exactly
+    // what every file written before this change already spells: the first `pmcp diff`
+    // after it lands must be empty, or the widening announces itself as a namespace-wide
+    // update nobody asked for.
+    const server = state([proxyRow("notion", bare)]);
+    expect(planChanges(file(bare), server)).toEqual({ steps: [], warnings: [], errors: [] });
+    // The other spelling is the same MEANING, so it is the same plan — the diff is a
+    // function of what a role grants, never of which spelling happened to be written down.
+    expect(planChanges(file(spelled), server)).toEqual(planChanges(file(bare), server));
+    // …and a different keyspace is a different meaning, so it is a real change.
+    const moved = planChanges(file(elsewhere), server);
+    expect(moved.errors).toEqual([]);
+    expect(stepsOf(moved, "service_update")).toEqual([{ slug: "notion", roles: elsewhere }]);
   });
 
   it("§8 · an `auth` mode flip plans a service_update flagged destructive — it wipes the stored upstream credentials; twin: any other update is not", () => {
@@ -496,14 +601,27 @@ describe("planChanges · severities, every refusal beside its allow-twin (§9)",
   });
 
   it("§8 · a proxy `roles:` block gets `hub/register`'s validation (§6): a pattern that does not compile, a pattern over 128 chars, more than 64 patterns in one role, or a role name outside `[a-z0-9_-]{1,64}` are each a hard error; twin: a role at the caps with a compiling pattern is accepted", () => {
-    const proxy = (roles: Record<string, string[]>): DesiredConfig =>
+    const proxy = (roles: RoleDeclaration): DesiredConfig =>
       parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", roles } }));
-    const refusals: Record<string, string[]>[] = [
+    const capped = (length: number): string[] => Array.from({ length }, () => "a".repeat(128));
+    const refusals: RoleDeclaration[] = [
       { reader: ["get_(.*"] },
       { reader: ["a".repeat(129)] },
       { reader: Array.from({ length: 65 }, (_unused, index) => `tool_${index}`) },
       { ["Reader"]: ["search"] },
       { ["r".repeat(65)]: ["search"] },
+      // §20.3 applies those same rules to EVERY family list and adds one of its own: a key
+      // outside the three families is a violation. Without these rows the whole per-family
+      // spelling is unwitnessed on the refusal side, and the one-line wrong implementation
+      // — skip anything that is not an Array — passes every case in this file while
+      // `pmcp apply` dies server-side, AFTER the destructive delete phase has run. That is
+      // verbatim the failure plan.ts's second copy of validateRoles exists to prevent.
+      { docs: { tolls: ["x"] } },
+      { docs: { resources: ["news://[["] } },
+      { docs: { prompts: ["a".repeat(129)] } },
+      { docs: { resources: Array.from({ length: 65 }, (_unused, index) => `news://feed/${index}`) } },
+      // `all` is the built-in in either spelling — the object form is not a way in.
+      { all: { tools: ["search"] } },
     ];
     for (const roles of refusals) {
       const plan = planChanges(proxy(roles), state());
@@ -511,11 +629,19 @@ describe("planChanges · severities, every refusal beside its allow-twin (§9)",
     }
     const twin = planChanges(
       proxy({
-        ["r".repeat(64)]: Array.from({ length: 64 }, () => "a".repeat(128)),
+        ["r".repeat(64)]: capped(64),
       }),
       state(),
     );
     expect(twin.errors).toEqual([]);
+    // The twin's other half: the cap is per FAMILY LIST, not per role (§20.3 — "the same
+    // two limits.ts constants, applied three times"), so a role at the caps in all three
+    // families is legal and a planner that summed them would refuse a valid file.
+    const perFamily = planChanges(
+      proxy({ docs: { tools: capped(64), prompts: capped(64), resources: capped(64) } }),
+      state(),
+    );
+    expect(perFamily.errors).toEqual([]);
   });
 
   it("§7/§9 · a `redact` or `redact_results` KEY that does not compile is a hard error on EITHER kind — the same rule the proxy `roles:` block gets, because both are the one pattern language over tool names. A key that compiles nowhere matches no tool, so the file reads as masking a password that the hub then persists in full; `pmcp apply` refusing locally is what keeps that from being discovered in an audit row. The message names the service and the key and never the declared paths — a diff runs on shared terminals; twin: the same key with its group closed plans cleanly", () => {

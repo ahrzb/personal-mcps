@@ -21,6 +21,14 @@
  * asserts a rendered line: the output is presentation and would make this file a golden-file
  * test of padding.
  *
+ * Amended 2026-08-26 (§20.6): the four data-model commands front an MCP METHOD rather than
+ * an admin op — exactly as `tools` and `call` already do — so their block at the end
+ * records the whole frame, endpoint path and params included, instead of only an op name.
+ * The path is half of what those rows assert because §20.2 routes a read by the ADDRESSED
+ * SLUG and never by the URI it names. The no-rendered-line rule above still holds: the one
+ * row that mentions printing asserts how MANY lines were written and which name each
+ * carries, never their padding.
+ *
  * Project: `cli` — plain Node, parallel. Every case owns its own stub and its own temp
  * file; nothing here reaches the network, the real config file, or the user's terminal.
  */
@@ -165,6 +173,16 @@ const ARGV: Record<string, string[]> = {
   ls: ["ls"],
   tools: ["tools", "news"],
   call: ["call", "news", "echo", "text=hi"],
+  // §20.6's four. They front an MCP method rather than an admin op, so each one reaches
+  // exactly zero ops — which is the half of direction D the row-driven case witnesses, and
+  // the half a table row claiming `ops: []` cannot witness about itself. The other half is
+  // `server/test/worker/contracts.test.ts`'s "§8 parity D · pmcp prompts/prompt/resources/
+  // read front MCP methods" row, which names the same four and the method each fronts —
+  // the totality case below only holds once those rows exist in COMMANDS.
+  prompts: ["prompts", "news"],
+  prompt: ["prompt", "news", "digest"],
+  resources: ["resources", "news"],
+  read: ["read", "news", "news://feed/tech"],
   "service create": ["service", "create", "news"],
   "service archive": ["service", "archive", "news"],
   "service unarchive": ["service", "unarchive", "news"],
@@ -391,5 +409,178 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
     // The service is `news` and the tool `echo` — never a service called `news_echo`.
     expect(await main(["call", "news", "echo", "hello"])).toBe(1);
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe("§20.6 · the data-model commands, gateway sugar over an MCP method", () => {
+  /** One JSON-RPC frame a run put on the wire, with the endpoint path it was addressed to. */
+  type GatewayFrame = { path: string; method: string; params: Record<string, unknown> };
+
+  /**
+   * A stubbed hub that records the WHOLE frame rather than an op name: these four commands
+   * front no admin op, so the oracle is the method they chose, the endpoint they chose it
+   * on, and the params they built. `results` answers one method with the shape a real
+   * service returns; an unanswered method gets `{}`, which every renderer reads as an empty
+   * family. Nothing about the CLI is mocked — argv parsing and the whoami handshake run.
+   */
+  function gatewayHub(results: Record<string, unknown> = {}): GatewayFrame[] {
+    const frames: GatewayFrame[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+      if (String(url).endsWith("/api/whoami")) {
+        return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+      }
+      const message = JSON.parse(init?.body ?? "{}") as { method?: string; params?: Record<string, unknown> };
+      const method = String(message.method);
+      frames.push({ path: new URL(String(url)).pathname, method, params: message.params ?? {} });
+      return json({ jsonrpc: "2.0", id: 1, result: results[method] ?? {} });
+    });
+    return frames;
+  }
+
+  /** Whatever the run wrote to one of the two streams the shared beforeEach spies on. */
+  function written(stream: { write: unknown }): string[] {
+    const spy = stream.write as { mock: { calls: unknown[][] } };
+    return spy.mock.calls
+      .map((call) => String(call[0]))
+      .join("")
+      .split("\n")
+      .filter((line) => line !== "");
+  }
+
+  const printed = (): string[] => written(process.stdout);
+  const errored = (): string[] => written(process.stderr);
+
+  /** §20.2's mount for a prompt- or resource-heavy service: the scoped one, unprefixed. */
+  const SCOPED = `/${NAMESPACE}/mcp/news`;
+
+  /**
+   * A second service, whose slug is deliberately NOT the scheme of the URI read below.
+   * §20.2 routes a read by the ADDRESSED SLUG and never by the URI it names, and a fixture
+   * that reads `news://…` on the service `news` cannot tell the two apart: a CLI that built
+   * its mount out of the URI's scheme would produce the identical frame.
+   */
+  const SCOPED_DOCS = `/${NAMESPACE}/mcp/docs`;
+
+  /**
+   * A URI with something in every component a careless implementation would touch — a
+   * scheme with `://`, a path, and a query carrying `&`, `=` and a space.
+   */
+  const URI = "news://feed/tech?q=a b&limit=5";
+
+  it("§20.6 · pmcp prompts <service> calls prompts/list on the scoped endpoint and prints one row per prompt", async () => {
+    const frames = gatewayHub({
+      "prompts/list": {
+        prompts: [
+          { name: "digest", description: "the day in five lines" },
+          { name: "brief", description: "" },
+        ],
+      },
+    });
+    expect(await main(["prompts", "news"])).toBe(0);
+    // The SCOPED mount, and one call: §20.2 makes it the home of a prompt-heavy service,
+    // and only there does a prompt keep the unprefixed name the service gave it.
+    expect(frames).toEqual([{ path: SCOPED, method: "prompts/list", params: {} }]);
+    // One row per prompt, each carrying its name. Padding is presentation (file header)
+    // and is not asserted; the COUNT is what a renderer that dumped the whole result blob,
+    // or printed only the first entry, would get wrong.
+    const lines = printed();
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("digest");
+    expect(lines[1]).toContain("brief");
+  });
+
+  it("§20.6 · pmcp prompt <service> <name> key=value sends the arguments as params.arguments", async () => {
+    const frames = gatewayHub({
+      "prompts/get": { messages: [{ role: "user", content: { type: "text", text: "tech, five lines" } }] },
+    });
+    expect(await main(["prompt", "news", "digest", "topic=tech", "limit=5"])).toBe(0);
+    // The `key=value` grammar `pmcp call` already speaks, landing where a prompts/get
+    // declares it — `params.arguments`, beside the prompt's own name, and nowhere else.
+    expect(frames).toEqual([
+      {
+        path: SCOPED,
+        method: "prompts/get",
+        params: { name: "digest", arguments: { topic: "tech", limit: "5" } },
+      },
+    ]);
+  });
+
+  it("§20.6 · pmcp resources <service> calls resources/list · --templates calls resources/templates/list (the twin)", async () => {
+    const listed = gatewayHub({ "resources/list": { resources: [{ uri: "news://feed/tech", name: "Tech" }] } });
+    expect(await main(["resources", "news"])).toBe(0);
+    expect(listed).toEqual([{ path: SCOPED, method: "resources/list", params: {} }]);
+    // The row carries the URI, not the display name: §20.2 keys this family by `uri` and
+    // never by `name`, and the URI is the word the operator hands to `pmcp read`. A
+    // renderer copied from `tools` prints `.name` — here that is "Tech", which addresses
+    // nothing. The fixture's uri and name differ so the two cannot be confused.
+    expect(printed()).toHaveLength(1);
+    expect(printed()[0]).toContain("news://feed/tech");
+
+    // The twin: one flag, a different method — and still exactly one frame, which is what
+    // a command that listed first and then templated on top would get wrong.
+    const templated = gatewayHub({
+      "resources/templates/list": { resourceTemplates: [{ uriTemplate: "news://feed/{id}", name: "Feed" }] },
+    });
+    expect(await main(["resources", "news", "--templates"])).toBe(0);
+    expect(templated).toEqual([{ path: SCOPED, method: "resources/templates/list", params: {} }]);
+    // The RAW template, unexpanded — it is the string §20.3's resource patterns are matched
+    // against, so it is the string an operator has to be able to read.
+    expect(printed()).toHaveLength(2);
+    expect(printed()[1]).toContain("news://feed/{id}");
+
+    // §10 spells `--templates` as a value-less flag, and the argv grammar has to be told:
+    // a flag outside BOOLEAN_FLAGS swallows the word after it, so this spelling would read
+    // `news` as the flag's value, find no service, and fail with a usage error — the exact
+    // silent misreading the `pmcp service --yes delete news` case above already forbids for
+    // the flags that existed before this one.
+    const leading = gatewayHub({ "resources/templates/list": { resourceTemplates: [] } });
+    expect(await main(["resources", "--templates", "news"])).toBe(0);
+    expect(leading).toEqual([{ path: SCOPED, method: "resources/templates/list", params: {} }]);
+  });
+
+  it("§20.6 · pmcp read <service> <uri> calls resources/read with the URI verbatim — no encoding, no prefixing", async () => {
+    const frames = gatewayHub({ "resources/read": { contents: [{ uri: URI, mimeType: "text/plain", text: "…" }] } });
+    expect(await main(["read", "docs", URI])).toBe(0);
+    // Verbatim on both counts: not percent-encoded (the URI is a param value, never part
+    // of the URL), and not `<slug>_`-prefixed — §20.2 refuses the aggregated endpoint
+    // precisely BECAUSE a URI cannot take a prefix and still be the URI the service knows.
+    // And the mount is the SLUG's, though the URI's scheme names another service entirely.
+    expect(frames).toEqual([{ path: SCOPED_DOCS, method: "resources/read", params: { uri: URI } }]);
+
+    // The routing twin: the same URI addressed to a second slug is a second endpoint with
+    // byte-identical params. Two services may legitimately serve one URI (§20.2 —
+    // `file:///notes.txt` is nobody's private namespace), and which one answers is decided
+    // by the URL the CLI built, never by the URI it carries. Routing by URI is the
+    // confused-deputy shape this design avoids by construction, and the CLI is the half of
+    // it that builds `/<user>/mcp/<slug>`.
+    const other = gatewayHub({ "resources/read": { contents: [] } });
+    expect(await main(["read", "news", URI])).toBe(0);
+    expect(other).toEqual([{ path: SCOPED, method: "resources/read", params: { uri: URI } }]);
+  });
+
+  it("§20.6 · pmcp read against the aggregated endpoint is refused by the CLI with the reason (resources are scoped-only)", async () => {
+    const frames = gatewayHub();
+    // A URI with no slug beside it addresses the aggregated mount — there is nothing else
+    // it could address, since the CLI builds `/<user>/mcp/<slug>` from a slug it was given.
+    // §20.2 answers `-32601` there and declares no resources capability, so this is the
+    // same rule the duration flags follow above: a frame the hub would refuse is a frame
+    // this CLI must never send. The reason travels with the refusal, because "missing
+    // argument" would send the operator looking for a slug that does not exist.
+    expect(await main(["read", URI])).toBe(1);
+    expect(frames).toEqual([]);
+    const refusal = [...printed(), ...errored()];
+    expect(refusal.join(" ")).toMatch(/scoped/i);
+
+    // …and that reason is not the CLI's answer to every short argv. §10's grammar is
+    // `pmcp read <service> <uri>`, so a forgotten URI is an ordinary usage error naming
+    // what is missing: answering it with "resources are scoped-only" would send an
+    // operator who typed too little looking for an endpoint problem that is not there —
+    // the mirror image of the confusion this row exists to prevent.
+    const missing = gatewayHub();
+    expect(await main(["read", "news"])).toBe(1);
+    expect(missing).toEqual([]);
+    const usage = [...printed(), ...errored()].filter((line) => !refusal.includes(line)).join(" ");
+    expect(usage).toMatch(/uri/i);
+    expect(usage).not.toMatch(/scoped/i);
   });
 });

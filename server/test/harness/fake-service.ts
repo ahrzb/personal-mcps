@@ -17,9 +17,15 @@
 // therefore proves nothing about SDK conformance, which is `scripts/e2e.ts`'s job (§10).
 //
 // Every wire string here is SPELLED, never imported from src: `hub/register`, the
-// `_meta` key names, the 2026-07-28 revision. tunnel.ts publishes the same vocabulary as
-// exports, and protocol.test.ts asserts the two agree — a fake that imported the
-// constants would make that lock vacuous by construction.
+// `_meta` key names, the 2026-07-28 revision, and — from §20 — `server/discover`, the four
+// list methods, and the three `notifications/*/list_changed` frames. tunnel.ts publishes the
+// same vocabulary as exports, and protocol.test.ts asserts the two agree — a fake that
+// imported the constants would make that lock vacuous by construction.
+//
+// WHAT §20 ADDED, and why it is here rather than in a second fake: this service now serves
+// four catalogs, not one, and answers the registration-time `server/discover` a real client
+// library answers ITSELF (§11) — three behaviors deep, because §6's whole compatibility
+// story is what the hub does when that answer does not come.
 //
 // PROJECT: `tunnel` only, and that is load-bearing — live sockets and DOs are exactly what
 // per-file storage isolation cannot hold, so this project runs serial (`--max-workers=1
@@ -60,16 +66,64 @@ export type ToolBehavior =
   | { mode: "drop" };
 
 /**
- * What the service does with the NEXT `tools/list` — the catalog warm's other half, and
- * the only way a fixture reaches the states §6 lifecycle 2 is about. `answer` is the
+ * What the service does with the NEXT list of ANY family — the catalog warm's other half,
+ * and the only way a fixture reaches the states §6 lifecycle 2 is about. `answer` is the
  * default every other fixture assumes; `error` and `hang` are the two ways a warm draws no
- * catalog at all (an error reply the hub cannot read as a tool list, and a list that never
+ * catalog at all (an error reply the hub cannot read as a list, and a list that never
  * comes back), which is what leaves a never-connected DO online with nothing cached.
  */
 export type ListBehavior =
   | { mode: "answer" }
   | { mode: "error"; error: { code: number; message: string } }
   | { mode: "hang" };
+
+/**
+ * The four catalogs §20.5 gives the DO a durable key each — the tool list §6 always had,
+ * plus `catalog:prompts`, `catalog:resources` and `catalog:resourceTemplates`. Spelled as
+ * one union because every list behaves identically on this wire: one hub-originated
+ * request, one result object whose single key is the family's own name.
+ *
+ * The METHOD each one rides is not derivable from the name (`resourceTemplates` is
+ * `resources/templates/list`), so {@link LIST_METHOD} carries the mapping — spelled here
+ * like every other wire string in this file, never imported from src.
+ */
+export type CatalogFamily = "tools" | "prompts" | "resources" | "resourceTemplates";
+
+/**
+ * The hub-originated list method for each family, and the result key its answer carries
+ * (they are the same string — MCP names the result member after the family, and
+ * `resources/templates/list` answers `{resourceTemplates: [...]}`).
+ */
+export const LIST_METHOD: Readonly<Record<CatalogFamily, string>> = {
+  tools: "tools/list",
+  prompts: "prompts/list",
+  resources: "resources/list",
+  resourceTemplates: "resources/templates/list",
+};
+
+/**
+ * What the service does with the hub's registration-time `server/discover` (§6, amended
+ * 2026-08-26). Three modes because §6 gives the fallback three inputs and ONE meaning:
+ * `error` covers the `-32601` a library that predates the method answers with — and, with
+ * any other code, "any other error" — while `hang` is the correlation timeout. All three
+ * are "capabilities unknown", and the hub then warms tools only.
+ *
+ * `answer` is the default, and the answer's `capabilities` are the fixture's declared
+ * families (FakeServiceOptions.capabilities) rendered as a real 2026-07-28 DiscoverResult.
+ */
+export type DiscoverBehavior =
+  | { mode: "answer" }
+  | { mode: "error"; error: { code: number; message: string } }
+  | { mode: "hang" };
+
+/**
+ * One entry of a prompt, resource or resource-template catalog, structurally: the fake
+ * service puts on the wire exactly the object a fixture handed it. Deliberately NOT the
+ * hub's own `Prompt`/`Resource` types — this harness answers bytes, and a fixture whose
+ * catalog entry is deliberately malformed (a resource whose `name` matches where its `uri`
+ * does not, §20.2) must still be sendable.
+ */
+export type CatalogEntry = Record<string, unknown>;
 
 /**
  * One observed inbound frame, captured verbatim before interpretation — the oracle's row.
@@ -101,10 +155,34 @@ export type FakeServiceOptions = {
   roles?: RoleDeclaration;
   /** The catalog answered to `tools/list` — schemas included, since redaction walks them (§7). */
   tools?: Tool[];
+  /** The catalog answered to `prompts/list` (§20.5). Its PRESENCE is also what makes the
+   *  default `server/discover` answer declare the prompts family — a service that serves
+   *  prompts is a service that says so. */
+  prompts?: CatalogEntry[];
+  /** The catalog answered to `resources/list`; present ⇒ the default discover answer
+   *  declares `resources`, which is the one family whose declaration warms two keys. */
+  resources?: CatalogEntry[];
+  /** The catalog answered to `resources/templates/list` — the second key the `resources`
+   *  declaration warms (§20.5), declared by either this or `resources`. */
+  resourceTemplates?: CatalogEntry[];
+  /**
+   * The families the `server/discover` answer DECLARES, overriding what the catalogs above
+   * imply — the seam for the two cases the implication cannot reach: a service that
+   * declares a family it then fails to list (§20.5's failed warm), and one that stops
+   * declaring a family it declared before (the undeclare that CLEARS). Values are §20.2's
+   * capability vocabulary: `tools`, `prompts`, `resources`, `completions`.
+   */
+  capabilities?: readonly string[];
   /** Default behavior for tools with no per-tool entry; absent means `answer` with an empty result. */
   behavior?: ToolBehavior;
-  /** What `tools/list` does, from the registration warm onwards; absent means `answer`. */
+  /** What EVERY family's list does, from the registration warm onwards, unless
+   *  `listBehaviors` names that family; absent means `answer`. */
   listBehavior?: ListBehavior;
+  /** Per-family override of `listBehavior` — how a fixture makes one warm fail while its
+   *  siblings land (§20.5: an undeclare clears, a failure does not). */
+  listBehaviors?: Partial<Record<CatalogFamily, ListBehavior>>;
+  /** What the registration-time `server/discover` does; absent means `answer`. */
+  discoverBehavior?: DiscoverBehavior;
   /**
    * Suppress the `hub/register` frame entirely — the only way to observe the 10 s
    * registration deadline (close 4004) and pre-register traffic rejection (§6).
@@ -153,6 +231,11 @@ export class FakeService {
    * Every `tools/list` this socket received. Non-empty right after registration is how
    * §6's "register → hub immediately warms its cache" is observed from outside, and a
    * second entry after `notifyToolsListChanged` is how invalidation is.
+   *
+   * Tools ONLY, and deliberately so: §20.5's three further catalogs are read off
+   * {@link frames} (which records every inbound frame before interpretation, so it carries
+   * the same at-arrival guarantee), because a parallel array per family would say the same
+   * thing four times and invite a fixture to ask the wrong one.
    */
   readonly lists: readonly { wireId: string; seq: number }[] = [];
 
@@ -188,7 +271,16 @@ export class FakeService {
   private readonly options: FakeServiceOptions;
   private tools: Tool[];
   private readonly behaviors = new Map<string, ToolBehavior>();
+  /** The three §20.5 catalogs that are not tools — tools keeps its own typed field because
+   *  fixtures hand it `Tool[]` and redaction walks those schemas. */
+  private readonly catalogs = new Map<CatalogFamily, CatalogEntry[]>();
+  /** The families the discover answer declares — §20.2's capability vocabulary as strings,
+   *  since `completions` is a capability with no catalog and no list method. */
+  private capabilities: readonly string[];
+  private discoverBehavior: DiscoverBehavior;
+  /** The default for every family's list; `listBehaviors` overrides it per family. */
   private listBehavior: ListBehavior;
+  private readonly listBehaviors = new Map<CatalogFamily, ListBehavior>();
   /** Calls parked by `hang`, in arrival order — what `release` answers, oldest first.
    *  Keyed by nothing: two concurrent calls on the same tool are two entries, so a double
    *  dispatch shows up on `invocations` rather than as one stranded frame that times out. */
@@ -205,7 +297,15 @@ export class FakeService {
     this.socket = socket;
     this.options = options;
     this.tools = options.tools ?? [];
+    this.catalogs.set("prompts", options.prompts ?? []);
+    this.catalogs.set("resources", options.resources ?? []);
+    this.catalogs.set("resourceTemplates", options.resourceTemplates ?? []);
+    this.capabilities = options.capabilities ?? declaredFamilies(options);
+    this.discoverBehavior = options.discoverBehavior ?? { mode: "answer" };
     this.listBehavior = options.listBehavior ?? { mode: "answer" };
+    for (const [family, behavior] of Object.entries(options.listBehaviors ?? {})) {
+      this.listBehaviors.set(family as CatalogFamily, behavior as ListBehavior);
+    }
     (this as { registered: Promise<RegisterOutcome> }).registered = new Promise((resolve, reject) => {
       this.settleRegistered = resolve;
       this.failRegistered = reject;
@@ -252,13 +352,29 @@ export class FakeService {
   }
 
   /**
-   * Change what the next `tools/list` does. The lever for the failed-warm pair: a service
-   * that registers while it cannot list yet, and then can — with no reconnect in between,
-   * so what heals the catalog is the hub's own re-list rather than a fresh registration.
+   * Change what the next list does — every family, or just `family`. The lever for the
+   * failed-warm pair: a service that registers while it cannot list yet, and then can —
+   * with no reconnect in between, so what heals the catalog is the hub's own re-list rather
+   * than a fresh registration.
+   *
+   * Naming a family sets an OVERRIDE that outlives later default changes, which is what
+   * §20.5's "a failure is not an undeclare" pair needs: one family failing while its
+   * siblings answer normally.
    */
-  setListBehavior(behavior: ListBehavior): void {
+  setListBehavior(behavior: ListBehavior, family?: CatalogFamily): void {
     // deps: none
-    this.listBehavior = behavior;
+    if (family === undefined) this.listBehavior = behavior;
+    else this.listBehaviors.set(family, behavior);
+  }
+
+  /**
+   * Change what the next `server/discover` does. Only a RECONNECT re-asks it (§6 issues it
+   * once, at registration), so this exists for a fixture that dials a second socket against
+   * the same service and wants that registration to take the fallback.
+   */
+  setDiscoverBehavior(behavior: DiscoverBehavior): void {
+    // deps: none
+    this.discoverBehavior = behavior;
   }
 
   /**
@@ -285,6 +401,26 @@ export class FakeService {
     // deps: WebSocket.send
     this.tools = tools;
     await this.sendRaw({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+  }
+
+  /**
+   * Send `notifications/prompts/list_changed` with a new prompt catalog — §20.5's second
+   * invalidation path, which §6 amended the DO to ROUTE rather than drop. Same shape as the
+   * tools notification for the same reason: the new catalog is installed before the frame
+   * goes out, so the hub's re-list draws the new one and nothing races.
+   */
+  async notifyPromptsListChanged(prompts: CatalogEntry[]): Promise<void> {
+    // deps: WebSocket.send
+    this.catalogs.set("prompts", prompts);
+    await this.sendRaw({ jsonrpc: "2.0", method: "notifications/prompts/list_changed" });
+  }
+
+  /** Send `notifications/resources/list_changed` with a new resource catalog — §20.5's
+   *  third invalidation path. */
+  async notifyResourcesListChanged(resources: CatalogEntry[]): Promise<void> {
+    // deps: WebSocket.send
+    this.catalogs.set("resources", resources);
+    await this.sendRaw({ jsonrpc: "2.0", method: "notifications/resources/list_changed" });
   }
 
   /**
@@ -344,9 +480,44 @@ export class FakeService {
     const method = frame.method;
     if (method === undefined) return this.answerToOurs(frame);
     if (method === "hub/replaced") return this.settleReplaced?.();
-    if (method === "tools/list") return this.serveList(frame);
+    if (method === "server/discover") return this.serveDiscover(frame);
+    const family = familyOfMethod(method);
+    if (family !== undefined) return this.serveList(family, frame);
     if (method === "tools/call") return this.serveCall(frame);
     // Everything else (the hub's warning notifications) is recorded and nothing more.
+  }
+
+  /**
+   * §6's one registration-time control question in the MCP namespace: which families does
+   * this service serve? A real client library answers it ITSELF, from what the author's SDK
+   * registered (§11) — which is why this fake answers from its own catalogs rather than
+   * bridging anywhere, and why a fixture can make it answer `-32601` to stand in for every
+   * library in the field that predates the method.
+   *
+   * The answer is a genuine 2026-07-28 `DiscoverResult`: `supportedVersions`, a
+   * `capabilities` object keyed by family, `resultType`. `listChanged` and `subscribe` are
+   * claimed TRUE deliberately — §20.2 forces both false in what the hub re-advertises
+   * "whatever the service claims", and a fixture that claimed false could not tell a hub
+   * that forces them from one that merely copies them.
+   */
+  private serveDiscover(frame: Record<string, unknown>): void {
+    const wireId = String(frame.id);
+    switch (this.discoverBehavior.mode) {
+      case "answer":
+        return this.reply({
+          jsonrpc: "2.0",
+          id: wireId,
+          result: {
+            supportedVersions: ["2026-07-28"],
+            capabilities: capabilitiesOf(this.capabilities),
+            resultType: "complete",
+          },
+        });
+      case "error":
+        return this.reply({ jsonrpc: "2.0", id: wireId, error: this.discoverBehavior.error });
+      case "hang":
+        return;
+    }
   }
 
   /** A reply to a request THIS side sent — only `hub/register` is ever one. */
@@ -356,16 +527,25 @@ export class FakeService {
     this.settleRegistered?.(error === undefined ? { ok: true } : { ok: false, error });
   }
 
-  private serveList(frame: Record<string, unknown>): void {
+  private serveList(family: CatalogFamily, frame: Record<string, unknown>): void {
     const wireId = String(frame.id);
     // BEFORE the branch, like serveCall: "the hub asked" and "the hub was answered" are
     // different questions, and a warm that draws no catalog is still a list that arrived.
-    (this.lists as { wireId: string; seq: number }[]).push({ wireId, seq: ++this.seq });
-    switch (this.listBehavior.mode) {
+    // (`frames` already recorded it; `lists` is the tools-only reading of the same event.)
+    if (family === "tools") (this.lists as { wireId: string; seq: number }[]).push({ wireId, seq: ++this.seq });
+    else this.seq++;
+    const behavior = this.listBehaviors.get(family) ?? this.listBehavior;
+    switch (behavior.mode) {
       case "answer":
-        return this.reply({ jsonrpc: "2.0", id: wireId, result: { tools: this.tools } });
+        // The result member is named after the family, for all four (§20.5's key names are
+        // the catalog's; MCP's result members are the same words).
+        return this.reply({
+          jsonrpc: "2.0",
+          id: wireId,
+          result: { [family]: family === "tools" ? this.tools : (this.catalogs.get(family) ?? []) },
+        });
       case "error":
-        return this.reply({ jsonrpc: "2.0", id: wireId, error: this.listBehavior.error });
+        return this.reply({ jsonrpc: "2.0", id: wireId, error: behavior.error });
       case "hang":
         return;
     }
@@ -414,6 +594,40 @@ export class FakeService {
     this.settleClosed?.({ code, reason });
     this.failRegistered?.(new Error(`socket closed (${code}) before hub/register was answered`));
   }
+}
+
+/** Which catalog a hub-originated list method asks for, or undefined for anything that is
+ *  not one — the inverse of {@link LIST_METHOD}, kept beside it so the two cannot drift. */
+function familyOfMethod(method: unknown): CatalogFamily | undefined {
+  const entry = Object.entries(LIST_METHOD).find(([, name]) => name === method);
+  return entry === undefined ? undefined : (entry[0] as CatalogFamily);
+}
+
+/**
+ * The families a fixture's catalogs imply, when it did not spell `capabilities` itself:
+ * tools always (every service has a tool list, empty or not, and §6's fallback warms
+ * exactly that), plus prompts and resources when a catalog for them was supplied. The
+ * `resources` declaration covers BOTH resource keys (§20.5), so either catalog declares it.
+ */
+function declaredFamilies(options: FakeServiceOptions): readonly string[] {
+  const families = ["tools"];
+  if (options.prompts !== undefined) families.push("prompts");
+  if (options.resources !== undefined || options.resourceTemplates !== undefined) {
+    families.push("resources");
+  }
+  return families;
+}
+
+/** A `ServerCapabilities` object over the declared family names — the shape a 2026-07-28
+ *  `server/discover` answers with, so the hub reads capabilities rather than a bare list. */
+function capabilitiesOf(families: readonly string[]): Record<string, Record<string, unknown>> {
+  const claimed: Record<string, Record<string, unknown>> = {};
+  for (const family of families) {
+    if (family === "resources") claimed[family] = { subscribe: true, listChanged: true };
+    else if (family === "completions") claimed[family] = {};
+    else claimed[family] = { listChanged: true };
+  }
+  return claimed;
 }
 
 /**

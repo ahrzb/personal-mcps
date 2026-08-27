@@ -642,13 +642,20 @@ describe("§6 registration", () => {
     const service = await connect(fixture);
     expect(await waitFor(() => service.lists.length > 0)).toBe(true);
     const asked = hubRequests(service);
-    expect(asked.map((frame) => frame.method)).toEqual(["tools/list"]);
+    // §6, amended 2026-08-26 (§20): the tools/list is still there and still the warm this
+    // case is named for, but the capability question now goes in front of it.
+    expect(asked.map((frame) => frame.method)).toEqual(["server/discover", "tools/list"]);
     expect(service.frames.some((frame) => frame.method === "initialize")).toBe(false);
-    const meta = (asked[0].params as { _meta?: Record<string, unknown> })._meta;
-    expect(meta?.["io.modelcontextprotocol/protocolVersion"]).toBe("2026-07-28");
-    // Mirrored from the consumer's request — and a catalog warm has no consumer behind it,
-    // which per MRTR rules is what `{}` says (§6).
-    expect(meta?.["io.modelcontextprotocol/clientCapabilities"]).toEqual({});
+    // Self-contained, BOTH of them: §6's rule is about every hub-originated request, and a
+    // frame that carried no protocol fields would be unanswerable on a wire where
+    // `initialize` never crosses.
+    for (const frame of asked) {
+      const meta = (frame.params as { _meta?: Record<string, unknown> })._meta;
+      expect(meta?.["io.modelcontextprotocol/protocolVersion"]).toBe("2026-07-28");
+      // Mirrored from the consumer's request — and neither a discover nor a catalog warm has
+      // a consumer behind it, which per MRTR rules is what `{}` says (§6).
+      expect(meta?.["io.modelcontextprotocol/clientCapabilities"]).toEqual({});
+    }
   });
 
   it("4a. §7 · a catalog answer carrying a tool whose schema trips the indirection refuse-line is reported LOUDLY and survives: the service receives a warning frame naming that tool's violations, the registration still succeeds, the service reads online, and that tool is cached schema-unsound (what unsoundness then costs a call — sensitivePaths null, -32001, no recorded bodies — is the worker project's)", async () => {
@@ -951,6 +958,9 @@ describe("§6 the published wire vocabulary — the behavior↔table lock", () =
     const second = await connect(fixture, { skipRegister: true });
     await first.replaced;
     expect(hubRequests(first).map((frame) => frame.method)).toEqual([
+      // §6, amended: the capability question precedes the warm. Neither is a `hub/` control
+      // frame, which is what makes the third entry the only one this lock is about.
+      "server/discover",
       "tools/list",
       HUB_METHODS.replaced,
     ]);

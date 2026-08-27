@@ -104,13 +104,18 @@ class McpServer(Protocol):
     async def run(self, read_stream: Any, write_stream: Any, initialization_options: Any, /) -> None: ...
 
 
-# Role declaration sent in ``hub/register``: role name -> anchored patterns over
-# tool names (§2's one pattern language — a bare tool name matches itself, ``*``
-# aliases ``.*``). Validation is the hub's job, not this library's: names must
-# match [a-z0-9_-]{1,64}, ``all`` is reserved, pattern length (<=128) and
-# per-role count (<=64) are capped — a violating declaration is rejected at
-# registration, which serve() surfaces as RegistrationError.
-Roles = dict[str, list[str]]
+# Role declaration sent in ``hub/register``: role name -> either a bare pattern
+# list — tools, forever, so every service written before §20 keeps registering
+# unchanged — or a per-family object (§20.3). Validation is the hub's job, not
+# this library's: names must match [a-z0-9_-]{1,64}, ``all`` is reserved, an
+# unknown family key is a violation, and pattern length (<=128) and per-family
+# pattern count (<=64) are capped — a violating declaration is rejected at
+# registration, which serve() surfaces as RegistrationError. The two spellings
+# may be mixed across roles in one declaration; this library sends whichever an
+# author wrote, unchanged — no normalization here (§20.6). Pinned as a VALUE
+# (not just an annotation) by test_transport.py's own equality check, so this
+# exact spelling is load-bearing.
+Roles = dict[str, list[str] | dict[str, list[str]]]
 
 __all__ = [
     "CallerIdentity",
@@ -148,6 +153,12 @@ HUB_METHODS = {"register": HUB_METHOD_REGISTER, "replaced": HUB_METHOD_REPLACED}
 
 #: The pinned MCP revision of the tunnel wire (contracts/tunnel-frames.json).
 PROTOCOL_VERSION = "2026-07-28"
+
+#: The registration-time capability question (§6/§11, added §20) — plain MCP
+#: namespace, not ``hub/``-prefixed, but answered by this library rather than
+#: bridged to the SDK session: no MCP SDK implements it, and this library is
+#: what knows which families the author actually registered.
+_DISCOVER_METHOD = "server/discover"
 
 #: What ``clientVersion`` reports on the register frame — a free string in the fixture.
 _CLIENT_VERSION = "pmcp-client/0"
@@ -265,7 +276,9 @@ async def serve(
     """
     resolved_url = _resolve(url, "PMCP_URL", "hub url")
     resolved_token = _resolve(token, "PMCP_SERVICE_TOKEN", "service token")
-    async with HubTransport(resolved_url, resolved_token, roles) as (read_stream, write_stream):
+    async with HubTransport(
+        resolved_url, resolved_token, roles, discover=lambda: _probe_capabilities(mcp)
+    ) as (read_stream, write_stream):
         # The SDK session owns the handshake from here. ``create_initialization_options``
         # stays a getattr because the SDK itself makes it optional; ``run`` does not.
         make_options = getattr(mcp, "create_initialization_options", None)
@@ -309,6 +322,29 @@ def _ending_for_close(code: int) -> _Ending:
     return _Ending("reconnect", schedule="exponential")
 
 
+def _probe_capabilities(mcp: McpServer) -> dict[str, Any] | None:
+    """The author's declared capabilities, read the one way §11 sanctions: the
+    SDK's own optional ``get_capabilities()`` (``mcp.server.Server``'s — the
+    no-argument call is its own default), never guessed from what this library
+    can carry. Absent — every service already in the field — is ``None``, which
+    :meth:`HubTransport._answer_discover` turns into a ``-32601``: "capabilities
+    unknown", the hub's documented fallback (§6), not a fabricated empty set
+    (§20.5: an empty ANSWER is an undeclare and clears a catalog; a missing
+    answer is not)."""
+    probe = getattr(mcp, "get_capabilities", None)
+    if not callable(probe):
+        return None
+    capabilities = probe()
+    if isinstance(capabilities, dict):
+        return capabilities
+    dump = getattr(capabilities, "model_dump", None)
+    if not callable(dump):
+        return None
+    # by_alias: the wire's camelCase (listChanged, …); exclude_none: only the
+    # families actually registered, which is the whole question this answers.
+    return dump(by_alias=True, mode="json", exclude_none=True)
+
+
 def _message_of(error: Any) -> str:
     if isinstance(error, dict):
         message = error.get("message")
@@ -337,14 +373,28 @@ class HubTransport:
     of the JS library's ``closed`` promise.
     """
 
-    def __init__(self, url: str, token: str, roles: Roles | None = None) -> None:
+    def __init__(
+        self,
+        url: str,
+        token: str,
+        roles: Roles | None = None,
+        *,
+        discover: Callable[[], dict[str, Any] | None] | None = None,
+    ) -> None:
         """``url`` is the hub's https origin — a bare origin, no path; anything
         else is a ValueError here, before any I/O. ``token`` is the
         ``pmcp_svc_`` credential the whole connection authenticates as. No
-        network happens until ``__aenter__``."""
+        network happens until ``__aenter__``.
+
+        ``discover`` answers the hub's registration-time ``server/discover``
+        (§6/§11, §20) — internal wiring :func:`serve` supplies from the SDK
+        server's own capabilities, not one of the three public options a
+        service author sets. Omitted (a hand-rolled session that does not pass
+        one) means every ``server/discover`` gets the ``-32601`` fallback."""
         self._address = _connect_address(url)
         self._token = token
         self._roles: Roles = roles if roles is not None else {}
+        self._discover = discover
 
         self._read_send: MemoryObjectSendStream[SessionMessage | Exception]
         self._read_recv: MemoryObjectReceiveStream[SessionMessage | Exception]
@@ -538,7 +588,42 @@ class HubTransport:
                 continue
             if frame.get("method") == HUB_METHOD_REPLACED:
                 continue
+            # §11/§6: the one MCP-namespace method this library answers itself. The
+            # author's SDK never sees it — no SDK implements it, and this library is
+            # what knows which families were actually registered.
+            if frame.get("method") == _DISCOVER_METHOD:
+                await self._answer_discover(ws, frame.get("id"))
+                continue
             await self._deliver(frame)
+
+    async def _answer_discover(self, ws: Any, msg_id: Any) -> None:
+        """Answer ``server/discover`` directly on the wire — never delivered to
+        the SDK session. ``None`` capabilities means "unknown", the fallback
+        that keeps every service predating this method warming tools only
+        (§6); a real capability set is relayed exactly as the author's SDK
+        reports it, in the same DiscoverResult shape the reverse direction
+        (hub→consumer) uses."""
+        capabilities = self._discover() if self._discover is not None else None
+        if capabilities is None:
+            payload: dict[str, Any] = {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {"code": -32601, "message": "server/discover not implemented"},
+            }
+        else:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "supportedVersions": [PROTOCOL_VERSION],
+                    "capabilities": capabilities,
+                    "resultType": "complete",
+                },
+            }
+        try:
+            await ws.send(json.dumps(payload))
+        except Exception:
+            pass  # the hub closed the socket under us; the close-code path handles it
 
     async def _deliver(self, frame: dict[str, Any]) -> None:
         try:

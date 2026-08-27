@@ -1527,10 +1527,13 @@ describe("§10 · applying the set", () => {
       await applyD1Migrations(env.DB, migrations); // N: upstream_oauth_state, on top of live data
       expect(await countFor("service", ctx)).toBe(1);
       expect(await countFor("service_account", ctx)).toBe(1);
-      // N's own table — 0004's today, and named rather than derived, so a migration 0005
-      // makes this line visibly stale instead of silently testing N−1 (which is what the
-      // `approval` insert it replaces had quietly become).
-      await insertRow("upstream_oauth_state", buildRow("upstream_oauth_state", ctx, {}));
+      // N's own schema object — 0006's `capabilities_json` column today, and named rather
+      // than derived, so a migration 0007 makes this line visibly stale instead of silently
+      // witnessing N−1 (which is what the `upstream_oauth_state` insert it replaces had
+      // quietly become once 0005 and 0006 landed).
+      await db()
+        .prepare(`UPDATE "service" SET "capabilities_json" = '["tools"]'`)
+        .run();
     },
   );
 });
@@ -1708,8 +1711,13 @@ describe("§19.4 · 0005 applies", () => {
     async () => {
       await dropEverything();
       const migrations = env.TEST_MIGRATIONS;
-      // 0001..0004 only: `oauthResource` does not exist yet, so these users predate §19.
-      await applyD1Migrations(env.DB, migrations.slice(0, migrations.length - 1));
+      // Everything BEFORE 0005, sliced by name rather than count so later migrations
+      // (0006…) cannot creep into the pre-§19 world: `oauthResource` must not exist yet,
+      // so these users predate it.
+      await applyD1Migrations(
+        env.DB,
+        migrations.slice(0, migrations.findIndex((m) => m.name.startsWith("0005"))),
+      );
       const usernames = [await seedNamedUser(), await seedNamedUser(), await seedNamedUser()];
       // A username-less user exists too — it owns no namespace, so the back-fill must skip it.
       await seedFixture();

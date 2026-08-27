@@ -49,17 +49,17 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "../../src/approvals";
-import { beforeSend, query } from "../../src/audit";
+import { beforeSend, query, REDACTED_QUERY } from "../../src/audit";
 import type { AuditConfig, AuditRow, BodyStub } from "../../src/audit";
-import type { Tool } from "../../src/gateway";
+import type { Prompt, Resource, ResourceTemplate, Tool } from "../../src/gateway";
 import worker from "../../src/index";
 import { tokenPattern } from "../../src/principal";
 import type { Env } from "../../src/index";
-import { AUDIT_BODY_CAP_BYTES, RETENTION_DAYS } from "../../src/limits";
+import { AUDIT_BODY_CAP_BYTES, AUDIT_URI_CAP_BYTES, RETENTION_DAYS } from "../../src/limits";
 import { applyRedaction, PMCP_SLUG, REDACTED, Registry } from "../../src/registry";
-import type { ServiceKind } from "../../src/registry";
+import type { GrantEntry, RoleDeclaration, ServiceKind } from "../../src/registry";
 import { setHeaders } from "../../src/upstream";
-import { upstreamUrlFor } from "../harness/fake-upstream";
+import { registerOverride, upstreamUrlFor } from "../harness/fake-upstream";
 import type { UpstreamScenario } from "../harness/fake-upstream";
 import { seedNamespace, seedOwnerSession, seedService, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
@@ -618,6 +618,17 @@ const PLANTED = {
   case21Password: "FAKE0000-case21-password",
   case22First: "FAKE0000-case22-first",
   case22Second: "FAKE0000-case22-second",
+  // §20.4's read families. Each is planted by exactly one case below and hunted by the
+  // sweep like every other secret this suite invents — which is what makes "never reaches
+  // any log, event, or stored body" a claim about the whole database rather than about
+  // the one column its own case happened to look at.
+  readAccessToken: "FAKE0000-read-access-token",
+  readPromptPassword: "FAKE0000-read-prompt-password",
+  readPromptMessage: "FAKE0000-read-prompt-message",
+  readOversizePassword: "FAKE0000-read-oversize-password",
+  readResourceBlob: "FAKE0000-read-resource-blob",
+  readResourceSecret: "FAKE0000-read-resource-secret",
+  readTunnelArgument: "FAKE0000-read-tunnel-argument",
 } as const;
 
 type BodyWorld = { ns: SeededNamespace; credential: string };
@@ -1483,45 +1494,6 @@ describe("§15 · the exception sink (Sentry beforeSend, pinned without the SDK)
   });
 });
 
-describe("§15 · the sweep", () => {
-  it("23. §15 · after the full exercise no column of any table holds token material or a sentinel secret (sweepForSentinels, with its control value found — an unreachable sweep fails)", async () => {
-    const sentinels = [
-      ...AUDIT_BODY_ROWS.flatMap((row) => row.sentinels),
-      ...SENTRY_SCRUB_ROWS.flatMap((row) => row.scrubbed),
-      ...Object.values(PLANTED),
-      BLOCK_BYTES,
-    ];
-
-    // The control is a value the exercise above DID persist visibly (table row 4's query),
-    // so a sweep that finds nothing because it reaches nothing fails instead of passing.
-    const hits = await sweepForSentinels(sentinels, "quarterly report");
-
-    expect(hits, `the ledger holds: ${JSON.stringify(hits)}`).toEqual([]);
-  }, CASE_BUDGET_MS);
-
-  it("24. §15 · bodies live only in approval.args_json and the audit body columns · the visible argument IS found in exactly those columns and in no other (the twin that makes 23 non-vacuous)", async () => {
-    const marker = "visible-case24-marker";
-
-    // One dispatched call, whose argument lands in the audit body column…
-    const recorded = await seedProxyWorld({
-      kind: "proxy",
-      upstream: healthyUpstream({ ok: marker }),
-      logBodies: true,
-    });
-    await callTool(recorded.ns, recorded.credential, SERVICE, TOOL, { q: marker });
-
-    // …and one gated call, whose argument lands in the approval row instead.
-    const gated = await seedApprovalGatedWorld();
-    await callTool(gated.ns, gated.credential, SERVICE, TOOL, { q: marker, password: "x" });
-
-    const hits = await sweepForSentinels([marker], marker);
-    const columns = new Set(hits.map((hit) => `${hit.table}.${hit.column}`));
-    expect(columns, "a body reached a column §15 does not name").toEqual(
-      new Set(["audit.args_json", "audit.result_json", "approval.args_json"]),
-    );
-  }, CASE_BUDGET_MS);
-});
-
 // ── the fixtures the numbered cases share ─────────────────────────────────────────────
 
 /** A fake upstream that serves the one tool and answers with `structuredContent`. */
@@ -1702,3 +1674,652 @@ async function approvalRows(ownerId: string): Promise<{ id: string; args_hash: s
       .all<{ id: string; args_hash: string }>()
   ).results;
 }
+
+// ══ §20.4 — the read families in the ledger ═══════════════════════════════════════════
+//
+// §20 adds two AUDITED methods (`prompts/get`, `resources/read`) and four unaudited ones,
+// and it is the only section that TIGHTENS a §15 rule rather than inheriting one: a
+// resource URI is the row's `tool` column, it is caller-supplied and unbounded, and its
+// query component is a routine carrier of somebody else's bearer token — which §15's
+// scrubbing grammar, knowing only the hub's own `pmcp_(sa|svc)_` shape, would wave
+// straight into a column any admin-token agent can read back for the whole retention
+// window.
+//
+// Everything else the families need was already here: bodies ride the same `log_bodies`
+// gate and the same envelope, and prompt messages and resource contents are content
+// blocks, which §15 already stubs. The one genuine exception is prompt ARGUMENTS — a
+// prompt has no JSON Schema and therefore no `writeOnly` channel, so §20.3 puts them on
+// the PROXIED posture whatever the service's kind, and the tunneled row below is what
+// makes that a rule rather than a coincidence of which fixture was cheapest.
+//
+// These cases sit outside AUDIT_BODY_ROWS deliberately: that table's columns are a
+// `tools/call`'s two body columns, and half of what §20.4 pins lives in the `tool` column
+// instead — one string, four different rules about it.
+
+/**
+ * The fake upstream's §20 seam, named here because the harness does not carry it yet —
+ * the same declaration order.table.test.ts makes, narrowed to the families this file
+ * plants secrets in. It lands as one change to `UpstreamScenario` and the deletion of
+ * these lines; until then the cases below fail on their assertions.
+ */
+type ServingScenario = UpstreamScenario & {
+  prompts?: Prompt[];
+  /** Answered to `prompts/get` — the family's analogue of `result`. */
+  promptResult?: unknown;
+  resources?: Resource[];
+  /** Served from `resources/templates/list`. */
+  resourceTemplates?: ResourceTemplate[];
+  /** Answered to `resources/read`. */
+  readResult?: unknown;
+  /** Answered to `completion/complete`. */
+  completionResult?: unknown;
+};
+
+/** The prompt every read case asks for, and the resource URI beside it. */
+const READ_PROMPT = "digest_daily";
+const READ_URI = "news://feed/tech";
+
+/**
+ * The template and the completion answer the same service serves. They exist for exactly
+ * one case — the four unaudited methods — and they exist because "no row" is only a
+ * statement about the METHOD when the method had something to answer with: an upstream
+ * serving no templates and no completions makes "wrote no row" and "was never
+ * implemented" the same green.
+ */
+const READ_TEMPLATE = "news://feed/{id}";
+const READ_COMPLETION_RESULT = { completion: { values: ["tech", "world"], hasMore: false } };
+
+/** The tunneled fixture's second prompt: the one its service's `redact` map has an entry
+ *  for. READ_PROMPT beside it has none, and the pair is what makes §20.3's rule
+ *  ("log_bodies on AND a matching entry", kind-blind) tellable from "tunnels record
+ *  nothing" and from a log_bodies default that moved. */
+const REDACTED_PROMPT = "digest_redacted";
+
+/**
+ * A resource URI with a query component, and the same URI without one. Spelled as an
+ * http(s) URI on purpose: `?access_token=` / `?sig=` / `?key=` is how the URIs that
+ * actually carry credentials are shaped, and the rule exists for exactly those.
+ */
+const QUERYLESS_URI = "https://files.pmcp-test.invalid/notes/report.txt";
+const QUERIED_URI = `${QUERYLESS_URI}?access_token=${PLANTED.readAccessToken}&harmless=keep`;
+
+/** A `pmcp_sa_`-SHAPED string in a URI's path, where the query rule cannot reach it — so
+ *  §15's own grammar is the only thing left that can keep it out of the column. */
+const TOKEN_SHAPED_SEGMENT = "pmcp_sa_FAKE0000000000000000";
+
+/** What a matched `prompts/get` answers by default. */
+const READ_PROMPT_RESULT = {
+  description: "the daily digest",
+  messages: [{ role: "user", content: { type: "text", text: "summarize the feed" } }],
+};
+
+/** What a matched `resources/read` answers by default. */
+const READ_RESOURCE_RESULT = {
+  contents: [{ uri: READ_URI, mimeType: "text/plain", text: "tech headlines" }],
+};
+
+/** How one read world differs from the default — every field one override. */
+type ReadWorldSpec = {
+  /** `redact` entries, keyed by prompt name exactly as §20.3 keeps the map family-blind. */
+  redact?: Record<string, string[]>;
+  promptResult?: unknown;
+  readResult?: unknown;
+  /** The proxied service's virtual roles (default: none — the account holds `all`). */
+  roles?: RoleDeclaration;
+  grant?: GrantEntry[];
+};
+
+/**
+ * A proxied service serving both read families with `log_bodies` ON, and one account on
+ * it. Proxied and not tunneled for every case but one: §20.3 puts prompt arguments on the
+ * proxied posture REGARDLESS of kind, so the proxied side is where the rule is cheapest
+ * to state and the tunneled side (below) is where it is worth proving.
+ */
+async function seedReadWorld(spec: ReadWorldSpec = {}): Promise<BodyWorld> {
+  const id = uniqueSlug("up");
+  // The URL-encoded half stays MINIMAL — an id and a mode are all `upstreamUrlFor` needs
+  // to route and to pick the unreachable scheme. Every per-family answer rides
+  // registerOverride instead: §20.4's own "4 MB blob" case is exactly the payload a
+  // URL-encoded scenario cannot carry without tripping a real HTTP 431 (fake-upstream.ts's
+  // header), and every OTHER case in this file is small enough that the split costs it
+  // nothing.
+  await registerOverride(id, {
+    tools: [toolMarking({ args: [], results: [] })],
+    prompts: [{ name: READ_PROMPT, description: "the daily digest" }],
+    promptResult: spec.promptResult ?? READ_PROMPT_RESULT,
+    resources: [{ uri: READ_URI, name: "tech feed" }],
+    resourceTemplates: [{ uriTemplate: READ_TEMPLATE, name: "one feed item" }],
+    readResult: spec.readResult ?? READ_RESOURCE_RESULT,
+    completionResult: READ_COMPLETION_RESULT,
+  } satisfies Partial<ServingScenario>);
+  const upstream: ServingScenario = { id, mode: { kind: "ok" } };
+  const ns = await seedNamespace(env.DB, {
+    services: [
+      {
+        slug: SERVICE,
+        kind: "proxy",
+        upstreamUrl: upstreamUrlFor(upstream),
+        upstreamAuthMode: "headers",
+        logBodies: true,
+        ...(spec.roles === undefined ? {} : { roles: spec.roles }),
+        ...(spec.redact === undefined ? {} : { redact: spec.redact }),
+      },
+    ],
+    accounts: [
+      {
+        slug: ACCOUNT,
+        grants: { [SERVICE]: spec.grant ?? [{ role: "all", mode: "allow" }] },
+        tokens: [{ as: TOKEN }],
+      },
+    ],
+  });
+  const service = await new Registry(env.DB).getService(ns.owner.userId, SERVICE);
+  if (service === null) throw new Error("seedReadWorld: the seeded service vanished");
+  await setHeaders(service, UPSTREAM_HEADERS);
+  return { ns, credential: ns.tokens[TOKEN].token };
+}
+
+/** One scoped `prompts/get`, exactly as a consumer makes it. */
+async function getPromptThrough(
+  world: BodyWorld,
+  name: string,
+  args: Record<string, unknown> = {},
+): Promise<Answer> {
+  return rpc(world.ns, world.credential, SERVICE, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "prompts/get",
+    params: { name, arguments: args },
+  });
+}
+
+/** One scoped `resources/read`. */
+async function readThrough(world: BodyWorld, uri: string): Promise<Answer> {
+  return rpc(world.ns, world.credential, SERVICE, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "resources/read",
+    params: { uri },
+  });
+}
+
+/** The newest row of one EVENT in a namespace, through the one read path §8 exposes. */
+async function lastRow(ownerId: string, event: string): Promise<AuditRow> {
+  const { rows } = await query(env.DB, ownerId, { event, limit: 1 });
+  if (rows.length === 0) throw new Error(`no "${event}" audit row was written`);
+  return rows[0];
+}
+
+/**
+ * Every size stub inside a stored body, at any depth.
+ *
+ * Depth-first rather than keyed, because §15 pins the stub SHAPE and §20.4 pins that
+ * prompt messages and resource contents become stubs — neither pins which key of the
+ * stored envelope holds them for a family whose result carries `messages` or `contents`
+ * rather than `content`. Asserting on the stubs themselves states everything the spec
+ * says and freezes nothing it leaves open.
+ */
+function stubsIn(body: unknown): BodyStub[] {
+  const found: BodyStub[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (typeof node !== "object" || node === null) return;
+    const record = node as Record<string, unknown>;
+    if (typeof record.stub === "string") {
+      found.push(record as unknown as BodyStub);
+      return;
+    }
+    Object.values(record).forEach(walk);
+  };
+  walk(body);
+  return found;
+}
+
+describe("§20.4 · what a read writes into the tool column", () => {
+  it("§20.4 · prompts/get writes an audit row whose event is \"prompts/get\" and whose tool column is the prompt name", async () => {
+    const world = await seedReadWorld();
+
+    const answer = await getPromptThrough(world, READ_PROMPT, { topic: "visible-read-topic" });
+    expect(answer.body.error, JSON.stringify(answer.body.error)).toBeUndefined();
+
+    const recorded = await lastRow(world.ns.owner.userId, "prompts/get");
+    expect(recorded.event, "the method IS the event (§15's vocabulary, extended)").toBe("prompts/get");
+    expect(recorded.tool, "the prompt name, where a call puts its tool name").toBe(READ_PROMPT);
+    expect(recorded.service).toBe(SERVICE);
+    expect(recorded.outcome).toBe("ok");
+    expect(typeof recorded.durationMs, "audited like a call, timing included").toBe("number");
+  }, CASE_BUDGET_MS);
+
+  it("§20.4 · resources/read writes an audit row whose tool column is the resource URI with its query component replaced by \"?…\" · the scheme, host and path survive intact (the twin)", async () => {
+    const world = await seedReadWorld();
+
+    // The one place the SPELLING is pinned, the way web-pages.test.ts pins `‹redacted›`
+    // once and reads the name everywhere else: §20.4 names the literal `?…`, and without
+    // this line a hub that wrote `?`, `?<redacted>`, or dropped the component with no
+    // marker at all is green in every assertion that reads the constant.
+    expect(REDACTED_QUERY, "§20.4 pins the replacement's spelling").toBe("?…");
+
+    await readThrough(world, QUERIED_URI);
+    const queried = await lastRow(world.ns.owner.userId, "resources/read");
+    expect(queried.event).toBe("resources/read");
+    expect(queried.tool?.startsWith(QUERYLESS_URI), "what an owner reads the row for survives")
+      .toBe(true);
+    expect(queried.tool).toBe(`${QUERYLESS_URI}${REDACTED_QUERY}`);
+
+    // The twin: the rule is about the QUERY, so a URI that has none is stored as it is —
+    // a stripper that mangled every URI would satisfy the half above and destroy the column.
+    await readThrough(world, QUERYLESS_URI);
+    expect((await lastRow(world.ns.owner.userId, "resources/read")).tool).toBe(QUERYLESS_URI);
+  }, CASE_BUDGET_MS);
+
+  it("§20.4 · a resource URI carrying ?access_token=… never reaches audit.tool with the value — the query is dropped before the row is written, not scrubbed by pattern", async () => {
+    const world = await seedReadWorld();
+
+    await readThrough(world, QUERIED_URI);
+
+    const recorded = await lastRow(world.ns.owner.userId, "resources/read");
+    expect(recorded.tool, "the credential").not.toContain(PLANTED.readAccessToken);
+    // The half that says DROPPED rather than scrubbed: the innocuous parameter beside it
+    // goes too. A pattern-based scrubber keeps `harmless=keep` and therefore keeps every
+    // credential parameter nobody thought to name.
+    expect(recorded.tool, "the whole component, not the parts a pattern recognized")
+      .not.toContain("harmless");
+    expect(JSON.stringify(recorded), "and it reached no other column either")
+      .not.toContain(PLANTED.readAccessToken);
+  }, CASE_BUDGET_MS);
+
+  it("§20.4 · a resource URI longer than 1 KiB is capped in audit.tool, like every other caller-supplied string the hub persists", async () => {
+    // Grown FROM the cap in force, never written as a length: a change to
+    // limits.AUDIT_URI_CAP_BYTES moves the fixture and the assertion together. ASCII
+    // throughout, so "1 KiB" and "1024 characters" are the same statement here.
+    const world = await seedReadWorld();
+    const long = `${QUERYLESS_URI}/${"a".repeat(AUDIT_URI_CAP_BYTES)}`;
+
+    await readThrough(world, long);
+
+    const recorded = await lastRow(world.ns.owner.userId, "resources/read");
+    expect(byteLength(recorded.tool ?? ""), "the column is bounded").toBeLessThanOrEqual(
+      AUDIT_URI_CAP_BYTES,
+    );
+    expect(recorded.tool, "capped, never replaced — the readable head survives").toBe(
+      long.slice(0, AUDIT_URI_CAP_BYTES),
+    );
+  }, CASE_BUDGET_MS);
+
+  it("§20.4 · prompts/list, resources/list, resources/templates/list and completion/complete write no audit row — including a completion/complete that was refused -32001", async () => {
+    // The four listing-class methods, on a caller who can see everything. Each one's
+    // answer is read before the count is: an unimplemented `resources/templates/list`
+    // writes no audit row either, and so does a scoped `prompts/list` that threw — so
+    // without these assertions "no row" is satisfied by the absence of the very feature
+    // this case is about.
+    const world = await seedReadWorld();
+    const before = (await query(env.DB, world.ns.owner.userId, { limit: 200 })).total;
+    const listings: [string, (result: Record<string, unknown>) => unknown][] = [
+      ["prompts/list", (result) => result.prompts],
+      ["resources/list", (result) => result.resources],
+      ["resources/templates/list", (result) => result.resourceTemplates],
+    ];
+    for (const [method, served] of listings) {
+      const listed = await rpc(world.ns, world.credential, SERVICE, { jsonrpc: "2.0", id: 1, method });
+      expect(listed.body.error, method).toBeUndefined();
+      expect(served(listed.body.result ?? {}) as unknown[], `${method} answered nothing`)
+        .toHaveLength(1);
+    }
+    const completed = await rpc(world.ns, world.credential, SERVICE, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "completion/complete",
+      params: { ref: { type: "ref/prompt", name: READ_PROMPT }, argument: { name: "topic", value: "te" } },
+    });
+    expect(completed.body.error, "completion/complete").toBeUndefined();
+    expect((completed.body.result as { completion?: unknown }).completion).toEqual(
+      READ_COMPLETION_RESULT.completion,
+    );
+    expect(
+      (await query(env.DB, world.ns.owner.userId, { limit: 200 })).total,
+      "listings are agent polling noise, in every family",
+    ).toBe(before);
+
+    // …and the refusal, which is the half a "record what was denied" instinct would add:
+    // §20.2 decides the posture rather than inheriting it — a row per keystroke is noise,
+    // and the refusal is what makes the method safe in the first place.
+    const limited = await seedReadWorld({
+      roles: { reader: [TOOL] },
+      grant: [{ role: "reader", mode: "allow" }],
+    });
+    const beforeRefusal = (await query(env.DB, limited.ns.owner.userId, { limit: 200 })).total;
+    const refused = await rpc(limited.ns, limited.credential, SERVICE, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "completion/complete",
+      params: { ref: { type: "ref/prompt", name: READ_PROMPT }, argument: { name: "topic", value: "te" } },
+    });
+    expect(refused.body.error?.code).toBe(-32001);
+    expect(
+      (await query(env.DB, limited.ns.owner.userId, { limit: 200 })).total,
+      "a refused completion is still a listing",
+    ).toBe(beforeRefusal);
+  }, CASE_BUDGET_MS);
+
+  it("§20.4 · a resource URI carrying a pmcp_sa_-shaped substring is scrubbed by §15's grammar before it is logged", async () => {
+    // In the PATH, where the query rule cannot reach it: §15's "token material never, in
+    // any column" is the only thing standing between this string and a column
+    // `audit_query` serves and the JSONL export ships.
+    const world = await seedReadWorld();
+    const uri = `${QUERYLESS_URI}/${TOKEN_SHAPED_SEGMENT}`;
+
+    await readThrough(world, uri);
+
+    const recorded = await lastRow(world.ns.owner.userId, "resources/read");
+    expect(recorded.tool).not.toContain(TOKEN_SHAPED_SEGMENT);
+    expect(recorded.tool, "masked by the same sentinel every other secret gets").toContain(REDACTED);
+    expect(JSON.stringify(recorded)).not.toContain(TOKEN_SHAPED_SEGMENT);
+  }, CASE_BUDGET_MS);
+});
+
+describe("§20.4 · what a read writes into the two body columns", () => {
+  it("§20.4 · a prompt argument matched by the service's redact map is masked in the stored body · the caller's live reply still carries it (the twin)", async () => {
+    // §20.3 keeps the redaction map family-blind: the same `redact:` entry that covers a
+    // tool covers a prompt of that name. The owner having written it is the declaration
+    // that stands in for the schema a prompt does not have.
+    const world = await seedReadWorld({
+      redact: { [READ_PROMPT]: ["password"] },
+      // The service's own answer carries the same secret, so "the live reply still carries
+      // it" is a fact about the wire rather than an echo the fixture arranged.
+      promptResult: {
+        description: "the daily digest",
+        messages: [
+          { role: "user", content: { type: "text", text: PLANTED.readPromptPassword } },
+        ],
+      },
+    });
+
+    const answer = await getPromptThrough(world, READ_PROMPT, {
+      topic: "visible-redact-row-topic",
+      password: PLANTED.readPromptPassword,
+    });
+
+    const recorded = await lastRow(world.ns.owner.userId, "prompts/get");
+    expect(recorded.args).toEqual({ topic: "visible-redact-row-topic", password: REDACTED });
+    expect(
+      JSON.stringify(answer.body).includes(PLANTED.readPromptPassword),
+      "masking exists for persistence, never for the wire (§7)",
+    ).toBe(true);
+  }, CASE_BUDGET_MS);
+
+  it("§20.4 · a prompts/get on a service with no redact entry for that prompt records NO arguments body, even on a tunneled service with log_bodies on — prompts carry no writeOnly channel, so they take the proxied posture (§20.3) · the row itself, its outcome and the prompt name are still written (the twin)", async () => {
+    // A TUNNELED service, online over a real socket, whose log_bodies defaults ON — the
+    // only fixture in which "no arguments body" has exactly one explanation. On a proxied
+    // service the flag alone would explain it, and the rule §20.3 is stating would be
+    // indistinguishable from §15's existing default.
+    const world = await seedPromptTunnelWorld();
+    try {
+      const answer = await getPromptThrough(world, READ_PROMPT, {
+        note: PLANTED.readTunnelArgument,
+      });
+      expect(answer.body.error, JSON.stringify(answer.body.error)).toBeUndefined();
+
+      const recorded = await lastRow(world.ns.owner.userId, "prompts/get");
+      expect(recorded.args, "no redact entry, no arguments — whatever log_bodies says")
+        .toBeUndefined();
+      // The twin: not recording the arguments is not the same as not recording the read.
+      expect(recorded.tool).toBe(READ_PROMPT);
+      expect(recorded.outcome).toBe("ok");
+      expect(recorded.principal).toBe(`sa:${ACCOUNT}`);
+
+      // …and the leg that turns "even on a tunneled service with log_bodies on" from a
+      // comment into an assertion: the SAME socket, the same service, one prompt the
+      // service's redact map does name. Without it, a hub that recorded no prompt
+      // arguments on a tunneled service at all passes above — and §20.3 pins the rule
+      // kind-blind — as would a tunnel `log_bodies` default that quietly flipped OFF.
+      const named = await getPromptThrough(world, REDACTED_PROMPT, {
+        note: PLANTED.readTunnelArgument,
+      });
+      expect(named.body.error, JSON.stringify(named.body.error)).toBeUndefined();
+      expect(
+        (await lastRow(world.ns.owner.userId, "prompts/get")).args,
+        "log_bodies IS on: an entry-carrying prompt records its arguments, masked",
+      ).toEqual({ note: REDACTED });
+    } finally {
+      await world.close();
+    }
+  }, CASE_BUDGET_MS);
+
+  it("§20.4 · a prompts/get result's message content blocks are stored as typed size stubs, never as text", async () => {
+    // An image block, so "typed" is a fact the stub carries rather than an absence: the
+    // declared media type rides where the protocol puts it, and the bytes ride nowhere.
+    const content = { type: "image", mimeType: "image/png", data: PLANTED.readPromptMessage };
+    const world = await seedReadWorld({
+      redact: { [READ_PROMPT]: ["password"] },
+      promptResult: { description: "the daily digest", messages: [{ role: "user", content }] },
+    });
+
+    await getPromptThrough(world, READ_PROMPT, { topic: "visible-stub-row-topic" });
+
+    const recorded = await lastRow(world.ns.owner.userId, "prompts/get");
+    expect(stubsIn(recorded.result), "one typed size stub per message content block").toEqual([
+      { stub: "blob", contentType: "image/png", bytes: byteLength(JSON.stringify(content)) },
+    ]);
+    expect(JSON.stringify(recorded), "never as text").not.toContain(PLANTED.readPromptMessage);
+  }, CASE_BUDGET_MS);
+
+  it("§20.4 · a resources/read result's contents are stored as stubs — a 4 MB blob records its size and type, never its bytes", async () => {
+    // Sized from limits.AUDIT_BODY_CAP_BYTES rather than literally 4 MB: what the rule
+    // needs is a block far past the body cap, so the row also states the ORDER — blocks
+    // are stubbed BEFORE the cap is applied, or a large one would come back as a single
+    // `oversize` stub and its type and size would be lost with it.
+    const blob = `${PLANTED.readResourceBlob}${"F".repeat(AUDIT_BODY_CAP_BYTES * 4)}`;
+    const contents = [{ uri: READ_URI, mimeType: "image/png", blob }];
+    const world = await seedReadWorld({ readResult: { contents } });
+
+    await readThrough(world, READ_URI);
+
+    const recorded = await lastRow(world.ns.owner.userId, "resources/read");
+    expect(stubsIn(recorded.result), "its size and its type").toEqual([
+      { stub: "blob", contentType: "image/png", bytes: byteLength(JSON.stringify(contents[0])) },
+    ]);
+    expect(JSON.stringify(recorded), "never its bytes").not.toContain(PLANTED.readResourceBlob);
+  }, CASE_BUDGET_MS);
+
+  it("§20.4 · an over-cap prompts/get body is replaced whole by an oversize stub", async () => {
+    // The redact entry is load-bearing: without one there is no arguments body to be over
+    // the cap at all (the row above), and this case would pass by recording nothing.
+    const shrunk = auditConfigFor("shrunk");
+    const world = await seedReadWorld({ redact: { [READ_PROMPT]: ["password"] } });
+    const args = {
+      password: PLANTED.readOversizePassword,
+      filler: "x".repeat(shrunk.bodyCapBytes * 2),
+    };
+
+    await withCap(shrunk, () => getPromptThrough(world, READ_PROMPT, args));
+
+    const recorded = await lastRow(world.ns.owner.userId, "prompts/get");
+    expect(recorded.args, "replaced whole — never truncated into corrupt JSON").toEqual({
+      stub: "oversize",
+      bytes: byteLength(JSON.stringify(applyRedaction(args, ["password"]))),
+    });
+  }, CASE_BUDGET_MS);
+
+  it("§20.4 · a planted fake secret in a resource's contents never reaches any log, event, or stored body", async () => {
+    const world = await seedReadWorld({
+      readResult: {
+        contents: [{ uri: READ_URI, mimeType: "text/plain", text: PLANTED.readResourceSecret }],
+      },
+    });
+
+    const answer = await readThrough(world, READ_URI);
+    expect(
+      JSON.stringify(answer.body).includes(PLANTED.readResourceSecret),
+      "the caller still receives what they read",
+    ).toBe(true);
+
+    const rows = await query(env.DB, world.ns.owner.userId, { limit: 200 });
+    expect(JSON.stringify(rows.rows), "and the ledger receives none of it").not.toContain(
+      PLANTED.readResourceSecret,
+    );
+    // The whole-database half is the sweep's: this value is one field of PLANTED, so case
+    // 23 hunts it in every column of every table whether or not this case ran.
+  }, CASE_BUDGET_MS);
+});
+
+/**
+ * The tunneled prompt world, and the second socket this file holds (case 14a's is the
+ * other). A service ONLINE over a real `/connect` upgrade, answering `prompts/get` over
+ * the wire — the only fixture in which §20.3's "prompt arguments take the proxied posture
+ * REGARDLESS of the service's kind" can be told apart from §15's proxied default.
+ *
+ * `close` is the caller's obligation: a leaked socket outlives this file.
+ */
+async function seedPromptTunnelWorld(): Promise<BodyWorld & { close(): Promise<void> }> {
+  const ns = await seedNamespace(env.DB, {
+    services: [
+      {
+        slug: SERVICE,
+        kind: "tunnel",
+        // An entry for ONE of the two prompts this socket serves, and `log_bodies` left at
+        // the tunneled default (§15: ON). That pair is the whole fixture: the entry-less
+        // prompt records no arguments and the entry-carrying one records them masked, so
+        // the flag's state is observed rather than assumed.
+        redact: { [REDACTED_PROMPT]: ["note"] },
+        tokens: [{ as: "svc" }],
+      },
+    ],
+    accounts: [
+      {
+        slug: ACCOUNT,
+        // The built-in `all` spans every family (§20.3) and needs no declaration — which
+        // is what lets this fixture register with no roles at all and still be granted a
+        // prompt the service never declared a pattern for.
+        grants: { [SERVICE]: [{ role: "all", mode: "allow" }] },
+        tokens: [{ as: TOKEN }],
+      },
+    ],
+  });
+  const credential = ns.tokens[TOKEN].token;
+  const close = await dialPromptTunnel(ns.tokens.svc.token);
+  // Warm is observable, never slept for: the pipeline serving the catalog IS registration
+  // having completed.
+  for (let turn = 0; turn < 250; turn++) {
+    const listed = await rpc(ns, credential, SERVICE, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    if (((listed.body.result?.tools ?? []) as Tool[]).length === 1) {
+      return { ns, credential, close };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  await close();
+  throw new Error("the tunneled prompt service never registered");
+}
+
+/**
+ * One real service on the other end of §6's wire, serving one tool and one prompt.
+ * Hand-rolled for the reason case 14a's is: `harness/fake-service` is pinned to the
+ * `tunnel` project, and one case's socket must not import that project's assumptions.
+ *
+ * It answers §6's registration-time `server/discover` with **-32601** deliberately. That
+ * is §20.5's compatibility fallback — the leg that keeps every service already in the
+ * field alive — so this fixture exercises the path a deployed service actually takes, and
+ * this file states nothing about the discover answer's shape, which is tunnel/**'s.
+ */
+async function dialPromptTunnel(token: string): Promise<() => Promise<void>> {
+  const response = await worker.fetch(
+    new Request(`${ORIGIN}/connect`, {
+      headers: { Upgrade: "websocket", Authorization: `Bearer ${token}` },
+    }),
+    env as unknown as Env,
+  );
+  const socket = response.webSocket;
+  if (response.status !== 101 || socket === null) {
+    throw new Error(`/connect refused the upgrade: ${response.status}`);
+  }
+  socket.accept();
+  socket.addEventListener("message", (event) => {
+    const frame = JSON.parse(String((event as MessageEvent).data)) as {
+      id?: unknown;
+      method?: unknown;
+    };
+    const answer = (body: Record<string, unknown>) =>
+      socket.send(JSON.stringify({ jsonrpc: "2.0", id: frame.id, ...body }));
+    if (frame.method === "server/discover") {
+      answer({ error: { code: -32601, message: "method not found" } });
+    } else if (frame.method === "tools/list") {
+      answer({ result: { tools: [toolMarking({ args: [], results: [] })] } });
+    } else if (frame.method === "prompts/list") {
+      answer({
+        result: {
+          prompts: [
+            { name: READ_PROMPT, description: "the daily digest" },
+            { name: REDACTED_PROMPT, description: "the digest the redact map names" },
+          ],
+        },
+      });
+    } else if (frame.method === "prompts/get") {
+      answer({ result: READ_PROMPT_RESULT });
+    }
+  });
+  socket.send(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: "register",
+      method: "hub/register",
+      params: { clientVersion: "hygiene/0", protocolVersion: "2026-07-28", roles: {} },
+    }),
+  );
+  return async () => {
+    try {
+      socket.close(1000, "case teardown");
+    } catch {
+      // already gone
+    }
+  };
+}
+
+// ══ the sweep, LAST ═══════════════════════════════════════════════════════════════════
+//
+// This describe must stay the last one in the file, and that is now load-bearing rather
+// than tidy. Vitest runs a file's cases in declaration order and the `worker` project
+// isolates D1 per FILE, which is the only reason the sweep can see what the cases above
+// wrote at all — so a describe declared after it plants its secrets into a database the
+// sweep has already read. Seven of PLANTED's fields (`read*`) belong to §20.4's cases
+// below the old position; with the sweep left where it was, every one of them was swept
+// for before it existed.
+describe("§15 · the sweep", () => {
+  it("23. §15 · after the full exercise no column of any table holds token material or a sentinel secret (sweepForSentinels, with its control value found — an unreachable sweep fails)", async () => {
+    const sentinels = [
+      ...AUDIT_BODY_ROWS.flatMap((row) => row.sentinels),
+      ...SENTRY_SCRUB_ROWS.flatMap((row) => row.scrubbed),
+      ...Object.values(PLANTED),
+      BLOCK_BYTES,
+    ];
+
+    // The control is a value the exercise above DID persist visibly (table row 4's query),
+    // so a sweep that finds nothing because it reaches nothing fails instead of passing.
+    const hits = await sweepForSentinels(sentinels, "quarterly report");
+
+    expect(hits, `the ledger holds: ${JSON.stringify(hits)}`).toEqual([]);
+  }, CASE_BUDGET_MS);
+
+  it("24. §15 · bodies live only in approval.args_json and the audit body columns · the visible argument IS found in exactly those columns and in no other (the twin that makes 23 non-vacuous)", async () => {
+    const marker = "visible-case24-marker";
+
+    // One dispatched call, whose argument lands in the audit body column…
+    const recorded = await seedProxyWorld({
+      kind: "proxy",
+      upstream: healthyUpstream({ ok: marker }),
+      logBodies: true,
+    });
+    await callTool(recorded.ns, recorded.credential, SERVICE, TOOL, { q: marker });
+
+    // …and one gated call, whose argument lands in the approval row instead.
+    const gated = await seedApprovalGatedWorld();
+    await callTool(gated.ns, gated.credential, SERVICE, TOOL, { q: marker, password: "x" });
+
+    const hits = await sweepForSentinels([marker], marker);
+    const columns = new Set(hits.map((hit) => `${hit.table}.${hit.column}`));
+    expect(columns, "a body reached a column §15 does not name").toEqual(
+      new Set(["audit.args_json", "audit.result_json", "approval.args_json"]),
+    );
+  }, CASE_BUDGET_MS);
+});

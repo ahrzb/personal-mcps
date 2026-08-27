@@ -89,6 +89,16 @@ export type BodyStub = {
 };
 
 /**
+ * §20.4 — the literal that replaces a resource URI's query component before it enters
+ * `audit.tool`: the query is DROPPED, not pattern-scrubbed (a URI's query string is a
+ * routine carrier of somebody else's bearer token, and §15's scrubbing grammar only knows
+ * the hub's own `pmcp_(sa|svc)_` shape). Pinned as a name, not a call-site literal, so the
+ * gateway (which builds the `tool` value) and every test that reads it agree on the exact
+ * spelling.
+ */
+export const REDACTED_QUERY = "?…";
+
+/**
  * One audit event, as callers describe it — the hub stamps the timestamp and row id at
  * write time, so neither appears here.
  *

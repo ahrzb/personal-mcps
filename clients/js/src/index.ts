@@ -39,20 +39,36 @@ import { WebSocket } from "ws";
  * between a typo and an unknown-unknown. A hand-rolled session is served by constructing
  * {@link HubTransport} directly, which is what that class documents.
  */
-export type McpServer = { connect(transport: HubTransport): Promise<void> };
+export type McpServer = {
+  connect(transport: HubTransport): Promise<void>;
+  /**
+   * Optional: the SDK's own `ServerCapabilities`-shaped answer, read at
+   * registration time to answer the hub's `server/discover` (§11/§6, added
+   * §20). Structural and optional on purpose — every service already in the
+   * field is an object with no such method, and §11 pins that absence as the
+   * hub's "capabilities unknown" fallback rather than a TypeError here.
+   */
+  getCapabilities?(): Record<string, unknown>;
+};
 
 /** One MCP wire message — `JSONRPCMessage` from `@modelcontextprotocol/server`; external, never imported here. */
 export type JsonRpcMessage = unknown;
 
 /**
- * The role declaration sent in `hub/register`: role name → anchored patterns over
- * tool names (§2's one pattern language — a bare tool name matches itself, `*`
- * aliases `.*`). Validation is the hub's job, not this library's: names must match
- * `[a-z0-9_-]{1,64}`, `all` is reserved, and pattern length (≤128) and per-role
- * count (≤64) are capped — a violating declaration is rejected at registration,
- * which serve() surfaces as RegistrationError.
+ * The role declaration sent in `hub/register`: role name → either a bare pattern
+ * list — tools, forever, so every service written before §20 keeps registering
+ * unchanged — or a per-family object, each key optional (§20.3). Validation is
+ * the hub's job, not this library's: names must match `[a-z0-9_-]{1,64}`, `all`
+ * is reserved, an unknown family key is a violation, and pattern length (≤128)
+ * and per-family pattern count (≤64) are capped — a violating declaration is
+ * rejected at registration, which serve() surfaces as RegistrationError. The two
+ * spellings may be mixed across roles in one declaration; this library sends
+ * whichever an author wrote, unchanged — no normalization here (§20.6).
  */
-export type Roles = Record<string, string[]>;
+export type Roles = Record<
+  string,
+  string[] | { tools?: string[]; prompts?: string[]; resources?: string[] }
+>;
 
 /**
  * The `hub/*` control-frame method names (contracts/tunnel-frames.json `methods`, the
@@ -64,6 +80,14 @@ export const HUB_METHODS = { register: "hub/register", replaced: "hub/replaced" 
 
 /** The pinned MCP revision of the tunnel wire (contracts/tunnel-frames.json). */
 export const PROTOCOL_VERSION = "2026-07-28";
+
+/**
+ * The registration-time capability question (§6/§11, added §20) — plain MCP
+ * namespace, not `hub/`-prefixed, but answered by this library rather than
+ * bridged to the SDK session: no MCP SDK implements it, and this library is
+ * what knows which families the author actually registered.
+ */
+const DISCOVER_METHOD = "server/discover";
 
 /** What `clientVersion` reports on the register frame — a free string in the fixture. */
 const CLIENT_VERSION = "@personal-mcps/client/0";
@@ -165,10 +189,23 @@ export async function serve(server: McpServer, options?: ServeOptions): Promise<
   if (token === undefined || token === "") {
     throw new TypeError("no service token: pass options.token or set PMCP_SERVICE_TOKEN");
   }
-  const transport = new HubTransport({ url, token, roles: options?.roles });
+  const transport = new HubTransport({ url, token, roles: options?.roles, discover: () => probeCapabilities(server) });
   // The SDK session owns the handshake and calls start() itself.
   await server.connect(transport);
   await transport.closed;
+}
+
+/**
+ * The author's declared capabilities, read the one way §11 sanctions: the SDK's
+ * own optional `getCapabilities()`, never guessed from what this library can
+ * carry. Absent — every service already in the field — is `undefined`, which
+ * HubTransport answers `server/discover` with a `-32601` for: "capabilities
+ * unknown", the hub's documented fallback (§6), not a fabricated empty set
+ * (§20.5: an empty *answer* is an undeclare and clears a catalog; a missing
+ * answer is not).
+ */
+function probeCapabilities(server: McpServer): Record<string, unknown> | undefined {
+  return typeof server.getCapabilities === "function" ? server.getCapabilities() : undefined;
 }
 
 /**
@@ -219,6 +256,10 @@ export class HubTransport {
   private readonly address: string;
   private readonly token: string;
   private readonly roles: Roles;
+  /** Answers the hub's `server/discover` (§11/§6, §20). `undefined` when the
+   *  caller gave none — every `server/discover` then gets `-32601`, the same
+   *  "capabilities unknown" a library that predates this method sends. */
+  private readonly discover: () => Record<string, unknown> | undefined;
   private readonly settleClosed: { resolve: () => void; reject: (error: Error) => void };
   private readonly started = deferred<void>();
   private socket: WebSocket | null = null;
@@ -235,11 +276,20 @@ export class HubTransport {
    * These three and nothing else (§11). The reconnect policy's two observation
    * seams are the module-level {@link seams}, not options here.
    */
-  constructor(options: { url: string; token: string; roles?: Roles }) {
+  constructor(options: {
+    url: string;
+    token: string;
+    roles?: Roles;
+    /** Internal: serve()'s wiring for `server/discover` (§20). Not part of §11's
+     *  three public options — a hand-rolled session that wants to answer it
+     *  passes this directly; one that does not gets the `-32601` fallback. */
+    discover?: () => Record<string, unknown> | undefined;
+  }) {
     // deps: none
     this.address = connectAddress(options.url);
     this.token = options.token;
     this.roles = options.roles ?? {};
+    this.discover = options.discover ?? (() => undefined);
     const closed = deferred<void>();
     this.closed = closed.promise;
     this.settleClosed = { resolve: closed.resolve, reject: closed.reject };
@@ -364,12 +414,41 @@ export class HubTransport {
         // The two control frames are consumed here; every other method — `hub/` prefixed
         // or not — is ordinary MCP traffic for the session.
         if (frame.method === HUB_METHODS.replaced) return;
+        // §11/§6: the one MCP-namespace method this library answers itself. The author's
+        // SDK never sees it — no SDK implements it, and this library is what knows which
+        // families were actually registered.
+        if (frame.method === DISCOVER_METHOD) return this.answerDiscover(frame);
         this.onmessage?.(frame as JsonRpcMessage);
       });
       socket.on("error", (error: Error) => {
         this.onerror?.(new Error(`hub connection failed: ${error?.message ?? "unknown"}`));
       });
       socket.on("close", (code: number) => end(endingForClose(code)));
+    });
+  }
+
+  /**
+   * Answer the hub's registration-time `server/discover` (§6/§11/§20) — never
+   * forwarded to the SDK session. `undefined` capabilities means "unknown", the
+   * fallback that keeps every service predating this method warming tools only
+   * (§6); a real capability set is relayed exactly as the author's SDK reports
+   * it, in the same DiscoverResult shape the reverse direction (hub→consumer)
+   * uses, so both ends of the wire speak one envelope.
+   */
+  private answerDiscover(frame: Frame): void {
+    const capabilities = this.discover();
+    if (capabilities === undefined) {
+      void this.send({
+        jsonrpc: "2.0",
+        id: frame.id,
+        error: { code: -32601, message: "server/discover not implemented" },
+      });
+      return;
+    }
+    void this.send({
+      jsonrpc: "2.0",
+      id: frame.id,
+      result: { supportedVersions: [PROTOCOL_VERSION], capabilities, resultType: "complete" },
     });
   }
 

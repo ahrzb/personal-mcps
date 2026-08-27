@@ -18,10 +18,12 @@
  * hub-originated request is self-contained, carrying its protocol `_meta` fields. It also
  * owns the hibernation discipline: socket identity rides serializeAttachment, in-flight
  * correlation lives in an in-memory Map with 30 s timeouts (safe because an unresolved
- * inbound request blocks hibernation), and the tools/list catalog is cached in DO SQLite
- * so it survives disconnects and deploys (invalidated by notifications/tools/list_changed,
- * and re-listed on the next demand when a registration's warm never landed one — an
- * online service serving no catalog refuses every call, so it may not be a terminal state).
+ * inbound request blocks hibernation), and §20.5's FOUR catalogs — tools, prompts,
+ * resources, resource templates — are cached in DO SQLite beside the capability set the
+ * registration-time `server/discover` learned, so all of it survives disconnects and
+ * deploys (each catalog invalidated by its family's own list_changed frame, and re-listed
+ * on the next demand when a registration's warm never landed one — an online service
+ * serving no catalog refuses every call, so it may not be a terminal state).
  *
  * One MECHANIC is published rather than hidden, because a test leans on it: the
  * correlation deadline is armed ONCE per hub-originated request, as a single ambient
@@ -44,8 +46,16 @@ import type { BackendCtx, JsonRpcRequest, JsonRpcResponse, ServiceBackend, Tool 
 import { formatPrincipal } from "./principal";
 import { resolveServiceToken } from "./identity";
 import { CALL_TIMEOUT_MS, REGISTRATION_DEADLINE_MS } from "./limits";
-import { Registry, validateRoles, validateSchemaIndirection, writeOnlyPaths } from "./registry";
-import type { RoleDeclaration, Service } from "./registry";
+import {
+  patternFamilyOf,
+  Registry,
+  SERVICE_CAPABILITIES,
+  subjectKeyOf,
+  validateRoles,
+  validateSchemaIndirection,
+  writeOnlyPaths,
+} from "./registry";
+import type { ListKind, RoleDeclaration, Service, ServiceCapability } from "./registry";
 
 /**
  * Close code for connection replacement: a newer socket took the slot (after the
@@ -227,9 +237,12 @@ function connectionFor(serviceId: Service["id"]): ServiceConnection {
 
 /**
  * The tunnel implementation of ServiceBackend — how the gateway pipeline reaches a
- * tunneled service. Every method addresses the service's DO by `service.id`; none of
- * them performs authorization (the gateway's filter/archived/approval checks have
- * already run by the time a backend is called).
+ * tunneled service, §20's three further listings included. Every method addresses the
+ * service's DO by `service.id`; none of them performs authorization (the gateway's
+ * filter/archived/approval checks have already run by the time a backend is called).
+ * What the service listed is cached and relayed VERBATIM; the hub reads no field of an
+ * entry beyond the one key §20.2 matches its family on, and a second, weaker copy of the
+ * MCP descriptors the gateway publishes is exactly what §20 must not grow.
  */
 export const tunnelBackend: ServiceBackend = {
   /**
@@ -240,6 +253,31 @@ export const tunnelBackend: ServiceBackend = {
   async listTools(service, ctx) {
     // deps: viaConnection · ServiceConnection.listTools
     return cachedCatalog(service.id);
+  },
+
+  /**
+   * The cached prompt catalog (§20.5), under exactly the contract listTools answers under:
+   * whole-read from storage, empty for a service that never declared the family, never a
+   * wait on the socket. Unfiltered — matching prompts by NAME against the caller's patterns
+   * is the gateway's (§20.2).
+   */
+  async listPrompts(service, ctx) {
+    // deps: viaConnection · ServiceConnection.listCatalog
+    return cachedFamily(service.id, "prompts");
+  },
+
+  /** The cached resource catalog, same contract — matched by `uri` at the door, never by
+   *  `name` (§20.2), which is why nothing here reads either. */
+  async listResources(service, ctx) {
+    // deps: viaConnection · ServiceConnection.listCatalog
+    return cachedFamily(service.id, "resources");
+  },
+
+  /** The cached resource-template catalog — its own key because §20.5 gives it one, warmed
+   *  and cleared by the `resources` declaration that covers both. */
+  async listResourceTemplates(service, ctx) {
+    // deps: viaConnection · ServiceConnection.listCatalog
+    return cachedFamily(service.id, "resourceTemplates");
   },
 
   /**
@@ -292,11 +330,43 @@ export const tunnelBackend: ServiceBackend = {
   },
 };
 
-/** The DO's cached catalog as the worker half reads it — the one place both backend
+/** The DO's cached TOOL catalog as the worker half reads it — the one place both backend
  *  methods that need it go through, so the RPC contract below is applied once. */
 function cachedCatalog(serviceId: Service["id"]): Promise<Tool[]> {
   // deps: viaConnection · ServiceConnection.listTools
   return viaConnection(serviceId, "catalog_unreachable", (connection) => connection.listTools());
+}
+
+/**
+ * …and the same read for §20.5's other three catalogs. Generic in what the caller CALLS
+ * the entries: the DO caches whatever the service listed and interprets none of it, so the
+ * shape is the reader's to name — ServiceBackend names each family by the one key §20.2
+ * matches it on.
+ */
+function cachedFamily<T>(serviceId: Service["id"], family: CatalogFamily): Promise<T[]> {
+  // deps: viaConnection · ServiceConnection.listCatalog
+  return viaConnection(serviceId, "catalog_unreachable", (connection) =>
+    connection.listCatalog<T>(family),
+  );
+}
+
+/**
+ * The capability set this service DECLARED at its last successful registration (§20.5),
+ * for §20.2's scoped handshake — configuration the hub was told, read from the DO's
+ * durable state and never a live call, so a hung service still answers `initialize` at
+ * full speed.
+ *
+ * Answers `tools` for a service that has never connected, whose discover has never
+ * succeeded, or whose DO cannot be reached at all — §20.2's "a capability the hub has
+ * never been told about is not declared", and the same swallow-to-the-truthful-answer
+ * policy status() takes: a handshake has no consumer to hand a refusal to, and a service
+ * whose declaration cannot be consulted is certainly not known to serve more than tools.
+ */
+export async function capabilities(serviceId: Service["id"]): Promise<ServiceCapability[]> {
+  // deps: viaConnection · ServiceConnection.capabilities
+  return viaConnection(serviceId, "catalog_unreachable", (connection) =>
+    connection.capabilities(),
+  ).catch(() => [...DEFAULT_CAPABILITIES]);
 }
 
 /**
@@ -400,11 +470,70 @@ const PROTOCOL_META = {
  *  twin of this constant; §6 pins them to the same string. */
 const WIRE_REVISION = "2026-07-28";
 
-/** The client-originated MCP notification §6 defines: the service's tool set changed. */
-const TOOLS_LIST_CHANGED = "notifications/tools/list_changed";
+/**
+ * §20.5's four catalogs — §6's tool list plus the three families §20 proxies. Everything
+ * about a warm is identical in all four (one hub-originated request, one result object
+ * whose single member is named after the family, one durable key written whole), so they
+ * are ONE vocabulary here and the three tables below are all that differ.
+ */
+const CATALOG_FAMILIES = ["tools", "prompts", "resources", "resourceTemplates"] as const satisfies readonly ListKind[];
+type CatalogFamily = (typeof CATALOG_FAMILIES)[number];
 
-/** The catalog, under one durable key — see ServiceConnection.listTools. */
-const CATALOG_KEY = "catalog";
+/** Each catalog's durable key, by the names §20.5 spells. `tools` keeps §6's original key:
+ *  renaming it would strand the cache of every DO already in the field. */
+const CATALOG_KEY: Readonly<Record<CatalogFamily, string>> = {
+  tools: "catalog",
+  prompts: "catalog:prompts",
+  resources: "catalog:resources",
+  resourceTemplates: "catalog:resourceTemplates",
+};
+
+/** The hub-originated list method each catalog is warmed with — not derivable from the
+ *  family name, since resource templates ride `resources/templates/list`. */
+const LIST_METHOD: Readonly<Record<CatalogFamily, string>> = {
+  tools: "tools/list",
+  prompts: "prompts/list",
+  resources: "resources/list",
+  resourceTemplates: "resources/templates/list",
+};
+
+/**
+ * Which catalogs a declared capability owns — §20.2's vocabulary on one side, §20.5's keys
+ * on the other. NOT a table: it is registry's `patternFamilyOf` read forwards, so the fact
+ * that `resources` owns TWO (MCP gives resource templates no capability and no
+ * list_changed frame of their own, so the resources declaration is the only thing that can
+ * ever speak for them) is stated once, where the keyspace lives, instead of restated
+ * backwards here. `completions` owns none — it is a method, not a keyspace, and no catalog
+ * family answers to it.
+ *
+ * One rule, three readers: which warms a registration runs, which catalogs a
+ * re-registration that no longer declares a family clears, and what a list_changed frame
+ * re-lists. Splitting them would let the three disagree about what a family IS.
+ */
+function catalogsOf(capability: ServiceCapability): CatalogFamily[] {
+  // deps: registry.patternFamilyOf
+  return CATALOG_FAMILIES.filter((family) => patternFamilyOf(family) === capability);
+}
+
+/** The client-originated MCP notifications §6 defines, and the capability each invalidates
+ *  — the only service-originated frames the DO reads; every other one is still dropped. */
+const LIST_CHANGED: Readonly<Record<string, ServiceCapability>> = {
+  "notifications/tools/list_changed": "tools",
+  "notifications/prompts/list_changed": "prompts",
+  "notifications/resources/list_changed": "resources",
+};
+
+/** §6's registration-time capability question, asked of the CLIENT LIBRARY and never of the
+ *  author's SDK (§11) — which is why its refusal has to be survivable. */
+const DISCOVER_METHOD = "server/discover";
+
+/** The declared capability set, cached beside the catalogs (§20.5) and read by §20.2's
+ *  scoped handshake. */
+const CAPABILITIES_KEY = "capabilities";
+
+/** What a service the hub has never been told anything about serves: tools — §20.2's
+ *  never-connected answer, and exactly what §6's discover fallback warms. */
+const DEFAULT_CAPABILITIES: readonly ServiceCapability[] = ["tools"];
 
 /**
  * Closes the service's live socket, if any, with the given code — the two owner-triggered
@@ -564,9 +693,10 @@ export class ServiceConnection extends DurableObject {
    * declaration is handed to registry.upsertDeclaredRoles (which owns validation and
    * drift auditing); a rejected declaration gets a JSON-RPC error reply and close 4004,
    * a vanished service row closes 4003, success replies {ok:true}, writes the
-   * connect.register audit row, and immediately issues tools/list to warm the catalog.
-   * After registration: correlation replies resolve the pending map, and
-   * notifications/tools/list_changed invalidates the cached catalog and re-lists.
+   * connect.register audit row, and immediately runs the §6 capability warm — one
+   * server/discover, then the catalogs its answer declared.
+   * After registration: correlation replies resolve the pending map, and each of §6's three
+   * list_changed notifications invalidates its own family's catalogs and re-lists.
    * When the warmed catalog lands, each tool's input/output schemas run
    * registry.validateSchemaIndirection: violations are LOUD — echoed to the service
    * as a warning frame and logged — and the tool is cached flagged schema-unsound,
@@ -587,11 +717,13 @@ export class ServiceConnection extends DurableObject {
     if (frame === null) return;
     // A correlated answer to something this hub asked (a forwarded call, a catalog warm).
     if (frame.method === undefined) return this.settle(frame);
-    // §6's one client-originated MCP notification: the tool set changed, so re-list.
-    if (frame.method === TOOLS_LIST_CHANGED) return this.warmCatalog(ws, attachment);
-    // Anything else from a registered service is a frame the hub does not read (§6 v1
-    // forwards tools/list and tools/call, both hub-originated). Ignored, never a close:
-    // the protocol error is a PRE-registration rule.
+    // §6's three client-originated MCP notifications: that family's set changed, so re-list
+    // ITS catalogs and no others.
+    const changed = LIST_CHANGED[String(frame.method)];
+    if (changed !== undefined) return this.warmFamily(ws, attachment, changed);
+    // Anything else from a registered service is a frame the hub does not read (§6: every
+    // MCP request on this socket is hub-originated). Ignored, never a close: the protocol
+    // error is a PRE-registration rule.
   }
 
   /**
@@ -637,20 +769,83 @@ export class ServiceConnection extends DurableObject {
     if (drift.widened.length > 0) {
       await this.audit(attachment, "connect.roles_widened", { widened: drift.widened });
     }
-    await this.warmCatalog(ws, attachment);
+    await this.warmDeclared(ws, attachment);
   }
 
   /**
-   * The cache warm: one hub-originated `tools/list`, and the §7 indirection refuse-line
-   * applied LOUDLY to what comes back — each offending tool is named to the service in a
-   * warning frame and logged, while the registration itself stands, so one exotic schema
-   * never bricks a service. A warm that draws no catalog — unanswered, or answered with
-   * something that is not a tool list — leaves the previous cache in place (a stale catalog
-   * serves better than an empty one, §6 lifecycle 2) and is LOGGED: for a service that
-   * never had a catalog the cache stays empty, which reads online while refusing every call
-   * -32001, and listTools re-lists on the next demand to get out of it.
+   * §6's registration tail, and the one place §20.5 lets a cache be emptied. ONE
+   * hub-originated `server/discover` — always first, since its answer decides everything
+   * after it — then the warms for the families it declared, concurrent with each other. The
+   * tail is therefore worst-case TWO correlation budgets wide, never four.
+   *
+   * The FALLBACK is the load-bearing half (§6): a `-32601` from a library that predates the
+   * method, any other error, and a correlation timeout all mean "capabilities unknown", and
+   * the hub then warms TOOLS ONLY and touches no other key — no catalog is emptied and the
+   * stored capability set stands, so a service already in the field keeps the tool list it
+   * has always had and its handshake keeps advertising what it last declared. Warming blind
+   * instead would make every tools-only service log three spurious warm failures.
+   *
+   * A SUCCESSFUL answer replaces the stored set — never accumulates, or a family a service
+   * has stopped serving would be advertised forever — and CLEARS the catalogs of every
+   * family it omits: an omission in an answer is the service saying it no longer serves that
+   * family, which is the one case §20.5 distinguishes from a failure. Cleared to `[]`, the
+   * genuinely-empty answer, rather than to absent, which would re-warm on the next demand a
+   * family the service just undeclared.
    */
-  private async warmCatalog(ws: WebSocket, attachment: ConnectionAttachment): Promise<void> {
+  private async warmDeclared(ws: WebSocket, attachment: ConnectionAttachment): Promise<void> {
+    const declared = await this.discover(ws);
+    if (declared === null) return this.warmCatalog(ws, attachment, "tools");
+    await this.ctx.storage.put(CAPABILITIES_KEY, declared);
+    const warming = new Set(declared.flatMap(catalogsOf));
+    await Promise.all(
+      CATALOG_FAMILIES.map((family) =>
+        warming.has(family)
+          ? this.warmCatalog(ws, attachment, family)
+          : this.ctx.storage.put(CATALOG_KEY[family], []),
+      ),
+    );
+  }
+
+  /**
+   * §6's capability question, asked once per registration: which families does this service
+   * serve? Answered by the CLIENT LIBRARY rather than the author's SDK (§11), so every
+   * answer this hub cannot read is a library that predates the method — null, meaning
+   * "unknown", which is a different fact from an answer that declared nothing.
+   */
+  private async discover(ws: WebSocket): Promise<ServiceCapability[] | null> {
+    const outcome = await this.request(ws, {
+      jsonrpc: "2.0",
+      method: DISCOVER_METHOD,
+      params: { _meta: withProtocolFields() },
+    });
+    return outcome.ok ? declaredOf(outcome.response) : null;
+  }
+
+  /** One capability's catalogs, re-listed together — the `resources` declaration speaks for
+   *  resource templates too, which have no list_changed frame of their own (§20.5). */
+  private async warmFamily(
+    ws: WebSocket,
+    attachment: ConnectionAttachment,
+    capability: ServiceCapability,
+  ): Promise<void> {
+    await Promise.all(catalogsOf(capability).map((family) => this.warmCatalog(ws, attachment, family)));
+  }
+
+  /**
+   * One catalog's warm: a hub-originated list for that family, and — on the tool catalog —
+   * the §7 indirection refuse-line applied LOUDLY to what comes back, so one exotic schema
+   * names itself to the service and the operator while the registration still stands. A
+   * warm that draws no catalog — unanswered, or answered with something that is not a list
+   * — leaves the previous cache in place (a stale catalog serves better than an empty one,
+   * §6 lifecycle 2; a failure is never an undeclare, §20.5) and is LOGGED: for a family that
+   * never warmed the key stays ABSENT, which reads as never-warmed and re-lists on the next
+   * demand, since an online service serving no catalog is not a state to sit in.
+   */
+  private async warmCatalog(
+    ws: WebSocket,
+    attachment: ConnectionAttachment,
+    family: CatalogFamily,
+  ): Promise<void> {
     // Parking here is safe, and the reason is not local: the answer arrives as a SEPARATE
     // webSocketMessage invocation on this same object while this handler is still awaiting.
     // A Durable Object's input gate does not hold back websocket events behind a handler
@@ -659,20 +854,27 @@ export class ServiceConnection extends DurableObject {
     // CALL_TIMEOUT_MS. Self-contained, like every hub-originated request (§6).
     const outcome = await this.request(ws, {
       jsonrpc: "2.0",
-      method: "tools/list",
+      method: LIST_METHOD[family],
       params: { _meta: withProtocolFields() },
     });
-    const tools = outcome.ok ? catalogOf(outcome.response) : null;
-    if (tools === null) {
-      // §15 hygiene: the slug so an operator can find the service, and the failure class —
-      // never the answer's body. Loud because nothing else about this state is: the
-      // registration succeeded and the service reads online.
+    const entries = outcome.ok ? catalogOf(outcome.response, family) : null;
+    if (entries === null) {
+      // §15 hygiene: the slug so an operator can find the service, the family so they know
+      // which list, and the failure class — never the answer's body. Loud because nothing
+      // else about this state is: the registration succeeded and the service reads online.
       console.warn(
-        `pmcp/catalog-warm-failed: ${attachment.slug}: ${outcome.ok ? "answer was not a tool list" : outcome.reason}`,
+        `pmcp/catalog-warm-failed: ${attachment.slug} ${family}: ${outcome.ok ? "answer was not a catalog" : outcome.reason}`,
       );
       return;
     }
-    await this.ctx.storage.put(CATALOG_KEY, tools);
+    await this.ctx.storage.put(CATALOG_KEY[family], entries);
+    // §7's refuse-line reads inputSchema and outputSchema, which only a tool has.
+    if (family === "tools") this.reportUnsound(ws, attachment, entries as Tool[]);
+  }
+
+  /** The LOUD half of §7's indirection refuse-line: every unsound tool named to the service
+   *  in a warning frame and to the operator in a log line. The registration still stands. */
+  private reportUnsound(ws: WebSocket, attachment: ConnectionAttachment, tools: Tool[]): void {
     for (const tool of tools) {
       const violations = schemaViolations(tool);
       if (violations.length === 0) continue;
@@ -738,16 +940,52 @@ export class ServiceConnection extends DurableObject {
    */
   async listTools(): Promise<Tool[]> {
     // deps: DO ctx.storage `catalog` · warmCatalog
-    // ponytail: ONE durable key holding the whole catalog, absent until a registration
-    // warms it — which is exactly the never-connected answer, with no table and no
-    // migration to own; a SQLite-backed class stores it in SQLite either way. It is
+    return this.cached<Tool>("tools");
+  }
+
+  /**
+   * The same contract for §20.5's other three catalogs — prompts, resources and resource
+   * templates, each under its own key. Their entries are whatever the service listed, kept
+   * VERBATIM: the hub reads only the key §20.2 matches the family on (and does that at the
+   * door), so what an entry is called here is the caller's to say.
+   *
+   * Empty both for a service that never declared the family and for one that just stopped
+   * declaring it — §20.5's clear stores `[]`, so an undeclared family answers empty instead
+   * of re-warming forever against a service that no longer serves it.
+   */
+  async listCatalog<T>(family: CatalogFamily): Promise<T[]> {
+    // deps: DO ctx.storage `catalog:*` · warmCatalog
+    return this.cached<T>(family);
+  }
+
+  /**
+   * One catalog, read whole from its durable key, with §20.5's absent-versus-empty rule
+   * applied once for all four families: ABSENT means never-warmed, so re-warm on demand;
+   * a stored `[]` is a genuinely empty set and is never re-asked.
+   */
+  private async cached<T>(family: CatalogFamily): Promise<T[]> {
+    // ponytail: ONE durable key per family holding the whole catalog, absent until a warm
+    // lands one — which is exactly the never-connected answer, with no table and no
+    // migration to own; a SQLite-backed class stores it in SQLite either way. Each is
     // written whole and read whole, and the schema-unsound flag §7 needs is DERIVED from
-    // these very schemas at read time (sensitivePaths) rather than stored beside them.
+    // the cached schemas at read time (sensitivePaths) rather than stored beside them.
     // Upgrade path, if a catalog ever grows past what one value should carry: rows keyed by
-    // tool name, with this method's contract unchanged.
-    const cached = await this.ctx.storage.get<Tool[]>(CATALOG_KEY);
-    if (cached === undefined) this.rewarm();
+    // the family's subject key, with this method's contract unchanged.
+    const cached = await this.ctx.storage.get<T[]>(CATALOG_KEY[family]);
+    if (cached === undefined) this.rewarm(family);
     return cached ?? [];
+  }
+
+  /**
+   * The capability set §20.2's scoped handshake advertises: what the last SUCCESSFUL
+   * `server/discover` declared, durable beside the catalogs so a disconnect never narrows
+   * it. Absent — never connected, or never a discover this hub could read — is `tools`,
+   * because a capability the hub has never been told about is not declared (§20.2).
+   */
+  async capabilities(): Promise<ServiceCapability[]> {
+    // deps: DO ctx.storage `capabilities`
+    const declared = await this.ctx.storage.get<ServiceCapability[]>(CAPABILITIES_KEY);
+    return declared ?? [...DEFAULT_CAPABILITIES];
   }
 
   /**
@@ -764,27 +1002,28 @@ export class ServiceConnection extends DurableObject {
    * warm one; a rejection is swallowed for the same reason warmCatalog's failure is
    * survivable, and the next demand simply asks again.
    *
-   * ONE at a time, and that bound is the point: this runs on DEMAND, and the demand is
-   * tools/call's (sensitivePaths reads the same cache), so a wedged service that never
-   * answers would otherwise draw one hub-originated tools/list per consumer call — each
+   * ONE at a time PER FAMILY, and that bound is the point: this runs on DEMAND, and the
+   * demand is tools/call's (sensitivePaths reads the same cache), so a wedged service that
+   * never answers would otherwise draw one hub-originated list per consumer call — each
    * parking a waiter for CALL_TIMEOUT_MS, and each keeping the instance awake, unbounded in
    * exactly the state this recovery was written for. The guard is READ OFF `pending` rather
    * than kept in a field of its own, which is the same no-in-memory-marks rule as above and
    * costs nothing here: a pending request cannot be hibernated away, so the map is as
    * durable as the in-flight request it is answering about.
    */
-  private rewarm(): void {
+  private rewarm(family: CatalogFamily): void {
     const ws = this.live();
     // Offline: nothing to ask, and the reconnect's own hub/register warms it (§6).
     if (ws === null) return;
     const attachment = attachmentOf(ws);
     if (attachment === null) return;
-    // The only tools/list this DO ever originates is a warm — forward() carries consumer
-    // tools/call and nothing else — so one on this socket IS a warm still in flight.
+    // Every list this DO originates is a warm — the gateway serves every family's listing
+    // from these caches and forward() carries fetches (tools/call, prompts/get,
+    // resources/read) — so one on this socket IS a warm of that family still in flight.
     for (const waiter of this.pending.values()) {
-      if (waiter.ws === ws && waiter.method === "tools/list") return;
+      if (waiter.ws === ws && waiter.method === LIST_METHOD[family]) return;
     }
-    void this.warmCatalog(ws, attachment).catch(() => undefined);
+    void this.warmCatalog(ws, attachment, family).catch(() => undefined);
   }
 
   /**
@@ -1001,19 +1240,38 @@ function idOf(frame: Frame | null): string | number | null {
   return typeof id === "string" || typeof id === "number" ? id : null;
 }
 
-/** `hub/register`'s declaration, or null when the payload is not one — the wire shape
- *  registry.validateRoles is contracted to receive (role → list of pattern strings). */
+/**
+ * `hub/register`'s declaration, or null when the payload is not one — the wire shape
+ * registry.validateRoles is contracted to receive, in either of §20.3's two spellings: a
+ * bare list of pattern strings (which MEANS tools, forever) or the per-family object.
+ *
+ * TYPE only. Which family names are legal, how long a pattern may be, whether it compiles
+ * and whether `all` was reserved are all registry's, and every one of them comes back as a
+ * violation with a message — so anything this reader refuses is a frame that could not have
+ * produced one.
+ */
 function declarationOf(frame: Frame): RoleDeclaration | null {
   const params = frame.params;
   const roles = typeof params === "object" && params !== null ? (params as Record<string, unknown>).roles : undefined;
   // §6: `{}` and an absent `roles` alike mean "no roles declared" — a declaration, not a
   // violation.
   if (roles === undefined) return {};
-  if (typeof roles !== "object" || roles === null || Array.isArray(roles)) return null;
-  for (const value of Object.values(roles)) {
-    if (!Array.isArray(value) || value.some((p) => typeof p !== "string")) return null;
+  if (!isPlainObject(roles)) return null;
+  for (const declared of Object.values(roles)) {
+    // The bare list IS the tools list (§20.3), so both spellings are read as one shape here
+    // — the normalization that STORES it is registry's, spelled once.
+    const families = Array.isArray(declared) ? { tools: declared } : declared;
+    if (!isPlainObject(families)) return null;
+    for (const patterns of Object.values(families)) {
+      if (!Array.isArray(patterns) || patterns.some((p) => typeof p !== "string")) return null;
+    }
   }
   return roles as RoleDeclaration;
+}
+
+/** A JSON object, as the wire can produce one — arrays and null excluded. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -1054,19 +1312,52 @@ function errorMemberOf(raw: unknown): JsonRpcResponse["error"] {
   return "data" in carrier ? { ...error, data: carrier.data } : error;
 }
 
-/** A `tools/list` answer's catalog, or null when the service answered with an error or
- *  with something that is not a tool list — either way the previous cache stands. A tool
- *  with no object inputSchema is not a Tool: sensitivePaths walks that schema, and a
- *  string there would be a walk over something the type says cannot happen. */
-function catalogOf(response: JsonRpcResponse): Tool[] | null {
+/**
+ * One list answer's catalog, or null when the service answered with an error or with
+ * something that is not a list at all — either way the previous cache stands (§20.5: a
+ * failure never empties one). MCP names the result member after the family in all four,
+ * `resources/templates/list` included, so the family's own name is the key.
+ *
+ * Entries are kept VERBATIM but not indiscriminately: one without the key its family is
+ * matched on (§20.2) names nothing any grant could cover, so caching it would only put a
+ * permanently unlistable row in front of every reader. A tool additionally needs its object
+ * inputSchema — sensitivePaths walks that schema, and a string there would be a walk over
+ * something the type says cannot happen.
+ */
+function catalogOf(response: JsonRpcResponse, family: CatalogFamily): Record<string, unknown>[] | null {
   const result = response.result;
   if (typeof result !== "object" || result === null) return null;
-  const tools = (result as { tools?: unknown }).tools;
-  if (!Array.isArray(tools)) return null;
-  return tools.filter(
-    (tool): tool is Tool =>
-      typeof tool?.name === "string" && typeof tool?.inputSchema === "object" && tool.inputSchema !== null,
+  const entries = (result as Record<string, unknown>)[family];
+  if (!Array.isArray(entries)) return null;
+  // The key registry matches this family on: an entry that does not carry it names nothing
+  // any grant could cover, so caching it would put a permanently unlistable row in front of
+  // every reader. Which patterns then match it is the gateway's question, not this one's.
+  const key = subjectKeyOf(family);
+  return entries.filter(
+    (entry) =>
+      typeof entry?.[key] === "string" &&
+      (family !== "tools" || (typeof entry.inputSchema === "object" && entry.inputSchema !== null)),
   );
+}
+
+/**
+ * A `server/discover` answer's declared families, or null for everything §6 reads as
+ * "capabilities unknown": an error reply — `-32601` from a library that predates the method,
+ * or any other code — and an answer carrying no capabilities object at all, which is no
+ * more legible than an error. Null and an answer that declared NOTHING are deliberately
+ * different facts: only the second one is the service undeclaring itself (§20.5).
+ *
+ * Filtered to §20.2's vocabulary, so a family the handshake cannot spell is never stored,
+ * never advertised, and never warmed.
+ */
+function declaredOf(response: JsonRpcResponse): ServiceCapability[] | null {
+  const result = response.result;
+  if (typeof result !== "object" || result === null) return null;
+  const claimed = (result as { capabilities?: unknown }).capabilities;
+  if (typeof claimed !== "object" || claimed === null) return null;
+  // The CLAIM alone: what a service says about listChanged or subscribe is not read here
+  // and never republished — §20.2 forces both false whatever the service claims.
+  return SERVICE_CAPABILITIES.filter((capability) => capability in claimed);
 }
 
 /** A JSON-RPC error reply, the only error object this module builds — §7's consumer wire

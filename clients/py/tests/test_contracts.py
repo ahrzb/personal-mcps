@@ -191,6 +191,30 @@ async def test_register_frame_matches_the_fixture_shape(registry) -> None:
         assert f'"{forbidden}"' not in json.dumps(emitted)
 
 
+async def test_register_roles_value_is_the_fixtures_declaration_verbatim(registry) -> None:
+    """§6/§20.3 · the roles VALUE the library sends is the fixture's own
+    declaration, both spellings intact — a bare pattern list beside a per-family
+    object, neither repaired on the way out.
+
+    The shape case above compares params KEYS, which a library that flattened
+    ``{"tools": ..., "prompts": ..., "resources": ...}`` to its tools would still
+    satisfy. The declaration comes from the FIXTURE, never from a constant here:
+    §20.3 gives the family vocabulary exactly one home and it is the hub's (§6),
+    so the only thing this library owes it is verbatim transmission — in whichever
+    of the two spellings the author chose, mixed across roles in one declaration if
+    that is what they wrote. This is the library half of contracts.test.ts's "a
+    shape change in either library fails here first": that case runs in workerd and
+    cannot import this package, so the judgement of a library against that value
+    happens on this side of the boundary."""
+    declared = _TUNNEL_FRAMES["register"]["request"]["params"]["roles"]
+    hub = await start_fake_hub()
+    transport = pmcp_client.HubTransport(hub.origin, TOKEN, declared)
+    registry.append((hub, transport))
+    await transport.__aenter__()
+    emitted = (await hub.next_frame(1)).message["params"]
+    assert emitted["roles"] == declared
+
+
 async def test_protocol_version_equals_the_fixture_revision(registry) -> None:
     """§6 · the protocolVersion the library sends is the fixture's pinned revision
     — a revision bump is an owner-run fixture commit, and this case is what makes

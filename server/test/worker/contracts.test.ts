@@ -18,6 +18,13 @@
 // to an ops key — total in both directions, so an op nobody can reach fails here too.
 // Directions A and B live where their other halves live (admin-ops, web-pages).
 //
+// AMENDED 2026-08-26 (§20.3): the tunnel-frames family's `roles` value gains the family
+// dimension, so this file now pins the role declaration's TWO spellings — a bare pattern
+// list beside a per-family object, in one declaration — where all four copies of that shape
+// meet: the register frame both client libraries emit, the validation §6 judges it by, and
+// §8's canonical READ, which is a separate decision from how storage normalizes it and is
+// what `pmcp diff`'s stability rests on.
+//
 // PROJECT: `worker` — real D1, every sibling real, no sockets. Correct because eight of
 // the nine families are HTTP or in-process emissions (a whoami response, a JSON-RPC error
 // object, a handshake answer, an ops schema, a D1-backed row, a recorded audit body) and
@@ -43,6 +50,7 @@ import { adminBackend, ops } from "../../src/admin";
 import type { AdminOp } from "../../src/admin";
 import { query } from "../../src/audit";
 import type { AuditRow, BodyStub } from "../../src/audit";
+import { CAPABILITY_SHAPE } from "../../src/gateway";
 import type { JsonRpcRequest, JsonRpcResponse, Tool } from "../../src/gateway";
 import {
   AUDIT_BODY_CAP_BYTES,
@@ -51,7 +59,7 @@ import {
   ROLE_PATTERNS_MAX,
 } from "../../src/limits";
 import { tokenPattern } from "../../src/principal";
-import { PMCP_SLUG, Registry } from "../../src/registry";
+import { PMCP_SLUG, Registry, ROLE_FAMILIES as SERVER_ROLE_FAMILIES } from "../../src/registry";
 import type { Service } from "../../src/registry";
 import { CODES } from "../../src/errors";
 import {
@@ -80,11 +88,12 @@ import { COMMANDS } from "../../../cli/src/commands";
 import {
   parseDesired,
   planChanges,
+  ROLE_FAMILIES as PLANNER_ROLE_FAMILIES,
   ROLE_NAME_MAX_LENGTH as PLANNER_ROLE_NAME_MAX_LENGTH,
   ROLE_PATTERN_MAX_LENGTH as PLANNER_ROLE_PATTERN_MAX_LENGTH,
   ROLE_PATTERNS_MAX as PLANNER_ROLE_PATTERNS_MAX,
 } from "../../../cli/src/plan";
-import type { CurrentService, PlanStep } from "../../../cli/src/plan";
+import type { CurrentService, PlanStep, RoleDeclaration } from "../../../cli/src/plan";
 import type { BootstrapRequest, BootstrapResponse } from "../../../scripts/users";
 
 /**
@@ -194,7 +203,7 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
   {
     file: "contracts/initialize.json",
     spec: "§7",
-    emission: "the initialize result POST /<user>/mcp really answers a live pmcp_sa_ key — protocolVersion, capabilities, serverInfo — beside the request a compliant client opens with, whose protocolVersion is read off the hub's own server/discover rather than transcribed",
+    emission: "the initialize result POST /<user>/mcp really answers a live pmcp_sa_ key — protocolVersion, capabilities, serverInfo — beside the request a compliant client opens with, whose protocolVersion is read off the hub's own server/discover rather than transcribed, and beside gateway's CAPABILITY_SHAPE: the per-family objects the SCOPED handshake derives its answer from, which is where a consumer meets resources and completions",
     consumers: [],
     producer: "worker",
   },
@@ -211,7 +220,7 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
   {
     file: "contracts/tunnel-frames.json",
     spec: "§6/§7",
-    emission: "the hub/register REQUEST shape the DO accepts — HUB_METHODS.register plus the params keys it reads (clientVersion, protocolVersion, roles) and the wire revision it speaks, with no service or slug field ever — beside the ack and hub/replaced notification the DO emits, named by the same exported HUB_METHODS, plus the forwarded-call _meta key names (hub/principal, hub/roles, the mirrored clientCapabilities)",
+    emission: "the hub/register REQUEST shape the DO accepts — HUB_METHODS.register plus the params keys it reads (clientVersion, protocolVersion, roles, the last carrying §20.3's two spellings in one declaration: a bare pattern list beside a per-family object) and the wire revision it speaks, with no service or slug field ever — beside the ack and hub/replaced notification the DO emits, named by the same exported HUB_METHODS, plus the forwarded-call _meta key names (hub/principal, hub/roles, the mirrored clientCapabilities)",
     consumers: ["clients/js", "clients/py"],
     producer: "worker",
   },
@@ -453,6 +462,46 @@ const FIXTURE_TUNNEL = "contracts-tunnel";
 const FIXTURE_PROXY = "contracts-proxy";
 const FIXTURE_TOOL = "search";
 
+/**
+ * §20.3's role declaration, in the TWO spellings one `hub/register` may mix: a bare
+ * pattern list — which means tools, forever, so every service in the field keeps
+ * registering unchanged — and the per-family object. Spelled once here because three
+ * surfaces read it: the tunnel-frames emission (the wire shape both client libraries copy
+ * with no shared declaration), the acceptance case, and the canonical-read case. A second
+ * spelling among them is exactly the drift this directory exists to catch.
+ *
+ * The multi-family role names all three families deliberately. §20.3 does not say whether
+ * the canonical form fills an ABSENT family with `[]`, and a declaration that left one out
+ * would make this file the place that guessed.
+ */
+const FIXTURE_TOOLS_ONLY_ROLE = "reader";
+const FIXTURE_MULTI_FAMILY_ROLE = "curator";
+const FIXTURE_ROLE_DECLARATION = {
+  [FIXTURE_TOOLS_ONLY_ROLE]: [FIXTURE_TOOL],
+  [FIXTURE_MULTI_FAMILY_ROLE]: {
+    tools: ["publish"],
+    prompts: ["digest_.*"],
+    resources: ["news://feed/*"],
+  },
+};
+
+/**
+ * A role whose MEANING is tools-only but whose SPELLING is the per-family object — the
+ * "whichever spelling registered it" half of §20.3's canonical read shape, and the only
+ * way to tell a read that renders meaning from one that renders history.
+ */
+const SPELLED_TOOLS_ONLY_ROLE = "publisher";
+
+/**
+ * §20.3's family vocabulary, read off the fixture's OWN multi-family role — which names all
+ * three deliberately (see above). Derived rather than transcribed because a literal here
+ * would be a third copy beside registry's `ROLE_FAMILIES` and the planner's, and a
+ * validator that hand-copies the vocabulary it is validating checks only that this file
+ * agrees with itself. The fixture is the one home; the case below locks both
+ * implementations to it.
+ */
+const ROLE_FAMILIES = Object.keys(FIXTURE_ROLE_DECLARATION[FIXTURE_MULTI_FAMILY_ROLE]);
+
 /** An obviously fake service credential — the wrong KIND for every consumer surface, which
  *  is the whole point of the whoami 401 row. */
 const FAKE_SERVICE_TOKEN = "pmcp_svc_FAKE0000-not-a-consumer-credential";
@@ -587,6 +636,14 @@ async function initializeEmission(): Promise<unknown> {
       ...answered,
       serverInfo: pinTypes(answered.serverInfo as Record<string, unknown>, ["version"]),
     },
+    // The SCOPED handshake's other half (§20.2), emitted from gateway's own constant the
+    // way tunnel-frames is emitted from HUB_METHODS. `result.capabilities` above is the
+    // AGGREGATED answer and carries two families; a scoped endpoint derives its object
+    // from what the hub stores for that service, so a consumer meets `resources` (with a
+    // `subscribe` key that appears nowhere else) and `completions` there. Both shapes are
+    // one decision — CAPABILITY_SHAPE — and a directory that pinned only the first would
+    // send an implementer to gateway.ts to learn the rest.
+    scopedCapabilities: CAPABILITY_SHAPE,
   };
 }
 
@@ -685,8 +742,13 @@ async function captureErrors(): Promise<ErrorsWorld> {
       const unavailable = errorOf(await as(FIXTURE_TUNNEL, callMessage(FIXTURE_TOOL)));
       const archived = errorOf(await as(`${FIXTURE_TUNNEL}-archived`, callMessage(FIXTURE_TOOL)));
       const approval = errorOf(await as(gated, callMessage(FIXTURE_TOOL)));
+      // -32601 is sourced from a method §20.1 puts OUT OF SCOPE, not from one nobody had
+      // implemented yet: `resources/list` used to answer this row and stopped the day §20.2
+      // implemented it, which is how a fixture starts pinning a code no surface still emits.
+      // `subscriptions/listen` is refused on both endpoint shapes by decision, so this row
+      // keeps its meaning when the next family lands.
       const methodNotFound = errorOf(
-        await as(FIXTURE_PROXY, { jsonrpc: "2.0", id: 1, method: "resources/list" }),
+        await as(FIXTURE_PROXY, { jsonrpc: "2.0", id: 1, method: "subscriptions/listen" }),
       );
       // The two -32001 causes, side by side: a tool the grant does not cover, and a name
       // that names no service at all on the aggregated shape.
@@ -743,15 +805,20 @@ async function tunnelFramesEmission(): Promise<unknown> {
     // frame" test is a set membership over exactly this.
     methods: { ...HUB_METHODS },
     register: {
-      // The request the DO ACCEPTS. `roles` is `{}` because an empty declaration is a
-      // declaration (§6); the client's own version string varies, so its TYPE is pinned.
+      // The request the DO ACCEPTS. `roles` carries §20.3's two spellings in ONE
+      // declaration — the family dimension is a shape both client libraries copy, so the
+      // fixture has to SHOW it rather than merely leave room for it. (Before 2026-08-26
+      // this was `{}`, on the reasoning that an empty declaration is a declaration (§6);
+      // that stays true and is pinned where it is observable — both libraries send `{}`
+      // through unchanged when the author declares none.) The client's own version string
+      // varies, so its TYPE is pinned.
       request: {
         jsonrpc: "2.0",
         method: HUB_METHODS.register,
         params: {
           clientVersion: TYPE_TOKEN.string,
           protocolVersion: revision,
-          roles: {},
+          roles: FIXTURE_ROLE_DECLARATION,
         },
       },
       // §6's sharpest privilege rule as data: identity comes exclusively from the token,
@@ -1161,8 +1228,12 @@ describe("§4 · the MCP handshake — the shape every consumer meets first", ()
   }, CASE_BUDGET_MS);
 
   it("§7 · initialize.json advertises the tools capability with listChanged FALSE — a stateless endpoint holds no session to notify, so a client that subscribed would wait forever; the same object server/discover publishes, never a second spelling of it", async () => {
-    const pinned = fixture(INITIALIZE).result as { capabilities: unknown };
-    expect(pinned.capabilities).toEqual({ tools: { listChanged: false } });
+    const pinned = fixture(INITIALIZE).result as { capabilities: Record<string, unknown> };
+    // The TOOLS member, which is this case's own sentence. §20.2 put `prompts` beside it
+    // (both `listChanged: false`, for the reason this title states); the whole capability
+    // set, byte-for-byte, is the §20.2 row below — one owner per claim, so a family added
+    // to the aggregated answer fails exactly one case and it is the one that says so.
+    expect(pinned.capabilities.tools).toEqual({ listChanged: false });
     // The hub's two published answers agree, because one constant serves both (§7).
     const discovered = await inNamespace(
       { accounts: [{ slug: FIXTURE_ACCOUNT, tokens: [{ as: "key" }] }] },
@@ -1188,6 +1259,28 @@ describe("§4 · the MCP handshake — the shape every consumer meets first", ()
     const declared = (fixture(INITIALIZE).request as { params: { clientInfo: Record<string, unknown> } })
       .params.clientInfo;
     expect(declared).toEqual({ name: TYPE_TOKEN.string, version: TYPE_TOKEN.string });
+  });
+
+  it("§7/§20.2 · contracts/initialize.json pins the aggregated answer byte-for-byte: tools and prompts, listChanged false, no resources and no completions", () => {
+    const pinned = (fixture(INITIALIZE).result as { capabilities: Record<string, unknown> }).capabilities;
+    // §20.2's aggregated constant, WHOLE: two families and no third, both unable to notify.
+    // It stays a constant — and therefore stays a fixture — because an empty `prompts/list`
+    // is a legal answer and composing a union across the namespace could only ever tell a
+    // consumer to expect nothing (the intersection it sidesteps would let one tools-only
+    // service suppress every other service's prompts).
+    expect(pinned).toEqual({ tools: { listChanged: false }, prompts: { listChanged: false } });
+    // `listChanged: false` on both is not decoration: server→consumer notifications are
+    // deferred with `subscriptions/listen` (§20.1), and a declared listChanged would make a
+    // Claude Code client open a listen stream, take -32601, and burn its reopen budget for
+    // the rest of the day. Never declare a capability the transport cannot honor.
+    for (const family of Object.values(pinned)) expect(family).toEqual({ listChanged: false });
+    // The two families §18 decision 26 keeps OFF this endpoint shape: a URI cannot take a
+    // `<slug>_` prefix and still be the URI the service knows, so `resources/*` and
+    // `completion/complete` answer -32601 here — and a handshake must not promise what the
+    // door refuses.
+    for (const absent of ["resources", "completions"]) {
+      expect(Object.keys(pinned), `the aggregated handshake promised ${absent}`).not.toContain(absent);
+    }
   });
 });
 
@@ -1555,6 +1648,129 @@ describe("§4 · tunnel frames and close codes", () => {
     expect(meta.filter((key) => key.startsWith("hub/"))).toHaveLength(2);
   });
 });
+
+/**
+ * §20.3's role declaration where every copy of it meets: the `hub/register` frame both
+ * client libraries emit, the validation §6 judges it by, and §8's canonical READ — the
+ * shape `pmcp diff` plans against, which storage being normalized does not by itself
+ * decide.
+ */
+describe("§4 · the roles wire — one language, three keyspaces", () => {
+  it("§6/§20.3 · tunnel-frames' register frame accepts a bare pattern list and a per-family object in the same declaration", async () => {
+    const declared = registerRoles(fixture(TUNNEL_FRAMES));
+    // Both spellings ride ONE declaration (§20.3's own example): mixing them across roles
+    // is legal, which is what makes "every service in the field keeps registering
+    // unchanged" and "a role may span three keyspaces" the same sentence rather than two
+    // wire revisions.
+    expect(declared[FIXTURE_TOOLS_ONLY_ROLE]).toEqual(FIXTURE_ROLE_DECLARATION[FIXTURE_TOOLS_ONLY_ROLE]);
+    expect(declared[FIXTURE_MULTI_FAMILY_ROLE]).toEqual(FIXTURE_ROLE_DECLARATION[FIXTURE_MULTI_FAMILY_ROLE]);
+    // "Accepts" is the HUB's answer and not this file's: §8 gives a proxied service's role
+    // definitions exactly the `hub/register` validation §6 pins, so the declaration a
+    // socket would be judged by is judged here, without one. A violation throws.
+    const stored = await roundTripRoles(declared);
+    // The VALUE, not the key set. A hub that took the declaration and then dropped the
+    // family dimension — flattening `curator` to its tools, or discarding the `prompts` and
+    // `resources` keys it had never heard of — leaves exactly the same role NAMES behind and
+    // would satisfy a key comparison while accepting nothing this row is about. §20.3 makes
+    // the two spellings ONE declaration after normalization, so the prompt and resource
+    // patterns have to survive storage to have been accepted at all. The fixture's
+    // declaration is already canonical (the tools-only role spelled bare, the multi-family
+    // one spelled as the object), so §8's read owes it back unchanged.
+    expect(stored).toEqual(declared);
+  }, CASE_BUDGET_MS);
+
+  it("§6/§20.3 · the contract fixture pins both role spellings — a shape change in either library fails here first", async () => {
+    const declared = registerRoles(fixture(TUNNEL_FRAMES));
+    const values = Object.values(declared);
+    // A bare list, still a list — the spelling every deployed service registers with, and
+    // the one an older CLI typed `Record<string, string[]>` stays correct for.
+    expect(values.filter((value) => Array.isArray(value))).not.toEqual([]);
+    // …beside a per-family object keyed only by §20.3's families, each holding a pattern
+    // list. Pinned by its KEYS rather than by either library's type, because the copies
+    // stay copies (§4) — there is no shared declaration to rename.
+    const objects = values.filter(
+      (value) => !Array.isArray(value) && typeof value === "object" && value !== null,
+    ) as Record<string, unknown>[];
+    expect(objects).not.toEqual([]);
+    for (const object of objects) {
+      expect(Object.keys(object)).not.toEqual([]);
+      for (const [family, patterns] of Object.entries(object)) {
+        expect(ROLE_FAMILIES, `"${family}" is not one of §20.3's families`).toContain(family);
+        expect(Array.isArray(patterns), `"${family}" holds no pattern list`).toBe(true);
+      }
+    }
+    // …and the fixture is the EMISSION's, never a hand-edit: what a library copies and
+    // what the hub accepts are one value, which is the whole mechanism (§4).
+    expect(declared).toEqual(registerRoles((await emitted(TUNNEL_FRAMES)) as Record<string, unknown>));
+    // WHERE THE LIBRARY HALF LIVES (recorded 2026-08-26, reconciliation): "a shape change in
+    // either library fails here" cannot be asserted from workerd — both libraries are Node
+    // packages (`ws`, `websockets`) and neither is importable in this project. So the half
+    // that judges a library lives where the copies do: the fixture's own
+    // `register.request.params.roles` is handed to HubTransport and deep-equalled against the
+    // frame the fake hub observes, in clients/js/test/contracts-consumer.test.ts and
+    // clients/py/tests/test_contracts.py. A library that flattened the per-family object to
+    // its tools, or lifted the bare list into one, fails there against THIS value. What this
+    // case owns is the value itself: the fixture really carries both spellings, keyed only by
+    // §20.3's families, so there is one declaration for those two rows to be measured by.
+  }, CASE_BUDGET_MS);
+
+  it("§8/§20.3 · service_get renders a tools-only role as a bare list and a multi-family role as the per-family object — the canonical read shape, whichever spelling registered it", async () => {
+    const rendered = await roundTripRoles({
+      // Registered as a bare list…
+      [FIXTURE_TOOLS_ONLY_ROLE]: [FIXTURE_TOOL],
+      // …and the same MEANING registered as an object. Both render the bare list, which is
+      // what makes the read a function of meaning rather than of history: always rendering
+      // the object would diff every YAML file written before §20.3 landed, and rendering
+      // whichever spelling registered would make `pmcp diff` stable or noisy by accident.
+      [SPELLED_TOOLS_ONLY_ROLE]: { tools: ["publish"] },
+      [FIXTURE_MULTI_FAMILY_ROLE]: FIXTURE_ROLE_DECLARATION[FIXTURE_MULTI_FAMILY_ROLE],
+    });
+    expect(rendered).toEqual({
+      [FIXTURE_TOOLS_ONLY_ROLE]: [FIXTURE_TOOL],
+      [SPELLED_TOOLS_ONLY_ROLE]: ["publish"],
+      // Not tools-only, so the object survives — the other direction of the same rule,
+      // without which "render the bare list" would be satisfied by flattening everything.
+      [FIXTURE_MULTI_FAMILY_ROLE]: FIXTURE_ROLE_DECLARATION[FIXTURE_MULTI_FAMILY_ROLE],
+    });
+  }, CASE_BUDGET_MS);
+});
+
+/** The `roles` value a register frame carries — read the same way out of the fixture and
+ *  out of a live capture, so the two cases above cannot compare different subtrees. */
+function registerRoles(frames: Record<string, unknown>): Record<string, unknown> {
+  return (frames.register as { request: { params: { roles: Record<string, unknown> } } }).request.params
+    .roles;
+}
+
+/**
+ * One proxied service created with `declaration` and read straight back — the roles wire's
+ * two halves in one call, both through production seams.
+ *
+ * Acceptance is `service_create`'s: §8 gives a proxied service's role definitions "the same
+ * validation as `hub/register`" (§6), so the declaration a socket would be judged by is
+ * judged here without one — and a violating declaration throws rather than returning, which
+ * is what lets the acceptance case assert acceptance by simply reading the row back. The
+ * read is `service_get`'s, which §8 pins as the canonical form §20.3 defines.
+ *
+ * `declaration` is `unknown` on purpose: the per-family spelling is the thing under test,
+ * and typing this parameter against the server's own RoleDeclaration would make the case
+ * unwritable until that type widens — a compile error where the oracle wants a behavioral
+ * one.
+ */
+async function roundTripRoles(declaration: unknown): Promise<Record<string, unknown>> {
+  return inNamespace({}, async (ns) => {
+    await ops.service_create.handler(ns.owner.userId, {
+      slug: FIXTURE_PROXY,
+      kind: "proxy",
+      endpoint: upstreamUrlFor(healthyUpstream()),
+      roles: declaration,
+    });
+    const read = (await ops.service_get.handler(ns.owner.userId, { slug: FIXTURE_PROXY })) as {
+      service: { roles: Record<string, unknown> };
+    };
+    return read.service.roles;
+  });
+}
 
 /** One close-code entry as the fixture carries it. */
 type CloseEntry = { kind: string; code: number; behavior: string; schedule?: string };
@@ -1946,7 +2162,7 @@ describe("§4 direction C · planner steps → ops", () => {
 });
 
 describe("§9 · the planner's copy of the role-declaration rules", () => {
-  it("§6/§9 · the caps cli/src/plan.ts validates a proxy `roles:` block against are limits.ts's, by name — the planner's early refusal exists so `pmcp apply` never dies mid-plan, and a copy that drifted low would call a file valid that the hub then rejects AFTER the destructive delete phase has run", () => {
+  it("§6/§9 · the caps cli/src/plan.ts validates a proxy `roles:` block against are limits.ts's, by name — the planner's early refusal exists so `pmcp apply` never dies mid-plan, and a copy that drifted low would call a file valid that the hub then rejects AFTER the destructive delete phase has run", async () => {
     // plan.ts deliberately re-implements registry.validateRoles rather than importing it
     // (§9: the planner never depends on the server, which is why the fixtures exist at
     // all). A second implementation is only safe with a lock, and this case is it — the
@@ -1954,6 +2170,12 @@ describe("§9 · the planner's copy of the role-declaration rules", () => {
     expect(PLANNER_ROLE_NAME_MAX_LENGTH).toBe(ROLE_NAME_MAX_LENGTH);
     expect(PLANNER_ROLE_PATTERN_MAX_LENGTH).toBe(ROLE_PATTERN_MAX_LENGTH);
     expect(PLANNER_ROLE_PATTERNS_MAX).toBe(ROLE_PATTERNS_MAX);
+    // The family VOCABULARY is a rule of exactly the same kind and needs the same lock:
+    // add a family to registry.ROLE_FAMILIES without this line and the whole suite stays
+    // green while `pmcp diff` hard-errors on a legal file with `"x" is not a role family`.
+    // Both copies answer to the fixture's own declaration, never to each other.
+    expect([...SERVER_ROLE_FAMILIES]).toEqual(ROLE_FAMILIES);
+    expect([...PLANNER_ROLE_FAMILIES]).toEqual(ROLE_FAMILIES);
     // …and the copy still refuses what the server would: a declaration one pattern over
     // the shared cap is a hard error in the plan, not a call the hub gets to reject.
     const overCap = planChanges(
@@ -1969,18 +2191,98 @@ describe("§9 · the planner's copy of the role-declaration rules", () => {
       { services: [], accounts: [] },
     );
     expect(overCap.errors.length).toBeGreaterThan(0);
-  });
+
+    // §20.3's canonical READ beside the planner's canonical COMPARE — the second copied
+    // rule in this pair, and the one whose drift is silent rather than loud: a planner that
+    // canonicalizes differently from the hub's read plans `service_update` on every run, so
+    // `pmcp diff` never comes back clean and `pmcp apply` never converges. The table is the
+    // declarations whose spelling and canonical form differ, empty families included —
+    // `docs: {tools: [publish], prompts: []}` and the bare `docs: {}` placeholder are files
+    // an owner plausibly writes, and neither is covered by the two spellings alone.
+    const declared: RoleDeclaration = {
+      bare: ["publish"],
+      spelled: { tools: ["publish"] },
+      trailing: { tools: ["publish"], prompts: [] },
+      placeholder: {},
+      hollow: { tools: [], prompts: [] },
+      spanning: { tools: ["publish"], prompts: ["digest_.*"], resources: [] },
+    };
+    // The hub's half of the table: what §8's read renders each declaration back as. An
+    // empty family is a family not declared, in every row — which is why the first five
+    // collapse and only the genuinely multi-family one keeps the object.
+    const rendered = (await roundTripRoles(declared)) as RoleDeclaration;
+    expect(rendered).toEqual({
+      bare: ["publish"],
+      spelled: ["publish"],
+      trailing: ["publish"],
+      placeholder: [],
+      hollow: [],
+      spanning: { tools: ["publish"], prompts: ["digest_.*"], resources: [] },
+    });
+    // …and the planner's half: the file that WROTE those declarations, diffed against the
+    // hub's rendering of them, plans nothing at all.
+    const endpoint = "https://mcp.notion.com/mcp";
+    const current: CurrentService = {
+      slug: FIXTURE_PROXY,
+      kind: "proxy",
+      name: FIXTURE_PROXY,
+      description: "",
+      archived: false,
+      builtin: false,
+      roles: rendered,
+      redact: {},
+      redactResults: {},
+      logBodies: false,
+      endpoint,
+      auth: "headers",
+      forwardIdentity: false,
+    };
+    const settled = planChanges(
+      parseDesired({ services: { [FIXTURE_PROXY]: { kind: "proxy", endpoint, roles: declared } } }),
+      { services: [current], accounts: [] },
+    );
+    expect(settled.errors).toEqual([]);
+    expect(settled.steps).toEqual([]);
+  }, CASE_BUDGET_MS);
 });
+
+/**
+ * The MCP methods a CLI command may front INSTEAD of an admin op — §7's tool surface plus
+ * §20.6's four data-model commands. Gateway sugar, not a capability of its own: any agent
+ * holding the same token calls these directly, which is why §8's parity list is untouched
+ * by them and why they are not exceptions to it.
+ *
+ * Spelled here because gateway.ts's dispatch table is a `switch` and not a value — and that
+ * is a GAP, not a lock (finding, recorded 2026-08-26 rather than worked around). A literal
+ * in this file cannot fail when the hub stops routing one of these names, so a CLI row
+ * fronting a method §20.1 puts out of scope (`logging/setLevel`) ships green on one added
+ * line here. What the two cases below really assert is the CLASSIFICATION — an op, a
+ * gateway method, or a pinned exception — and the routing half is witnessed one file over,
+ * by order.table.test.ts's per-method rows. Closing the gap is FINDINGS 2's own precedent
+ * applied once more: gateway.ts publishing its consumer-facing method vocabulary as a value,
+ * this list becoming an assertTotalMapping against it with `completion/complete` — §20.6's
+ * one deliberately unfronted method — as the named exception. That export is
+ * `server/src/gateway.ts`'s to make, not this file's.
+ */
+const GATEWAY_METHODS = [
+  "tools/list",
+  "tools/call",
+  "prompts/list",
+  "prompts/get",
+  "resources/list",
+  "resources/templates/list",
+  "resources/read",
+];
 
 describe("§4 direction D · CLI subcommands → ops", () => {
   it("§4 · every non-auth CLI subcommand maps to an ops key", () => {
     for (const command of COMMANDS) {
       if (command.exception === "auth") continue;
-      // Either it fronts admin ops, or it fronts the gateway method that IS the tool
-      // surface (`pmcp tools` / `pmcp call`) — nothing else is a legal row.
+      // Either it fronts admin ops, or it fronts a gateway method that IS the consumer
+      // surface (`pmcp tools` / `pmcp call`, and §20.6's four) — nothing else is a legal row.
       if (command.ops.length === 0) {
         expect(command.method, `${command.name} fronts neither an op nor an MCP method`).toBeDefined();
-        expect(["tools/list", "tools/call"], command.name).toContain(command.method);
+        expect(GATEWAY_METHODS, command.name).toContain(command.method);
         continue;
       }
       for (const op of command.ops) expect(Object.keys(ops), `${command.name} → ${op}`).toContain(op);
@@ -2016,6 +2318,32 @@ describe("§4 direction D · CLI subcommands → ops", () => {
     expect(connections?.ops).toEqual(["connection_list"]);
     expect(revoke?.ops).toEqual(["connection_revoke"]);
     expect(Object.keys(ops)).toEqual(expect.arrayContaining(["connection_list", "connection_revoke"]));
+  });
+
+  it("§8 parity D · pmcp prompts/prompt/resources/read front MCP methods, not admin ops — the parity table classifies them like tools/call", () => {
+    // §20.6: all four are gateway sugar of the kind `tools`/`call` already are. That
+    // classification is the whole claim — an admin op for them would put a second,
+    // hub-side front on a method the caller's own token already reaches, and an EXCEPTION
+    // for them would say the CLI can do something no agent can, which is the sentence §8's
+    // parity invariant exists to keep false.
+    const fronted = {
+      prompts: "prompts/list",
+      prompt: "prompts/get",
+      resources: "resources/list",
+      read: "resources/read",
+    };
+    for (const [name, method] of Object.entries(fronted)) {
+      const command = COMMANDS.find((entry) => entry.name === name);
+      expect(command, `the CLI table has no "${name}" row`).toBeDefined();
+      expect(command?.ops, `"${name}" fronts an admin op`).toEqual([]);
+      expect(command?.method, `"${name}" fronts the wrong method`).toBe(method);
+      expect(command?.exception, `"${name}" was made a parity exception`).toBeUndefined();
+      expect(GATEWAY_METHODS, method).toContain(method);
+    }
+    // …and no op appeared to front them: the four are reachable through the gateway alone.
+    for (const method of Object.values(fronted)) {
+      expect(Object.keys(ops), `${method} grew an admin op`).not.toContain(method.replace("/", "_"));
+    }
   });
 
   it("§8 parity · /oauth/consent is a pinned parity exception and has no admin op", () => {

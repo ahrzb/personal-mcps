@@ -46,9 +46,9 @@
 // the observation log, RFC 9728 / RFC 8414 discovery on both hosts, and the adversarial
 // authorization server (authorize, token, refresh, DCR) with its real S256 check.
 //
-// deps: crypto.subtle (real SHA-256 for S256) · fetch Request/Response · gateway.Tool (shape only) · upstream.UpstreamFailureClass (vocabulary only) — no hub module at runtime, no MCP SDK
+// deps: crypto.subtle (real SHA-256 for S256) · fetch Request/Response · gateway.Tool/Prompt/Resource/ResourceTemplate (shape only) · upstream.UpstreamFailureClass (vocabulary only) — no hub module at runtime, no MCP SDK
 
-import type { Tool } from "../../src/gateway";
+import type { Prompt, Resource, ResourceTemplate, Tool } from "../../src/gateway";
 import type { UpstreamFailureClass } from "../../src/upstream";
 
 /**
@@ -127,6 +127,18 @@ export type UpstreamScenario = {
   tools?: Tool[];
   /** Answered to `tools/call`; a `resultType: "input_required"` value drives the proxied MRTR leg. */
   result?: unknown;
+  /** §20.2 — served from `prompts/list`. */
+  prompts?: Prompt[];
+  /** §20.2 — answered to `prompts/get`; the family's analogue of `result`. */
+  promptResult?: unknown;
+  /** §20.2 — served from `resources/list`. */
+  resources?: Resource[];
+  /** §20.2 — served from `resources/templates/list`. */
+  resourceTemplates?: ResourceTemplate[];
+  /** §20.2 — answered to `resources/read`. */
+  readResult?: unknown;
+  /** §20.2 — answered to `completion/complete`. */
+  completionResult?: unknown;
   /**
    * Answered to `tools/call` INSTEAD of `result` — a well-formed JSON-RPC `error` object.
    * A separate field rather than a mode because it is not a failure of this upstream at
@@ -285,8 +297,16 @@ export async function outboundRouter(request: Request): Promise<Response> {
     if (url.pathname.startsWith(`${OBSERVATION_PATH}/`)) {
       return json(observations.get(url.pathname.slice(OBSERVATION_PATH.length + 1)) ?? []);
     }
-    const scenario = decodeSegment<UpstreamScenario>(url, SCENARIO_PATH);
-    if (scenario === null) return unknownScenario(url);
+    if (url.pathname.startsWith(`${OVERRIDE_PATH}/`)) {
+      return registerOverrideRequest(url, request);
+    }
+    const decoded = decodeSegment<UpstreamScenario>(url, SCENARIO_PATH);
+    if (decoded === null) return unknownScenario(url);
+    // §20.2's per-family payloads can be large enough to blow a real request line if they
+    // rode the URL like the rest of a scenario (HTTP 431) — registerOverride's one
+    // customer. Absent for every scenario that never registered one, so nothing about the
+    // pre-§20 URL-encoding path changes for a fixture that does not need this.
+    const scenario = { ...decoded, ...overrides.get(decoded.id) };
     // The two discovery documents a PROTECTED RESOURCE serves, ahead of the MCP endpoint
     // because they are not MCP: RFC 9728's protected-resource metadata, and — for the
     // `no_prm` persona, whose whole point is that the first document is missing — the RFC
@@ -393,6 +413,40 @@ async function handleUpstream(request: Request, scenario: UpstreamScenario): Pro
   const id = (message.id ?? null) as string | number | null;
   if (message.method === "tools/list") {
     return json({ jsonrpc: "2.0", id, result: { tools: scenario.tools ?? [], resultType: "complete" } });
+  }
+  // §20.2's three listing methods — each answers ITS OWN key, never `tools`', so a fixture
+  // that only ever set `tools` cannot accidentally satisfy a prompts/resources assertion.
+  if (message.method === "prompts/list") {
+    return json({ jsonrpc: "2.0", id, result: { prompts: scenario.prompts ?? [], resultType: "complete" } });
+  }
+  if (message.method === "resources/list") {
+    return json({ jsonrpc: "2.0", id, result: { resources: scenario.resources ?? [], resultType: "complete" } });
+  }
+  if (message.method === "resources/templates/list") {
+    return json({
+      jsonrpc: "2.0",
+      id,
+      result: { resourceTemplates: scenario.resourceTemplates ?? [], resultType: "complete" },
+    });
+  }
+  // §20.2's two reads and its one relay method — each answers its OWN result field, same
+  // `error`-first rule as `tools/call` below (a well-formed JSON-RPC error is a RESPONSE,
+  // not a failure of this upstream, §7).
+  if (message.method === "prompts/get") {
+    if (scenario.error !== undefined) return json({ jsonrpc: "2.0", id, error: scenario.error });
+    return json({ jsonrpc: "2.0", id, result: scenario.promptResult ?? { messages: [] } });
+  }
+  if (message.method === "resources/read") {
+    if (scenario.error !== undefined) return json({ jsonrpc: "2.0", id, error: scenario.error });
+    return json({ jsonrpc: "2.0", id, result: scenario.readResult ?? { contents: [] } });
+  }
+  if (message.method === "completion/complete") {
+    if (scenario.error !== undefined) return json({ jsonrpc: "2.0", id, error: scenario.error });
+    return json({
+      jsonrpc: "2.0",
+      id,
+      result: scenario.completionResult ?? { completion: { values: [] } },
+    });
   }
   // A well-formed JSON-RPC error is a RESPONSE, not a failure of this upstream — §7 has
   // the hub relay it verbatim, which is the boundary the bad_body modes are drawn against.
@@ -673,6 +727,41 @@ export async function readObservations(scenarioId: string): Promise<UpstreamObse
 }
 
 /**
+ * Registers scenario fields OUT of the URL, over the wire on this fake's own control path
+ * — `readObservations`'s write-side twin, and for the identical reason: the router shares
+ * no memory with the test. It exists for exactly the payload the URL-encoding scheme
+ * cannot carry — §20.2's per-family answers can be large enough that base64-encoding them
+ * INTO a request line trips a real HTTP 431 (a request-line-too-large error every proxy
+ * and runtime enforces, workerd's `fetch` included), which is a fact about HTTP the
+ * scenario's SIZE decides, not about anything the code under test does wrong. A caller
+ * that expects a large answer keeps its URL-encoded scenario minimal (an id and a mode
+ * suffice to route) and registers the bulky fields here before its first request; a
+ * scenario that never calls this reads exactly as it always has, fields riding the URL.
+ * Merged OVER the URL-encoded scenario at request time, so a registered field wins.
+ */
+export async function registerOverride(scenarioId: string, fields: Partial<UpstreamScenario>): Promise<void> {
+  // deps: fetch (control path on UPSTREAM_HOST)
+  await fetch(`https://${UPSTREAM_HOST}${OVERRIDE_PATH}/${scenarioId}`, {
+    method: "POST",
+    body: JSON.stringify(fields),
+  });
+}
+
+/** The override request itself: stores the posted fields, keyed by scenario id, and
+ *  answers 204 — nothing about it is observed, since it carries no fact about the code
+ *  under test (unlike an MCP dial or a discovery request). */
+async function registerOverrideRequest(url: URL, request: Request): Promise<Response> {
+  const id = url.pathname.slice(OVERRIDE_PATH.length + 1);
+  const body = (await request.text().catch(() => "")) || "{}";
+  overrides.set(id, (parseJson(body) as Partial<UpstreamScenario> | null) ?? {});
+  return new Response(null, { status: 204 });
+}
+
+/** Scenario field overrides registered via `registerOverride`, keyed by scenario id — the
+ *  same module-level, per-file-isolated store `observations` already is, for the write side. */
+const overrides = new Map<string, Partial<UpstreamScenario>>();
+
+/**
  * The mapping this harness claims to cover, as a type rather than a comment: every
  * `UpstreamFailureClass` the production vocabulary names, and the mode or quirk that
  * produces it. Exhaustive by construction — adding a class to upstream.ts without a way
@@ -692,10 +781,11 @@ export type FailureClassSource = Record<
 
 // ── the URL grammar and the observation log ───────────────────────────────────────────
 
-/** The three path prefixes the router dispatches on. */
+/** The four path prefixes the router dispatches on. */
 const SCENARIO_PATH = "/s";
 const AS_PATH = "/as";
 const OBSERVATION_PATH = "/_obs";
+const OVERRIDE_PATH = "/_override";
 
 /**
  * The two discovery documents, at the EXACT path each RFC puts them: the well-known segment

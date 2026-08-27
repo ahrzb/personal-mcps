@@ -56,17 +56,21 @@ below watches both.
 # deps: tests/fake_hub.py (the in-process `websockets` hub: chooses upgrade
 #   status, accepts/rejects hub/register, closes with a code) ·
 #   conftest.recorded_sleep + conftest.anyio_backend · pytest (parametrize) ·
-#   anyio · pmcp_client (HubTransport, serve, CredentialsError,
-#   RegistrationError, backoff_delay, and the private _connect_address /
-#   _rng / _PING_INTERVAL_S seams) · contracts/close-codes.json (read-only —
-#   see test_contracts.py)
+#   anyio · json (one message per text frame) · pmcp_client (HubTransport, serve,
+#   CredentialsError, RegistrationError, backoff_delay, and the private
+#   _connect_address / _rng / _PING_INTERVAL_S seams) · mcp.server.Server +
+#   mcp_types.RequestParams (the REAL SDK, for the §20 rows' capability half only
+#   — never faked, strategy §9) · contracts/close-codes.json (read-only — see
+#   test_contracts.py)
 
+import json
 from typing import Any, NamedTuple
 
 import anyio
 import pytest
+from mcp.server import Server
 from mcp.shared.message import SessionMessage
-from mcp_types import jsonrpc_message_adapter
+from mcp_types import RequestParams, jsonrpc_message_adapter
 
 import pmcp_client
 from fake_hub import FakeHub, RegisterOutcome, start_fake_hub
@@ -505,6 +509,358 @@ async def test_serve_resolves_url_and_token_before_any_io(registry, monkeypatch)
             while overridden.status == "pending":
                 await anyio.sleep(0)
         assert overridden.status == "resolved"
+
+
+# ── the data model beyond tools · §20, §11 ────────────────────────────────────
+# §20.6 pins "no new API beyond the widened `roles` shape", so what this library
+# gains is exactly three things: the widened declaration going out untouched, the
+# one MCP-namespace method the LIBRARY answers instead of bridging
+# (`server/discover`, §11/§6), and the prompt/resource traffic the bridge already
+# carries. The last is a regression pin rather than new behaviour — §20 opens by
+# saying a tunneled service that declares prompts answers them over the socket
+# TODAY and the hub was the only thing saying -32601 — and pinning it is what
+# keeps a future frame-inspecting transport from quietly becoming a tools-only
+# one. Every row drives `serve()` rather than HubTransport, because the surface
+# these rows may touch is exactly the surface a service author has.
+
+#: The capability families §20 knows. ``completions`` is here so a library that
+#: declared it unasked is visible, not because any row expects it.
+_FAMILIES = ("tools", "prompts", "resources", "completions")
+
+#: The correlation id the hub puts on its own ``server/discover`` — the HUB's id,
+#: never one the library minted (it originates exactly one request, hub/register).
+_DISCOVER_ID = "hub-discover-1"
+
+#: §20.3's two spellings in ONE declaration — the example the spec itself writes.
+#: Annotated against the library's own :data:`pmcp_client.Roles`, the way the JS
+#: twin types its ``MIXED_ROLES`` against the exported ``Roles``. Python does not
+#: enforce an annotation at runtime and this package has no type checker in the
+#: exit criteria, so the annotation alone would let an un-widened alias ride
+#: through invisibly while every type-checked service author was told the
+#: per-family declaration is invalid — §11 pins the two libraries as "identical
+#: shape … the same two spellings", so the alias is asserted as a value in the row
+#: that uses it.
+_MIXED_ROLES: pmcp_client.Roles = {
+    "reader": ["get_news", "search_.*"],
+    "curator": {"tools": ["publish"], "prompts": ["digest_.*"], "resources": ["news://feed/*"]},
+}
+
+#: A declaration the HUB rejects — §20.3 makes an unknown family key a violation
+#: like any other. Nothing about it is this library's to notice.
+_REJECTED_ROLES: dict[str, Any] = {"curator": {"toolz": ["publish"]}}
+
+#: What the author's server answers a ``prompts/get`` with: §20.1's message list.
+#: Content blocks, which is why §15 stubs them in the ledger rather than storing
+#: the text.
+_PROMPT_RESULT = {
+    "description": "a digest",
+    "messages": [{"role": "user", "content": {"type": "text", "text": "headlines"}}],
+}
+
+#: …and a ``resources/read``: contents keyed by the URI the service itself knows.
+_RESOURCE_URI = "news://feed/tech"
+_RESOURCE_RESULT = {"contents": [{"uri": _RESOURCE_URI, "mimeType": "text/plain", "text": "headline"}]}
+
+
+class _AuthorService:
+    """The author's service as :func:`pmcp_client.serve` receives it — §11's
+    "plain MCP server written with the official SDK".
+
+    The CAPABILITY half is a real ``mcp.server.Server``: ``get_capabilities()``
+    derives the families from the request handlers actually registered on it, so
+    "the families the author's SDK actually registered" is the SDK's answer here
+    and not this suite's paraphrase of one. That is what §11 means by "the library
+    is what knows which families the author registered", and it is the half the JS
+    twin cannot have (that package has no SDK dependency, so its fake hands the
+    capabilities in).
+
+    The RUN half is the suite's, like :class:`_Session` above and for the same
+    reason: a real ``Server.run`` waits for the MCP ``initialize`` §6 keeps off
+    this wire — the library synthesizes whatever bootstrap its local SDK needs —
+    and driving that bootstrap end to end is ``scripts/e2e.ts``'s job. What these
+    rows need from a session is that it RECORD what reached it and answer what it
+    was scripted to, and ``reached`` records at arrival, before any scripted answer
+    runs, which is what makes "the request never reaches the SDK" an observation
+    rather than an absence.
+    """
+
+    def __init__(self, *registers: str, answers: dict[str, Any] | None = None) -> None:
+        self.sdk = Server("author")
+        for method in registers:
+            # Registration is the whole declaration: the handler is never invoked
+            # here, because what a family costs the SDK is a handler EXISTING.
+            self.sdk.add_request_handler(method, RequestParams, self._never_called)
+        self.reached: list[dict[str, Any]] = []
+        self._answers = answers or {}
+        self._write: Any = None
+        self._running = anyio.Event()
+
+    async def _never_called(self, ctx: Any, params: Any) -> None:
+        raise AssertionError("the suite's run() answers; the SDK's handlers are the declaration")
+
+    def get_capabilities(self) -> Any:
+        """What the author's SDK registered — never what this library can carry."""
+        return self.sdk.get_capabilities()
+
+    def create_initialization_options(self) -> Any:
+        """The same answer by the route ``serve()`` already takes today."""
+        return self.sdk.create_initialization_options()
+
+    async def run(self, read_stream: Any, write_stream: Any, initialization_options: Any) -> None:
+        self._write = write_stream
+        self._running.set()
+        async for item in read_stream:
+            if isinstance(item, Exception):
+                continue
+            frame = item.message.model_dump(by_alias=True, exclude_unset=True)
+            self.reached.append(frame)
+            answer = self._answers.get(frame.get("method", ""))
+            if answer is not None and "id" in frame:
+                await write_stream.send(
+                    _to_session_message({"jsonrpc": "2.0", "id": frame["id"], "result": answer})
+                )
+
+    async def emit(self, frame: dict[str, Any]) -> None:
+        """One notification the author's SDK emits on its own — the outbound half
+        of the bridge, and a pass-through rather than a library feature (§11)."""
+        with anyio.fail_after(5):
+            await self._running.wait()
+        await self._write.send(_to_session_message(frame))
+
+
+def _families_in(frame: dict[str, Any]) -> list[str]:
+    """The families one ``server/discover`` answer names, sorted.
+
+    Read off ``result.capabilities`` and intersected with §20.3's vocabulary,
+    because an SDK's capability object also carries keys that are not families
+    (``experimental``, ``extensions``) — what the hub reads from this answer is
+    which catalogs to warm, and that is a question about families alone."""
+    capabilities = (frame.get("result") or {}).get("capabilities") or {}
+    return sorted(key for key in capabilities if key in _FAMILIES)
+
+
+def _declared_roles(hub: FakeHub) -> dict[str, Any]:
+    """The declaration the hub really received on the first frame."""
+    return hub.frames[0].message["params"]["roles"]
+
+
+async def _serving_author(
+    registry: list[tuple[FakeHub | None, HubTransport | None]],
+    tg: Any,
+    service: _AuthorService,
+    roles: dict[str, Any] | None = None,
+) -> FakeHub:
+    """One author's service running against one fresh hub, registered — the shape
+    every §20 row starts from. serve() owns the transport, so only the hub goes on
+    the teardown registry; cancelling the task group is what ends the run."""
+    hub = await start_fake_hub()
+    registry.append((hub, None))
+    tg.start_soon(
+        _watch,
+        pmcp_client.serve(service, url=hub.origin, token=TOKEN, roles=ROLES if roles is None else roles),
+        _Awaited(),
+    )
+    await hub.next_frame(1)
+    return hub
+
+
+async def test_serve_passes_a_bare_pattern_list_through_unchanged(registry, recorded_sleep) -> None:
+    """§11/§20.3 · serve({roles}) passes a bare pattern list through to
+    hub/register unchanged.
+
+    Unchanged means UNNORMALIZED: ``["get_news"]`` becoming ``{"tools":
+    ["get_news"]}`` is the hub's business (§20.3 — normalization happens once, in
+    registry.validate_roles and the filter builder), and a library that did it here
+    would be a second rule that could disagree with the first."""
+    async with anyio.create_task_group() as tg:
+        hub = await _serving_author(registry, tg, _AuthorService("tools/list"), roles=ROLES)
+        declared = _declared_roles(hub)
+        assert declared == ROLES
+        assert isinstance(declared["reader"], list)
+        tg.cancel_scope.cancel()
+
+
+async def test_serve_passes_a_per_family_object_through_unchanged(registry, recorded_sleep) -> None:
+    """§11/§20.3 · serve({roles}) passes a per-family object through unchanged —
+    the library normalizes nothing.
+
+    The two spellings survive SIDE BY SIDE in one declaration (§20.3's own
+    example): the object is not flattened to its tools, and the bare list beside it
+    is not lifted into an object. Either repair would make the wire a function of
+    which library sent it."""
+    # The PUBLIC alias, as a value. `Roles` is in `__all__`, so §11's "identical
+    # shape … the same two spellings" is a claim about it — and the JS twin makes
+    # that claim fail at `tsc` by typing its declaration against the exported
+    # `Roles`. Nothing type-checks this package (no mypy, no pyright, and the exit
+    # criteria run `uv run pytest` alone), so an un-widened alias would leave the
+    # rest of this row green while every annotated service author was told the
+    # per-family declaration is invalid. GenericAlias and UnionType both compare by
+    # value, so the pin is a plain equality.
+    assert pmcp_client.Roles == dict[str, list[str] | dict[str, list[str]]]
+    async with anyio.create_task_group() as tg:
+        service = _AuthorService("tools/list", "prompts/list", "resources/list")
+        hub = await _serving_author(registry, tg, service, roles=_MIXED_ROLES)
+        declared = _declared_roles(hub)
+        assert declared == _MIXED_ROLES
+        assert declared["curator"] == _MIXED_ROLES["curator"]
+        assert isinstance(declared["reader"], list)
+        tg.cancel_scope.cancel()
+
+
+async def test_a_roles_value_the_hub_rejects_is_still_sent_as_written(registry, recorded_sleep) -> None:
+    """§11/§20.3 · a roles value the hub will reject is still sent as written; the
+    library surfaces the hub's rejection rather than pre-validating.
+
+    AS WRITTEN: not repaired into ``{"tools": [...]}``, not dropped, not refused
+    locally. §20.3 gives the family vocabulary exactly one validator and it is the
+    hub's — a library that pre-validated would be a second one, and the day they
+    disagreed the author would get a local error for a declaration the hub was
+    perfectly happy with. What the author sees instead is the HUB's refusal,
+    surfaced rather than retried: identical input cannot start succeeding (§6)."""
+    refusing = await start_fake_hub(
+        registrations=[RegisterOutcome(error={"code": -32602, "message": "unknown role family"})]
+    )
+    registry.append((refusing, None))
+    with pytest.raises(RegistrationError):
+        await pmcp_client.serve(
+            _AuthorService("tools/list"), url=refusing.origin, token=TOKEN, roles=_REJECTED_ROLES
+        )
+    assert _declared_roles(refusing) == {"curator": {"toolz": ["publish"]}}
+    assert len(refusing.dials) == 1
+
+
+async def test_the_library_answers_server_discover_itself(registry, recorded_sleep) -> None:
+    """§11/§6 · the library answers the hub's server/discover itself with the
+    families the author's SDK actually registered — the author writes nothing, and
+    the request never reaches the SDK.
+
+    §11 makes this the one MCP-namespace method the library handles instead of
+    bridging: it is a hub↔library control question, and the library is what knows
+    which families were registered. The author wrote no handler for it."""
+    async with anyio.create_task_group() as tg:
+        service = _AuthorService("tools/list", "prompts/list", "resources/list")
+        hub = await _serving_author(registry, tg, service)
+        await hub.send({"jsonrpc": "2.0", "id": _DISCOVER_ID, "method": "server/discover"})
+        answer = await hub.next_frame(2)
+        assert answer.message["id"] == _DISCOVER_ID
+        assert _families_in(answer.message) == ["prompts", "resources", "tools"]
+        assert "server/discover" not in [frame.get("method") for frame in service.reached]
+        tg.cancel_scope.cancel()
+
+
+async def test_a_tools_only_sdk_answers_server_discover_with_tools_alone(registry, recorded_sleep) -> None:
+    """§11/§6 · a service whose SDK registers only tools answers server/discover
+    with tools alone — the declaration is observed, not assumed from the library's
+    own capabilities.
+
+    The library CAN carry all three — the bridge is transparent, and the two
+    round-trip rows below prove it — so answering with what the LIBRARY can do
+    rather than with what the AUTHOR registered would make every tools-only service
+    in the field log three spurious catalog-warm failures at the hub (§6/§20.5).
+    That is the whole reason the discover leg exists."""
+    async with anyio.create_task_group() as tg:
+        service = _AuthorService("tools/list")
+        hub = await _serving_author(registry, tg, service)
+        await hub.send({"jsonrpc": "2.0", "id": _DISCOVER_ID, "method": "server/discover"})
+        answer = await hub.next_frame(2)
+        assert _families_in(answer.message) == ["tools"]
+        assert "server/discover" not in [frame.get("method") for frame in service.reached]
+        tg.cancel_scope.cancel()
+
+
+async def test_a_service_the_library_cannot_introspect_answers_discover_32601(registry, recorded_sleep) -> None:
+    """§11/§6 · a service object the library cannot introspect for capabilities
+    answers server/discover with -32601 — the "capabilities unknown" signal — and
+    never a successful empty capability set, because a successful answer that omits
+    a family is an UNDECLARE and §20.5 makes an undeclare clear that family's
+    catalog.
+
+    §11 pins the answer for a server with no capability seam: the -32601 reaches
+    the hub, which warms tools only, "which is what keeps every service already in
+    the field working unchanged". §20.5 is why the plausible repair is worse than
+    the fallback — a discover leg that ERRORS changes no catalog, while a
+    successful ``{}`` tells the hub this service no longer serves prompts or
+    resources and clears both catalogs for a service that is serving them right
+    now. Failure never empties one; success does, so the absence of a seam must
+    stay a failure. Observed on the frame the HUB sees, never on a library
+    internal."""
+    async with anyio.create_task_group() as tg:
+        # SESSION is the bare protocol — `run` and nothing else, which is exactly
+        # what an author's server that predates §20 looks like to this library.
+        hub = await start_fake_hub()
+        registry.append((hub, None))
+        tg.start_soon(
+            _watch,
+            pmcp_client.serve(SESSION, url=hub.origin, token=TOKEN, roles=ROLES),
+            _Awaited(),
+        )
+        await hub.next_frame(1)
+        await hub.send({"jsonrpc": "2.0", "id": _DISCOVER_ID, "method": "server/discover"})
+        answer = await hub.next_frame(2)
+        assert answer.message["id"] == _DISCOVER_ID
+        assert answer.message["error"]["code"] == -32601
+        assert "result" not in answer.message
+        tg.cancel_scope.cancel()
+
+
+async def test_a_prompts_get_reaches_the_authors_server_and_answers_over_the_socket(
+    registry, recorded_sleep
+) -> None:
+    """§11/§20.1 · a prompts/get request from the hub reaches the author's SDK
+    server and its response returns over the socket.
+
+    Both directions verbatim: the request arrives exactly as the hub sent it —
+    ``arguments`` included, which is what the hub's redact map keys on (§20.3) —
+    and the answer goes back on the socket the hub asked over."""
+    async with anyio.create_task_group() as tg:
+        service = _AuthorService("tools/list", "prompts/list", answers={"prompts/get": _PROMPT_RESULT})
+        hub = await _serving_author(registry, tg, service)
+        request = {
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "prompts/get",
+            "params": {"name": "digest", "arguments": {"topic": "ai"}},
+        }
+        await hub.send(request)
+        relayed = await hub.next_frame(2)
+        assert service.reached == [request]
+        assert relayed.message == {"jsonrpc": "2.0", "id": 21, "result": _PROMPT_RESULT}
+        tg.cancel_scope.cancel()
+
+
+async def test_a_resources_read_round_trips_the_same_way(registry, recorded_sleep) -> None:
+    """§11/§20.1 · a resources/read request round-trips the same way.
+
+    The URI the service knows is the URI it is asked for and the URI it answers
+    with: §20.2 refuses to rewrite one anywhere, which is why resources are
+    scoped-only."""
+    async with anyio.create_task_group() as tg:
+        service = _AuthorService("tools/list", "resources/list", answers={"resources/read": _RESOURCE_RESULT})
+        hub = await _serving_author(registry, tg, service)
+        request = {"jsonrpc": "2.0", "id": 22, "method": "resources/read", "params": {"uri": _RESOURCE_URI}}
+        await hub.send(request)
+        relayed = await hub.next_frame(2)
+        assert service.reached == [request]
+        assert relayed.message == {"jsonrpc": "2.0", "id": 22, "result": _RESOURCE_RESULT}
+        assert _RESOURCE_URI in json.dumps(relayed.message)
+        tg.cancel_scope.cancel()
+
+
+async def test_a_prompts_list_changed_notification_reaches_the_hub_unchanged(registry, recorded_sleep) -> None:
+    """§11/§20.5 · a prompts/list_changed notification emitted by the author's SDK
+    reaches the hub unchanged.
+
+    A pass-through, not a feature (§11): the DO routes this frame to invalidate its
+    ``catalog:prompts`` key (§20.5), so a library that swallowed or renamed it would
+    leave the hub serving a stale prompt list until the next registration."""
+    async with anyio.create_task_group() as tg:
+        service = _AuthorService("tools/list", "prompts/list")
+        hub = await _serving_author(registry, tg, service)
+        notification = {"jsonrpc": "2.0", "method": "notifications/prompts/list_changed"}
+        await service.emit(notification)
+        relayed = await hub.next_frame(2)
+        assert relayed.message == notification
+        tg.cancel_scope.cancel()
 
 
 # ── the policy itself · §6 upgrade matrix + close codes ───────────────────────

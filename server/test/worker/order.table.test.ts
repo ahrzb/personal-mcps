@@ -48,15 +48,15 @@ import { describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import type { Env } from "../../src/index";
 import { Approvals } from "../../src/approvals";
-import type { JsonRpcResponse } from "../../src/gateway";
-import { APPROVAL_WINDOW_MS } from "../../src/limits";
-import { Registry } from "../../src/registry";
-import type { GrantEntry, GrantMode, Service } from "../../src/registry";
+import type { JsonRpcResponse, Prompt, Resource, ResourceTemplate } from "../../src/gateway";
+import { AGGREGATED_LIST_DEADLINE_MS, APPROVAL_WINDOW_MS } from "../../src/limits";
+import { PMCP_SLUG, Registry } from "../../src/registry";
+import type { GrantEntry, GrantMode, RoleDeclaration, Service } from "../../src/registry";
 import type { Principal } from "../../src/identity";
 import { setHeaders } from "../../src/upstream";
 import type { UpstreamConnectionStatus } from "../../src/upstream";
 import { readObservations, upstreamUrlFor } from "../harness/fake-upstream";
-import type { UpstreamScenario } from "../harness/fake-upstream";
+import type { UpstreamObservation, UpstreamScenario } from "../harness/fake-upstream";
 import { subscribeFakeBrowser } from "../harness/push-service";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
@@ -1070,8 +1070,15 @@ const UPSTREAM_TOOLS = [
 /** The obviously-fake headers sealed into the credential envelope — see buildFixture. */
 const FAKE_UPSTREAM_HEADERS = { "X-Fixture-Token": "FAKE0000-upstream-header" };
 
-/** A method the hub serves on neither shape — the -32601 rows' `other`. */
-const UNSERVED_METHOD = "resources/list";
+/**
+ * A method the hub serves on neither shape — the -32601 rows' `other`. It was
+ * `resources/list` until §20 made that a SERVED method on the scoped shape (and a -32601
+ * on the aggregated one, which is its own row below): a constant that names a served
+ * method would have made the scoped -32601 row assert the opposite of what it says.
+ * `logging/*` is §20.1's own "Out" family — deprecated in 2026-07-28 itself — so it is
+ * unserved for a reason the spec states rather than by happening not to be implemented.
+ */
+const UNSERVED_METHOD = "logging/setLevel";
 
 /** The handshake params a compliant client opens with. Obviously-fake client identity; the
  *  params the hub is free to ignore are still the ones it will actually receive, and a
@@ -1253,7 +1260,16 @@ describe("§7's dispatch table, amended 2026-08-26 — the MCP handshake", () =>
     const discovered = await rpc(aggregated, token, { jsonrpc: "2.0", id: 1, method: "server/discover", params: {} });
     const revision = (discovered.result as { supportedVersions: string[] }).supportedVersions[0];
 
-    for (const url of [aggregated, `${aggregated}/${NEWS}`]) {
+    // Two of the three ARE the same answer on both shapes; `capabilities` stopped being so
+    // on 2026-08-26. §20.2 gives the aggregated shape one static two-family constant and
+    // DERIVES the scoped one from what the hub stores for that service — and this
+    // namespace's `news` is a tunnel that has never connected, so it declares `tools`
+    // alone. The two answers are pinned here per shape rather than dropped, so this case
+    // keeps stating the whole handshake; §20.2's own cases below own the reasoning.
+    for (const [url, capabilities] of [
+      [aggregated, AGGREGATED_CAPABILITIES],
+      [`${aggregated}/${NEWS}`, { tools: { listChanged: false } }],
+    ] as const) {
       const answer = await rpc(url, token, { jsonrpc: "2.0", id: 1, method: "initialize", params: CLIENT_HANDSHAKE });
       expect(answer.error, `${url}: the handshake was refused`).toBeUndefined();
       const result = answer.result as {
@@ -1262,7 +1278,7 @@ describe("§7's dispatch table, amended 2026-08-26 — the MCP handshake", () =>
         serverInfo?: { name?: unknown };
       };
       expect(result.protocolVersion, `${url}: protocolVersion`).toBe(revision);
-      expect(result.capabilities, `${url}: capabilities`).toEqual({ tools: { listChanged: false } });
+      expect(result.capabilities, `${url}: capabilities`).toEqual(capabilities);
       expect(result.serverInfo?.name, `${url}: serverInfo carries a name`).toBeTruthy();
     }
   });
@@ -1337,5 +1353,874 @@ describe("the table's own invariants", () => {
       answers.size,
       `every -32001 answers alike, or the differences map grant patterns: ${JSON.stringify([...answers])}`,
     ).toBe(1);
+  });
+});
+
+// ══ §20 — the MCP data model beyond tools ═════════════════════════════════════════════
+//
+// BESIDE the table rather than in it, for the reason the handshake cases above are: an
+// OrderRow can observe four things — 200, error-vs-result, the `data` keys, the four
+// effect deltas — and nearly every §20 sentence pins CONTENT no column can hold (a
+// prompt's messages, a URI left unrewritten, a capabilities object, a `_meta` key that
+// survived, a `ttlMs` that must not be there). The few that ARE pure order rows name
+// their twin inside the same sentence, and a twin the table expresses as a SEPARATE row
+// cannot be asserted from inside one case — which is what every "(the twin)" title here
+// asks for.
+//
+// What these cases keep from the table is its discipline: one world per case, seeded
+// through production seams alone, every refusal stated beside the allow-twin one column
+// away, and every effect (an approval row that must not exist, an upstream arrival that
+// must not happen) read as a DELTA around the case's own request.
+//
+// The backend under all of them is the PROXIED one. §20 is method-shaped, not
+// backend-shaped — the same `route` table answers every family on both shapes — and the
+// proxied fake is the only backend this project can drive live (the tunnel appears here
+// only in its never-connected state, which is exactly what the -32000 row wants). The
+// tunneled halves of §20 — the DO's three new catalog keys, the capability warm, the two
+// new list_changed frames — are tunnel/**'s.
+
+/**
+ * The fake upstream's §20 seam, named HERE because the harness does not carry it yet:
+ * `UpstreamScenario` gains one field per family, exactly as it already carries `tools`
+ * and `result`. Spelled as an intersection so this file states the shape it needs and
+ * the harness change lands as a deletion of these lines rather than a rewrite of every
+ * fixture. Until it lands, every §20 case below fails on its assertions — which is the
+ * intended shape of this stage's red.
+ */
+type ServingScenario = UpstreamScenario & {
+  /** Served from `prompts/list` (§20.2). */
+  prompts?: Prompt[];
+  /** Answered to `prompts/get` — the family's analogue of `result`. */
+  promptResult?: unknown;
+  /** Served from `resources/list`. */
+  resources?: Resource[];
+  /** Served from `resources/templates/list`. */
+  resourceTemplates?: ResourceTemplate[];
+  /** Answered to `resources/read`. */
+  readResult?: unknown;
+  /** Answered to `completion/complete`. */
+  completionResult?: unknown;
+};
+
+/** The second proxied service §20 needs: the aggregated rows need two prefixes to prove
+ *  one, and "a read is routed by the addressed slug, never by the URI" needs two services
+ *  serving one URI. No slug contains `_` (§7). */
+const LINEAR = "linear";
+
+/** The second account, for the row that compares one service against TWO callers'
+ *  patterns — a claim no single-caller fixture can make. */
+const OTHER_AGENT = "auditor";
+const OTHER_TOKEN = "other-key";
+
+/** The role that second account holds: resource patterns only, and template-shaped. */
+const TEMPLATE_ROLE = "templar";
+
+/** The prompt the granted pattern matches. Its own name carries a `_`, so every
+ *  aggregated row also states §7's first-`_` split rather than merely assuming it. */
+const PROMPT = "digest_daily";
+/** …and the prompt on the same service that no granted pattern matches. */
+const UNGRANTED_PROMPT = "payroll_export";
+/** The prompt pattern the role declares — `*` is outside the tool-name charset, so this
+ *  compiles rather than comparing literally (§20.3: prompts are matched by NAME). */
+const PROMPT_PATTERN = "digest_.*";
+
+/** The resource URI the granted pattern covers, and the one it does not. */
+const URI = "news://feed/tech";
+const UNGRANTED_URI = "vault://secrets/root";
+/** The resource pattern the role declares (§20.3: `*` aliases `.*` in the resource
+ *  grammar too, so this is what makes `news://feed/{id}` answerable). */
+const RESOURCE_PATTERN = "news://feed/*";
+
+/** Two templates `news://feed/*` covers and one it does not. §20.3: a template-shaped
+ *  PATTERN compiles ({ and } are metacharacters) and still matches exactly its own
+ *  template — which is only observable if a SECOND covered template exists to be dropped. */
+const TEMPLATE = "news://feed/{id}";
+const OTHER_TEMPLATE = "news://feed/latest";
+const UNGRANTED_TEMPLATE = "vault://{id}";
+
+/** The per-family declaration §20.3 introduces, and the one every §20 case grants out of.
+ *  Tools ride along so the relayed-`resource_link` row has a grant to call with. */
+const D13_ROLES: RoleDeclaration = {
+  [ROLE]: {
+    tools: [TOOL, `${TOOL}_pages`],
+    prompts: [PROMPT_PATTERN],
+    resources: [RESOURCE_PATTERN],
+  },
+};
+
+/** §20.3's other spelling: a bare list is tools-only, so a caller holding it has ZERO
+ *  prompt and ZERO resource grants — the state two rows below are entirely about. */
+const TOOLS_ONLY_ROLES: RoleDeclaration = { [ROLE]: [TOOL, `${TOOL}_pages`] };
+
+/** What a matched `prompts/get` answers. The message text is obviously fake because the
+ *  redaction rows in hygiene.test.ts plant real-looking things in this same carrier. */
+const PROMPT_RESULT = {
+  description: "the daily digest",
+  messages: [{ role: "user", content: { type: "text", text: "summarize FAKE0000-digest-body" } }],
+  resultType: "complete",
+};
+
+/** What a matched `resources/read` answers. */
+const READ_RESULT = {
+  contents: [{ uri: URI, mimeType: "text/plain", text: "tech headlines" }],
+  resultType: "complete",
+};
+
+/** What `completion/complete` answers — relayed verbatim for a ref the patterns match. */
+const COMPLETION_RESULT = {
+  completion: { values: ["tech", "world"], hasMore: false },
+  resultType: "complete",
+};
+
+/** What every §20 fixture's upstream serves, in each family, unless the case says
+ *  otherwise. Named once so a case's `serves` override reads as the one thing it bent. */
+const D13_SERVES: Partial<ServingScenario> = {
+  prompts: [
+    { name: PROMPT, description: "the prompt the granted pattern matches" },
+    { name: UNGRANTED_PROMPT, description: "the prompt no granted pattern matches" },
+  ],
+  promptResult: PROMPT_RESULT,
+  resources: [
+    { uri: URI, name: "tech feed" },
+    // The resource §20.2's second matching rule exists for: its NAME is a string the
+    // granted pattern matches, while its URI matches nothing the caller holds.
+    { uri: UNGRANTED_URI, name: URI },
+  ],
+  resourceTemplates: [
+    { uriTemplate: TEMPLATE, name: "one feed item" },
+    { uriTemplate: OTHER_TEMPLATE, name: "the latest item" },
+    { uriTemplate: UNGRANTED_TEMPLATE, name: "a vault entry" },
+  ],
+  readResult: READ_RESULT,
+  completionResult: COMPLETION_RESULT,
+};
+
+/** The aggregated endpoint's ONE static answer (§20.2): tools and prompts, both
+ *  listChanged false, never resources and never completions. */
+const AGGREGATED_CAPABILITIES = {
+  tools: { listChanged: false },
+  prompts: { listChanged: false },
+};
+
+/** The reserved `_meta` key §7 has the hub mirror onto every forwarded request — which
+ *  §20.2 extends to every family. */
+const CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
+
+/** What one §20 case needs seeded over and above the shared defaults. Every field is an
+ *  override of exactly one thing, so a case reads as "the world, except…". */
+type D13Spec = {
+  /** The proxied service's per-family declaration (default: D13_ROLES). */
+  roles?: RoleDeclaration;
+  /** The account's grant on it (default: the role, allow-mode). */
+  grant?: GrantEntry[];
+  archived?: boolean;
+  /** §20.2's owner-declared `capabilities` config — absent means `tools` only. */
+  capabilities?: string[];
+  /** What the proxied upstream serves, or does. */
+  serves?: Partial<ServingScenario>;
+  /** A second proxied service: the aggregated prefix rows and the A-vs-B read row. */
+  also?: { roles?: RoleDeclaration; grant?: GrantEntry[]; serves?: Partial<ServingScenario> };
+  /**
+   * Seed the never-connected tunnel too, granted the built-in `all`. `all` and not the
+   * declared role, deliberately: a tunnel that has never registered declares NOTHING, so
+   * any other grant resolves to the empty pattern set and the filter answers -32001 (§7
+   * step 2) — which would make the -32000 row assert the wrong stage entirely.
+   */
+  withTunnel?: boolean;
+  /** A second account and its grants — the two-callers rows. */
+  second?: Record<string, GrantEntry[]>;
+};
+
+/** One §20 case's seeded world: what its assertions read, and nothing more. */
+type D13World = {
+  ns: SeededNamespace;
+  /** The service account's `pmcp_sa_` key. */
+  agent: string;
+  /** The second account's key — throws when the case never asked for one. */
+  otherAgent(): string;
+  /** The aggregated URL, or one service's scoped URL. */
+  url(slug?: string): string;
+  /** What one upstream saw. The forwarded `_meta` lives here and nowhere else. */
+  arrivals(slug?: string): Promise<UpstreamObservation[]>;
+  /** The owner, signed in — the twin of every "the caller's grants" row. */
+  ownerToken(): Promise<string>;
+  /** How many approval rows this namespace holds (§18 decision 27: reads open none). */
+  approvals(): Promise<number>;
+};
+
+/**
+ * The §20 world, built per case through production seams alone: one proxied service on a
+ * fake upstream serving every family, its credential written by `upstream.setHeaders`,
+ * and — when the case asks — a second proxied service, a never-connected tunnel, and a
+ * second account. Nothing is written as raw SQL, so a fixture can never reach a state the
+ * hub itself cannot produce.
+ */
+async function seedD13(spec: D13Spec = {}): Promise<D13World> {
+  const scenarios: Record<string, ServingScenario> = {
+    [NOTION]: {
+      id: uniqueSlug("up"),
+      mode: { kind: "ok" },
+      tools: UPSTREAM_TOOLS,
+      ...D13_SERVES,
+      ...spec.serves,
+    },
+  };
+  if (spec.also !== undefined) {
+    scenarios[LINEAR] = {
+      id: uniqueSlug("up"),
+      mode: { kind: "ok" },
+      tools: UPSTREAM_TOOLS,
+      ...D13_SERVES,
+      ...spec.also.serves,
+    };
+  }
+
+  const ns = await seedNamespace(env.DB, {
+    services: [
+      ...Object.entries(scenarios).map(([slug, scenario]) => ({
+        slug,
+        kind: "proxy" as const,
+        upstreamUrl: upstreamUrlFor(scenario),
+        upstreamAuthMode: "headers" as const,
+        roles: (slug === NOTION ? spec.roles : spec.also?.roles) ?? D13_ROLES,
+        logBodies: true,
+        archived: slug === NOTION && spec.archived === true,
+      })),
+      ...(spec.withTunnel === true ? [{ slug: NEWS, kind: "tunnel" as const, logBodies: true }] : []),
+    ],
+    accounts: [
+      {
+        slug: AGENT,
+        grants: {
+          [NOTION]: spec.grant ?? [{ role: ROLE, mode: "allow" as const }],
+          ...(spec.also === undefined
+            ? {}
+            : { [LINEAR]: spec.also.grant ?? [{ role: ROLE, mode: "allow" as const }] }),
+          ...(spec.withTunnel === true ? { [NEWS]: [{ role: "all", mode: "allow" as const }] } : {}),
+        },
+        tokens: [{ as: TOKEN }],
+      },
+      ...(spec.second === undefined
+        ? []
+        : [{ slug: OTHER_AGENT, grants: spec.second, tokens: [{ as: OTHER_TOKEN }] }]),
+    ],
+  });
+
+  const registry = new Registry(env.DB);
+  for (const [slug, scenario] of Object.entries(scenarios)) {
+    const service = await registry.getService(ns.owner.userId, slug);
+    if (service === null) throw new Error(`seedD13: the proxied service "${slug}" vanished`);
+    // The credential envelope, through the seam that owns the column — a proxied service
+    // with none reads `not_connected` and is refused -32000 before any §20 rule is reached.
+    await setHeaders(service, FAKE_UPSTREAM_HEADERS);
+    if (spec.capabilities !== undefined && slug === NOTION) {
+      // §20.2's owner-DECLARED set, written where an owner writes it. Not a cache, not a
+      // probe of `scenario`: the declaration and what the upstream actually serves are
+      // deliberately allowed to disagree, which is the whole of "a wrong declaration can
+      // mislead feature detection but never widen access".
+      await registry.updateService(service.id, { capabilities: spec.capabilities });
+    }
+  }
+
+  return {
+    ns,
+    agent: ns.tokens[TOKEN].token,
+    otherAgent() {
+      const token = ns.tokens[OTHER_TOKEN];
+      if (token === undefined) throw new Error("seedD13: this case seeded no second account");
+      return token.token;
+    },
+    url: (slug?: string) =>
+      `${ORIGIN}/${ns.owner.username}/mcp${slug === undefined ? "" : `/${slug}`}`,
+    arrivals: (slug: string = NOTION) => readObservations(scenarios[slug].id),
+    ownerToken: async () => (await seedOwnerSession(ns.owner)).token,
+    approvals: async () =>
+      (
+        await db()
+          .prepare(`SELECT COUNT(*) AS n FROM approval WHERE owner_id = ?`)
+          .bind(ns.owner.userId)
+          .first<{ n: number }>()
+      )?.n ?? 0,
+  };
+}
+
+// ── the messages, and the answers read back ───────────────────────────────────────────
+
+/** One JSON-RPC request, spelled as the consumer spells it. */
+function message(method: string, params: Record<string, unknown> = {}): Record<string, unknown> {
+  return { jsonrpc: "2.0", id: 1, method, params };
+}
+
+/** The handshake, with the params a compliant client actually opens with. */
+function initializeMessage(): Record<string, unknown> {
+  return message("initialize", CLIENT_HANDSHAKE);
+}
+
+function getPrompt(name: string, params: Record<string, unknown> = {}): Record<string, unknown> {
+  return message("prompts/get", { name, arguments: {}, ...params });
+}
+
+function readResource(uri: string): Record<string, unknown> {
+  return message("resources/read", { uri });
+}
+
+/** A `completion/complete` whose `ref` names a PROMPT — matched by name (§20.2). */
+function promptRef(name: string): Record<string, unknown> {
+  return { ref: { type: "ref/prompt", name }, argument: { name: "topic", value: "te" } };
+}
+
+/** …and one whose `ref` names a resource TEMPLATE — matched by its template string. */
+function resourceRef(uriTemplate: string): Record<string, unknown> {
+  return { ref: { type: "ref/resource", uri: uriTemplate }, argument: { name: "id", value: "1" } };
+}
+
+/** The prompt names an answer served, sorted — a fan-out decides no order. */
+function promptNames(answer: JsonRpcResponse): string[] {
+  const prompts = (answer.result as { prompts?: { name: string }[] } | undefined)?.prompts ?? [];
+  return prompts.map((prompt) => prompt.name).sort();
+}
+
+/** The resource URIs an answer served, sorted. */
+function resourceUris(answer: JsonRpcResponse): string[] {
+  const listed = (answer.result as { resources?: { uri: string }[] } | undefined)?.resources ?? [];
+  return listed.map((resource) => resource.uri).sort();
+}
+
+/** The raw `uriTemplate` strings an answer served, sorted — the key §20.3 matches on. */
+function templateStrings(answer: JsonRpcResponse): string[] {
+  const listed =
+    (answer.result as { resourceTemplates?: { uriTemplate: string }[] } | undefined)
+      ?.resourceTemplates ?? [];
+  return listed.map((template) => template.uriTemplate).sort();
+}
+
+/** The `capabilities` object of an `initialize` (or `server/discover`) answer. */
+function capabilitiesOf(answer: JsonRpcResponse): Record<string, unknown> | undefined {
+  return (answer.result as { capabilities?: Record<string, unknown> } | undefined)?.capabilities;
+}
+
+/** The slugs an aggregated answer reported unavailable, sorted. */
+function unavailableIn(answer: JsonRpcResponse): string[] {
+  const meta = (answer.result as { _meta?: Record<string, unknown> } | undefined)?._meta;
+  const omitted = meta?.["pmcp/unavailable"];
+  return Array.isArray(omitted) ? [...(omitted as string[])].sort() : [];
+}
+
+/** The arrivals of one JSON-RPC method, in arrival order. */
+function matching(arrivals: UpstreamObservation[], method: string): UpstreamObservation[] {
+  return arrivals.filter((arrival) => arrival.rpcMethod === method);
+}
+
+describe("§20.2 — prompts, on both endpoint shapes", () => {
+  it("§20.2 · scoped prompts/list returns only the prompts the caller's grants match · the owner sees all (the twin)", async () => {
+    const world = await seedD13();
+
+    const scoped = await rpc(world.url(NOTION), world.agent, message("prompts/list"));
+    expect(scoped.error, JSON.stringify(scoped.error)).toBeUndefined();
+    expect(promptNames(scoped), "prompts are matched by NAME (§20.2)").toEqual([PROMPT]);
+
+    // The twin: owners see everything in their namespace, in every family.
+    const owner = await rpc(world.url(NOTION), await world.ownerToken(), message("prompts/list"));
+    expect(promptNames(owner)).toEqual([PROMPT, UNGRANTED_PROMPT].sort());
+  });
+
+  it("§20.2 · aggregated prompts/list prefixes every name <slug>_<prompt>", async () => {
+    const world = await seedD13({ also: {} });
+
+    const aggregated = await rpc(world.url(), world.agent, message("prompts/list"));
+    expect(aggregated.error, JSON.stringify(aggregated.error)).toBeUndefined();
+    expect(promptNames(aggregated)).toEqual([`${LINEAR}_${PROMPT}`, `${NOTION}_${PROMPT}`].sort());
+  });
+
+  it("§20.2 · aggregated prompts/get splits at the first underscore and reaches the right service", async () => {
+    // The two services answer DIFFERENTLY, which is what makes "the right service" a fact
+    // rather than an inference: `notion_digest_daily` carries two underscores, so a
+    // last-`_` split would address a service that does not exist and a greedy one would
+    // address `linear` never at all.
+    const elsewhere = { ...PROMPT_RESULT, description: "linear's own answer" };
+    const world = await seedD13({ also: { serves: { promptResult: elsewhere } } });
+
+    const answer = await rpc(world.url(), world.agent, getPrompt(`${NOTION}_${PROMPT}`));
+    expect(answer.error, JSON.stringify(answer.error)).toBeUndefined();
+    expect(answer.result, "the addressed service's own answer, relayed").toEqual(PROMPT_RESULT);
+    expect(matching(await world.arrivals(NOTION), "prompts/get"), "reached notion").toHaveLength(1);
+    expect(matching(await world.arrivals(LINEAR), "prompts/get"), "and nobody else").toHaveLength(0);
+  });
+
+  it("§20.2 · an aggregated prompt name whose prefix matches no visible service is -32001 — indistinguishable from not-permitted", async () => {
+    const world = await seedD13();
+
+    const ghost = await rpc(world.url(), world.agent, getPrompt(`ghost_${PROMPT}`));
+    const ungranted = await rpc(world.url(), world.agent, getPrompt(`${NOTION}_${UNGRANTED_PROMPT}`));
+
+    expect(ghost.error?.code).toBe(-32001);
+    // Indistinguishable is a SAMENESS claim, so the whole error object is compared —
+    // message included. A namespace's services are not enumerable through prompt names.
+    expect(ghost.error, "a missing service must answer exactly like a missing grant").toEqual(
+      ungranted.error,
+    );
+  });
+
+  it("§20.2 · prompts/get for a prompt the caller's grants do not match is -32001 · a matched prompt returns messages (the twin)", async () => {
+    const world = await seedD13();
+
+    const refused = await rpc(world.url(NOTION), world.agent, getPrompt(UNGRANTED_PROMPT));
+    expect(refused.error?.code).toBe(-32001);
+    expect(matching(await world.arrivals(), "prompts/get"), "refused before the service").toHaveLength(0);
+
+    // The twin, one prompt name away: the filter is a filter, not a wall.
+    const allowed = await rpc(world.url(NOTION), world.agent, getPrompt(PROMPT));
+    expect(allowed.error, JSON.stringify(allowed.error)).toBeUndefined();
+    expect((allowed.result as { messages?: unknown }).messages).toEqual(PROMPT_RESULT.messages);
+  });
+
+  it("§20.2 · prompts/get on an archived service is -32002, after the filter check", async () => {
+    const world = await seedD13({ archived: true });
+
+    const granted = await rpc(world.url(NOTION), world.agent, getPrompt(PROMPT));
+    expect(granted.error?.code, "archived, for a caller whose grants match").toBe(-32002);
+
+    // "after the filter check" stated where it costs something: an ungranted caller must
+    // not learn from a prompt name that the service is archived (§7 step 3's ordering,
+    // reused unchanged — §20.2 grows no pipeline of its own).
+    const ungranted = await rpc(world.url(NOTION), world.agent, getPrompt(UNGRANTED_PROMPT));
+    expect(ungranted.error?.code, "filter first, always").toBe(-32001);
+  });
+
+  it("§20.2 · prompts/get on an offline tunneled service is -32000", async () => {
+    const world = await seedD13({ withTunnel: true });
+
+    const answer = await rpc(world.url(NEWS), world.agent, getPrompt(PROMPT));
+    expect(answer.error?.code).toBe(-32000);
+    expect(answer.error?.data, "-32000 carries no data, in any family").toBeUndefined();
+  });
+
+  it("§20.2 · prompts/get is never approval-gated — an approval-mode grant returns the prompt, not -32003", async () => {
+    const world = await seedD13({ grant: [{ role: ROLE, mode: "approval" }] });
+    const before = await world.approvals();
+
+    const answer = await rpc(world.url(NOTION), world.agent, getPrompt(PROMPT));
+
+    expect(answer.error, JSON.stringify(answer.error)).toBeUndefined();
+    expect((answer.result as { messages?: unknown }).messages).toEqual(PROMPT_RESULT.messages);
+    // The strong form (§18 decision 27): not merely "no -32003", but no owner asked at all.
+    expect(await world.approvals(), "a read opens no pending row").toBe(before);
+  });
+});
+
+describe("§20.2 — resources are scoped-only, and matched by URI", () => {
+  it("§20.2 · aggregated resources/list is -32601 and the aggregated endpoint declares no resources capability", async () => {
+    // The namespace's one service DECLARES resources, so the aggregated answer is a
+    // constant rather than a union that happened to come out empty (§20.2).
+    const world = await seedD13({ capabilities: ["tools", "prompts", "resources"] });
+
+    const listed = await rpc(world.url(), world.agent, message("resources/list"));
+    expect(listed.error?.code).toBe(-32601);
+
+    const handshake = await rpc(world.url(), world.agent, initializeMessage());
+    expect(capabilitiesOf(handshake)?.resources, "never declared on the aggregated shape")
+      .toBeUndefined();
+  });
+
+  it("§20.2 · aggregated resources/read and completion/complete are -32601", async () => {
+    const world = await seedD13();
+
+    // §20.2 refuses the FAMILY on this shape — `resources/*` and `completion/complete` —
+    // and `resources/templates/list` rides here because it is the member nothing else in
+    // this file ever sends to the aggregated URL. A dispatch table that enumerated the
+    // refusals method by method and forgot it would fan template listings across the
+    // namespace: every service's raw `uriTemplate` strings, unprefixed and unroutable, on
+    // the one shape §18 decision 26 keeps resources off entirely.
+    for (const request of [
+      readResource(URI),
+      message("resources/templates/list"),
+      message("completion/complete", promptRef(PROMPT)),
+    ]) {
+      const answer = await rpc(world.url(), world.agent, request);
+      expect(answer.error?.code, String(request.method)).toBe(-32601);
+    }
+  });
+
+  it("§20.2 · scoped resources/list returns unprefixed, unrewritten URIs", async () => {
+    const world = await seedD13();
+
+    const listed = await rpc(world.url(NOTION), world.agent, message("resources/list"));
+
+    expect(listed.error, JSON.stringify(listed.error)).toBeUndefined();
+    // One equality states both halves: a `notion_` prefix, or any rewrite at all, fails it.
+    expect(resourceUris(listed)).toEqual([URI]);
+  });
+
+  it("§20.2 · scoped resources/read returns contents for a matched URI · an unmatched URI is -32001 (the twin)", async () => {
+    const world = await seedD13();
+
+    const matched = await rpc(world.url(NOTION), world.agent, readResource(URI));
+    expect(matched.error, JSON.stringify(matched.error)).toBeUndefined();
+    expect((matched.result as { contents?: unknown }).contents).toEqual(READ_RESULT.contents);
+
+    const unmatched = await rpc(world.url(NOTION), world.agent, readResource(UNGRANTED_URI));
+    expect(unmatched.error?.code).toBe(-32001);
+  });
+
+  it("§20.2 · resources are matched by uri, never by name — a resource whose NAME matches a granted pattern while its URI matches none is absent from resources/list and -32001 on read · the same resource under a granted URI pattern is listed and readable (the twin)", async () => {
+    // The fixture's second resource carries `name: URI` — the exact string the granted
+    // pattern matches — over a URI the pattern does not cover. Reusing the name-keyed
+    // `filterList` here lists it and reads it; matching by `uri` does neither.
+    const world = await seedD13();
+
+    const listed = await rpc(world.url(NOTION), world.agent, message("resources/list"));
+    expect(resourceUris(listed), "the name-matching resource is absent").toEqual([URI]);
+
+    const byName = await rpc(world.url(NOTION), world.agent, readResource(UNGRANTED_URI));
+    expect(byName.error?.code, "and unreadable").toBe(-32001);
+
+    // The twin: the same caller, the same service, a resource whose URI the pattern covers.
+    const byUri = await rpc(world.url(NOTION), world.agent, readResource(URI));
+    expect(byUri.error, JSON.stringify(byUri.error)).toBeUndefined();
+    expect((byUri.result as { contents?: unknown }).contents).toEqual(READ_RESULT.contents);
+  });
+
+  it("§20.2 · a URI served by both service A and service B is readable on A's scoped endpoint by a caller granted it on A · B's scoped endpoint refuses the same URI -32001 (the twin — a read is routed by the addressed slug, never by the URI)", async () => {
+    // B declares a TOOLS-ONLY role (§20.3's bare list), so the identical URI it genuinely
+    // serves is covered by no resource pattern of this caller's grants ON B. The URI is
+    // the same bytes on both endpoints; only the URL differs.
+    const world = await seedD13({ also: { roles: TOOLS_ONLY_ROLES } });
+
+    const onA = await rpc(world.url(NOTION), world.agent, readResource(URI));
+    expect(onA.error, JSON.stringify(onA.error)).toBeUndefined();
+    expect((onA.result as { contents?: unknown }).contents).toEqual(READ_RESULT.contents);
+
+    const onB = await rpc(world.url(LINEAR), world.agent, readResource(URI));
+    expect(onB.error?.code, "judged against the grants held on B").toBe(-32001);
+    expect(
+      matching(await world.arrivals(LINEAR), "resources/read"),
+      "and B is never dialed — the URI never selects the service",
+    ).toHaveLength(0);
+  });
+
+  it("§20.2 · scoped resources/templates/list is filtered by the resource patterns of the caller's roles, matched against the raw uriTemplate string — \"news://feed/*\" keeps \"news://feed/{id}\", and a template-shaped pattern keeps exactly its own template", async () => {
+    // Two callers, one service, two patterns — the only shape in which "matched against
+    // the RAW uriTemplate" is falsifiable: the wildcard keeps both feed templates, and the
+    // template-shaped pattern keeps one of them and drops the other. A hub that expanded
+    // templates, or that matched a pattern against a template's expansion, cannot produce
+    // both answers.
+    const world = await seedD13({
+      roles: {
+        [ROLE]: { resources: [RESOURCE_PATTERN] },
+        [TEMPLATE_ROLE]: { resources: [TEMPLATE] },
+      },
+      second: { [NOTION]: [{ role: TEMPLATE_ROLE, mode: "allow" }] },
+    });
+
+    const wildcard = await rpc(world.url(NOTION), world.agent, message("resources/templates/list"));
+    expect(wildcard.error, JSON.stringify(wildcard.error)).toBeUndefined();
+    expect(templateStrings(wildcard)).toEqual([OTHER_TEMPLATE, TEMPLATE].sort());
+
+    const exact = await rpc(world.url(NOTION), world.otherAgent(), message("resources/templates/list"));
+    expect(exact.error, JSON.stringify(exact.error)).toBeUndefined();
+    expect(templateStrings(exact), "an unquantified brace sequence is a literal").toEqual([TEMPLATE]);
+  });
+
+  it("§20.2 · scoped completion/complete relays the service's suggestions verbatim for a ref the caller's patterns match · a ref naming an unmatched prompt or resource template is -32001 and never reaches the service (the twin)", async () => {
+    const world = await seedD13();
+
+    // BOTH `ref` kinds on the matched side, because §20.2 gives them two different
+    // matching keys: a prompt by NAME against the prompt patterns, a resource template by
+    // its raw TEMPLATE STRING against the resource patterns (`news://feed/*` covers
+    // `news://feed/{id}`, §20.3). With only the prompt leg, a hub that implements
+    // `ref/prompt` and falls through to -32001 on every `ref/resource` — or that matches a
+    // resource ref against the prompt list, or against an expanded template — is green on
+    // every completion case in this file while half the ref rule is dead.
+    for (const ref of [promptRef(PROMPT), resourceRef(TEMPLATE)]) {
+      const matched = await rpc(world.url(NOTION), world.agent, message("completion/complete", ref));
+      expect(matched.error, JSON.stringify(ref)).toBeUndefined();
+      expect((matched.result as { completion?: unknown }).completion, JSON.stringify(ref)).toEqual(
+        COMPLETION_RESULT.completion,
+      );
+    }
+
+    // The twin, on both `ref` kinds: a prompt no pattern matches, and a template no
+    // pattern matches. Both refused, and — the half that makes the refusal worth having —
+    // refused BEFORE anything reaches the service.
+    const before = matching(await world.arrivals(), "completion/complete").length;
+    for (const ref of [promptRef(UNGRANTED_PROMPT), resourceRef(UNGRANTED_TEMPLATE)]) {
+      const refused = await rpc(world.url(NOTION), world.agent, message("completion/complete", ref));
+      expect(refused.error?.code, JSON.stringify(ref)).toBe(-32001);
+    }
+    expect(matching(await world.arrivals(), "completion/complete"), "a refused ref is never relayed")
+      .toHaveLength(before);
+  });
+
+  it("§20.2 · a caller with zero prompt and zero resource grants gets -32001 from completion/complete for every ref — the method cannot be used to enumerate past the role's patterns", async () => {
+    // A tools-only role, which every service in the field holds today (§20.3): the caller
+    // can call tools and must be able to complete NOTHING — not even the prompts and
+    // templates this service genuinely serves.
+    const world = await seedD13({ roles: TOOLS_ONLY_ROLES });
+
+    for (const ref of [
+      promptRef(PROMPT),
+      promptRef(UNGRANTED_PROMPT),
+      resourceRef(TEMPLATE),
+      resourceRef(UNGRANTED_TEMPLATE),
+    ]) {
+      const refused = await rpc(world.url(NOTION), world.agent, message("completion/complete", ref));
+      expect(refused.error?.code, JSON.stringify(ref)).toBe(-32001);
+    }
+    expect(matching(await world.arrivals(), "completion/complete"), "nothing reached the service")
+      .toHaveLength(0);
+  });
+
+  it("§20.2 · a tool result carrying a resource_link is relayed byte-for-byte — no URI is rewritten anywhere", async () => {
+    // §18 decision 26's residue, pinned: the aggregated endpoint prefixes NAMES, and a
+    // `resource_link`'s URI is not a name. Asserted on both shapes because the aggregated
+    // one is where a rewrite would be tempting and the scoped one is where it would be
+    // pointless — the same bytes either way.
+    const link = { type: "resource_link", uri: URI, name: "tech feed", mimeType: "text/plain" };
+    const world = await seedD13({ serves: { result: { content: [link], resultType: "complete" } } });
+
+    for (const [url, name] of [
+      [world.url(NOTION), TOOL],
+      [world.url(), `${NOTION}_${TOOL}`],
+    ] as const) {
+      const answer = await rpc(url, world.agent, message("tools/call", { name, arguments: ARGS }));
+      expect(answer.error, `${url}: ${JSON.stringify(answer.error)}`).toBeUndefined();
+      expect((answer.result as { content?: unknown }).content, url).toEqual([link]);
+    }
+  });
+});
+
+describe("§20.1/§20.2 — what each endpoint shape declares, and what it refuses", () => {
+  it("§20.1 · subscriptions/listen is -32601 on both endpoint shapes", async () => {
+    const world = await seedD13();
+
+    for (const url of [world.url(), world.url(NOTION)]) {
+      const answer = await rpc(url, world.agent, message("subscriptions/listen"));
+      expect(answer.error?.code, url).toBe(-32601);
+    }
+  });
+
+  it("§20.2 · the aggregated endpoint declares tools and prompts, both listChanged false, and never resources or completions — one static answer, whatever the namespace holds", async () => {
+    // Two namespaces at the extremes of what a union would produce: one whose service
+    // declares every family, one whose role grants tools alone. The answer is the same
+    // object, which is what "static" means and what the fixture pins.
+    const rich = await seedD13({
+      capabilities: ["tools", "prompts", "resources", "completions"],
+      also: {},
+    });
+    expect(capabilitiesOf(await rpc(rich.url(), rich.agent, initializeMessage()))).toEqual(
+      AGGREGATED_CAPABILITIES,
+    );
+
+    const bare = await seedD13({ roles: TOOLS_ONLY_ROLES });
+    expect(capabilitiesOf(await rpc(bare.url(), bare.agent, initializeMessage()))).toEqual(
+      AGGREGATED_CAPABILITIES,
+    );
+  });
+
+  it("§20.2 · the scoped endpoint derives capabilities from the STORED declared set with listChanged and subscribe forced false — initialize makes no upstream call, and a hung service answers the handshake at full speed (the twin)", async () => {
+    // The upstream HANGS. An `initialize` that asked it anything would take a deadline to
+    // answer, or never answer at all — which is the failure mode §20.2's "never a live
+    // upstream call" exists to forbid, in the one method §7 pins as stateless.
+    const world = await seedD13({
+      capabilities: ["tools", "prompts", "resources"],
+      serves: { mode: { kind: "hang" } },
+    });
+
+    const startedAt = Date.now();
+    const answer = await rpc(world.url(NOTION), world.agent, initializeMessage());
+    const elapsed = Date.now() - startedAt;
+
+    expect(capabilitiesOf(answer)).toEqual({
+      tools: { listChanged: false },
+      prompts: { listChanged: false },
+      // Forced false whatever the service claims: the hub can honor neither, and §20.1
+      // pins that declaring one it cannot serve costs a Claude Code client its reopen
+      // budget for the rest of the day.
+      resources: { subscribe: false, listChanged: false },
+    });
+    expect(await world.arrivals(), "the handshake dials nobody").toEqual([]);
+    expect(elapsed, "…so a hung service cannot slow it").toBeLessThan(AGGREGATED_LIST_DEADLINE_MS);
+  });
+
+  it("§20.2 · a tunneled service that has never connected declares tools only on its scoped endpoint", async () => {
+    // The same answer it already gives, and consistent with the empty `tools/list` it
+    // serves from an empty catalog: a capability the hub has never been told about is not
+    // declared (§20.2).
+    const world = await seedD13({ withTunnel: true });
+
+    const answer = await rpc(world.url(NEWS), world.agent, initializeMessage());
+
+    expect(capabilitiesOf(answer)).toEqual({ tools: { listChanged: false } });
+  });
+
+  it("§20.2 · a proxied service with no capabilities config declares tools only on its scoped endpoint · one whose config declares resources advertises it, listChanged and subscribe still forced false (the twin) — owner-declared configuration, never an upstream call", async () => {
+    // The upstream serves every family in BOTH halves. What differs is the owner's
+    // declaration, which is the point: absent means `tools` only, so every proxied service
+    // in the field is unchanged by §20.
+    const silent = await seedD13();
+    expect(capabilitiesOf(await rpc(silent.url(NOTION), silent.agent, initializeMessage()))).toEqual({
+      tools: { listChanged: false },
+    });
+
+    const declaring = await seedD13({ capabilities: ["tools", "resources"] });
+    expect(
+      capabilitiesOf(await rpc(declaring.url(NOTION), declaring.agent, initializeMessage())),
+    ).toEqual({
+      tools: { listChanged: false },
+      resources: { subscribe: false, listChanged: false },
+    });
+    expect(await declaring.arrivals(), "read per request from config, never dialed").toEqual([]);
+  });
+
+  it("§20.2 · server/discover's consumer-facing answer matches initialize's capabilities on both endpoint shapes — one source, two spellings", async () => {
+    const world = await seedD13({ capabilities: ["tools", "prompts", "resources"] });
+
+    for (const url of [world.url(), world.url(NOTION)]) {
+      const discovered = await rpc(url, world.agent, message("server/discover"));
+      const handshake = await rpc(url, world.agent, initializeMessage());
+      // A divergence between the two is a bug, not a degree of freedom (§20.2).
+      expect(capabilitiesOf(discovered), url).toEqual(capabilitiesOf(handshake));
+    }
+  });
+
+  it("§20.2 · the pmcp builtin's scoped endpoint answers empty prompt and resource lists and declares neither capability", async () => {
+    // `pmcp` is owner-only (§8), so the credential is a real signed-in session's.
+    const world = await seedD13();
+    const owner = await world.ownerToken();
+    const url = world.url(PMCP_SLUG);
+
+    const prompts = await rpc(url, owner, message("prompts/list"));
+    const resources = await rpc(url, owner, message("resources/list"));
+
+    // Empty ANSWERS, not refusals: the builtin serves both families and holds nothing in
+    // either, which is a different thing from a method it does not implement.
+    expect(prompts.error, JSON.stringify(prompts.error)).toBeUndefined();
+    expect(promptNames(prompts)).toEqual([]);
+    expect(resources.error, JSON.stringify(resources.error)).toBeUndefined();
+    expect(resourceUris(resources)).toEqual([]);
+    expect(capabilitiesOf(await rpc(url, owner, initializeMessage()))).toEqual({
+      tools: { listChanged: false },
+    });
+  });
+});
+
+describe("§20.2/§20.4 — identity, MRTR, the fan-out and the two relay rules", () => {
+  it("§20.2 · every forwarded prompts/get and resources/read carries hub/principal, hub/roles and the consumer's mirrored clientCapabilities", async () => {
+    const world = await seedD13();
+    const declared = { elicitation: {}, sampling: {} };
+    const meta = { [CLIENT_CAPABILITIES]: declared };
+
+    await rpc(world.url(NOTION), world.agent, getPrompt(PROMPT, { _meta: meta }));
+    await rpc(world.url(NOTION), world.agent, message("resources/read", { uri: URI, _meta: meta }));
+
+    const forwarded = (await world.arrivals()).filter(
+      (arrival) => arrival.rpcMethod === "prompts/get" || arrival.rpcMethod === "resources/read",
+    );
+    expect(forwarded.map((arrival) => arrival.rpcMethod)).toEqual(["prompts/get", "resources/read"]);
+    for (const arrival of forwarded) {
+      expect(arrival.meta?.["hub/principal"], arrival.rpcMethod).toBe(`sa:${AGENT}`);
+      expect(arrival.meta?.["hub/roles"], arrival.rpcMethod).toEqual([ROLE]);
+      expect(arrival.meta?.[CLIENT_CAPABILITIES], arrival.rpcMethod).toEqual(declared);
+    }
+  });
+
+  it("§20.2 · a consumer-supplied hub/* _meta key is stripped from a prompts/get before forwarding · progressToken survives (the twin)", async () => {
+    const world = await seedD13();
+
+    await rpc(
+      world.url(NOTION),
+      world.agent,
+      getPrompt(PROMPT, {
+        _meta: {
+          "hub/principal": "user:FAKE0000-impostor",
+          "hub/roles": ["all"],
+          progressToken: "FAKE0000-progress",
+        },
+      }),
+    );
+
+    const [forwarded] = matching(await world.arrivals(), "prompts/get");
+    expect(forwarded, "the call was forwarded at all").toBeDefined();
+    // Overwrite, never merge: any `hub/*` a service sees was written by the hub.
+    expect(forwarded.meta?.["hub/principal"]).toBe(`sa:${AGENT}`);
+    expect(forwarded.meta?.["hub/roles"]).toEqual([ROLE]);
+    // The twin: everything outside the reserved prefix passes untouched.
+    expect(forwarded.meta?.progressToken).toBe("FAKE0000-progress");
+  });
+
+  it("§20.2 · an input_required result from prompts/get relays verbatim and the retry re-enters the pipeline as an ordinary request", async () => {
+    const pending = {
+      resultType: "input_required",
+      requestState: "FAKE0000-opaque-request-state",
+      inputRequests: [{ name: "topic", schema: { type: "string" } }],
+    };
+    const world = await seedD13({ serves: { promptResult: pending } });
+
+    const first = await rpc(world.url(NOTION), world.agent, getPrompt(PROMPT));
+    // Verbatim: `requestState` is opaque to the hub — never inspected, never rewritten.
+    expect(first.result).toEqual(pending);
+
+    const retry = await rpc(
+      world.url(NOTION),
+      world.agent,
+      getPrompt(PROMPT, { inputResponses: { topic: "tech" }, requestState: pending.requestState }),
+    );
+    expect(retry.error, JSON.stringify(retry.error)).toBeUndefined();
+    expect(matching(await world.arrivals(), "prompts/get"), "an ordinary request, forwarded again")
+      .toHaveLength(2);
+  });
+
+  it("§20.2 · aggregated prompts/list survives one failing service and names it in _meta[\"pmcp/unavailable\"] · the scoped list against the same service fails -32000 (the twin)", async () => {
+    const world = await seedD13({ also: { serves: { mode: { kind: "status", status: 503 } } } });
+
+    const aggregated = await rpc(world.url(), world.agent, message("prompts/list"));
+    expect(aggregated.error, "the aggregate itself always succeeds (§7, unchanged)").toBeUndefined();
+    expect(promptNames(aggregated), "one service's failure costs the consumer only its own")
+      .toEqual([`${NOTION}_${PROMPT}`]);
+    expect(unavailableIn(aggregated)).toContain(LINEAR);
+
+    // The twin: the scoped shape is where the aggregate's silent omission surfaces.
+    const scoped = await rpc(world.url(LINEAR), world.agent, message("prompts/list"));
+    expect(scoped.error?.code).toBe(-32000);
+  });
+
+  it("§20.4 · a service's cacheScope \"public\" on resources/read is downgraded to \"private\" before relay", async () => {
+    // The one place verbatim relay is actually unsafe: the hub's authorization context is
+    // per-token, so a `public` result from an authenticated endpoint could be shared
+    // across access tokens.
+    const world = await seedD13({
+      serves: { readResult: { ...READ_RESULT, cacheScope: "public" } },
+    });
+
+    const answer = await rpc(world.url(NOTION), world.agent, readResource(URI));
+
+    expect(answer.error, JSON.stringify(answer.error)).toBeUndefined();
+    expect((answer.result as { cacheScope?: unknown }).cacheScope).toBe("private");
+    expect((answer.result as { contents?: unknown }).contents, "and nothing else moved").toEqual(
+      READ_RESULT.contents,
+    );
+  });
+
+  it("§20.4 · a result carrying requestState is served with no ttlMs", async () => {
+    const world = await seedD13({
+      serves: {
+        readResult: { resultType: "input_required", requestState: "FAKE0000-opaque-request-state" },
+      },
+    });
+
+    const answer = await rpc(world.url(NOTION), world.agent, readResource(URI));
+    expect(answer.error, JSON.stringify(answer.error)).toBeUndefined();
+    expect((answer.result as Record<string, unknown>).requestState).toBe(
+      "FAKE0000-opaque-request-state",
+    );
+    expect(
+      "ttlMs" in (answer.result as object),
+      "an exchange still in flight is not a cacheable answer (§20.5)",
+    ).toBe(false);
+
+    // Non-vacuous: the SAME world's listing does carry the hint, so "no ttlMs" is a
+    // decision about this result rather than a hub that never mints one.
+    const listed = await rpc(world.url(NOTION), world.agent, message("resources/list"));
+    expect((listed.result as { ttlMs?: unknown }).ttlMs, "a listing is cacheable").toBeDefined();
   });
 });

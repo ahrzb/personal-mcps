@@ -1,0 +1,23 @@
+-- 0006_service_capabilities.sql — §20.2's owner-declared capability list for a PROXIED
+-- service: what its scoped `initialize` advertises, since the hub never makes a live
+-- upstream call inside the handshake and a proxied service caches nothing to learn from.
+--
+-- Separate from 0002 for the ordinary reason migrations are separate: nothing here
+-- rewrites an earlier file. One nullable column, so every existing row keeps its meaning.
+--
+-- NULL is not "empty": it means the owner declared nothing, which §20.2 reads as `tools`
+-- only — the answer every proxied service in the field already gives. A stored `[]` is a
+-- deliberate declaration of no capabilities. The registry owns that distinction; the
+-- column merely keeps it expressible, which is why there is no DEFAULT here (0002's rule:
+-- a DEFAULT would be a second, never-exercised answer to "what does an absent value
+-- mean").
+--
+-- The declaration gates the HANDSHAKE alone. Routing stays grant-filtered whatever it
+-- says, so a wrong declaration can mislead a client's feature detection and can never
+-- widen access — which is also why no CHECK constrains the JSON: registry.assertCapabilities
+-- is the one gate, applied on service_create and service_update alike.
+--
+-- Tunneled services never carry this: their capability set is learned at registration and
+-- cached in the DO (§20.5), and registry's PROXY_ONLY check refuses the field on a tunnel.
+
+ALTER TABLE service ADD COLUMN capabilities_json TEXT;

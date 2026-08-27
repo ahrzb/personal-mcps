@@ -29,7 +29,16 @@ import { record } from "./audit";
 // `class UpstreamError extends HubError` is evaluated at module init, and an edge back
 // into gateway would put HubError in its temporal dead zone on the first import.
 import { HubError, unavailable } from "./errors";
-import type { BackendCtx, JsonRpcRequest, JsonRpcResponse, ServiceBackend, Tool } from "./gateway";
+import type {
+  BackendCtx,
+  JsonRpcRequest,
+  JsonRpcResponse,
+  Prompt,
+  Resource,
+  ResourceTemplate,
+  ServiceBackend,
+  Tool,
+} from "./gateway";
 import { requireOwnerSession } from "./identity";
 import { formatPrincipal } from "./principal";
 import type { Service } from "./registry";
@@ -105,14 +114,23 @@ export const upstreamBackend: ServiceBackend = {
    */
   async listTools(service, ctx) {
     // deps: D1 `service` · crypto.subtle (AES-GCM envelope) · @modelcontextprotocol/client Client (Streamable HTTP) · audit.record (refresh failure)
-    const relayed = await dial(service, {
-      jsonrpc: "2.0",
-      id: crypto.randomUUID(),
-      method: "tools/list",
-      params: {},
-    });
-    const tools = (relayed.result as { tools?: unknown } | undefined)?.tools;
-    return Array.isArray(tools) ? (tools as Tool[]) : [];
+    return liveList<Tool>(service, "tools/list", "tools");
+  },
+
+  /**
+   * §20.2's three further listings, live and uncached like `listTools` above — §20.5 pins
+   * "proxied services cache nothing at all" for every family, not tools alone. A failing
+   * fetch throws the same `UpstreamError` `listTools` does, read the same way by the
+   * caller (omit the slug, or -32000).
+   */
+  async listPrompts(service, ctx) {
+    return liveList<Prompt>(service, "prompts/list", "prompts");
+  },
+  async listResources(service, ctx) {
+    return liveList<Resource>(service, "resources/list", "resources");
+  },
+  async listResourceTemplates(service, ctx) {
+    return liveList<ResourceTemplate>(service, "resources/templates/list", "resourceTemplates");
   },
 
   /**
@@ -197,6 +215,19 @@ async function dial(
   const body = (await response.json().catch(() => null)) as JsonRpcResponse | null;
   if (typeof body !== "object" || body === null || body.jsonrpc !== "2.0") throw failure("bad_body");
   return body;
+}
+
+/**
+ * One live listing round trip, shared by `listTools` and §20.2's three further families:
+ * a fresh JSON-RPC request for `method`, reading the answer's `key` field as the catalog.
+ * Same failure behavior as `dial` throughout — any `UpstreamError` propagates uncaught,
+ * which is what lets the aggregated fan-out treat it as "this slug contributes nothing"
+ * and the scoped endpoint surface it as -32000.
+ */
+async function liveList<T>(service: Service, method: string, key: string): Promise<T[]> {
+  const relayed = await dial(service, { jsonrpc: "2.0", id: crypto.randomUUID(), method, params: {} });
+  const items = (relayed.result as Record<string, unknown> | undefined)?.[key];
+  return Array.isArray(items) ? (items as T[]) : [];
 }
 
 /** The one shape every upstream failure leaves this module in — see UpstreamError. */

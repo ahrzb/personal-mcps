@@ -146,6 +146,23 @@ describe("tunnel frames · §4, §6", () => {
     }
   });
 
+  it("§6/§20.3 · the roles VALUE the library sends is the fixture's own declaration, both spellings intact — a bare pattern list beside a per-family object, neither repaired on the way out. The shape case above compares params KEYS, which a library that flattened {tools, prompts, resources} to its tools would still satisfy", async () => {
+    // The declaration comes from the FIXTURE, not from a constant here: §20.3 gives the
+    // family vocabulary exactly one home and it is the hub's (§6), so the only thing this
+    // library owes it is verbatim transmission — in whichever of the two spellings the
+    // author chose, mixed across roles in one declaration if that is what they wrote.
+    // This is the library half of contracts.test.ts's "a shape change in either library
+    // fails here first": that case cannot import this package (workerd, no `ws`), so the
+    // judgement of a library against that value happens on this side of the boundary.
+    const declared = tunnelFrames.register.request.params.roles;
+    const hub = await startFakeHub();
+    const transport = new HubTransport({ url: hub.origin, token: TOKEN, roles: declared });
+    opened.push({ hub, transport });
+    void transport.start().catch(() => {});
+    const emitted = (await hub.nextFrame(1)).message.params as Record<string, unknown>;
+    expect(emitted.roles).toEqual(declared);
+  });
+
   it("§6 · the protocolVersion the library sends equals the fixture's pinned revision — a revision bump is a fixture commit, owner-run, and this case is what makes the client's copy follow it", async () => {
     const hub = await startFakeHub();
     const transport = new HubTransport({ url: hub.origin, token: TOKEN });

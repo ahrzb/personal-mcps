@@ -23,6 +23,20 @@
 export type DesiredGrant = { role: string; mode: "allow" | "approval" };
 
 /**
+ * One role's declaration, §20.3's wire shape: a bare pattern list means tools and nothing
+ * else, forever (`registry.validateRoles`'s normalization — a role that grants tools grants
+ * *nothing* in another family), while the per-family object names any of the three keyspaces
+ * (every key optional) and may sit beside a bare list in the same declaration. Kept as loose
+ * as the wire itself at the TYPE level — an unknown family key or a stray `all` is a semantic
+ * violation (`roleDeclarationProblems`), not a type error, matching the rest of this module:
+ * parse throws on STRUCTURE, plan reports on MEANING. Both `DesiredService.roles` and
+ * `CurrentService.roles` use this — a bare list normalizes to nothing here, because the
+ * canonical read shape a diff compares against is the SERVER's rendering (§20.3), and the
+ * planner would disagree with its own wire if it normalized on the way in.
+ */
+export type RoleDeclaration = Record<string, string[] | Record<string, string[]>>;
+
+/**
  * One service as the YAML declares it, fully normalized: every default already
  * applied, so two files that mean the same thing compare equal. Tunneled
  * services never carry `roles` — their roles arrive at connect time and are not
@@ -45,8 +59,16 @@ export type DesiredService = {
   endpoint?: string;
   auth?: "headers" | "oauth";
   forwardIdentity?: boolean;
-  /** proxy only: virtual role definitions, role name → anchored patterns (§2) */
-  roles?: Record<string, string[]>;
+  /** proxy only: virtual role definitions, §20.3's per-family shape */
+  roles?: RoleDeclaration;
+  /**
+   * proxy only: §20.2's owner-declared advertisement — which MCP families the scoped
+   * handshake advertises (subset of tools/prompts/resources/completions). Absent, not
+   * defaulted: the hub's own default (tools only) applies, and inventing `["tools"]` here
+   * would make every file written before this key existed diff against the server on the
+   * first `pmcp diff` after it lands.
+   */
+  capabilities?: string[];
 };
 
 /**
@@ -84,8 +106,8 @@ export type CurrentService = {
   description: string;
   archived: boolean;
   builtin: boolean;
-  /** declared roles — from registration for tunnel kind, from config for proxy kind */
-  roles: Record<string, string[]>;
+  /** declared roles — from registration for tunnel kind, from config for proxy kind (§20.3's canonical read shape) */
+  roles: RoleDeclaration;
   redact: Record<string, string[]>;
   redactResults: Record<string, string[]>;
   logBodies: boolean;
@@ -173,7 +195,7 @@ export function parseDesired(doc: unknown): DesiredConfig {
 
 /** Every key the service grammar knows, split by the kind that may carry it (§9). */
 const COMMON_SERVICE_KEYS = ["kind", "name", "description", "archived", "redact", "redact_results", "log_bodies"];
-const PROXY_ONLY_KEYS = ["endpoint", "auth", "forward_identity", "roles"];
+const PROXY_ONLY_KEYS = ["endpoint", "auth", "forward_identity", "roles", "capabilities"];
 
 /** One `services:` entry, defaults applied. Structural problems throw with the path. */
 function parseService(slug: string, value: unknown): DesiredService {
@@ -198,13 +220,46 @@ function parseService(slug: string, value: unknown): DesiredService {
   // A proxied service with no forwarding target claims a hub capability that does not
   // exist; the hub's own op requires it too.
   if (endpoint === undefined) throw new TypeError(`${path}.endpoint is required for a proxied service`);
+  // §20.2: absent means tools only, decided by the hub — no default is invented here, or
+  // every file written before this key existed would diff against the server.
+  const capabilities =
+    fields.capabilities === undefined ? undefined : strings(fields.capabilities, `${path}.capabilities`);
   return {
     ...common,
     endpoint,
     auth: pick(fields.auth, ["headers", "oauth"], `${path}.auth`) ?? "headers",
     forwardIdentity: flag(fields.forward_identity, `${path}.forward_identity`) ?? false,
-    roles: pathMap(fields.roles, `${path}.roles`),
+    roles: roleDeclarationMap(fields.roles, `${path}.roles`),
+    ...(capabilities === undefined ? {} : { capabilities }),
   };
+}
+
+/**
+ * The `roles:` field of a proxied service (§20.3): each role is a bare pattern list (tools,
+ * unchanged forever) or a per-family object — every key optional, and the two spellings may
+ * sit side by side in one declaration. Parsed VERBATIM: nothing is normalized here, because
+ * the canonical read shape a diff compares against is the server's rendering, and a planner
+ * that normalized on the way in would disagree with the wire it diffs against. Structural
+ * problems (a role that is neither a list nor a mapping, a family value that is not a list
+ * of strings) throw with the offending path, same as every other grammar rule; an unknown
+ * family name and every pattern-grammar rule are `planChanges`' job
+ * (`roleDeclarationProblems`), so a bad regex in one role does not stop `diff` from
+ * reporting every other problem in the file in one pass.
+ */
+function roleDeclarationMap(value: unknown, path: string): RoleDeclaration {
+  const roles = asMap(value, path);
+  return Object.fromEntries(
+    Object.keys(roles).map((role) => {
+      const declared = roles[role];
+      const rolePath = `${path}.${role}`;
+      if (Array.isArray(declared)) return [role, strings(declared, rolePath)];
+      const families = asMap(declared, rolePath);
+      return [
+        role,
+        Object.fromEntries(Object.keys(families).map((family) => [family, strings(families[family], `${rolePath}.${family}`)])),
+      ];
+    }),
+  );
 }
 
 /** One `service_accounts:` entry, with every grant string split into role and mode. */
@@ -487,27 +542,46 @@ function redactKeyProblems(path: string, map: Record<string, string[]>): string[
 }
 
 /**
- * `hub/register`'s validation, applied to a proxied service's config-declared roles (§6,
- * §8). It is deliberately a SECOND implementation of `server/src/registry.ts`'s
- * validateRoles — §9 keeps the planner free of any server import — so the caps below are
- * exported and locked to `server/src/limits.ts` in the parity suite; see them.
+ * §20.3's three keyspaces — the only family keys a per-family role object may carry.
+ * EXPORTED for the same reason the caps below are: this is a second copy of the server's
+ * `registry.ROLE_FAMILIES`, and §9 forbids the planner importing it, so
+ * `server/test/worker/contracts.test.ts` locks the two by name. Without that lock, a family
+ * added on the server ships a whole green suite while `pmcp diff` hard-errors on a legal
+ * file with `"x" is not a role family`.
  */
-function roleDeclarationProblems(path: string, roles: Record<string, string[]>): string[] {
+export const ROLE_FAMILIES = ["tools", "prompts", "resources"] as const;
+
+/**
+ * `hub/register`'s validation, extended to §20.3's per-family shape and applied to a
+ * proxied service's config-declared roles (§6, §8). It is deliberately a SECOND
+ * implementation of `server/src/registry.ts`'s validateRoles — §9 keeps the planner free of
+ * any server import — so the caps below are exported and locked to `server/src/limits.ts`
+ * in the parity suite; see them. A bare pattern list is judged as the tools family; a
+ * per-family object is judged family by family, and a key outside the three keyspaces above
+ * is a violation of its own. The two size caps apply PER FAMILY LIST, never summed across a
+ * role — a role at the cap in all three families is legal.
+ */
+function roleDeclarationProblems(path: string, roles: RoleDeclaration): string[] {
   const problems: string[] = [];
-  for (const [role, patterns] of Object.entries(roles)) {
+  for (const [role, declared] of Object.entries(roles)) {
     if (role === BUILTIN_ROLE) problems.push(`${path}.roles.${role}: \`${BUILTIN_ROLE}\` is the built-in, never declarable`);
     else if (!ROLE_NAME_PATTERN.test(role)) {
       problems.push(`${path}.roles.${role}: a role name is [a-z0-9_-]{1,${ROLE_NAME_MAX_LENGTH}}`);
     }
-    if (patterns.length > ROLE_PATTERNS_MAX) {
-      problems.push(`${path}.roles.${role}: at most ${ROLE_PATTERNS_MAX} patterns`);
-    }
-    for (const pattern of patterns) {
-      if (pattern.length > ROLE_PATTERN_MAX_LENGTH) {
-        problems.push(`${path}.roles.${role}: a pattern is at most ${ROLE_PATTERN_MAX_LENGTH} characters`);
+    for (const [family, patterns] of Object.entries(familiesOf(declared))) {
+      const familyPath = `${path}.roles.${role}.${family}`;
+      if (!(ROLE_FAMILIES as readonly string[]).includes(family)) {
+        problems.push(`${familyPath}: "${family}" is not a role family — tools, prompts, or resources`);
         continue;
       }
-      if (!compiles(pattern)) problems.push(`${path}.roles.${role}: "${pattern}" does not compile`);
+      if (patterns.length > ROLE_PATTERNS_MAX) problems.push(`${familyPath}: at most ${ROLE_PATTERNS_MAX} patterns`);
+      for (const pattern of patterns) {
+        if (pattern.length > ROLE_PATTERN_MAX_LENGTH) {
+          problems.push(`${familyPath}: a pattern is at most ${ROLE_PATTERN_MAX_LENGTH} characters`);
+          continue;
+        }
+        if (!compiles(pattern)) problems.push(`${familyPath}: "${pattern}" does not compile`);
+      }
     }
   }
   return problems;
@@ -584,6 +658,7 @@ function wireFields(service: DesiredService): Record<string, unknown> {
           auth: service.auth,
           forward_identity: service.forwardIdentity,
           roles: service.roles ?? {},
+          ...(service.capabilities === undefined ? {} : { capabilities: service.capabilities }),
         }
       : {}),
   };
@@ -592,10 +667,14 @@ function wireFields(service: DesiredService): Record<string, unknown> {
 /**
  * The fields that differ, in the op's wire spelling. `archived` is never among them (it
  * has its own ops) and a tunneled service's `roles` are never compared — they arrive at
- * connect time and are not desired state (§9).
+ * connect time and are not desired state (§9). `capabilities` rides service_create's wire
+ * above but is EXCLUDED here: service_list/service_get do not report what a proxied
+ * service's scoped handshake currently advertises (§20.2 is silent on reading it back), so
+ * there is no current value to diff against — comparing it against an always-absent current
+ * field would flag every `pmcp apply` as a capabilities change, forever.
  */
 function changedFields(service: DesiredService, existing: CurrentService): Record<string, unknown> {
-  const wire = wireFields(service);
+  const { capabilities: _capabilities, ...wire } = wireFields(service);
   const server: Record<string, unknown> = {
     name: existing.name,
     description: existing.description,
@@ -609,9 +688,54 @@ function changedFields(service: DesiredService, existing: CurrentService): Recor
   };
   const changed: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(wire)) {
-    if (!deepEqual(value, server[key])) changed[key] = value;
+    // `roles` compares by MEANING, not by spelling (§20.3): a bare list and its equivalent
+    // `{tools:[...]}` are the same grant, so they must plan nothing, while a different
+    // FAMILY key under the identical patterns is a real change. Every other field compares
+    // structurally as before.
+    const same =
+      key === "roles"
+        ? deepEqual(canonicalRoles(value as RoleDeclaration), canonicalRoles((server.roles as RoleDeclaration) ?? {}))
+        : deepEqual(value, server[key]);
+    if (!same) changed[key] = value;
   }
   return changed;
+}
+
+/**
+ * §20.3's bare-list ≡ `{tools: [...]}` equivalence, spelled ONCE for this module — the
+ * validation above and the comparison below both read it here, so a change to the
+ * equivalence (a fourth family, a different empty rule) has one site, not two 150 lines
+ * apart. The object arm is handed back as it stands, unknown keys included: judging those
+ * is `roleDeclarationProblems`' job and hiding them here would make an invalid declaration
+ * look clean.
+ */
+function familiesOf(declared: string[] | Record<string, string[]>): Record<string, string[]> {
+  return Array.isArray(declared) ? { tools: declared } : declared;
+}
+
+/**
+ * §20.3's normalization, for COMPARISON only: a bare pattern list IS `{tools: [...]}`, and
+ * a family declared EMPTY is a family not declared. Never used to build a plan step's args
+ * — those stay verbatim, because §20.3 pins the wire as the canonical form and a rewritten
+ * one would disagree with what the server actually stores — only to decide whether two
+ * declarations mean the same thing regardless of which spelling wrote them down.
+ *
+ * Both halves are needed because the server's canonical READ (registry.canonicalRoles)
+ * collapses a role to a bare list whenever every non-tools family is empty OR absent: a
+ * file writing `docs: {tools: [publish], prompts: []}` reads back as `['publish']`, and
+ * `docs: {}` reads back as `[]`. Dropping empties makes `[]`, `{}`, `{tools: []}` and
+ * `{tools: [], prompts: []}` ONE value on both sides, so the planner no longer has to know
+ * which shape the server happened to render. Without it those files replan `service_update`
+ * on every run — `pmcp diff` never comes back clean and `pmcp apply` never converges, which
+ * is the exact outcome this function exists to prevent.
+ */
+function canonicalRoles(decl: RoleDeclaration): Record<string, Record<string, string[]>> {
+  return Object.fromEntries(
+    Object.entries(decl).map(([role, declared]) => [
+      role,
+      Object.fromEntries(Object.entries(familiesOf(declared)).filter(([, patterns]) => patterns.length > 0)),
+    ]),
+  );
 }
 
 /** Two grant lists as the same set, order and spelling normalized. */

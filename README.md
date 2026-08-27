@@ -128,4 +128,5 @@ section there, and the code cites it by section (§6 tunnel protocol, §7 proxy,
 [docs/specs/testing](docs/specs/testing),
 explains how the suite is built; [test-inventory.json](test-inventory.json) is the
 generated map of every test. To write and connect a bot, read the
-[client quickstart](docs/quickstart-clients.md).
+[client quickstart](docs/quickstart-clients.md); to stand up your own instance on
+your own Cloudflare account, the [deployment guide](docs/deploy.md).

@@ -45,22 +45,34 @@
 
 import { env } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
+import worker from "../../src/index";
 import { describe, expect, it } from "vitest";
 import { adminBackend, ops } from "../../src/admin";
 import type { AdminOp } from "../../src/admin";
 import { query } from "../../src/audit";
 import type { AuditRow, BodyStub } from "../../src/audit";
-import { CAPABILITY_SHAPE } from "../../src/gateway";
+import { FORWARDED_METHODS } from "../../src/gateway";
 import type { JsonRpcRequest, JsonRpcResponse, Tool } from "../../src/gateway";
 import {
   AUDIT_BODY_CAP_BYTES,
   ROLE_NAME_MAX_LENGTH,
   ROLE_PATTERN_MAX_LENGTH,
   ROLE_PATTERNS_MAX,
+  LISTEN_SUBSCRIPTIONS_MAX,
+  SUBSCRIBE_URI_MAX_BYTES,
 } from "../../src/limits";
-import { tokenPattern } from "../../src/principal";
+import {
+  BELL_PROMPTS,
+  BELL_RESOURCES,
+  BELL_TOOLS,
+  bellFrame,
+  capabilityShape,
+  DEFAULT_SERVICE_CAPABILITIES,
+  RESOURCES_UPDATED,
+} from "../../src/capabilities";
+import { principalKey, tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, Registry, ROLE_FAMILIES as SERVER_ROLE_FAMILIES } from "../../src/registry";
-import type { Service } from "../../src/registry";
+import type { Service, ServiceCapability } from "../../src/registry";
 import { CODES } from "../../src/errors";
 import {
   CLOSE_ARCHIVED,
@@ -73,6 +85,10 @@ import {
   CLOSE_SCHEDULES,
   handleConnect,
   HUB_METHODS,
+  SERVICE_NOTIFICATIONS,
+  status,
+  subscribe,
+  unsubscribe,
 } from "../../src/tunnel";
 import type { SeverCode } from "../../src/tunnel";
 import { setHeaders } from "../../src/upstream";
@@ -171,7 +187,7 @@ export type ContractFamily = {
  * the oracle it is later measured by.
  */
 export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
-  // Nine families, TEN rows: the planner-rows family names two boundaries
+  // Ten families, ELEVEN rows: the planner-rows family names two boundaries
   // the planner reads separately — `service_list` and `account_list` — and this row type
   // pins one file per row, which the "every fixture is claimed by exactly one row"
   // governance case depends on. Splitting them here rather than fusing the fixtures keeps
@@ -179,9 +195,11 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
   //
   // Strategy §4 and contracts/README.md both still say EIGHT: the ninth is the MCP
   // handshake family below, added when §7's 2026-08-26 amendment made `initialize` an
-  // answer of ours rather than a -32601. Both documents owe it a line, and neither is
-  // this file's to write (§9 rule 1 — the strategy and the fixture governance are the
-  // owner's), so the disagreement is recorded here rather than silently reconciled.
+  // answer of ours rather than a -32601, and the tenth is §21's push-frames family (the
+  // consumer-facing notification wire), added when D14 served it. Both documents owe a
+  // line, and neither is this file's to write (§9 rule 1 — the strategy and the fixture
+  // governance are the owner's), so the disagreement is recorded here rather than
+  // silently reconciled.
   //
   // `consumers` is empty on four rows and that emptiness is the finding, not an omission:
   // whoami, the error vocabulary, the admin ops and the planner rows are produced and
@@ -203,7 +221,7 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
   {
     file: "contracts/initialize.json",
     spec: "§7",
-    emission: "the initialize result POST /<user>/mcp really answers a live pmcp_sa_ key — protocolVersion, capabilities, serverInfo — beside the request a compliant client opens with, whose protocolVersion is read off the hub's own server/discover rather than transcribed, and beside gateway's CAPABILITY_SHAPE: the per-family objects the SCOPED handshake derives its answer from, which is where a consumer meets resources and completions",
+    emission: "the initialize result POST /<user>/mcp really answers a live pmcp_sa_ key — protocolVersion, capabilities, serverInfo — beside the request a compliant client opens with, whose protocolVersion is read off the hub's own server/discover rather than transcribed, and beside the four kind-named scopedCapabilities pictures (tunneled-registered, tunneled-never-connected, proxied, builtin) emitted from capabilities' kind-aware capabilityShape: the per-family objects the SCOPED handshake derives its answer from, which is where a consumer meets resources, subscribe and completions",
     consumers: [],
     producer: "worker",
   },
@@ -269,6 +287,13 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
     consumers: ["server"],
     producer: "worker",
   },
+  {
+    file: "contracts/push-frames.json",
+    spec: "§21.3/§21.4",
+    emission: "the consumer-facing push wire, whole — the three list_changed bell frames byte-for-byte with NO params, updated as the one frame carrying a uri, and the DO's read-set as tunnel's SERVICE_NOTIFICATIONS distinguishes it: which frames invalidate a family and which route by URI. Emitted from capabilities' bellFrame and tunnel's exported service-originated notification record, so a fifth frame cannot reach the wire without reaching this fixture",
+    consumers: [],
+    producer: "worker",
+  },
 ];
 
 /**
@@ -328,6 +353,7 @@ const EMISSIONS: Record<string, () => Promise<unknown>> = {
   "contracts/service-list.json": serviceListEmission,
   "contracts/account-list.json": accountListEmission,
   "contracts/audit-body-stubs.json": auditBodyStubsEmission,
+  "contracts/push-frames.json": pushFramesEmission,
 };
 
 /** One family's live emission, normalized. */
@@ -502,6 +528,19 @@ const SPELLED_TOOLS_ONLY_ROLE = "publisher";
  */
 const FIXTURE_CAPABILITIES = ["resources", "tools"];
 
+/** §21.5's four scoped-capability pictures, derived from the kind-aware shape function.
+ *  `tunneled-registered` is the three bell-ringing families of a resource-serving
+ *  registered service — the shape the tunnel project's registration cases witness — and
+ *  `proxied` is the FULL family set, so `completions`' `{}` rendering (the one family with
+ *  no bell) stays pinned on it. */
+const FIXTURE_CAPABILITIES_REGISTERED: readonly ServiceCapability[] = ["tools", "prompts", "resources"];
+const FIXTURE_CAPABILITIES_PROXIED: readonly ServiceCapability[] = [
+  "tools",
+  "prompts",
+  "resources",
+  "completions",
+];
+
 /** A second proxied service in the same namespace, created with no `capabilities` at all —
  *  the absent-is-absent half of the read-back case, beside its declared twin. */
 const FIXTURE_UNDECLARED_PROXY = `${FIXTURE_PROXY}-undeclared`;
@@ -650,14 +689,20 @@ async function initializeEmission(): Promise<unknown> {
       ...answered,
       serverInfo: pinTypes(answered.serverInfo as Record<string, unknown>, ["version"]),
     },
-    // The SCOPED handshake's other half (§20.2), emitted from gateway's own constant the
-    // way tunnel-frames is emitted from HUB_METHODS. `result.capabilities` above is the
-    // AGGREGATED answer and carries two families; a scoped endpoint derives its object
-    // from what the hub stores for that service, so a consumer meets `resources` (with a
-    // `subscribe` key that appears nowhere else) and `completions` there. Both shapes are
-    // one decision — CAPABILITY_SHAPE — and a directory that pinned only the first would
-    // send an implementer to gateway.ts to learn the rest.
-    scopedCapabilities: CAPABILITY_SHAPE,
+    // The SCOPED handshake's other half (§20.2/§21.5), emitted from the KIND-AWARE
+    // capabilityShape — the one place the scoped shape's four branches meet.
+    // `result.capabilities` above is the AGGREGATED answer (one constant, two families);
+    // a scoped endpoint's answer depends on the service's kind and its stored capability
+    // set, so a consumer meets `resources` (with a `subscribe` key that appears nowhere
+    // else), `completions` (which no bell serves, so it shapes as `{}`), and the never-
+    // connected/builtin fallbacks. Four pictures, named for what the handshake branches
+    // on, so a fifth kind — or one that inherits another's shape by accident — fails here.
+    scopedCapabilities: {
+      "tunneled-registered": capabilityShape(FIXTURE_CAPABILITIES_REGISTERED, "tunnel"),
+      "tunneled-never-connected": capabilityShape(DEFAULT_SERVICE_CAPABILITIES, "tunnel"),
+      proxied: capabilityShape(FIXTURE_CAPABILITIES_PROXIED, "proxy"),
+      builtin: capabilityShape(DEFAULT_SERVICE_CAPABILITIES, "builtin"),
+    },
   };
 }
 
@@ -681,7 +726,9 @@ const FIXTURE_CLIENT_INFO = { name: "pmcp-contracts-client", version: "0.0.0-FAK
  * Messages are incidental (§7) and appear nowhere here.
  */
 async function errorsEmission(): Promise<unknown> {
-  return (await errorsWorld()).entries;
+  const world = await errorsWorld();
+  const subs = await subscriberErrors();
+  return { ...world.entries, [String(subs.overcap.code)]: entry(subs.overcap) };
 }
 
 /**
@@ -696,7 +743,13 @@ let errorsCapture: Promise<ErrorsWorld> | undefined;
 type WireError = { code: number; message: string; data?: unknown };
 type ErrorsWorld = {
   entries: Record<string, { code: number; dataKeys: string[] | null }>;
-  raw: { ungranted: WireError; unknown: WireError; unavailable: WireError; allowed: unknown };
+  raw: {
+    ungranted: WireError;
+    unknown: WireError;
+    unavailable: WireError;
+    allowed: unknown;
+    methodNotFound: WireError;
+  };
 };
 
 function errorsWorld(): Promise<ErrorsWorld> {
@@ -756,13 +809,19 @@ async function captureErrors(): Promise<ErrorsWorld> {
       const unavailable = errorOf(await as(FIXTURE_TUNNEL, callMessage(FIXTURE_TOOL)));
       const archived = errorOf(await as(`${FIXTURE_TUNNEL}-archived`, callMessage(FIXTURE_TOOL)));
       const approval = errorOf(await as(gated, callMessage(FIXTURE_TOOL)));
-      // -32601 is sourced from a method §20.1 puts OUT OF SCOPE, not from one nobody had
+      // -32601 is sourced from a method the spec puts OUT OF SCOPE, not from one nobody had
       // implemented yet: `resources/list` used to answer this row and stopped the day §20.2
-      // implemented it, which is how a fixture starts pinning a code no surface still emits.
-      // `subscriptions/listen` is refused on both endpoint shapes by decision, so this row
-      // keeps its meaning when the next family lands.
+      // implemented it, and `subscriptions/listen` took its place and stopped the day §21.1
+      // implemented THAT — which is how a fixture starts pinning a code no surface still
+      // emits, twice. `logging/*` and server-initiated requests are §7's whole remaining
+      // leftover set (the 2026-09-01 amendment), and both are dead in 2026-07-28 itself, so
+      // this capture cannot be implemented out from under the row a third time.
+      //
+      // Sourcing it from a SERVED method is not merely wrong, it HANGS: a
+      // `subscriptions/listen` now answers a held `text/event-stream`, and this producer
+      // reads its body as JSON.
       const methodNotFound = errorOf(
-        await as(FIXTURE_PROXY, { jsonrpc: "2.0", id: 1, method: "subscriptions/listen" }),
+        await as(FIXTURE_PROXY, { jsonrpc: "2.0", id: 1, method: "logging/setLevel" }),
       );
       // The two -32001 causes, side by side: a tool the grant does not cover, and a name
       // that names no service at all on the aggregated shape.
@@ -778,7 +837,7 @@ async function captureErrors(): Promise<ErrorsWorld> {
           [String(approval.code)]: entry(approval),
           [String(methodNotFound.code)]: entry(methodNotFound),
         },
-        raw: { ungranted, unknown, unavailable, allowed },
+        raw: { ungranted, unknown, unavailable, allowed, methodNotFound },
       };
     },
   );
@@ -804,6 +863,253 @@ function healthyUpstream(result?: UpstreamScenario["result"]): UpstreamScenario 
     tools: [{ name: FIXTURE_TOOL, inputSchema: { type: "object", properties: {} } }],
     ...(result === undefined ? {} : { result }),
   };
+}
+
+/** The slug of the one tunneled service every §21.4 error row is about. */
+const FIXTURE_SUBSCRIBE_SLUG = `${FIXTURE_TUNNEL}-subscribe`;
+/** This world's subscriber socket session — fixed, so the capture is byte-stable. */
+const FIXTURE_SESSION_ID = "FAKE0000-0000-4000-8000-000000000000";
+/** UUID as the hub mints it (crypto.randomUUID): version 4, variant 8/9/a/b. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+/** The granted resource pattern behind both twins: covers SUBSCRIBE_URI, its cap-sibling
+ *  (the over-cap -32602 twin) and the fill URIs, but NOT UNGRANTED_SUBSCRIBE_URI — so the
+ *  cap twin passes §21.4's filter and is refused for the COUNT, while an outside URI still
+ *  answers the ungranted -32001. The literal SUBSCRIBE_URI would refuse the cap twin at the
+ *  filter, making the -32602 row unreachable. */
+const SUBSCRIBE_PATTERN = "news://feed/tech*";
+/** A URI the granted resource pattern covers — the under-cap allow-twin's target. */
+const SUBSCRIBE_URI = "news://feed/tech";
+/** A URI the granted pattern does not cover — the ungranted -32001 twin. */
+const UNGRANTED_SUBSCRIBE_URI = "news://feed/other";
+/** What the online service answers a forwarded subscribe — relayed verbatim, so a
+ *  distinguishable body is what makes "the allow-twin succeeded" assertable. */
+const SUBSCRIBE_RESULT = { resultType: "complete" };
+
+/** §21.4's -32602, the six codes' sixth entry and the only one this file cannot reach
+ *  socket-free: a subscribe is refused only when a live subscriber socket's set is at
+ *  LISTEN_SUBSCRIPTIONS_MAX (the DO owns the cap, §21.4), so this world holds a real
+ *  subscriber socket — opened through the DO's second door exactly as the Worker opens it
+ *  — filed to the cap, beside a live service socket so the under-cap allow-twin and the
+ *  over-cap refusal are both answered through the real router. Also captures the one new
+ *  method that carries a caller URI, so its ungranted refusal can be pinned byte-identical
+ *  to every other -32001. Memoized like every capture here. */
+let subscriberErrorsCapture: Promise<SubscriberErrors> | undefined;
+
+type SubscriberErrors = {
+  overcap: WireError;
+  undercapAllowed: unknown;
+  ungrantedSubscribe: WireError;
+};
+
+function subscriberErrors(): Promise<SubscriberErrors> {
+  return (subscriberErrorsCapture ??= captureSubscriberErrors());
+}
+
+async function captureSubscriberErrors(): Promise<SubscriberErrors> {
+  // wireRevision seeds its own namespace under FIXTURE_USER, so it must run OUTSIDE the
+  // world's own inNamespace — a nested provision of the same username would violate the
+  // unique constraint.
+  const revision = await wireRevision();
+  return inNamespace(
+    {
+      services: [{ slug: FIXTURE_SUBSCRIBE_SLUG, kind: "tunnel", tokens: [{ as: "svc" }] }],
+      accounts: [
+        {
+          slug: FIXTURE_ACCOUNT,
+          grants: { [FIXTURE_SUBSCRIBE_SLUG]: [{ role: "reader", mode: "allow" }] },
+          tokens: [{ as: "key" }],
+        },
+      ],
+    },
+    async (ns) => {
+      const serviceId = ns.services[FIXTURE_SUBSCRIBE_SLUG].id;
+      const close = await dialTunnelService(ns.tokens.svc.token, revision);
+      try {
+        await untilOnline(serviceId);
+        const session = FIXTURE_SESSION_ID;
+        // The AUTHORIZATION key, not the audit spelling: the DO compares the socket's stored
+        // principal to what the gateway sends, and the gateway sends principal.principalKey's
+        // immutable-id form (a slug is unique only among live accounts). A socket opened with
+        // `sa:<slug>` here would simply never match, and the over-cap refusal below would
+        // silently become a no_stream success.
+        const principal = principalKey({
+          kind: "service_account",
+          accountId: ns.accounts[FIXTURE_ACCOUNT].id,
+          ownerId: ns.owner.userId,
+          slug: FIXTURE_ACCOUNT,
+        });
+        const subscriber = await openSubscriberFor(serviceId, session, principal);
+        try {
+          // Field to cap minus one through the DO's own RPC (a store needs no service
+          // interaction), so the router's allow-twin lands AT the cap and the next is
+          // refused.
+          for (let i = 0; i < LISTEN_SUBSCRIPTIONS_MAX - 1; i++) {
+            await subscribe(serviceId, session, principal, `${SUBSCRIBE_URI}/${i}`);
+          }
+          const as = (message: JsonRpcRequest, headers: Record<string, string> = {}) =>
+            fetched(`/${ns.owner.username}/mcp/${FIXTURE_SUBSCRIBE_SLUG}`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${ns.tokens.key.token}`,
+                ...headers,
+              },
+              body: JSON.stringify(message),
+            });
+          // The under-cap allow-twin: at cap minus one, this subscribe STORES and forwards,
+          // and the service's answer returns over the socket, relayed verbatim.
+          const allowed = await as(
+            { jsonrpc: "2.0", id: 1, method: "resources/subscribe", params: { uri: SUBSCRIBE_URI } },
+            { "Mcp-Session-Id": session },
+          );
+          // The over-cap: at cap now, refused -32602 having stored and forwarded nothing.
+          const overcap = errorOf(
+            await as(
+              {
+                jsonrpc: "2.0",
+                id: 2,
+                method: "resources/subscribe",
+                params: { uri: `${SUBSCRIBE_URI}/cap` },
+              },
+              { "Mcp-Session-Id": session },
+            ),
+          );
+          // The indistinguishable twin: a URI no granted pattern covers answers the same
+          // -32001 as every other ungranted read, byte for byte.
+          const ungrantedSubscribe = errorOf(
+            await as({
+              jsonrpc: "2.0",
+              id: 3,
+              method: "resources/subscribe",
+              params: { uri: UNGRANTED_SUBSCRIBE_URI },
+            }),
+          );
+          return { overcap, undercapAllowed: allowed.body, ungrantedSubscribe };
+        } finally {
+          try {
+            subscriber.close();
+          } catch {
+            // already gone
+          }
+        }
+      } finally {
+        await close();
+      }
+    },
+  );
+}
+
+/** Dial a real service socket and register it — through /connect, the token resolved on
+ *  the wire. Answers the registration warms and the two §21.4 per-URI methods natively,
+ *  so a forwarded subscribe round-trips back a distinguishable result. */
+async function dialTunnelService(token: string, revision: string): Promise<() => Promise<void>> {
+  const response = await worker.fetch(
+    new Request(`${ORIGIN}/connect`, {
+      headers: { Upgrade: "websocket", Authorization: `Bearer ${token}` },
+    }),
+    env as never,
+  );
+  const socket = response.webSocket;
+  if (response.status !== 101 || socket === null) {
+    throw new Error(`/connect refused the upgrade: ${response.status}`);
+  }
+  socket.accept();
+  socket.addEventListener("message", (event) => {
+    const frame = JSON.parse(String(event.data)) as { id?: unknown; method?: unknown };
+    const answer = (body: Record<string, unknown>) => {
+      try {
+        socket.send(JSON.stringify({ jsonrpc: "2.0", id: frame.id, ...body }));
+      } catch {
+        // already closed
+      }
+    };
+    if (frame.method === "server/discover") {
+      answer({ error: { code: -32601, message: "method not found" } });
+    } else if (frame.method === "tools/list") {
+      answer({ result: { tools: [] } });
+    } else if (frame.method === "prompts/list") {
+      answer({ result: { prompts: [] } });
+    } else if (frame.method === "resources/list") {
+      answer({ result: { resources: [] } });
+    } else if (frame.method === "resources/templates/list") {
+      answer({ result: { resourceTemplates: [] } });
+    } else if (frame.method === "resources/subscribe" || frame.method === "resources/unsubscribe") {
+      answer({ result: SUBSCRIBE_RESULT });
+    }
+  });
+  socket.send(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: "register",
+      method: "hub/register",
+      params: {
+        clientVersion: "contracts/0",
+        protocolVersion: revision,
+        roles: { reader: { resources: [SUBSCRIBE_PATTERN] } },
+      },
+    }),
+  );
+  return async () => {
+    try {
+      socket.close(1000, "case teardown");
+    } catch {
+      // already gone
+    }
+  };
+}
+
+/** Registration is observable, never slept for: `status` reading online is registration
+ *  having completed, and the availability check the router runs consults the same fact. */
+async function untilOnline(serviceId: string): Promise<void> {
+  for (let turn = 0; turn < 250; turn++) {
+    if ((await status(serviceId)) === "online") return;
+    // REAL time, like order.table's dialFeed: workerd is the runtime under test and
+    // vitest's fake timers do not reach inside it. One millisecond per turn; the loop
+    // exits on the condition itself.
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("the tunneled service never registered");
+}
+
+/** §21.2's second door, exactly as the Worker opens it: a real subscriber socket accepted
+ *  by the DO, tagged `sub:<session-id>`, principal stored in the attachment. */
+function openSubscriberFor(
+  serviceId: string,
+  sessionId: string,
+  principal: string,
+): Promise<WebSocket> {
+  const stub = connectionStub(serviceId);
+  return stub
+    .fetch(
+      new Request("https://pmcp.invalid/subscribe", {
+        headers: {
+          Upgrade: "websocket",
+          "x-pmcp-session-id": sessionId,
+          "x-pmcp-principal": principal,
+        },
+      }),
+    )
+    .then((response) => {
+      const socket = response.webSocket;
+      if (response.status !== 101 || socket === null) {
+        throw new Error(`subscriber upgrade refused: ${response.status}`);
+      }
+      socket.accept();
+      return socket;
+    });
+}
+
+/** The DO handle for one service id, cast to the fetch door a subscriber upgrade rides. */
+function connectionStub(serviceId: string): { fetch(req: Request): Promise<Response> } {
+  const binding = env as unknown as {
+    SERVICE_CONNECTION: {
+      get(id: unknown): { fetch(req: Request): Promise<Response> };
+      idFromName(name: string): unknown;
+    };
+  };
+  // The cast, once, then the namespace read: the binding's structure is exactly this door.
+  const namespace = binding.SERVICE_CONNECTION;
+  return namespace.get(namespace.idFromName(serviceId));
 }
 
 /**
@@ -855,7 +1161,64 @@ async function tunnelFramesEmission(): Promise<unknown> {
         "io.modelcontextprotocol/clientCapabilities",
       ],
     },
+    // §6's hub→service method list, emitted from gateway's named export (FORWARDED_METHODS),
+    // split by the `_meta` regime each method rides under. `consumerDriven` are the six the
+    // hub forwards from a consumer — including the two §21.4 added — carrying the
+    // forwardedCall `_meta` keys; `protocol` are the registration-time `server/discover`
+    // and the four catalog warms, which carry protocol-only `_meta` fields (no principal
+    // exists at registration). A twelfth forwarded method cannot reach a client library's
+    // wire without reaching this fixture.
+    forwardedMethods: {
+      consumerDriven: Object.keys(FORWARDED_METHODS)
+        .filter((method) => FORWARDED_METHODS[method] === "forwardedCall")
+        .sort(),
+      protocol: Object.keys(FORWARDED_METHODS)
+        .filter((method) => FORWARDED_METHODS[method] === "protocol")
+        .sort(),
+    },
   };
+}
+
+/**
+ * §21.3/§21.4's consumer-facing push wire, emitted from the exported vocabulary: the
+ * three `list_changed` bell frames from capabilities' bellFrame (method-only, NO params),
+ * `resources/updated` as the one frame carrying a `uri` (relayed verbatim, so the value's
+ * TYPE is pinned — a fixture never carries a per-run value), and the DO's read-set from
+ * tunnel's SERVICE_NOTIFICATIONS — the record that distinguishes invalidates-family from
+ * routes-by-uri. A fifth frame cannot reach the wire without reaching this fixture.
+ */
+async function pushFramesEmission(): Promise<unknown> {
+  return {
+    protocolVersion: await wireRevision(),
+    frames: {
+      [BELL_TOOLS]: bellFrame(BELL_TOOLS),
+      [BELL_PROMPTS]: bellFrame(BELL_PROMPTS),
+      [BELL_RESOURCES]: bellFrame(BELL_RESOURCES),
+      [RESOURCES_UPDATED]: {
+        jsonrpc: "2.0",
+        method: RESOURCES_UPDATED,
+        params: { uri: TYPE_TOKEN.string },
+      },
+    },
+    serviceOriginated: serviceNotifications(),
+  };
+}
+
+/** The DO's read-set, whole, derived from tunnel.ts's exported SERVICE_NOTIFICATIONS — the
+ *  record that splits the three invalidate-a-family `list_changed` frames from `updated`,
+ *  which routes by URI (and only that record). Exercised by the push-frames fixture and
+ *  its totality row; a frame added there reaches the wire AND this capture. */
+function serviceNotifications(): {
+  invalidatesFamily: Record<string, string>;
+  routesByUri: string[];
+} {
+  const invalidatesFamily: Record<string, string> = {};
+  const routesByUri: string[] = [];
+  for (const [method, reads] of Object.entries(SERVICE_NOTIFICATIONS)) {
+    if (reads.reads === "invalidates") invalidatesFamily[method] = reads.capability;
+    else routesByUri.push(method);
+  }
+  return { invalidatesFamily, routesByUri };
 }
 
 /** The one MCP revision this hub speaks, read off the hub's own `server/discover` answer
@@ -1235,6 +1598,7 @@ const ADMIN_OPS = "contracts/admin-ops.json";
 const SERVICE_LIST = "contracts/service-list.json";
 const ACCOUNT_LIST = "contracts/account-list.json";
 const AUDIT_STUBS = "contracts/audit-body-stubs.json";
+const PUSH_FRAMES = "contracts/push-frames.json";
 
 describe("§4 · the MCP handshake — the shape every consumer meets first", () => {
   it("§7 · initialize.json's result carries the revision the hub PUBLISHES on server/discover — one revision, read off a second surface, so a bump can never reach the handshake without reaching the fixture", async () => {
@@ -1249,13 +1613,26 @@ describe("§4 · the MCP handshake — the shape every consumer meets first", ()
     expect(request.params.protocolVersion).toBe(pinned.protocolVersion);
   }, CASE_BUDGET_MS);
 
-  it("§7 · initialize.json advertises the tools capability with listChanged FALSE — a stateless endpoint holds no session to notify, so a client that subscribed would wait forever; the same object server/discover publishes, never a second spelling of it", async () => {
+  it("§21.5/§20.2 · initialize.json pins the aggregated answer byte-for-byte: tools and prompts both listChanged TRUE, no resources, no completions (replaces :1252 and :1286, both of which carried the reversed reason)", async () => {
     const pinned = fixture(INITIALIZE).result as { capabilities: Record<string, unknown> };
-    // The TOOLS member, which is this case's own sentence. §20.2 put `prompts` beside it
-    // (both `listChanged: false`, for the reason this title states); the whole capability
-    // set, byte-for-byte, is the §20.2 row below — one owner per claim, so a family added
-    // to the aggregated answer fails exactly one case and it is the one that says so.
-    expect(pinned.capabilities.tools).toEqual({ listChanged: false });
+    // The whole aggregated answer (§20.2's constant, now §21.5's): two families and no
+    // third, both listChanged TRUE because the transport honoring them flipped in the same
+    // deploy that serves the stream (§21.5's lockstep rule). One owner per claim — a family
+    // added to the answer fails exactly this case and it is the one that says so. (This row
+    // replaces the pre-flip ':1252 and :1286', both of which pinned the reversed reason.)
+    expect(pinned.capabilities.tools).toEqual({ listChanged: true });
+    expect(pinned.capabilities.prompts).toEqual({ listChanged: true });
+    for (const family of Object.values(pinned.capabilities)) expect(family).toEqual({ listChanged: true });
+    // The two families §18 decision 26 keeps OFF this endpoint shape: a URI cannot take a
+    // `<slug>_` prefix and still be the URI the service knows, so `resources/*` and
+    // `completion/complete` answer -32601 here — and a handshake must not promise what the
+    // door refuses.
+    for (const absent of ["resources", "completions"]) {
+      expect(
+        Object.keys(pinned.capabilities),
+        `the aggregated handshake promised ${absent}`,
+      ).not.toContain(absent);
+    }
     // The hub's two published answers agree, because one constant serves both (§7).
     const discovered = await inNamespace(
       { accounts: [{ slug: FIXTURE_ACCOUNT, tokens: [{ as: "key" }] }] },
@@ -1283,27 +1660,55 @@ describe("§4 · the MCP handshake — the shape every consumer meets first", ()
     expect(declared).toEqual({ name: TYPE_TOKEN.string, version: TYPE_TOKEN.string });
   });
 
-  it("§7/§20.2 · contracts/initialize.json pins the aggregated answer byte-for-byte: tools and prompts, listChanged false, no resources and no completions", () => {
-    const pinned = (fixture(INITIALIZE).result as { capabilities: Record<string, unknown> }).capabilities;
-    // §20.2's aggregated constant, WHOLE: two families and no third, both unable to notify.
-    // It stays a constant — and therefore stays a fixture — because an empty `prompts/list`
-    // is a legal answer and composing a union across the namespace could only ever tell a
-    // consumer to expect nothing (the intersection it sidesteps would let one tools-only
-    // service suppress every other service's prompts).
-    expect(pinned).toEqual({ tools: { listChanged: false }, prompts: { listChanged: false } });
-    // `listChanged: false` on both is not decoration: server→consumer notifications are
-    // deferred with `subscriptions/listen` (§20.1), and a declared listChanged would make a
-    // Claude Code client open a listen stream, take -32601, and burn its reopen budget for
-    // the rest of the day. Never declare a capability the transport cannot honor.
-    for (const family of Object.values(pinned)) expect(family).toEqual({ listChanged: false });
-    // The two families §18 decision 26 keeps OFF this endpoint shape: a URI cannot take a
-    // `<slug>_` prefix and still be the URI the service knows, so `resources/*` and
-    // `completion/complete` answer -32601 here — and a handshake must not promise what the
-    // door refuses.
-    for (const absent of ["resources", "completions"]) {
-      expect(Object.keys(pinned), `the aggregated handshake promised ${absent}`).not.toContain(absent);
-    }
+  it("§21.5 · scopedCapabilities is FOUR pictures named for what the handshake branches on — tunneled-registered, tunneled-never-connected, proxied, builtin — emitted from the kind-aware shape function; the tunneled-registered picture carries resources.subscribe: true and is behaviorally witnessed by the tunnel project's registration cases", () => {
+    const scoped = fixture(INITIALIZE).scopedCapabilities as Record<string, Record<string, unknown>>;
+    expect(Object.keys(scoped).sort()).toEqual(
+      ["builtin", "proxied", "tunneled-never-connected", "tunneled-registered"],
+    );
+    expect(scoped["tunneled-registered"].resources).toEqual({ listChanged: true, subscribe: true });
+    expect(scoped["tunneled-registered"].tools).toEqual({ listChanged: true });
   });
+
+  it("§21.5 · the proxied picture declares completions among its families so the completions: {} wire shape survives the split — all four family renderings stay pinned in this directory", () => {
+    const scoped = fixture(INITIALIZE).scopedCapabilities as Record<string, Record<string, unknown>>;
+    const proxied = scoped.proxied as Record<string, unknown>;
+    // All four family renderings, so none can silently drop off the proxied picture.
+    expect(proxied.tools).toEqual({ listChanged: false });
+    expect(proxied.prompts).toEqual({ listChanged: false });
+    expect(proxied.resources).toEqual({ listChanged: false });
+    expect(proxied.completions).toEqual({});
+  });
+
+  it("§21.1 · the listen envelope: 200, text/event-stream, and a minted UUID-shaped Mcp-Session-Id that never echoes the client's — status and headers read, body cancelled, never awaited", async () => {
+    const stream = await inNamespace(
+      { accounts: [{ slug: FIXTURE_ACCOUNT, tokens: [{ as: "key" }] }] },
+      async (ns) => {
+        const response = await workerExports.default.fetch(
+          new Request(`${ORIGIN}/${ns.owner.username}/mcp`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${ns.tokens.key.token}`,
+              "Mcp-Session-Id": "FAKE0000-client-supplied-session",
+            },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "subscriptions/listen" }),
+          }),
+        );
+        return {
+          status: response.status,
+          contentType: response.headers.get("Content-Type"),
+          sessionId: response.headers.get("Mcp-Session-Id"),
+          body: response.body,
+        };
+      },
+    );
+    expect(stream.status).toBe(200);
+    expect(stream.contentType).toContain("text/event-stream");
+    expect(stream.sessionId).toMatch(UUID);
+    expect(stream.sessionId).not.toBe("FAKE0000-client-supplied-session");
+    // Cancelled, never awaited whole: a held body has no end.
+    await stream.body?.cancel();
+  }, CASE_BUDGET_MS);
 });
 
 /**
@@ -1512,10 +1917,25 @@ async function aggregatedNames(): Promise<string[]> {
 }
 
 describe("§4 · error vocabulary", () => {
-  it("§7 · errors.json code set equals the five codes the pipeline emits (-32000/-32001/-32002/-32003/-32601) and admits no sixth", async () => {
-    const emitted = Object.keys((await errorsWorld()).entries).sort();
+  it("§21.4/§7 · errors.json gains -32602 captured from a real over-cap resources/subscribe (dataKeys null) beside its under-cap allow-twin — the totality row is six codes, and the -32601 entry is recaptured from logging/setLevel", async () => {
+    const emitted = Object.keys((await errorsEmission()) as Record<string, unknown>).sort();
     expect(Object.keys(fixture(ERRORS)).sort()).toEqual(emitted);
-    expect(emitted).toEqual(["-32000", "-32001", "-32002", "-32003", "-32601"].sort());
+    expect(emitted).toEqual(["-32000", "-32001", "-32002", "-32003", "-32601", "-32602"].sort());
+
+    // …and the new entry is a REAL refusal's, not a hand-written one: an over-cap subscribe
+    // against a live socket, carrying no `data` (§21's open question pins it unset).
+    const { overcap, undercapAllowed } = await subscriberErrors();
+    expect(fixture(ERRORS)["-32602"]).toEqual(entry(overcap));
+    expect(overcap.data).toBeUndefined();
+    // Its allow-twin, in the same world: a refusal row that "passed" because the door
+    // refuses everything would pin nothing at all.
+    const allowed = undercapAllowed as JsonRpcResponse;
+    expect(allowed.error, "the allow-twin would be satisfied by refusing everything").toBeUndefined();
+    expect(allowed.id).toBe(1);
+    expect(allowed.result).toEqual(SUBSCRIBE_RESULT);
+    // …and -32601 comes from `logging/setLevel` now that §21.1 implemented the method that
+    // used to answer it — the capture the producer's own comment explains.
+    expect(fixture(ERRORS)["-32601"]).toEqual(entry((await errorsWorld()).raw.methodNotFound));
   }, CASE_BUDGET_MS);
 
   it("§7 · errors.json -32003 entry's data keys deep-equal a real approval-required error's data — approvalId, approvalUrl, expiresAt, nothing else", async () => {
@@ -1534,6 +1954,13 @@ describe("§4 · error vocabulary", () => {
     // grant patterns it was not given (§7).
     expect(JSON.stringify(unknown)).toBe(JSON.stringify(ungranted));
     expect(fixture(ERRORS)["-32001"]).toEqual(entry(ungranted));
+  }, CASE_BUDGET_MS);
+  it("§21.4/§7 · a resources/subscribe refused for an ungranted URI is byte-identical to the other -32001 causes — indistinguishability extended to the one new method that carries a caller URI", async () => {
+    const { ungranted, unknown } = (await errorsWorld()).raw;
+    const refused = (await subscriberErrors()).ungrantedSubscribe;
+    expect(JSON.stringify(refused)).toBe(JSON.stringify(ungranted));
+    expect(JSON.stringify(refused)).toBe(JSON.stringify(unknown));
+    expect(fixture(ERRORS)["-32001"]).toEqual(entry(refused));
   }, CASE_BUDGET_MS);
 
   it("§7 · a granted call in the same seeded namespace returns a result and no error member — the allow-twin of the -32001 and -32000 rows", async () => {
@@ -1668,6 +2095,71 @@ describe("§4 · tunnel frames and close codes", () => {
       "io.modelcontextprotocol/clientCapabilities",
     ]);
     expect(meta.filter((key) => key.startsWith("hub/"))).toHaveLength(2);
+  });
+  it("§6/§21.4 · tunnel-frames.json's forwarded-method list is emitted from gateway's named export AND spelled spec-side — eleven methods, the two new members resources/subscribe and resources/unsubscribe; the consumer-driven six carry the forwardedCall _meta keys while server/discover and the four warms carry protocol fields alone (no principal exists at registration)", () => {
+    const pinned = fixture(TUNNEL_FRAMES).forwardedMethods as {
+      consumerDriven: string[];
+      protocol: string[];
+    };
+    const all = [...pinned.consumerDriven, ...pinned.protocol];
+    expect(all).toHaveLength(11);
+    expect(all.sort()).toEqual(Object.keys(FORWARDED_METHODS).sort());
+    expect(pinned.consumerDriven).toContain("resources/subscribe");
+    expect(pinned.consumerDriven).toContain("resources/unsubscribe");
+    expect(pinned.consumerDriven).toEqual(
+      Object.keys(FORWARDED_METHODS)
+        .filter((method) => FORWARDED_METHODS[method] === "forwardedCall")
+        .sort(),
+    );
+    expect(pinned.protocol).toEqual(
+      Object.keys(FORWARDED_METHODS)
+        .filter((method) => FORWARDED_METHODS[method] === "protocol")
+        .sort(),
+    );
+  });
+});
+/**
+ * §21.3/§21.4's consumer-facing push wire: the three method-only list_changed bells, the
+ * one uri-carrying updated frame, and the DO's read-set as tunnel's SERVICE_NOTIFICATIONS
+ * splits it. Emitted from capabilities' bellFrame and tunnel's exported notification
+ * record — a fifth frame can neither be rung nor routed without reaching this fixture.
+ */
+describe("§4 · §21.3/§21.4 push frames — the consumer-facing notification wire", () => {
+  it("§21.3/§21.4 · push-frames.json pins the consumer-facing wire: the three list_changed notifications byte-for-byte with NO params, and updated as the one frame carrying a uri, relayed verbatim", () => {
+    const frames = fixture(PUSH_FRAMES).frames as Record<string, Record<string, unknown>>;
+    expect(frames[BELL_TOOLS]).toEqual({ jsonrpc: "2.0", method: BELL_TOOLS });
+    expect(frames[BELL_PROMPTS]).toEqual({ jsonrpc: "2.0", method: BELL_PROMPTS });
+    expect(frames[BELL_RESOURCES]).toEqual({ jsonrpc: "2.0", method: BELL_RESOURCES });
+    expect(frames[RESOURCES_UPDATED]).toEqual({
+      jsonrpc: "2.0",
+      method: RESOURCES_UPDATED,
+      params: { uri: TYPE_TOKEN.string },
+    });
+    // The three bells carry only jsonrpc + method — NO params, no names, no counts.
+    for (const bell of [BELL_TOOLS, BELL_PROMPTS, BELL_RESOURCES]) {
+      expect(Object.keys(frames[bell])).toEqual(["jsonrpc", "method"]);
+    }
+    expect(frames[RESOURCES_UPDATED].params).toEqual({ uri: TYPE_TOKEN.string });
+  });
+
+  it("§6/§21.4 · the service-originated NOTIFICATIONS the DO reads are exactly four, emitted from tunnel's export that distinguishes invalidates-family from routes-by-uri — a fifth frame cannot reach the wire without reaching this fixture", () => {
+    const originated = fixture(PUSH_FRAMES).serviceOriginated as {
+      invalidatesFamily: Record<string, string>;
+      routesByUri: string[];
+    };
+    const methods = [...Object.keys(originated.invalidatesFamily), ...originated.routesByUri];
+    expect(methods).toHaveLength(4);
+    expect(methods.sort()).toEqual(Object.keys(SERVICE_NOTIFICATIONS).sort());
+    const invalidatesFamily: Record<string, string> = {};
+    for (const [method, reads] of Object.entries(SERVICE_NOTIFICATIONS)) {
+      if (reads.reads === "invalidates") invalidatesFamily[method] = reads.capability;
+    }
+    expect(originated.invalidatesFamily).toEqual(invalidatesFamily);
+    expect(originated.routesByUri).toEqual(
+      Object.keys(SERVICE_NOTIFICATIONS).filter(
+        (method) => SERVICE_NOTIFICATIONS[method].reads === "routes",
+      ),
+    );
   });
 });
 

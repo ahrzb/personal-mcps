@@ -14,7 +14,13 @@
  * observing the map empty after the boundary. **No test here asserts the map survives**
  * — upstream's own fixtures prove it does not, and a suite that pinned survival would
  * be pinning a bug. The registration deadline is the fourth tier: a storage alarm,
- * chosen over a timer precisely so it outlives hibernation, so it must still fire.
+ * chosen over a timer precisely so it outlives hibernation, so it must still fire. §21
+ * adds the FIFTH tier and a second socket class: a subscriber socket's attachment (its
+ * stored principal and its subscription set, §21.4/§5), and the doorbell floor's state —
+ * per-family last-rang stamps and the pending-ring flag, in DO STORAGE rather than
+ * instance memory precisely so a burst that straddles a wake still delivers its trailing
+ * ring. Class selection is durable for the same reason: the ring path enumerates sockets
+ * by TAG, which the runtime keeps, and never from a list the eviction would take.
  *
  * ALSO PINNED: attachment versioning (§10's code contract). A wake that reads an
  * unknown or absent `v` treats the socket as unintelligible and closes 4004, turning
@@ -45,7 +51,7 @@
  * the flake this whole directory is arranged to avoid.
  */
 
-// deps: harness/seed · harness/fake-service · harness/tunnel-do (connectionStub, backendCtx) · cloudflare:test (evictDurableObject, runInDurableObject, runDurableObjectAlarm) · src/tunnel (tunnelBackend, status, sever, ServiceConnection) · src/errors (CODES) · src/limits (REGISTRATION_DEADLINE_MS, CALL_TIMEOUT_MS)
+// deps: harness/seed · harness/fake-service (connectFakeService, openSubscriber) · harness/tunnel-do (connectionStub, backendCtx) · cloudflare:test (evictDurableObject, runInDurableObject, runDurableObjectAlarm) · src/tunnel (tunnelBackend, status, sever, subscribe, ServiceConnection) · src/capabilities (BELL_TOOLS, RESOURCES_UPDATED) · src/errors (CODES) · src/limits (REGISTRATION_DEADLINE_MS, CALL_TIMEOUT_MS)
 
 import { env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
@@ -54,10 +60,19 @@ import type { Tool } from "../../src/gateway";
 import { tokenPattern } from "../../src/principal";
 import { Registry } from "../../src/registry";
 import type { Service } from "../../src/registry";
-import { CLOSE_PROTOCOL, CLOSE_REVOKED, sever, status, tunnelBackend, wipe } from "../../src/tunnel";
+import { BELL_TOOLS, RESOURCES_UPDATED } from "../../src/capabilities";
+import {
+  CLOSE_PROTOCOL,
+  CLOSE_REVOKED,
+  sever,
+  status,
+  subscribe,
+  tunnelBackend,
+  wipe,
+} from "../../src/tunnel";
 import type { ServiceConnection } from "../../src/tunnel";
-import { connectFakeService, waitFor } from "../harness/fake-service";
-import type { FakeService, FakeServiceOptions } from "../harness/fake-service";
+import { connectFakeService, openSubscriber, tick, waitFor } from "../harness/fake-service";
+import type { FakeService, FakeServiceOptions, FakeSubscriber } from "../harness/fake-service";
 import { seedNamespace, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 import { backendCtx, connectionStub, stillOpen } from "../harness/tunnel-do";
@@ -303,8 +318,10 @@ type Fixture = {
 
 const seeded: SeededNamespace[] = [];
 const opened: FakeService[] = [];
+const streams: FakeSubscriber[] = [];
 
 afterEach(async () => {
+  for (const stream of streams.splice(0)) await stream.close();
   for (const service of opened.splice(0)) await service.close();
   for (const namespace of seeded.splice(0)) await namespace.teardown();
 });
@@ -352,6 +369,54 @@ async function evicted(fixture: Fixture): Promise<FakeService> {
   await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
   return service;
 }
+
+/**
+ * One subscriber socket, opened through the DO's own fetch door exactly as the Worker
+ * opens it (§21.2) — and that is load-bearing HERE above everywhere else: a socket
+ * fabricated inside runInDurableObject silently vanishes at evictDurableObject, which
+ * would make every row below pass by observing nothing.
+ */
+async function openStream(
+  fixture: Fixture,
+  options: { principal?: string } = {},
+): Promise<FakeSubscriber> {
+  const stream = await openSubscriber(connectionStub(fixture.serviceId), {
+    principal: options.principal ?? STREAM_PRINCIPAL,
+  });
+  streams.push(stream);
+  return stream;
+}
+
+/** A registered socket serving an EMPTY tool catalog, its warm landed — the start of the
+ *  §21 rows, whose subject is a change made AFTER the wake: a non-empty first registration
+ *  is itself a change and would put the provocation inside the floor's window (§21.3). */
+async function quietlyRegistered(fixture: Fixture): Promise<FakeService> {
+  const service = await connect(fixture, { tools: [] });
+  expect(await service.registered).toEqual({ ok: true });
+  expect(await waitFor(() => service.lists.length > 0), "the catalog never warmed").toBe(true);
+  await settle();
+  return service;
+}
+
+/** One catalog change that has LANDED — the notification sent, the re-list answered, the
+ *  write done. A burst is a sequence of these: the fake service installs its catalog before
+ *  it sends the frame, so un-awaited notifications collapse into one change. */
+async function landedChange(service: FakeService, tools: Tool[]): Promise<void> {
+  const listed = service.lists.length;
+  await service.notifyToolsListChanged(tools);
+  expect(await waitFor(() => service.lists.length > listed), "the re-list never arrived").toBe(true);
+  await settle();
+}
+
+/** A few turns of the loop — long enough for a DO write and the frame it produced. */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 5; turn++) await tick();
+}
+
+/** The principal a held stream carries — opaque to the DO, which never resolves it. */
+const STREAM_PRINCIPAL = "acct:reader";
+const OTHER_PRINCIPAL = "acct:intruder";
+const SUBSCRIBED_URI = "file:///notes.md";
 
 /** The in-memory correlation map's size — the documented exception to observing from
  *  outside, used only where the claim is that it is EMPTY. */
@@ -512,5 +577,76 @@ describe("§6 owner actions across the boundary", () => {
     expect(await connectionStub(fixture.serviceId).listTools()).toEqual([CACHED_TOOL]);
     await wipe(fixture.serviceId);
     expect(await connectionStub(fixture.serviceId).listTools()).toEqual([]);
+  });
+});
+
+describe("§21 the subscriber socket across the boundary", () => {
+  it('§21.4/§5 · the subscription set survives evictDurableObject({webSockets:"hibernate"}) — an updated for a subscribed URI still routes after the wake', async () => {
+    const fixture = await seedFixture();
+    const service = await quietlyRegistered(fixture);
+    const stream = await openStream(fixture);
+    expect(await subscribe(fixture.serviceId, stream.sessionId, STREAM_PRINCIPAL, SUBSCRIBED_URI)).toBe(
+      "stored",
+    );
+
+    await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
+
+    await service.notifyResourcesUpdated(SUBSCRIBED_URI);
+    expect(await waitFor(() => stream.count(RESOURCES_UPDATED) > 0)).toBe(true);
+  });
+
+  it("§21.4 · the stored principal survives the same eviction — a post-wake subscribe from another principal still mutates nothing", async () => {
+    const fixture = await seedFixture();
+    const service = await quietlyRegistered(fixture);
+    const stream = await openStream(fixture);
+
+    await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
+
+    // The id selects and the principal authorizes — and the principal is on the socket, so
+    // an instance that lost it would either refuse everything or accept anybody.
+    expect(
+      await subscribe(fixture.serviceId, stream.sessionId, OTHER_PRINCIPAL, SUBSCRIBED_URI),
+    ).toBe("no_stream");
+    await service.notifyResourcesUpdated(SUBSCRIBED_URI);
+    await settle();
+    expect(stream.count(RESOURCES_UPDATED)).toBe(0);
+
+    // …and the socket's own principal still owns it after the wake (the allow-twin).
+    expect(
+      await subscribe(fixture.serviceId, stream.sessionId, STREAM_PRINCIPAL, SUBSCRIBED_URI),
+    ).toBe("stored");
+    await service.notifyResourcesUpdated(SUBSCRIBED_URI);
+    expect(await waitFor(() => stream.count(RESOURCES_UPDATED) > 0)).toBe(true);
+  });
+
+  it("§21.2 · class selection survives the wake — status still reads by the service socket alone, and a post-wake bell still reaches the subscriber socket (the ring path enumerates by tag, not memory)", async () => {
+    const fixture = await seedFixture();
+    // The subscriber socket is accepted FIRST, so an instance that woke reading position
+    // instead of class answers every question below with the wrong socket.
+    const stream = await openStream(fixture);
+    const service = await quietlyRegistered(fixture);
+
+    await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
+
+    expect(await status(fixture.serviceId)).toBe("online");
+    await landedChange(service, [CACHED_TOOL]);
+    expect(await waitFor(() => stream.count(BELL_TOOLS) > 0)).toBe(true);
+    expect(stream.open).toBe(true);
+  });
+
+  it("§21.3 · a pending coalesced ring survives eviction — evict with the ring pending, runDurableObjectAlarm, the frame lands (floor state is durable, constraint 5)", async () => {
+    const fixture = await seedFixture();
+    const service = await quietlyRegistered(fixture);
+    const stream = await openStream(fixture);
+
+    // Two changes inside one interval: the first rings, the second is suppressed and owed.
+    await landedChange(service, [CACHED_TOOL]);
+    await landedChange(service, [{ name: "other", inputSchema: { type: "object" } }]);
+    expect(await waitFor(() => stream.count(BELL_TOOLS) === 1)).toBe(true);
+
+    await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
+
+    expect(await runDurableObjectAlarm(connectionStub(fixture.serviceId))).toBe(true);
+    expect(await waitFor(() => stream.count(BELL_TOOLS) === 2)).toBe(true);
   });
 });

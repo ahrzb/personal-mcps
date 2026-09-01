@@ -15,7 +15,8 @@
  * The hub's one error vocabulary. `code` is a code from the pinned table — -32000
  * service unavailable · -32001 tool not permitted / unknown (deliberately
  * indistinguishable, §7) · -32002 service archived · -32003 approval required, `data`
- * carrying { approvalId, approvalUrl, expiresAt } · -32601 method not found. Thrown
+ * carrying { approvalId, approvalUrl, expiresAt } · -32601 method not found · -32602
+ * invalid params (§21.4's over-cap subscribe, the sixth consumer-visible code). Thrown
  * anywhere in the pipeline or backends; it reaches the wire only through gateway's
  * mapping, so no module ever builds a JSON-RPC error object of its own.
  */
@@ -57,8 +58,11 @@ export const CODES = {
   /** Not §7's own, but JSON-RPC's: a body that is not a request at all. */
   invalidRequest: -32600,
   methodNotFound: -32601,
-  /** JSON-RPC's "invalid params" — an OWNER's configuration request being wrong, which is
-   *  a different thing from §7's four consumer refusals (admin.ts's vocabulary note). */
+  /** JSON-RPC's "invalid params", in TWO vocabularies since §21.4: an OWNER's configuration
+   *  request being wrong (admin.ts's note), and — the sixth consumer-visible code, the first
+   *  the door has ever emitted — a `resources/subscribe` refused past LISTEN_SUBSCRIPTIONS_MAX
+   *  or SUBSCRIBE_URI_MAX_BYTES, which is a caller-supplied list being too long rather than
+   *  any of §7's four access refusals. */
   invalidParams: -32602,
   /** The generic mapping for anything that is not a HubError — never a cause, ever. */
   internal: -32603,
@@ -120,3 +124,12 @@ export const unavailable = (failureClass?: string): HubError => {
 
 export const notPermitted = (): HubError => new HubError(CODES.notPermitted, "tool not permitted");
 export const archived = (): HubError => new HubError(CODES.archived, "service archived");
+
+/**
+ * -32602 as a CONSUMER meets it (§21.4): a `resources/subscribe` refused because the
+ * socket's subscription set is full or the URI is over its byte cap. Payload-free like the
+ * three above — the cap is not echoed (§21's open question pins `data` unset), and the
+ * message says nothing a caller could not derive from its own request, so a refusal
+ * carries no signal about the stream it aimed at.
+ */
+export const invalidParams = (): HubError => new HubError(CODES.invalidParams, "invalid params");

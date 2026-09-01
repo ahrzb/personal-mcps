@@ -53,6 +53,7 @@ import { AGGREGATED_LIST_DEADLINE_MS, APPROVAL_WINDOW_MS } from "../../src/limit
 import { PMCP_SLUG, Registry } from "../../src/registry";
 import type { GrantEntry, GrantMode, RoleDeclaration, Service } from "../../src/registry";
 import type { Principal } from "../../src/identity";
+import { status } from "../../src/tunnel";
 import { setHeaders } from "../../src/upstream";
 import type { UpstreamConnectionStatus } from "../../src/upstream";
 import { readObservations, upstreamUrlFor } from "../harness/fake-upstream";
@@ -1042,6 +1043,57 @@ async function rpc(url: string, token: string, message: Record<string, unknown>)
   return (await response.json()) as JsonRpcResponse;
 }
 
+/** One message's HTTP STATUS, for the answers the door writes rather than the pipeline —
+ *  §7's one anonymous 404 is `text/plain`, so `rpc` above cannot read it. */
+async function statusOf(url: string, token: string, message: Record<string, unknown>): Promise<number> {
+  const response = await worker.fetch(
+    new Request(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(message),
+    }),
+    env as unknown as Env,
+  );
+  await response.body?.cancel().catch(() => undefined);
+  return response.status;
+}
+
+/** What one `subscriptions/listen` answered (§21.1): either a HELD stream — read as its
+ *  status, content type and minted session id, then CANCELLED, never awaited whole — or a
+ *  JSON-RPC refusal, read as its code. `code` present ⇔ no stream was opened, which is what
+ *  every §21 refusal row below asserts on. */
+type StreamAnswer = {
+  status: number;
+  contentType: string | null;
+  sessionId: string | null;
+  code?: number;
+};
+
+async function listenAt(url: string, token: string): Promise<StreamAnswer> {
+  const response = await worker.fetch(
+    new Request(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(message("subscriptions/listen")),
+    }),
+    env as unknown as Env,
+  );
+  const contentType = response.headers.get("Content-Type");
+  const answer: StreamAnswer = {
+    status: response.status,
+    contentType,
+    sessionId: response.headers.get("Mcp-Session-Id"),
+  };
+  // A held response never ends on its own: cancel the body rather than reading it, so the
+  // invocation is free to end and no case waits out a keepalive it did not shrink.
+  if (contentType?.includes("text/event-stream") === true) {
+    await response.body?.cancel().catch(() => undefined);
+    return answer;
+  }
+  const refusal = (await response.json().catch(() => ({}))) as JsonRpcResponse;
+  return { ...answer, code: refusal.error?.code };
+}
+
 // ── the fixture's vocabulary ──────────────────────────────────────────────────────────
 
 /** The hub's own origin, as the worker under test knows it. */
@@ -1268,7 +1320,10 @@ describe("§7's dispatch table, amended 2026-08-26 — the MCP handshake", () =>
     // keeps stating the whole handshake; §20.2's own cases below own the reasoning.
     for (const [url, capabilities] of [
       [aggregated, AGGREGATED_CAPABILITIES],
-      [`${aggregated}/${NEWS}`, { tools: { listChanged: false } }],
+      // §21.5 flipped the aggregated flags to TRUE and left the scoped derivation alone;
+      // `news` has never connected, so it declares `tools` — with the listChanged a
+      // tunneled service can now honor.
+      [`${aggregated}/${NEWS}`, { tools: { listChanged: true } }],
     ] as const) {
       const answer = await rpc(url, token, { jsonrpc: "2.0", id: 1, method: "initialize", params: CLIENT_HANDSHAKE });
       expect(answer.error, `${url}: the handshake was refused`).toBeUndefined();
@@ -1495,11 +1550,12 @@ const D13_SERVES: Partial<ServingScenario> = {
   completionResult: COMPLETION_RESULT,
 };
 
-/** The aggregated endpoint's ONE static answer (§20.2): tools and prompts, both
- *  listChanged false, never resources and never completions. */
+/** The aggregated endpoint's ONE static answer (§20.2, flipped by §21.5): tools and
+ *  prompts, both listChanged TRUE — the transport that honors it landed in the same deploy
+ *  — and never resources, never completions. */
 const AGGREGATED_CAPABILITIES = {
-  tools: { listChanged: false },
-  prompts: { listChanged: false },
+  tools: { listChanged: true },
+  prompts: { listChanged: true },
 };
 
 /** The reserved `_meta` key §7 has the hub mirror onto every forwarded request — which
@@ -1990,19 +2046,29 @@ describe("§20.2 — resources are scoped-only, and matched by URI", () => {
 });
 
 describe("§20.1/§20.2 — what each endpoint shape declares, and what it refuses", () => {
-  it("§20.1 · subscriptions/listen is -32601 on both endpoint shapes", async () => {
+  it("§21.1 · subscriptions/listen leaves the -32601 leftover set — logging/setLevel still refuses -32601 on both shapes, the §7 amendment's remaining row (replaces :1993)", async () => {
+    // §7's 2026-09-01 amendment served `subscriptions/listen` and the two per-URI methods,
+    // and named what is LEFT: `logging/*` and every server-initiated request, both dead in
+    // 2026-07-28 itself. The served method beside the refusal is what keeps this row from
+    // passing on a hub that refuses everything — the leftover set shrank, it did not move.
     const world = await seedD13();
 
     for (const url of [world.url(), world.url(NOTION)]) {
-      const answer = await rpc(url, world.agent, message("subscriptions/listen"));
+      const answer = await rpc(url, world.agent, message(UNSERVED_METHOD));
       expect(answer.error?.code, url).toBe(-32601);
+
+      const stream = await listenAt(url, world.agent);
+      expect(stream.code, `${url}: listen is a served method now`).toBeUndefined();
+      expect(stream.contentType, url).toContain("text/event-stream");
     }
   });
 
-  it("§20.2 · the aggregated endpoint declares tools and prompts, both listChanged false, and never resources or completions — one static answer, whatever the namespace holds", async () => {
+  it("§21.5 · the aggregated endpoint declares tools and prompts with listChanged TRUE — still one static answer whatever the namespace holds, still never resources or completions (replaces :2002)", async () => {
     // Two namespaces at the extremes of what a union would produce: one whose service
     // declares every family, one whose role grants tools alone. The answer is the same
-    // object, which is what "static" means and what the fixture pins.
+    // object, which is what "static" means and what the fixture pins. §21.5 flipped the
+    // FLAGS and nothing else about it: `resources` and `completions` are still not served on
+    // this shape at all (§18 decision 26), so advertising either would promise a -32601.
     const rich = await seedD13({
       capabilities: ["tools", "prompts", "resources", "completions"],
       also: {},
@@ -2017,10 +2083,17 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
     );
   });
 
-  it("§20.2 · the scoped endpoint derives capabilities from the STORED declared set with listChanged and subscribe forced false — initialize makes no upstream call, and a hung service answers the handshake at full speed (the twin)", async () => {
-    // The upstream HANGS. An `initialize` that asked it anything would take a deadline to
-    // answer, or never answer at all — which is the failure mode §20.2's "never a live
-    // upstream call" exists to forbid, in the one method §7 pins as stateless.
+  it("§21.5 · a proxied service keeps every push flag false whatever its owner-declared capabilities list says, and so does the pmcp builtin — kind, not stored set (replaces :2020)", async () => {
+    // KIND is the axis §21.5 added, and these are the two kinds with no channel to ring
+    // from: a proxied service has no DO (a Worker cannot hold an outbound stream past its
+    // own invocation) and the builtin's tools never change. An implementation that asked
+    // "is it proxied?" instead of naming three kinds gets the BUILTIN wrong, which is why
+    // both halves are one row.
+    //
+    // It also carries :2020's other clause, which has nowhere else to live: the handshake
+    // makes NO upstream call. The upstream HANGS — an `initialize` that asked it anything
+    // would take a deadline to answer, or never answer at all, in the one method §7 pins as
+    // stateless.
     const world = await seedD13({
       capabilities: ["tools", "prompts", "resources"],
       serves: { mode: { kind: "hang" } },
@@ -2033,24 +2106,41 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
     expect(capabilitiesOf(answer)).toEqual({
       tools: { listChanged: false },
       prompts: { listChanged: false },
-      // Forced false whatever the service claims: the hub can honor neither, and §20.1
-      // pins that declaring one it cannot serve costs a Claude Code client its reopen
-      // budget for the rest of the day.
-      resources: { subscribe: false, listChanged: false },
+      // Whole-object, and `subscribe` is ABSENT rather than present-and-false: §21.5 gives
+      // that key to tunneled resources alone, so a client that read it here at all would be
+      // reading a promise this kind of service can never keep.
+      resources: { listChanged: false },
     });
     expect(await world.arrivals(), "the handshake dials nobody").toEqual([]);
     expect(elapsed, "…so a hung service cannot slow it").toBeLessThan(AGGREGATED_LIST_DEADLINE_MS);
+
+    // The builtin, on the same axis — owner-only (§8), so the credential is a session's.
+    const owner = await world.ownerToken();
+    expect(capabilitiesOf(await rpc(world.url(PMCP_SLUG), owner, initializeMessage()))).toEqual({
+      tools: { listChanged: false },
+    });
   });
 
-  it("§20.2 · a tunneled service that has never connected declares tools only on its scoped endpoint", async () => {
-    // The same answer it already gives, and consistent with the empty `tools/list` it
-    // serves from an empty catalog: a capability the hub has never been told about is not
-    // declared (§20.2).
+  it("§21.5 · a never-connected tunneled service declares exactly {tools: {listChanged: true}} on its scoped handshake, and an unresolvable slug answers the identical shape (replaces :2045; whole-object)", async () => {
+    // Honest before the first registration (§21.5): the bell rings on the first write that
+    // CHANGES a stored catalog, which the first non-empty registration is — and §21.3's
+    // absent ≡ [] keeps an empty first warm silent. Whole-object, so a second family
+    // appearing here fails instead of passing on a partial match.
     const world = await seedD13({ withTunnel: true });
 
-    const answer = await rpc(world.url(NEWS), world.agent, initializeMessage());
+    expect(capabilitiesOf(await rpc(world.url(NEWS), world.agent, initializeMessage()))).toEqual({
+      tools: { listChanged: true },
+    });
 
-    expect(capabilitiesOf(answer)).toEqual({ tools: { listChanged: false } });
+    // The unresolvable slug, answered as §7 answers it on this endpoint shape: the
+    // anti-enumeration rule bites at the DOOR, before any handshake, so the caller never
+    // reaches a capabilities object at all — byte-identical to the answer an ungranted
+    // service gives, which is strictly stronger than the shape-identity §21.5 asks for. The
+    // shape function's own identical answer for an unresolvable slug is pinned where it is
+    // reachable: unit/capabilities.test.ts's never-connected row.
+    expect(
+      await statusOf(world.url(uniqueSlug("ghost")), world.agent, initializeMessage()),
+    ).toBe(404);
   });
 
   it("§20.2 · a proxied service with no capabilities config declares tools only on its scoped endpoint · one whose config declares resources advertises it, listChanged and subscribe still forced false (the twin) — owner-declared configuration, never an upstream call", async () => {
@@ -2067,7 +2157,9 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
       capabilitiesOf(await rpc(declaring.url(NOTION), declaring.agent, initializeMessage())),
     ).toEqual({
       tools: { listChanged: false },
-      resources: { subscribe: false, listChanged: false },
+      // §21.5: `subscribe` is absent on a proxied service rather than present-and-false —
+      // the key belongs to tunneled resources alone, and this kind advertises no push.
+      resources: { listChanged: false },
     });
     expect(await declaring.arrivals(), "read per request from config, never dialed").toEqual([]);
   });
@@ -2222,5 +2314,304 @@ describe("§20.2/§20.4 — identity, MRTR, the fan-out and the two relay rules"
     // decision about this result rather than a hub that never mints one.
     const listed = await rpc(world.url(NOTION), world.agent, message("resources/list"));
     expect((listed.result as { ttlMs?: unknown }).ttlMs, "a listing is cacheable").toBeDefined();
+  });
+});
+
+// ══ §21 — the stream's refusals, and the two per-URI methods ══════════════════════════
+//
+// BESIDE the table for §20's reason (an OrderRow observes four things, and "a held
+// text/event-stream was opened" is none of them) plus one of its own: `resources/subscribe`
+// exists on TUNNELED services alone (§21.4), and the table reaches a tunnel only in its
+// never-connected state. Two rows here need one that is genuinely ONLINE, so this section
+// holds a socket — dialled and closed inside the case, hand-rolled for the reason
+// hygiene.test.ts's is: `harness/fake-service` is pinned to the `tunnel` project, and one
+// case's socket must not import that project's assumptions.
+//
+// What these rows keep from the table is its discipline: one world per case, every refusal
+// stated beside its allow-twin, and the ORDER observable — which is the whole reason
+// §21.4's URI filter running before the archived check is a row at all.
+
+/** The tunneled service every §21 case is about. Its own slug, so a case that also seeds a
+ *  proxied `notion` reads unambiguously. */
+const FEED = "feed";
+
+/** A role the account is granted but the service never declared — the state §7 spells as
+ *  "still a grant, empty pattern set", which is how a caller reaches the URI filter's
+ *  refusal while the DOOR still admits it. */
+const D14_ROLE = "watcher";
+
+/** The URI a granted caller subscribes, and the one no pattern covers. */
+const D14_URI = "news://feed/tech";
+
+/** What the online service answers a forwarded `resources/subscribe` — relayed verbatim, so
+ *  a distinguishable body is what makes "returns the service's result" assertable. */
+const SUBSCRIBE_RESULT = { resultType: "complete" };
+
+/** How one §21 world differs from the default — every field one override. */
+type D14Spec = {
+  /** The grant the account holds on the tunneled service; absent is the built-in wildcard,
+   *  which spans every family (§20.3) and therefore passes every URI. */
+  role?: string;
+  archived?: boolean;
+  /** Dial a real socket, so a forwarded subscribe can actually be answered. */
+  online?: boolean;
+  /** Add a PROXIED service with NO stored credential — `not_connected`, which §7 counts as
+   *  known-unavailable and refuses -32000 before any dial. */
+  unreachableProxy?: boolean;
+};
+
+type D14World = {
+  ns: SeededNamespace;
+  agent: string;
+  url(slug?: string): string;
+  ownerToken(): Promise<string>;
+  close(): Promise<void>;
+};
+
+/**
+ * One §21 world: a tunneled `feed`, an account holding one grant on it, and — when the case
+ * asks — a proxied service the hub knows it cannot reach, an archive, or a live socket.
+ * Seeded through production seams alone, like every other fixture in this file.
+ */
+async function seedD14(spec: D14Spec = {}): Promise<D14World> {
+  const proxied: ServingScenario = {
+    id: uniqueSlug("up"),
+    mode: { kind: "ok" },
+    tools: UPSTREAM_TOOLS,
+    ...D13_SERVES,
+  };
+  const ns = await seedNamespace(env.DB, {
+    services: [
+      { slug: FEED, kind: "tunnel", logBodies: true, tokens: [{ as: "svc" }] },
+      ...(spec.unreachableProxy === true
+        ? [
+            {
+              slug: NOTION,
+              kind: "proxy" as const,
+              upstreamUrl: upstreamUrlFor(proxied),
+              upstreamAuthMode: "headers" as const,
+              roles: D13_ROLES,
+              logBodies: true,
+            },
+          ]
+        : []),
+    ],
+    accounts: [
+      {
+        slug: AGENT,
+        grants: {
+          [FEED]: [{ role: spec.role ?? "all", mode: "allow" }],
+          // No `setHeaders` call anywhere below: that omission IS the not_connected state,
+          // written the way an owner reaches it (a service configured and never connected).
+          ...(spec.unreachableProxy === true ? { [NOTION]: [{ role: ROLE, mode: "allow" as const }] } : {}),
+        },
+        tokens: [{ as: TOKEN }],
+      },
+    ],
+  });
+
+  const close = spec.online === true ? await dialFeed(ns.tokens.svc.token) : async () => undefined;
+  // Archived AFTER the socket, if a case ever wants both: archival is a stage, not a create
+  // field, and it severs nothing here — admin's cascade owns that ordering (§6).
+  if (spec.archived === true) await new Registry(env.DB).archiveService(ns.services[FEED].id);
+
+  return {
+    ns,
+    agent: ns.tokens[TOKEN].token,
+    url: (slug?: string) =>
+      `${ORIGIN}/${ns.owner.username}/mcp${slug === undefined ? "" : `/${slug}`}`,
+    ownerToken: async () => (await seedOwnerSession(ns.owner)).token,
+    close,
+  };
+}
+
+/**
+ * One real service on the other end of §6's wire, answering `resources/subscribe` natively
+ * (§21.4: "the author's SDK answers it natively, so neither client library changes"). It
+ * answers the registration-time `server/discover` with -32601 — §20.5's compatibility
+ * fallback, the leg every service already in the field takes — so this file states nothing
+ * about that answer's shape, which is tunnel/**'s.
+ */
+async function dialFeed(token: string): Promise<() => Promise<void>> {
+  const response = await worker.fetch(
+    new Request(`${ORIGIN}/connect`, {
+      headers: { Upgrade: "websocket", Authorization: `Bearer ${token}` },
+    }),
+    env as unknown as Env,
+  );
+  const socket = response.webSocket;
+  if (response.status !== 101 || socket === null) {
+    throw new Error(`/connect refused the upgrade: ${response.status}`);
+  }
+  socket.accept();
+  socket.addEventListener("message", (event) => {
+    const data = typeof event.data === "string" ? event.data : "";
+    const frame = JSON.parse(data) as { id?: unknown; method?: unknown };
+    // A warm whose answer arrives after the case closed this socket is a teardown race, not
+    // a fixture failure: the send is guarded so it cannot surface as an uncaught exception.
+    const answer = (body: Record<string, unknown>) => {
+      try {
+        socket.send(JSON.stringify({ jsonrpc: "2.0", id: frame.id, ...body }));
+      } catch {
+        // already closed
+      }
+    };
+    if (frame.method === "server/discover") {
+      answer({ error: { code: -32601, message: "method not found" } });
+    } else if (frame.method === "tools/list") {
+      answer({ result: { tools: [] } });
+    } else if (frame.method === "prompts/list") {
+      answer({ result: { prompts: [] } });
+    } else if (frame.method === "resources/list") {
+      answer({ result: { resources: [] } });
+    } else if (frame.method === "resources/templates/list") {
+      answer({ result: { resourceTemplates: [] } });
+    } else if (frame.method === "resources/subscribe" || frame.method === "resources/unsubscribe") {
+      answer({ result: SUBSCRIBE_RESULT });
+    }
+  });
+  socket.send(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: "register",
+      method: "hub/register",
+      params: { clientVersion: "order-table/0", protocolVersion: "2026-07-28", roles: {} },
+    }),
+  );
+  return async () => {
+    try {
+      socket.close(1000, "case teardown");
+    } catch {
+      // already gone
+    }
+  };
+}
+
+/** Registration is observable, never slept for: the pipeline serving the catalog IS
+ *  registration having completed, and `status` reading online is what the availability
+ *  check below consults. */
+async function untilOnline(world: D14World): Promise<void> {
+  for (let turn = 0; turn < 250; turn++) {
+    if ((await status(world.ns.services[FEED].id)) === "online") return;
+    await new Promise<void>((resolve) => {
+      // REAL time: workerd is the runtime under test and vitest's fake timers do not reach
+      // inside it. One millisecond per turn, and the loop exits on the condition itself.
+      setTimeout(resolve, 1);
+    });
+  }
+  throw new Error("the tunneled service never registered");
+}
+
+
+describe("§21.1 — what a listen request is refused for, and what it is not", () => {
+  it("§21.1 · a GRANTED caller's scoped subscriptions/listen against an archived service is -32002 before the stream opens · the same caller's aggregated stream opens with the archived service simply not subscribed (the allow-twin)", async () => {
+    const world = await seedD14({ archived: true });
+
+    const scoped = await listenAt(world.url(FEED), world.agent);
+    expect(scoped.code, "the refusal is a payload, and it comes before the first byte").toBe(-32002);
+    expect(scoped.contentType).not.toContain("text/event-stream");
+    expect(scoped.sessionId, "a refused open mints nothing").toBeNull();
+
+    // The allow-twin: on the aggregated shape an archived service is not a refusal, it is
+    // simply not in the subscribed set (§21.1) — and the stream is the same 200 either way.
+    const aggregated = await listenAt(world.url(), world.agent);
+    expect(aggregated.status).toBe(200);
+    expect(aggregated.contentType).toContain("text/event-stream");
+    expect(aggregated.code).toBeUndefined();
+  });
+
+  it("§21.1 · availability is never checked on listen — an offline tunneled service and a needs-reconnect proxied one, each -32000 to every call, both hand back a scoped stream", async () => {
+    // FLAGGED, and stated rather than hidden: the proxied half rides `not_connected`, the
+    // OTHER of §7's two known-unavailable proxied states, because this file's own seeder
+    // hard-refuses needs_reconnect ("reaching it here would mean running a whole connect
+    // flow, which is upstream-credentials.test.ts's subject and not this table's") and the
+    // flip has exactly one production trigger — a rejected refresh. What the row needs of
+    // the fixture is a service the hub KNOWS it cannot reach, which is what both states are;
+    // needs_reconnect's own -32000 is pinned in upstream-proxy.test.ts.
+    const world = await seedD14({ unreachableProxy: true });
+
+    for (const slug of [FEED, NOTION]) {
+      const call = await rpc(
+        world.url(slug),
+        world.agent,
+        message("tools/call", { name: TOOL, arguments: ARGS }),
+      );
+      expect(call.error?.code, `${slug}: every CALL is refused`).toBe(-32000);
+
+      // …and the stream is handed back anyway: a stream against a service that is down is
+      // the point — the bell rings when it comes back changed (§21.1).
+      const stream = await listenAt(world.url(slug), world.agent);
+      expect(stream.code, `${slug}: availability was consulted`).toBeUndefined();
+      expect(stream.status, slug).toBe(200);
+      expect(stream.contentType, slug).toContain("text/event-stream");
+    }
+  });
+});
+
+describe("§21.4 — the two per-URI methods, in §7's order", () => {
+  it("§7/§21.4 · resources/subscribe and resources/unsubscribe are -32601 on the aggregated endpoint · and -32601 scoped against a proxied service and the builtin — the capability is never advertised and there is nowhere to forward", async () => {
+    const world = await seedD13();
+    const owner = await world.ownerToken();
+
+    for (const method of ["resources/subscribe", "resources/unsubscribe"]) {
+      // Aggregated: a URI cannot take a `<slug>_` prefix and still be the URI the service
+      // knows (§18 decision 26), so the shape refuses before any service is resolved.
+      const aggregated = await rpc(world.url(), world.agent, message(method, { uri: URI }));
+      expect(aggregated.error?.code, `${method}: aggregated`).toBe(-32601);
+
+      // Scoped against a PROXIED service: no DO, no channel, nothing to forward to (§21.2),
+      // and §21.5 never advertises the capability for it.
+      const proxied = await rpc(world.url(NOTION), world.agent, message(method, { uri: URI }));
+      expect(proxied.error?.code, `${method}: proxied`).toBe(-32601);
+
+      // …and the builtin, whose tools never change — owner-only (§8), so a session's bearer.
+      const builtin = await rpc(world.url(PMCP_SLUG), owner, message(method, { uri: URI }));
+      expect(builtin.error?.code, `${method}: builtin`).toBe(-32601);
+    }
+  });
+
+  it("§21.4 · an ungranted URI against an ARCHIVED service is -32001, never -32002 — the URI filter runs first, per the table's overlapping-condition doctrine", async () => {
+    // A grant on a role the service never declared: §7 keeps it a GRANT (so the door admits
+    // the caller — a 404 here would prove nothing about the order) whose pattern set is
+    // EMPTY, so every URI is ungranted. The service is archived as well, which is the
+    // overlapping condition: only the order decides which of the two codes comes back.
+    const world = await seedD14({ role: D14_ROLE, archived: true });
+
+    const refused = await rpc(
+      world.url(FEED),
+      world.agent,
+      message("resources/subscribe", { uri: D14_URI }),
+    );
+    expect(refused.error?.code).toBe(-32001);
+  });
+
+  it("§21.4 · a granted URI against an archived AND known-offline service is -32002, never -32000 · the granted, online subscribe dispatches and returns the service's result (the allow-twin)", async () => {
+    // Granted by the built-in wildcard, so the URI filter passes and the next two checks are
+    // the only ones left. The service is archived AND has never held a socket: -32000 is the
+    // answer an implementation that checked availability first would give.
+    const archived = await seedD14({ archived: true });
+    const refused = await rpc(
+      archived.url(FEED),
+      archived.agent,
+      message("resources/subscribe", { uri: D14_URI }),
+    );
+    expect(refused.error?.code).toBe(-32002);
+
+    // The allow-twin, on a service that is genuinely online: the frame reaches it and its
+    // answer is relayed verbatim. No stream is open, so the DO stores nothing and forwards
+    // anyway — a legal MCP request whose notifications are simply undeliverable (§21.4).
+    const live = await seedD14({ online: true });
+    try {
+      await untilOnline(live);
+      const dispatched = await rpc(
+        live.url(FEED),
+        live.agent,
+        message("resources/subscribe", { uri: D14_URI }),
+      );
+      expect(dispatched.error, JSON.stringify(dispatched.error)).toBeUndefined();
+      expect(dispatched.result).toEqual(SUBSCRIBE_RESULT);
+    } finally {
+      await live.close();
+    }
   });
 });

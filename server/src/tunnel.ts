@@ -37,15 +37,44 @@
  * format never enters this module. The worker half reaches its DO namespace binding
  * (SERVICE_CONNECTION) via the importable env of `cloudflare:workers`, so callers never
  * thread an env object; the composition root owns the binding name.
+ *
+ * §21 gave this DO a SECOND CLASS of socket, and with it three mechanics the module now
+ * also owns. The SUBSCRIBER ACCEPT DOOR: a second upgrade path beside /connect's, through
+ * which the Worker opens one hibernatable socket per held listen stream, tagged
+ * `sub:<session-id>` and carrying the resolved principal and that stream's subscription
+ * set in its attachment. The DOORBELL AT THE WRITE: a warm whose canonical catalog
+ * differs from the stored one rings that family's bell on every subscriber socket the DO
+ * holds, behind a leading-edge floor whose state is DURABLE (a burst that straddles a
+ * hibernation must not lose its trailing ring). And the ALARM MULTIPLEXING: that floor's
+ * coalescing timer shares §6's single alarm slot with the registration deadline, so the
+ * handler runs both legs and neither purpose can clobber the other.
+ *
+ * The class invariant is the tag PREFIX and nothing else (§21.2): every reader below
+ * selects the service socket by class rather than by position, so a subscriber socket
+ * accepted first is never mistaken for the bot's connection, and a frame arriving on one
+ * is never read as service traffic.
  */
 
 import { DurableObject, env } from "cloudflare:workers";
 import { record } from "./audit";
+import {
+  BELL_PROMPTS,
+  BELL_RESOURCES,
+  BELL_TOOLS,
+  bellFrame,
+  catalogChanged,
+  DEFAULT_SERVICE_CAPABILITIES,
+  familyBell,
+  parseSubscriberTag,
+  RESOURCES_UPDATED,
+  subscribeAllowed,
+  subscriberTag,
+} from "./capabilities";
 import { CODES, HubError, unavailable } from "./errors";
 import type { BackendCtx, JsonRpcRequest, JsonRpcResponse, ServiceBackend, Tool } from "./gateway";
 import { formatPrincipal } from "./principal";
 import { resolveServiceToken } from "./identity";
-import { CALL_TIMEOUT_MS, REGISTRATION_DEADLINE_MS } from "./limits";
+import { CALL_TIMEOUT_MS, LISTEN_BELL_MIN_INTERVAL_MS, REGISTRATION_DEADLINE_MS } from "./limits";
 import {
   patternFamilyOf,
   Registry,
@@ -227,6 +256,19 @@ const IDENTITY_HEADER = {
   owner: "x-pmcp-owner-id",
   slug: "x-pmcp-slug",
   token: "x-pmcp-token-id",
+} as const;
+
+/**
+ * The two headers the worker half hands the DO for a SUBSCRIBER upgrade (§21.2) — the
+ * same internal seam as IDENTITY_HEADER, under the same rules: never a wire format, never
+ * credential material. The session id is the stream's minted correlation id and becomes
+ * the socket's tag; the principal is the caller the Worker already resolved, stored so a
+ * later `resources/subscribe` can be authorized against it (§21.4: the id selects, the
+ * principal authorizes).
+ */
+const SUBSCRIBER_HEADER = {
+  session: "x-pmcp-session-id",
+  principal: "x-pmcp-principal",
 } as const;
 
 /** The one place a service id becomes a DO stub — every export below goes through it. */
@@ -515,12 +557,30 @@ function catalogsOf(capability: ServiceCapability): CatalogFamily[] {
   return CATALOG_FAMILIES.filter((family) => patternFamilyOf(family) === capability);
 }
 
-/** The client-originated MCP notifications §6 defines, and the capability each invalidates
- *  — the only service-originated frames the DO reads; every other one is still dropped. */
-const LIST_CHANGED: Readonly<Record<string, ServiceCapability>> = {
-  "notifications/tools/list_changed": "tools",
-  "notifications/prompts/list_changed": "prompts",
-  "notifications/resources/list_changed": "resources",
+/**
+ * How the DO reads one service-originated notification — the WHOLE read-set (§6, as §21.4
+ * amended it), and the two ways a frame in it is read. `invalidates` names the capability
+ * whose catalogs the frame re-lists; `routes` names no capability at all, because
+ * `notifications/resources/updated` invalidates nothing and re-warms nothing — it is
+ * relayed to the subscriber sockets that subscribed its `uri` and to nobody else. Every
+ * other frame a registered service sends is still dropped.
+ *
+ * The distinction is a VALUE rather than two tables because the contracts fixture producer
+ * emits this record whole (§4 of the testing strategy): a fifth frame cannot reach the
+ * wire without reaching the fixture. The keys are the bell constants from capabilities.ts
+ * — the consumer-facing bell and the service-originated notification are the same MCP
+ * method, which is exactly why one write can be read as both (§21.3).
+ */
+export type ServiceNotification =
+  | { reads: "invalidates"; capability: ServiceCapability }
+  | { reads: "routes" };
+
+/** The four service-originated notifications the DO reads, by method (§6/§21.4). */
+export const SERVICE_NOTIFICATIONS: Readonly<Record<string, ServiceNotification>> = {
+  [BELL_TOOLS]: { reads: "invalidates", capability: "tools" },
+  [BELL_PROMPTS]: { reads: "invalidates", capability: "prompts" },
+  [BELL_RESOURCES]: { reads: "invalidates", capability: "resources" },
+  [RESOURCES_UPDATED]: { reads: "routes" },
 };
 
 /** §6's registration-time capability question, asked of the CLIENT LIBRARY and never of the
@@ -532,8 +592,28 @@ const DISCOVER_METHOD = "server/discover";
 const CAPABILITIES_KEY = "capabilities";
 
 /** What a service the hub has never been told anything about serves: tools — §20.2's
- *  never-connected answer, and exactly what §6's discover fallback warms. */
-const DEFAULT_CAPABILITIES: readonly ServiceCapability[] = ["tools"];
+ *  never-connected answer, and exactly what §6's discover fallback warms. Imported rather
+ *  than respelled: capabilities.ts owns the value, and two copies of one default is how a
+ *  handshake and a warm start disagreeing. */
+const DEFAULT_CAPABILITIES = DEFAULT_SERVICE_CAPABILITIES;
+
+/**
+ * §21.3's floor state, DURABLE (constraint 5): when each bell last rang, and which bells
+ * owe a trailing ring. Prefixed keys rather than one record so the coalescing alarm drains
+ * them with a single list — and so `wipe`'s deleteAll takes them with everything else.
+ */
+const BELL_RANG_PREFIX = "bell:rang:";
+const BELL_PENDING_PREFIX = "bell:pending:";
+
+/**
+ * The ONE alarm slot's other purpose, as stored state (constraint 2): the instant §6's
+ * registration deadline falls due for the socket currently sitting unregistered. Durable
+ * because the deadline has to outlive hibernation (an unregistered socket has no pending
+ * request to keep the instance awake), and a stored TIMESTAMP rather than a flag because
+ * `alarm()` has to be able to tell "this firing is mine" from "this firing belongs to the
+ * coalescer and I am not due yet" — which is what keeps §6's ten seconds ten seconds.
+ */
+const ALARM_DEADLINE_KEY = "alarm:deadline";
 
 /**
  * Closes the service's live socket, if any, with the given code — the two owner-triggered
@@ -559,6 +639,81 @@ export async function sever(serviceId: Service["id"], code: SeverCode, onlyIfTok
 export async function wipe(serviceId: Service["id"]): Promise<void> {
   // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.wipe
   await connectionFor(serviceId).wipe();
+}
+
+/**
+ * Worker half of §21.2's SECOND door: opens one subscriber socket into a service's DO and
+ * hands back the Worker-side end, already accepted, for the held SSE invocation to pump.
+ * A fresh request like handleConnect's, carrying no credential material — the Worker has
+ * already resolved the principal and read the grants, and the DO trusts it (§3).
+ *
+ * Throws when the DO refuses the upgrade or cannot be reached: a stream that cannot open
+ * one of its sockets is the caller's decision to make (§21.2 ends the whole stream on any
+ * subscriber-socket failure it did not initiate), and inventing a dead socket here would
+ * make that decision silently.
+ */
+export async function openSubscriber(
+  serviceId: Service["id"],
+  sessionId: string,
+  principal: string,
+): Promise<WebSocket> {
+  // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.fetch
+  const response = await connectionFor(serviceId).fetch(
+    new Request("https://pmcp.invalid/subscribe", {
+      headers: {
+        Upgrade: "websocket",
+        [SUBSCRIBER_HEADER.session]: sessionId,
+        [SUBSCRIBER_HEADER.principal]: principal,
+      },
+    }),
+  );
+  const socket = response.webSocket;
+  if (socket === null) throw new Error(`pmcp/subscriber-upgrade refused: ${response.status}`);
+  socket.accept();
+  return socket;
+}
+
+/**
+ * What a subscribe did inside the DO, in the three words the door needs (§21.4).
+ * `stored` — the URI is on the caller's own live subscriber socket, so forward it;
+ * `no_stream` — the session-and-principal pair matched no live subscriber socket, so
+ * nothing was stored and the frame is STILL forwarded (a legal MCP request whose
+ * notifications are simply undeliverable); `refused` — a cap said no, and the door answers
+ * -32602 having stored and forwarded nothing.
+ */
+export type SubscribeOutcome = "stored" | "no_stream" | "refused";
+
+/**
+ * §21.4's subscription mutation as the door reaches it — the DO owns the whole rule (which
+ * socket, whose principal, which caps), and the door owns only what a refusal is CALLED on
+ * the consumer wire. A DO that cannot be reached is a dispatch failure like any other
+ * (-32000 through viaConnection), never a silent no-op that would leave the consumer
+ * believing it had subscribed.
+ */
+export function subscribe(
+  serviceId: Service["id"],
+  sessionId: string,
+  principal: string,
+  uri: string,
+): Promise<SubscribeOutcome> {
+  // deps: viaConnection · ServiceConnection.subscribe
+  return viaConnection(serviceId, "do_unreachable", (connection) =>
+    connection.subscribe(sessionId, principal, uri),
+  );
+}
+
+/** §21.4's mirror: filter, match, remove, forward. Removing can exceed no cap, so unlike
+ *  subscribe it has no refusal to report — the door forwards whatever this answers. */
+export function unsubscribe(
+  serviceId: Service["id"],
+  sessionId: string,
+  principal: string,
+  uri: string,
+): Promise<void> {
+  // deps: viaConnection · ServiceConnection.unsubscribe
+  return viaConnection(serviceId, "do_unreachable", (connection) =>
+    connection.unsubscribe(sessionId, principal, uri),
+  );
 }
 
 /**
@@ -610,6 +765,22 @@ type ConnectionAttachment = {
 };
 
 /**
+ * A SUBSCRIBER socket's identity and its subscription set, as they ride
+ * serializeAttachment through hibernation (§21.4/§5). Versioned like the service socket's
+ * attachment and for the same reason, and never confused with it: the socket's `sub:` tag
+ * decides which reader runs, so the two shapes never meet at a read.
+ *
+ * The set is bounded by LISTEN_SUBSCRIPTIONS_MAX URIs of at most SUBSCRIBE_URI_MAX_BYTES
+ * each, whose product is what keeps this attachment far inside the platform's 16 KB (§5).
+ */
+type SubscriberAttachment = {
+  v: 1;
+  sessionId: string;
+  principal: string;
+  uris: string[];
+};
+
+/**
  * The per-service Durable Object: at most one accepted socket ever (newest wins at
  * acceptance), the cached tools/list catalog in its own SQLite, in-flight correlation in
  * memory. It trusts the worker half completely — an upgrade only reaches fetch() after
@@ -656,17 +827,42 @@ export class ServiceConnection extends DurableObject {
    */
   async fetch(req: Request): Promise<Response> {
     // deps: DO ctx.acceptWebSocket · DO ws.serializeAttachment · DO ctx.storage.setAlarm · audit.record · audit.resolveAuditConfig
+    if (!isUpgrade(req)) return refuse(426, "Upgrade Required");
+    // §21.2's second door, tried first because it is the narrower one: a subscriber
+    // upgrade carries the two subscriber headers and none of the four identity headers.
+    const subscriber = subscriberFrom(req);
+    if (subscriber !== null) return this.acceptSubscriber(subscriber);
     const arriving = identityFrom(req);
     // One refusal for "this did not come from handleConnect", whichever way it failed to.
-    if (!isUpgrade(req) || arriving === null) return refuse(426, "Upgrade Required");
+    if (arriving === null) return refuse(426, "Upgrade Required");
     // Newest wins BEFORE the newcomer is accepted, so the two-socket window never exists.
     await this.evictCurrent(arriving);
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1], [arriving.serviceId]);
     pair[1].serializeAttachment(arriving);
     // A storage alarm, not a timer: an unregistered socket has no pending request to keep
-    // this instance awake, so the deadline has to outlive hibernation (§6).
-    await this.ctx.storage.setAlarm(Date.now() + REGISTRATION_DEADLINE_MS);
+    // this instance awake, so the deadline has to outlive hibernation (§6). Its PURPOSE is
+    // stored beside it (constraint 2), because one slot cannot remember two intentions and
+    // the handler must not spend this deadline early on the coalescer's firing. Armed
+    // through the multiplexer, which never pushes a pending ring out behind it (§21.3).
+    const dueAt = Date.now() + REGISTRATION_DEADLINE_MS;
+    await this.ctx.storage.put(ALARM_DEADLINE_KEY, dueAt);
+    await this.armAlarm(dueAt);
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  /**
+   * §21.2's subscriber accept: a socket of the OTHER class — tagged `sub:<session-id>` so
+   * that no service-socket reader can ever return it, carrying the Worker's resolved
+   * principal and an empty subscription set. It evicts nothing (§6's at-most-one invariant
+   * counts service sockets), writes no audit row (§21.6, doorbells are listing-class), and
+   * — the pin — arms NO registration deadline: a subscriber never registers, and a stream
+   * that opened before its service reconnects must not be killed by the bot's clock.
+   */
+  private acceptSubscriber(attachment: SubscriberAttachment): Response {
+    const pair = new WebSocketPair();
+    this.ctx.acceptWebSocket(pair[1], [subscriberTag(attachment.sessionId)]);
+    pair[1].serializeAttachment(attachment);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
@@ -695,8 +891,10 @@ export class ServiceConnection extends DurableObject {
    * a vanished service row closes 4003, success replies {ok:true}, writes the
    * connect.register audit row, and immediately runs the §6 capability warm — one
    * server/discover, then the catalogs its answer declared.
-   * After registration: correlation replies resolve the pending map, and each of §6's three
-   * list_changed notifications invalidates its own family's catalogs and re-lists.
+   * After registration: correlation replies resolve the pending map, and each frame of the
+   * DO's read-set (SERVICE_NOTIFICATIONS) is read the one way that record says — §6's
+   * three list_changed invalidate their own family's catalogs and re-list, §21.4's
+   * `resources/updated` is routed by `uri` and invalidates nothing.
    * When the warmed catalog lands, each tool's input/output schemas run
    * registry.validateSchemaIndirection: violations are LOUD — echoed to the service
    * as a warning frame and logged — and the tool is cached flagged schema-unsound,
@@ -705,9 +903,15 @@ export class ServiceConnection extends DurableObject {
    * service. Any
    * pre-registration message other than hub/register is a protocol error — error reply,
    * then close 4004. The hub never forwards consumer traffic to an unregistered socket.
+   *
+   * Nothing a SUBSCRIBER socket sends is read at all (§21.2): the hub writes on those
+   * sockets and listens on none of them, so a consumer that talks back can neither warm a
+   * catalog nor ring a bell.
    */
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     // deps: registry.upsertDeclaredRoles · registry.validateSchemaIndirection · audit.record · audit.resolveAuditConfig · DO SQLite `catalog` · DO ws.serializeAttachment
+    // The class question, asked FIRST and by tag — never by position (§21.2).
+    if (this.sessionOf(ws) !== null) return;
     const attachment = attachmentOf(ws);
     // §10: an attachment this code cannot read is a socket it cannot serve. Closing it
     // turns deploy version-skew into the client's ordinary reconnect.
@@ -717,13 +921,16 @@ export class ServiceConnection extends DurableObject {
     if (frame === null) return;
     // A correlated answer to something this hub asked (a forwarded call, a catalog warm).
     if (frame.method === undefined) return this.settle(frame);
-    // §6's three client-originated MCP notifications: that family's set changed, so re-list
-    // ITS catalogs and no others.
-    const changed = LIST_CHANGED[String(frame.method)];
-    if (changed !== undefined) return this.warmFamily(ws, attachment, changed);
+    const notification = SERVICE_NOTIFICATIONS[String(frame.method)];
     // Anything else from a registered service is a frame the hub does not read (§6: every
     // MCP request on this socket is hub-originated). Ignored, never a close: the protocol
     // error is a PRE-registration rule.
+    if (notification === undefined) return;
+    // §21.4's per-URI relay: routing only, so no catalog is invalidated and no re-warm runs.
+    if (notification.reads === "routes") return this.route(frame);
+    // §6's three: that family's set changed, so re-list ITS catalogs and no others — and
+    // ring its bell if the re-list changed what the hub stores (§21.3).
+    return this.warmFamily(ws, attachment, notification.capability);
   }
 
   /**
@@ -764,6 +971,10 @@ export class ServiceConnection extends DurableObject {
     }
     attachment.registered = true;
     ws.serializeAttachment(attachment);
+    // The deadline's purpose is SPENT: this socket registered, so a later firing of the
+    // shared slot has no deadline leg to run (constraint 2 — the handler dispatches on the
+    // stored purpose, and a purpose nobody owns must not linger).
+    await this.ctx.storage.delete(ALARM_DEADLINE_KEY);
     this.send(ws, { jsonrpc: "2.0", id, result: { ok: true } });
     await this.audit(attachment, "connect.register", { roles: Object.keys(roles) });
     if (drift.widened.length > 0) {
@@ -794,16 +1005,19 @@ export class ServiceConnection extends DurableObject {
    */
   private async warmDeclared(ws: WebSocket, attachment: ConnectionAttachment): Promise<void> {
     const declared = await this.discover(ws);
-    if (declared === null) return this.warmCatalog(ws, attachment, "tools");
+    if (declared === null) return this.warmAndRing(ws, attachment, ["tools"]);
     await this.ctx.storage.put(CAPABILITIES_KEY, declared);
     const warming = new Set(declared.flatMap(catalogsOf));
-    await Promise.all(
+    const changed = await Promise.all(
       CATALOG_FAMILIES.map((family) =>
         warming.has(family)
           ? this.warmCatalog(ws, attachment, family)
-          : this.ctx.storage.put(CATALOG_KEY[family], []),
+          : this.writeCatalog(family, []),
       ),
     );
+    // §21.3: the clear that emptied a NON-empty catalog is a change like any other, and
+    // rings — one bell per family this registration actually moved, whichever leg moved it.
+    await this.ringChanged(CATALOG_FAMILIES.filter((_, index) => changed[index] === true));
   }
 
   /**
@@ -828,7 +1042,34 @@ export class ServiceConnection extends DurableObject {
     attachment: ConnectionAttachment,
     capability: ServiceCapability,
   ): Promise<void> {
-    await Promise.all(catalogsOf(capability).map((family) => this.warmCatalog(ws, attachment, family)));
+    await this.warmAndRing(ws, attachment, catalogsOf(capability));
+  }
+
+  /**
+   * A set of catalogs warmed together, and the bells that warm owes (§21.3). ONE ring per
+   * bell however many keys moved: both resource catalogs answer to
+   * `notifications/resources/list_changed`, so a re-list that changed the resource list and
+   * the templates list is one frame — MCP defines no templates frame, the same
+   * one-frame-covers-both rule §6 pins for the invalidation.
+   */
+  private async warmAndRing(
+    ws: WebSocket,
+    attachment: ConnectionAttachment,
+    families: readonly CatalogFamily[],
+  ): Promise<void> {
+    const changed = await Promise.all(
+      families.map((family) => this.warmCatalog(ws, attachment, family)),
+    );
+    await this.ringChanged(families.filter((_, index) => changed[index] === true));
+  }
+
+  /** The distinct bells a set of changed families owes, rung once each (§21.3/§6). A family
+   *  with no bell — there is none for completions — owes nothing. */
+  private async ringChanged(families: readonly CatalogFamily[]): Promise<void> {
+    const bells = new Set(
+      families.map((family) => familyBell(family)).filter((bell): bell is string => bell !== null),
+    );
+    for (const bell of bells) await this.ring(bell);
   }
 
   /**
@@ -845,7 +1086,7 @@ export class ServiceConnection extends DurableObject {
     ws: WebSocket,
     attachment: ConnectionAttachment,
     family: CatalogFamily,
-  ): Promise<void> {
+  ): Promise<boolean> {
     // Parking here is safe, and the reason is not local: the answer arrives as a SEPARATE
     // webSocketMessage invocation on this same object while this handler is still awaiting.
     // A Durable Object's input gate does not hold back websocket events behind a handler
@@ -865,11 +1106,88 @@ export class ServiceConnection extends DurableObject {
       console.warn(
         `pmcp/catalog-warm-failed: ${attachment.slug} ${family}: ${outcome.ok ? "answer was not a catalog" : outcome.reason}`,
       );
-      return;
+      // §20.5/§21.3: a failure is not an undeclare. Nothing was written, so nothing rings.
+      return false;
     }
-    await this.ctx.storage.put(CATALOG_KEY[family], entries);
+    const changed = await this.writeCatalog(family, entries);
     // §7's refuse-line reads inputSchema and outputSchema, which only a tool has.
     if (family === "tools") this.reportUnsound(ws, attachment, entries as Tool[]);
+    return changed;
+  }
+
+  /**
+   * One catalog written, with §21.3's ring verdict taken BEFORE the write: the bell is
+   * about the hub's STORED catalog changing, so the comparison is the old value against the
+   * new one, canonically — and absent compares EQUAL to `[]`, so a first registration
+   * writing empty family keys rings nothing while the undeclare that emptied a served
+   * family rings.
+   *
+   * Answers whether it changed rather than ringing itself: one warm owes one bell per
+   * FAMILY, and the resources declaration writes two keys.
+   */
+  private async writeCatalog(family: CatalogFamily, entries: readonly unknown[]): Promise<boolean> {
+    const stored = await this.ctx.storage.get(CATALOG_KEY[family]);
+    const changed = catalogChanged(stored, entries);
+    await this.ctx.storage.put(CATALOG_KEY[family], entries);
+    return changed;
+  }
+
+  /**
+   * §21.3's doorbell, with its leading-edge floor. The first ring of a bell in a quiet
+   * window goes out immediately; one inside LISTEN_BELL_MIN_INTERVAL_MS of it is suppressed
+   * and remembered as PENDING, and the alarm delivers exactly one trailing frame for it —
+   * so a burst is at most two frames and the final state always rings.
+   *
+   * Both halves of the floor — the per-bell last-rang stamp and the pending flag — live in
+   * DO storage rather than in instance memory (constraint 5): a burst that straddles a
+   * hibernation must not lose its trailing ring, and an evicted instance has no fields.
+   */
+  private async ring(bell: string): Promise<void> {
+    const now = Date.now();
+    const last = (await this.ctx.storage.get<number>(BELL_RANG_PREFIX + bell)) ?? 0;
+    if (now - last >= LISTEN_BELL_MIN_INTERVAL_MS) {
+      await this.ctx.storage.put(BELL_RANG_PREFIX + bell, now);
+      this.fanout(bellFrame(bell));
+      return;
+    }
+    await this.ctx.storage.put(BELL_PENDING_PREFIX + bell, true);
+    await this.armAlarm(last + LISTEN_BELL_MIN_INTERVAL_MS);
+  }
+
+  /**
+   * The coalescing leg of the alarm: every pending ring fires, UNCONDITIONALLY — no clock
+   * re-check. That is what guarantees §21.3's "the final state always rings" when the alarm
+   * runs late, and it is what makes the alarm a lever a suite can pull instead of a
+   * duration a suite must wait out. Answers whether it rang anything, which is how `alarm`
+   * tells its own firing apart from the deadline's (below).
+   */
+  private async flushBells(): Promise<boolean> {
+    const pending = await this.ctx.storage.list<boolean>({ prefix: BELL_PENDING_PREFIX });
+    const now = Date.now();
+    for (const key of pending.keys()) {
+      const bell = key.slice(BELL_PENDING_PREFIX.length);
+      await this.ctx.storage.delete(key);
+      await this.ctx.storage.put(BELL_RANG_PREFIX + bell, now);
+      this.fanout(bellFrame(bell));
+    }
+    return pending.size > 0;
+  }
+
+  /**
+   * The DO's ONE alarm slot, armed for the EARLIER of its two purposes (§21.3's
+   * multiplexing): a registration deadline arriving while a ring is pending must not push
+   * that ring ten seconds out, so neither purpose ever overwrites a sooner alarm.
+   *
+   * Sharing the slot this way is only safe because the purposes are stored SEPARATELY
+   * (`bell:pending:*` and ALARM_DEADLINE_KEY) and `alarm()` dispatches on them: the earlier
+   * purpose consumes the slot, runs, and re-arms whatever it borrowed the slot from. Firing
+   * both legs on every firing instead would let a coalescing ring one second away spend
+   * §6's ten-second deadline nine seconds early, closing a socket that was still inside its
+   * handshake window.
+   */
+  private async armAlarm(at: number): Promise<void> {
+    const scheduled = await this.ctx.storage.getAlarm();
+    if (scheduled === null || at < scheduled) await this.ctx.storage.setAlarm(at);
   }
 
   /** The LOUD half of §7's indirection refuse-line: every unsound tool named to the service
@@ -913,19 +1231,36 @@ export class ServiceConnection extends DurableObject {
   }
 
   /**
-   * Enforces the registration deadline: fires ~10 s after acceptance and closes the
-   * socket 4004 if hub/register has not completed. A storage alarm rather than a timer
-   * because an unregistered socket has no pending request to keep the DO awake — the
-   * deadline must survive hibernation. A no-op when registration already succeeded or
-   * the socket is gone.
+   * The DO's one alarm, serving two purposes — and DISPATCHING on stored state rather than
+   * running both legs blind (constraint 2), because one slot cannot remember two intentions
+   * and the purposes do not fall due together.
+   *
+   * The COALESCING leg is §21.3's, and it runs first and unconditionally: whatever rings are
+   * pending fire, with no clock re-check, which is what makes `runDurableObjectAlarm` a
+   * lever rather than a duration to wait out.
+   *
+   * The DEADLINE leg is §6's. It runs when its stored instant is due — or when no ring was
+   * pending at all, which means this firing was armed by the deadline itself and is the
+   * case every suite pulls the lever for. It does NOT run on a firing the coalescer owns
+   * while the deadline is still in the future: §6 pins that window at ten seconds, and
+   * spending it on somebody else's alarm would close a socket mid-handshake. Borrowed slot
+   * returned: the deadline re-arms itself for its own instant.
+   *
+   * A socket accept cancels neither purpose, and a subscriber accept arms neither.
    */
   async alarm(): Promise<void> {
-    // deps: DO ctx.getWebSockets · DO ws.deserializeAttachment
+    // deps: DO ctx.getWebSockets · DO ws.deserializeAttachment · DO ctx.storage `bell:*` · DO ctx.storage `alarm:deadline`
+    const dueAt = await this.ctx.storage.get<number>(ALARM_DEADLINE_KEY);
+    const rang = await this.flushBells();
+    if (dueAt === undefined) return;
+    if (rang && Date.now() < dueAt) return this.armAlarm(dueAt);
+    await this.ctx.storage.delete(ALARM_DEADLINE_KEY);
     const current = this.socket();
     // An unintelligible attachment is treated exactly like a missed deadline: the socket
     // cannot be served, and the client's reconnect is the cure (§10).
-    if (current === null || current.attachment?.registered === true) return;
-    this.drop(current.ws, CLOSE_PROTOCOL, "registration deadline");
+    if (current !== null && current.attachment?.registered !== true) {
+      this.drop(current.ws, CLOSE_PROTOCOL, "registration deadline");
+    }
   }
 
   /**
@@ -1023,7 +1358,7 @@ export class ServiceConnection extends DurableObject {
     for (const waiter of this.pending.values()) {
       if (waiter.ws === ws && waiter.method === LIST_METHOD[family]) return;
     }
-    void this.warmCatalog(ws, attachment, family).catch(() => undefined);
+    void this.warmAndRing(ws, attachment, [family]).catch(() => undefined);
   }
 
   /**
@@ -1116,8 +1451,105 @@ export class ServiceConnection extends DurableObject {
    * the identity cannot be read (§10's version-skew branch).
    */
   private socket(): { ws: WebSocket; attachment: ConnectionAttachment | null } | null {
-    const [ws] = this.ctx.getWebSockets();
-    return ws === undefined ? null : { ws, attachment: attachmentOf(ws) };
+    // By CLASS, never by position (§21.2, constraint 1). Spelled as the COMPLEMENT — the
+    // socket carrying no `sub:` tag — rather than as a positive `getWebSockets(serviceId)`
+    // lookup, and deliberately: this DO learns its own service id from an attachment, which
+    // is exactly what a version-skewed or unintelligible attachment denies it (§10), and the
+    // one socket that must still be findable then is this one. The prefix is what makes the
+    // complement exact — service ids are themselves UUIDs, so no id can carry it, and a
+    // `getWebSockets(service.id)` lookup can never return a subscriber socket either.
+    for (const ws of this.ctx.getWebSockets()) {
+      if (this.sessionOf(ws) === null) return { ws, attachment: attachmentOf(ws) };
+    }
+    return null;
+  }
+
+  /** The session id a socket's `sub:` tag carries, or null for the service socket — the one
+   *  place the class question is asked, so no reader can answer it differently. */
+  private sessionOf(ws: WebSocket): string | null {
+    for (const tag of this.ctx.getTags(ws)) {
+      const sessionId = parseSubscriberTag(tag);
+      if (sessionId !== null) return sessionId;
+    }
+    return null;
+  }
+
+  /** One frame to every subscriber socket this DO holds, enumerated by TAG over
+   *  getWebSockets() and never from an in-memory list (constraint 6): an evicted instance
+   *  keeps no list, and a DO that went deaf after a hibernation is exactly the failure
+   *  §21.2 refuses. The DO knows no endpoint shapes — the filter is the Worker's. */
+  private fanout(frame: Record<string, unknown>): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      if (this.sessionOf(ws) !== null) this.send(ws, frame);
+    }
+  }
+
+  /**
+   * §21.4's per-URI relay: `notifications/resources/updated` reaches exactly the subscriber
+   * sockets whose stored set CONTAINS the frame's uri, by exact string match — the hub
+   * normalizes nothing here, so a trailing slash, a case difference or an added query
+   * component is a different resource and matches nobody. Grant filtering already happened
+   * at subscribe time, which is what makes a rogue frame inert rather than dangerous.
+   *
+   * Relayed VERBATIM, uri intact: the hub forwards the service's frame, it does not compose
+   * one of its own.
+   */
+  private route(frame: Frame): void {
+    const params = frame.params;
+    const uri = isPlainObject(params) ? params.uri : undefined;
+    if (typeof uri !== "string") return;
+    for (const ws of this.ctx.getWebSockets()) {
+      if (this.sessionOf(ws) === null) continue;
+      const attachment = subscriberAttachmentOf(ws);
+      if (attachment !== null && attachment.uris.includes(uri)) this.send(ws, frame);
+    }
+  }
+
+  /**
+   * §21.4's subscription mutation, DO side. The session id SELECTS the socket — a direct
+   * `getWebSockets("sub:<id>")` lookup, the tag being the index — and the socket's stored
+   * principal AUTHORIZES the mutation: the same session id presented by another principal
+   * matches a socket and changes nothing, which is the check §21.1's "a guessed session id
+   * steals nothing" rests on.
+   *
+   * The caps are capabilities.subscribeAllowed's, so the off-by-one lives in one place. Two
+   * consequences fall out of asking it exactly once: a URI already in the set is a no-op
+   * that cannot exceed the count cap (the set is a SET, and re-subscribing must not double
+   * anything), and a subscribe with no live socket is measured against an EMPTY set, so only
+   * the byte cap — a property of the request, not of the socket — can refuse it.
+   */
+  async subscribe(sessionId: string, principal: string, uri: string): Promise<SubscribeOutcome> {
+    // deps: DO ctx.getWebSockets(tag) · DO ws.serializeAttachment · capabilities.subscribeAllowed
+    const found = this.subscriberFor(sessionId, principal);
+    const stored = found === null ? [] : found.attachment.uris;
+    if (stored.includes(uri)) return "stored";
+    if (!subscribeAllowed(stored.length, uri)) return "refused";
+    if (found === null) return "no_stream";
+    found.ws.serializeAttachment({ ...found.attachment, uris: [...stored, uri] });
+    return "stored";
+  }
+
+  /** §21.4's mirror, under the same select-then-authorize rule: a URI that is not in the
+   *  set (or a socket that is not the caller's) leaves the attachment exactly as it was. */
+  async unsubscribe(sessionId: string, principal: string, uri: string): Promise<void> {
+    // deps: DO ctx.getWebSockets(tag) · DO ws.serializeAttachment
+    const found = this.subscriberFor(sessionId, principal);
+    if (found === null || !found.attachment.uris.includes(uri)) return;
+    const uris = found.attachment.uris.filter((stored) => stored !== uri);
+    found.ws.serializeAttachment({ ...found.attachment, uris });
+  }
+
+  /** The caller's own subscriber socket for one session id, or null — the id selects, the
+   *  principal authorizes (§21.4), and both halves are asked in this one place. */
+  private subscriberFor(
+    sessionId: string,
+    principal: string,
+  ): { ws: WebSocket; attachment: SubscriberAttachment } | null {
+    for (const ws of this.ctx.getWebSockets(subscriberTag(sessionId))) {
+      const attachment = subscriberAttachmentOf(ws);
+      if (attachment !== null && attachment.principal === principal) return { ws, attachment };
+    }
+    return null;
   }
 
   /** The live REGISTERED socket, or null — §6's whole definition of "online". */
@@ -1176,10 +1608,17 @@ export class ServiceConnection extends DurableObject {
 
   /** DO half of the module-level wipe(), whose comment is this operation's contract. */
   async wipe(): Promise<void> {
-    // deps: DO ctx.storage `catalog`
+    // deps: DO ctx.storage `catalog` · DO ctx.getWebSockets
     // Everything this DO persists is durable storage, so the whole store IS the footprint
     // — and deleting all of it is idempotent on a DO that never woke.
     await this.ctx.storage.deleteAll();
+    // §21.2: service DELETE closes the subscriber sockets too — a stream listening to a
+    // service that no longer exists must end loudly rather than go quietly deaf, and the
+    // consumer's reopen rebuilds the fan-out against current state. Archive and token
+    // revocation never come through here: they sever the service socket alone.
+    for (const ws of this.ctx.getWebSockets()) {
+      if (this.sessionOf(ws) !== null) this.drop(ws, CLOSE_REVOKED, "service deleted");
+    }
   }
 
   /** DO half of the module-level status(), whose comment is this operation's contract. */
@@ -1203,6 +1642,31 @@ function identityFrom(req: Request): ConnectionAttachment | null {
   const tokenId = req.headers.get(IDENTITY_HEADER.token);
   if (serviceId === null || ownerId === null || slug === null || tokenId === null) return null;
   return { v: 1, serviceId, ownerId, slug, tokenId, registered: false };
+}
+
+/**
+ * A subscriber upgrade's identity as the worker half wrote it, or null when either header
+ * is absent — which is how the service door and the subscriber door tell each other's
+ * traffic apart, since neither writes the other's headers (§21.2).
+ */
+function subscriberFrom(req: Request): SubscriberAttachment | null {
+  const sessionId = req.headers.get(SUBSCRIBER_HEADER.session);
+  const principal = req.headers.get(SUBSCRIBER_HEADER.principal);
+  if (sessionId === null || principal === null) return null;
+  return { v: 1, sessionId, principal, uris: [] };
+}
+
+/**
+ * A subscriber socket's attachment, or null when it is absent or of an unknown version —
+ * the §10 version-skew branch again, answered here by treating the socket as carrying no
+ * subscriptions at all rather than by closing it: a stream whose attachment cannot be read
+ * hears no doorbell, and the re-auth tick (§21.2) is what ends it.
+ */
+function subscriberAttachmentOf(ws: WebSocket): SubscriberAttachment | null {
+  const raw = ws.deserializeAttachment() as Partial<SubscriberAttachment> | null;
+  if (raw === null || raw.v !== 1) return null;
+  if (typeof raw.sessionId !== "string" || typeof raw.principal !== "string") return null;
+  return { v: 1, sessionId: raw.sessionId, principal: raw.principal, uris: [...(raw.uris ?? [])] };
 }
 
 /** One inbound frame, read as far as the router needs: a method makes it a request or

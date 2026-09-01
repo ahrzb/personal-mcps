@@ -50,8 +50,9 @@ type DurableObjectStateLike = {
     get<T>(key: string): Promise<T | undefined>;
     put(key: string, value: unknown): Promise<void>;
     /** Everything stored, for the one sweep that has to look at ALL of it: §15's rule that
-     *  no credential material is at rest in a store nothing else audits. */
-    list<T = unknown>(): Promise<Map<string, T>>;
+     *  no credential material is at rest in a store nothing else audits — and, with a
+     *  `prefix`, the keyspace scan §21.3's coalescing alarm drains its pending rings with. */
+    list<T = unknown>(options?: { prefix?: string }): Promise<Map<string, T>>;
     delete(key: string): Promise<boolean>;
     deleteAll(): Promise<void>;
     setAlarm(scheduledTime: number): Promise<void>;
@@ -62,6 +63,9 @@ type DurableObjectStateLike = {
    *  own filter for getWebSockets, never an identity (§6 puts identity in the attachment). */
   acceptWebSocket(ws: WebSocket, tags?: string[]): void;
   getWebSockets(tag?: string): WebSocket[];
+  /** The tags a socket was accepted with — how §21.2's two socket CLASSES are told apart
+   *  inside the DO (the `sub:` prefix is the whole separator), never an identity. */
+  getTags(ws: WebSocket): string[];
 };
 
 /**

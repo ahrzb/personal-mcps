@@ -11,10 +11,19 @@
 // errors.ts owns and never see a JSON-RPC error code, and backends never see an
 // unfiltered tool name, an archived service, or an unapproved gated call.
 //
+// It also owns §21's ONE carve-out from statelessness: `subscriptions/listen`'s held
+// `text/event-stream`, the session id the hub mints for it, its re-authorization tick and
+// its Worker-side shape filter, plus the two per-URI methods (`resources/subscribe` /
+// `resources/unsubscribe`) that mutate the subscription set on the socket feeding it. What
+// it does NOT own of that: what rings (tunnel.ts's DO), and the shape/bell/tag vocabulary
+// the filter asks (capabilities.ts, which is Node-clean and must stay so).
+//
 // What it does NOT own: §7 step 1's HTTP-level door. Content-Type, the Origin rule, the
 // 401 with WWW-Authenticate, the scoped-visibility 404 and the resolution of the caller
-// all belong to index.mcpEntry, which hands the resolved principal in. One resolution per
-// request, and one place to change step 1.
+// all belong to index.mcpEntry, which hands the resolved principal in — and, for a held
+// stream, hands in the same verdict as a callable so the keepalive tick re-runs step 1
+// rather than re-implementing it (§21.2). One resolution per request, one place to change
+// step 1.
 //
 // IMPLEMENTATION NOTE (2026-08-25): `@modelcontextprotocol/server` is not a dependency of
 // this repo and "no new dependencies" is binding, so the SDK wiring named above is served
@@ -26,17 +35,38 @@ import { adminBackend, BUILTIN_LOG_BODIES } from "./admin";
 import type { ApprovalClaim, Approvals, CheckResult } from "./approvals";
 import { record, REDACTED_QUERY } from "./audit";
 import type { BodyStub } from "./audit";
-import { archived, CODES, HubError, notPermitted, unavailable } from "./errors";
-import { formatPrincipal, tokenPattern } from "./principal";
+import {
+  admits,
+  AGGREGATED_CAPABILITIES,
+  bellFrame,
+  capabilityShape,
+  DEFAULT_SERVICE_CAPABILITIES,
+  familyBell,
+} from "./capabilities";
+import type { CapabilityKind, EndpointShape } from "./capabilities";
+import { archived, CODES, HubError, invalidParams, notPermitted, unavailable } from "./errors";
+import { formatPrincipal, principalKey, tokenPattern } from "./principal";
 import type { Principal } from "./principal";
 import { pushSender } from "./push";
 import { applyRedaction, PMCP_SLUG, REDACTED, Registry } from "./registry";
-import type { ListKind, RoleFamily, Service, ServiceCapability } from "./registry";
-import { capabilities as tunnelCapabilities, status as tunnelStatus, tunnelBackend } from "./tunnel";
+import type { ListKind, RoleFamily, Service } from "./registry";
+import {
+  capabilities as tunnelCapabilities,
+  openSubscriber,
+  status as tunnelStatus,
+  subscribe as tunnelSubscribe,
+  tunnelBackend,
+  unsubscribe as tunnelUnsubscribe,
+} from "./tunnel";
 import { availability, upstreamBackend } from "./upstream";
 import { approvalsFromEnv, vapidFromEnv } from "./wiring";
 import type { Env } from "./index";
-import { AGGREGATED_LIST_DEADLINE_MS, AUDIT_URI_CAP_BYTES } from "./limits";
+import {
+  AGGREGATED_LIST_DEADLINE_MS,
+  AUDIT_URI_CAP_BYTES,
+  LISTEN_FANOUT_MAX,
+  LISTEN_KEEPALIVE_MS,
+} from "./limits";
 
 /**
  * A JSON-RPC 2.0 id as the hub accepts it on requests. `null` ids are never accepted
@@ -200,14 +230,24 @@ function approvalRequired(check: Extract<CheckResult, { outcome: "required" }>):
  * (`notifications/initialized` included), and answers 200 whether or not it refused. (The
  * SDK's legacy-stateless lane would serve 2025-era clients from the same wiring; it is
  * comment-level only, like the rest of the SDK seam.)
+ *
+ * §21.1's `subscriptions/listen` is the ONE message whose answer is not a JSON-RPC
+ * envelope — a `text/event-stream` this invocation then holds — so it is answered here,
+ * ahead of `route`, rather than by a case that cannot express its return type. Everything
+ * else about it is ordinary: the same door admitted it, and a refusal on the way to
+ * opening it (a scoped archived service, -32002) leaves through the same mapping below.
+ * `reauthorize` is the door's own verdict, handed in because the held stream must re-run
+ * §7 step 1 on every keepalive (§21.2) and a second implementation of step 1 is the one
+ * thing §21 forbids.
  */
 export async function mcpMessage(
   request: Request,
   env: Env,
   principal: Principal,
-  slug?: string,
+  slug: string | undefined,
+  reauthorize: Reauthorize,
 ): Promise<Response> {
-  // deps: splitAggregatedName · captureClientMeta · callTool · listScoped · listAggregated · toWire
+  // deps: splitAggregatedName · captureClientMeta · callTool · listScoped · listAggregated · listenStream · toWire
   const msg = await readMessage(request);
   if (msg === null) {
     return jsonRpc(toWire(new HubError(CODES.invalidRequest, "invalid request"), null));
@@ -217,23 +257,30 @@ export async function mcpMessage(
   const ctx: BackendCtx = { principal, roles: [], clientMeta: captureClientMeta(msg) };
   const ownerId = principal.kind === "user" ? principal.userId : principal.ownerId;
   try {
-    return jsonRpc(await route(env, ownerId, slug, msg, ctx));
+    if (msg.method === LISTEN_METHOD) return await listenStream(env, ownerId, ctx, slug, reauthorize);
+    // §21.4: the session id a subscribe names its stream with is a REQUEST header, and this
+    // is the only place a consumer-supplied one is ever read (§21.1 — correlation, never
+    // authentication: the bearer above decided everything).
+    return jsonRpc(await route(env, ownerId, slug, msg, ctx, request.headers.get(MCP_SESSION_HEADER)));
   } catch (err) {
     if (err instanceof Response) throw err; // identity's convention, never ours to swallow
     return jsonRpc(toWire(err, msg.id ?? null));
   }
 }
 
-/** §7 step 3's method table, widened by §20's seven entries: served methods, everything
- *  else -32601. `resources/*` and `completion/complete` are refused on the AGGREGATED
- *  shape by name (§20.2) rather than falling to the default case, so the refusal is a
- *  method-table entry and not an accident of what nobody implemented. */
+/** §7 step 3's method table, widened by §20's seven entries and §21's three: served
+ *  methods, everything else -32601. `resources/*` and `completion/complete` are refused on
+ *  the AGGREGATED shape by name (§20.2) rather than falling to the default case, so the
+ *  refusal is a method-table entry and not an accident of what nobody implemented.
+ *  `subscriptions/listen` never reaches here — its answer is a held response, so mcpMessage
+ *  answers it above (§21.1). */
 async function route(
   env: Env,
   ownerId: string,
   slug: string | undefined,
   msg: JsonRpcRequest,
   ctx: BackendCtx,
+  sessionId: string | null,
 ): Promise<JsonRpcResponse> {
   const id = msg.id ?? null;
   switch (msg.method) {
@@ -278,9 +325,19 @@ async function route(
       if (slug === undefined) throw methodNotFound();
       return completeRef(env, ownerId, slug, msg, ctx);
     }
+    // §21.4's two per-URI methods, scoped-only for §18 decision 26's reason and
+    // tunneled-only for §21.2's: a proxied service has no channel to ring from and the
+    // builtin never changes, so neither ADVERTISES subscribe and neither has anywhere to
+    // forward — refused inside, by kind, on the same -32601 this shape check gives.
+    case "resources/subscribe":
+    case "resources/unsubscribe": {
+      if (slug === undefined) throw methodNotFound();
+      return subscription(env, ownerId, slug, msg.method, sessionId, msg, ctx);
+    }
     default:
-      // §20.1: everything outside this table — subscriptions/listen, logging/*, any
-      // server-initiated request — falls here, on both endpoint shapes alike.
+      // §7's 2026-09-01 amendment: with `subscriptions/listen` and the two per-URI methods
+      // served, the leftover set is `logging/*` and every server-initiated request — both
+      // dead in 2026-07-28 itself — and it falls here on both endpoint shapes alike.
       throw methodNotFound();
   }
 }
@@ -290,6 +347,40 @@ async function route(
 function methodNotFound(): HubError {
   return new HubError(CODES.methodNotFound, "method not found");
 }
+
+/**
+ * What a method the hub forwards over a service socket carries beyond its own params (§6,
+ * §7's identity clause, §21.4). `forwardedCall` names the six a CONSUMER drives: each
+ * arrives post-hygiene with `hub/principal`, `hub/roles` and the mirrored
+ * `clientCapabilities` in its `_meta`, under one strip-then-set. `protocol` names the five
+ * the HUB itself drives — §6's registration-time `server/discover` and the four catalog
+ * warms — which carry the protocol `_meta` fields alone, because at registration no
+ * principal exists to attach.
+ */
+export type ForwardedCarrier = "forwardedCall" | "protocol";
+
+/**
+ * §6's hub→service forwarded methods, WHOLE — the eleven the hub ever sends over a service
+ * socket, and which of the two `_meta` regimes each rides under. Published vocabulary, like
+ * tunnel's HUB_METHODS and SERVICE_NOTIFICATIONS: `contracts/tunnel-frames.json` is emitted
+ * from this record, so a twelfth forwarded method cannot reach a client library's wire
+ * without reaching the fixture. It sits beside the dispatch switch above — that switch is
+ * where the six consumer-driven ones enter, and where the two §21.4 added were added — and
+ * beside the warms tunnel.ts issues, which are the protocol half's only sender.
+ */
+export const FORWARDED_METHODS: Readonly<Record<string, ForwardedCarrier>> = {
+  "tools/call": "forwardedCall",
+  "prompts/get": "forwardedCall",
+  "resources/read": "forwardedCall",
+  "completion/complete": "forwardedCall",
+  "resources/subscribe": "forwardedCall",
+  "resources/unsubscribe": "forwardedCall",
+  "server/discover": "protocol",
+  "tools/list": "protocol",
+  "prompts/list": "protocol",
+  "resources/list": "protocol",
+  "resources/templates/list": "protocol",
+};
 
 /**
  * §20.2's four listings as data: which catalog each method serves, and whether the
@@ -368,61 +459,51 @@ async function initializeResult(env: Env, ownerId: string, slug: string | undefi
 }
 
 /**
- * §20.2's capabilities question, answered once for both `initialize` and `server/discover`
- * on both endpoint shapes. Aggregated (`slug` absent): the fixed two-family constant,
- * whatever the namespace holds — a union could only ever tell a consumer to expect
- * nothing, and an intersection would let one tools-only service suppress every other
- * service's prompts. Scoped: derived from what the hub already STORES for that service —
- * the capability set §6's registration-time `server/discover` learned (tunneled), or the
- * owner-declared `capabilities` config (proxied, absent means tools only) — NEVER a live
- * upstream call, which is what lets a hung service answer the handshake at full speed. The
- * builtin and a service the caller cannot even resolve both read as "tools only", the same
- * answer a never-connected tunnel gives: a capability the hub has never been told about is
- * not declared.
+ * §20.2's capabilities question — reversed in one direction by §21.5 — answered once for
+ * both `initialize` and `server/discover` on both endpoint shapes. Aggregated (`slug`
+ * absent): the fixed two-family constant, whatever the namespace holds, now with
+ * `listChanged: true` on both, because the transport that honors it flipped in the same
+ * deploy (§21.5's lockstep rule). Scoped: derived from what the hub already STORES for that
+ * service — the capability set §6's registration-time `server/discover` learned (tunneled),
+ * or the owner-declared `capabilities` config (proxied, absent means tools only) — NEVER a
+ * live upstream call, which is what lets a hung service answer the handshake at full speed.
+ *
+ * The KIND is the second input, and the one §21.5 added: a proxied service has no DO to
+ * ring from and the builtin's tools never change, so both declare every push flag false
+ * whatever their stored set says, while a tunneled service declares `listChanged` on each
+ * family it stores and `subscribe` on its resources. The three are named, never inferred
+ * from "is not proxied" (capabilities.CapabilityKind), which is what keeps the builtin off
+ * the tunneled branch. A service the caller cannot even resolve answers the NEVER-CONNECTED
+ * tunneled shape — the handshake must not become a service-existence oracle (§20.2's
+ * anti-enumeration posture, and §21.5's own sentence about it).
  */
 async function capabilitiesFor(env: Env, ownerId: string, slug: string | undefined): Promise<Record<string, unknown>> {
-  // deps: registry.getService · tunnel.capabilities
+  // deps: registry.getService · tunnel.capabilities · capabilities.capabilityShape
   if (slug === undefined) return AGGREGATED_CAPABILITIES;
-  if (slug === PMCP_SLUG) return capabilityShape(DEFAULT_SERVICE_CAPABILITIES);
+  if (slug === PMCP_SLUG) return capabilityShape(DEFAULT_SERVICE_CAPABILITIES, "builtin");
   const service = await new Registry(env.DB).getService(ownerId, slug);
-  if (service === null) return capabilityShape(DEFAULT_SERVICE_CAPABILITIES);
+  if (service === null) return capabilityShape(DEFAULT_SERVICE_CAPABILITIES, "tunnel");
   const declared =
     service.kind === "tunnel" ? await tunnelCapabilities(service.id) : service.capabilities ?? DEFAULT_SERVICE_CAPABILITIES;
-  return capabilityShape(declared);
+  return capabilityShape(declared, CAPABILITY_KINDS[service.kind]);
 }
 
-/** What a service the hub has never been told anything about serves (§20.2) — the same
- *  answer a never-connected tunnel, the builtin, and an unresolvable slug all give. */
-const DEFAULT_SERVICE_CAPABILITIES: readonly ServiceCapability[] = ["tools"];
+/** A stored service's kind as §21.5's capability axis spells it — the builtin is decided by
+ *  slug above, so this table covers the two kinds a D1 row can hold. */
+const CAPABILITY_KINDS = { tunnel: "tunnel", proxy: "proxy" } as const satisfies Record<
+  Service["kind"],
+  CapabilityKind
+>;
 
 /**
- * The wire shape of ONE declared capability, in BOTH handshakes — `listChanged` and
- * `subscribe` forced false whatever the service claims, because the hub cannot honor
- * either and must not republish them (§20.1: a client that subscribed would wait forever).
- * Exported so `contracts/initialize.json` can pin all four family shapes: the scoped
- * handshake is the only surface that serves the last two, and a shape no fixture carries
- * is one a consumer meets without warning.
+ * Constraint 4's seam, spelled once: the pure capability core lives in a Node-clean module
+ * (`capabilities.ts`, which must never gain a `cloudflare:workers` import — this module has
+ * one, through admin.ts), and the DOOR is where a fixture producer or a sibling reads it
+ * from. §21.5's four-picture split landed with it, so the pre-flip `CAPABILITY_SHAPE`
+ * constant that used to sit here is gone: `capabilityShape` answers both handshakes and
+ * emits every fixture picture.
  */
-export const CAPABILITY_SHAPE: Record<ServiceCapability, Record<string, unknown>> = {
-  tools: { listChanged: false },
-  prompts: { listChanged: false },
-  resources: { subscribe: false, listChanged: false },
-  completions: {},
-};
-
-/** A declared capability set, rendered as the `capabilities` object both handshakes carry. */
-function capabilityShape(declared: readonly ServiceCapability[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const capability of declared) result[capability] = CAPABILITY_SHAPE[capability];
-  return result;
-}
-
-/** §20.2's aggregated answer, whole: tools and prompts, never a third family — fixed,
- *  regardless of what the namespace holds. Only WHICH families is decided here; how one
- *  renders is CAPABILITY_SHAPE's, so the two handshakes cannot describe a family
- *  differently. */
-const AGGREGATED_FAMILIES = ["tools", "prompts"] as const satisfies readonly ServiceCapability[];
-const AGGREGATED_CAPABILITIES = capabilityShape(AGGREGATED_FAMILIES);
+export { AGGREGATED_CAPABILITIES, capabilityShape } from "./capabilities";
 
 /** The one MCP revision this hub speaks (§7: stateless 2026-07-28 endpoints). */
 const PROTOCOL_VERSION = "2026-07-28";
@@ -1010,8 +1091,9 @@ function blobStub(block: unknown): BodyStub {
 }
 
 /**
- * The one audit write of every DISPATCHING method — `tools/call`, `prompts/get` and
- * `resources/read` alike (§15, §20.4). Every path through each of those three ends in
+ * The one audit write of every DISPATCHING method — `tools/call`, `prompts/get`,
+ * `resources/read` and §21.6's two per-URI methods alike (§15, §20.4, §21.6). Every path
+ * through each of those five ends in
  * exactly one call to this function, invoked after the try/catch and nowhere else, which is
  * what makes "one row per call" readable off the control flow rather than inferred from
  * which statements can throw. One row shape, one place for it to change.
@@ -1022,8 +1104,14 @@ async function recordDispatch(
     ownerId: string;
     ctx: BackendCtx;
     /** The audited event — `tool` is the call's tool name, a prompt's name, or §20.4's
-     *  hygiened resource URI, whichever this event addresses. */
-    event: "tools/call" | "prompts/get" | "resources/read";
+     *  hygiened resource URI (which §21.6 gives the two subscription methods too),
+     *  whichever this event addresses. */
+    event:
+      | "tools/call"
+      | "prompts/get"
+      | "resources/read"
+      | "resources/subscribe"
+      | "resources/unsubscribe";
     slug: string;
     tool: string;
     outcome: string;
@@ -1328,6 +1416,490 @@ function refTarget(msg: JsonRpcRequest): { subject: string; family: RoleFamily }
   if (ref?.type === "ref/prompt" && typeof ref.name === "string") return { subject: ref.name, family: "prompts" };
   if (ref?.type === "ref/resource" && typeof ref.uri === "string") return { subject: ref.uri, family: "resources" };
   return null;
+}
+
+// ══ §21 — the held listen stream, and the two per-URI methods ══════════════════════════
+//
+// One method whose answer is a `text/event-stream` this invocation then HOLDS (§21.1), and
+// two that mutate the subscription set on the socket feeding it (§21.4).
+//
+// What makes this the SAME door and not a second one: the open resolves nothing itself —
+// it is handed the principal index.mcpEntry already resolved — reads the grant set through
+// the very calls the aggregated fan-out makes (`listServicesFor` / `getService`), and its
+// re-authorization tick re-runs §7 step 1 by CALLING the door's verdict (`Reauthorize`,
+// constructed once in index.ts) rather than re-deciding it here. The only things this
+// section decides for itself are what a stream writes and when it stops.
+//
+// NOT here: what rings (the DO's, tunnel.ts — it rings every subscriber socket it holds and
+// knows no endpoint shapes), nor what a bell frame looks like or which shape serves it
+// (capabilities.ts — this section only asks `admits`).
+
+/** §21.1's one method whose answer is a held response rather than a JSON-RPC envelope. */
+const LISTEN_METHOD = "subscriptions/listen";
+
+/**
+ * §21.1's correlation header, in both directions: the hub MINTS one on every stream it
+ * opens — a client-supplied value is never echoed, so the id's shape and uniqueness are the
+ * hub's own — and reads one back on a `resources/subscribe` to know which of that
+ * principal's streams to feed. It authenticates NOTHING (the bearer decides everything on
+ * every request, §7), which is why the DO requires principal equality beside it (§21.4).
+ */
+const MCP_SESSION_HEADER = "Mcp-Session-Id";
+
+/**
+ * §21.2's re-authorization leg, as the DOOR hands it in: re-run §7 step 1's whole verdict —
+ * resolve the bearer, judge the namespace, and (scoped) this service's visibility to that
+ * caller — and answer the principal it now admits, or null when it admits nobody. A held
+ * stream is one request, and "revocation is immediate" is a per-request property (§15), so
+ * the tick has to ask the door again; it must not ask a second implementation of it.
+ */
+export type Reauthorize = () => Promise<Principal | null>;
+
+/**
+ * §21.1's held answer, opened: mint the session id, open one subscriber socket into each
+ * granted tunneled service's DO, write the first keepalive so the client can see the stream
+ * is live, and hand the response back while this invocation keeps writing to it.
+ *
+ * The refusals are the listings', never the calls': a scoped ARCHIVED service refuses
+ * -32002 before a byte is written, availability is never asked (a stream against an offline
+ * service is the point — the bell rings when it comes back changed), and a caller whose
+ * grants match nothing gets a stream that simply never rings.
+ */
+async function listenStream(
+  env: Env,
+  ownerId: string,
+  ctx: BackendCtx,
+  slug: string | undefined,
+  reauthorize: Reauthorize,
+): Promise<Response> {
+  // deps: registry.getService · registry.listServicesFor · tunnel.openSubscriber · tunnel.capabilities
+  // The refusal comes first, whole: a -32002 must leave no half-opened stream behind it.
+  const services = await subscribable(new Registry(env.DB), ownerId, ctx.principal, slug);
+  const stream = new ListenStream(slug === undefined ? "aggregated" : "scoped");
+  try {
+    await stream.begin(services, principalKey(ctx.principal));
+  } catch (err) {
+    // A DO that cannot be reached is the same failure class here as on any other method, so
+    // it answers -32000 like every other one (never a generic internal error) — and the
+    // sockets the fan-out DID open are closed before the refusal goes out, because an open
+    // that failed must leave no stream behind it either.
+    await stream.abandon();
+    if (err instanceof HubError) throw err;
+    throw unavailable("do_unreachable");
+  }
+  // Deliberately not awaited: the loop outlives this function by design — it IS the held
+  // response — and it ends when the consumer disconnects, the door stops admitting the
+  // caller, or a socket closes under it. Nothing inside it throws (the tick is
+  // failure-closed), so a rejection here is a hub defect and says so.
+  void stream.hold(env, ownerId, slug, reauthorize).catch((err: unknown) => {
+    console.error("pmcp/listen: the held stream's tick failed", err);
+  });
+  return stream.response();
+}
+
+/**
+ * The services one stream subscribes (§21.2) — the SAME reads every other shape performs,
+ * and on the scoped shape the same access verdict every other scoped method gets: a service
+ * this caller cannot see was already 404'd at the door, an ARCHIVED one refuses -32002
+ * before the stream opens, and availability is never asked.
+ *
+ * TUNNELED services only. A proxied service has no DO to ring from (a Worker cannot hold an
+ * outbound stream to an upstream past its own invocation) and the builtin's tools never
+ * change, so neither is dialed at all — which is also why neither advertises push (§21.5).
+ * Deterministic SLUG order, capped at LISTEN_FANOUT_MAX: the platform bounds an
+ * invocation's simultaneous connections, and the excess is silent until the client reopens
+ * (§21.7's recorded ceiling). Slug order rather than any other is what makes two concurrent
+ * streams over one namespace — and one reopened stream — choose the same set.
+ *
+ * No FILTER runs here, and that is §21.1's listing-class sentence rather than an omission:
+ * a stream serves no items, so there is nothing for the caller's patterns to match; a
+ * caller the door admits whose patterns match nothing gets the never-ringing stream.
+ */
+async function subscribable(
+  registry: Registry,
+  ownerId: string,
+  principal: Principal,
+  slug: string | undefined,
+): Promise<Service[]> {
+  // deps: registry.getService · registry.listServicesFor
+  if (slug !== undefined) {
+    // The builtin is addressable by its owner and rings nothing: a legal, permanently quiet
+    // stream, answered before any registry read (no D1 row for `pmcp` exists to read).
+    if (slug === PMCP_SLUG) return [];
+    const service = await registry.getService(ownerId, slug);
+    if (service === null) throw notPermitted();
+    if (service.archived) throw archived();
+    return service.kind === "tunnel" ? [service] : [];
+  }
+  const visible = await registry.listServicesFor(principal);
+  return visible
+    .filter((service) => !service.archived && service.kind === "tunnel")
+    .sort((left, right) => (left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0))
+    .slice(0, LISTEN_FANOUT_MAX);
+}
+
+/**
+ * One held listen stream: the SSE writer this invocation owns, the subscriber sockets it
+ * opened (keyed by service id — its own fan-out), and whether it has ended. Every §21.2
+ * delivery rule lives in these methods and nowhere else:
+ *
+ * - a frame a socket delivers is written PAYLOAD-VERBATIM and admission-filtered by the
+ *   endpoint shape (`admits`): the DO rang every subscriber socket it holds and knows no
+ *   shapes, so this is the only party that can drop the resources bell an aggregated stream
+ *   does not serve;
+ * - a socket close the Worker did not initiate ends the WHOLE stream — fail loud, not deaf,
+ *   because a stream that silently stopped hearing one service is the one failure a doorbell
+ *   design cannot afford. A close this stream DID initiate is told from it by the socket
+ *   having already left the map, which is why `drop` deletes before it closes;
+ * - a KEEPALIVE the body has not accepted by the time the next one is due means nobody is
+ *   reading it: the stream ends and closes its sockets, which is what makes subscriptions
+ *   die with the stream (§21.1) rather than outlive it (`write` and `hold` say why the
+ *   counters, rather than an awaited write, are what can observe that — and why only the
+ *   keepalive is counted: a doorbell still in flight is a busy consumer, not a gone one);
+ * - the keepalive is a BARE `setTimeout(…, LISTEN_KEEPALIVE_MS)` (constraint 3), and the
+ *   same tick carries the re-authorization, so the revocation window IS the keepalive
+ *   window (§21.1) and the suite's exact-constant shim reaches this timer and no other.
+ */
+class ListenStream {
+  /** Minted here and never read off the request: a client-supplied id is never echoed. */
+  private readonly sessionId = crypto.randomUUID();
+  private readonly encoder = new TextEncoder();
+  private readonly body: ReadableStream<Uint8Array>;
+  private readonly writer: WritableStreamDefaultWriter<Uint8Array>;
+  private readonly sockets = new Map<string, WebSocket>();
+  /** KEEPALIVE blocks handed to the body, and keepalive blocks the body accepted — the
+   *  stall detector's whole input, see `write`. Data blocks are deliberately uncounted. */
+  private keepalivesIssued = 0;
+  private keepalivesAccepted = 0;
+  private ended = false;
+
+  constructor(private readonly endpoint: EndpointShape) {
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+    this.body = readable;
+    this.writer = writable.getWriter();
+  }
+
+  /** The answer, exactly as §21.1 spells it: 200, `text/event-stream`, a minted session id.
+   *  No `Last-Event-ID` is honored anywhere, so nothing here advertises resumption. */
+  response(): Response {
+    return new Response(this.body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        // An intermediary that buffered a doorbell would defeat the whole mechanism.
+        "Cache-Control": "no-cache",
+        [MCP_SESSION_HEADER]: this.sessionId,
+      },
+    });
+  }
+
+  /**
+   * The open: one socket per service, then the first keepalive — a client learns its stream
+   * is live from a byte, not from a header. Nothing is RUNG here: an open is not a change.
+   *
+   * That first write is deliberately not awaited. A transform stream applies backpressure
+   * from its reader, and nothing reads this body until `response()` has been returned to the
+   * consumer — so awaiting it here would deadlock the open against the answer it is opening.
+   * `write` swallows its own failure into `end()`, so the unawaited promise can reject only
+   * into a stream that has already ended.
+   */
+  async begin(services: readonly Service[], principal: string): Promise<void> {
+    // Concurrently, like the aggregated fan-out's listing (`listAggregated`): these are up
+    // to LISTEN_FANOUT_MAX round trips on the latency-critical path of a held response, and
+    // the subscribed SET is already fixed by `subscribable`'s slug order, so nothing here
+    // depends on the order the sockets come up in.
+    await Promise.all(services.map((service) => this.subscribe(service, principal)));
+    void this.write(KEEPALIVE, true);
+  }
+
+  /** The open that failed: every socket it did open, closed, and the body finished — so a
+   *  refusal leaves no half-opened stream behind it either (§21.2). */
+  async abandon(): Promise<void> {
+    await this.end();
+  }
+
+  /**
+   * §21.1/§21.2's tick loop: one SSE comment and one re-authorization per
+   * LISTEN_KEEPALIVE_MS, forever, until the consumer stops reading, the door stops admitting
+   * the caller, or a socket ends the stream under it.
+   *
+   * The keepalive is written but NOT awaited, and the stall check is what replaces awaiting
+   * it: a KEEPALIVE still unaccepted when the next tick comes due means nobody is reading
+   * this body — a consumer that disconnected, or one so far behind that it may as well have
+   * — so the stream ends and its subscriptions die with it (§21.1). Waiting on the write
+   * instead would hang here forever, since a cancelled body neither accepts nor refuses one.
+   *
+   * DATA blocks are not counted: a doorbell written microseconds before a tick has not
+   * failed, it is merely in flight, and reading it as a stall would close a healthy stream
+   * for having something to say.
+   */
+  async hold(
+    env: Env,
+    ownerId: string,
+    slug: string | undefined,
+    reauthorize: Reauthorize,
+  ): Promise<void> {
+    for (;;) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, LISTEN_KEEPALIVE_MS);
+      });
+      if (this.ended) return;
+      if (this.keepalivesIssued !== this.keepalivesAccepted) {
+        await this.end();
+        return;
+      }
+      void this.write(KEEPALIVE, true);
+      if (!(await this.retick(env, ownerId, slug, reauthorize))) return;
+    }
+  }
+
+  /**
+   * One re-authorization (§21.2). The door's verdict first: a revoked or expired bearer, a
+   * deleted account, another user's namespace, or (scoped) a service the caller can no
+   * longer see CLOSES the stream — the tick answers exactly as a fresh open would, which is
+   * what makes "a fresh open would now 404" and "the stream closed" the same sentence.
+   *
+   * Then the grant set, re-read: a service that left it has its socket dropped and its
+   * subscriptions die with the socket, so no `resources/updated` outlives the grant that
+   * authorized it; a service that joined it is subscribed and rung — the Worker is the party
+   * that knows the set changed, and it rings exactly the family bells its endpoint shape
+   * serves that the service's STORED capability set contains (a tools-only service granted
+   * mid-stream rings the tools bell alone, because no other family of the caller's view
+   * changed). On the aggregated shape the stream narrows and stays open; on the scoped shape
+   * losing the service is losing the stream, which the door's verdict above already said.
+   *
+   * Any failure reaching a DO ends the stream rather than leaving it deaf to one service —
+   * §21.2's rule for every subscriber-socket failure the Worker did not initiate.
+   */
+  private async retick(
+    env: Env,
+    ownerId: string,
+    slug: string | undefined,
+    reauthorize: Reauthorize,
+  ): Promise<boolean> {
+    try {
+      const principal = await reauthorize();
+      if (principal === null) {
+        await this.end();
+        return false;
+      }
+      const next = await subscribable(new Registry(env.DB), ownerId, principal, slug);
+      for (const serviceId of [...this.sockets.keys()]) {
+        if (!next.some((service) => service.id === serviceId)) this.drop(serviceId);
+      }
+      for (const service of next) {
+        if (this.sockets.has(service.id)) continue;
+        await this.subscribe(service, principalKey(principal));
+        await this.ring(service);
+      }
+    } catch (err) {
+      // A scoped -32002 (archived mid-stream), a vanished service, a credential the door
+      // refuses by throwing, or a DO that could not be reached: every one of them is a
+      // stream that can no longer answer for itself, and §21.2 closes rather than deafens.
+      //
+      // Two failure classes, two OPERATOR signals, exactly as `listAggregated` splits them:
+      // a HubError is the door or somebody's downtime answering as designed, and a stream
+      // closing on it is the specified outcome rather than news. Anything else is a HUB
+      // defect, and a stream that vanished with nothing in the logs is the one way this
+      // design fails invisibly — so it is logged against this module.
+      if (!(err instanceof HubError)) {
+        console.error("pmcp/listen: hub defect on the re-authorization tick", err);
+      }
+      await this.end();
+      return false;
+    }
+    return !this.ended;
+  }
+
+  /** One subscriber socket into one service's DO, wired to this stream (§21.2). */
+  private async subscribe(service: Service, principal: string): Promise<void> {
+    const socket = await openSubscriber(service.id, this.sessionId, principal);
+    this.sockets.set(service.id, socket);
+    socket.addEventListener("message", (event) => {
+      const text = typeof event.data === "string" ? event.data : "";
+      let frame: unknown;
+      try {
+        frame = JSON.parse(text);
+      } catch {
+        // A frame this stream cannot classify is not one it may forward.
+        return;
+      }
+      const method =
+        typeof frame === "object" && frame !== null && "method" in frame ? frame.method : undefined;
+      if (typeof method !== "string" || !admits(method, this.endpoint)) return;
+      // The map is the authority on which socket this stream is still listening to: `drop`
+      // deletes before it closes, so a frame that arrives after a narrowing — in flight, or
+      // sent by a DO that has not processed the close yet — is not one this stream forwards.
+      if (this.sockets.get(service.id) !== socket) return;
+      void this.write(`data: ${text}\n\n`, false);
+    });
+    socket.addEventListener("close", () => {
+      // Still in the map ⇒ nobody here closed it: the DO, a deploy, or a restart did, and
+      // §21.2 ends the whole stream so the client's ordinary reopen rebuilds the fan-out.
+      if (this.sockets.get(service.id) === socket) void this.end();
+    });
+  }
+
+  /** The bells a newly subscribed service owes this shape, derived from the SAME kind-aware
+   *  shape the handshake answered (`capabilityShape`) rather than from the stored set again:
+   *  a family whose shape carries no `listChanged` promises no bell, so it may not ring one.
+   *  Then intersected with what the endpoint shape serves, and deduplicated — both resource
+   *  catalogs answer to the one bell (§21.3).
+   *
+   *  Not awaited, for the reason `write` gives: a cancelled body never settles a write, and
+   *  awaiting one here would wedge the tick that called it, holding every socket open. */
+  private async ring(service: Service): Promise<void> {
+    const shape = capabilityShape(await tunnelCapabilities(service.id), "tunnel");
+    const bells = new Set<string>();
+    for (const [family, flags] of Object.entries(shape)) {
+      if (flags.listChanged !== true) continue;
+      const bell = familyBell(family);
+      if (bell !== null && admits(bell, this.endpoint)) bells.add(bell);
+    }
+    for (const bell of bells) void this.write(`data: ${JSON.stringify(bellFrame(bell))}\n\n`, false);
+  }
+
+  /** A socket this stream is done with: out of the map FIRST, so its close event reads as
+   *  hub-initiated and does not end the stream (§21.2 — a narrowing is not a failure). */
+  private drop(serviceId: string): void {
+    const socket = this.sockets.get(serviceId);
+    if (socket === undefined) return;
+    this.sockets.delete(serviceId);
+    try {
+      socket.close(1000, "grant revoked");
+    } catch {
+      // already gone
+    }
+  }
+
+  /** The end, from whichever direction reached it: every socket closed as hub-initiated,
+   *  every subscription riding them gone, and the response body finished. Idempotent. */
+  private async end(): Promise<void> {
+    if (this.ended) return;
+    this.ended = true;
+    for (const serviceId of [...this.sockets.keys()]) this.drop(serviceId);
+    await this.writer.close().catch(() => undefined);
+  }
+
+  /**
+   * One SSE block out. `keepalivesIssued`/`keepalivesAccepted` are the ONLY way this
+   * invocation can learn its consumer is gone: a cancelled response body neither errors this
+   * writable nor rejects the write — the write simply never settles again — so the tick
+   * above reads the counters rather than waiting on a promise that has no answer for it
+   * (measured against workerd, both in-process and over a service binding).
+   *
+   * `counted` is what the stall detector observes, and only the keepalive sets it: it is the
+   * one block written on a fixed cadence, so "the previous one has not landed and the next
+   * is already due" is a statement about the CONSUMER. A doorbell is written when a service
+   * happens to change something, which is no schedule at all.
+   */
+  private async write(text: string, counted: boolean): Promise<boolean> {
+    if (this.ended) return false;
+    if (counted) this.keepalivesIssued += 1;
+    try {
+      await this.writer.write(this.encoder.encode(text));
+      if (counted) this.keepalivesAccepted += 1;
+      return true;
+    } catch {
+      await this.end();
+      return false;
+    }
+  }
+}
+
+/** §21.1's keepalive: an SSE COMMENT, so a client parsing `data:` lines as JSON-RPC sees
+ *  nothing at all here — the form is the contract, the interval is limits.ts's. */
+const KEEPALIVE = ": keepalive\n\n";
+
+/**
+ * §21.4's two per-URI methods, in one pipeline because they differ in one line. Scoped and
+ * TUNNELED-only: the builtin and a proxied service answer -32601 (the capability is never
+ * advertised for them and there is nowhere to forward), which is decided before the audited
+ * body below, exactly as the aggregated shape's refusal is decided in `route`.
+ *
+ * Then §7's order, with §21.4's own step in it: the URI is matched against the caller's
+ * resource patterns FIRST (-32001 — an unfiltered subscribe is a standing read past the
+ * role's patterns, and the filter running first is also why an ungranted URI on an archived
+ * service is -32001 and not -32002), then archived (-32002), then availability (-32000),
+ * then the DO's own verdict: a subscribe past either cap is refused -32602 having stored and
+ * forwarded NOTHING. Passing, the frame is forwarded with its params unrewritten and the
+ * same `_meta` every family carries — hub/principal, hub/roles and the mirrored
+ * clientCapabilities under one strip-then-set (`prepareForward`) — and relayed verbatim.
+ *
+ * Exactly one audit row, written after the try/catch like every other dispatching method:
+ * §21.6 records these two like a READ, so the row's `tool` column is the URI under §20.4's
+ * hygiene, no body is ever carried (there is none to carry), and — like a read's — the
+ * -32001 an unresolvable service earns is IN the ledger. The -32601 above it is not: a
+ * method that is not served for this kind of target had no dispatch to record, which is
+ * exactly how `route` treats its own.
+ */
+async function subscription(
+  env: Env,
+  ownerId: string,
+  slug: string,
+  method: "resources/subscribe" | "resources/unsubscribe",
+  sessionId: string | null,
+  msg: JsonRpcRequest,
+  ctx: BackendCtx,
+): Promise<JsonRpcResponse> {
+  // deps: registry.getService · registry.resolveAccess · probeAvailability · tunnel.subscribe · tunnel.unsubscribe · prepareForward · audit.record
+  const registry = new Registry(env.DB);
+  if (slug === PMCP_SLUG) throw methodNotFound();
+  const service = await registry.getService(ownerId, slug);
+  if (service !== null && service.kind !== "tunnel") throw methodNotFound();
+
+  const startedAt = Date.now();
+  const uri = msg.params?.uri;
+  // The session id names WHICH of the caller's streams to feed; the DO authorizes the
+  // mutation by the socket's stored principal, so a missing header can only fail to match.
+  const session = sessionId ?? "";
+  let outcome = "error";
+  let answer: JsonRpcResponse | undefined;
+  let refusal: unknown;
+  try {
+    // A request with no `uri`, or one that is not a string, names no resource: -32602, the
+    // same code the caps refuse with, because the alternative is a subscription stored
+    // against `""` — a URI that passed no meaningful filter and that no service can emit.
+    if (typeof uri !== "string") throw invalidParams();
+    if (service === null) throw notPermitted();
+    const filter = await registry.resolveAccess(ctx.principal, service);
+    if (filter.check(uri, "resources") === "deny") throw notPermitted();
+    if (service.archived) throw archived();
+    const unavailableAs = await probeAvailability(service);
+    if (unavailableAs !== null) throw unavailableAs;
+
+    // The socket's stored principal is an authorization key, never the audit spelling
+    // (principal.principalKey says why the two must not be the same string).
+    const principal = principalKey(ctx.principal);
+    if (method === "resources/subscribe") {
+      if ((await tunnelSubscribe(service.id, session, principal, uri)) === "refused") {
+        throw invalidParams();
+      }
+    } else {
+      await tunnelUnsubscribe(service.id, session, principal, uri);
+    }
+
+    const serviceCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
+    const forwarded = prepareForward({ ...msg, params: { ...msg.params, uri } }, serviceCtx);
+    const relayed = await selectBackend(service).call(service, forwarded, serviceCtx);
+    outcome = relayed.error === undefined ? "ok" : "error";
+    answer = { ...relayed, id: msg.id ?? null };
+  } catch (err) {
+    refusal = err;
+    outcome = err instanceof HubError ? String(err.code) : "error";
+  }
+  await recordDispatch(env, {
+    ownerId,
+    ctx,
+    event: method,
+    slug: service?.slug ?? slug,
+    tool: auditableUri(typeof uri === "string" ? uri : ""),
+    outcome,
+    durationMs: Date.now() - startedAt,
+    bodies: {},
+  });
+  if (answer === undefined) throw refusal;
+  return answer;
 }
 
 /**

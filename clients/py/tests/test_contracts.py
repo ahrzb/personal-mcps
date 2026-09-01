@@ -303,3 +303,45 @@ def test_caller_reads_the_fixtures_forwarded_meta_keys() -> None:
     assert identity.principal == "sa:claude"
     assert identity.roles == ("reader",)
     assert identity.has_role("reader") is True
+
+
+async def test_transparency_probe_drives_every_forwarded_method(registry) -> None:
+    """§4/§21.4 · the transparency probe drives every member of
+    tunnel-frames.json's forwarded list — not one hand-picked method — and each
+    reaches the SDK session untouched.
+
+    The oracle asks this to AMEND the existing probe; it is a new row instead,
+    and deliberately: the nearest existing probe (the forwardedCall metaKeys row
+    above) asserts a different thing, and folding this in would have cost that
+    coverage rather than added to it. The one exception the fixture's own split
+    names: ``server/discover`` is consumed by the LIBRARY, which
+    test_transport.py's discover rows pin."""
+    forwarded = _TUNNEL_FRAMES["forwardedMethods"]
+    all_methods = list(forwarded["consumerDriven"]) + list(forwarded["protocol"])
+    assert len(all_methods) == 11
+    for method in all_methods:
+        hub = await start_fake_hub()
+        transport = pmcp_client.HubTransport(hub.origin, TOKEN)
+        registry.append((hub, transport))
+        read_stream, _write_stream = await transport.__aenter__()
+        request = {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": method,
+            "params": {"uri": "news://feed/probe"},
+        }
+        await hub.send(request)
+        if method == "server/discover":
+            # The fixture's own split names this method protocol-only and §11
+            # names its reader the LIBRARY: the SDK session must never see it,
+            # and the frame this hub observes in return is the library's own
+            # -32601 answer (a transport with no capabilities probe) — which is
+            # what test_transport.py's discover rows assert in behavior.
+            await hub.next_frame(2)
+            assert hub.frames[1].message["error"]["code"] == -32601
+        else:
+            # Untouched: byte-for-byte the frame the hub sent, reaching the
+            # session the library bridges.
+            with anyio.fail_after(5):
+                item = await read_stream.receive()
+            assert item.message.model_dump(by_alias=True, exclude_unset=True) == request

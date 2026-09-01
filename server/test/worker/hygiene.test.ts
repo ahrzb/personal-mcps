@@ -1560,18 +1560,22 @@ async function dialTunneledService(token: string): Promise<() => Promise<void>> 
   socket.accept();
   socket.addEventListener("message", (event) => {
     const frame = JSON.parse(String((event as MessageEvent).data)) as { id?: unknown; method?: unknown };
+    // Guarded: a warm the hub sends after this case's teardown would otherwise throw
+    // "Can't call WebSocket send() after close()" as an uncaught exception in the runtime,
+    // failing whichever unrelated case happens to be running when it lands.
+    const reply = (result: unknown): void => {
+      try {
+        socket.send(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result }));
+      } catch {
+        // the case that opened this socket has already closed it
+      }
+    };
     if (frame.method === "tools/list") {
-      socket.send(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: { tools: CASE_14A_CATALOG } }));
+      reply({ tools: CASE_14A_CATALOG });
     } else if (frame.method === "tools/call") {
       // The marked field the twin's row must store masked — planted, and hunted by the
       // file-wide sweep like every other secret this suite invents.
-      socket.send(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: frame.id,
-          result: { structuredContent: { token: PLANTED.case14aResultSecret } },
-        }),
-      );
+      reply({ structuredContent: { token: PLANTED.case14aResultSecret } });
     }
   });
   socket.send(
@@ -2275,6 +2279,312 @@ async function dialPromptTunnel(token: string): Promise<() => Promise<void>> {
     }
   };
 }
+
+// ══ §21.6 — the two subscription rows, and everything push does NOT record ════════════
+//
+// §21.6 splits push into two postures. `resources/subscribe` and `resources/unsubscribe`
+// write rows LIKE A READ — rare, deliberate, and they name a URI, which is exactly the
+// sensitivity `resources/read` records — so they inherit §20.4's URI hygiene whole: the
+// query component dropped to `REDACTED_QUERY`, the column capped at AUDIT_URI_CAP_BYTES,
+// §15's token grammar scrubbed, and no bodies (there are none to carry). Streams,
+// doorbells and `updated` relays write NOTHING: listing-class, §15's polling-noise rule.
+//
+// Both methods are TUNNELED-only (§21.4), so this section holds the file's third socket —
+// hand-rolled for the reason the other two are, and closed inside each case. `log_bodies`
+// is left at the tunneled default (ON), which is what makes "no bodies" a decision about
+// these methods rather than a flag that happened to be off.
+
+/** The URI the subscribe cases name, and the catalog entry behind it. */
+const SUBSCRIBED_URI = READ_URI;
+
+/** One §21.6 world: a tunneled service ONLINE over a real `/connect` upgrade, one account
+ *  holding the built-in wildcard on it (so every URI passes the filter, §20.3), plus the two
+ *  provocations §21.6's negative row needs — a catalog change, and one `updated`. */
+type PushWorld = BodyWorld & {
+  close(): Promise<void>;
+  /** Change the stored resource catalog and tell the hub: one doorbell. */
+  ring(): Promise<void>;
+  /** Emit one `notifications/resources/updated` for `uri`. */
+  update(uri: string): Promise<void>;
+};
+
+async function seedPushTunnelWorld(): Promise<PushWorld> {
+  const ns = await seedNamespace(env.DB, {
+    services: [{ slug: SERVICE, kind: "tunnel", tokens: [{ as: "svc" }] }],
+    accounts: [
+      {
+        // The built-in `all` spans every family and needs no declaration (§20.3), which is
+        // what lets this fixture register with no roles and still pass a URI filter.
+        slug: ACCOUNT,
+        grants: { [SERVICE]: [{ role: "all", mode: "allow" }] },
+        tokens: [{ as: TOKEN }],
+      },
+    ],
+  });
+  const credential = ns.tokens[TOKEN].token;
+  const service = await dialPushTunnel(ns.tokens.svc.token);
+  // Registration is observable, never slept for: the pipeline serving the catalog IS
+  // registration having completed.
+  for (let turn = 0; turn < 250; turn++) {
+    const listed = await rpc(ns, credential, SERVICE, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    if (((listed.body.result?.tools ?? []) as Tool[]).length === 1) {
+      return { ns, credential, ...service };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  await service.close();
+  throw new Error("the tunneled push service never registered");
+}
+
+/**
+ * One real service on §6's wire that answers `resources/subscribe` and its mirror natively
+ * (§21.4: "the author's SDK answers it natively, so neither client library changes"), and
+ * can be told to change its resource catalog or emit one `updated`. Its registration-time
+ * `server/discover` answers -32601 — §20.5's compatibility fallback — so this file states
+ * nothing about that answer's shape, which is tunnel/**'s.
+ */
+async function dialPushTunnel(token: string): Promise<Pick<PushWorld, "close" | "ring" | "update">> {
+  const response = await worker.fetch(
+    new Request(`${ORIGIN}/connect`, {
+      headers: { Upgrade: "websocket", Authorization: `Bearer ${token}` },
+    }),
+    env as unknown as Env,
+  );
+  const socket = response.webSocket;
+  if (response.status !== 101 || socket === null) {
+    throw new Error(`/connect refused the upgrade: ${response.status}`);
+  }
+  socket.accept();
+  // The catalog the hub re-lists on a `list_changed`; `ring` grows it, which is what makes
+  // the re-warm a CHANGE and therefore a bell (§21.3 — a re-list that changes nothing rings).
+  let resources: { uri: string; name: string }[] = [];
+  socket.addEventListener("message", (event) => {
+    const data = typeof event.data === "string" ? event.data : "";
+    const frame = JSON.parse(data) as { id?: unknown; method?: unknown };
+    // A warm whose answer arrives after the case closed this socket is a teardown race, not
+    // a fixture failure: the send is guarded so it cannot surface as an uncaught exception.
+    const answer = (body: Record<string, unknown>) => {
+      try {
+        socket.send(JSON.stringify({ jsonrpc: "2.0", id: frame.id, ...body }));
+      } catch {
+        // already closed
+      }
+    };
+    if (frame.method === "server/discover") {
+      answer({ error: { code: -32601, message: "method not found" } });
+    } else if (frame.method === "tools/list") {
+      answer({ result: { tools: [toolMarking({ args: [], results: [] })] } });
+    } else if (frame.method === "prompts/list") {
+      answer({ result: { prompts: [] } });
+    } else if (frame.method === "resources/list") {
+      answer({ result: { resources } });
+    } else if (frame.method === "resources/templates/list") {
+      answer({ result: { resourceTemplates: [] } });
+    } else if (frame.method === "resources/subscribe" || frame.method === "resources/unsubscribe") {
+      answer({ result: { resultType: "complete" } });
+    }
+  });
+  socket.send(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: "register",
+      method: "hub/register",
+      params: { clientVersion: "hygiene-push/0", protocolVersion: "2026-07-28", roles: {} },
+    }),
+  );
+  return {
+    close: async () => {
+      try {
+        socket.close(1000, "case teardown");
+      } catch {
+        // already gone
+      }
+    },
+    ring: async () => {
+      resources = [...resources, { uri: `${SUBSCRIBED_URI}/${resources.length}`, name: "entry" }];
+      socket.send(JSON.stringify({ jsonrpc: "2.0", method: "notifications/resources/list_changed" }));
+    },
+    update: async (uri: string) => {
+      socket.send(
+        JSON.stringify({ jsonrpc: "2.0", method: "notifications/resources/updated", params: { uri } }),
+      );
+    },
+  };
+}
+
+/** One `resources/subscribe`/`unsubscribe` through the real endpoint. `session` is §21.4's
+ *  one consumer-supplied header; absent, the DO matches no stream, stores nothing, and
+ *  forwards anyway — which is a legal MCP request and an audited one. */
+async function subscribeThrough(
+  world: BodyWorld,
+  method: "resources/subscribe" | "resources/unsubscribe",
+  uri: string,
+  session?: string,
+): Promise<Answer> {
+  const response = await worker.fetch(
+    new Request(`${ORIGIN}/${world.ns.owner.username}/mcp/${SERVICE}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${world.credential}`,
+        ...(session === undefined ? {} : { "Mcp-Session-Id": session }),
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: { uri } }),
+    }),
+    env as unknown as Env,
+  );
+  return { status: response.status, body: (await response.json()) as Answer["body"] };
+}
+
+/** One held listen stream, reduced to what §21.6's negative row needs of it: the minted
+ *  session id, whether a given notification arrived, and a way to end it. */
+type OpenStream = {
+  sessionId: string;
+  received(method: string): Promise<boolean>;
+  cancel(): Promise<void>;
+};
+
+async function openStream(world: BodyWorld): Promise<OpenStream> {
+  const response = await worker.fetch(
+    new Request(`${ORIGIN}/${world.ns.owner.username}/mcp/${SERVICE}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${world.credential}`,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "subscriptions/listen" }),
+    }),
+    env as unknown as Env,
+  );
+  const sessionId = response.headers.get("Mcp-Session-Id");
+  const body = response.body;
+  if (sessionId === null || body === null) {
+    throw new Error(`the listen answer carried no stream: ${response.status}`);
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  const pump = async (): Promise<void> => {
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        text += decoder.decode(value, { stream: true });
+      }
+    } catch {
+      // A cancelled body is an ended stream, which is all this row needs of it.
+    }
+  };
+  void pump();
+  return {
+    sessionId,
+    // REAL time, deliberately: workerd is the runtime under test, vitest's fake timers do
+    // not reach inside it, and what is waited on is a frame crossing two real sockets — the
+    // loop exits on the frame itself, never on a duration.
+    received: async (method: string) => {
+      const deadline = Date.now() + 2_000;
+      while (!text.includes(method) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      return text.includes(method);
+    },
+    cancel: async () => {
+      await reader.cancel().catch(() => undefined);
+    },
+  };
+}
+
+describe("§21.6 · what push writes, and what it does not", () => {
+  it("§21.6 · resources/subscribe writes a row like a read — event carries the method, the URI in the tool column with its query dropped to audit.REDACTED_QUERY and capped at AUDIT_URI_CAP_BYTES, no bodies · resources/unsubscribe writes its own the same way (the twin)", async () => {
+    const world = await seedPushTunnelWorld();
+    try {
+      // The QUERY, first: a resource URI's query string is a routine carrier of somebody
+      // else's bearer token, and §21.6 inherits §20.4's rule rather than restating it.
+      const subscribed = await subscribeThrough(world, "resources/subscribe", QUERIED_URI);
+      expect(subscribed.body.error, JSON.stringify(subscribed.body.error)).toBeUndefined();
+
+      const sub = await lastRow(world.ns.owner.userId, "resources/subscribe");
+      expect(sub.event, "the method IS the event (§15's vocabulary, extended again)").toBe(
+        "resources/subscribe",
+      );
+      expect(sub.tool, "the URI, where a read puts its own").toBe(
+        `${QUERYLESS_URI}${REDACTED_QUERY}`,
+      );
+      expect(sub.tool).not.toContain(PLANTED.readAccessToken);
+      expect(sub.service).toBe(SERVICE);
+      expect(sub.outcome).toBe("ok");
+      // No bodies, with log_bodies at the tunneled default ON: there are none to carry, so a
+      // hub that recorded an empty pair would be recording a shape §21.6 does not have.
+      expect(sub.args, "a subscribe has no argument channel").toBeUndefined();
+      expect(sub.result, "…and its answer is an empty MCP result").toBeUndefined();
+
+      // The cap, grown FROM the constant in force so a change to it moves both sides.
+      const long = `${QUERYLESS_URI}/${"a".repeat(AUDIT_URI_CAP_BYTES)}`;
+      await subscribeThrough(world, "resources/subscribe", long);
+      const capped = await lastRow(world.ns.owner.userId, "resources/subscribe");
+      expect(byteLength(capped.tool ?? ""), "the column is bounded").toBeLessThanOrEqual(
+        AUDIT_URI_CAP_BYTES,
+      );
+      expect(capped.tool, "capped, never replaced").toBe(long.slice(0, AUDIT_URI_CAP_BYTES));
+
+      // The twin: the mirror method writes its OWN row, under every one of the same rules —
+      // a hub that audited only the subscribe would leave the removal unrecorded.
+      const unsubscribed = await subscribeThrough(world, "resources/unsubscribe", QUERIED_URI);
+      expect(unsubscribed.body.error, JSON.stringify(unsubscribed.body.error)).toBeUndefined();
+      const unsub = await lastRow(world.ns.owner.userId, "resources/unsubscribe");
+      expect(unsub.event).toBe("resources/unsubscribe");
+      expect(unsub.tool).toBe(`${QUERYLESS_URI}${REDACTED_QUERY}`);
+      expect(unsub.service).toBe(SERVICE);
+      expect(unsub.outcome).toBe("ok");
+      expect(unsub.args).toBeUndefined();
+      expect(unsub.result).toBeUndefined();
+    } finally {
+      await world.close();
+    }
+  }, CASE_BUDGET_MS);
+
+  it("§21.6 · an open stream, its doorbells, and an updated relay write NO rows · the subscribe sent alongside them writes exactly one (the twin that makes the negative non-vacuous)", async () => {
+    const world = await seedPushTunnelWorld();
+    const stream = await openStream(world);
+    try {
+      const before = (await query(env.DB, world.ns.owner.userId, { limit: 200 })).total;
+
+      // The one audited act, aimed at the stream above by its minted session id (§21.4).
+      const subscribed = await subscribeThrough(
+        world,
+        "resources/subscribe",
+        SUBSCRIBED_URI,
+        stream.sessionId,
+      );
+      expect(subscribed.body.error, JSON.stringify(subscribed.body.error)).toBeUndefined();
+
+      // …and the three unaudited ones, each OBSERVED rather than assumed: a doorbell that
+      // never rang and a relay that never arrived would satisfy "no rows" for free.
+      await world.ring();
+      expect(
+        await stream.received("notifications/resources/list_changed"),
+        "the doorbell never rang, so the negative below would be vacuous",
+      ).toBe(true);
+      await world.update(SUBSCRIBED_URI);
+      expect(
+        await stream.received("notifications/resources/updated"),
+        "the relay never arrived, same reason",
+      ).toBe(true);
+
+      const after = (await query(env.DB, world.ns.owner.userId, { limit: 200 })).total;
+      expect(
+        after - before,
+        "a stream, its doorbells and its relays are listing-class (§21.6)",
+      ).toBe(1);
+      expect((await lastRow(world.ns.owner.userId, "resources/subscribe")).tool).toBe(
+        SUBSCRIBED_URI,
+      );
+    } finally {
+      await stream.cancel();
+      await world.close();
+    }
+  }, CASE_BUDGET_MS);
+});
 
 // ══ the sweep, LAST ═══════════════════════════════════════════════════════════════════
 //

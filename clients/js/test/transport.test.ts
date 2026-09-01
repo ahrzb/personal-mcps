@@ -602,6 +602,76 @@ describe("the data model beyond tools · §20, §11", () => {
     // the hub serving a stale prompt list until the next registration.
     expect(relayed.message).toEqual(notification);
   }, OBSERVATION_BUDGET_MS);
+
+  // ── §21.4's per-URI push, from the author's side ────────────────────────────────────
+  // Subscribe, unsubscribe and `resources/updated` are to the bridge what reads and the
+  // list_changed notifications are: ordinary framed MCP traffic the library neither
+  // recognizes nor stashes. A library that kept its own subscription set would contradict
+  // the "session-scoped, lives on the socket" lifetime §21.4 pins, no matter how useful
+  // the shortcut looked.
+
+  it("§11/§21.4 · a resources/subscribe from the hub reaches the author's SDK and its response returns over the socket — the library keeps no subscription set · resources/unsubscribe round-trips identically", async () => {
+    const service = new AuthorService({ tools: {}, resources: {} }, {
+      "resources/subscribe": SUBSCRIBE_RESULT,
+      "resources/unsubscribe": SUBSCRIBE_RESULT,
+    });
+    const hub = await servingAuthor(service);
+    const subscribe = {
+      jsonrpc: "2.0",
+      id: 23,
+      method: "resources/subscribe",
+      params: { uri: RESOURCE_URI },
+    };
+    await hub.send(subscribe);
+    // Both directions verbatim: the request arrives at the author's SDK exactly as the
+    // hub sent it — URI included, which §21.4 keys on — and the answer goes back on the
+    // socket the hub asked over.
+    const relayed = await hub.nextFrame(2);
+    expect(service.reached).toEqual([subscribe]);
+    expect(relayed.message).toEqual({ jsonrpc: "2.0", id: 23, result: SUBSCRIBE_RESULT });
+    // The no-set half of the row: the SAME URI subscribed TWICE reaches the SDK twice.
+    // A library that retained subscriptions would dedupe, cache, or prefetch here and the
+    // second ask would vanish — but the set lives on the hub's socket, never in the
+    // library, so there is nothing to remember.
+    await hub.send(subscribe);
+    const again = await hub.nextFrame(3);
+    expect(service.reached).toEqual([subscribe, subscribe]);
+    expect(again.message).toEqual({ jsonrpc: "2.0", id: 23, result: SUBSCRIBE_RESULT });
+    const unsubscribe = {
+      jsonrpc: "2.0",
+      id: 24,
+      method: "resources/unsubscribe",
+      params: { uri: RESOURCE_URI },
+    };
+    await hub.send(unsubscribe);
+    const unrelayed = await hub.nextFrame(4);
+    expect(service.reached).toEqual([subscribe, subscribe, unsubscribe]);
+    expect(unrelayed.message).toEqual({ jsonrpc: "2.0", id: 24, result: SUBSCRIBE_RESULT });
+  }, OBSERVATION_BUDGET_MS);
+
+  it("§11/§21.4 · a notifications/resources/updated the SDK emits crosses the socket verbatim, its uri untouched — for a URI no subscribe ever crossed this socket, so a library that secretly kept a set would fail it", async () => {
+    const service = new AuthorService({ tools: {}, resources: {} });
+    const hub = await servingAuthor(service);
+    // The one outbound frame §21.4 adds. The DO routes it by EXACT uri match against the
+    // subscriber socket's set (§21.4) — nothing for the SDK session to do, and nothing for
+    // a transparent bridge to decide, so the frame must arrive untouched.
+    const updated = {
+      jsonrpc: "2.0",
+      method: "notifications/resources/updated",
+      params: { uri: `${RESOURCE_URI}/late` },
+    };
+    await service.emit(updated);
+    const relayed = await hub.nextFrame(2);
+    expect(relayed.message).toEqual(updated);
+    // …for a URI NO subscribe ever crossed this socket: frame 1 is the registration and
+    // this row sends no subscribe — a library that kept a set would have nothing to match
+    // against and (in the eager spelling of that bug) silence the relay; a library that
+    // filters sends a frame that is NOT this one. The observed wire is both frames.
+    expect(hub.frames.map((frame) => frame.message.method)).toEqual([
+      "hub/register",
+      "notifications/resources/updated",
+    ]);
+  }, OBSERVATION_BUDGET_MS);
 });
 
 /**
@@ -745,6 +815,10 @@ const RESOURCE_URI = "news://feed/tech";
 const RESOURCE_RESULT = {
   contents: [{ uri: RESOURCE_URI, mimeType: "text/plain", text: "headline" }],
 };
+/** …and §21.4's per-URI methods: the one result the author's SDK answers with. Shaped
+ *  like MCP's own definition (a subscription that took, an unsubscription that took) and
+ *  distinctive enough that the two round-trip rows can tell the response from a nil. */
+const SUBSCRIBE_RESULT = { resultType: "complete" };
 
 /**
  * The table runner: one case per row, titled with the row's `spec`. It stands up

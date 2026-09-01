@@ -508,6 +508,12 @@ function bootstrapApp(secret: string): Hono {
  * §7 step 1 runs once per request, here, and gateway never has to trust — or re-prove —
  * who is calling. That is what "entered ONLY past the door" buys, and it is why a
  * session-bearer call costs one better-auth round trip rather than two.
+ *
+ * §21.2 adds the one request that outlives its own step 1: a held listen stream, which
+ * re-authorizes itself on every keepalive. It is given the SAME verdict as a callable
+ * (`admitted` below, which is also what this function's own last two lines run), so the
+ * tick answers exactly as a fresh open would and there is no second spelling of step 1 to
+ * drift from this one.
  */
 async function mcpEntry(
   request: Request,
@@ -534,11 +540,32 @@ async function mcpEntry(
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   }
+  const principal = await admitted(request, env, slug);
+  if (principal === null) return anonymousNotFound();
+  // The tick re-reads the credential and (scoped) the service's visibility off the SAME
+  // request — bearer, namespace and slug are all still on it — so nothing about the
+  // stream's own state can widen what the door already decided. Identity refuses by
+  // THROWING a Response, and on a tick there is nobody to hand one to: every way step 1
+  // can refuse means one thing to a held stream, which is that it is no longer admitted
+  // (§21.2 — the stream closes, and the client's reopen meets the door properly).
+  return mcpMessage(request, env, principal, slug, () =>
+    admitted(request, env, slug).catch(() => null),
+  );
+}
+
+/**
+ * §7 step 1's identity half, as one verdict: the caller resolved (identity's own 401/404
+ * throws travel out of here untouched — the composition root turns them into the answer)
+ * and, on the scoped shape, judged visible for the addressed slug. `null` is the
+ * scoped-visibility 404 alone; a credential that resolves to nobody never gets this far.
+ *
+ * Called twice per held stream and once per POST, which is the whole reason it is a
+ * function: §21.2's re-authorization tick has to ask the door, not a copy of it.
+ */
+async function admitted(request: Request, env: Env, slug?: string): Promise<Principal | null> {
   const principal = await resolvePrincipal(request);
-  if (slug !== undefined && !(await visibleOnScoped(env, principal, slug))) {
-    return anonymousNotFound();
-  }
-  return mcpMessage(request, env, principal, slug);
+  if (slug !== undefined && !(await visibleOnScoped(env, principal, slug))) return null;
+  return principal;
 }
 
 /** §7 step 1: `Content-Type: application/json` is required (parameters ignored). */

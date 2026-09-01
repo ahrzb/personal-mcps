@@ -239,6 +239,55 @@ describe("tunnel frames · §4, §6", () => {
     // The third key is not the transport's business: the whole frame arrives untouched.
     expect(received).toEqual([forwarded]);
   });
+
+  it("§4/§21.4 · the transparency probe drives every member of tunnel-frames.json's forwarded list — not one hand-picked method — and each reaches the SDK session untouched", async () => {
+    // The oracle asks this to AMEND the existing probe; it is a new row instead, and
+    // deliberately: the nearest existing probe (the forwardedCall.metaKeys row above)
+    // asserts a different thing — that `caller()` reads the fixture's three `_meta` keys —
+    // and folding this in would have cost that coverage rather than added to it.
+    //
+    // The fixture's own halves, whole: the list a library that swallowed, rewrote, or
+    // otherwise "helped" any forwarded method would diverge from. Five of the eleven
+    // arrive at the hub as registration-time protocol traffic; the rest are consumer
+    // calls. Both halves are bridged verbatim — a session that only handles tools/call
+    // is an incomplete harness, and a probe that drives only tools/call is an incomplete
+    // probe.
+    const forwarded = tunnelFrames.forwardedMethods as {
+      consumerDriven: string[];
+      protocol: string[];
+    };
+    const all = [...forwarded.consumerDriven, ...forwarded.protocol];
+    expect(all).toHaveLength(11);
+    for (const method of all) {
+      const hub = await startFakeHub();
+      const transport = new HubTransport({ url: hub.origin, token: TOKEN });
+      opened.push({ hub, transport });
+      const received: unknown[] = [];
+      transport.onmessage = (message) => received.push(message);
+      await transport.start();
+      const request = {
+        jsonrpc: "2.0",
+        id: 9,
+        method,
+        params: { uri: "news://feed/probe" },
+      };
+      await hub.send(request);
+      await settle();
+      if (method === "server/discover") {
+        // The fixture's own split names this method protocol-only and §11 names its
+        // reader the LIBRARY: the SDK session must never see it, and the frame this
+        // hub observes in return is the library's own answer (a -32601 for a transport
+        // with no capabilities probe) — which is what the dedicated rows in the
+        // transport suite assert in behavior.
+        expect(received, `${method} reached the session`).toEqual([]);
+        expect(hub.frames.length, `${method} was not answered`).toBe(2);
+      } else {
+        // Untouched: byte-for-byte the frame the hub sent, reaching the session the
+        // library bridges.
+        expect(received, method).toEqual([request]);
+      }
+    }
+  });
 });
 
 /** A row's required behavior in the fixture's own vocabulary — the join the tables need. */

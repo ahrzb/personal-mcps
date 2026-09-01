@@ -81,3 +81,31 @@ export const AUDIT_BODY_CAP_BYTES = 16 * 1024;
  * body cap and retention alone).
  */
 export const AUDIT_URI_CAP_BYTES = 1024;
+
+/**
+ * §21.1 — an idle listen stream's keepalive cadence: one SSE comment per this
+ * interval, and the stream's re-authorization tick (§21.2) — the revocation
+ * window equals the keepalive window.
+ */
+export const LISTEN_KEEPALIVE_MS = 15_000;
+
+/** §21.3 — the doorbell floor: a change inside this window after a family's leading ring is suppressed and coalesced into one trailing ring at the window's end. */
+export const LISTEN_BELL_MIN_INTERVAL_MS = 1_000;
+
+/**
+ * §21.4 — at most this many subscribed URIs per subscriber socket, each bounded
+ * by SUBSCRIBE_URI_MAX_BYTES: the caps' product keeps the attachment far inside
+ * serializeAttachment's 16 KB (§5).
+ */
+export const LISTEN_SUBSCRIPTIONS_MAX = 6;
+
+/** §21.4 — a subscribed URI may be at most this many UTF-8 BYTES (the AUDIT_URI_CAP_BYTES discipline, §20.4). */
+export const SUBSCRIBE_URI_MAX_BYTES = 2048;
+
+/**
+ * §21.2 — at most this many DO subscriber sockets one stream opens, services
+ * taken in deterministic slug order. The platform documents six simultaneous
+ * open connections per invocation; the gate's live measurement can only LOWER
+ * this, never raise it.
+ */
+export const LISTEN_FANOUT_MAX = 6;

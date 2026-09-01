@@ -557,6 +557,11 @@ _PROMPT_RESULT = {
     "messages": [{"role": "user", "content": {"type": "text", "text": "headlines"}}],
 }
 
+#: …and §21.4's per-URI methods: the one result the author's SDK answers with.
+#: Shaped like MCP's own definition (a subscription that took, an unsubscription
+#: that took) and distinctive enough that the round-trip rows can tell the
+#: response from a nil.
+_SUBSCRIBE_RESULT = {"resultType": "complete"}
 #: …and a ``resources/read``: contents keyed by the URI the service itself knows.
 _RESOURCE_URI = "news://feed/tech"
 _RESOURCE_RESULT = {"contents": [{"uri": _RESOURCE_URI, "mimeType": "text/plain", "text": "headline"}]}
@@ -860,6 +865,89 @@ async def test_a_prompts_list_changed_notification_reaches_the_hub_unchanged(reg
         await service.emit(notification)
         relayed = await hub.next_frame(2)
         assert relayed.message == notification
+        tg.cancel_scope.cancel()
+
+
+# ── §21.4's per-URI push, from the author's side ─────────────────────────────
+# Subscribe, unsubscribe and ``resources/updated`` are to the bridge what reads
+# and the list_changed notifications are: ordinary framed MCP traffic the library
+# neither recognizes nor stashes. A library that kept its own subscription set
+# would contradict the "session-scoped, lives on the socket" lifetime §21.4 pins,
+# no matter how useful the shortcut looked.
+
+
+async def test_a_resources_subscribe_and_unsubscribe_round_trip(registry, recorded_sleep) -> None:
+    """§11/§21.4 · a resources/subscribe from the hub reaches the author's SDK
+    and its response returns over the socket — the library keeps no subscription
+    set · resources/unsubscribe round-trips identically.
+
+    Both directions verbatim: the request arrives at the author's SDK exactly as
+    the hub sent it — URI included, which §21.4 keys on — and the answer goes
+    back on the socket the hub asked over. The no-set half of the row: the SAME
+    URI subscribed TWICE reaches the SDK twice — a library that retained
+    subscriptions would dedupe, cache, or prefetch here and the second ask would
+    vanish, but the set lives on the hub's socket (§21.4), never in the library,
+    so there is nothing to remember."""
+    async with anyio.create_task_group() as tg:
+        service = _AuthorService(
+            "tools/list",
+            "resources/list",
+            answers={"resources/subscribe": _SUBSCRIBE_RESULT, "resources/unsubscribe": _SUBSCRIBE_RESULT},
+        )
+        hub = await _serving_author(registry, tg, service)
+        subscribe = {
+            "jsonrpc": "2.0",
+            "id": 23,
+            "method": "resources/subscribe",
+            "params": {"uri": _RESOURCE_URI},
+        }
+        await hub.send(subscribe)
+        relayed = await hub.next_frame(2)
+        assert service.reached == [subscribe]
+        assert relayed.message == {"jsonrpc": "2.0", "id": 23, "result": _SUBSCRIBE_RESULT}
+        await hub.send(subscribe)
+        again = await hub.next_frame(3)
+        assert service.reached == [subscribe, subscribe]
+        assert again.message == {"jsonrpc": "2.0", "id": 23, "result": _SUBSCRIBE_RESULT}
+        unsubscribe = {
+            "jsonrpc": "2.0",
+            "id": 24,
+            "method": "resources/unsubscribe",
+            "params": {"uri": _RESOURCE_URI},
+        }
+        await hub.send(unsubscribe)
+        unrelayed = await hub.next_frame(4)
+        assert service.reached == [subscribe, subscribe, unsubscribe]
+        assert unrelayed.message == {"jsonrpc": "2.0", "id": 24, "result": _SUBSCRIBE_RESULT}
+        tg.cancel_scope.cancel()
+
+
+async def test_a_resources_updated_crosses_verbatim_without_any_subscribe(registry, recorded_sleep) -> None:
+    """§11/§21.4 · a notifications/resources/updated the SDK emits crosses the
+    socket verbatim, its uri untouched — for a URI no subscribe ever crossed this
+    socket, so a library that secretly kept a set would fail it.
+
+    The DO routes this frame by EXACT uri match against the subscriber socket's
+    set (§21.4) — nothing for the SDK session to do, and nothing for a transparent
+    bridge to decide. A library that kept a set would have nothing to match
+    against and (in the eager spelling of that bug) silence the relay; a library
+    that filters would send a frame that is NOT this one. The observed wire is
+    both frames, in order."""
+    async with anyio.create_task_group() as tg:
+        service = _AuthorService("tools/list", "resources/list")
+        hub = await _serving_author(registry, tg, service)
+        updated = {
+            "jsonrpc": "2.0",
+            "method": "notifications/resources/updated",
+            "params": {"uri": f"{_RESOURCE_URI}/late"},
+        }
+        await service.emit(updated)
+        relayed = await hub.next_frame(2)
+        assert relayed.message == updated
+        assert [frame.message["method"] for frame in hub.frames] == [
+            "hub/register",
+            "notifications/resources/updated",
+        ]
         tg.cancel_scope.cancel()
 
 

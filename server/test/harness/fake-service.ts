@@ -27,6 +27,17 @@
 // library answers ITSELF (§11) — three behaviors deep, because §6's whole compatibility
 // story is what the hub does when that answer does not come.
 //
+// WHAT §21 ADDED: the fourth frame of the DO's read-set — `notifications/resources/updated`
+// — and the two forwarded methods a service answers natively (`resources/subscribe` /
+// `resources/unsubscribe`, §11: the author's SDK answers them, so a client library that
+// secretly kept a subscription set would fail these rows). And the OTHER CLASS of socket:
+// FakeSubscriber is the consumer end of a §21.2 subscriber socket, opened through the DO's
+// second upgrade door the same way the Worker opens it — `stub.fetch(upgrade)` with the
+// peer accepted test-side, never fabricated inside runInDurableObject, because a
+// fabricated socket silently vanishes at evictDurableObject and would make every
+// hibernation row vacuous (measured). Its two headers are SPELLED here like every other
+// wire string in this file.
+//
 // PROJECT: `tunnel` only, and that is load-bearing — live sockets and DOs are exactly what
 // per-file storage isolation cannot hold, so this project runs serial (`--max-workers=1
 // --no-isolate`). Consequences fixtures must respect: sockets from a previous file may
@@ -417,10 +428,33 @@ export class FakeService {
 
   /** Send `notifications/resources/list_changed` with a new resource catalog — §20.5's
    *  third invalidation path. */
-  async notifyResourcesListChanged(resources: CatalogEntry[]): Promise<void> {
+  async notifyResourcesListChanged(resources?: CatalogEntry[]): Promise<void> {
     // deps: WebSocket.send
-    this.catalogs.set("resources", resources);
+    // The catalog is optional because §21.3's templates-only twin changes the OTHER key
+    // this one frame speaks for (MCP defines no templates frame) and leaves this one alone.
+    if (resources !== undefined) this.catalogs.set("resources", resources);
     await this.sendRaw({ jsonrpc: "2.0", method: "notifications/resources/list_changed" });
+  }
+
+  /** Install a catalog WITHOUT announcing it — the lever for the changes a service makes
+   *  before the one frame that speaks for them goes out (§20.5's two resource keys), and
+   *  for the re-warm that draws exactly what the hub already has (§21.3's equal-catalog
+   *  twin, which must ring nothing however loudly the service said something changed). */
+  setCatalog(family: CatalogFamily, entries: CatalogEntry[]): void {
+    // deps: none
+    this.catalogs.set(family, entries);
+  }
+
+  /**
+   * Send `notifications/resources/updated` for one URI — §21.4's per-URI frame, the fourth
+   * member of the DO's read-set and the only one carrying a payload the hub reads. Sent
+   * raw and uninterpreted: a fixture may name a URI nobody subscribed, or one that differs
+   * from a subscribed URI by a trailing slash, and this harness must put both on the wire
+   * unchanged.
+   */
+  async notifyResourcesUpdated(uri: string): Promise<void> {
+    // deps: WebSocket.send
+    await this.sendRaw({ jsonrpc: "2.0", method: "notifications/resources/updated", params: { uri } });
   }
 
   /**
@@ -484,6 +518,11 @@ export class FakeService {
     const family = familyOfMethod(method);
     if (family !== undefined) return this.serveList(family, frame);
     if (method === "tools/call") return this.serveCall(frame);
+    if (method === "resources/subscribe" || method === "resources/unsubscribe") {
+      // §21.4/§11: the author's SDK answers these itself, so the service answers with the
+      // empty result MCP defines and keeps no set of its own. Already recorded in `frames`.
+      return this.reply({ jsonrpc: "2.0", id: String(frame.id), result: {} });
+    }
     // Everything else (the hub's warning notifications) is recorded and nothing more.
   }
 
@@ -594,6 +633,134 @@ export class FakeService {
     this.settleClosed?.({ code, reason });
     this.failRegistered?.(new Error(`socket closed (${code}) before hub/register was answered`));
   }
+}
+
+/**
+ * The consumer end of one §21.2 SUBSCRIBER socket: opened through the DO's second upgrade
+ * door with the two headers the Worker writes, and accepted test-side, so it hibernates,
+ * survives eviction, and is enumerated by the DO exactly like the Worker's own.
+ *
+ * It records frames and sends almost nothing: the hub writes on these sockets and reads
+ * nothing from them (§21.2), and `sendRaw` exists only so a fixture can prove that — a
+ * frame from here must warm no catalog and ring no bell.
+ */
+export class FakeSubscriber {
+  /** The stream's minted session id, which is also this socket's tag suffix (§21.2). */
+  readonly sessionId: string;
+  /** The principal the Worker resolved, stored in the DO's attachment — a subscribe by any
+   *  other principal must not mutate this socket, however right its session id is (§21.4). */
+  readonly principal: string;
+  /** Resolves with the close code when the socket ends — §21.2's "service delete closes
+   *  subscriber sockets too" and its twins are read here. */
+  readonly closed: Promise<{ code: number; reason: string }>;
+
+  private readonly received: Record<string, unknown>[] = [];
+  private readonly socket: WebSocket;
+  private readonly settleClosed: (end: { code: number; reason: string }) => void;
+  private ended = false;
+
+  constructor(socket: WebSocket, sessionId: string, principal: string) {
+    this.socket = socket;
+    this.sessionId = sessionId;
+    this.principal = principal;
+    // The executor form, not Promise.withResolvers: this repo's lib target is ES2022 and
+    // workerd's own runtime is what the suite runs on — the same shape FakeService uses.
+    let settle: (end: { code: number; reason: string }) => void = () => undefined;
+    this.closed = new Promise((resolve) => {
+      settle = resolve;
+    });
+    this.settleClosed = settle;
+    socket.accept();
+    socket.addEventListener("message", (event) => this.record(event as MessageEvent));
+    socket.addEventListener("close", (event) => {
+      const closing = event as CloseEvent;
+      this.end(closing.code, closing.reason);
+    });
+    socket.addEventListener("error", () => this.end(1006, "transport error"));
+  }
+
+  /** Every frame the DO wrote here, verbatim: a doorbell carries nothing but a method and
+   *  an `updated` carries a uri, so the whole claim of both is readable off this array. */
+  get frames(): readonly Record<string, unknown>[] {
+    // deps: none
+    return this.received;
+  }
+
+  /** How many frames carried this method — the doorbell count every §21.3 row asserts on. */
+  count(method: string): number {
+    // deps: none
+    return this.frames.filter((frame) => frame.method === method).length;
+  }
+
+  /** True until this side or the hub ended the socket. */
+  get open(): boolean {
+    // deps: none
+    return !this.ended;
+  }
+
+  /** One frame FROM the consumer — the thing the hub must never read (§21.2). */
+  async sendRaw(frame: Record<string, unknown>): Promise<void> {
+    // deps: WebSocket.send
+    this.socket.send(JSON.stringify(frame));
+  }
+
+  /** Close from this side — the stream ending. Idempotent; every fixture calls it in
+   *  teardown, because this project shares sockets across files. */
+  async close(): Promise<void> {
+    // deps: WebSocket.close
+    if (this.ended) return;
+    try {
+      this.socket.close(1000, "fixture teardown");
+    } catch {
+      // already gone
+    }
+    this.end(1000, "fixture teardown");
+  }
+
+  /** One inbound frame, parsed and kept whole. A frame that is not JSON at all is nothing
+   *  this wire carries, and the row that cares reads `frames` and finds it absent. */
+  private record(event: MessageEvent): void {
+    try {
+      this.received.push(JSON.parse(String(event.data)) as Record<string, unknown>);
+    } catch {
+      // not JSON — see above
+    }
+  }
+
+  private end(code: number, reason: string): void {
+    if (this.ended) return;
+    this.ended = true;
+    this.settleClosed({ code, reason });
+  }
+}
+
+/**
+ * Open one subscriber socket into a service's DO, through the DO's own fetch door — the
+ * SAME door the Worker uses, reached with the DO stub the fixture already has (the stub is
+ * a parameter rather than an import so this file stays free of `cloudflare:test`, whose
+ * absence is what lets it be a plain WebSocket client).
+ *
+ * The two headers are spelled, not imported: tunnel.ts's door names them, and a harness
+ * that imported the names could not fail when the door renamed one.
+ */
+export async function openSubscriber(
+  connection: { fetch(req: Request): Promise<Response> },
+  options: { principal: string; sessionId?: string },
+): Promise<FakeSubscriber> {
+  // deps: ServiceConnection.fetch (the DO's second upgrade door) · WebSocket
+  const sessionId = options.sessionId ?? crypto.randomUUID();
+  const response = await connection.fetch(
+    new Request("https://pmcp.invalid/subscribe", {
+      headers: {
+        Upgrade: "websocket",
+        "x-pmcp-session-id": sessionId,
+        "x-pmcp-principal": options.principal,
+      },
+    }),
+  );
+  const socket = response.webSocket;
+  if (response.status !== 101 || socket === null) throw new UpgradeRefused(response.status);
+  return new FakeSubscriber(socket, sessionId, options.principal);
 }
 
 /** Which catalog a hub-originated list method asks for, or undefined for anything that is

@@ -1,7 +1,10 @@
 // principal.ts — who is calling, as a value: the resolved-identity type every downstream
-// decision keys on, and the ONE canonical spelling of it — of a human or machine caller
-// (formatPrincipal, HUB_PRINCIPAL) and of the credential prefixes the §15 scrubbers hunt
-// (TOKEN_PREFIX, tokenPattern).
+// decision keys on, the ONE canonical DISPLAY spelling of it — of a human or machine caller
+// (formatPrincipal, HUB_PRINCIPAL) — the ONE comparison key for an access check over time
+// (principalKey, §21.4's subscriber authorization), and the credential prefixes the §15
+// scrubbers hunt (TOKEN_PREFIX, tokenPattern). The first two are deliberately different
+// functions: one names a caller in a ledger, the other decides whether a caller may mutate
+// something, and `principalKey` says why a slug cannot do both jobs.
 //
 // A LEAF (deps: none), and for the same reason errors.ts is one: audit rows, the forwarded
 // `hub/principal` _meta field, /api/whoami and the approval ledger all have to NAME a
@@ -37,6 +40,24 @@ export type Principal =
 export function formatPrincipal(p: Principal): string {
   // deps: none
   return p.kind === "user" ? `user:${p.username}` : `sa:${p.slug}`;
+}
+
+/**
+ * The principal as an AUTHORIZATION key, deliberately not `formatPrincipal`'s string:
+ * `user:<userId>` / `sa:<accountId>`, over the immutable row ids.
+ *
+ * §21.4 authorizes a `resources/subscribe` by comparing the subscriber socket's stored
+ * principal to the caller's, and a key used for that has to be stable and unique OVER
+ * TIME. `sa:<slug>` is neither: a slug is unique only among LIVE accounts, so
+ * delete-and-recreate reuses one, and an account recreated under an old slug would
+ * authorize against the deleted account's live socket. It is also the format audit rows,
+ * `hub/principal`, /api/whoami and the approval ledger all read — a display spelling is
+ * no place to put an access check, and coupling the two would make renaming either one
+ * silently change the other's meaning.
+ */
+export function principalKey(p: Principal): string {
+  // deps: none
+  return p.kind === "user" ? `user:${p.userId}` : `sa:${p.accountId}`;
 }
 
 /**

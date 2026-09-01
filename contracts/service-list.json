@@ -27,6 +27,10 @@
     "endpoint": "<string>",
     "auth": "oauth",
     "forwardIdentity": false,
+    "capabilities": [
+      "resources",
+      "tools"
+    ],
     "connection": "not_connected"
   },
   "builtin": {

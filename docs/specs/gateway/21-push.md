@@ -270,7 +270,14 @@ No replay buffer (§21.1). The change-timing oracle: the bell is computed on the
 catalog, so a narrowly-granted caller learns *that* and *when* unseen parts of a granted
 service changed, and a revoked grant keeps that signal for at most one keepalive
 interval (§21.2/§21.3; upgrade path: ring on the caller-filtered projection).
-Pattern-level role drift rings nothing (§21.3). Cross-service bursts are not coalesced
+Pattern-level role drift rings nothing (§21.3) — and, the other half of the same gap,
+it revokes nothing: the re-authorization tick compares grant MEMBERSHIP, so drift that
+narrows a role's `resources` patterns while leaving the grant standing leaves live
+per-URI subscriptions in place, and `updated` keeps arriving for a URI the caller's
+current patterns would now deny (grant filtering happened at subscribe time, §21.4).
+Bounded by the stream's own lifetime; ended by losing the grant, or by a reopen
+(§21.1's "subscriptions die with the stream"). Upgrade path: re-run `resolveAccess` per
+subscribed URI on the tick and prune the attachment. Cross-service bursts are not coalesced
 (§21.3). `LISTEN_FANOUT_MAX` bounds a stream's subscriber sockets, excess services
 silent until reopen (§21.2; upgrade path: fan in through one DO). A
 non-Worker-initiated subscriber-socket close ends the whole stream, so one DO restart

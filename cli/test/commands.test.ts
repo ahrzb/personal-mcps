@@ -29,6 +29,12 @@
  * row that mentions printing asserts how MANY lines were written and which name each
  * carries, never their padding.
  *
+ * Amended 2026-09-01 (the CLI DX redesign, §10): the exit-code vocabulary split, so the
+ * malformed-argv cases below assert 2 where they used to assert 1 — §10 pins `2` for
+ * malformed argv ALONE and `1` for every runtime/remote failure, and a `--since` value with
+ * no duration grammar, a third positional on `call`, and a `read` missing its slug are all
+ * argv. Nothing about WHICH ops each row reaches changed.
+ *
  * Project: `cli` — plain Node, parallel. Every case owns its own stub and its own temp
  * file; nothing here reaches the network, the real config file, or the user's terminal.
  */
@@ -161,6 +167,22 @@ afterEach(() => {
 
 function json(body: unknown): { ok: boolean; status: number; json: () => Promise<unknown> } {
   return { ok: true, status: 200, json: async () => body };
+}
+
+/**
+ * A hub that COUNTS every request instead of recording frames — the whoami handshake
+ * included. It is the only oracle that can see a local check performed after
+ * `await context()`: a stub that records `pmcp` tools/call frames answers whoami before it
+ * records anything, so "no frame" and "nothing on the wire" are not the same claim (§10 —
+ * pure argv mistakes are caught locally, BEFORE any network).
+ */
+function countingHub(): { calls: number } {
+  const counter = { calls: 0 };
+  vi.stubGlobal("fetch", async () => {
+    counter.calls += 1;
+    return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE, jsonrpc: "2.0", id: 1, result: {} });
+  });
+  return counter;
 }
 
 /**
@@ -348,16 +370,20 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
     expect(declared("audit_query", "limit")).toMatchObject({ type: "integer" });
   });
 
-  it("§10 · a bare epoch and an ISO-8601 instant are `--since`'s other two spellings, and a value that is none of the three fails LOCALLY: exit 1 with NOTHING on the wire, never a frame the hub is left to refuse", async () => {
+  it("§10 · a bare epoch and an ISO-8601 instant are `--since`'s other two spellings, and a value that is none of the three fails LOCALLY: exit 2 with NOTHING on the wire, never a frame the hub is left to refuse", async () => {
     const accepted = recordingHub();
     expect(await main(["audit", "--since", "1750000000000", "--until", "2026-08-26T00:00:00Z"])).toBe(0);
     expect(accepted.map((frame) => frame.arguments)).toEqual([
       { since: 1_750_000_000_000, until: Date.parse("2026-08-26T00:00:00Z") },
     ]);
 
-    const rejected = recordingHub();
-    expect(await main(["audit", "--since", "7 days"])).toBe(1);
-    expect(rejected).toEqual([]);
+    // Counted at the FETCH, not at the `pmcp` frame: the whoami handshake is a request too,
+    // and a `--since` resolved after `await context()` would reach the network before it
+    // failed — invisible to a stub that records only tools/call frames, and reported as
+    // `remote_error` exit 1 rather than `usage` exit 2 the moment the hub is unreachable.
+    const rejected = countingHub();
+    expect(await main(["audit", "--since", "7 days"])).toBe(2);
+    expect(rejected.calls, "a malformed --since must be caught before any request").toBe(0);
   });
 
   it("§10 · a refusal the hub DOES send is reported rather than absorbed, and a refused page is not retried: `audit --export jsonl` is the one command that re-queries, and it stops at the first error", async () => {
@@ -385,10 +411,11 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
       { kind: "service", slug: "news", expires_in: 3600 },
     ]);
 
-    // Same local refusal as `--since`: an untranslatable lifetime never becomes a token.
-    const rejected = recordingHub();
-    expect(await main(["token", "issue", "--account", "bot", "--expires", "90 days"])).toBe(1);
-    expect(rejected).toEqual([]);
+    // Same local refusal as `--since`: an untranslatable lifetime never becomes a token,
+    // and never becomes a request of any kind either.
+    const rejected = countingHub();
+    expect(await main(["token", "issue", "--account", "bot", "--expires", "90 days"])).toBe(2);
+    expect(rejected.calls).toBe(0);
 
     expect(declared("token_issue", "expires_in")).toMatchObject({
       oneOf: [{ type: "integer" }, { const: "never" }],
@@ -407,7 +434,7 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
       { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "echo", arguments: { text: "hi" } } },
     ]);
     // The service is `news` and the tool `echo` — never a service called `news_echo`.
-    expect(await main(["call", "news", "echo", "hello"])).toBe(1);
+    expect(await main(["call", "news", "echo", "hello"])).toBe(2);
     expect(sent).toHaveLength(1);
   });
 });
@@ -566,7 +593,7 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
     // same rule the duration flags follow above: a frame the hub would refuse is a frame
     // this CLI must never send. The reason travels with the refusal, because "missing
     // argument" would send the operator looking for a slug that does not exist.
-    expect(await main(["read", URI])).toBe(1);
+    expect(await main(["read", URI])).toBe(2);
     expect(frames).toEqual([]);
     const refusal = [...printed(), ...errored()];
     expect(refusal.join(" ")).toMatch(/scoped/i);
@@ -577,10 +604,389 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
     // operator who typed too little looking for an endpoint problem that is not there —
     // the mirror image of the confusion this row exists to prevent.
     const missing = gatewayHub();
-    expect(await main(["read", "news"])).toBe(1);
+    expect(await main(["read", "news"])).toBe(2);
     expect(missing).toEqual([]);
     const usage = [...printed(), ...errored()].filter((line) => !refusal.includes(line)).join(" ");
     expect(usage).toMatch(/uri/i);
     expect(usage).not.toMatch(/scoped/i);
+  });
+});
+
+/**
+ * §10's `describe` and `get` (2026-09-01) — the documented surface the five hidden aliases
+ * above now sit behind. They front GATEWAY methods, several each, so they are outside §8's
+ * parity list and carry no COMMANDS row (the table is frozen until D14 lands): the oracle
+ * here is the same one the §20.6 block uses — which methods, on which endpoint, and which
+ * refusals are absorbed rather than propagated.
+ */
+describe("§10 · describe and get, the composed exploration verbs", () => {
+  type Frame = { path: string; method: string; name?: string };
+
+  /** Every frame one run put on the wire; `answers` replies per method, `refuse` per method. */
+  function hub(answers: Record<string, unknown> = {}, refuse: Record<string, number> = {}): Frame[] {
+    const frames: Frame[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+      if (String(url).endsWith("/api/whoami")) {
+        return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+      }
+      const message = JSON.parse(init?.body ?? "{}") as { method?: string; params?: { name?: string } };
+      const method = String(message.method);
+      frames.push({ path: new URL(String(url)).pathname, method, ...(message.params?.name === undefined ? {} : { name: message.params.name }) });
+      const key = method === "tools/call" ? String(message.params?.name) : method;
+      if (refuse[key] !== undefined) return json({ jsonrpc: "2.0", id: 1, error: { code: refuse[key], message: "no" } });
+      return json({
+        jsonrpc: "2.0",
+        id: 1,
+        result: method === "tools/call" ? { structuredContent: answers[key] ?? {} } : (answers[key] ?? {}),
+      });
+    });
+    return frames;
+  }
+
+  const CATALOG = {
+    "tools/list": { tools: [{ name: "paper_fetch", description: "fetch a paper", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } }] },
+    "prompts/list": { prompts: [] },
+    "resources/list": { resources: [] },
+    "resources/templates/list": { resourceTemplates: [] },
+  };
+
+  it("§10 · `pmcp describe service/<slug>` calls all FOUR gateway list methods on the scoped endpoint, plus ONE best-effort service_list for the header — the catalog is the command, the admin read is decoration", async () => {
+    const frames = hub({ ...CATALOG, service_list: { services: [serverService("news")] } });
+    expect(await main(["describe", "service/news"])).toBe(0);
+    expect(frames.filter((frame) => frame.method !== "tools/call").map((frame) => frame.method).sort()).toEqual([
+      "prompts/list",
+      "resources/list",
+      "resources/templates/list",
+      "tools/list",
+    ]);
+    // Every list goes to the SERVICE's own mount; only the header read goes to `pmcp`.
+    for (const frame of frames.filter((f) => f.method !== "tools/call")) expect(frame.path).toBe(`/${NAMESPACE}/mcp/news`);
+    expect(frames.filter((frame) => frame.method === "tools/call").map((frame) => frame.name)).toEqual(["service_list"]);
+  });
+
+  it("§10 · a service-account caller still gets the catalog: a refused service_list degrades the header, it does not fail the command — and a family answering -32601 prints as absent rather than propagating", async () => {
+    const frames = hub(
+      { "tools/list": CATALOG["tools/list"] },
+      { service_list: -32001, "prompts/list": -32601, "resources/list": -32601, "resources/templates/list": -32601 },
+    );
+    expect(await main(["describe", "service/news"])).toBe(0);
+    expect(frames.some((frame) => frame.name === "service_list")).toBe(true);
+  });
+
+  it("§10 · `describe service/<slug>/<item>` matches inside the catalog it already read — no per-item round trip — and a miss is `not_found` (exit 1), not malformed argv", async () => {
+    const found = hub({ ...CATALOG, service_list: { services: [serverService("news")] } });
+    expect(await main(["describe", "service/news/paper_fetch"])).toBe(0);
+    // The four lists and nothing else: the item form makes no admin read at all, because
+    // the header line it would decorate is not printed for a leaf.
+    expect(found.filter((frame) => frame.method === "tools/call")).toEqual([]);
+
+    const missed = hub(CATALOG);
+    expect(await main(["describe", "service/news/paper"])).toBe(1);
+    expect(missed.filter((frame) => frame.method === "tools/call")).toEqual([]);
+  });
+
+  it("§10 · `describe account/<slug>` composes account_list + token_list — the same two reads the admin family already makes, and no gateway call at all", async () => {
+    const frames = hub({
+      account_list: { accounts: [{ slug: "ci", name: "ci", description: "", grants: { news: ["reader:approval"] } }] },
+      token_list: { tokens: [{ id: "tk_1", kind: "service_account", refSlug: "ci", prefix: "pmcp_sa_x9", expiresAt: null, lastUsedAt: null }] },
+    });
+    expect(await main(["describe", "account/ci"])).toBe(0);
+    expect(frames.map((frame) => frame.name)).toEqual(["account_list", "token_list"]);
+  });
+
+  it("§10 · `get` fronts exactly the two methods the retired `prompt`/`read` spellings did, chosen by the ref's FIRST segment", async () => {
+    const prompted = hub({ "prompts/get": { messages: [] } });
+    expect(await main(["get", "prompt/news/digest", "topic=tech"])).toBe(0);
+    expect(prompted).toEqual([{ path: `/${NAMESPACE}/mcp/news`, method: "prompts/get", name: "digest" }]);
+
+    const readIt = hub({ "resources/read": { contents: [] } });
+    expect(await main(["get", "resource/news/news://feed/tech"])).toBe(0);
+    expect(readIt).toEqual([{ path: `/${NAMESPACE}/mcp/news`, method: "resources/read" }]);
+  });
+
+  it("§10 · `--args '{…}'` is the payload flag now that `--json` means output format: both reach params.arguments, and `--json` on the same call changes only what stdout carries", async () => {
+    const sent: { arguments?: unknown }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+      if (String(url).endsWith("/api/whoami")) return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+      const message = JSON.parse(init?.body ?? "{}") as { params?: { arguments?: unknown } };
+      sent.push({ arguments: message.params?.arguments });
+      return json({ jsonrpc: "2.0", id: 1, result: { content: [] } });
+    });
+    expect(await main(["call", "news", "echo", "--args", '{"text":"hi","n":2}'])).toBe(0);
+    expect(await main(["call", "news", "echo", "--args", '{"text":"hi","n":2}', "--json"])).toBe(0);
+    expect(sent).toEqual([{ arguments: { text: "hi", n: 2 } }, { arguments: { text: "hi", n: 2 } }]);
+
+    // A payload that is not JSON is malformed argv, caught before any REQUEST — not merely
+    // before the tools/call frame. Counting fetches is what makes that a claim about the
+    // network rather than about the frame: `--args` parsed after `await context()` would
+    // report the whoami's failure on an unreachable hub instead of the operator's typo.
+    const rejected = countingHub();
+    expect(await main(["call", "news", "echo", "--args", "{text: hi}"])).toBe(2);
+    expect(rejected.calls).toBe(0);
+    // …and the same for `get`, whose arguments are parsed on the same seam.
+    const refusedGet = countingHub();
+    expect(await main(["get", "prompt/news/digest", "--args", "{oops}"])).toBe(2);
+    expect(refusedGet.calls).toBe(0);
+    // …and on the hidden `prompt` alias, which an agent taught the old spelling still types:
+    // the two spellings must agree on the exit code, not just on the happy path.
+    const refusedAlias = countingHub();
+    expect(await main(["prompt", "news", "digest", "--args", "{oops}"])).toBe(2);
+    expect(refusedAlias.calls).toBe(0);
+  });
+
+  it("§10 · a malformed describe ref is argv, caught before any request — `describe news` with the ref type left off gets exit 2 and the correction, never whatever the hub said about the token", async () => {
+    const hub = countingHub();
+    expect(await main(["describe", "news"])).toBe(2);
+    expect(hub.calls).toBe(0);
+  });
+
+  it("§10 · both argument spellings at once are a refusal, not a silent precedence — the CLI never executes a different call than the one typed", async () => {
+    const hub = countingHub();
+    // `--args` beside a key=value word: one of them would silently lose.
+    expect(await main(["call", "news", "echo", "--args", '{"a":1}', "b=2"])).toBe(2);
+    // A trailing word on a resource read would be dropped: resources/read takes no arguments.
+    expect(await main(["get", "resource/news/file:///x", "topic=ai"])).toBe(2);
+    expect(hub.calls).toBe(0);
+  });
+
+  it("§10 · a tool result carrying `isError: true` exits 1 with the result still on stdout — the failure is the tool's, and the caller needs to read it", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).endsWith("/api/whoami")) return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+      return json({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: "upstream said no" }] } });
+    });
+    const stdout = process.stdout.write as unknown as { mock: { calls: unknown[][] } };
+    expect(await main(["call", "news", "echo"])).toBe(1);
+    expect(stdout.mock.calls.map((call) => String(call[0])).join("")).toContain("upstream said no");
+  });
+
+  it("§10 · a hub refusal is enriched on the ERROR path only: the unknown-tool case fetches the catalog it did not pre-flight, and says which name was meant", async () => {
+    const frames = hub({ "tools/list": CATALOG["tools/list"] }, { paper_fetc: -32001 });
+    const stderr = process.stderr.write as unknown as { mock: { calls: unknown[][] } };
+    expect(await main(["call", "news", "paper_fetc", "url=x"])).toBe(1);
+    // The failing call first, THEN the enrichment read — never the other way round.
+    expect(frames.map((frame) => frame.method)).toEqual(["tools/call", "tools/list"]);
+    const written = stderr.mock.calls.map((call) => String(call[0])).join("");
+    expect(written).toContain("error: not_found:");
+    expect(written).toContain('did you mean "paper_fetch"?');
+  });
+});
+
+/**
+ * §10's output contract and error vocabulary (2026-09-01), on the seams where getting it
+ * wrong is invisible to every other case here: the bytes `--json` puts on stdout when the
+ * process happens to own a terminal (agent harnesses allocate a pty, so this is the common
+ * case, not the exotic one), which stream a confirmation question uses, which code a local
+ * file typo reports, and what a mutating verb does with a partial id.
+ */
+describe("§10 · the output contract and the code vocabulary", () => {
+  /** Whatever the run wrote to one of the two streams the shared beforeEach spies on. */
+  function textOf(stream: { write: unknown }): string {
+    return (stream.write as { mock: { calls: unknown[][] } }).mock.calls.map((call) => String(call[0])).join("");
+  }
+  const stdoutText = (): string => textOf(process.stdout);
+  const stderrText = (): string => textOf(process.stderr);
+
+  /**
+   * Runs `body` with stdout claiming to be a terminal — the state an agent harness that
+   * allocates a pty puts this process in. `NO_COLOR` is pinned empty so the runner's own
+   * environment cannot decide the answer for the colour gate either way.
+   */
+  async function onATty(body: () => Promise<void>): Promise<void> {
+    const original = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    vi.stubEnv("NO_COLOR", "");
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    try {
+      await body();
+    } finally {
+      if (original === undefined) delete (process.stdout as { isTTY?: boolean }).isTTY;
+      else Object.defineProperty(process.stdout, "isTTY", original);
+    }
+  }
+
+  it("§10 · `--json` emits plain bytes even when stdout is a terminal: the machine stream is one document that PARSES, and the human colour gate does not reach it", async () => {
+    await onATty(async () => {
+      expect(await main(["ls", "--json"])).toBe(0);
+      const out = stdoutText();
+      expect(out).not.toContain("[");
+      expect(() => JSON.parse(out) as unknown).not.toThrow();
+      expect((JSON.parse(out) as { services: unknown[] }).services).toHaveLength(4);
+    });
+  });
+
+  it("§10 · a tool result follows the same rule — `call --json` on a terminal parses, while the human rendering of the same result keeps its colour", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).endsWith("/api/whoami")) return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+      return json({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "hello" }] } });
+    });
+    await onATty(async () => {
+      expect(await main(["call", "news", "echo", "--json"])).toBe(0);
+      const machine = stdoutText();
+      expect(machine).not.toContain("[");
+      expect(() => JSON.parse(machine) as unknown).not.toThrow();
+
+      const before = stdoutText().length;
+      expect(await main(["call", "news", "echo"])).toBe(0);
+      // Without `--json` the same bytes are for a human, and §10 keeps colour on a TTY.
+      expect(stdoutText().slice(before)).toContain("[");
+    });
+  });
+
+  it("§10 · the destructive y/N question goes to stderr — stdout belongs to the command's output alone, so `apply --json` never puts prose in front of its document", async () => {
+    const originalTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    vi.spyOn(process.stdin, "setEncoding").mockReturnValue(process.stdin);
+    vi.spyOn(process.stdin, "resume").mockReturnValue(process.stdin);
+    vi.spyOn(process.stdin, "pause").mockReturnValue(process.stdin);
+    vi.spyOn(process.stdin, "once").mockImplementation((event: string | symbol, handler: (...args: any[]) => void) => {
+      if (event === "data") handler("n\n");
+      return process.stdin;
+    });
+    try {
+      // Answered "n", so the plan is refused: exit 1, and NOTHING on stdout either way.
+      expect(await main(["apply", "-f", configPath, "--json"])).toBe(1);
+      expect(stderrText()).toContain("[y/N]");
+      expect(stdoutText()).toBe("");
+    } finally {
+      if (originalTty === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
+      else Object.defineProperty(process.stdin, "isTTY", originalTty);
+    }
+  });
+
+  it("§10 · a typo in mcps.yaml is `usage` (exit 2) — the file is the operator's, and `remote_error` would send an agent looking for a hub outage", async () => {
+    writeFileSync(configPath, "services:\n  notes:\n    rols: [reader]\n");
+    expect(await main(["diff", "-f", configPath])).toBe(2);
+    const written = stderrText();
+    expect(written).toContain("error: usage:");
+    expect(written).toContain("rols");
+    expect(written).not.toContain("remote_error");
+  });
+
+  it("§10 · `approvals --history` is a CLIENT-side selection: `approval_list.status` is the wire enum and has no \"decided\" member, so the hub is asked for everything and the pending rows are dropped here", async () => {
+    const frames: { name: string; arguments: Record<string, unknown> }[] = [];
+    const approvals = [
+      { id: "ap_1", status: "pending", accountSlug: "ci", serviceSlug: "news", tool: "echo", args: {} },
+      { id: "ap_2", status: "approved", accountSlug: "ci", serviceSlug: "news", tool: "echo", args: {} },
+    ];
+    vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+      if (String(url).endsWith("/api/whoami")) return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+      const message = JSON.parse(init?.body ?? "{}") as { params?: { name?: string; arguments?: Record<string, unknown> } };
+      frames.push({ name: String(message.params?.name), arguments: message.params?.arguments ?? {} });
+      return json({ jsonrpc: "2.0", id: 1, result: { structuredContent: { approvals } } });
+    });
+
+    expect(await main(["approvals", "--history", "--json"])).toBe(0);
+    expect(frames).toEqual([{ name: "approval_list", arguments: {} }]);
+    expect((JSON.parse(stdoutText()) as { approvals: { id: string }[] }).approvals.map((row) => row.id)).toEqual(["ap_2"]);
+
+    // `--pending` is the one spelling the wire itself understands, and it is sent as such.
+    frames.length = 0;
+    expect(await main(["approvals", "--pending"])).toBe(0);
+    expect(frames).toEqual([{ name: "approval_list", arguments: { status: "pending" } }]);
+
+    // What makes "history" unsendable is the CONTRACT's enum, not this file's opinion.
+    const contract = JSON.parse(
+      readFileSync(fileURLToPath(new URL("../../contracts/admin-ops.json", import.meta.url)), "utf8"),
+    ) as { inputSchemas: Record<string, { properties?: Record<string, { enum?: string[] }> }> };
+    const status = contract.inputSchemas.approval_list?.properties?.status;
+    expect(status?.enum).toContain("pending");
+    expect(status?.enum).not.toContain("history");
+  });
+
+  /**
+   * Mock §6's id-prefix acceptance for the mutating verbs, and the `ambiguous_id` code §10
+   * freezes for the collision. Resolution happens on the ERROR path: an exact id costs one
+   * call, and only a refusal buys the list.
+   */
+  describe("§10 · id prefixes on the mutating verbs", () => {
+    /** A hub where `token_revoke` accepts only the ids in `known`, and `token_list` lists them. */
+    function tokenHub(known: string[]): { name: string; arguments: Record<string, unknown> }[] {
+      const frames: { name: string; arguments: Record<string, unknown> }[] = [];
+      vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+        if (String(url).endsWith("/api/whoami")) return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+        const message = JSON.parse(init?.body ?? "{}") as { params?: { name?: string; arguments?: Record<string, unknown> } };
+        const name = String(message.params?.name);
+        const args = message.params?.arguments ?? {};
+        frames.push({ name, arguments: args });
+        if (name === "token_list") return json({ jsonrpc: "2.0", id: 1, result: { structuredContent: { tokens: known.map((id) => ({ id })) } } });
+        if (!known.includes(String(args.id))) {
+          return json({ jsonrpc: "2.0", id: 1, error: { code: -32001, message: `no token ${String(args.id)}` } });
+        }
+        return json({ jsonrpc: "2.0", id: 1, result: { structuredContent: {} } });
+      });
+      return frames;
+    }
+
+    it("an exact id costs exactly one call — the prefix machinery never runs on the happy path", async () => {
+      const frames = tokenHub(["tok_abc123"]);
+      expect(await main(["token", "revoke", "tok_abc123"])).toBe(0);
+      expect(frames.map((frame) => frame.name)).toEqual(["token_revoke"]);
+    });
+
+    it("an unambiguous prefix is resolved after the refusal and the verb is re-issued with the full id", async () => {
+      const frames = tokenHub(["tok_abc123"]);
+      expect(await main(["token", "revoke", "tok_abc"])).toBe(0);
+      expect(frames.map((frame) => frame.name)).toEqual(["token_revoke", "token_list", "token_revoke"]);
+      expect(frames[2].arguments).toEqual({ id: "tok_abc123" });
+      expect(stdoutText()).toContain("tok_abc123");
+    });
+
+    it("a prefix matching several ids is `ambiguous_id`, and nothing is revoked", async () => {
+      const frames = tokenHub(["tok_ab1", "tok_ab2"]);
+      expect(await main(["token", "revoke", "tok_ab"])).toBe(1);
+      expect(frames.map((frame) => frame.name)).toEqual(["token_revoke", "token_list"]);
+      const written = stderrText();
+      expect(written).toContain("error: ambiguous_id:");
+      expect(written).toContain("tok_ab1");
+      expect(written).toContain("tok_ab2");
+    });
+
+    it("a prefix matching nothing keeps the hub's own refusal — the CLI never invents a not-found the hub did not send", async () => {
+      const frames = tokenHub(["tok_zzz"]);
+      expect(await main(["token", "revoke", "tok_ab"])).toBe(1);
+      expect(frames.map((frame) => frame.name)).toEqual(["token_revoke", "token_list"]);
+      expect(stderrText()).toContain("no token tok_ab");
+    });
+  });
+});
+
+/**
+ * §10's help and version contract (2026-09-01). The rule with teeth is the ORDER: help is
+ * answered before any context resolution, so it works logged out, offline, and with a
+ * `--profile` that does not exist. Before the commander rewrite `pmcp tools --help` made a
+ * network `whoami` first and then failed with `missing service` — the shape this block
+ * forbids by counting requests, not by reading text.
+ */
+describe("§10 · help and --version, answered before anything is resolved", () => {
+  /** Counts every request a run made — the oracle is zero, whatever the stub would answer. */
+  function countingHub(): { calls: number } {
+    const counter = { calls: 0 };
+    vi.stubGlobal("fetch", async () => {
+      counter.calls += 1;
+      return json({ principal: "user:owner", namespace: NAMESPACE });
+    });
+    return counter;
+  }
+
+  for (const argv of [[], ["help"], ["--help"], ["-h"], ["--version"], ["tools", "--help"], ["describe", "-h"], ["token"]]) {
+    it(`§10 · \`pmcp ${argv.join(" ")}\` prints and exits 0 without reaching the hub`, async () => {
+      const hub = countingHub();
+      expect(await main(argv)).toBe(0);
+      expect(hub.calls, "help must not resolve a context").toBe(0);
+      const stdout = process.stdout.write as unknown as { mock: { calls: unknown[][] } };
+      expect(stdout.mock.calls.map((call) => String(call[0])).join("")).not.toBe("");
+    });
+  }
+
+  it("§10 · a `--profile` that names nothing still gets help — the flag is consumed, never resolved, before the answer", async () => {
+    const hub = countingHub();
+    expect(await main(["--profile", "does-not-exist", "--help"])).toBe(0);
+    expect(hub.calls).toBe(0);
+  });
+
+  it("§10 · `--version` prints one line and nothing else", async () => {
+    countingHub();
+    expect(await main(["--version"])).toBe(0);
+    const stdout = process.stdout.write as unknown as { mock: { calls: unknown[][] } };
+    expect(stdout.mock.calls.map((call) => String(call[0])).join("").trim().split("\n")).toHaveLength(1);
   });
 });

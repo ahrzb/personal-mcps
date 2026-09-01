@@ -23,6 +23,12 @@
   },
   "dependencies": {
     "@better-auth/infra": "^0.4.2",
+    "@clack/prompts": "^1.7.0",
+    "commander": "^15.0.0",
+    "picocolors": "^1.1.1",
+    "smol-toml": "^1.4.0",
+    "wrap-ansi": "^10.0.1",
+    "yaml": "^2.8.0",
     "@better-auth/oauth-provider": "1.7.1",
     "@sentry/cloudflare": "^10.71.0",
     "better-auth": "^1.7.1",

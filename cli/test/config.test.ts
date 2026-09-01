@@ -17,16 +17,16 @@
  * the CLI itself is mocked; argv parsing, the device flow, and the whoami handshake all run.
  *
  * Not here: what each command DOES once resolved (commands.test.ts), and the file's format
- * (toml.test.ts).
+ * (config-store.test.ts).
  *
  * Project: `cli` — plain Node, parallel. Every case owns its own HOME.
  */
 
 // deps: cli/src/main.ts (main — the real dispatcher — and applyProfile, the `pnpm users`
-//   bridge) · cli/src/toml.ts (parseToml, to read back what was written) · node:fs +
+//   bridge) · cli/src/config.ts (parseConfig, to read back what was written) · node:fs +
 //   node:os (the temp HOME) · a stubbed global fetch · vitest
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,7 +43,7 @@ vi.mock("node:os", async (importOriginal) => ({
 }));
 
 import { applyProfile, main } from "../src/main";
-import { parseToml } from "../src/toml";
+import { parseConfig } from "../src/config";
 
 /** Obviously fake, and never a `pmcp_svc_` value — main.ts refuses that kind outright. */
 const TOKEN = "pmcp_sa_FAKE0000000000000000000000000000";
@@ -93,8 +93,8 @@ function writeConfigFile(text: string): void {
   writeFileSync(configPath, text);
 }
 
-function readConfigFile(): ReturnType<typeof parseToml> {
-  return parseToml(readFileSync(configPath, "utf8"));
+function readConfigFile(): ReturnType<typeof parseConfig> {
+  return parseConfig(readFileSync(configPath, "utf8"));
 }
 
 /** The origin every request in this invocation went to — one per `pmcp whoami`. */
@@ -234,6 +234,44 @@ describe("§10 · what `login` and `logout` write", () => {
     // Best effort, but it is the local hub's session that was revoked.
     expect(origins()).toEqual(["http://localhost:8787"]);
   });
+
+  it("§10 · `login --json` is the agent path: stdout carries the device document the instant the hub issues it, then the outcome document, and NOTHING else — the chatter that guides a human goes to stderr", async () => {
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    expect(await main(["login", "--json", "--url", "http://localhost:8787"])).toBe(0);
+    const documents = stdout.mock.calls
+      .map((call) => String(call[0]))
+      .join("")
+      .split("\n")
+      .filter((line) => line !== "");
+    // Two lines, both parseable — a progress line on stdout would break every agent that
+    // reads this stream with JSON.parse.
+    expect(documents).toHaveLength(2);
+    expect(JSON.parse(documents[0])).toEqual({
+      verificationUri: "http://localhost:8787/device",
+      userCode: "FAKE-CODE",
+      expiresIn: 600,
+    });
+    expect(JSON.parse(documents[1])).toEqual({ principal: "user:owner", namespace: "owner", profile: "default" });
+    // …and the token still landed in the file, exactly as the human path leaves it.
+    expect(readConfigFile().profiles.default.token).toBe(DEVICE_TOKEN);
+  });
+
+  it("§10 · polling stops at the device code's own expiry — `login_timeout`, exit 1 — rather than waiting forever on a code the hub has already forgotten", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
+      const target = String(url);
+      if (target.endsWith("/api/auth/device/code")) {
+        // expires_in 0: the code is dead the moment it is issued.
+        return json({ device_code: "dev_FAKE", user_code: "FAKE-CODE", interval: 0, expires_in: 0 });
+      }
+      return json({ error: "authorization_pending" });
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    stderr.mockClear();
+    expect(await main(["login", "--url", "http://localhost:8787"])).toBe(1);
+    expect(stderr.mock.calls.map((call) => String(call[0])).join("")).toContain("error: login_timeout:");
+    // Nothing was written: a timed-out login must not clear or half-write a profile.
+    expect(existsSync(configPath)).toBe(false);
+  });
 });
 
 describe("§10 · the flat config.json left over from before profiles", () => {
@@ -252,6 +290,71 @@ describe("§10 · the flat config.json left over from before profiles", () => {
     expect(config.profile).toBe("default");
     expect(config.profiles.default).toEqual({ url: "https://old.invalid", token: "" });
     expect(JSON.parse(readFileSync(legacy, "utf8"))).toEqual({ url: "https://old.invalid", token: TOKEN });
+  });
+});
+
+/**
+ * §10's `profile` family (2026-09-01) — the only commands besides `login`/`logout` that
+ * write the file, and the only ones that never touch the network. They live in this file
+ * rather than commands.test.ts for one reason: a profile write goes to `homedir()`, and
+ * this is the suite that redirects it.
+ */
+describe("§10 · the profile family", () => {
+  it("§10 · `profile add` writes the url ALONE and never destroys a credential: a second add with a different url warns about the stale token instead of clearing it, and nothing reaches the network", async () => {
+    expect(await main(["profile", "add", "work", "--url", "https://work.invalid"])).toBe(0);
+    expect(readConfigFile().profiles.work).toEqual({ url: "https://work.invalid" });
+
+    // Give it a token the way `login` would, then move the url underneath it.
+    writeConfigFile(["[profiles.work]", 'url = "https://work.invalid"', `token = "${TOKEN}"`, ""].join("\n"));
+    expect(await main(["profile", "add", "work", "--url", "https://moved.invalid"])).toBe(0);
+    expect(readConfigFile().profiles.work).toEqual({ url: "https://moved.invalid", token: TOKEN });
+    expect(seen).toEqual([]);
+  });
+
+  it("§10 · `profile use` moves the top-level default, and `profile list --json` resolves the precedence chain — token presence as a boolean, never the value", async () => {
+    writeConfigFile(FOUR_PROFILES);
+    expect(await main(["profile", "use", "flagged"])).toBe(0);
+    expect(readConfigFile().profile).toBe("flagged");
+
+    // The shared beforeEach already spies this stream; re-spying returns that same mock,
+    // so the `profile use` line above has to be cleared before the document is read back.
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    stdout.mockClear();
+    expect(await main(["profile", "list", "--json"])).toBe(0);
+    const doc = JSON.parse(stdout.mock.calls.map((call) => String(call[0])).join("")) as {
+      active: string;
+      activeSource: string;
+      profiles: { name: string; url: string; token: boolean }[];
+    };
+    expect(doc.active).toBe("flagged");
+    expect(doc.activeSource).toBe("config");
+    expect(doc.profiles.map((entry) => entry.name)).toEqual(["default", "enved", "filed", "flagged"]);
+    expect(doc.profiles.every((entry) => entry.token === true)).toBe(true);
+    // The stored bearer never prints, in either rendering.
+    expect(JSON.stringify(doc)).not.toContain(TOKEN);
+    expect(seen).toEqual([]);
+  });
+
+  it("§10 · `profile remove` refuses the ACTIVE profile without --yes on a non-TTY, and removes a non-active one outright — the file's default is cleared with it", async () => {
+    writeConfigFile(FOUR_PROFILES);
+    // `filed` is the file's own default, so it is the active one here.
+    expect(await main(["profile", "remove", "filed"])).toBe(1);
+    expect(Object.keys(readConfigFile().profiles)).toContain("filed");
+
+    expect(await main(["profile", "remove", "flagged"])).toBe(0);
+    expect(Object.keys(readConfigFile().profiles)).not.toContain("flagged");
+
+    expect(await main(["profile", "remove", "filed", "--yes"])).toBe(0);
+    const config = readConfigFile();
+    expect(Object.keys(config.profiles)).not.toContain("filed");
+    expect(config.profile).toBeUndefined();
+    expect(seen).toEqual([]);
+  });
+
+  it("§10 · a profile that does not exist is `not_found` (exit 1), not malformed argv", async () => {
+    writeConfigFile(FOUR_PROFILES);
+    expect(await main(["profile", "use", "typo"])).toBe(1);
+    expect(await main(["profile", "remove", "typo"])).toBe(1);
   });
 });
 

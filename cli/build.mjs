@@ -17,8 +17,9 @@ const FILES = {
   "src/main.mjs": "src/main.ts",
   "src/commands.mjs": "src/commands.ts",
   "src/plan.mjs": "src/plan.ts",
-  "src/toml.mjs": "src/toml.ts",
-  "src/yaml.mjs": "src/yaml.ts",
+  "src/config.mjs": "src/config.ts",
+  "src/render.mjs": "src/render.ts",
+  "src/errors.mjs": "src/errors.ts",
 };
 
 for (const [dest, source] of Object.entries(FILES)) {

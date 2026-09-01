@@ -1009,3 +1009,54 @@ check and (manual, once) a real push notification to a real browser.
   admin's serviceRow doesn't yet return it (revisit when it does); one uncaught
   async "WebSocket send() after close()" from hygiene.test.ts:1564 under full-run
   load (passed, watch). All subagents Opus/Sonnet per the model rule.
+- 2026-08-27 — **D13.1: capabilities made readable/diffable/appliable + two spec
+  pins.** Owner-ordered after the debt review. Spec: §8 row shape gains the stored
+  `capabilities` (absent when never configured), §9 diffs it as a set with absent ≡
+  `[tools]`; §20.5 pins undeclare-uniformity (tools is a family like any other);
+  §6 pins that `resources/list_changed` invalidates BOTH resource keys (templates
+  have no frame of their own). Workflow `wf_33eb9825-4a2` (2 Opus): red-first
+  4 cases; admin.serviceRow spreads registry's row (NULL stays absent, never
+  default-filled); plan.ts's exclusion deleted — `canonicalCapabilities` is the one
+  spelling of the set rule, decided OUTSIDE the wire loop (an omitted YAML key is a
+  desired value `[tools]`, not "leave it alone", so narrowing converges); granted
+  excursion cli/src/main.ts wires the row through readCurrentState (without it every
+  declared set replanned spuriously — the exact bug class this closes). Verifier
+  PASS by EXECUTING the planner: 12 scenarios, all spurious-replan shapes plan [],
+  the real change plans exactly {slug, capabilities}, empty-plan law converges.
+  Gate (orchestrator): suite 1149/1149, tsc 0, pytest 68/68, inventory +4/0/0,
+  contracts diff = 4-line capabilities addition to service-list.json's proxy row
+  (idempotent ×2), deploy `2c6f15a5`, SMOKE PASS 26/26 live. Debt recorded, owner
+  on usage credits so all deferred: plan.ts's DEFAULT_CAPABILITIES is an unlocked
+  twin of gateway's private constant (lock = export + one contracts case);
+  /services page shows no capabilities column (parity spirit); the two §20.5/§6
+  pins have no oracle rows yet (tunnel-harness work); D14 candidate parked —
+  list_changed relay to consumers, blocked on an SSE/DO-stream + client-behavior
+  probe (plan open question 6).
+- 2026-09-01 — **D14 probe ran (`wf_128952e4-ae5`, 2 Opus, ~300k tokens); verdict:
+  buildable and effectively free, but valuable to Claude Code only — build PARKED.**
+  Platform: P1 GREEN — a plain Worker holds an SSE response indefinitely (duration
+  is unbilled; only CPU counts; ~1e-5 USD/day idle; weekly runtime updates cut
+  streams with a 30s grace, so consumers must reconnect). P2 RED — a DO holding
+  the stream bills wall-clock 128 MB (~$4.05/month per idle consumer) and there is
+  NO non-WebSocket hibernation; the lifecycle doc's "response stream in flight"
+  is an active-DO condition. P3 AMBER — a DO can hand a ReadableStream across RPC
+  (verified locally: same instance kept writing at t+63s) but stays pinned; it is
+  a byte transport, not a billing dodge. P4 — the winning shape, verified
+  end-to-end in local workerd: the WORKER holds the consumer GET/SSE and
+  subscribes to each service DO over an outbound WebSocket the DO accepts via the
+  Hibernation API; DO duration stays $0. This resolves open question 6.
+  Clients: C1 Claude Code GREEN — 2.1.216 opens the GET stream unconditionally
+  (6/6 observed, not gated on advertisement) and the shipped binary registers
+  list_changed handlers — but ONLY per capability the server advertises
+  `listChanged: true` for (code-level read), so the relay requires flipping the
+  pinned static initialize answer. CAVEAT: the actual live re-list was never
+  wire-captured (nested `claude -p` cannot authenticate under Claude Desktop);
+  rests on the 2.1.0 changelog + the binary's handler; probe script ready in the
+  session scratchpad for a one-minute re-run from a normal terminal. C2 claude.ai
+  hosted connectors RED — instrumented origins report ZERO GET requests ever
+  arriving (Anthropic's proxy never issues/forwards them; sibling issue closed
+  NOT_PLANNED), so the hosted surface cannot receive a pushed notification today.
+  RECOMMENDATION (orchestrator; owner call pending): with the primary connector
+  surface RED, keep D14 parked at probe-complete; revisit if claude.ai's proxy
+  starts opening the GET stream or if Claude Code live-refresh alone becomes
+  worth the door rework.

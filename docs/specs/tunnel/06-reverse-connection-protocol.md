@@ -105,7 +105,11 @@ Two message namespaces:
    `notifications/tools/list_changed` when the user's server changes its tool set; the DO
    invalidates its cache and re-lists — *(amended 2026-08-26: and the same for
    `notifications/prompts/list_changed` and `notifications/resources/list_changed`, each
-   invalidating its own catalog key. These are the only service-originated frames the DO
+   invalidating its own catalog key — where `resources`' own keys are **both** resource
+   catalogs, the resource list and the resource-templates list *(pinned 2026-08-27:
+   MCP defines no templates frame, so the resources frame is the only thing that can ever
+   speak for them — the same one-declaration-covers-both rule their §20.5 warm follows)*.
+   These are the only service-originated frames the DO
    reads; every other one is still dropped. They stop at the hub — §20 forwards no
    notification to a consumer.)*
 

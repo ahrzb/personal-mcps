@@ -60,9 +60,11 @@ service_accounts:
   server but absent from the file, **and** grants for any (account, service) pair not
   listed under that account's `grants:` block. `redact`, `redact_results`, and
   `log_bodies` (either kind) and, for proxied
-  services, `endpoint`, `auth`, `forward_identity`, and `roles` are part of the
-  desired state and diffed like any other field (an `auth` flip is shown as
-  destructive — it wipes stored upstream credentials, §8). Listing the same role name in both modes (`[reader,
+  services, `endpoint`, `auth`, `forward_identity`, `roles`, and *(2026-08-27)*
+  `capabilities` are part of the desired state and diffed like any other field (an
+  `auth` flip is shown as destructive — it wipes stored upstream credentials, §8).
+  `capabilities` is compared as a **set** with absent ≡ `[tools]` (§20.2's default),
+  so spelling out the default, or reordering the list, is never a diff. Listing the same role name in both modes (`[reader,
   "reader:approval"]`) is rejected as a config error — in the YAML and in `grant_set`
   alike. Grants
   referencing roles a *tunneled* service hasn't declared are applied but flagged with a

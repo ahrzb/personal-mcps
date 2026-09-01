@@ -276,7 +276,12 @@ service saying it no longer serves that family. Without the clear, a service tha
 prompts serves its stale prompt catalog forever and every `prompts/get` against it becomes
 a `-32000` against a list the hub is still publishing. Undeclare clears; failure does not.
 The two are distinguishable precisely because the discover leg either answered or did
-not.
+not. *(Pinned 2026-08-27:)* **tools is a family like any other for this rule** — a
+successful discover answer omitting `tools` clears the tools catalog too. Safe for the
+same two reasons the rule exists at all: only an affirmative answer can undeclare (the
+`-32601`/timeout fallback warms tools and clears nothing), and the declaration is derived
+by the client library from what the author's SDK actually registered (§11), never
+hand-written — so an omitted `tools` means the service genuinely has none.
 
 `resources/read` results are **never** cached: per-caller, potentially large, and the
 method can answer `input_required`. Proxied services cache nothing at all, as today —

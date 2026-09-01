@@ -9,7 +9,10 @@ Tools (names final, shapes reviewed at implementation time):
   §20.3: returned in the **canonical read shape** — a bare pattern list iff the role is
   tools-only, the per-family object otherwise, whichever spelling registered it. Pinned
   because `pmcp diff`'s stability depends on this response, not on how a service happened
-  to declare itself)*, redact paths
+  to declare itself)*, a proxied service's stored `capabilities` list *(amended
+  2026-08-27: part of the row, absent when never configured — pinned for the same
+  reason as roles; until this amendment the field was create-only and invisible to
+  `pmcp diff`)*, redact paths
   (`redact` and `redact_results`), `log_bodies`, archived status, and for proxied
   services the endpoint, the `auth` mode, and
   `forward_identity`; connection status and last seen apply to tunneled services only

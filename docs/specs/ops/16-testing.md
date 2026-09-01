@@ -85,6 +85,18 @@
   cleared while a merely *failed* warm still leaves the previous one; a public
   `cacheScope` from a service is downgraded to private; read rows land in audit with the
   prompt name / query-redacted resource URI and their contents stubbed.
+- **push** (§21): the listen stream on both shapes (ungranted → a stream that never
+  rings; scoped archived → `-32002`; availability never checked); the bell-at-the-write
+  rule (no-op `list_changed` rings nothing; undeclare of a non-empty family rings;
+  absent ≡ `[]`; either resource catalog rings the one resources bell, once per warm;
+  the floor coalesces to a final ring); the Worker-side shape filter (no resources bell
+  on an aggregated stream); subscribe/unsubscribe (grant-filtered by URI,
+  principal-equality match, caps → `-32602`, exact-match `updated` routing — a rogue
+  frame for an unsubscribed URI rings nobody); the re-auth tick (revoked token closes
+  the stream, revoked grant drops the socket and its subscriptions); capability flags
+  flip with the transport, fixture in the same commit; a `sub:`-tagged socket never
+  answers a `getWebSockets(service.id)` lookup. The held-stream economics and the real
+  fan-out width are out-of-process obligations (strategy §10).
 - One `scripts/e2e.md` runbook (manual): deploy to a dev worker, run the example service,
   `pmcp call` round-trip.
 

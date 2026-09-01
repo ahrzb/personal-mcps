@@ -1,7 +1,9 @@
 ## 7. Consumer-facing proxy
 
 Two shapes, one pipeline — both stateless 2026-07-28 MCP endpoints (via
-`createMcpHandler`, user and service resolved from the URL):
+`createMcpHandler`, user and service resolved from the URL; *amended 2026-09-01: §21's
+`subscriptions/listen` is the one held-open response, served by a hub-owned route beside
+the handler — statelessness everywhere else is unchanged*):
 
 - `POST /<user>/mcp` — **aggregated**: every tool the caller may use across `<user>`'s
   services, tool names prefixed `<slug>_<tool>`. Slugs contain no `_`, so the first `_`
@@ -117,6 +119,12 @@ Per request:
    - anything else → `-32601`. *(Amended 2026-08-26: §20's seven methods join this
      table; everything outside it — `subscriptions/listen`, `logging/*`, any
      server-initiated request — is still `-32601`, and §20 records why for each.)*
+     *(Amended 2026-09-01: `subscriptions/listen` joins per §21 — on both endpoint
+     shapes, listing-class, filter → archived and never availability — and
+     `resources/subscribe` / `resources/unsubscribe` join scoped-only like every other
+     resource method, filtered by URI against the caller's resource patterns before
+     forwarding. The leftover `-32601` set is `logging/*` and server-initiated requests,
+     both dead in 2026-07-28 itself.)*
 
 ### Approval flow
 

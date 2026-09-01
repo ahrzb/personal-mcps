@@ -2,7 +2,9 @@
 
 - Every forwarded request, both kinds: 30 s hard timeout → JSON-RPC error to the caller.
   Tunneled: the DO's pending map is rejected on socket close. Proxied: the upstream
-  fetch is aborted at the same deadline.
+  fetch is aborted at the same deadline. *(Amended 2026-09-01: §21's listen stream is
+  the one deliberately held-open response — the timeout governs forwarded requests,
+  never it.)*
 - Hub deploys terminate all WebSockets: services reconnect (backoff), consumers retry.
   Treat every `tools/call` as at-most-once.
 - Duplicate service connection: newest wins, oldest gets `hub/replaced` + close 4000.
@@ -11,7 +13,8 @@
   services return `-32002` instead (§6). (Queue-and-retry is a later feature if it
   ever hurts.)
 - Token revocation: consumer tokens are checked on every request, so revocation is
-  immediate there. A revoked *service* token (or a deleted service) additionally severs
+  immediate there. *(Amended 2026-09-01, §21.2: for a held listen stream "every request"
+  becomes every keepalive tick — revocation lands within one `LISTEN_KEEPALIVE_MS`.)* A revoked *service* token (or a deleted service) additionally severs
   the live reverse connection — the Worker tells the DO to close the socket with code
   `4001` (§8); a racing re-register fails because the service row / token is gone.
 - User deletion (`/internal/users`) performs the same teardown as `service_delete` for
@@ -46,7 +49,9 @@
   `oauth.consented` /
   `oauth.rebound` / `oauth.revoked` / `oauth.client_registered`.)* Not recorded:
   `tools/list` (agent polling noise) — *(and, by the same rule, every §20 LIST method
-  plus `completion/complete`, which is a listing of argument suggestions)* — and token
+  plus `completion/complete`, which is a listing of argument suggestions; and,
+  2026-09-01: §21's streams, doorbells and `updated` relays — while
+  `resources/subscribe`/`unsubscribe` ARE recorded like reads, §21.6)* — and token
   material never, in any column.
 - Audit bodies: a `tools/call` row carries the call's bodies when the service's
   `log_bodies` flag is on AND the call was actually dispatched. Refusal rows

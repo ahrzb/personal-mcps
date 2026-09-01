@@ -20,14 +20,16 @@ method-agnostic. The hub is the only thing saying `-32601`.
 | Resource templates | `resources/templates/list` | **In**, scoped endpoint only, same reason. |
 | Completions | `completion/complete` | **In**, scoped endpoint only, and **filtered by its `ref`** like every other read (§20.2) — it is a relay, not a pass-through, because an unfiltered one is a read straight past the caller's patterns. Served for conformance; nothing observably consumes it, so it gets no CLI command. |
 | MRTR (elicitation / sampling / roots) | `input_required` results on `prompts/get` and `resources/read` | **In.** It is a *result shape*, not a stream: the hub already relays an `input_required` leg verbatim for `tools/call`, and §7's `clientCapabilities` mirroring already tells the service what the consumer can answer. |
-| `subscriptions/listen` | — | **Deferred.** In this revision it is the *only* delivery mechanism for server→client notifications, and its response IS a long-lived `text/event-stream`. The consumer surface is POST/JSON with no stream at all, and the service socket lives in a Durable Object whose seam to the worker is strictly request/response — piping a service notification into a consumer's open stream needs a new DO→worker push channel, and a permanently-open subscription inverts the DO's hibernation discipline ("an unresolved inbound request blocks hibernation"). |
-| `notifications/*/list_changed` **to consumers**, `resources/updated` | — | **Deferred**, same reason: they are only deliverable on a listen stream. Consequence, pinned: every capability the hub declares keeps `listChanged: false` and `resources.subscribe` is never declared. Declaring one without serving `subscriptions/listen` would make a Claude Code v2 client open a listen stream, take `-32601`, and burn its reopen budget (3 reopens then a stop; 5 in an hour then a ~6 h wait) — degrading that consumer's freshness for the rest of the day. **Never declare a capability the transport cannot honor.** |
+| `subscriptions/listen` | — | **In** *(2026-09-01, §21; **Deferred** at first writing)*. The deferral reasoned that piping a service notification into a consumer's open stream needs a DO→worker push channel that did not exist, and that a permanently-open subscription inverts the DO's hibernation discipline ("an unresolved inbound request blocks hibernation"). The D14 probe measured both away: the **Worker** holds the `text/event-stream` (CPU-billed — an idle stream is effectively free) and reaches each service DO over a **hibernatable WebSocket**, which is the missing push channel and hibernates like any socket. §21 is the spec. |
+| `notifications/*/list_changed` **to consumers**, `resources/updated` | — | **In** *(2026-09-01, §21)* — deliverable now that the listen stream is served. The consequence pin survives with its sign flipped: **never declare a capability the transport cannot honor** was the reason for `listChanged: false` (a declared-but-unserved capability makes a Claude Code v2 client open a listen stream, take `-32601`, and burn its reopen budget — 3 reopens then a stop; 5 in an hour then a ~6 h wait), and it is now the reason declaration and transport flip **in the same deploy** (§21.5): a served-but-undeclared stream is one no client ever opens. |
 | `logging/*`, `notifications/message` | — | **Out.** Deprecated in 2026-07-28 itself, and per-request SSE would be needed to carry it. |
 | Server-initiated JSON-RPC requests | — | **Impossible in this revision** — servers MUST NOT send them; MRTR replaced them. |
 
 Freshness without notifications is carried by `ttlMs` (§20.5): the hub's own view stays
 current because the DO still invalidates on a service's `list_changed`; only the
-consumer's view lags by the TTL.
+consumer's view lags by the TTL. *(Amended 2026-09-01: §21's doorbell closes that lag for
+a consumer holding a listen stream; `ttlMs` remains the floor for streamless consumers —
+claude.ai's proxy is one, §21.)*
 
 ### 20.2 Routing at the door
 
@@ -74,7 +76,10 @@ stateless, and never a live upstream call**. Two static answers, one per endpoin
   empty `prompts/list` is a legal answer, and a constant beats composing a union that
   could only ever tell a consumer to expect nothing. Because it is one fixed result,
   `contracts/initialize.json` keeps pinning it byte-for-byte: that fixture gains the
-  `prompts` capability and stays a fixture.
+  `prompts` capability and stays a fixture. *(Amended 2026-09-01, §21.5: the constant
+  flips to `listChanged: true` for both — still one fixed result, still the same
+  fixture, which flips in the very deploy that serves the stream, per §21.5's lockstep
+  rule.)*
 - **Scoped**: derived from what the hub already **stores** for that service — the
   capability set learned at registration (§6's `server/discover`, cached in the DO) for
   tunneled services; for proxied services, an **owner-declared `capabilities` list** on
@@ -86,7 +91,11 @@ stateless, and never a live upstream call**. Two static answers, one per endpoin
   either way, so a wrong declaration can mislead a client's feature detection but never
   widen access. All of it — with `listChanged`
   and `subscribe` forced false whatever the service claims, since the hub cannot honor
-  them and must not republish them. **Never a live upstream call**: an earlier draft of
+  them and must not republish them. *(Amended 2026-09-01, §21.5: "cannot honor" ended
+  with §21 — the flags are now derived from what the hub serves: `listChanged: true` per
+  stored family and `resources.subscribe: true` for tunneled services with `resources`;
+  proxied services keep every push flag false, §21.2, so for them this sentence still
+  reads as first written.)* **Never a live upstream call**: an earlier draft of
   this paragraph said "live for proxied", which would have put an unbounded round trip
   inside the handshake, with no deadline and no answer for a down upstream, in the one
   method §7 pins as stateless. A tunneled service that has **never connected** advertises

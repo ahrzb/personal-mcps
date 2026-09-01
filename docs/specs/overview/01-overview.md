@@ -24,5 +24,7 @@ beyond the server-rendered pages of §13 (no SPA — the pages do ship as an ins
 with Web Push for approvals, §13). *(Amended 2026-08-26: two former non-goals became
 sections of their own — MCP-native OAuth for third-party clients is **§19**, and
 prompts/resources proxying is **§20**. The push-stream non-goal is the one that stayed,
-and §20 records why.)*
+and §20 records why.)* *(Amended 2026-09-01: it did not stay either — push is **§21**
+now, decision 28 — leaving cross-namespace sharing and the no-SPA rule as the v1
+non-goals.)*
 

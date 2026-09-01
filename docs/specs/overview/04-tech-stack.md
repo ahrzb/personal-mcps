@@ -2,7 +2,11 @@
 
 - **Runtime**: Cloudflare Workers, Hono for routing. D1 for the control plane,
   SQLite-backed Durable Objects (`new_sqlite_classes`) for per-service connection state.
-- **MCP**: target spec revision **2026-07-28** (stateless, POST-only, no sessions).
+- **MCP**: target spec revision **2026-07-28** (stateless, POST-only, no sessions
+  *(amended 2026-09-01, §21: one exception each — `subscriptions/listen`'s response is a
+  held `text/event-stream` served by a hub-owned route beside `createMcpHandler`, and
+  the `Mcp-Session-Id` it mints is correlation only, never authentication and never
+  server-side state on the POST path)*).
   Serve with `createMcpHandler` from `@modelcontextprotocol/server` v2 with a per-request
   factory building a **low-level `Server`** (`setRequestHandler('tools/list' | 'tools/call', …)`)
   — the SDK-endorsed gateway pattern. Its `legacy: 'stateless'` lane serves 2025-era

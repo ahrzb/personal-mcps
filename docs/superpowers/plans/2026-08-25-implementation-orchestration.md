@@ -1060,3 +1060,8 @@ check and (manual, once) a real push notification to a real browser.
   surface RED, keep D14 parked at probe-complete; revisit if claude.ai's proxy
   starts opening the GET stream or if Claude Code live-refresh alone becomes
   worth the door rework.
+  DECISION (owner, 2026-09-01): overridden — "support the entirety of MCP spec
+  and be a good intermediary". D14 un-parked; spec amended first (§21 added,
+  §1/§6/§7/§18/§20 out-pins reversed, decision 28 records the call and the probe
+  economics). claude.ai deafness accepted knowingly: the transport is honored for
+  clients that open it (Claude Code does), inert for those that don't.

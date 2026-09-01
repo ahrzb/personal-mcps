@@ -188,5 +188,7 @@ CREATE INDEX upstream_oauth_state_expires ON upstream_oauth_state(expires_at);
 
 The DO keeps per-service volatile/cached state in its own SQLite: cached `tools/list`
 result, connection metadata. Identity/auth facts for the socket ride in
-`serializeAttachment` (≤16 KB).
+`serializeAttachment` (≤16 KB) *(amended 2026-09-01, §21.4: a subscriber socket's
+attachment additionally carries its principal and its capped subscription set —
+`LISTEN_SUBSCRIPTIONS_MAX` × `SUBSCRIBE_URI_MAX_BYTES` keeps it far inside the 16 KB)*.
 

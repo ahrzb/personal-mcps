@@ -21,7 +21,10 @@
    with no stream and the DO↔worker seam is request/response — §20 records the reason
    per feature, and the corollary rule that no capability may be declared that the
    transport cannot honor (a declared `listChanged` would make a v2 client open a
-   listen stream, get `-32601`, and spend its reopen budget).
+   listen stream, get `-32601`, and spend its reopen budget). *(Re-revised 2026-09-01:
+   the push half fell too — §21 serves `subscriptions/listen`, the consumer doorbells,
+   and `resources/subscribe`/`updated`; decision 28 carries the call and the probe
+   economics. Nothing of the original sentence survives.)*
 5. **Usernames, not emails**, with synthesized placeholder emails internally.
 6. **`apply` deletes by default** (after showing the diff and confirming) — the YAML is
    desired state, not additive patches.
@@ -153,4 +156,21 @@
     `(account, service, tool, args_hash)`, so gating another family would let a prompt
     and a tool of the same name share one approval. No migration, no discriminator
     column, no ambiguity.
+28. **The hub is a full intermediary: push is served, not deferred** (§21). Owner call,
+    2026-09-01 — "support the entirety of the MCP spec" — made over the orchestrator's
+    park recommendation, and made *informed*: the primary hosted consumer (claude.ai's
+    connector proxy) never opens a listen stream, so the feature is inert there, and the
+    owner ordered it anyway because the hub honors the transport, not one vendor's use of
+    it. The 2026-08-26 deferral was architectural, not economic, and the D14 probe
+    (2026-08-31) dissolved it with measurements rather than arguments: a Worker-held
+    `text/event-stream` bills CPU only (idle ≈ free) and subscribes to service DOs over
+    hibernatable WebSockets (~1e-5 USD/day per idle stream), while the feared shape — the
+    DO holding the stream — bills wall-clock (~$4/month idle, no hibernation for
+    non-WebSocket streams) and stays refused. The security half of the call is
+    **doorbell-not-data** (§21.3): the hub relays the fact of change and never content,
+    so the consumer's re-list re-enters the filter-first pipeline and push adds no second
+    path past grants. Logging (`logging/*`, `notifications/message`) stays out — 2026-07-28
+    deprecated it upstream — and server-initiated JSON-RPC requests stay impossible by
+    MCP's own MUST NOT, so with §21 the hub's answer to "which of the revision's features
+    do you proxy?" is: all of the live ones.
 

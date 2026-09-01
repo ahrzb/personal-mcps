@@ -87,8 +87,11 @@ Two message namespaces:
    - `hub/replaced` (hub → client, notification): a newer connection for the same slug
      arrived; the old socket is closed with code `4000` after this. Eviction happens at
      **acceptance** of the new socket (`ctx.acceptWebSocket`), before its `hub/register`
-     is seen — the DO never holds two sockets, preserving §2's at-most-one-connection
-     invariant. Accepted consequence: if the new socket's registration then fails
+     is seen — the DO never holds two **service** sockets, preserving §2's
+     at-most-one-connection invariant *(clarified 2026-09-01: the invariant counts
+     service sockets; §21.2's subscriber sockets are a separately tagged class the DO
+     holds in any number, never evicted by this rule and never carrying
+     consumer→service traffic)*. Accepted consequence: if the new socket's registration then fails
      validation or never arrives, the old healthy connection is already gone and the
      service stays offline until the bot reconnects (a service-token holder can already
      deny service by connecting, so this adds no attacker capability). Client must NOT
@@ -101,7 +104,8 @@ Two message namespaces:
    plus `server/discover`, `prompts/list`, `prompts/get`, `resources/list`,
    `resources/templates/list`, `resources/read` and `completion/complete` — the frame
    shape is unchanged, so the wire and both client libraries carry them with no new
-   framing)*. The client library also sends
+   framing)* *(amended 2026-09-01, §21.4: plus `resources/subscribe` and
+   `resources/unsubscribe`, same rule)*. The client library also sends
    `notifications/tools/list_changed` when the user's server changes its tool set; the DO
    invalidates its cache and re-lists — *(amended 2026-08-26: and the same for
    `notifications/prompts/list_changed` and `notifications/resources/list_changed`, each
@@ -110,8 +114,14 @@ Two message namespaces:
    MCP defines no templates frame, so the resources frame is the only thing that can ever
    speak for them — the same one-declaration-covers-both rule their §20.5 warm follows)*.
    These are the only service-originated frames the DO
-   reads; every other one is still dropped. They stop at the hub — §20 forwards no
-   notification to a consumer.)*
+   reads *(amended 2026-09-01, §21.4: plus `notifications/resources/updated`, routed
+   only to subscriber sockets whose subscription set contains the frame's URI by exact
+   match — a frame matching no subscription is inert)*; every other one is still
+   dropped. ~~They stop at the hub — §20 forwards no notification to a consumer.~~
+   *(Reversed 2026-09-01, §21.3: a catalog re-warm whose write **changes** the stored
+   value rings that family's doorbell on every subscriber socket — the fact of change
+   crosses the hub; content never does, and a `list_changed` that changes nothing rings
+   nothing.)*)*
 
 Handshake, pinned: the wire is stateless 2026-07-28-style — **`initialize` never crosses
 the wire**. Hub-originated requests are self-contained, carrying all required `_meta`

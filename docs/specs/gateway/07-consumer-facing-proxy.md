@@ -1,16 +1,16 @@
 ## 7. Consumer-facing proxy
 
 Two shapes, one pipeline — both stateless 2026-07-28 MCP endpoints (via
-`createMcpHandler`, user and service resolved from the URL; *amended 2026-09-01: §21's
+`createMcpHandler`, user and app resolved from the URL; *amended 2026-09-01: §21's
 `subscriptions/listen` is the one held-open response, served by a hub-owned route beside
 the handler — statelessness everywhere else is unchanged*):
 
 - `POST /<user>/mcp` — **aggregated**: every tool the caller may use across `<user>`'s
-  services, tool names prefixed `<slug>_<tool>`. Slugs contain no `_`, so the first `_`
-  splits the name unambiguously. The built-in `pmcp` service participates like any
-  other — owners see `pmcp_service_list` etc.; service accounts can't hold `pmcp`
+  apps, tool names prefixed `<slug>_<tool>`. Slugs contain no `_`, so the first `_`
+  splits the name unambiguously. The built-in `pmcp` app participates like any
+  other — owners see `pmcp_app_list` etc.; agents can't hold `pmcp`
   grants (§8), so admin tools never reach them.
-- `POST /<user>/mcp/<slug>` — **scoped** to one service, unprefixed tool names. This is
+- `POST /<user>/mcp/<slug>` — **scoped** to one app, unprefixed tool names. This is
   also how `pmcp` is reached (`/<user>/mcp/pmcp`).
 
 Per request:
@@ -24,15 +24,15 @@ Per request:
    check is pure defense-in-depth against browser-originated requests, with the same
    if-present-must-match semantics as the SDK's `originValidation` middleware (which
    `createMcpHandler` does not apply automatically — wire it in explicitly).
-   Resolution: `pmcp_sa_` prefix → SHA-256 lookup
-   in `token` with an explicit `kind = 'service_account'` check (unrevoked, unexpired,
-   `ref_id` resolves to a live service account) → service account; `pmcp_svc_` /
-   `pmcp_sa_`-prefixed tokens **never** fall through to session lookup; anything else →
+   Resolution: `pmcp_agt_` prefix → SHA-256 lookup
+   in `token` with an explicit `kind = 'agent'` check (unrevoked, unexpired,
+   `ref_id` resolves to a live agent) → agent; `pmcp_app_` /
+   `pmcp_agt_`-prefixed tokens **never** fall through to session lookup; anything else →
    *(amended 2026-08-26, §19: a **JWT-shaped** bearer — exactly three `.`-separated
    base64url segments, the predicate pinned byte-for-byte in §19.6 step 3 because it is
    what selects between two credential regimes — is answered by the OAuth leg **alone**:
    signature, issuer, audience, token type, `mcp` scope and binding row, which together
-   answer **service account**, so nothing past this step knows the difference. The leg is
+   answer **agent**, so nothing past this step knows the difference. The leg is
    **terminal and fails closed**: every failure in it is a 401, and none of them falls
    through to the session lookup — the same hard rule the `pmcp_` prefixes already carry
    one clause earlier, for a sharper reason. better-auth can resolve some of its own
@@ -52,16 +52,16 @@ Per request:
    on a nonexistent one stay the same bytes)*. A
    *resolved* principal on another user's namespace (or a nonexistent user) → **404**
    (namespaces don't leak existence).
-2. Resolve the allowed-tool filter (per service):
+2. Resolve the allowed-tool filter (per app):
    - owner → all tools (sees everything in their namespace);
-   - service account → the union of anchored-regex patterns of its granted roles,
-     resolved against the service's `roles_json` **at request time**; the built-in
+   - agent → the union of anchored-regex patterns of its granted roles,
+     resolved against the app's `roles_json` **at request time**; the built-in
      `all` role contributes `.*` without ever appearing in `roles_json`. A granted role no
      longer present in `roles_json` resolves to the empty pattern set — it still counts
-     as a grant (the account gets an empty `tools/list` and `-32001`, not a 404). On the
-     scoped endpoint a service account gets **404** both for a nonexistent slug and for
-     a service it holds no grants on — indistinguishable, so zero-grant accounts can't
-     enumerate the namespace. The aggregated endpoint spans the services with at least
+     as a grant (the agent gets an empty `tools/list` and `-32001`, not a 404). On the
+     scoped endpoint an agent gets **404** both for a nonexistent slug and for
+     an app it holds no grants on — indistinguishable, so zero-grant agents can't
+     enumerate the namespace. The aggregated endpoint spans the apps with at least
      one grant.
 
    Pattern semantics, pinned: compile as `^(?:<pattern>)$` with no flags (naive
@@ -81,18 +81,18 @@ Per request:
    - `server/discover` → answered by the Worker (hub capabilities).
    - `tools/list` → tunneled: served from the DO's **cached** list (kept in DO SQLite,
      so it survives disconnects — deploy-induced reconnect flapping doesn't churn agent
-     tool lists; a service that has never connected lists no tools). Proxied: forwarded
+     tool lists; an app that has never connected lists no tools). Proxied: forwarded
      live to the upstream endpoint with the stored auth headers. Both filtered by the
      allowed patterns; aggregated adds the slug prefix and fans out over the relevant
-     services **in parallel**, skipping archived ones, with a **10 s per-upstream
-     deadline** (inside §15's 30 s request budget — tunneled services answer from cache
+     apps **in parallel**, skipping archived ones, with a **10 s per-upstream
+     deadline** (inside §15's 30 s request budget — tunneled apps answer from cache
      and are unaffected). A proxied upstream that errors, times out, or is in
      needs-reconnect (§7, "Upstream OAuth") contributes zero tools and the aggregated
      list still succeeds; the omitted slugs are reported in the result's `_meta`
      (`pmcp/unavailable: ["<slug>", …]`) and logged as an ops event (not an audit row —
      §15 keeps `tools/list` out of audit). The scoped endpoint is where that failure
      surfaces: scoped `tools/list` against an unreachable or needs-reconnect proxied
-     upstream fails `-32000`, and an archived service fails with `-32002` like every
+     upstream fails `-32000`, and an archived app fails with `-32002` like every
      other request to it. `ttlMs`/`cacheScope` hints set so clients can cache.
      *(Amended 2026-08-26: `prompts/list` obeys every sentence of this bullet — same
      cache, same live fetch, same filter, same `<slug>_` prefix, same fan-out, same
@@ -100,17 +100,17 @@ Per request:
      `resources/read`, `prompts/get` and `completion/complete` with the scoping rules
      it pins there.)*
    - `tools/call` → (aggregated: split off the slug prefix first; a prefix matching no
-     service → `-32001`, indistinguishable from not-permitted) checks run in a fixed
+     app → `-32001`, indistinguishable from not-permitted) checks run in a fixed
      order, identical on both endpoint shapes: **filter first** (`-32001` "tool not
-     permitted" — so an ungranted account can't even learn a service is archived), then
+     permitted" — so an ungranted agent can't even learn an app is archived), then
      **archived** (`-32002`), then the **approval gate** (`-32003`, below), then
-     **availability** (tunnel-not-connected or upstream-unreachable → `-32000` "service
+     **availability** (tunnel-not-connected or upstream-unreachable → `-32000` "app
      unavailable"). Passing all four, the call is forwarded — through the DO to the live
      connection (tunneled) or to the upstream endpoint (proxied) — with the caller
      identity attached (below), and the response relayed back verbatim. For proxied
-     services, "verbatim" applies only to a well-formed JSON-RPC response from the
+     apps, "verbatim" applies only to a well-formed JSON-RPC response from the
      upstream; any HTTP-level failure — non-2xx status, a body that is not a JSON-RPC
-     message, TLS or transport error — maps to `-32000` with a generic "service
+     message, TLS or transport error — maps to `-32000` with a generic "app
      unavailable" message. The upstream's status line, headers (including
      `WWW-Authenticate`), and body are never echoed to the consumer (extending §15's
      log-hygiene rule); the audit row's `detail` records the failure class (e.g.
@@ -129,19 +129,19 @@ Per request:
 ### Approval flow
 
 When the caller's only path to a tool is through approval-mode grants (§2), the call
-does not execute on its own. The gate consults **known availability first**: a service
+does not execute on its own. The gate consults **known availability first**: an app
 the hub already knows cannot execute — tunneled with no live registered connection,
 proxied flagged `not_connected` or `needs_reconnect` — fails `-32000` before any
 approval row is read, created, or consumed. The owner is never asked to approve a call
 that cannot run (no pending row, no push), and an existing approved pass survives
-untouched; the agent's retry once the service returns is what opens the pending. This
+untouched; the agent's retry once the app returns is what opens the pending. This
 is stored knowledge only — no dial is attempted, so a `connected` proxied upstream
 that is genuinely unreachable still surfaces at dispatch. Past that refusal:
 
-1. The Worker looks for an `approval` row matching (account, service, tool,
+1. The Worker looks for an `approval` row matching (agent, app, tool,
    `args_hash`) with `status: approved` and unexpired. Found → the call proceeds
    through the availability check; on unavailability the row is left `approved` — an
-   approved retry that hits an offline service gets `-32000` **without consuming the
+   approved retry that hits an offline app gets `-32000` **without consuming the
    approval**, so the owner never has to re-approve because a bot was mid-reconnect.
    If availability passes, the Worker **claims the row atomically** before dispatching
    — a compare-and-set (`UPDATE approval SET status = 'used', decided_at = ? WHERE id
@@ -152,29 +152,29 @@ that is genuinely unreachable still surfaces at dispatch. Past that refusal:
    never authorizes dispatch — N concurrent identical calls must resolve to exactly
    one execution. If dispatch fails *after* a successful claim (30 s timeout, socket
    dropped mid-call), the approval stays consumed: the call may already have reached
-   the service (every `tools/call` is at-most-once, §15), so reverting the row would
+   the app (every `tools/call` is at-most-once, §15), so reverting the row would
    risk a second execution — the caller's retry gets a fresh `-32003` and the owner
    re-approves. One exception restores the row: a leg whose relayed result is MRTR
    `input_required` (below) flips it back to `approved` with the same CAS discipline,
    so the exchange can continue on the original approval.
-2. Otherwise, if an unexpired `pending` row already exists for the same (account,
-   service, tool, `args_hash`), no new row is inserted and no new `approval.requested`
+2. Otherwise, if an unexpired `pending` row already exists for the same (agent,
+   app, tool, `args_hash`), no new row is inserted and no new `approval.requested`
    audit row is written — the reply is `-32003` carrying that row's existing
    `approvalId`/`expiresAt`, so retries see a stable id and link. Only when no such
    row exists does it record a fresh `pending` approval — arguments stored
-   **post-redaction** (below); for tunneled services a pending row is only created for
+   **post-redaction** (below); for tunneled apps a pending row is only created for
    a tool present in the cached catalog (no schema → no redaction map → refuse with
    `-32001` instead, the same code as not-permitted/unknown, so a probing agent cannot
    use the refusal to map its own grant patterns; such a call could not execute
-   anyway, and the catalog heals at the service's next registration) — and reply with JSON-RPC
+   anyway, and the catalog heals at the app's next registration) — and reply with JSON-RPC
    error **`-32003`** ("approval required"), whose `data` carries
    `{ approvalId, approvalUrl, expiresAt }`. The message text includes the URL too, so
    an agent that only surfaces error strings still hands the user something
    actionable. `approval.tool` stores the **unprefixed** tool name (aggregated calls
    split off the slug prefix before the gate, above), so retries through either
    endpoint shape match the same row.
-3. The owner opens the link (or `pmcp approvals`), sees the request detail — account,
-   service, tool, redacted arguments, requested time — and approves or rejects.
+3. The owner opens the link (or `pmcp approvals`), sees the request detail — agent,
+   app, tool, redacted arguments, requested time — and approves or rejects.
 4. The agent retries the **identical** call (same canonical-JSON arguments — the hash
    must match). Approved → executes (once); still pending → `-32003` with the same
    `approvalId` (no new row, per step 2); rejected or expired → `-32003` again with a
@@ -195,7 +195,7 @@ body columns alike, §15). One approval covers the whole MRTR exchange: a
 forwarded leg that returns `resultType: "input_required"` restores the claimed row to
 `approved` (step 1), so follow-up legs (same `params.arguments`, plus
 `inputResponses`/`requestState`) pass on the original approval until a `complete`
-result or service error consumes it, with `expires_at` (1 h) bounding the exchange.
+result or app error consumes it, with `expires_at` (1 h) bounding the exchange.
 
 Approvals are single-use, args-bound, and expire 1 h after creation. Every transition
 writes an audit row (`approval.requested` / `approval.approved` / `approval.rejected` /
@@ -208,7 +208,7 @@ remaining past-expiry `pending` rows to `expired` (same audit row) before prunin
 there is no hourly job. v1 never blocks the original request while waiting —
 blocking-until-decided is explicitly future work. The owner is push-notified instead:
 creating a `pending` approval row sends a Web Push to every `push_subscription` row
-(§5, §13) naming the service and tool plus the approval id — never arguments (push
+(§5, §13) naming the app and tool plus the approval id — never arguments (push
 payloads rest on third-party push services; §15's hygiene applies). Tapping the
 notification opens `/approvals/<id>`. Push is best-effort; the dashboard stays the
 source of truth.
@@ -217,20 +217,20 @@ call them).
 
 ### Caller identity forwarding
 
-Services can do their own fine-grained authorization on top of the hub's role gate —
+Apps can do their own fine-grained authorization on top of the hub's role gate —
 useful when one tool serves several roles. Every forwarded `tools/call` carries the
 caller's identity and resolved roles (proxied: only when enabled, below):
 
 - **Tunneled**: `_meta` fields on the forwarded request —
-  `hub/principal` (`"sa:claude"` or `"user:ahrzb"`) and `hub/roles` (the caller's
-  granted role names on this service, exactly as granted — the built-in wildcard is
+  `hub/principal` (`"agent:claude"` or `"user:ahrzb"`) and `hub/roles` (the caller's
+  granted role names on this app, exactly as granted — the built-in wildcard is
   forwarded literally as `"all"`, never expanded into declared role names; owners get
   `["all"]`). The client libraries surface these on the tool context (e.g.
   `ctx.principal`, `ctx.roles`, `ctx.has_role("editor")`); `has_role(x)` returns true
   when the list contains `x` or `"all"`, so owner and `all`-granted calls behave
   identically, and `all` can never collide with a real role name (§6 rejects it in
   declarations).
-- **Proxied**: only when the service sets `forward_identity: true` (default **false**):
+- **Proxied**: only when the app sets `forward_identity: true` (default **false**):
   real HTTP headers on the upstream request — `X-Pmcp-Principal` and `X-Pmcp-Roles`
   (comma-separated, same values — including a literal `all`) — so an upstream you also
   control can branch on them. Third-party upstreams (Notion, Linear) have no need for
@@ -238,7 +238,7 @@ caller's identity and resolved roles (proxied: only when enabled, below):
 
 The `hub/` prefix in `_meta` is **reserved**: before forwarding, the hub deletes every
 consumer-supplied `_meta` key beginning with `hub/` and then sets its own values —
-overwrite, never merge — so any `hub/*` field a service sees was written by the hub,
+overwrite, never merge — so any `hub/*` field an app sees was written by the hub,
 never the caller. (Other consumer `_meta` keys, e.g. `progressToken`, pass through
 untouched. The proxied analogue holds by construction: `X-Pmcp-*` headers are set on
 the hub's own upstream request, which never copies consumer headers.)
@@ -250,7 +250,7 @@ session-id key onto each `tools/call` audit row (`client_name` / `client_version
 `client_session_id`, §5), each truncated to 128 chars and treated strictly as untrusted
 display data — never parsed, never part of any authorization decision. The recognized
 session-id keys are a small allowlist maintained in code (Claude Code's first);
-unrecognized vendor `_meta` still passes through to services untouched, as above.
+unrecognized vendor `_meta` still passes through to apps untouched, as above.
 
 Alongside identity, the hub forwards the consumer's declared
 `io.modelcontextprotocol/clientCapabilities` unchanged: copied into the forwarded
@@ -260,27 +260,27 @@ the upstream sees the consumer's capabilities, not the hub's (proxied). An
 path, and the consumer's retry (with `inputResponses` + `requestState`) is an ordinary
 `tools/call` re-entering the same pipeline — the hub itself never answers an
 inputRequest. Legacy consumers that declare no capabilities are forwarded `{}`, so
-services correctly refrain from elicitation/sampling for them.
+apps correctly refrain from elicitation/sampling for them.
 
-Identity is informational for the service's own logic; the hub's grant check has
-already run and services must not treat these fields as secrets. Services *may* trust
+Identity is informational for the app's own logic; the hub's grant check has
+already run and apps must not treat these fields as secrets. Apps *may* trust
 `hub/*` values for their own fine-grained checks precisely because the hub strips
 inbound copies — a consumer cannot inject them.
 
-### Upstream OAuth (proxied services)
+### Upstream OAuth (proxied apps)
 
-A proxied service's upstream auth is one of two kinds, declared as `auth: headers`
-(default) or `auth: oauth` on the service:
+A proxied app's upstream auth is one of two kinds, declared as `auth: headers`
+(default) or `auth: oauth` on the app:
 
-- **headers** — static headers stored via `service_set_upstream_auth` (as before).
+- **headers** — static headers stored via `app_set_upstream_auth` (as before).
 - **oauth** — for upstreams that require sign-in (Linear, etc.). The owner clicks
-  **Connect** on the `/services` page (or follows the URL `pmcp connect <slug>`
+  **Connect** on the `/apps` page (or follows the URL `pmcp connect <slug>`
   prints): the hub discovers the upstream's authorization server via its RFC 9728
   protected-resource metadata, obtains a client identity (CIMD document hosted by the
   hub, falling back to Dynamic Client Registration where the AS still wants it), and
   runs the authorization-code + PKCE flow in the owner's browser with callback
   `/oauth/upstream/callback`. Connect initiation mints a one-time unguessable `state`,
-  stored server-side bound to {owner, service, expected AS issuer + token endpoint,
+  stored server-side bound to {owner, app, expected AS issuer + token endpoint,
   PKCE verifier} and to the initiating cookie session, expiring in ~10 minutes. PKCE
   is not the CSRF defense here — RFC 9700 permits that only when the client has
   ensured the AS enforces PKCE, which a dynamically discovered upstream can't
@@ -293,8 +293,8 @@ A proxied service's upstream auth is one of two kinds, declared as `auth: header
   code is only ever redeemed, with the bound verifier, at the token endpoint recorded
   at initiation. The token bundle lands in the encrypted
   `upstream_auth_json`; the hub attaches `Authorization: Bearer` upstream and
-  refreshes proactively. A failed refresh flips the service to **needs reconnect** —
-  calls fail `-32000` and `/services` shows a Reconnect button — and Disconnect wipes
+  refreshes proactively. A failed refresh flips the app to **needs reconnect** —
+  calls fail `-32000` and `/apps` shows a Reconnect button — and Disconnect wipes
   the bundle. Connect/disconnect/refresh-failure all write audit rows
   (`upstream.oauth_*`). The YAML declares only the `auth` mode; tokens never appear in
   it, and the mode is diffed like any other field.
@@ -307,7 +307,7 @@ per direction, from two sources, unioned:
 
 - **Schema-declared** (tunneled): any property marked with standard JSON Schema
   **`writeOnly: true`** (at any depth) in a tool's input **or output** schema is
-  sensitive. The hub derives both maps from the catalog cached in the service's DO
+  sensitive. The hub derives both maps from the catalog cached in the app's DO
   at `tools/list` time; the client libraries make declaring it natural (§11): a
   `Secret` field type in pydantic-/zod-style tool definitions emits `writeOnly`
   wherever it appears — input and output models alike — plus path-based sugar for
@@ -325,7 +325,7 @@ per direction, from two sources, unioned:
   conceal a mark: external or non-local refs, `$id`/`$anchor`/`$dynamicRef`
   resolution, and a recursive cycle carrying a secret (its path set is infinite —
   no finite path list can express the mask). Violations are reported per tool at
-  catalog warm — echoed to the service and logged; registration still succeeds —
+  catalog warm — echoed to the app and logged; registration still succeeds —
   and such a tool is cached **schema-unsound**: it has no derivable redaction map,
   so approval-gated calls refuse `-32001` (the catalog-miss rule below) and its
   bodies are never recorded (§15). Inlining `$defs` client-side remains optional
@@ -333,8 +333,8 @@ per direction, from two sources, unioned:
 - **Config-declared** (both kinds): the owner lists redaction paths per tool —
   `redact: { "<tool-or-pattern>": ["password", "credentials.token"] }` for
   arguments, and `redact_results:` (identical shape, applied to the result's
-  `structuredContent`) — in the YAML / `service_update`. This is the **only** path
-  for proxied services in v1: their `tools/list` is forwarded live and never cached,
+  `structuredContent`) — in the YAML / `app_update`. This is the **only** path
+  for proxied apps in v1: their `tools/list` is forwarded live and never cached,
   so there is no schema to derive from (honoring upstream `writeOnly` becomes
   possible if a proxied schema cache is ever added).
 
@@ -348,6 +348,6 @@ wire). This extends
 §15's log-hygiene rule. Only *structured* data is ever redactable — which is why
 unstructured result content is never persisted at all, only stubbed (§15).
 
-The hub terminates auth entirely; client tokens are never forwarded to services
+The hub terminates auth entirely; client tokens are never forwarded to apps
 (MCP audience-binding rules forbid pass-through anyway).
 

@@ -37,10 +37,10 @@ const MANIFEST = "/manifest.webmanifest";
 const SERVICE_WORKER = "/sw.js";
 
 const NAV: { key: NavSection; label: string; href: string }[] = [
-  { key: "services", label: "Services", href: paths.services },
+  { key: "apps", label: "Apps", href: paths.apps },
   { key: "audit", label: "Audit", href: paths.audit },
   { key: "approvals", label: "Approvals", href: paths.approvals },
-  { key: "account", label: "Account", href: paths.account },
+  { key: "settings", label: "Settings", href: paths.settings },
 ];
 
 /** The hub mark from the artboards — a node with three spokes. */
@@ -71,7 +71,7 @@ export const Layout: FC<LayoutProps> = ({ title, active, username, pendingApprov
       <body>
         <header class="app-header">
           <div class="app-header-main">
-            <a class="brand" href={paths.services}>
+            <a class="brand" href={paths.apps}>
               <BrandMark />
               <span>personal-mcps</span>
             </a>

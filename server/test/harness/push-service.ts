@@ -27,7 +27,7 @@ export type PostedPush = {
 
 /**
  * The push service's front door: a `PushFetch` that accepts everything with a 201 (the
- * status a real service answers a queued push with) and keeps what it was handed.
+ * status a real app answers a queued push with) and keeps what it was handed.
  */
 export function pushService(): { fetch: PushFetch; posted: PostedPush[] } {
   const posted: PostedPush[] = [];

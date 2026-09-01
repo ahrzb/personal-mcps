@@ -34,15 +34,15 @@
 import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { parseDesired, planChanges } from "../src/plan";
-import type { CurrentAccount, CurrentService, CurrentState, DesiredConfig, Plan } from "../src/plan";
+import type { CurrentAgent, CurrentApp, CurrentState, DesiredConfig, Plan } from "../src/plan";
 
 /** One YAML document as `YAML.parse` would hand it over — the planner's only input shape. */
-function doc(services: unknown, serviceAccounts?: unknown): unknown {
-  return serviceAccounts === undefined ? { services } : { services, service_accounts: serviceAccounts };
+function doc(apps: unknown, agents?: unknown): unknown {
+  return agents === undefined ? { apps } : { apps, agents: agents };
 }
 
-/** A server-side service row with the fields no row can be missing. */
-function currentService(over: Partial<CurrentService> & { slug: string }): CurrentService {
+/** A server-side app row with the fields no row can be missing. */
+function currentApp(over: Partial<CurrentApp> & { slug: string }): CurrentApp {
   return {
     kind: "tunnel",
     name: over.slug,
@@ -57,7 +57,7 @@ function currentService(over: Partial<CurrentService> & { slug: string }): Curre
   };
 }
 
-function currentAccount(over: Partial<CurrentAccount> & { slug: string }): CurrentAccount {
+function currentAgent(over: Partial<CurrentAgent> & { slug: string }): CurrentAgent {
   return { name: over.slug, description: "", grants: {}, ...over };
 }
 
@@ -65,25 +65,25 @@ function currentAccount(over: Partial<CurrentAccount> & { slug: string }): Curre
  * §20.3's role declaration, both spellings: a bare pattern list means tools and nothing
  * else, forever, while the per-family object names any of the three keyspaces and may sit
  * beside a bare list in the same declaration. Spelled here rather than imported because it
- * is what `DesiredService.roles` and `CurrentService.roles` BECOME with this dispatch — the
+ * is what `DesiredApp.roles` and `CurrentApp.roles` BECOME with this dispatch — the
  * two rows that use it are what widens them.
  */
 type RoleDeclaration = Record<string, string[] | Record<string, string[]>>;
 
 /**
  * A proxied server row carrying such a declaration. The cast is a seam bridge and not a
- * claim: `CurrentService.roles` is still spelled tools-only, so it is deletable the day the
+ * claim: `CurrentApp.roles` is still spelled tools-only, so it is deletable the day the
  * type widens, and no assertion below reads through it.
  *
- * That day is this dispatch. §20.3's canonical read shape means `service_list` returns the
- * per-family object whenever a role is not tools-only, so `CurrentService.roles`,
- * `DesiredService.roles` and main.ts's `ServiceRow.roles` all become active misstatements
+ * That day is this dispatch. §20.3's canonical read shape means `app_list` returns the
+ * per-family object whenever a role is not tools-only, so `CurrentApp.roles`,
+ * `DesiredApp.roles` and main.ts's `AppRow.roles` all become active misstatements
  * of the wire until they are widened to this type — and main.ts documents those declarations
  * as the lock that makes a server-side shape change "fail to compile here rather than
  * emptying a column". Deleting this cast is part of implementing the two rows below.
  */
-function proxyRow(slug: string, roles: RoleDeclaration): CurrentService {
-  return currentService({
+function proxyRow(slug: string, roles: RoleDeclaration): CurrentApp {
+  return currentApp({
     slug,
     kind: "proxy",
     endpoint: "https://x/mcp",
@@ -93,8 +93,8 @@ function proxyRow(slug: string, roles: RoleDeclaration): CurrentService {
   });
 }
 
-function state(services: CurrentService[] = [], accounts: CurrentAccount[] = []): CurrentState {
-  return { services, accounts };
+function state(apps: CurrentApp[] = [], agents: CurrentAgent[] = []): CurrentState {
+  return { apps, agents };
 }
 
 /**
@@ -102,7 +102,7 @@ function state(services: CurrentService[] = [], accounts: CurrentAccount[] = [])
  * missing key rather than as an empty list — which is the distinction the two capabilities
  * cases are about: `undefined` means "never configured", and §9 makes that identical in
  * MEANING to `[tools]` without making it identical in shape. One pair of builders so the two
- * cases cannot drift into diffing different proxied services.
+ * cases cannot drift into diffing different proxied apps.
  */
 function capabilityFile(capabilities?: string[]): DesiredConfig {
   return parseDesired(
@@ -118,7 +118,7 @@ function capabilityFile(capabilities?: string[]): DesiredConfig {
 
 function capabilityServer(capabilities?: string[]): CurrentState {
   return state([
-    currentService({
+    currentApp({
       slug: "linear",
       kind: "proxy",
       endpoint: "https://x/mcp",
@@ -142,7 +142,7 @@ function tools(plan: Plan): string[] {
 describe("parseDesired · defaults and grammar (§9, §15)", () => {
   it("§9 · every default applied — absent kind → tunnel, absent name → slug, description \"\", archived false, redact/redact_results {} — so two files that mean the same thing normalize equal", () => {
     const bare = parseDesired(doc({ news: null }));
-    expect(bare.services).toEqual([
+    expect(bare.apps).toEqual([
       {
         slug: "news",
         kind: "tunnel",
@@ -169,25 +169,25 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
       }),
     );
     expect(spelled).toEqual(bare);
-    expect(bare.serviceAccounts).toEqual([]);
+    expect(bare.agents).toEqual([]);
   });
 
   it("§15 · log_bodies defaults by kind (tunnel true, proxy false), and an explicit value overrides the kind default in both directions", () => {
     const defaults = parseDesired(
       doc({ news: {}, notion: { kind: "proxy", endpoint: "https://mcp.notion.com/mcp" } }),
     );
-    expect(defaults.services.map((service) => service.logBodies)).toEqual([true, false]);
+    expect(defaults.apps.map((app) => app.logBodies)).toEqual([true, false]);
     const explicit = parseDesired(
       doc({
         news: { log_bodies: false },
         notion: { kind: "proxy", endpoint: "https://mcp.notion.com/mcp", log_bodies: true },
       }),
     );
-    expect(explicit.services.map((service) => service.logBodies)).toEqual([false, true]);
+    expect(explicit.apps.map((app) => app.logBodies)).toEqual([false, true]);
   });
 
   it("§9 · proxy defaults: auth \"headers\", forward_identity false", () => {
-    const [proxy] = parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://mcp.notion.com/mcp" } })).services;
+    const [proxy] = parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://mcp.notion.com/mcp" } })).apps;
     expect(proxy.auth).toBe("headers");
     expect(proxy.forwardIdentity).toBe(false);
     expect(proxy.roles).toEqual({});
@@ -200,7 +200,7 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
 
   it("§9 · `reader:approval` splits into approval mode; bare `reader` is allow — role names carry no colon, so the split is unambiguous", () => {
     const parsed = parseDesired(doc({ news: {} }, { claude: { grants: { news: ["reader", "writer:approval"] } } }));
-    expect(parsed.serviceAccounts).toEqual([
+    expect(parsed.agents).toEqual([
       {
         slug: "claude",
         name: "claude",
@@ -222,7 +222,7 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
       );
     }
     const twin = parseDesired(doc({ news: {} }, { claude: { grants: { news: ["reader:approval"] } } }));
-    expect(twin.serviceAccounts[0].grants.news).toEqual([{ role: "reader", mode: "approval" }]);
+    expect(twin.agents[0].grants.news).toEqual([{ role: "reader", mode: "approval" }]);
   });
 
   it("§9 · an unrecognized key (`rols:`) and a wrong-typed field (redact values not string arrays) each throw naming the offending path — a typo never silently plans a role wipe; twin: the correctly spelled file parses", () => {
@@ -232,17 +232,17 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
     const twin = parseDesired(
       doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", roles: { reader: ["search"] } } }),
     );
-    expect(twin.services[0].roles).toEqual({ reader: ["search"] });
+    expect(twin.apps[0].roles).toEqual({ reader: ["search"] });
   });
 
-  it("§9/§18 d3 · keys that are RECOGNIZED but misplaced throw too, naming the offending path: the proxy-only fields (`roles`, `endpoint`, `auth`, `forward_identity`) on a `kind: tunnel` service, and a `kind: proxy` service carrying no `endpoint`. The `rols:` case cannot catch either — both keys exist in the grammar — and dropping them silently would make the file lie about a tunneled service's role surface while the hub keeps whatever the bot self-declared, or claim a forwarding target the hub does not have; twin: the same keys on a proxy service parse", () => {
+  it("§9/§18 d3 · keys that are RECOGNIZED but misplaced throw too, naming the offending path: the proxy-only fields (`roles`, `endpoint`, `auth`, `forward_identity`) on a `kind: tunnel` app, and a `kind: proxy` app carrying no `endpoint`. The `rols:` case cannot catch either — both keys exist in the grammar — and dropping them silently would make the file lie about a tunneled app's role surface while the hub keeps whatever the bot self-declared, or claim a forwarding target the hub does not have; twin: the same keys on a proxy app parse", () => {
     const misplaced: Record<string, unknown>[] = [
       { roles: { reader: ["search"] } },
       { endpoint: "https://x/mcp" },
       { auth: "oauth" },
       { forward_identity: true },
       // §20.2's owner-declared advertisement is the fifth member of that set, and misplaced
-      // for the same reason: a TUNNELED service's capability set is the one it answered
+      // for the same reason: a TUNNELED app's capability set is the one it answered
       // `server/discover` with (§6), so a `capabilities:` line here would be a claim about
       // the hub's surface that the hub ignores — the file lying, silently.
       { capabilities: ["tools", "resources"] },
@@ -264,7 +264,7 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
         },
       }),
     );
-    expect(twin.services[0]).toMatchObject({
+    expect(twin.apps[0]).toMatchObject({
       endpoint: "https://x/mcp",
       auth: "oauth",
       forwardIdentity: true,
@@ -283,13 +283,13 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
 });
 
 describe("planChanges · the steps a difference produces (§8, §9)", () => {
-  it("§9 · file-only service and file-only account → service_create / account_create carrying the normalized fields", () => {
+  it("§9 · file-only app and file-only agent → app_create / agent_create carrying the normalized fields", () => {
     const plan = planChanges(
       parseDesired(doc({ news: { name: "News MCP" } }, { claude: { name: "Claude" } })),
       state(),
     );
     expect(plan.errors).toEqual([]);
-    expect(stepsOf(plan, "service_create")).toEqual([
+    expect(stepsOf(plan, "app_create")).toEqual([
       {
         slug: "news",
         kind: "tunnel",
@@ -300,37 +300,37 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
         log_bodies: true,
       },
     ]);
-    expect(stepsOf(plan, "account_create")).toEqual([{ slug: "claude", name: "Claude", description: "" }]);
+    expect(stepsOf(plan, "agent_create")).toEqual([{ slug: "claude", name: "Claude", description: "" }]);
     expect(plan.steps.every((step) => step.summary.length > 0)).toBe(true);
     expect(plan.steps.some((step) => step.destructive)).toBe(false);
   });
 
-  it("§9 · server-only service and server-only account → service_delete /account_delete, both flagged destructive (grants cascade, tokens deleted)", () => {
+  it("§9 · server-only app and server-only agent → app_delete /agent_delete, both flagged destructive (grants cascade, tokens deleted)", () => {
     const plan = planChanges(
       parseDesired(doc({})),
-      state([currentService({ slug: "news" })], [currentAccount({ slug: "claude" })]),
+      state([currentApp({ slug: "news" })], [currentAgent({ slug: "claude" })]),
     );
-    expect(stepsOf(plan, "service_delete")).toEqual([{ slug: "news" }]);
-    expect(stepsOf(plan, "account_delete")).toEqual([{ slug: "claude" }]);
+    expect(stepsOf(plan, "app_delete")).toEqual([{ slug: "news" }]);
+    expect(stepsOf(plan, "agent_delete")).toEqual([{ slug: "claude" }]);
     expect(plan.steps.every((step) => step.destructive)).toBe(true);
   });
 
   it("§8 · the builtin `pmcp` row is excluded from the delete computation", () => {
     const plan = planChanges(
       parseDesired(doc({})),
-      state([currentService({ slug: "pmcp", builtin: true })]),
+      state([currentApp({ slug: "pmcp", builtin: true })]),
     );
     expect(plan.steps).toEqual([]);
     expect(plan.errors).toEqual([]);
   });
 
-  it("§9 · a (account, service) pair the SERVER grants and the file's `grants:` block omits plans grant_set with an empty role list — absence in the file is desired state, not silence. Scoped to pairs the server actually holds, deliberately: §9's \"any pair not listed\" read as a quantifier over every (account × service) product would emit a clearing step for pairs nobody grants, and a state derived from itself would plan |accounts|×|services| steps — contradicting the empty-plan law below, which is the one contradiction this file could not detect from inside", () => {
+  it("§9 · a (agent, app) pair the SERVER grants and the file's `grants:` block omits plans grant_set with an empty role list — absence in the file is desired state, not silence. Scoped to pairs the server actually holds, deliberately: §9's \"any pair not listed\" read as a quantifier over every (agent × app) product would emit a clearing step for pairs nobody grants, and a state derived from itself would plan |agents|×|apps| steps — contradicting the empty-plan law below, which is the one contradiction this file could not detect from inside", () => {
     const plan = planChanges(
       parseDesired(doc({ news: {}, home: {} }, { claude: { grants: { news: ["reader"] } } })),
       state(
-        [currentService({ slug: "news", roles: { reader: ["get_.*"] } }), currentService({ slug: "home" })],
+        [currentApp({ slug: "news", roles: { reader: ["get_.*"] } }), currentApp({ slug: "home" })],
         [
-          currentAccount({
+          currentAgent({
             slug: "claude",
             grants: { news: [{ role: "reader", mode: "allow" }], home: [{ role: "all", mode: "allow" }] },
           }),
@@ -339,25 +339,25 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
     );
     // `news` is unchanged, so only the omitted `home` pair is planned — and it is planned
     // as a clearing replacement, not skipped.
-    expect(stepsOf(plan, "grant_set")).toEqual([{ account: "claude", service: "home", roles: [] }]);
+    expect(stepsOf(plan, "grant_set")).toEqual([{ agent: "claude", app: "home", roles: [] }]);
   });
 
-  it("§9/§15 · a change in redact, redact_results, or log_bodies alone plans a service_update — either kind", () => {
+  it("§9/§15 · a change in redact, redact_results, or log_bodies alone plans an app_update — either kind", () => {
     const tunnel = planChanges(
       parseDesired(doc({ news: { redact: { search: ["query"] } } })),
-      state([currentService({ slug: "news" })]),
+      state([currentApp({ slug: "news" })]),
     );
-    expect(stepsOf(tunnel, "service_update")).toEqual([{ slug: "news", redact: { search: ["query"] } }]);
+    expect(stepsOf(tunnel, "app_update")).toEqual([{ slug: "news", redact: { search: ["query"] } }]);
     const proxy = planChanges(
       parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", log_bodies: true } })),
-      state([currentService({ slug: "notion", kind: "proxy", endpoint: "https://x/mcp", auth: "headers", forwardIdentity: false })]),
+      state([currentApp({ slug: "notion", kind: "proxy", endpoint: "https://x/mcp", auth: "headers", forwardIdentity: false })]),
     );
-    expect(stepsOf(proxy, "service_update")).toEqual([{ slug: "notion", log_bodies: true }]);
+    expect(stepsOf(proxy, "app_update")).toEqual([{ slug: "notion", log_bodies: true }]);
     const results = planChanges(
       parseDesired(doc({ news: { redact_results: { search: ["page.token"] } } })),
-      state([currentService({ slug: "news" })]),
+      state([currentApp({ slug: "news" })]),
     );
-    expect(stepsOf(results, "service_update")).toEqual([
+    expect(stepsOf(results, "app_update")).toEqual([
       { slug: "news", redact_results: { search: ["page.token"] } },
     ]);
   });
@@ -375,7 +375,7 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
         }),
       ),
       state([
-        currentService({
+        currentApp({
           slug: "notion",
           kind: "proxy",
           endpoint: "https://old/mcp",
@@ -385,12 +385,12 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
         }),
       ]),
     );
-    expect(stepsOf(plan, "service_update")).toEqual([
+    expect(stepsOf(plan, "app_update")).toEqual([
       { slug: "notion", endpoint: "https://new/mcp", forward_identity: true, roles: { reader: ["search"] } },
     ]);
   });
 
-  it("§9/§20.3 · the YAML planner accepts a per-family roles block for a proxied service and diffs it field-by-field", () => {
+  it("§9/§20.3 · the YAML planner accepts a per-family roles block for a proxied app and diffs it field-by-field", () => {
     const file = (roles: RoleDeclaration): DesiredConfig =>
       parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", roles } }));
     // §20.3's own shape: the two spellings mixed across roles in one declaration, and a
@@ -403,13 +403,13 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
     // the canonical read shape §20.3 pins is what the diff compares against. It does NOT
     // follow that it refuses nothing: §20.3's Validation bullet applies to every family
     // list, and the severities block below walks those refusals.
-    expect(file(declared).services[0].roles).toEqual(declared);
+    expect(file(declared).apps[0].roles).toEqual(declared);
     expect(planChanges(file(declared), state()).errors).toEqual([]);
 
     const current = state([proxyRow("notion", declared)]);
     // Field-by-field, so the same declaration on both sides differs in no field and plans
     // nothing — a planner that re-rendered the block would plan an update that changes it
-    // to itself, on every run, for every proxied service that has one.
+    // to itself, on every run, for every proxied app that has one.
     expect(planChanges(file(declared), current).steps).toEqual([]);
     // One family widened is one changed field, carried whole in the op's wire spelling and
     // beside no other field.
@@ -419,7 +419,7 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
     };
     const plan = planChanges(file(widened), current);
     expect(plan.errors).toEqual([]);
-    expect(stepsOf(plan, "service_update")).toEqual([{ slug: "notion", roles: widened }]);
+    expect(stepsOf(plan, "app_update")).toEqual([{ slug: "notion", roles: widened }]);
   });
 
   it("§9/§20.3 · a bare list in YAML plans identically to {tools: [...]} — no spurious diff on a file written before this change", () => {
@@ -448,30 +448,30 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
     // …and a different keyspace is a different meaning, so it is a real change.
     const moved = planChanges(file(elsewhere), server);
     expect(moved.errors).toEqual([]);
-    expect(stepsOf(moved, "service_update")).toEqual([{ slug: "notion", roles: elsewhere }]);
+    expect(stepsOf(moved, "app_update")).toEqual([{ slug: "notion", roles: elsewhere }]);
   });
 
-  it("§9/§20.2 · a capabilities change on a proxied service plans a service_update naming the field", () => {
+  it("§9/§20.2 · a capabilities change on a proxied app plans an app_update naming the field", () => {
     // The widening: the file names a family the server was never told about. Carried whole
-    // in the op's wire spelling — `service_update` replaces the list, it does not merge one.
+    // in the op's wire spelling — `app_update` replaces the list, it does not merge one.
     const widened = planChanges(capabilityFile(["tools", "resources"]), capabilityServer(["tools"]));
     expect(widened.errors).toEqual([]);
-    expect(stepsOf(widened, "service_update")).toEqual([
+    expect(stepsOf(widened, "app_update")).toEqual([
       { slug: "linear", capabilities: ["tools", "resources"] },
     ]);
     // …and the narrowing, because a field that can only grow is a field that never
     // converges: an owner who deletes `resources` from the file must see it planned away.
     expect(
-      stepsOf(planChanges(capabilityFile(["tools"]), capabilityServer(["tools", "prompts"])), "service_update"),
+      stepsOf(planChanges(capabilityFile(["tools"]), capabilityServer(["tools", "prompts"])), "app_update"),
     ).toEqual([{ slug: "linear", capabilities: ["tools"] }]);
-    // Declaring the key against a service that has none is a change too — absent ≡ [tools]
+    // Declaring the key against an app that has none is a change too — absent ≡ [tools]
     // (below), so naming a second family really is a widening of what the handshake says.
     expect(
-      stepsOf(planChanges(capabilityFile(["tools", "prompts"]), capabilityServer()), "service_update"),
+      stepsOf(planChanges(capabilityFile(["tools", "prompts"]), capabilityServer()), "app_update"),
     ).toEqual([{ slug: "linear", capabilities: ["tools", "prompts"] }]);
     // Nothing else moves with it: `capabilities` is one field among the proxied ones, not a
     // trigger that re-sends the whole row.
-    expect(Object.keys(stepsOf(widened, "service_update")[0]).sort()).toEqual(["capabilities", "slug"]);
+    expect(Object.keys(stepsOf(widened, "app_update")[0]).sort()).toEqual(["capabilities", "slug"]);
   });
 
   it("§9/§20.2 · capabilities compares as a set with absent ≡ [tools] — spelling the default, or reordering the list, plans nothing", () => {
@@ -491,14 +491,14 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
     // the set comparison narrows the diff without blinding it.
     const real = planChanges(capabilityFile(["tools", "prompts"]), capabilityServer(["tools", "resources"]));
     expect(real.errors).toEqual([]);
-    expect(stepsOf(real, "service_update")).toEqual([
+    expect(stepsOf(real, "app_update")).toEqual([
       { slug: "linear", capabilities: ["tools", "prompts"] },
     ]);
   });
 
-  it("§8 · an `auth` mode flip plans a service_update flagged destructive — it wipes the stored upstream credentials; twin: any other update is not", () => {
+  it("§8 · an `auth` mode flip plans an app_update flagged destructive — it wipes the stored upstream credentials; twin: any other update is not", () => {
     const current = state([
-      currentService({
+      currentApp({
         slug: "notion",
         kind: "proxy",
         endpoint: "https://x/mcp",
@@ -510,35 +510,35 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
       parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", auth: "oauth" } })),
       current,
     );
-    expect(flip.steps.map((step) => [step.tool, step.destructive])).toEqual([["service_update", true]]);
+    expect(flip.steps.map((step) => [step.tool, step.destructive])).toEqual([["app_update", true]]);
     const twin = planChanges(
       parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", name: "Notion" } })),
       current,
     );
-    expect(twin.steps.map((step) => [step.tool, step.destructive])).toEqual([["service_update", false]]);
+    expect(twin.steps.map((step) => [step.tool, step.destructive])).toEqual([["app_update", false]]);
   });
 
-  it("§6/§9 · an `archived` difference plans service_archive / service_unarchive, never an update carrying an archived field", () => {
+  it("§6/§9 · an `archived` difference plans app_archive / app_unarchive, never an update carrying an archived field", () => {
     const park = planChanges(
       parseDesired(doc({ home: { archived: true } })),
-      state([currentService({ slug: "home" })]),
+      state([currentApp({ slug: "home" })]),
     );
-    expect(tools(park)).toEqual(["service_archive"]);
-    expect(stepsOf(park, "service_archive")).toEqual([{ slug: "home" }]);
+    expect(tools(park)).toEqual(["app_archive"]);
+    expect(stepsOf(park, "app_archive")).toEqual([{ slug: "home" }]);
     const revive = planChanges(
       parseDesired(doc({ home: {} })),
-      state([currentService({ slug: "home", archived: true })]),
+      state([currentApp({ slug: "home", archived: true })]),
     );
-    expect(tools(revive)).toEqual(["service_unarchive"]);
+    expect(tools(revive)).toEqual(["app_unarchive"]);
     expect(JSON.stringify(park.steps)).not.toMatch(/archived/);
   });
 
-  it("§8/§9 · a file-only service declared `archived: true` plans TWO steps — service_create then service_archive — and `archived` never appears in service_create's arguments: the op has no such property and rejects additionalProperties, so \"carrying the normalized fields\" verbatim would be refused by the real tools/call; twin: `archived: false` plans the create alone", () => {
+  it("§8/§9 · a file-only app declared `archived: true` plans TWO steps — app_create then app_archive — and `archived` never appears in app_create's arguments: the op has no such property and rejects additionalProperties, so \"carrying the normalized fields\" verbatim would be refused by the real tools/call; twin: `archived: false` plans the create alone", () => {
     const parked = planChanges(parseDesired(doc({ home: { archived: true } })), state());
-    expect(tools(parked)).toEqual(["service_create", "service_archive"]);
-    expect(Object.keys(stepsOf(parked, "service_create")[0])).not.toContain("archived");
+    expect(tools(parked)).toEqual(["app_create", "app_archive"]);
+    expect(Object.keys(stepsOf(parked, "app_create")[0])).not.toContain("archived");
     const twin = planChanges(parseDesired(doc({ home: { archived: false } })), state());
-    expect(tools(twin)).toEqual(["service_create"]);
+    expect(tools(twin)).toEqual(["app_create"]);
   });
 
   it("§8 · every step's `args` is the OP's wire spelling, not the planner's normalized shape: snake_case keys (`redact_results`, `forward_identity`, `log_bodies`) and grant_set's `roles` as a flat string array with the `:approval` suffix re-joined — not DesiredGrant's split {role, mode}. `args` is documented as ready to forward verbatim, so a planner that forwarded the camelCase/split shape would satisfy every other case here and be rejected by every real tools/call (contracts/README direction C)", () => {
@@ -560,17 +560,17 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
       ),
       state(),
     );
-    const created = stepsOf(plan, "service_create")[0];
+    const created = stepsOf(plan, "app_create")[0];
     expect(Object.keys(created)).toEqual(
       expect.arrayContaining(["redact_results", "forward_identity", "log_bodies"]),
     );
     expect(JSON.stringify(plan.steps)).not.toMatch(/redactResults|forwardIdentity|logBodies/);
     expect(stepsOf(plan, "grant_set")).toEqual([
-      { account: "claude", service: "notion", roles: ["reader", "writer:approval"] },
+      { agent: "claude", app: "notion", roles: ["reader", "writer:approval"] },
     ]);
   });
 
-  it("§9 · a `grants:` block naming a service that exists neither in the file nor on the server is a hard error, not a grant_set against an unreferenceable slug: apply stops at the first failure with no rollback, so a typo that plans a doomed step AFTER the destructive delete phase leaves the namespace half-applied; twin: a slug the same file creates is fine, and the order row below pins the grant_set sorting after that create", () => {
+  it("§9 · a `grants:` block naming an app that exists neither in the file nor on the server is a hard error, not a grant_set against an unreferenceable slug: apply stops at the first failure with no rollback, so a typo that plans a doomed step AFTER the destructive delete phase leaves the namespace half-applied; twin: a slug the same file creates is fine, and the order row below pins the grant_set sorting after that create", () => {
     const ghost = planChanges(
       parseDesired(doc({ news: {} }, { claude: { grants: { newz: ["reader"] } } })),
       state(),
@@ -581,28 +581,28 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
       state(),
     );
     expect(twin.errors).toEqual([]);
-    expect(tools(twin)).toEqual(["service_create", "account_create", "grant_set"]);
+    expect(tools(twin)).toEqual(["app_create", "agent_create", "grant_set"]);
   });
 });
 
 describe("planChanges · severities, every refusal beside its allow-twin (§9)", () => {
-  it("§9 · a grant naming a role a TUNNELED service has not declared warns and still plans the grant_set (the file may be ahead of the first connection); twin: a declared role plans with no warning", () => {
-    const current = state([currentService({ slug: "news", roles: { reader: ["get_.*"] } })]);
+  it("§9 · a grant naming a role a TUNNELED app has not declared warns and still plans the grant_set (the file may be ahead of the first connection); twin: a declared role plans with no warning", () => {
+    const current = state([currentApp({ slug: "news", roles: { reader: ["get_.*"] } })]);
     const ahead = planChanges(
       parseDesired(doc({ news: {} }, { claude: { grants: { news: ["writer"] } } })),
-      { ...current, accounts: [currentAccount({ slug: "claude" })] },
+      { ...current, agents: [currentAgent({ slug: "claude" })] },
     );
     expect(ahead.errors).toEqual([]);
     expect(ahead.warnings.some((warning) => warning.includes("writer"))).toBe(true);
-    expect(stepsOf(ahead, "grant_set")).toEqual([{ account: "claude", service: "news", roles: ["writer"] }]);
+    expect(stepsOf(ahead, "grant_set")).toEqual([{ agent: "claude", app: "news", roles: ["writer"] }]);
     const twin = planChanges(
       parseDesired(doc({ news: {} }, { claude: { grants: { news: ["reader"] } } })),
-      { ...current, accounts: [currentAccount({ slug: "claude" })] },
+      { ...current, agents: [currentAgent({ slug: "claude" })] },
     );
     expect(twin.warnings).toEqual([]);
   });
 
-  it("§9 · the same undeclared role on a PROXIED service is a hard error — its roles live in this very file; twin: a role the file declares is accepted", () => {
+  it("§9 · the same undeclared role on a PROXIED app is a hard error — its roles live in this very file; twin: a role the file declares is accepted", () => {
     const file = (roles: string[]): DesiredConfig =>
       parseDesired(
         doc(
@@ -629,7 +629,7 @@ describe("planChanges · severities, every refusal beside its allow-twin (§9)",
     expect(plan.warnings).toEqual([]);
   });
 
-  it("§18 d10 · a grant of a role literally named `*` is NOT the built-in wildcard — `*` is only a PATTERN alias for `.*` and was retired as a role name, so it is treated as any other undeclared role (warning on tunnel, hard error on proxy, per the two rows above). An implementer who adds a `*`→`all` alias turns a typo into a full-namespace grant on a service; twin: `all` in the same position stays exempt. (Reported, not bent: §9's own YAML example still spells the wildcard grant `home: [\"*:approval\"]`, which §2 and decision 10 retired — that line needs a `spec:` fix, and this row is what it should read as)", () => {
+  it("§18 d10 · a grant of a role literally named `*` is NOT the built-in wildcard — `*` is only a PATTERN alias for `.*` and was retired as a role name, so it is treated as any other undeclared role (warning on tunnel, hard error on proxy, per the two rows above). An implementer who adds a `*`→`all` alias turns a typo into a full-namespace grant on an app; twin: `all` in the same position stays exempt. (Reported, not bent: §9's own YAML example still spells the wildcard grant `home: [\"*:approval\"]`, which §2 and decision 10 retired — that line needs a `spec:` fix, and this row is what it should read as)", () => {
     const onTunnel = planChanges(
       parseDesired(doc({ home: {} }, { claude: { grants: { home: ["*:approval"] } } })),
       state(),
@@ -653,7 +653,7 @@ describe("planChanges · severities, every refusal beside its allow-twin (§9)",
     expect(twin.warnings).toEqual([]);
   });
 
-  it("§9 · one role granted in both modes for one (account, service) is a hard error; twin: the same role in a single mode is accepted", () => {
+  it("§9 · one role granted in both modes for one (agent, app) is a hard error; twin: the same role in a single mode is accepted", () => {
     const dual = planChanges(
       parseDesired(doc({ news: {} }, { claude: { grants: { news: ["reader", "reader:approval"] } } })),
       state(),
@@ -723,7 +723,7 @@ describe("planChanges · severities, every refusal beside its allow-twin (§9)",
     expect(perFamily.errors).toEqual([]);
   });
 
-  it("§7/§9 · a `redact` or `redact_results` KEY that does not compile is a hard error on EITHER kind — the same rule the proxy `roles:` block gets, because both are the one pattern language over tool names. A key that compiles nowhere matches no tool, so the file reads as masking a password that the hub then persists in full; `pmcp apply` refusing locally is what keeps that from being discovered in an audit row. The message names the service and the key and never the declared paths — a diff runs on shared terminals; twin: the same key with its group closed plans cleanly", () => {
+  it("§7/§9 · a `redact` or `redact_results` KEY that does not compile is a hard error on EITHER kind — the same rule the proxy `roles:` block gets, because both are the one pattern language over tool names. A key that compiles nowhere matches no tool, so the file reads as masking a password that the hub then persists in full; `pmcp apply` refusing locally is what keeps that from being discovered in an audit row. The message names the app and the key and never the declared paths — a diff runs on shared terminals; twin: the same key with its group closed plans cleanly", () => {
     const typo = "get_(.*"; // one unclosed group
     const kinds: Record<string, unknown>[] = [{}, { kind: "proxy", endpoint: "https://x/mcp" }];
     for (const kind of kinds) {
@@ -743,15 +743,15 @@ describe("planChanges · severities, every refusal beside its allow-twin (§9)",
     expect(twin.errors).toEqual([]);
   });
 
-  it("§7/§8 · a `services:` key outside the slug grammar `[a-z0-9-]` is a hard error, an underscore especially: §7's aggregated `<slug>_<tool>` split depends on slugs having no `_`, so a service slugged `news_x` makes `news_x_get` ambiguous with service `news`'s tool `x_get` — tool-name confusion across two services in one namespace; twin: the same slug hyphenated (`news-x`) is accepted", () => {
+  it("§7/§8 · a `apps:` key outside the slug grammar `[a-z0-9-]` is a hard error, an underscore especially: §7's aggregated `<slug>_<tool>` split depends on slugs having no `_`, so an app slugged `news_x` makes `news_x_get` ambiguous with app `news`'s tool `x_get` — tool-name confusion across two apps in one namespace; twin: the same slug hyphenated (`news-x`) is accepted", () => {
     const underscored = planChanges(parseDesired(doc({ news_x: {} })), state());
     expect(underscored.errors.some((error) => error.includes("news_x"))).toBe(true);
     expect(planChanges(parseDesired(doc({ "news-x": {} })), state()).errors).toEqual([]);
   });
 
-  it("§8/§9 · the reserved `pmcp` slug is a hard error as a `services:` key and inside a `grants:` block alike — the reservation is uniform; twin: a slug that merely contains or is prefixed by it (`pmcp-admin`, `pmcpx`) is an ordinary service, because the reservation is the exact slug and the ops schemas' `^[a-z0-9-]+$` admits those neighbours", () => {
-    const asService = planChanges(parseDesired(doc({ pmcp: {} })), state());
-    expect(asService.errors.some((error) => error.includes("pmcp"))).toBe(true);
+  it("§8/§9 · the reserved `pmcp` slug is a hard error as a `apps:` key and inside a `grants:` block alike — the reservation is uniform; twin: a slug that merely contains or is prefixed by it (`pmcp-admin`, `pmcpx`) is an ordinary app, because the reservation is the exact slug and the ops schemas' `^[a-z0-9-]+$` admits those neighbours", () => {
+    const asApp = planChanges(parseDesired(doc({ pmcp: {} })), state());
+    expect(asApp.errors.some((error) => error.includes("pmcp"))).toBe(true);
     const inGrants = planChanges(
       parseDesired(doc({ news: {} }, { claude: { grants: { pmcp: ["all"] } } })),
       state(),
@@ -759,25 +759,25 @@ describe("planChanges · severities, every refusal beside its allow-twin (§9)",
     expect(inGrants.errors.some((error) => error.includes("pmcp"))).toBe(true);
     const twin = planChanges(parseDesired(doc({ "pmcp-admin": {}, pmcpx: {} })), state());
     expect(twin.errors).toEqual([]);
-    expect(tools(twin)).toEqual(["service_create", "service_create"]);
+    expect(tools(twin)).toEqual(["app_create", "app_create"]);
   });
 
-  it("§8 · a kind change on an existing slug is a hard error: kind is immutable and the planner never invents a delete-and-recreate the file did not ask for; twin: the same slug with an unchanged kind plans an ordinary service_update, so a planner that errored on every update cannot pass", () => {
-    const current = state([currentService({ slug: "news" })]);
+  it("§8 · a kind change on an existing slug is a hard error: kind is immutable and the planner never invents a delete-and-recreate the file did not ask for; twin: the same slug with an unchanged kind plans an ordinary app_update, so a planner that errored on every update cannot pass", () => {
+    const current = state([currentApp({ slug: "news" })]);
     const converted = planChanges(
       parseDesired(doc({ news: { kind: "proxy", endpoint: "https://x/mcp" } })),
       current,
     );
     expect(converted.errors.some((error) => error.includes("news"))).toBe(true);
-    expect(tools(converted)).not.toContain("service_delete");
+    expect(tools(converted)).not.toContain("app_delete");
     const twin = planChanges(parseDesired(doc({ news: { name: "News MCP" } })), current);
     expect(twin.errors).toEqual([]);
-    expect(stepsOf(twin, "service_update")).toEqual([{ slug: "news", name: "News MCP" }]);
+    expect(stepsOf(twin, "app_update")).toEqual([{ slug: "news", name: "News MCP" }]);
   });
 });
 
 describe("planChanges · order and laws (§9)", () => {
-  it("§9 · one fixture exercising all four phases pins the order deletes → creates → updates and archive transitions → grant_set, and a grant_set naming a service created in the same plan sorts after that create", () => {
+  it("§9 · one fixture exercising all four phases pins the order deletes → creates → updates and archive transitions → grant_set, and a grant_set naming an app created in the same plan sorts after that create", () => {
     const plan = planChanges(
       parseDesired(
         doc(
@@ -786,19 +786,19 @@ describe("planChanges · order and laws (§9)", () => {
         ),
       ),
       state(
-        [currentService({ slug: "gone" }), currentService({ slug: "news" })],
-        [currentAccount({ slug: "old" })],
+        [currentApp({ slug: "gone" }), currentApp({ slug: "news" })],
+        [currentAgent({ slug: "old" })],
       ),
     );
     expect(plan.errors).toEqual([]);
     expect([...tools(plan)].sort()).toEqual(
       [
-        "service_delete",
-        "account_delete",
-        "service_create",
-        "account_create",
-        "service_update",
-        "service_archive",
+        "app_delete",
+        "agent_delete",
+        "app_create",
+        "agent_create",
+        "app_update",
+        "app_archive",
         "grant_set",
         "grant_set",
       ].sort(),
@@ -806,20 +806,20 @@ describe("planChanges · order and laws (§9)", () => {
     // The four phases, in order. Ordering WITHIN a phase is incidental (file header), so
     // the assertion is that the phase index never decreases.
     const phase: Record<string, number> = {
-      service_delete: 0,
-      account_delete: 0,
-      service_create: 1,
-      account_create: 1,
-      service_update: 2,
-      service_archive: 2,
-      service_unarchive: 2,
+      app_delete: 0,
+      agent_delete: 0,
+      app_create: 1,
+      agent_create: 1,
+      app_update: 2,
+      app_archive: 2,
+      app_unarchive: 2,
       grant_set: 3,
     };
     const phases = tools(plan).map((tool) => phase[tool]);
     expect(phases).toEqual([...phases].sort((left, right) => left - right));
-    const createdAt = tools(plan).indexOf("service_create");
+    const createdAt = tools(plan).indexOf("app_create");
     const granted = plan.steps.findIndex(
-      (step) => step.tool === "grant_set" && step.args.service === "home",
+      (step) => step.tool === "grant_set" && step.args.app === "home",
     );
     expect(granted).toBeGreaterThan(createdAt);
   });
@@ -832,23 +832,23 @@ describe("planChanges · order and laws (§9)", () => {
           { claude: { grants: { news: ["reader", "reader:approval"], ghost: ["all"] } } },
         ),
       ),
-      state([currentService({ slug: "news" })]),
+      state([currentApp({ slug: "news" })]),
     );
     expect(plan.errors.length).toBeGreaterThan(2);
     // Best-effort: the legitimate half of the file is still planned.
-    expect(stepsOf(plan, "service_update")).toEqual([{ slug: "news", name: "News MCP" }]);
-    expect(() => planChanges({ services: [], serviceAccounts: [] }, state())).not.toThrow();
+    expect(stepsOf(plan, "app_update")).toEqual([{ slug: "news", name: "News MCP" }]);
+    expect(() => planChanges({ apps: [], agents: [] }, state())).not.toThrow();
   });
 
-  it("§8/§9 · the plan's tool vocabulary is CLOSED to the non-secret admin ops — service_create/update/delete/archive/unarchive, account_create/delete, grant_set — and no plan over any input emits `token_issue` or `service_set_upstream_auth`. `PlanStep.tool` is a free string and renderPlan prints every step's summary while apply executes each verbatim, so a planner that reached for §6's \"create then mint a token\" pairing would make `pmcp diff` and `pmcp apply` print credentials to stdout: secrets and humans are imperative-only and never in this file", () => {
+  it("§8/§9 · the plan's tool vocabulary is CLOSED to the non-secret admin ops — app_create/update/delete/archive/unarchive, agent_create/delete, grant_set — and no plan over any input emits `token_issue` or `app_set_upstream_auth`. `PlanStep.tool` is a free string and renderPlan prints every step's summary while apply executes each verbatim, so a planner that reached for §6's \"create then mint a token\" pairing would make `pmcp diff` and `pmcp apply` print credentials to stdout: secrets and humans are imperative-only and never in this file", () => {
     const vocabulary = new Set([
-      "service_create",
-      "service_update",
-      "service_delete",
-      "service_archive",
-      "service_unarchive",
-      "account_create",
-      "account_delete",
+      "app_create",
+      "app_update",
+      "app_delete",
+      "app_archive",
+      "app_unarchive",
+      "agent_create",
+      "agent_delete",
       "grant_set",
     ]);
     const plans = [
@@ -865,11 +865,11 @@ describe("planChanges · order and laws (§9)", () => {
         ),
         state(
           [
-            currentService({ slug: "gone" }),
-            currentService({ slug: "home" }),
-            currentService({ slug: "notion", kind: "proxy", endpoint: "https://x/mcp", auth: "headers", forwardIdentity: false }),
+            currentApp({ slug: "gone" }),
+            currentApp({ slug: "home" }),
+            currentApp({ slug: "notion", kind: "proxy", endpoint: "https://x/mcp", auth: "headers", forwardIdentity: false }),
           ],
-          [currentAccount({ slug: "cron", grants: { gone: [{ role: "all", mode: "allow" }] } })],
+          [currentAgent({ slug: "cron", grants: { gone: [{ role: "all", mode: "allow" }] } })],
         ),
       ),
       planChanges(parseDesired(doc({})), state()),
@@ -879,7 +879,7 @@ describe("planChanges · order and laws (§9)", () => {
     }
   });
 
-  it("§9 · the planner is pure in the sense plan.ts claims: parseDesired and planChanges mutate neither argument at any depth, and a second call on the same inputs returns a deep-equal Plan — `pmcp diff` and `pmcp apply` run in one process, so a planner that sorted or normalized `current.services` in place would corrupt the second pass with every other case still green (the twin of api.test.ts's non-mutation case)", () => {
+  it("§9 · the planner is pure in the sense plan.ts claims: parseDesired and planChanges mutate neither argument at any depth, and a second call on the same inputs returns a deep-equal Plan — `pmcp diff` and `pmcp apply` run in one process, so a planner that sorted or normalized `current.apps` in place would corrupt the second pass with every other case still green (the twin of api.test.ts's non-mutation case)", () => {
     const source = doc(
       { news: { redact: { search: ["q"] } }, home: { archived: true } },
       { claude: { grants: { news: ["reader", "writer:approval"] } } },
@@ -888,8 +888,8 @@ describe("planChanges · order and laws (§9)", () => {
     const desired = parseDesired(source);
     expect(source).toEqual(sourceCopy);
     const current = state(
-      [currentService({ slug: "news" }), currentService({ slug: "gone" })],
-      [currentAccount({ slug: "claude", grants: { news: [{ role: "reader", mode: "allow" }] } })],
+      [currentApp({ slug: "news" }), currentApp({ slug: "gone" })],
+      [currentAgent({ slug: "claude", grants: { news: [{ role: "reader", mode: "allow" }] } })],
     );
     const desiredCopy = structuredClone(desired);
     const currentCopy = structuredClone(current);
@@ -902,8 +902,8 @@ describe("planChanges · order and laws (§9)", () => {
   it("§9 · the empty-plan law — desired derived from an arbitrary current state plans nothing: no steps, no warnings, no errors. This is the file's churn insurance: it holds across every future field, so adding one to the config language costs one case above, not a rewrite here", () => {
     const current = state(
       [
-        currentService({ slug: "pmcp", builtin: true }),
-        currentService({
+        currentApp({ slug: "pmcp", builtin: true }),
+        currentApp({
           slug: "news",
           name: "News MCP",
           description: "RSS",
@@ -911,8 +911,8 @@ describe("planChanges · order and laws (§9)", () => {
           redact: { search: ["q"] },
           logBodies: true,
         }),
-        currentService({ slug: "home", archived: true }),
-        currentService({
+        currentApp({ slug: "home", archived: true }),
+        currentApp({
           slug: "notion",
           kind: "proxy",
           endpoint: "https://mcp.notion.com/mcp",
@@ -924,7 +924,7 @@ describe("planChanges · order and laws (§9)", () => {
         }),
       ],
       [
-        currentAccount({
+        currentAgent({
           slug: "claude",
           name: "Claude",
           grants: {
@@ -932,7 +932,7 @@ describe("planChanges · order and laws (§9)", () => {
             notion: [{ role: "editor", mode: "approval" }],
           },
         }),
-        currentAccount({ slug: "cron" }),
+        currentAgent({ slug: "cron" }),
       ],
     );
     expect(planChanges(desiredFromCurrent(current), current)).toEqual({ steps: [], warnings: [], errors: [] });
@@ -942,17 +942,17 @@ describe("planChanges · order and laws (§9)", () => {
 /**
  * The empty-plan law's other half: project a server state back into the file
  * that would have produced it. Writing this is itself a design check (strategy
- * §6) — if a CurrentService cannot be projected onto a DesiredService without
+ * §6) — if a CurrentApp cannot be projected onto a DesiredApp without
  * inventing or discarding a field, then desired and current have drifted and the
  * law is unstateable, which is the finding, not a test bug. Runtime facts the
  * planner must never see (online/offline, OAuth connection state, last seen) are
- * absent from CurrentService by construction, so they cannot leak in here; the
+ * absent from CurrentApp by construction, so they cannot leak in here; the
  * `builtin` pmcp row is dropped, since no file may name it (§8).
  *
  * THE PROJECTION IS KIND-DEPENDENT, and that carve-out is stated here so the guard
- * above does not fire on correct behavior (resolved 2026-08-26). `CurrentService.roles`
+ * above does not fire on correct behavior (resolved 2026-08-26). `CurrentApp.roles`
  * is required on BOTH kinds — from registration for tunnel, from config for proxy —
- * while `DesiredService.roles` is proxy-only. Projecting a tunneled service therefore
+ * while `DesiredApp.roles` is proxy-only. Projecting a tunneled app therefore
  * DISCARDS `roles`, by design: tunneled roles arrive at connect time and are
  * deliberately not desired state (§18 decision 3), which is the whole reason the file
  * only references them. Carrying them for proxy kind and dropping them for tunnel kind
@@ -961,34 +961,34 @@ describe("planChanges · order and laws (§9)", () => {
 export function desiredFromCurrent(current: CurrentState): DesiredConfig {
   // deps: none
   return {
-    services: current.services
-      .filter((service) => !service.builtin)
-      .map((service) => ({
-        slug: service.slug,
-        kind: service.kind,
-        name: service.name,
-        description: service.description,
-        archived: service.archived,
-        redact: service.redact,
-        redactResults: service.redactResults,
-        logBodies: service.logBodies,
-        ...(service.kind === "proxy"
+    apps: current.apps
+      .filter((app) => !app.builtin)
+      .map((app) => ({
+        slug: app.slug,
+        kind: app.kind,
+        name: app.name,
+        description: app.description,
+        archived: app.archived,
+        redact: app.redact,
+        redactResults: app.redactResults,
+        logBodies: app.logBodies,
+        ...(app.kind === "proxy"
           ? {
-              endpoint: service.endpoint,
-              auth: service.auth,
-              forwardIdentity: service.forwardIdentity,
-              roles: service.roles,
+              endpoint: app.endpoint,
+              auth: app.auth,
+              forwardIdentity: app.forwardIdentity,
+              roles: app.roles,
               // Optional on BOTH sides (§20.2's absent-is-absent), so the projection carries
               // the absence too rather than inventing the default the planner applies.
-              ...(service.capabilities === undefined ? {} : { capabilities: service.capabilities }),
+              ...(app.capabilities === undefined ? {} : { capabilities: app.capabilities }),
             }
           : {}),
       })),
-    serviceAccounts: current.accounts.map((account) => ({
-      slug: account.slug,
-      name: account.name,
-      description: account.description,
-      grants: account.grants,
+    agents: current.agents.map((agent) => ({
+      slug: agent.slug,
+      name: agent.name,
+      description: agent.description,
+      grants: agent.grants,
     })),
   };
 }
@@ -1004,7 +1004,7 @@ export function desiredFromCurrent(current: CurrentState): DesiredConfig {
  */
 describe("§9 · the YAML package feeding parseDesired", () => {
   /** §9's example file, verbatim from the spec — the format's only real specimen. */
-  const SPEC_EXAMPLE = `services:
+  const SPEC_EXAMPLE = `apps:
   news:                     # kind: tunnel is the default; roles come from registration
     name: News MCP
     description: RSS digester on the home server
@@ -1022,7 +1022,7 @@ describe("§9 · the YAML package feeding parseDesired", () => {
   linear:
     kind: proxy
     endpoint: https://mcp.linear.app/mcp
-    auth: oauth             # connected interactively from /services (§7)
+    auth: oauth             # connected interactively from /apps (§7)
     capabilities: [tools, resources]  # §20.2: what the scoped handshake advertises
     roles:
       reader: ["list_.*", "get_.*"]        # bare list = tools, unchanged (§20)
@@ -1033,7 +1033,7 @@ describe("§9 · the YAML package feeding parseDesired", () => {
     name: Home automation
     archived: true          # parked: connections refused, hidden from consumers
 
-service_accounts:
+agents:
   claude:
     name: Claude
     grants:
@@ -1046,23 +1046,23 @@ service_accounts:
       news: [reader]
 `;
 
-  it("§9 · the spec's own example parses into a plannable config: four services with their kinds, two accounts with their grants, and a plan that creates every one of them without a hard error", () => {
+  it("§9 · the spec's own example parses into a plannable config: four apps with their kinds, two agents with their grants, and a plan that creates every one of them without a hard error", () => {
     const desired = parseDesired(parseYaml(SPEC_EXAMPLE));
-    expect(desired.services.map((service) => `${service.slug}:${service.kind}`)).toEqual([
+    expect(desired.apps.map((app) => `${app.slug}:${app.kind}`)).toEqual([
       "news:tunnel",
       "notion:proxy",
       "linear:proxy",
       "home:tunnel",
     ]);
-    expect(desired.services[1].roles).toEqual({ editor: ["create_page", "update_.*"], reader: ["search", "fetch_.*"] });
+    expect(desired.apps[1].roles).toEqual({ editor: ["create_page", "update_.*"], reader: ["search", "fetch_.*"] });
     // §20.3's two spellings, mixed in one declaration exactly as the spec prints them.
-    expect(desired.services[2].roles).toEqual({
+    expect(desired.apps[2].roles).toEqual({
       reader: ["list_.*", "get_.*"],
       docs: { prompts: ["summarize_.*"], resources: ["linear://docs/*"] },
     });
-    const plan = planChanges(desired, { services: [], accounts: [] });
+    const plan = planChanges(desired, { apps: [], agents: [] });
     expect(plan.errors).toEqual([]);
-    const created = plan.steps.filter((step) => step.tool === "service_create");
+    const created = plan.steps.filter((step) => step.tool === "app_create");
     expect(created).toHaveLength(4);
     expect(plan.steps.filter((step) => step.tool === "grant_set")).toHaveLength(4);
     const args = (slug: string): Record<string, unknown> => created.find((step) => step.args.slug === slug)?.args ?? {};
@@ -1077,12 +1077,12 @@ service_accounts:
     expect(doc.a).toEqual({ archived: true, log_bodies: false, name: "Quoted Name", endpoint: "https://x/mcp" });
     expect(doc.b).toBeNull();
     // …and the shape the planner is handed for a defaults-only entry is unchanged.
-    expect(parseDesired(parseYaml("services:\n  news:\n")).services[0]).toMatchObject({ slug: "news", kind: "tunnel" });
+    expect(parseDesired(parseYaml("apps:\n  news:\n")).apps[0]).toMatchObject({ slug: "news", kind: "tunnel" });
   });
 
   it("§9 · the package is STRICTER than the subset it replaces: a duplicate key and a tab-indented line are now parse errors rather than a silently-kept last value", () => {
-    expect(() => parseYaml("services:\n  news:\n  news:\n")).toThrow();
-    expect(() => parseYaml("services:\n\tnews:\n")).toThrow();
+    expect(() => parseYaml("apps:\n  news:\n  news:\n")).toThrow();
+    expect(() => parseYaml("apps:\n\tnews:\n")).toThrow();
   });
 
   it("§9 · and it is more CAPABLE: an anchor, a multi-line scalar and a flow mapping — none of which the subset understood — reach the planner as ordinary values", () => {
@@ -1090,7 +1090,7 @@ service_accounts:
       [
         "defaults: &roles",
         "  reader: [get_.*]",
-        "services:",
+        "apps:",
         "  a:",
         "    roles: *roles",
         "  b:",
@@ -1100,8 +1100,8 @@ service_accounts:
         "    roles: { reader: [get_.*] }",
       ].join("\n"),
     ) as Record<string, any>;
-    expect(doc.services.a.roles).toEqual({ reader: ["get_.*"] });
-    expect(doc.services.b.description).toBe("two\nlines\n");
-    expect(doc.services.b.roles).toEqual({ reader: ["get_.*"] });
+    expect(doc.apps.a.roles).toEqual({ reader: ["get_.*"] });
+    expect(doc.apps.b.description).toBe("two\nlines\n");
+    expect(doc.apps.b.roles).toEqual({ reader: ["get_.*"] });
   });
 });

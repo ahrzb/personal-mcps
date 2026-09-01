@@ -33,20 +33,20 @@ export PMCP_URL=https://personal-mcps.ahrzb.workers.dev
 pmcp login
 ```
 
-Create the service and capture its token — the `pmcp_svc_…` value is shown once:
+Create the app and capture its token — the `pmcp_app_…` value is shown once:
 
 ```bash
-pmcp service create mybot
+pmcp app create mybot
 ```
 
-(Lost it? Mint another with `pmcp token issue --service mybot` and revoke the
+(Lost it? Mint another with `pmcp token issue --app mybot` and revoke the
 old one with `pmcp token list` / `token revoke`.)
 
 Give the bot its environment (any machine, no inbound ports needed):
 
 ```bash
 export PMCP_URL=https://personal-mcps.ahrzb.workers.dev
-export PMCP_SERVICE_TOKEN=pmcp_svc_...   # from service create
+export PMCP_APP_TOKEN=pmcp_app_...   # from app create
 ```
 
 ## 1. Python
@@ -95,12 +95,12 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     return [types.TextContent(type="text", text=f"sunny in {arguments['city']}")]
 
 
-# Blocks for the life of the service — treat it as the bot's main loop.
+# Blocks for the life of the app — treat it as the bot's main loop.
 asyncio.run(pmcp_client.serve(server, roles={"reader": ["get_*"]}))
 ```
 
-`url=` and `token=` parameters override the `PMCP_URL` / `PMCP_SERVICE_TOKEN` env
-vars. There is deliberately no service-name parameter: identity comes entirely
+`url=` and `token=` parameters override the `PMCP_URL` / `PMCP_APP_TOKEN` env
+vars. There is deliberately no app-name parameter: identity comes entirely
 from the token.
 
 ## 2. TypeScript
@@ -122,8 +122,8 @@ import { serve } from "@personal-mcps/client";
 await serve(server, { roles: { reader: ["get_*"] } });
 ```
 
-Same contract as Python: options fall back to `PMCP_URL` / `PMCP_SERVICE_TOKEN`,
-and the returned promise pends for the life of the service. For a hand-rolled SDK
+Same contract as Python: options fall back to `PMCP_URL` / `PMCP_APP_TOKEN`,
+and the returned promise pends for the life of the app. For a hand-rolled SDK
 session, construct `HubTransport` directly — `serve()` is sugar over it.
 
 ## 3. Roles
@@ -131,7 +131,7 @@ session, construct `HubTransport` directly — `serve()` is sugar over it.
 The `roles` declaration maps role names to anchored patterns over tool names
 (`get_*` matches `get_weather`; a bare name matches itself; `*` matches all).
 Declaring none means only owner tokens or grants of the built-in `all` role can
-reach the service. Grant a role to a service account:
+reach the app. Grant a role to an agent:
 
 ```bash
 pmcp diff      # preview against the YAML access config
@@ -148,7 +148,7 @@ consumers cannot forge these fields:
 
 ```python
 who = pmcp_client.caller(request_meta)
-who.principal        # "user:ahrzb" or "sa:claude"
+who.principal        # "user:ahrzb" or "agent:claude"
 who.has_role("admin")  # True for the role or the built-in "all"
 ```
 
@@ -184,20 +184,20 @@ const schema = sensitive(jsonSchema, ["credentials.token"]);
 
 ## 6. Connect a consumer
 
-Issue a service-account key (shown once, `pmcp_sa_…`):
+Issue an agent key (shown once, `pmcp_agt_…`):
 
 ```bash
-pmcp token issue --account claude
+pmcp token issue --agent claude
 ```
 
-Point Claude Code at the service:
+Point Claude Code at the app:
 
 ```bash
-claude mcp add --transport http mybot https://personal-mcps.ahrzb.workers.dev/ahrzb/mcp --header "Authorization: Bearer pmcp_sa_..."
+claude mcp add --transport http mybot https://personal-mcps.ahrzb.workers.dev/ahrzb/mcp --header "Authorization: Bearer pmcp_agt_..."
 ```
 
 Or call it from anywhere that speaks streamable HTTP MCP — the endpoint is
-`https://<hub>/<user>/mcp` with the key as a bearer token. Check what the account
+`https://<hub>/<user>/mcp` with the key as a bearer token. Check what the agent
 can see:
 
 ```bash
@@ -209,7 +209,7 @@ pmcp tools
 | Event | Behavior |
 |---|---|
 | Network drop, hub deploy, timeouts | Reconnects forever (jittered backoff, 1 s → 60 s cap) and re-registers; you never see it |
-| Service archived (403 / close 4002) | Keeps retrying at max backoff — unarchiving heals within a minute |
+| App archived (403 / close 4002) | Keeps retrying at max backoff — unarchiving heals within a minute |
 | Newer connection takes the slot (close 4000) | This copy stops quietly: `serve()` returns |
 | Dead credential (401 / close 4001) | Raises/rejects `CredentialsError` — terminal, never retried |
 | Role declaration rejected | Raises/rejects `RegistrationError` — terminal |

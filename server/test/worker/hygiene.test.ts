@@ -1,7 +1,7 @@
 // hygiene.test.ts — log hygiene as a property of the DATABASE, not of any one call site.
 // Everything §15 promises about persisted bodies is checked where it is falsifiable: in D1
 // after the hub has been driven hard. This suite pins (a) the §15 audit BODY table —
-// per-service `log_bodies` defaulting by kind and flipping both ways, args and result
+// per-app `log_bodies` defaulting by kind and flipping both ways, args and result
 // structuredContent stored only post-redaction under §7's per-direction unions,
 // unstructured result blocks stored as typed `blob` stubs, an over-cap body replaced whole
 // by one `oversize` stub, and `token_issue`'s key masked by the uniform rule with no
@@ -19,14 +19,14 @@
 // this is the one place a planted secret can leave the worker instead of landing in it.
 //
 // Project: `worker` — real D1, every sibling module real, and one socket: case 14a's, and
-// only case 14a's. Every other body path here is reachable without one: proxied services
-// (fake upstream over miniflare.outboundService) and the builtin `pmcp` service, whose
-// logBodies is fixed ON (gateway.virtualPmcpService). The tunneled live-socket body path is
+// only case 14a's. Every other body path here is reachable without one: proxied apps
+// (fake upstream over miniflare.outboundService) and the builtin `pmcp` app, whose
+// logBodies is fixed ON (gateway.virtualPmcpApp). The tunneled live-socket body path is
 // pinned once, in tunnel/pipeline-tunnel.test.ts and tunnel/approval-e2e.test.ts, and is
 // deliberately not re-pinned here; what this file owns of the tunneled side is the ROW
 // contract — the `log_bodies` default written at create, and the flip — plus the one law
 // whose only producer is a warmed catalog (case 14a: a schema-unsound tool has no
-// redaction map, and §7 puts the availability check ahead of that map, so the service has
+// redaction map, and §7 puts the availability check ahead of that map, so the app has
 // to be genuinely online). That socket is dialled and closed inside the case, and it uses
 // no tunnel-project harness: `tunnel` runs serial and un-isolated precisely because live
 // sockets outlive per-file isolation, and nothing here may depend on that.
@@ -57,11 +57,11 @@ import { tokenPattern } from "../../src/principal";
 import type { Env } from "../../src/index";
 import { AUDIT_BODY_CAP_BYTES, AUDIT_URI_CAP_BYTES, RETENTION_DAYS } from "../../src/limits";
 import { applyRedaction, PMCP_SLUG, REDACTED, Registry } from "../../src/registry";
-import type { GrantEntry, RoleDeclaration, ServiceKind } from "../../src/registry";
+import type { GrantEntry, RoleDeclaration, AppKind } from "../../src/registry";
 import { setHeaders } from "../../src/upstream";
 import { registerOverride, upstreamUrlFor } from "../harness/fake-upstream";
 import type { UpstreamScenario } from "../harness/fake-upstream";
-import { seedNamespace, seedOwnerSession, seedService, uniqueSlug } from "../harness/seed";
+import { seedNamespace, seedOwnerSession, seedApp, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 
 /**
@@ -95,25 +95,25 @@ export type AuditBodyRow = {
   spec: string;
   /** Case title in the doc's convention, appended after `spec`. */
   title: string;
-  /** The kind of service seeded — decides which `log_bodies` default is under test. */
-  kind: ServiceKind;
+  /** The kind of app seeded — decides which `log_bodies` default is under test. */
+  kind: AppKind;
   /** `log_bodies` as configured at create: "default" exercises the by-kind default, a boolean the flip. */
   logBodies: "default" | boolean;
   /**
    * Schema-declared secrets (§7): `writeOnly` paths in the tool's input / output schema.
    * A fixture INPUT rather than an expectation — the runner plants these marks on the fake
    * upstream's tool schemas — and what the table asserts is what they CONTRIBUTE, which
-   * for a proxied service is nothing (§7: no cached schema, so config paths are the whole
+   * for a proxied app is nothing (§7: no cached schema, so config paths are the whole
    * union). Positive schema-derived masking belongs to the two kinds that have a schema
    * the hub trusts: the `pmcp` builtin (case 15 below) and the tunneled path
    * (tunnel/pipeline-tunnel.test.ts, tunnel/approval-e2e.test.ts), per this file's header.
    */
   writeOnly: { args: string[]; results: string[] };
-  /** Config-declared secrets (§7): the service's `redact` / `redact_results` entries for this tool. */
+  /** Config-declared secrets (§7): the app's `redact` / `redact_results` entries for this tool. */
   configRedact: { args: string[]; results: string[] };
   /** `params.arguments` as the consumer sends them — before any masking. */
   args: Record<string, unknown>;
-  /** The result's `structuredContent` as the service returns it — before any masking. */
+  /** The result's `structuredContent` as the app returns it — before any masking. */
   structuredContent: Record<string, unknown>;
   /** Unstructured result blocks returned beside it; each must persist as a `blob` stub, never bytes. */
   blocks: { type: "text" | "image" | "resource"; contentType?: string }[];
@@ -145,7 +145,7 @@ export type AuditBodyRow = {
  * (strategy §9 rule 1) — agents write the type and the runner, never the rows.
  */
 export const AUDIT_BODY_ROWS: readonly AuditBodyRow[] = [
-  // The fixture, named once: one seeded service per row (the row's `kind` and
+  // The fixture, named once: one seeded app per row (the row's `kind` and
   // `log_bodies`), one allow-mode grant, one tool, and — for proxied rows — a fake upstream
   // returning the row's `structuredContent` and `blocks`. Every planted secret is spelled
   // `FAKE0000-…` so a value that ever does surface in a log, a body, or a failure message
@@ -162,7 +162,7 @@ export const AUDIT_BODY_ROWS: readonly AuditBodyRow[] = [
   //   results union is walked against (§7) — "session.key", never
   //   "result.structuredContent.session.key".
   // · The two TUNNELED rows carry `absent` on both columns and no visible values. That is
-  //   not a gap in the table: this project has no sockets, so a tunneled service is
+  //   not a gap in the table: this project has no sockets, so a tunneled app is
   //   never-connected, its call is refused -32000 at availability, and §15's "refusal rows
   //   never carry bodies" is the strongest true thing a tunneled row can say here. They
   //   exist so the row set spans {tunnel, proxy} × {default, flipped} — and what they pin
@@ -171,16 +171,16 @@ export const AUDIT_BODY_ROWS: readonly AuditBodyRow[] = [
   //   tunnel/pipeline-tunnel.test.ts's and tunnel/approval-e2e.test.ts's.
 
   // ── the by-kind default, both cells ───────────────────────────────────────────────────
-  // The row that makes "proxied off" a decision rather than an accident: the service
+  // The row that makes "proxied off" a decision rather than an accident: the app
   // declares no `log_bodies`, the call dispatches and succeeds, and NOTHING is recorded —
   // not the argument, not the result. Both planted values are sentinels, so this row is
   // also the sweep's cheapest contributor: an implementation that recorded bodies by
   // default fails here AND in the sweep, naming the column.
   {
     spec:
-      "The flag's default is by kind: tunneled on (our libraries declare secrets in both schema directions, §7/§11), proxied off (no trustworthy schema; the owner opts in per service and covers it with `redact` / `redact_results` paths, §9).",
+      "The flag's default is by kind: tunneled on (our libraries declare secrets in both schema directions, §7/§11), proxied off (no trustworthy schema; the owner opts in per app and covers it with `redact` / `redact_results` paths, §9).",
     title:
-      "a proxied service created without log_bodies records NEITHER body — the by-kind default is OFF, so an unmasked upstream result can never land in D1 by accident",
+      "a proxied app created without log_bodies records NEITHER body — the by-kind default is OFF, so an unmasked upstream result can never land in D1 by accident",
     kind: "proxy",
     logBodies: "default",
     writeOnly: { args: [], results: [] },
@@ -204,7 +204,7 @@ export const AUDIT_BODY_ROWS: readonly AuditBodyRow[] = [
     spec:
       "Refusal rows (`-32000`/`-32001`/`-32002`/`-32003`) never carry bodies — several refusals happen before any redaction map exists (a catalog-miss has no schema, §7), so recording them would persist unmasked arguments.",
     title:
-      "a tunneled service defaults log_bodies ON — and a call it cannot dispatch (never connected → -32000) still records NEITHER body: the flag decides whether there are bodies, the dispatch decides whether there is a call",
+      "a tunneled app defaults log_bodies ON — and a call it cannot dispatch (never connected → -32000) still records NEITHER body: the flag decides whether there are bodies, the dispatch decides whether there is a call",
     kind: "tunnel",
     logBodies: "default",
     writeOnly: { args: [], results: [] },
@@ -224,12 +224,12 @@ export const AUDIT_BODY_ROWS: readonly AuditBodyRow[] = [
   // The flipped tunneled cell: the same refusal with the flag explicitly off. Its value is
   // structural — it is the fourth corner of {tunnel, proxy} × {default, flipped}, so a
   // future change to either default cannot go untested — and it states one thing the row
-  // above cannot: the flip is honoured at create for tunneled services too.
+  // above cannot: the flip is honoured at create for tunneled apps too.
   {
     spec:
-      "The flag's default is by kind: tunneled on (our libraries declare secrets in both schema directions, §7/§11), proxied off (no trustworthy schema; the owner opts in per service and covers it with `redact` / `redact_results` paths, §9).",
+      "The flag's default is by kind: tunneled on (our libraries declare secrets in both schema directions, §7/§11), proxied off (no trustworthy schema; the owner opts in per app and covers it with `redact` / `redact_results` paths, §9).",
     title:
-      "a tunneled service created with log_bodies explicitly OFF stores the flip and records neither body — the by-kind default is a default, never a fixture",
+      "a tunneled app created with log_bodies explicitly OFF stores the flip and records neither body — the by-kind default is a default, never a fixture",
     kind: "tunnel",
     logBodies: false,
     writeOnly: { args: [], results: [] },
@@ -252,7 +252,7 @@ export const AUDIT_BODY_ROWS: readonly AuditBodyRow[] = [
   // to navigate rather than blanket a subtree.
   {
     spec:
-      "Config-declared (both kinds): the owner lists redaction paths per tool — `redact: { \"<tool-or-pattern>\": [\"password\", \"credentials.token\"] }` for arguments, and `redact_results:` (identical shape, applied to the result's `structuredContent`) — in the YAML / `service_update`.",
+      "Config-declared (both kinds): the owner lists redaction paths per tool — `redact: { \"<tool-or-pattern>\": [\"password\", \"credentials.token\"] }` for arguments, and `redact_results:` (identical shape, applied to the result's `structuredContent`) — in the YAML / `app_update`.",
     title:
       "proxied log_bodies ON · every configured `redact` / `redact_results` path is masked in the recorded bodies and every sibling path survives verbatim",
     kind: "proxy",
@@ -305,7 +305,7 @@ export const AUDIT_BODY_ROWS: readonly AuditBodyRow[] = [
   // point of pinning it.
   {
     spec:
-      "This is the only path for proxied services in v1: their `tools/list` is forwarded live and never cached, so there is no schema to derive from (honoring upstream `writeOnly` becomes possible if a proxied schema cache is ever added).",
+      "This is the only path for proxied apps in v1: their `tools/list` is forwarded live and never cached, so there is no schema to derive from (honoring upstream `writeOnly` becomes possible if a proxied schema cache is ever added).",
     title:
       "a proxied tool's own `writeOnly` marks contribute NOTHING — with no cached schema the config paths are the whole union, which is precisely why proxied bodies default off",
     kind: "proxy",
@@ -483,7 +483,7 @@ async function withCap<T>(config: AuditConfig, body: () => Promise<T>): Promise<
 }
 
 /**
- * The table runner: seeds the row's service and grant, drives one `tools/call` through the
+ * The table runner: seeds the row's app and grant, drives one `tools/call` through the
  * real endpoint against a fake upstream that returns the row's result, then reads the
  * persisted audit row back through audit.query and asserts each column against
  * `row.expect` — plus the row's `outcome` against the audit row's own outcome column, and
@@ -502,7 +502,7 @@ export async function runAuditBodyRow(row: AuditBodyRow): Promise<void> {
   const args = argsFor(row, config);
 
   const answer = await withCap(config, () =>
-    callTool(world.ns, world.credential, SERVICE, TOOL, args),
+    callTool(world.ns, world.credential, APP, TOOL, args),
   );
   const recorded = await lastCallRow(world.ns.owner.userId);
 
@@ -579,12 +579,12 @@ function assertColumn(
 /** The hub's own origin, as the worker under test knows it. */
 const ORIGIN = (env as unknown as Env).PUBLIC_ORIGIN;
 
-const SERVICE = "notion";
-const ACCOUNT = "agent";
+const APP = "notion";
+const AGENT = "agent";
 const TOKEN = "key";
 const TOOL = "search";
 
-/** The stored headers-mode credential — a proxied service with no envelope reads
+/** The stored headers-mode credential — a proxied app with no envelope reads
  *  not-connected and is refused before dispatch, which no `outcome: "ok"` row could survive. */
 const UPSTREAM_HEADERS = { Authorization: "Bearer FAKE0000-upstream-static-token" };
 
@@ -601,7 +601,7 @@ const BLOCK_BYTES = "FAKE0000-unstructured-block-bytes";
  * Data rather than residue on purpose: assembled by a `push` at the end of each case, "what
  * this file plants" would have no declared home — it would be reconstructed by execution
  * order, and a `-t`, a `.only` or a reordering would quietly shrink the sweep without
- * removing one assertion. Case 16's minted `pmcp_sa_` key is deliberately absent: the sweep
+ * removing one assertion. Case 16's minted `pmcp_agt_` key is deliberately absent: the sweep
  * hunts the token grammar structurally (TOKEN_MATERIAL), so a runtime-minted credential
  * needs no registration to be caught.
  */
@@ -656,12 +656,12 @@ async function seedBodyWorld(row: AuditBodyRow, blocks: unknown[]): Promise<Body
 }
 
 /**
- * A namespace with one service of the given kind and one account holding an allow-mode
- * wildcard grant on it — the least a `tools/call` needs. Proxied services are given their
+ * A namespace with one app of the given kind and one agent holding an allow-mode
+ * wildcard grant on it — the least a `tools/call` needs. Proxied apps are given their
  * stored credential here, through `setHeaders` and nothing else.
  */
 async function seedProxyWorld(spec: {
-  kind: ServiceKind;
+  kind: AppKind;
   upstream: UpstreamScenario;
   logBodies?: boolean;
   redact?: Record<string, string[]>;
@@ -670,9 +670,9 @@ async function seedProxyWorld(spec: {
 }): Promise<BodyWorld> {
   const proxied = spec.kind === "proxy";
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
-        slug: SERVICE,
+        slug: APP,
         kind: spec.kind,
         ...(proxied
           ? { upstreamUrl: upstreamUrlFor(spec.upstream), upstreamAuthMode: "headers" as const }
@@ -682,24 +682,24 @@ async function seedProxyWorld(spec: {
         ...(spec.redactResults === undefined ? {} : { redactResults: spec.redactResults }),
       },
     ],
-    accounts: [
+    agents: [
       {
-        slug: ACCOUNT,
-        grants: { [SERVICE]: [{ role: "all", mode: spec.mode ?? "allow" }] },
+        slug: AGENT,
+        grants: { [APP]: [{ role: "all", mode: spec.mode ?? "allow" }] },
         tokens: [{ as: TOKEN }],
       },
     ],
   });
   if (proxied) {
-    const service = await new Registry(env.DB).getService(ns.owner.userId, SERVICE);
-    if (service === null) throw new Error("seedProxyWorld: the seeded service vanished");
-    await setHeaders(service, UPSTREAM_HEADERS);
+    const app = await new Registry(env.DB).getApp(ns.owner.userId, APP);
+    if (app === null) throw new Error("seedProxyWorld: the seeded app vanished");
+    await setHeaders(app, UPSTREAM_HEADERS);
   }
   return { ns, credential: ns.tokens[TOKEN].token };
 }
 
 /** A tool whose schemas carry the row's `writeOnly` marks — a fixture INPUT: what the table
- *  asserts is what they CONTRIBUTE, which for a proxied service is nothing (§7). */
+ *  asserts is what they CONTRIBUTE, which for a proxied app is nothing (§7). */
 function toolMarking(marks: AuditBodyRow["writeOnly"]): Tool {
   return {
     name: TOOL,
@@ -853,7 +853,7 @@ export type SentryScrubRow = {
  * responses, and exception traces", and audit.ts — the hub's log-hygiene chokepoint — owns
  * `beforeSend`, the sink that carries the third. It is the one §15 sink with no
  * falsifiable case anywhere in the repo — an event carrying an `Authorization` header or a
- * `pmcp_sa_`/`pmcp_svc_` token would leave the worker with every suite green. The function
+ * `pmcp_agt_`/`pmcp_app_` token would leave the worker with every suite green. The function
  * is pinned PURE and exported (`src/audit`'s `beforeSend`), so the Sentry SDK stays what
  * it is here: not a dependency. Every planted credential is spelled `FAKE0000-…` in the
  * house style, and these rows also feed the file-wide sweep's grammar check.
@@ -861,17 +861,17 @@ export type SentryScrubRow = {
 export const SENTRY_SCRUB_ROWS: readonly SentryScrubRow[] = [
   {
     spec:
-      "Log hygiene: `Authorization` headers and anything matching `pmcp_(sa|svc)_…` are redacted from logs, error responses, and exception traces.",
+      "Log hygiene: `Authorization` headers and anything matching `pmcp_(agt|app)_…` are redacted from logs, error responses, and exception traces.",
     title:
       "an event carrying the consumer's `Authorization` header leaves without it · the sibling request headers it needs for triage ride along untouched",
     event: {
       headers: {
-        Authorization: "Bearer pmcp_sa_FAKE0000000000000000",
+        Authorization: "Bearer pmcp_agt_FAKE0000000000000000",
         "Content-Type": "application/json",
         "User-Agent": "claude-code/1.2.3",
       },
     },
-    scrubbed: ["pmcp_sa_FAKE0000000000000000", "Bearer pmcp_sa_FAKE0000000000000000"],
+    scrubbed: ["pmcp_agt_FAKE0000000000000000", "Bearer pmcp_agt_FAKE0000000000000000"],
     survives: ["application/json", "claude-code/1.2.3"],
   },
   // The header is the easy half; the grammar is the half that matters, because a token
@@ -879,22 +879,22 @@ export const SENTRY_SCRUB_ROWS: readonly SentryScrubRow[] = [
   // that echoes what it was given, a stack frame's argument.
   {
     spec:
-      "Log hygiene: `Authorization` headers and anything matching `pmcp_(sa|svc)_…` are redacted from logs, error responses, and exception traces.",
+      "Log hygiene: `Authorization` headers and anything matching `pmcp_(agt|app)_…` are redacted from logs, error responses, and exception traces.",
     title:
-      "a `pmcp_sa_` token embedded in the event MESSAGE is scrubbed by the grammar, not by the field it sat in · the surrounding prose survives, so the message still says what went wrong",
-    event: { message: "token verification failed for pmcp_sa_FAKE0000000000000000 on /ahrzb/mcp" },
-    scrubbed: ["pmcp_sa_FAKE0000000000000000"],
+      "a `pmcp_agt_` token embedded in the event MESSAGE is scrubbed by the grammar, not by the field it sat in · the surrounding prose survives, so the message still says what went wrong",
+    event: { message: "token verification failed for pmcp_agt_FAKE0000000000000000 on /ahrzb/mcp" },
+    scrubbed: ["pmcp_agt_FAKE0000000000000000"],
     survives: ["token verification failed", "/ahrzb/mcp"],
   },
   {
     spec:
-      "Log hygiene: `Authorization` headers and anything matching `pmcp_(sa|svc)_…` are redacted from logs, error responses, and exception traces.",
+      "Log hygiene: `Authorization` headers and anything matching `pmcp_(agt|app)_…` are redacted from logs, error responses, and exception traces.",
     title:
-      "a `pmcp_svc_` token inside an exception's value is scrubbed too — both halves of the `pmcp_(sa|svc)_` grammar, and the exception's own type and location survive",
+      "a `pmcp_app_` token inside an exception's value is scrubbed too — both halves of the `pmcp_(agt|app)_` grammar, and the exception's own type and location survive",
     event: {
-      exceptionValue: "connect rejected: service token pmcp_svc_FAKE0000000000000000 is revoked",
+      exceptionValue: "connect rejected: app token pmcp_app_FAKE0000000000000000 is revoked",
     },
-    scrubbed: ["pmcp_svc_FAKE0000000000000000"],
+    scrubbed: ["pmcp_app_FAKE0000000000000000"],
     survives: ["connect rejected", "is revoked"],
   },
   // The allow-twin of the three above, and the reason none of them can be passed by a
@@ -902,7 +902,7 @@ export const SENTRY_SCRUB_ROWS: readonly SentryScrubRow[] = [
   // the hub has bought its hygiene by going blind.
   {
     spec:
-      "Log hygiene: `Authorization` headers and anything matching `pmcp_(sa|svc)_…` are redacted from logs, error responses, and exception traces.",
+      "Log hygiene: `Authorization` headers and anything matching `pmcp_(agt|app)_…` are redacted from logs, error responses, and exception traces.",
     title:
       "an event with no secret in it passes through UNCHANGED, event and headers alike — the twin that stops \"scrub\" from quietly meaning \"drop\", which would trade every production signal for a rule nothing else can check",
     event: {
@@ -973,8 +973,8 @@ export type SentinelHit = { table: string; column: string; rowId: string; sentin
 
 /**
  * The whole-database sweep: every column of every table (better-auth's included), scanned
- * for each sentinel plus the `pmcp_sa_` / `pmcp_svc_` token grammar. Returns every hit, so
- * a failure reads as "audit.detail row 12 holds the service token" rather than "false is
+ * for each sentinel plus the `pmcp_agt_` / `pmcp_app_` token grammar. Returns every hit, so
+ * a failure reads as "audit.detail row 12 holds the app token" rather than "false is
  * not true". Non-vacuous by construction: the sweep also searches for a control value the
  * exercise above DID persist visibly, and reports the sweep itself as broken when that
  * control is missing — a scan that cannot find what is there proves nothing about what is
@@ -1022,8 +1022,8 @@ export async function sweepForSentinels(
 /**
  * Token MATERIAL, as opposed to the §5 display prefix. The length floor is what separates
  * them: `token.prefix` is deliberately stored and is only `PREFIX_DISPLAY_LENGTH` characters
- * (`pmcp_sa_` plus four), while a real credential's body is a base64url-encoded 256 bits. A
- * bare `pmcp_(sa|svc)_` search would report the column §5 designed, and a sweep that cries
+ * (`pmcp_agt_` plus four), while a real credential's body is a base64url-encoded 256 bits. A
+ * bare `pmcp_(agt|app)_` search would report the column §5 designed, and a sweep that cries
  * wolf on its own schema is a sweep somebody switches off. The PREFIXES are not transcribed
  * here — they come from the leaf identity mints them out of, so a rotated or extended prefix
  * is hunted by this sweep the same day, rather than leaving it silently matching nothing.
@@ -1065,44 +1065,44 @@ describe("§15 · the audit body table", () => {
 describe("§15 · log_bodies defaults by kind and flips both ways", () => {
   it("3. §15 · tunneled create with log_bodies absent stores it ON", async () => {
     const ns = await seedNamespace(env.DB, {});
-    const service = await seedService(env.DB, ns.owner.userId, { slug: SERVICE, kind: "tunnel" });
-    expect(service.logBodies).toBe(true);
+    const app = await seedApp(env.DB, ns.owner.userId, { slug: APP, kind: "tunnel" });
+    expect(app.logBodies).toBe(true);
   }, CASE_BUDGET_MS);
 
   it("4. §15 · proxied create with log_bodies absent stores it OFF", async () => {
     const ns = await seedNamespace(env.DB, {});
-    const service = await seedService(env.DB, ns.owner.userId, {
-      slug: SERVICE,
+    const app = await seedApp(env.DB, ns.owner.userId, {
+      slug: APP,
       kind: "proxy",
       upstreamUrl: upstreamUrlFor(healthyUpstream()),
     });
-    expect(service.logBodies).toBe(false);
+    expect(app.logBodies).toBe(false);
   }, CASE_BUDGET_MS);
 
-  it("5. §15 · log_bodies flipped OFF on a tunneled service · its tools/call records no bodies", async () => {
+  it("5. §15 · log_bodies flipped OFF on a tunneled app · its tools/call records no bodies", async () => {
     const world = await seedProxyWorld({
       kind: "tunnel",
       upstream: healthyUpstream(),
       logBodies: false,
     });
-    const service = await new Registry(env.DB).getService(world.ns.owner.userId, SERVICE);
-    expect(service?.logBodies, "the flip is honoured at create for tunneled services too").toBe(false);
+    const app = await new Registry(env.DB).getApp(world.ns.owner.userId, APP);
+    expect(app?.logBodies, "the flip is honoured at create for tunneled apps too").toBe(false);
 
-    await callTool(world.ns, world.credential, SERVICE, TOOL, { note: "FAKE0000-flip-off-arg" });
+    await callTool(world.ns, world.credential, APP, TOOL, { note: "FAKE0000-flip-off-arg" });
 
     const recorded = await lastCallRow(world.ns.owner.userId);
     expect(recorded.args).toBeUndefined();
     expect(recorded.result).toBeUndefined();
   }, CASE_BUDGET_MS);
 
-  it("6. §15 · log_bodies flipped ON for a proxied service · its tools/call records both bodies (the allow-twin of 5 — the flip is proven in both directions, not just off)", async () => {
+  it("6. §15 · log_bodies flipped ON for a proxied app · its tools/call records both bodies (the allow-twin of 5 — the flip is proven in both directions, not just off)", async () => {
     const world = await seedProxyWorld({
       kind: "proxy",
       upstream: healthyUpstream({ ok: "visible-flip-on-result" }),
       logBodies: true,
     });
 
-    await callTool(world.ns, world.credential, SERVICE, TOOL, { q: "visible-flip-on-arg" });
+    await callTool(world.ns, world.credential, APP, TOOL, { q: "visible-flip-on-arg" });
 
     const recorded = await lastCallRow(world.ns.owner.userId);
     expect(recorded.args, "the args column").toEqual({ q: "visible-flip-on-arg" });
@@ -1111,13 +1111,13 @@ describe("§15 · log_bodies defaults by kind and flips both ways", () => {
     });
   }, CASE_BUDGET_MS);
 
-  it("7. §15 · the builtin pmcp service records bodies with no row to configure (logBodies fixed ON)", async () => {
+  it("7. §15 · the builtin pmcp app records bodies with no row to configure (logBodies fixed ON)", async () => {
     const world = await seedPmcpWorld();
 
     await callTool(world.ns, world.credential, PMCP_SLUG, "token_list", {});
 
     const recorded = await lastCallRow(world.ns.owner.userId);
-    expect(recorded.service, "the builtin has no D1 row and still records under its slug").toBe(
+    expect(recorded.app, "the builtin has no D1 row and still records under its slug").toBe(
       PMCP_SLUG,
     );
     expect(recorded.args, "arguments, even an empty set").toEqual({});
@@ -1134,7 +1134,7 @@ describe("§15 · what may reach the two body columns", () => {
       redact: { [TOOL]: ["password", "credentials.token"] },
     });
 
-    await callTool(world.ns, world.credential, SERVICE, TOOL, {
+    await callTool(world.ns, world.credential, APP, TOOL, {
       q: "visible-args-row-query",
       password: PLANTED.case8Password,
       credentials: { token: PLANTED.case8Nested, user: "visible-args-row-user" },
@@ -1149,7 +1149,7 @@ describe("§15 · what may reach the two body columns", () => {
   }, CASE_BUDGET_MS);
 
   it("9. §7 · result structuredContent recorded post-redaction under the results union (schema writeOnly ∪ config redact_results) · a non-marked field beside it verbatim", async () => {
-    // The CONFIG half, on a proxied service — the only results source a proxied tool has (§7).
+    // The CONFIG half, on a proxied app — the only results source a proxied tool has (§7).
     const proxied = await seedProxyWorld({
       kind: "proxy",
       upstream: healthyUpstream({
@@ -1158,7 +1158,7 @@ describe("§15 · what may reach the two body columns", () => {
       logBodies: true,
       redactResults: { [TOOL]: ["session.key"] },
     });
-    await callTool(proxied.ns, proxied.credential, SERVICE, TOOL, { q: "anything" });
+    await callTool(proxied.ns, proxied.credential, APP, TOOL, { q: "anything" });
     expect((await lastCallRow(proxied.ns.owner.userId)).result?.structuredContent).toEqual({
       session: { key: REDACTED, id: "visible-case9-session-id" },
     });
@@ -1170,7 +1170,7 @@ describe("§15 · what may reach the two body columns", () => {
     const structured = (await lastCallRow(builtin.ns.owner.userId)).result
       ?.structuredContent as Record<string, unknown>;
     expect(structured.token, "the writeOnly-marked field").toBe(REDACTED);
-    expect(structured.kind, "a non-marked field beside it").toBe("service_account");
+    expect(structured.kind, "a non-marked field beside it").toBe("agent");
   }, CASE_BUDGET_MS);
 
   it('10. §15 · unstructured result blocks persist as blob stubs · the structuredContent beside them persists masked (never "all or nothing")', async () => {
@@ -1193,7 +1193,7 @@ describe("§15 · what may reach the two body columns", () => {
       redactResults: { [TOOL]: ["secret"] },
     });
 
-    await callTool(world.ns, world.credential, SERVICE, TOOL, { q: "anything" });
+    await callTool(world.ns, world.credential, APP, TOOL, { q: "anything" });
 
     const recorded = await lastCallRow(world.ns.owner.userId);
     expect(recorded.result?.content, "type and size, never bytes").toEqual([
@@ -1215,11 +1215,11 @@ describe("§15 · what may reach the two body columns", () => {
     });
 
     const over = { q: "x".repeat(shrunk.bodyCapBytes * 2) };
-    await withCap(shrunk, () => callTool(world.ns, world.credential, SERVICE, TOOL, over));
+    await withCap(shrunk, () => callTool(world.ns, world.credential, APP, TOOL, over));
     const oversize = await lastCallRow(world.ns.owner.userId);
 
     const under = { q: "visible-case11-arg" };
-    await withCap(shrunk, () => callTool(world.ns, world.credential, SERVICE, TOOL, under));
+    await withCap(shrunk, () => callTool(world.ns, world.credential, APP, TOOL, under));
     const intact = await lastCallRow(world.ns.owner.userId);
 
     expect(oversize.args, "the over-cap body, replaced whole").toEqual({
@@ -1242,7 +1242,7 @@ describe("§15 · what may reach the two body columns", () => {
     });
 
     await withCap(shrunk, () =>
-      callTool(world.ns, world.credential, SERVICE, TOOL, {
+      callTool(world.ns, world.credential, APP, TOOL, {
         q: "y".repeat(shrunk.bodyCapBytes * 2),
       }),
     );
@@ -1267,7 +1267,7 @@ describe("§15 · what may reach the two body columns", () => {
     await callTool(
       world.ns,
       world.credential,
-      SERVICE,
+      APP,
       TOOL,
       { q: "visible-case13-arg" },
       {
@@ -1288,7 +1288,7 @@ describe("§15 · what may reach the two body columns", () => {
     });
     const before = await countRows(world.ns.owner.userId, "tools/call");
 
-    await rpc(world.ns, world.credential, SERVICE, {
+    await rpc(world.ns, world.credential, APP, {
       jsonrpc: "2.0",
       id: 1,
       method: "tools/list",
@@ -1298,7 +1298,7 @@ describe("§15 · what may reach the two body columns", () => {
       "tools/list is out of the vocabulary, not merely filtered",
     ).toBe(before);
 
-    await callTool(world.ns, world.credential, SERVICE, TOOL, { q: "anything" });
+    await callTool(world.ns, world.credential, APP, TOOL, { q: "anything" });
     expect(await countRows(world.ns.owner.userId, "tools/call"), "and a call writes one").toBe(
       before + 1,
     );
@@ -1310,15 +1310,15 @@ describe("§15 · what may reach the two body columns", () => {
     // tunnel.sensitivePaths — rather than adminBackend's unknown-name null that stood in
     // for it while tunnel.ts was a skeleton. That costs this file its one socket (see the
     // header): §7's availability check precedes the redaction map, so an OFFLINE tunneled
-    // service is refused -32000 and never reaches the law this row owns. Everything else
+    // app is refused -32000 and never reaches the law this row owns. Everything else
     // here is unchanged, the assertions included.
     //
-    // A tunneled service is the right vehicle for a second reason: its log_bodies defaults
+    // A tunneled app is the right vehicle for a second reason: its log_bodies defaults
     // ON (§15), so "no body" has exactly one explanation — the null map — and none of the
     // flag.
     const world = await seedUnsoundTunnelWorld();
     try {
-      const refused = await callTool(world.ns, world.credential, SERVICE, UNSOUND_TOOL, {
+      const refused = await callTool(world.ns, world.credential, APP, UNSOUND_TOOL, {
         note: PLANTED.case14aUnmappedArg,
       });
       expect(refused.body.error?.code, "a null map refuses as not-permitted (§7)").toBe(-32001);
@@ -1327,7 +1327,7 @@ describe("§15 · what may reach the two body columns", () => {
       expect(unmapped.result, "in either column").toBeUndefined();
 
       // The allow-twin, on a walkable schema: both columns land, masked at the marked path.
-      await callTool(world.ns, world.credential, SERVICE, TOOL, { q: "visible-case14a-arg" });
+      await callTool(world.ns, world.credential, APP, TOOL, { q: "visible-case14a-arg" });
       const mapped = await lastCallRow(world.ns.owner.userId);
       expect(mapped.args, "the twin records arguments").toBeDefined();
       expect(
@@ -1358,7 +1358,7 @@ describe("§8/§15 · the uniform rule needs no pmcp special case", () => {
 
     const issued = await issueKey(world);
 
-    expect(issued.token.startsWith("pmcp_sa_"), "the caller got a usable credential").toBe(true);
+    expect(issued.token.startsWith("pmcp_agt_"), "the caller got a usable credential").toBe(true);
     expect(issued.token, "…unredacted").not.toBe(REDACTED);
     const structured = (await lastCallRow(world.ns.owner.userId)).result
       ?.structuredContent as Record<string, unknown>;
@@ -1381,7 +1381,7 @@ describe("§7 · served outputSchemas carry no writeOnly", () => {
       logBodies: true,
     });
 
-    const listed = await servedTool(world, SERVICE, TOOL);
+    const listed = await servedTool(world, APP, TOOL);
 
     expect(JSON.stringify(listed.outputSchema), "the hub's internal marker reached the wire")
       .not.toContain("writeOnly");
@@ -1400,7 +1400,7 @@ describe("§7 · served outputSchemas carry no writeOnly", () => {
       logBodies: true,
     });
 
-    const listed = await servedTool(world, null, `${SERVICE}_${TOOL}`);
+    const listed = await servedTool(world, null, `${APP}_${TOOL}`);
 
     expect(JSON.stringify(listed.outputSchema)).not.toContain("writeOnly");
     expect(JSON.stringify(listed.inputSchema)).toContain("writeOnly");
@@ -1426,7 +1426,7 @@ describe("§7 · redaction precedes hashing", () => {
     const world = await seedApprovalGatedWorld();
     const args = { q: "visible-case20-arg", password: PLANTED.case20Password };
 
-    await callTool(world.ns, world.credential, SERVICE, TOOL, args);
+    await callTool(world.ns, world.credential, APP, TOOL, args);
 
     const [row] = await approvalRows(world.ns.owner.userId);
     expect(row.args_hash).toBe(
@@ -1438,7 +1438,7 @@ describe("§7 · redaction precedes hashing", () => {
     const world = await seedApprovalGatedWorld();
     const args = { q: "visible-case21-arg", password: PLANTED.case21Password };
 
-    await callTool(world.ns, world.credential, SERVICE, TOOL, args);
+    await callTool(world.ns, world.credential, APP, TOOL, args);
 
     const [row] = await approvalRows(world.ns.owner.userId);
     expect(row.args_hash).not.toBe(await sha256Hex(canonicalJson(args)));
@@ -1447,11 +1447,11 @@ describe("§7 · redaction precedes hashing", () => {
   it("22. §7 · two calls differing only in a redacted field share one approval row · two differing in a visible field never do", async () => {
     const world = await seedApprovalGatedWorld();
 
-    await callTool(world.ns, world.credential, SERVICE, TOOL, {
+    await callTool(world.ns, world.credential, APP, TOOL, {
       q: "same-visible",
       password: PLANTED.case22First,
     });
-    await callTool(world.ns, world.credential, SERVICE, TOOL, {
+    await callTool(world.ns, world.credential, APP, TOOL, {
       q: "same-visible",
       password: PLANTED.case22Second,
     });
@@ -1460,7 +1460,7 @@ describe("§7 · redaction precedes hashing", () => {
       "a redacted field cannot distinguish two calls — it is not in the binding",
     ).toBe(1);
 
-    await callTool(world.ns, world.credential, SERVICE, TOOL, {
+    await callTool(world.ns, world.credential, APP, TOOL, {
       q: "other-visible",
       password: PLANTED.case22First,
     });
@@ -1481,7 +1481,7 @@ describe("§15 · the exception sink (Sentry beforeSend, pinned without the SDK)
       .toBeUndefined();
 
     const event = {
-      request: { headers: { Authorization: "Bearer pmcp_sa_FAKE0000000000000000" } },
+      request: { headers: { Authorization: "Bearer pmcp_agt_FAKE0000000000000000" } },
       message: "kept",
     };
     const snapshot = JSON.stringify(event);
@@ -1507,10 +1507,10 @@ function healthyUpstream(structuredContent: Record<string, unknown> = {}): Upstr
 }
 
 /**
- * Case 14a's world, and the only place this file holds a socket. A tunneled service, ONLINE
+ * Case 14a's world, and the only place this file holds a socket. A tunneled app, ONLINE
  * over a real `/connect` upgrade, whose cached catalog holds one tool §7's indirection
  * refuse-line rejects and one it can walk — the producer the case's title names, which no
- * socket-free surface can stand in for (the case says why). The account holds the built-in
+ * socket-free surface can stand in for (the case says why). The agent holds the built-in
  * `all` so the FILTER admits both tools and the refusal under test is the redaction map's.
  *
  * The catalog is warm when the pipeline serves both tools: an observable, polled, never a
@@ -1518,19 +1518,19 @@ function healthyUpstream(structuredContent: Record<string, unknown> = {}): Upstr
  */
 async function seedUnsoundTunnelWorld(): Promise<BodyWorld & { close(): Promise<void> }> {
   const ns = await seedNamespace(env.DB, {
-    services: [{ slug: SERVICE, kind: "tunnel", tokens: [{ as: "svc" }] }],
-    accounts: [
+    apps: [{ slug: APP, kind: "tunnel", tokens: [{ as: "app" }] }],
+    agents: [
       {
-        slug: ACCOUNT,
-        grants: { [SERVICE]: [{ role: "all", mode: "allow" }] },
+        slug: AGENT,
+        grants: { [APP]: [{ role: "all", mode: "allow" }] },
         tokens: [{ as: TOKEN }],
       },
     ],
   });
   const credential = ns.tokens[TOKEN].token;
-  const close = await dialTunneledService(ns.tokens.svc.token);
+  const close = await dialTunneledApp(ns.tokens.app.token);
   for (let turn = 0; turn < 250; turn++) {
-    const listed = await rpc(ns, credential, SERVICE, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const listed = await rpc(ns, credential, APP, { jsonrpc: "2.0", id: 1, method: "tools/list" });
     if (((listed.body.result?.tools ?? []) as Tool[]).length === CASE_14A_CATALOG.length) {
       return { ns, credential, close };
     }
@@ -1541,12 +1541,12 @@ async function seedUnsoundTunnelWorld(): Promise<BodyWorld & { close(): Promise<
 }
 
 /**
- * One real service on the other end of §6's wire: it dials `/connect` through the running
+ * One real app on the other end of §6's wire: it dials `/connect` through the running
  * worker, completes `hub/register`, serves the catalog and answers calls. Deliberately
- * hand-rolled rather than borrowed from `harness/fake-service`, whose header pins it to the
+ * hand-rolled rather than borrowed from `harness/fake-app`, whose header pins it to the
  * `tunnel` project — one case's socket must not import that project's assumptions.
  */
-async function dialTunneledService(token: string): Promise<() => Promise<void>> {
+async function dialTunneledApp(token: string): Promise<() => Promise<void>> {
   const response = await worker.fetch(
     new Request(`${ORIGIN}/connect`, {
       headers: { Upgrade: "websocket", Authorization: `Bearer ${token}` },
@@ -1620,7 +1620,7 @@ const CASE_14A_CATALOG: Tool[] = [
 /** A namespace whose owner can call the builtin — `pmcp` is owner-only (§8), so the
  *  credential is a real signed-in session's bearer token. */
 async function seedPmcpWorld(): Promise<BodyWorld> {
-  const ns = await seedNamespace(env.DB, { accounts: [{ slug: ACCOUNT }] });
+  const ns = await seedNamespace(env.DB, { agents: [{ slug: AGENT }] });
   const { token } = await seedOwnerSession(ns.owner);
   return { ns, credential: token };
 }
@@ -1630,8 +1630,8 @@ async function issueKey(
   world: BodyWorld,
 ): Promise<{ id: string; token: string; prefix: string }> {
   const answer = await callTool(world.ns, world.credential, PMCP_SLUG, "token_issue", {
-    kind: "service_account",
-    slug: ACCOUNT,
+    kind: "agent",
+    slug: AGENT,
   });
   const issued = answer.body.result?.structuredContent as
     | { id: string; token: string; prefix: string }
@@ -1685,7 +1685,7 @@ async function approvalRows(ownerId: string): Promise<{ id: string; args_hash: s
 // and it is the only section that TIGHTENS a §15 rule rather than inheriting one: a
 // resource URI is the row's `tool` column, it is caller-supplied and unbounded, and its
 // query component is a routine carrier of somebody else's bearer token — which §15's
-// scrubbing grammar, knowing only the hub's own `pmcp_(sa|svc)_` shape, would wave
+// scrubbing grammar, knowing only the hub's own `pmcp_(agt|app)_` shape, would wave
 // straight into a column any admin-token agent can read back for the whole retention
 // window.
 //
@@ -1693,7 +1693,7 @@ async function approvalRows(ownerId: string): Promise<{ id: string; args_hash: s
 // gate and the same envelope, and prompt messages and resource contents are content
 // blocks, which §15 already stubs. The one genuine exception is prompt ARGUMENTS — a
 // prompt has no JSON Schema and therefore no `writeOnly` channel, so §20.3 puts them on
-// the PROXIED posture whatever the service's kind, and the tunneled row below is what
+// the PROXIED posture whatever the app's kind, and the tunneled row below is what
 // makes that a rule rather than a coincidence of which fixture was cheapest.
 //
 // These cases sit outside AUDIT_BODY_ROWS deliberately: that table's columns are a
@@ -1724,7 +1724,7 @@ const READ_PROMPT = "digest_daily";
 const READ_URI = "news://feed/tech";
 
 /**
- * The template and the completion answer the same service serves. They exist for exactly
+ * The template and the completion answer the same app serves. They exist for exactly
  * one case — the four unaudited methods — and they exist because "no row" is only a
  * statement about the METHOD when the method had something to answer with: an upstream
  * serving no templates and no completions makes "wrote no row" and "was never
@@ -1733,7 +1733,7 @@ const READ_URI = "news://feed/tech";
 const READ_TEMPLATE = "news://feed/{id}";
 const READ_COMPLETION_RESULT = { completion: { values: ["tech", "world"], hasMore: false } };
 
-/** The tunneled fixture's second prompt: the one its service's `redact` map has an entry
+/** The tunneled fixture's second prompt: the one its app's `redact` map has an entry
  *  for. READ_PROMPT beside it has none, and the pair is what makes §20.3's rule
  *  ("log_bodies on AND a matching entry", kind-blind) tellable from "tunnels record
  *  nothing" and from a log_bodies default that moved. */
@@ -1747,9 +1747,9 @@ const REDACTED_PROMPT = "digest_redacted";
 const QUERYLESS_URI = "https://files.pmcp-test.invalid/notes/report.txt";
 const QUERIED_URI = `${QUERYLESS_URI}?access_token=${PLANTED.readAccessToken}&harmless=keep`;
 
-/** A `pmcp_sa_`-SHAPED string in a URI's path, where the query rule cannot reach it — so
+/** A `pmcp_agt_`-SHAPED string in a URI's path, where the query rule cannot reach it — so
  *  §15's own grammar is the only thing left that can keep it out of the column. */
-const TOKEN_SHAPED_SEGMENT = "pmcp_sa_FAKE0000000000000000";
+const TOKEN_SHAPED_SEGMENT = "pmcp_agt_FAKE0000000000000000";
 
 /** What a matched `prompts/get` answers by default. */
 const READ_PROMPT_RESULT = {
@@ -1768,13 +1768,13 @@ type ReadWorldSpec = {
   redact?: Record<string, string[]>;
   promptResult?: unknown;
   readResult?: unknown;
-  /** The proxied service's virtual roles (default: none — the account holds `all`). */
+  /** The proxied app's virtual roles (default: none — the agent holds `all`). */
   roles?: RoleDeclaration;
   grant?: GrantEntry[];
 };
 
 /**
- * A proxied service serving both read families with `log_bodies` ON, and one account on
+ * A proxied app serving both read families with `log_bodies` ON, and one agent on
  * it. Proxied and not tunneled for every case but one: §20.3 puts prompt arguments on the
  * proxied posture REGARDLESS of kind, so the proxied side is where the rule is cheapest
  * to state and the tunneled side (below) is where it is worth proving.
@@ -1798,9 +1798,9 @@ async function seedReadWorld(spec: ReadWorldSpec = {}): Promise<BodyWorld> {
   } satisfies Partial<ServingScenario>);
   const upstream: ServingScenario = { id, mode: { kind: "ok" } };
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
-        slug: SERVICE,
+        slug: APP,
         kind: "proxy",
         upstreamUrl: upstreamUrlFor(upstream),
         upstreamAuthMode: "headers",
@@ -1809,17 +1809,17 @@ async function seedReadWorld(spec: ReadWorldSpec = {}): Promise<BodyWorld> {
         ...(spec.redact === undefined ? {} : { redact: spec.redact }),
       },
     ],
-    accounts: [
+    agents: [
       {
-        slug: ACCOUNT,
-        grants: { [SERVICE]: spec.grant ?? [{ role: "all", mode: "allow" }] },
+        slug: AGENT,
+        grants: { [APP]: spec.grant ?? [{ role: "all", mode: "allow" }] },
         tokens: [{ as: TOKEN }],
       },
     ],
   });
-  const service = await new Registry(env.DB).getService(ns.owner.userId, SERVICE);
-  if (service === null) throw new Error("seedReadWorld: the seeded service vanished");
-  await setHeaders(service, UPSTREAM_HEADERS);
+  const app = await new Registry(env.DB).getApp(ns.owner.userId, APP);
+  if (app === null) throw new Error("seedReadWorld: the seeded app vanished");
+  await setHeaders(app, UPSTREAM_HEADERS);
   return { ns, credential: ns.tokens[TOKEN].token };
 }
 
@@ -1829,7 +1829,7 @@ async function getPromptThrough(
   name: string,
   args: Record<string, unknown> = {},
 ): Promise<Answer> {
-  return rpc(world.ns, world.credential, SERVICE, {
+  return rpc(world.ns, world.credential, APP, {
     jsonrpc: "2.0",
     id: 1,
     method: "prompts/get",
@@ -1839,7 +1839,7 @@ async function getPromptThrough(
 
 /** One scoped `resources/read`. */
 async function readThrough(world: BodyWorld, uri: string): Promise<Answer> {
-  return rpc(world.ns, world.credential, SERVICE, {
+  return rpc(world.ns, world.credential, APP, {
     jsonrpc: "2.0",
     id: 1,
     method: "resources/read",
@@ -1892,7 +1892,7 @@ describe("§20.4 · what a read writes into the tool column", () => {
     const recorded = await lastRow(world.ns.owner.userId, "prompts/get");
     expect(recorded.event, "the method IS the event (§15's vocabulary, extended)").toBe("prompts/get");
     expect(recorded.tool, "the prompt name, where a call puts its tool name").toBe(READ_PROMPT);
-    expect(recorded.service).toBe(SERVICE);
+    expect(recorded.app).toBe(APP);
     expect(recorded.outcome).toBe("ok");
     expect(typeof recorded.durationMs, "audited like a call, timing included").toBe("number");
   }, CASE_BUDGET_MS);
@@ -1967,12 +1967,12 @@ describe("§20.4 · what a read writes into the tool column", () => {
       ["resources/templates/list", (result) => result.resourceTemplates],
     ];
     for (const [method, served] of listings) {
-      const listed = await rpc(world.ns, world.credential, SERVICE, { jsonrpc: "2.0", id: 1, method });
+      const listed = await rpc(world.ns, world.credential, APP, { jsonrpc: "2.0", id: 1, method });
       expect(listed.body.error, method).toBeUndefined();
       expect(served(listed.body.result ?? {}) as unknown[], `${method} answered nothing`)
         .toHaveLength(1);
     }
-    const completed = await rpc(world.ns, world.credential, SERVICE, {
+    const completed = await rpc(world.ns, world.credential, APP, {
       jsonrpc: "2.0",
       id: 1,
       method: "completion/complete",
@@ -1995,7 +1995,7 @@ describe("§20.4 · what a read writes into the tool column", () => {
       grant: [{ role: "reader", mode: "allow" }],
     });
     const beforeRefusal = (await query(env.DB, limited.ns.owner.userId, { limit: 200 })).total;
-    const refused = await rpc(limited.ns, limited.credential, SERVICE, {
+    const refused = await rpc(limited.ns, limited.credential, APP, {
       jsonrpc: "2.0",
       id: 1,
       method: "completion/complete",
@@ -2008,7 +2008,7 @@ describe("§20.4 · what a read writes into the tool column", () => {
     ).toBe(beforeRefusal);
   }, CASE_BUDGET_MS);
 
-  it("§20.4 · a resource URI carrying a pmcp_sa_-shaped substring is scrubbed by §15's grammar before it is logged", async () => {
+  it("§20.4 · a resource URI carrying a pmcp_agt_-shaped substring is scrubbed by §15's grammar before it is logged", async () => {
     // In the PATH, where the query rule cannot reach it: §15's "token material never, in
     // any column" is the only thing standing between this string and a column
     // `audit_query` serves and the JSONL export ships.
@@ -2025,13 +2025,13 @@ describe("§20.4 · what a read writes into the tool column", () => {
 });
 
 describe("§20.4 · what a read writes into the two body columns", () => {
-  it("§20.4 · a prompt argument matched by the service's redact map is masked in the stored body · the caller's live reply still carries it (the twin)", async () => {
+  it("§20.4 · a prompt argument matched by the app's redact map is masked in the stored body · the caller's live reply still carries it (the twin)", async () => {
     // §20.3 keeps the redaction map family-blind: the same `redact:` entry that covers a
     // tool covers a prompt of that name. The owner having written it is the declaration
     // that stands in for the schema a prompt does not have.
     const world = await seedReadWorld({
       redact: { [READ_PROMPT]: ["password"] },
-      // The service's own answer carries the same secret, so "the live reply still carries
+      // The app's own answer carries the same secret, so "the live reply still carries
       // it" is a fact about the wire rather than an echo the fixture arranged.
       promptResult: {
         description: "the daily digest",
@@ -2054,10 +2054,10 @@ describe("§20.4 · what a read writes into the two body columns", () => {
     ).toBe(true);
   }, CASE_BUDGET_MS);
 
-  it("§20.4 · a prompts/get on a service with no redact entry for that prompt records NO arguments body, even on a tunneled service with log_bodies on — prompts carry no writeOnly channel, so they take the proxied posture (§20.3) · the row itself, its outcome and the prompt name are still written (the twin)", async () => {
-    // A TUNNELED service, online over a real socket, whose log_bodies defaults ON — the
+  it("§20.4 · a prompts/get on an app with no redact entry for that prompt records NO arguments body, even on a tunneled app with log_bodies on — prompts carry no writeOnly channel, so they take the proxied posture (§20.3) · the row itself, its outcome and the prompt name are still written (the twin)", async () => {
+    // A TUNNELED app, online over a real socket, whose log_bodies defaults ON — the
     // only fixture in which "no arguments body" has exactly one explanation. On a proxied
-    // service the flag alone would explain it, and the rule §20.3 is stating would be
+    // app the flag alone would explain it, and the rule §20.3 is stating would be
     // indistinguishable from §15's existing default.
     const world = await seedPromptTunnelWorld();
     try {
@@ -2072,12 +2072,12 @@ describe("§20.4 · what a read writes into the two body columns", () => {
       // The twin: not recording the arguments is not the same as not recording the read.
       expect(recorded.tool).toBe(READ_PROMPT);
       expect(recorded.outcome).toBe("ok");
-      expect(recorded.principal).toBe(`sa:${ACCOUNT}`);
+      expect(recorded.principal).toBe(`agent:${AGENT}`);
 
-      // …and the leg that turns "even on a tunneled service with log_bodies on" from a
-      // comment into an assertion: the SAME socket, the same service, one prompt the
-      // service's redact map does name. Without it, a hub that recorded no prompt
-      // arguments on a tunneled service at all passes above — and §20.3 pins the rule
+      // …and the leg that turns "even on a tunneled app with log_bodies on" from a
+      // comment into an assertion: the SAME socket, the same app, one prompt the
+      // app's redact map does name. Without it, a hub that recorded no prompt
+      // arguments on a tunneled app at all passes above — and §20.3 pins the rule
       // kind-blind — as would a tunnel `log_bodies` default that quietly flipped OFF.
       const named = await getPromptThrough(world, REDACTED_PROMPT, {
         note: PLANTED.readTunnelArgument,
@@ -2171,60 +2171,60 @@ describe("§20.4 · what a read writes into the two body columns", () => {
 
 /**
  * The tunneled prompt world, and the second socket this file holds (case 14a's is the
- * other). A service ONLINE over a real `/connect` upgrade, answering `prompts/get` over
+ * other). An app ONLINE over a real `/connect` upgrade, answering `prompts/get` over
  * the wire — the only fixture in which §20.3's "prompt arguments take the proxied posture
- * REGARDLESS of the service's kind" can be told apart from §15's proxied default.
+ * REGARDLESS of the app's kind" can be told apart from §15's proxied default.
  *
  * `close` is the caller's obligation: a leaked socket outlives this file.
  */
 async function seedPromptTunnelWorld(): Promise<BodyWorld & { close(): Promise<void> }> {
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
-        slug: SERVICE,
+        slug: APP,
         kind: "tunnel",
         // An entry for ONE of the two prompts this socket serves, and `log_bodies` left at
         // the tunneled default (§15: ON). That pair is the whole fixture: the entry-less
         // prompt records no arguments and the entry-carrying one records them masked, so
         // the flag's state is observed rather than assumed.
         redact: { [REDACTED_PROMPT]: ["note"] },
-        tokens: [{ as: "svc" }],
+        tokens: [{ as: "app" }],
       },
     ],
-    accounts: [
+    agents: [
       {
-        slug: ACCOUNT,
+        slug: AGENT,
         // The built-in `all` spans every family (§20.3) and needs no declaration — which
         // is what lets this fixture register with no roles at all and still be granted a
-        // prompt the service never declared a pattern for.
-        grants: { [SERVICE]: [{ role: "all", mode: "allow" }] },
+        // prompt the app never declared a pattern for.
+        grants: { [APP]: [{ role: "all", mode: "allow" }] },
         tokens: [{ as: TOKEN }],
       },
     ],
   });
   const credential = ns.tokens[TOKEN].token;
-  const close = await dialPromptTunnel(ns.tokens.svc.token);
+  const close = await dialPromptTunnel(ns.tokens.app.token);
   // Warm is observable, never slept for: the pipeline serving the catalog IS registration
   // having completed.
   for (let turn = 0; turn < 250; turn++) {
-    const listed = await rpc(ns, credential, SERVICE, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const listed = await rpc(ns, credential, APP, { jsonrpc: "2.0", id: 1, method: "tools/list" });
     if (((listed.body.result?.tools ?? []) as Tool[]).length === 1) {
       return { ns, credential, close };
     }
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
   await close();
-  throw new Error("the tunneled prompt service never registered");
+  throw new Error("the tunneled prompt app never registered");
 }
 
 /**
- * One real service on the other end of §6's wire, serving one tool and one prompt.
- * Hand-rolled for the reason case 14a's is: `harness/fake-service` is pinned to the
+ * One real app on the other end of §6's wire, serving one tool and one prompt.
+ * Hand-rolled for the reason case 14a's is: `harness/fake-app` is pinned to the
  * `tunnel` project, and one case's socket must not import that project's assumptions.
  *
  * It answers §6's registration-time `server/discover` with **-32601** deliberately. That
- * is §20.5's compatibility fallback — the leg that keeps every service already in the
- * field alive — so this fixture exercises the path a deployed service actually takes, and
+ * is §20.5's compatibility fallback — the leg that keeps every app already in the
+ * field alive — so this fixture exercises the path a deployed app actually takes, and
  * this file states nothing about the discover answer's shape, which is tunnel/**'s.
  */
 async function dialPromptTunnel(token: string): Promise<() => Promise<void>> {
@@ -2297,7 +2297,7 @@ async function dialPromptTunnel(token: string): Promise<() => Promise<void>> {
 /** The URI the subscribe cases name, and the catalog entry behind it. */
 const SUBSCRIBED_URI = READ_URI;
 
-/** One §21.6 world: a tunneled service ONLINE over a real `/connect` upgrade, one account
+/** One §21.6 world: a tunneled app ONLINE over a real `/connect` upgrade, one agent
  *  holding the built-in wildcard on it (so every URI passes the filter, §20.3), plus the two
  *  provocations §21.6's negative row needs — a catalog change, and one `updated`. */
 type PushWorld = BodyWorld & {
@@ -2310,34 +2310,34 @@ type PushWorld = BodyWorld & {
 
 async function seedPushTunnelWorld(): Promise<PushWorld> {
   const ns = await seedNamespace(env.DB, {
-    services: [{ slug: SERVICE, kind: "tunnel", tokens: [{ as: "svc" }] }],
-    accounts: [
+    apps: [{ slug: APP, kind: "tunnel", tokens: [{ as: "app" }] }],
+    agents: [
       {
         // The built-in `all` spans every family and needs no declaration (§20.3), which is
         // what lets this fixture register with no roles and still pass a URI filter.
-        slug: ACCOUNT,
-        grants: { [SERVICE]: [{ role: "all", mode: "allow" }] },
+        slug: AGENT,
+        grants: { [APP]: [{ role: "all", mode: "allow" }] },
         tokens: [{ as: TOKEN }],
       },
     ],
   });
   const credential = ns.tokens[TOKEN].token;
-  const service = await dialPushTunnel(ns.tokens.svc.token);
+  const app = await dialPushTunnel(ns.tokens.app.token);
   // Registration is observable, never slept for: the pipeline serving the catalog IS
   // registration having completed.
   for (let turn = 0; turn < 250; turn++) {
-    const listed = await rpc(ns, credential, SERVICE, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const listed = await rpc(ns, credential, APP, { jsonrpc: "2.0", id: 1, method: "tools/list" });
     if (((listed.body.result?.tools ?? []) as Tool[]).length === 1) {
-      return { ns, credential, ...service };
+      return { ns, credential, ...app };
     }
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
-  await service.close();
+  await app.close();
   throw new Error("the tunneled push service never registered");
 }
 
 /**
- * One real service on §6's wire that answers `resources/subscribe` and its mirror natively
+ * One real app on §6's wire that answers `resources/subscribe` and its mirror natively
  * (§21.4: "the author's SDK answers it natively, so neither client library changes"), and
  * can be told to change its resource catalog or emit one `updated`. Its registration-time
  * `server/discover` answers -32601 — §20.5's compatibility fallback — so this file states
@@ -2422,7 +2422,7 @@ async function subscribeThrough(
   session?: string,
 ): Promise<Answer> {
   const response = await worker.fetch(
-    new Request(`${ORIGIN}/${world.ns.owner.username}/mcp/${SERVICE}`, {
+    new Request(`${ORIGIN}/${world.ns.owner.username}/mcp/${APP}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2446,7 +2446,7 @@ type OpenStream = {
 
 async function openStream(world: BodyWorld): Promise<OpenStream> {
   const response = await worker.fetch(
-    new Request(`${ORIGIN}/${world.ns.owner.username}/mcp/${SERVICE}`, {
+    new Request(`${ORIGIN}/${world.ns.owner.username}/mcp/${APP}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2511,7 +2511,7 @@ describe("§21.6 · what push writes, and what it does not", () => {
         `${QUERYLESS_URI}${REDACTED_QUERY}`,
       );
       expect(sub.tool).not.toContain(PLANTED.readAccessToken);
-      expect(sub.service).toBe(SERVICE);
+      expect(sub.app).toBe(APP);
       expect(sub.outcome).toBe("ok");
       // No bodies, with log_bodies at the tunneled default ON: there are none to carry, so a
       // hub that recorded an empty pair would be recording a shape §21.6 does not have.
@@ -2534,7 +2534,7 @@ describe("§21.6 · what push writes, and what it does not", () => {
       const unsub = await lastRow(world.ns.owner.userId, "resources/unsubscribe");
       expect(unsub.event).toBe("resources/unsubscribe");
       expect(unsub.tool).toBe(`${QUERYLESS_URI}${REDACTED_QUERY}`);
-      expect(unsub.service).toBe(SERVICE);
+      expect(unsub.app).toBe(APP);
       expect(unsub.outcome).toBe("ok");
       expect(unsub.args).toBeUndefined();
       expect(unsub.result).toBeUndefined();
@@ -2620,11 +2620,11 @@ describe("§15 · the sweep", () => {
       upstream: healthyUpstream({ ok: marker }),
       logBodies: true,
     });
-    await callTool(recorded.ns, recorded.credential, SERVICE, TOOL, { q: marker });
+    await callTool(recorded.ns, recorded.credential, APP, TOOL, { q: marker });
 
     // …and one gated call, whose argument lands in the approval row instead.
     const gated = await seedApprovalGatedWorld();
-    await callTool(gated.ns, gated.credential, SERVICE, TOOL, { q: marker, password: "x" });
+    await callTool(gated.ns, gated.credential, APP, TOOL, { q: marker, password: "x" });
 
     const hits = await sweepForSentinels([marker], marker);
     const columns = new Set(hits.map((hit) => `${hit.table}.${hit.column}`));

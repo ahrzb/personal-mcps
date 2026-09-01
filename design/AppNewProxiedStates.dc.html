@@ -1,0 +1,199 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
+    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
+    a:hover { color: #52525b; }
+  </style>
+</helmet>
+<div style="width: 480px; min-height: 2267px; box-sizing: border-box; background: #fafafa; display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 32px;">
+
+  <div style="width: 400px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">PROXIED — HEADERS</div>
+    <div style="width: 400px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 16px; font-weight: 600;">Add app</div>
+        <div style="font-size: 13px; color: #71717a;">Register an MCP app in your namespace.</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="border: 1px solid #e4e4e7; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start;">
+          <span style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #a1a1aa; box-sizing: border-box; margin-top: 1px; flex-shrink: 0;"></span>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="font-size: 14px; font-weight: 500;">Tunneled</div>
+            <div style="font-size: 13px; color: #71717a;">A bot that dials in with an app token — shown once after creating.</div>
+          </div>
+        </div>
+        <div style="border: 1px solid #18181b; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start; background: #ffffff;">
+          <span style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #18181b; box-sizing: border-box; margin-top: 1px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><span style="width: 8px; height: 8px; border-radius: 50%; background: #18181b;"></span></span>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="font-size: 14px; font-weight: 500;">Proxied</div>
+            <div style="font-size: 13px; color: #71717a;">An existing MCP endpoint the hub forwards to.</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 14px; font-weight: 500;">Name</div>
+          <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center;">Linear</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 14px; font-weight: 500;">Slug</div>
+          <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">linear</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 14px; font-weight: 500;">Endpoint</div>
+          <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">https://mcp.linear.app/mcp</div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="font-size: 14px; font-weight: 500;">Authentication</div>
+          <div style="border: 1px solid #18181b; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start; background: #ffffff;">
+            <span style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #18181b; box-sizing: border-box; margin-top: 1px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><span style="width: 8px; height: 8px; border-radius: 50%; background: #18181b;"></span></span>
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <div style="font-size: 14px; font-weight: 500;">Static headers</div>
+              <div style="font-size: 13px; color: #71717a;">You paste a header the hub sends upstream.</div>
+            </div>
+          </div>
+          <div style="border: 1px solid #e4e4e7; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start;">
+            <span style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #a1a1aa; box-sizing: border-box; margin-top: 1px; flex-shrink: 0;"></span>
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <div style="font-size: 14px; font-weight: 500;">OAuth</div>
+              <div style="font-size: 13px; color: #71717a;">You'll sign in to the provider after creating.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 14px; font-weight: 500;">Header</div>
+          <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">Authorization: Bearer lin_api_…</div>
+          <div style="font-size: 13px; color: #71717a;">Stored write-only — it never appears in listings or YAML.</div>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 12px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Create</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="width: 400px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">PROXIED — OAUTH</div>
+    <div style="width: 400px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 16px; font-weight: 600;">Add app</div>
+        <div style="font-size: 13px; color: #71717a;">Register an MCP app in your namespace.</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="border: 1px solid #e4e4e7; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start;">
+          <span style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #a1a1aa; box-sizing: border-box; margin-top: 1px; flex-shrink: 0;"></span>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="font-size: 14px; font-weight: 500;">Tunneled</div>
+            <div style="font-size: 13px; color: #71717a;">A bot that dials in with an app token — shown once after creating.</div>
+          </div>
+        </div>
+        <div style="border: 1px solid #18181b; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start; background: #ffffff;">
+          <span style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #18181b; box-sizing: border-box; margin-top: 1px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><span style="width: 8px; height: 8px; border-radius: 50%; background: #18181b;"></span></span>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="font-size: 14px; font-weight: 500;">Proxied</div>
+            <div style="font-size: 13px; color: #71717a;">An existing MCP endpoint the hub forwards to.</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 14px; font-weight: 500;">Name</div>
+          <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center;">Linear</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 14px; font-weight: 500;">Slug</div>
+          <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">linear</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 14px; font-weight: 500;">Endpoint</div>
+          <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">https://mcp.linear.app/mcp</div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="font-size: 14px; font-weight: 500;">Authentication</div>
+          <div style="border: 1px solid #e4e4e7; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start;">
+            <span style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #a1a1aa; box-sizing: border-box; margin-top: 1px; flex-shrink: 0;"></span>
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <div style="font-size: 14px; font-weight: 500;">Static headers</div>
+              <div style="font-size: 13px; color: #71717a;">You paste a header the hub sends upstream.</div>
+            </div>
+          </div>
+          <div style="border: 1px solid #18181b; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start; background: #ffffff;">
+            <span style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #18181b; box-sizing: border-box; margin-top: 1px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;"><span style="width: 8px; height: 8px; border-radius: 50%; background: #18181b;"></span></span>
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <div style="font-size: 14px; font-weight: 500;">OAuth</div>
+              <div style="font-size: 13px; color: #71717a;">You'll sign in to the provider after creating.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background: #f4f4f5; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #71717a; line-height: 1.5;">After creating, Connect opens Linear's sign-in in your browser — the hub stores the resulting tokens encrypted.</div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 12px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Create</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="width: 400px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">CONNECTING</div>
+    <div style="width: 400px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 16px; font-weight: 600;">Connecting to Linear…</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Finish signing in, in the tab that just opened. This link expires in about 10 minutes.</div>
+      </div>
+
+      <div style="height: 4px; border-radius: 999px; background: #e4e4e7; overflow: hidden;">
+        <div style="height: 4px; width: 30%; margin-left: 18%; border-radius: 999px; background: #18181b;"></div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #ffffff; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Cancel</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="width: 400px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">ENDPOINT ERROR</div>
+    <div style="width: 400px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <div style="font-size: 14px; font-weight: 500;">Endpoint</div>
+        <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #dc2626; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; display: flex; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">mcp.linear.app</div>
+        <div style="font-size: 13px; color: #dc2626;">Not a valid https URL.</div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 12px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #a1a1aa; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #a1a1aa;">Create</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":480,"height":2267}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

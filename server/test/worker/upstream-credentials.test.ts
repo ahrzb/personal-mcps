@@ -3,17 +3,17 @@
 //
 // The file exists because every failure it pins is silent. An envelope that stopped being
 // encrypted still works; a callback that accepts a replayed `state` still connects; a
-// `connectionStatus` that answers `connected` for a service whose refresh died still
+// `connectionStatus` that answers `connected` for an app whose refresh died still
 // renders a page. Nothing goes red in production — the owner just has a D1 export with
 // upstream tokens in it, or an attacker's authorization code redeemed into the owner's
-// service row.
+// app row.
 //
 // Three things carry it:
 //  · The status function is TOTAL over auth mode × stored-envelope state, which is why
 //    the table is a cross-product with a coverage law rather than a handful of cases:
 //    `needs_reconnect` is unreachable in headers mode, and the way to pin an unreachable
 //    combination is to enumerate the space, not to test the reachable corners.
-//  · Every callback refusal stores NOTHING — asserted against the whole service row, not
+//  · Every callback refusal stores NOTHING — asserted against the whole app row, not
 //    the envelope column alone. A refusal that still stamped a status or an audit row
 //    would be a partial write on the CSRF path.
 //  · The fake authorization server is ADVERSARIAL, not spec-shaped (strategy §9): it
@@ -31,7 +31,7 @@
 // one router). No socket, no DO: parallel, per-file isolation, order free. The state
 // row's TTL is read from limits.OAUTH_STATE_TTL_MS, never as a literal (§7).
 //
-// deps: test/harness/seed (namespace, proxied services) · test/harness/fake-upstream
+// deps: test/harness/seed (namespace, proxied apps) · test/harness/fake-upstream
 // (outboundService router: the adversarial fake AS + token endpoint) · server/src/upstream
 // (beginConnect, handleCallback, disconnect, setHeaders, connectionStatus,
 // cleanupStaleState, clientMetadata) · server/src/limits (OAUTH_STATE_TTL_MS) · env.DB
@@ -45,7 +45,7 @@ import worker from "../../src/index";
 import type { Env } from "../../src/index";
 import { OAUTH_STATE_TTL_MS } from "../../src/limits";
 import { Registry } from "../../src/registry";
-import type { ServiceDetail } from "../../src/registry";
+import type { AppDetail } from "../../src/registry";
 import {
   beginConnect,
   CLIENT_METADATA_PATH,
@@ -87,7 +87,7 @@ import type { SeededNamespace, SeededSession } from "../harness/seed";
  */
 export type ConnectionStatusRow = {
   title: string;
-  authMode: NonNullable<ServiceDetail["upstreamAuthMode"]>;
+  authMode: NonNullable<AppDetail["upstreamAuthMode"]>;
   envelope: "none" | "headers" | "oauth_live" | "oauth_refresh_failed" | "unopenable";
   expect: UpstreamConnectionStatus;
 };
@@ -129,7 +129,7 @@ export type CallbackDefect =
 
 /**
  * One callback row. `stores` is binary because the rule is binary — either the flow
- * completed and sealed a bundle, or the service row is byte-identical to before. The
+ * completed and sealed a bundle, or the app row is byte-identical to before. The
  * response the browser gets is deliberately absent from the row type: error prose and
  * redirect targets are incidental (§7), and "never echoes AS details" is a hygiene law
  * asserted once by the runner rather than transcribed per row.
@@ -146,19 +146,19 @@ export type OAuthCallbackRow = {
  * rule 1) — agents never fill them.
  */
 export const connectionStatusRows: readonly ConnectionStatusRow[] = [
-  // The fixture, named once: one proxied service whose `upstream_auth_mode` is the row's
+  // The fixture, named once: one proxied app whose `upstream_auth_mode` is the row's
   // `authMode` and whose stored envelope is the row's `envelope` — nothing else varies,
   // because nothing else may change the answer. The read dials nothing, so there is no
   // upstream to configure and no scenario to name.
   //
   // Why all ten cells and not the four reachable ones. Two combinations cannot occur
-  // while registry.updateService keeps its row invariant (an auth-mode flip clears the
-  // envelope in the same write — registry.test.ts's row): a headers-mode service holding
-  // an oauth bundle, and an oauth-mode service holding stored headers. They are enumerated
+  // while registry.updateApp keeps its row invariant (an auth-mode flip clears the
+  // envelope in the same write — registry.test.ts's row): a headers-mode app holding
+  // an oauth bundle, and an oauth-mode app holding stored headers. They are enumerated
   // here anyway, because the sentence this function has to be TOTAL over is not "what can
   // happen" but "what does it answer" — a status read that reported `connected` for
-  // credentials the service's mode cannot use would render a Disconnect button over a
-  // service that cannot call, and no reachable-corners table would notice. The rule the
+  // credentials the app's mode cannot use would render a Disconnect button over a
+  // app that cannot call, and no reachable-corners table would notice. The rule the
   // two cells encode is one sentence: an envelope whose kind does not match the mode is
   // no credential at all.
   //
@@ -170,18 +170,18 @@ export const connectionStatusRows: readonly ConnectionStatusRow[] = [
   // An envelope that will not open (foreign version byte, or ciphertext from before an
   // UPSTREAM_CREDS_KEY rotation) is exactly what the version byte exists to survive, and
   // the two answers a status read could give it are both wrong in a way no other row
-  // catches: throwing turns every consumer refusal on that service into an unhandled
+  // catches: throwing turns every consumer refusal on that app into an unhandled
   // error (probeAvailability is called per proxied call), and answering `connected` sends
   // the pipeline off to dial with a credential the hub cannot decrypt. The cells below
   // say which answer it is instead.
   {
     title:
-      "§7 · headers mode, no envelope → not_connected — a fresh service, and what Disconnect leaves behind",
+      "§7 · headers mode, no envelope → not_connected — a fresh app, and what Disconnect leaves behind",
     authMode: "headers",
     envelope: "none",
     expect: "not_connected",
   },
-  // §7/upstream.ts: "Headers-mode services report `connected` iff headers are stored."
+  // §7/upstream.ts: "Headers-mode apps report `connected` iff headers are stored."
   // The allow-twin of every not_connected row above and below it (§9 rule 2): a status
   // function stuck on not_connected would satisfy a refusals-only table perfectly.
   {
@@ -198,7 +198,7 @@ export const connectionStatusRows: readonly ConnectionStatusRow[] = [
     envelope: "oauth_live",
     expect: "not_connected",
   },
-  // The unreachable state, asked rather than assumed: §7 says a headers-mode service "can
+  // The unreachable state, asked rather than assumed: §7 says a headers-mode app "can
   // never be `needs_reconnect`", which is a claim about the ANSWER, so the cell that could
   // wrongly produce it is the only place to pin it.
   {
@@ -244,7 +244,7 @@ export const connectionStatusRows: readonly ConnectionStatusRow[] = [
   },
   {
     title:
-      "§7 · oauth mode, a bundle whose refresh failed → needs_reconnect — calls fail -32000 and /services offers Reconnect until the owner runs Connect again",
+      "§7 · oauth mode, a bundle whose refresh failed → needs_reconnect — calls fail -32000 and /apps offers Reconnect until the owner runs Connect again",
     authMode: "oauth",
     envelope: "oauth_refresh_failed",
     expect: "needs_reconnect",
@@ -253,11 +253,11 @@ export const connectionStatusRows: readonly ConnectionStatusRow[] = [
   // envelope the hub cannot open is a credential the hub cannot use, and the owner's only
   // repair in oauth mode is to run Connect again — which is precisely the button
   // `needs_reconnect` renders. `not_connected` would render Connect too, but it would also
-  // tell `/services` the service was never connected, which is a different sentence than
+  // tell `/apps` the app was never connected, which is a different sentence than
   // "the credential it has is unusable".
   {
     title:
-      "§7/§5 · oauth mode holding an envelope that will not open → needs_reconnect, and never a throw — the owner's one repair is Connect again, and a status read that crashed would take every consumer refusal on the service with it",
+      "§7/§5 · oauth mode holding an envelope that will not open → needs_reconnect, and never a throw — the owner's one repair is Connect again, and a status read that crashed would take every consumer refusal on the app with it",
     authMode: "oauth",
     envelope: "unopenable",
     expect: "needs_reconnect",
@@ -378,7 +378,7 @@ export const oauthCallbackRows: readonly OAuthCallbackRow[] = [
   },
   // The refusal the fake AS produces itself, with real S256: the hub presents a verifier
   // that is not the one bound to this state, the AS rejects the redemption, and the hub
-  // must leave the service row exactly as it found it rather than storing a half-flow.
+  // must leave the app row exactly as it found it rather than storing a half-flow.
   {
     title:
       "§7 · the AS's own S256 check rejects the redemption — a verifier that is not the one bound to this state → refused, nothing stored",
@@ -395,7 +395,7 @@ export const oauthCallbackRows: readonly OAuthCallbackRow[] = [
  * the property here, so a combination without a row fails the table rather than going
  * unasked — and no row's read ever THROWS. The second is not decoration: this function is
  * called per proxied `tools/call` by the approval path's availability probe, so a throw
- * on any stored byte-sequence turns a service's refusals into unhandled errors, and the
+ * on any stored byte-sequence turns an app's refusals into unhandled errors, and the
  * `unopenable` rows are the ones that would produce it.
  */
 export function runConnectionStatusTable(rows: readonly ConnectionStatusRow[]): void {
@@ -406,7 +406,7 @@ export function runConnectionStatusTable(rows: readonly ConnectionStatusRow[]): 
       const before = (await readObservations(world.upstreamId)).length;
       // Called bare — no try/catch — because "never a throw" is one of this table's two
       // laws and a caught throw would be a passing test for a crashing hot path.
-      expect(await connectionStatus(world.service), row.title).toBe(row.expect);
+      expect(await connectionStatus(world.app), row.title).toBe(row.expect);
       expect(
         (await readObservations(world.upstreamId)).length,
         `${row.title}: the read dialed the upstream`,
@@ -423,24 +423,24 @@ export function runConnectionStatusTable(rows: readonly ConnectionStatusRow[]): 
  */
 const CASE_BUDGET_MS = 30_000;
 
-/** One status row's world: the service under test, plus the scenario whose observation log
+/** One status row's world: the app under test, plus the scenario whose observation log
  *  proves the read dialed nothing. */
-type StatusWorld = { ns: SeededNamespace; service: ServiceDetail; upstreamId: string };
+type StatusWorld = { ns: SeededNamespace; app: AppDetail; upstreamId: string };
 
 /**
  * Seed one cell of the cross-product. Every envelope that can be written by a production
  * seam IS — `setHeaders` for the headers bundle, a real connect flow for the oauth ones —
- * and the two mode/kind MISMATCH cells are reached by sealing the bundle on a donor service
+ * and the two mode/kind MISMATCH cells are reached by sealing the bundle on a donor app
  * of the matching mode and copying the ciphertext across. That copy is the only hand-written
  * thing here and it is deliberately not a hand-written ENVELOPE: what the mismatch rows ask
- * is what the reader answers to a real bundle sitting in the wrong service, and a bundle
+ * is what the reader answers to a real bundle sitting in the wrong app, and a bundle
  * this suite invented would be asking something else.
  */
 async function seedStatusWorld(row: ConnectionStatusRow): Promise<StatusWorld> {
   const upstream = liveScenario();
   const donorNeeded = DONOR_MODE[row.envelope];
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
         slug: TARGET,
         kind: "proxy",
@@ -460,21 +460,21 @@ async function seedStatusWorld(row: ConnectionStatusRow): Promise<StatusWorld> {
     ],
   });
   const registry = new Registry(env.DB);
-  const service = await detail(registry, ns, TARGET);
-  const world: StatusWorld = { ns, service, upstreamId: upstream.id };
+  const app = await detail(registry, ns, TARGET);
+  const world: StatusWorld = { ns, app, upstreamId: upstream.id };
 
   if (row.envelope === "none") return world;
   if (row.envelope === "unopenable") {
     // What an UPSTREAM_CREDS_KEY rotation without a re-seal leaves behind: bytes led by a
     // version header this build does not know. Written raw because that is what the state
     // IS — no seam can produce ciphertext under a key the worker no longer holds.
-    await plantEnvelope(service.id, FOREIGN_ENVELOPE);
+    await plantEnvelope(app.id, FOREIGN_ENVELOPE);
     return world;
   }
-  const producer = donorNeeded === row.authMode ? service : await detail(registry, ns, DONOR);
+  const producer = donorNeeded === row.authMode ? app : await detail(registry, ns, DONOR);
   await produceEnvelope(ns, producer, row.envelope);
-  if (producer.id !== service.id) {
-    await plantEnvelope(service.id, (await envelopeOf(producer.id)) ?? "");
+  if (producer.id !== app.id) {
+    await plantEnvelope(app.id, (await envelopeOf(producer.id)) ?? "");
   }
   return world;
 }
@@ -489,14 +489,14 @@ const DONOR_MODE: Record<ConnectionStatusRow["envelope"], "headers" | "oauth" | 
   oauth_refresh_failed: "oauth",
 };
 
-/** Write one real envelope onto `service` through the seam its kind belongs to. */
+/** Write one real envelope onto `app` through the seam its kind belongs to. */
 async function produceEnvelope(
   ns: SeededNamespace,
-  service: ServiceDetail,
+  app: AppDetail,
   envelope: "headers" | "oauth_live" | "oauth_refresh_failed",
 ): Promise<void> {
   if (envelope === "headers") {
-    await setHeaders(service, SENTINEL_HEADERS);
+    await setHeaders(app, SENTINEL_HEADERS);
     return;
   }
   // A dead bundle is reached the one way §7 allows: connect, then let a refresh fail. The
@@ -504,8 +504,8 @@ async function produceEnvelope(
   // this persona refuses every refresh.
   const quirks: AsQuirk[] =
     envelope === "oauth_refresh_failed" ? ["stale_first_token", "refresh_fails"] : [];
-  await connect(ns, service, { id: uniqueSlug("as"), quirks });
-  if (envelope === "oauth_refresh_failed") await failRefresh(ns, service);
+  await connect(ns, app, { id: uniqueSlug("as"), quirks });
+  if (envelope === "oauth_refresh_failed") await failRefresh(ns, app);
 }
 
 /**
@@ -513,18 +513,18 @@ async function produceEnvelope(
  * rejects. Driven through the consumer pipeline rather than by poking the column, because
  * the flag lives INSIDE the ciphertext and only upstream.ts may put it there.
  */
-async function failRefresh(ns: SeededNamespace, service: ServiceDetail): Promise<void> {
-  const account = await new Registry(env.DB).createAccount({
+async function failRefresh(ns: SeededNamespace, app: AppDetail): Promise<void> {
+  const agent = await new Registry(env.DB).createAgent({
     ownerId: ns.owner.userId,
     slug: uniqueSlug("caller"),
     name: "caller",
   });
-  await new Registry(env.DB).setGrants(account.id, service.id, [{ role: "all", mode: "allow" }]);
-  const { token } = await seedToken(ns.owner.userId, "service_account", account.id, account.slug, {
+  await new Registry(env.DB).setGrants(agent.id, app.id, [{ role: "all", mode: "allow" }]);
+  const { token } = await seedToken(ns.owner.userId, "agent", agent.id, agent.slug, {
     as: "caller",
   });
   await worker.fetch(
-    new Request(`${ORIGIN}/${ns.owner.username}/mcp/${service.slug}`, {
+    new Request(`${ORIGIN}/${ns.owner.username}/mcp/${app.slug}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({
@@ -536,8 +536,8 @@ async function failRefresh(ns: SeededNamespace, service: ServiceDetail): Promise
     }),
     env as unknown as Env,
   );
-  if ((await connectionStatus(service)) !== "needs_reconnect") {
-    throw new Error(`seed: the refresh did not fail for "${service.slug}"`);
+  if ((await connectionStatus(app)) !== "needs_reconnect") {
+    throw new Error(`seed: the refresh did not fail for "${app.slug}"`);
   }
 }
 
@@ -546,13 +546,13 @@ async function failRefresh(ns: SeededNamespace, service: ServiceDetail): Promise
  * with the row's defect injected, then assert what was stored and what was audited. Three
  * table-wide laws:
  *
- *  · every `nothing` row leaves the ENTIRE service row unchanged, not just the envelope
+ *  · every `nothing` row leaves the ENTIRE app row unchanged, not just the envelope
  *    column;
  *  · no response body or redirect ever carries an AS-derived status, header or body (§7's
  *    hygiene rule extended to this surface);
  *  · the AS's token response carries SENTINEL access and refresh tokens
  *    (`FAKE0000-…`-spelled, like every planted secret in this suite), and after a
- *    `credential_envelope` row neither appears anywhere: not in any column of the service
+ *    `credential_envelope` row neither appears anywhere: not in any column of the app
  *    row (§5 — `upstream_auth_json` is ciphertext at rest so a D1 dump leaks nothing),
  *    not in the `upstream.oauth_connected` row the same call writes (`detail` is a
  *    free-form JSON column, and §5 pins that it never holds token material), and not in
@@ -571,21 +571,21 @@ export function runOAuthCallbackTable(rows: readonly OAuthCallbackRow[]): void {
       // replay row's first callback is a complete, legitimate flow, and what this row asks
       // is what the SECOND one does. Every column below is therefore a delta around the
       // callback under test.
-      const before = await serviceRowOf(flow.service.id);
+      const before = await appRowOf(flow.app.id);
       const auditedBefore = (
         await query(env.DB, flow.ns.owner.userId, { event: "upstream.oauth_connected" })
       ).total;
       const answer = await worker.fetch(callback, env as unknown as Env);
       const bytes = `${answer.status} ${answer.headers.get("Location") ?? ""} ${await answer.text()}`;
 
-      const after = await serviceRowOf(flow.service.id);
+      const after = await appRowOf(flow.app.id);
       if (row.stores === "nothing") {
         // The WHOLE row, not the envelope column: a refusal that still stamped a status, a
         // timestamp or a mode would be a partial write on the CSRF path.
-        expect(after, `${row.title}: the service row changed`).toEqual(before);
+        expect(after, `${row.title}: the app row changed`).toEqual(before);
       } else {
         expect(after.upstream_auth_json, `${row.title}: no bundle was sealed`).not.toBeNull();
-        expect(await connectionStatus(flow.service)).toBe("connected");
+        expect(await connectionStatus(flow.app)).toBe("connected");
       }
 
       const written = (
@@ -601,11 +601,11 @@ export function runOAuthCallbackTable(rows: readonly OAuthCallbackRow[]): void {
       expect(bytes.includes(AS_HOST), `${row.title}: the response named the AS`).toBe(false);
 
       // LAW 3 — the sentinel tokens the AS minted appear NOWHERE after a stored flow: not
-      // in any column of the service row (the column is ciphertext at rest), not in the
+      // in any column of the app row (the column is ciphertext at rest), not in the
       // audit row the same call writes, and not in the bytes the browser received.
       const sentinels = [fakeAccessToken(flow.as.id), fakeRefreshToken(flow.as.id)];
       for (const sentinel of sentinels) {
-        expect(JSON.stringify(after).includes(sentinel), `${row.title}: token in the service row`).toBe(false);
+        expect(JSON.stringify(after).includes(sentinel), `${row.title}: token in the app row`).toBe(false);
         expect(JSON.stringify(written).includes(sentinel), `${row.title}: token in the ledger`).toBe(false);
         expect(bytes.includes(sentinel), `${row.title}: token in the browser's bytes`).toBe(false);
       }
@@ -638,9 +638,9 @@ const QUIRKS_FOR: Record<CallbackDefect, AsQuirk[]> = {
  */
 type Flow = {
   ns: SeededNamespace;
-  service: ServiceDetail;
+  app: AppDetail;
   as: AsScenario;
-  /** The resource scenario the service points at — RFC 9728 and the RFC 8414 fallback
+  /** The resource scenario the app points at — RFC 9728 and the RFC 8414 fallback
    *  are asked of the RESOURCE, so those arrivals land in this log, not the AS's. */
   upstreamId: string;
   session: SeededSession;
@@ -659,7 +659,7 @@ async function beginFlow(quirks: AsQuirk[] = []): Promise<Flow> {
     requireBearer: `Bearer ${fakeAccessToken(as.id)}`,
   };
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
         slug: TARGET,
         kind: "proxy",
@@ -669,12 +669,12 @@ async function beginFlow(quirks: AsQuirk[] = []): Promise<Flow> {
       },
     ],
   });
-  const service = await detail(new Registry(env.DB), ns, TARGET);
+  const app = await detail(new Registry(env.DB), ns, TARGET);
   const session = await seedOwnerSession(ns.owner);
   const { sessionId } = await requireOwnerSession(
-    new Request(`${ORIGIN}/services`, { headers: { Cookie: session.cookie } }),
+    new Request(`${ORIGIN}/apps`, { headers: { Cookie: session.cookie } }),
   );
-  const authorize = await beginConnect(service, { id: sessionId });
+  const authorize = await beginConnect(app, { id: sessionId });
   // The browser's leg, answered by the AS itself: composing the callback URL here instead
   // would mean the `code` and the `iss` came from the test rather than from the server the
   // flow is defending against.
@@ -685,7 +685,7 @@ async function beginFlow(quirks: AsQuirk[] = []): Promise<Flow> {
   }
   return {
     ns,
-    service,
+    app,
     as,
     upstreamId: upstream.id,
     session,
@@ -747,7 +747,7 @@ async function bend(flow: Flow, defect: CallbackDefect): Promise<Request> {
 /** The hub's own origin, as the worker under test knows it. */
 const ORIGIN = (env as unknown as Env).PUBLIC_ORIGIN;
 
-/** The service every case is about, and the one that exists only to seal a bundle the
+/** The app every case is about, and the one that exists only to seal a bundle the
  *  target's own mode could not have written. */
 const TARGET = "notion";
 const DONOR = "donor";
@@ -768,21 +768,21 @@ const FOREIGN_ENVELOPE = btoa(
   String.fromCharCode(2, ...new Array(32).fill(0).map((_, n) => (n * 7 + 13) % 256)),
 );
 
-/** A healthy upstream for a service that is never actually dialed by these cases. */
+/** A healthy upstream for an app that is never actually dialed by these cases. */
 function liveScenario(): UpstreamScenario {
   return { id: uniqueSlug("up"), mode: { kind: "ok" }, tools: [] };
 }
 
-/** The service row as registry reports it, or a loud failure — every case addresses
- *  services by slug and none of them may silently operate on `null`. */
+/** The app row as registry reports it, or a loud failure — every case addresses
+ *  apps by slug and none of them may silently operate on `null`. */
 async function detail(
   registry: Registry,
   ns: SeededNamespace,
   slug: string,
-): Promise<ServiceDetail> {
-  const service = await registry.getService(ns.owner.userId, slug);
-  if (service === null) throw new Error(`the seeded service "${slug}" vanished`);
-  return service;
+): Promise<AppDetail> {
+  const app = await registry.getApp(ns.owner.userId, slug);
+  if (app === null) throw new Error(`the seeded app "${slug}" vanished`);
+  return app;
 }
 
 /**
@@ -792,23 +792,23 @@ async function detail(
  */
 async function connect(
   ns: SeededNamespace,
-  service: ServiceDetail,
+  app: AppDetail,
   as: AsScenario,
 ): Promise<void> {
   // Discovery starts at the RESOURCE (§7: RFC 9728 protected-resource metadata), so the
-  // upstream this service points at has to advertise this AS persona — and a fake scenario
+  // upstream this app points at has to advertise this AS persona — and a fake scenario
   // carries everything about itself in its URL (fake-upstream's isolation note). Repointed
   // through registry's own seam, which leaves the credential column alone because the auth
   // MODE is untouched; that keeps the persona a parameter of the flow rather than something
   // every fixture has to decide at seed time.
-  await new Registry(env.DB).updateService(service.id, {
+  await new Registry(env.DB).updateApp(app.id, {
     upstreamUrl: upstreamUrlFor({ ...liveScenario(), as }),
   });
   const session = await seedOwnerSession(ns.owner);
   const { sessionId } = await requireOwnerSession(
-    new Request(`${ORIGIN}/services`, { headers: { Cookie: session.cookie } }),
+    new Request(`${ORIGIN}/apps`, { headers: { Cookie: session.cookie } }),
   );
-  const authorize = await beginConnect(service, { id: sessionId });
+  const authorize = await beginConnect(app, { id: sessionId });
   const redirect = await fetch(authorize.toString(), { redirect: "manual" });
   const location = redirect.headers.get("Location");
   if (location === null) throw new Error(`connect: the fake AS answered no redirect`);
@@ -819,12 +819,12 @@ async function connect(
   if (answer.status !== 302) throw new Error(`connect: the callback refused (${answer.status})`);
 }
 
-/** One headers-mode proxied service on a live fake upstream, plus a credentialled account
+/** One headers-mode proxied app on a live fake upstream, plus a credentialled agent
  *  — the world the envelope-at-rest cases seal into and dial from. */
 async function seedHeadersWorld(): Promise<StatusWorld & { credential: string }> {
   const upstream: UpstreamScenario = { id: uniqueSlug("up"), mode: { kind: "ok" }, tools: [] };
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
         slug: TARGET,
         kind: "proxy",
@@ -833,13 +833,13 @@ async function seedHeadersWorld(): Promise<StatusWorld & { credential: string }>
         logBodies: true,
       },
     ],
-    accounts: [
+    agents: [
       { slug: "agent", grants: { [TARGET]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "t" }] },
     ],
   });
   return {
     ns,
-    service: await detail(new Registry(env.DB), ns, TARGET),
+    app: await detail(new Registry(env.DB), ns, TARGET),
     upstreamId: upstream.id,
     credential: ns.tokens.t.token,
   };
@@ -848,7 +848,7 @@ async function seedHeadersWorld(): Promise<StatusWorld & { credential: string }>
 /** One scoped `tools/call` through the composition root — enough to make the hub dial. */
 async function callOnce(world: StatusWorld & { credential: string }): Promise<Response> {
   return worker.fetch(
-    new Request(`${ORIGIN}/${world.ns.owner.username}/mcp/${world.service.slug}`, {
+    new Request(`${ORIGIN}/${world.ns.owner.username}/mcp/${world.app.slug}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${world.credential}` },
       body: JSON.stringify({
@@ -875,27 +875,27 @@ type D1Like = {
 };
 const db = () => env.DB as D1Like;
 
-/** The whole service row, for the "nothing stored" law — every column, not just the one. */
-async function serviceRowOf(serviceId: string): Promise<Record<string, unknown>> {
-  const row = await db().prepare(`SELECT * FROM service WHERE id = ?`).bind(serviceId).first<Record<string, unknown>>();
-  if (row === null) throw new Error("serviceRowOf: the service vanished");
+/** The whole app row, for the "nothing stored" law — every column, not just the one. */
+async function appRowOf(appId: string): Promise<Record<string, unknown>> {
+  const row = await db().prepare(`SELECT * FROM app WHERE id = ?`).bind(appId).first<Record<string, unknown>>();
+  if (row === null) throw new Error("appRowOf: the app vanished");
   return row;
 }
 
-async function envelopeOf(serviceId: string): Promise<string | null> {
+async function envelopeOf(appId: string): Promise<string | null> {
   const row = await db()
-    .prepare(`SELECT upstream_auth_json FROM service WHERE id = ?`)
-    .bind(serviceId)
+    .prepare(`SELECT upstream_auth_json FROM app WHERE id = ?`)
+    .bind(appId)
     .first<{ upstream_auth_json: string | null }>();
   return row?.upstream_auth_json ?? null;
 }
 
-/** Move a bundle (or a foreign byte sequence) onto a service the seams would not have put
+/** Move a bundle (or a foreign byte sequence) onto an app the seams would not have put
  *  it on — the only hand-written write in this file, and only for the states no seam has. */
-async function plantEnvelope(serviceId: string, envelope: string): Promise<void> {
+async function plantEnvelope(appId: string, envelope: string): Promise<void> {
   await db()
-    .prepare(`UPDATE service SET upstream_auth_json = ? WHERE id = ?`)
-    .bind(envelope, serviceId)
+    .prepare(`UPDATE app SET upstream_auth_json = ? WHERE id = ?`)
+    .bind(envelope, appId)
     .run();
 }
 
@@ -969,10 +969,10 @@ describe("§7 · connectionStatus is total", () => {
 });
 
 describe("§5 · the envelope at rest", () => {
-  it("§5 · a sentinel header stored through setHeaders appears nowhere in the service row — the column holds ciphertext", async () => {
+  it("§5 · a sentinel header stored through setHeaders appears nowhere in the app row — the column holds ciphertext", async () => {
     const world = await seedHeadersWorld();
-    await setHeaders(world.service, SENTINEL_HEADERS);
-    const row = await serviceRowOf(world.service.id);
+    await setHeaders(world.app, SENTINEL_HEADERS);
+    const row = await appRowOf(world.app.id);
     expect(row.upstream_auth_json, "something was stored").not.toBeNull();
     // The whole row, because "which column" is not the claim: a D1 export of this table
     // must leak nothing, wherever an implementation decided to put it.
@@ -981,7 +981,7 @@ describe("§5 · the envelope at rest", () => {
 
   it("§5 · twin to the case above: the fake upstream observes that exact header on the next dial — sealed, not lost", async () => {
     const world = await seedHeadersWorld();
-    await setHeaders(world.service, SENTINEL_HEADERS);
+    await setHeaders(world.app, SENTINEL_HEADERS);
     await callOnce(world);
     const [dial] = await readObservations(world.upstreamId);
     expect(dial?.authorization, "the sealed header is what reached the upstream").toBe(
@@ -991,8 +991,8 @@ describe("§5 · the envelope at rest", () => {
 
   it("§5 · the envelope leads with a version byte, so ciphertext written under today's key is self-describing before any key is applied", async () => {
     const world = await seedHeadersWorld();
-    await setHeaders(world.service, SENTINEL_HEADERS);
-    const stored = await envelopeOf(world.service.id);
+    await setHeaders(world.app, SENTINEL_HEADERS);
+    const stored = await envelopeOf(world.app.id);
     const framed = Uint8Array.from(atob(stored ?? ""), (c) => c.charCodeAt(0));
     // Version, then a 12-byte AES-GCM nonce, then ciphertext — readable in that order by
     // anything holding the bytes, which is what lets the key rotate without a migration.
@@ -1002,9 +1002,9 @@ describe("§5 · the envelope at rest", () => {
 });
 
 describe("§7 · one credential path per mode", () => {
-  it("§7 · setHeaders refuses an oauth-mode service and beginConnect refuses a headers-mode or tunneled one · twins: each mode's own path stores", async () => {
+  it("§7 · setHeaders refuses an oauth-mode app and beginConnect refuses a headers-mode or tunneled one · twins: each mode's own path stores", async () => {
     const ns = await seedNamespace(env.DB, {
-      services: [
+      apps: [
         {
           slug: "headersmode",
           kind: "proxy",
@@ -1027,13 +1027,13 @@ describe("§7 · one credential path per mode", () => {
     const session = { id: "FAKE0000-session-that-never-gets-used" };
 
     // Each mode has exactly one credential path, so the other mode's path is not a
-    // fallback — it is a refusal, and a service that took both would have two.
+    // fallback — it is a refusal, and an app that took both would have two.
     await expect(setHeaders(oauthMode, SENTINEL_HEADERS)).rejects.toThrow();
     await expect(beginConnect(headersMode, session)).rejects.toThrow();
     await expect(beginConnect(tunneled, session)).rejects.toThrow();
     // Nothing was half-written on the way to any of those refusals.
-    for (const service of [headersMode, oauthMode, tunneled]) {
-      expect(await envelopeOf(service.id), service.slug).toBeNull();
+    for (const app of [headersMode, oauthMode, tunneled]) {
+      expect(await envelopeOf(app.id), app.slug).toBeNull();
     }
 
     // The twins: each mode's OWN path stores. Without them a module that refused every
@@ -1046,7 +1046,7 @@ describe("§7 · one credential path per mode", () => {
 
   it("§7 · disconnect wipes the envelope, writes upstream.disconnected, leaves roles, grants and config untouched, and is idempotent", async () => {
     const ns = await seedNamespace(env.DB, {
-      services: [
+      apps: [
         {
           slug: TARGET,
           kind: "proxy",
@@ -1057,36 +1057,36 @@ describe("§7 · one credential path per mode", () => {
           forwardIdentity: true,
         },
       ],
-      accounts: [{ slug: "agent", grants: { [TARGET]: [{ role: "reader", mode: "allow" }] } }],
+      agents: [{ slug: "agent", grants: { [TARGET]: [{ role: "reader", mode: "allow" }] } }],
     });
     const registry = new Registry(env.DB);
-    const service = await detail(registry, ns, TARGET);
-    await setHeaders(service, SENTINEL_HEADERS);
-    const configured = await serviceRowOf(service.id);
+    const app = await detail(registry, ns, TARGET);
+    await setHeaders(app, SENTINEL_HEADERS);
+    const configured = await appRowOf(app.id);
 
-    await disconnect(service);
-    expect(await envelopeOf(service.id), "the bundle is gone").toBeNull();
-    expect(await connectionStatus(service)).toBe("not_connected");
+    await disconnect(app);
+    expect(await envelopeOf(app.id), "the bundle is gone").toBeNull();
+    expect(await connectionStatus(app)).toBe("not_connected");
     // Every other column is what it was: Disconnect is a credential op, not a reset.
-    expect(await serviceRowOf(service.id)).toEqual({ ...configured, upstream_auth_json: null });
-    const grants = await registry.grantsFor(ns.accounts.agent.id);
-    expect(grants.find((entry) => entry.serviceSlug === TARGET)?.entries).toEqual([
+    expect(await appRowOf(app.id)).toEqual({ ...configured, upstream_auth_json: null });
+    const grants = await registry.grantsFor(ns.agents.agent.id);
+    expect(grants.find((entry) => entry.appSlug === TARGET)?.entries).toEqual([
       { role: "reader", mode: "allow" },
     ]);
 
-    await disconnect(service);
-    expect(await envelopeOf(service.id), "idempotent about the envelope").toBeNull();
+    await disconnect(app);
+    expect(await envelopeOf(app.id), "idempotent about the envelope").toBeNull();
     // The audit row is NOT idempotent, and deliberately: it records that Disconnect RAN,
     // which is what an owner reading the ledger asked about.
     const written = await query(env.DB, ns.owner.userId, { event: "upstream.disconnected" });
     expect(written.total).toBe(2);
-    expect(written.rows[0].service).toBe(TARGET);
+    expect(written.rows[0].app).toBe(TARGET);
     expect(written.rows[0].principal).toBe(`user:${ns.owner.username}`);
   }, CASE_BUDGET_MS);
 });
 
 describe("§7 · the connect flow against an adversarial AS", () => {
-  it("§7 · beginConnect records one single-use state row bound to owner, service, issuer, token endpoint, verifier and session — and stores nothing on the service", async () => {
+  it("§7 · beginConnect records one single-use state row bound to owner, app, issuer, token endpoint, verifier and session — and stores nothing on the app", async () => {
     const flow = await beginFlow();
     const rows = await stateRowsOf(flow.ns.owner.userId);
     expect(rows.length, "one row per initiation, and only one").toBe(1);
@@ -1094,7 +1094,7 @@ describe("§7 · the connect flow against an adversarial AS", () => {
     expect(state).toMatchObject({
       state: flow.state,
       owner_id: flow.ns.owner.userId,
-      service_id: flow.service.id,
+      app_id: flow.app.id,
       session_id: flow.sessionId,
       issuer: asUrlFor(flow.as),
       token_endpoint: `${asUrlFor(flow.as)}/token`,
@@ -1103,10 +1103,10 @@ describe("§7 · the connect flow against an adversarial AS", () => {
     expect(typeof state.code_verifier === "string" && state.code_verifier.length >= 43).toBe(true);
     // The TTL by name, with a second of slack for the round trips between mint and read.
     expect(Number(state.expires_at) - Number(state.created_at)).toBe(OAUTH_STATE_TTL_MS);
-    // Initiation stores NOTHING on the service: a flow abandoned in the browser leaves a
-    // service exactly as connected — or as unconnected — as it was.
-    expect(await envelopeOf(flow.service.id)).toBeNull();
-    expect(await connectionStatus(flow.service)).toBe("not_connected");
+    // Initiation stores NOTHING on the app: a flow abandoned in the browser leaves a
+    // app exactly as connected — or as unconnected — as it was.
+    expect(await envelopeOf(flow.app.id)).toBeNull();
+    expect(await connectionStatus(flow.app)).toBe("not_connected");
   }, CASE_BUDGET_MS);
 
   it("§7 · the AS's real S256 check bites: a redemption carrying a verifier that does not match the recorded challenge is refused and stores nothing · twin: the bound verifier redeems", async () => {
@@ -1114,7 +1114,7 @@ describe("§7 · the connect flow against an adversarial AS", () => {
     await retargetVerifier(bent.state);
     const refused = await worker.fetch(await bend(bent, "none"), env as unknown as Env);
     expect(refused.status).toBe(400);
-    expect(await envelopeOf(bent.service.id), "a half-flow was stored").toBeNull();
+    expect(await envelopeOf(bent.app.id), "a half-flow was stored").toBeNull();
     // The AS's own arithmetic, read back rather than recomputed here: recomputing the hash
     // in the test would just be a second implementation of the thing under test.
     const checks = (await readObservations(bent.as.id)).filter((seen) => seen.pkce !== undefined);
@@ -1124,7 +1124,7 @@ describe("§7 · the connect flow against an adversarial AS", () => {
     const bound = await beginFlow();
     const accepted = await worker.fetch(await bend(bound, "none"), env as unknown as Env);
     expect(accepted.status, "the twin: the bound verifier redeems").toBe(302);
-    expect(await connectionStatus(bound.service)).toBe("connected");
+    expect(await connectionStatus(bound.app)).toBe("connected");
     const passed = (await readObservations(bound.as.id)).filter((seen) => seen.pkce !== undefined);
     expect(passed[0].pkce?.ok).toBe(true);
   }, CASE_BUDGET_MS);
@@ -1145,7 +1145,7 @@ describe("§7 · the connect flow against an adversarial AS", () => {
     );
 
     expect(answer.status, "the flow completed at the RECORDED endpoint").toBe(302);
-    expect(await connectionStatus(flow.service)).toBe("connected");
+    expect(await connectionStatus(flow.app)).toBe("connected");
     expect(
       (await readObservations(impostor.id)).length,
       "the impostor was never dialed — not for metadata, not for the code",
@@ -1156,11 +1156,11 @@ describe("§7 · the connect flow against an adversarial AS", () => {
     ).toBe(true);
   }, CASE_BUDGET_MS);
 
-  it("§7/§9 · the adversarial branches are the real ones: no RFC 9728 document, CIMD refused so DCR runs, no expires_in in the token response — connect still completes and the service reads `connected`", async () => {
+  it("§7/§9 · the adversarial branches are the real ones: no RFC 9728 document, CIMD refused so DCR runs, no expires_in in the token response — connect still completes and the app reads `connected`", async () => {
     const flow = await beginFlow(["no_prm", "reject_cimd", "no_expires_in"]);
     const answer = await worker.fetch(await bend(flow, "none"), env as unknown as Env);
     expect(answer.status, "all three branches taken, and the flow still completes").toBe(302);
-    expect(await connectionStatus(flow.service)).toBe("connected");
+    expect(await connectionStatus(flow.app)).toBe("connected");
 
     const seen = await readObservations(flow.as.id);
     // The DCR leg is otherwise never exercised: a spec-shaped AS advertises CIMD and the
@@ -1201,7 +1201,7 @@ describe("§7 · the callback refusal matrix", () => {
     const [first, second] = await Promise.all([callback(), callback()]);
     const statuses = [first.status, second.status].sort();
     expect(statuses, "exactly one connects, exactly one is refused").toEqual([302, 400]);
-    expect(await connectionStatus(flow.service)).toBe("connected");
+    expect(await connectionStatus(flow.app)).toBe("connected");
     // And the bundle was sealed once, by one of them: the ledger says how many flows
     // completed, and two would mean the code was redeemed twice.
     const written = await query(env.DB, flow.ns.owner.userId, { event: "upstream.oauth_connected" });
@@ -1227,7 +1227,7 @@ describe("§7 · hygiene around the flow", () => {
       env as unknown as Env,
     );
     expect(refused.status).toBe(400);
-    expect(await envelopeOf(stale.service.id)).toBeNull();
+    expect(await envelopeOf(stale.app.id)).toBeNull();
     expect(
       (await stateRowsOf(stale.ns.owner.userId)).length,
       "the dead row was still there when the callback refused it",
@@ -1273,7 +1273,7 @@ describe("§7 · hygiene around the flow", () => {
     expect(
       JSON.stringify(document),
       "and no planted secret of this suite's leaked into it either",
-    ).not.toMatch(/FAKE0000|pmcp_(sa|svc)_/);
+    ).not.toMatch(/FAKE0000|pmcp_(agt|app)_/);
 
     // Served unauthenticated on the canonical origin, because an AS fetches it with no
     // credential of ours and must find the same bytes.

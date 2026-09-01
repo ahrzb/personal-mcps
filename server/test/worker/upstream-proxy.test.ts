@@ -38,7 +38,7 @@
 // body columns' contents (hygiene.test.ts) — this file pins that `detail` carries the
 // class and that no body reaches the consumer, not the body table itself.
 //
-// deps: harness/seed (owner + one account; two proxied services, one headers-mode and one
+// deps: harness/seed (owner + one agent; two proxied apps, one headers-mode and one
 //   oauth-mode, plus a third healthy one for the fan-out) · harness/fake-upstream
 //   (miniflare.outboundService router: per-slug behavior, adversarial fake AS, dial
 //   counters) · ../../src/index (default.fetch) · ../../src/upstream · ../../src/gateway ·
@@ -65,7 +65,7 @@ import worker from "../../src/index";
 import type { Env } from "../../src/index";
 import { AGGREGATED_LIST_DEADLINE_MS, CALL_TIMEOUT_MS } from "../../src/limits";
 import { Registry } from "../../src/registry";
-import type { GrantEntry, RoleDeclaration, ServiceDetail } from "../../src/registry";
+import type { GrantEntry, RoleDeclaration, AppDetail } from "../../src/registry";
 import {
   beginConnect,
   connectionStatus,
@@ -105,7 +105,7 @@ import type { SeededNamespace } from "../harness/seed";
  * object, and upstream.ts's own contract spells it out ("results, errors, and MRTR
  * `input_required` legs alike"). Without it the four `body` rows only pin "unparseable →
  * -32000", and an implementation that collapsed every upstream `error` into -32000 —
- * turning an upstream's "unknown tool" into "service unavailable" for every consumer —
+ * turning an upstream's "unknown tool" into "app unavailable" for every consumer —
  * satisfies every other row in the table.
  */
 export type UpstreamBehavior =
@@ -167,7 +167,7 @@ export type UpstreamFailureRow = {
   /**
    * Which surface drives the dial — the three differ in how they treat the same failure.
    * `call-twice` is the fourth because one column cannot express a SEQUENCE: two identical
-   * calls on one service, both of which must succeed, with `dials`/`tokenDials` stating
+   * calls on one app, both of which must succeed, with `dials`/`tokenDials` stating
    * the TOTALS across both. It exists for exactly one question (whether a refreshed bundle
    * was re-sealed into `upstream_auth_json` or only held in memory) that no single-call
    * row can ask.
@@ -183,7 +183,7 @@ export type UpstreamFailureRow = {
  * rule 1) — agents write the fake upstream and the runner, never the oracle.
  */
 export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
-  // The fixture these rows are written against, named once: one proxied service per row,
+  // The fixture these rows are written against, named once: one proxied app per row,
   // pointed at a fake-upstream scenario carrying the row's `behavior`, seeded in the row's
   // `credentials` state, plus — for the `list-aggregated` rows — two healthy proxied
   // siblings so the aggregate has something to succeed WITH. The dial counters are read
@@ -207,7 +207,7 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
   //   fan-out that swallowed a TypeError from its own filtering would be indistinguishable
   //   from one that swallowed the upstream's 503 — the exact distinction gateway.ts logs
   //   two different ways so an operator is never sent to a healthy upstream.
-  // · `{ auth: "none" }` carries no row on purpose. A proxied service with no stored
+  // · `{ auth: "none" }` carries no row on purpose. A proxied app with no stored
   //   envelope reads `not_connected`, and §7's availability-first clause refuses such a
   //   tools/call with -32000 BEFORE this module is reached — zero dials, and a refusal
   //   whose detail carries no upstream class at all. That row exists, and it is
@@ -287,11 +287,11 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
   // exactly the retry storm the two counter columns exist to bound, and invisible locally
   // because workerd enforces no subrequest cap. "A 401 means needs_reconnect" is worse: §7
   // binds that flip strictly to a FAILED REFRESH, and flipping on a resource answer bricks
-  // the service until the owner clicks Reconnect — a permission error at the upstream
+  // the app until the owner clicks Reconnect — a permission error at the upstream
   // turned into a dead credential at the hub.
   {
     title:
-      "§7 · oauth mode, a FRESH token, and the resource server answers 401 → -32000, class upstream_status, ONE resource dial and ZERO token dials — a resource refusal is not a dead credential, and the service is still `connected` afterwards",
+      "§7 · oauth mode, a FRESH token, and the resource server answers 401 → -32000, class upstream_status, ONE resource dial and ZERO token dials — a resource refusal is not a dead credential, and the app is still `connected` afterwards",
     behavior: { act: "status", status: 401, wwwAuthenticate: true },
     credentials: { auth: "oauth", token: "fresh" },
     operation: "call",
@@ -402,7 +402,7 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
   // response, not to a successful one, and upstream.ts's own contract says the same
   // ("results, errors, and MRTR `input_required` legs alike"). Without this row the
   // cluster reads equally well as "every upstream `error` is -32000", which would turn an
-  // upstream's own "unknown tool" or "invalid params" into "service unavailable" for every
+  // upstream's own "unknown tool" or "invalid params" into "app unavailable" for every
   // consumer and hide it behind a class the owner reads as an outage. `failureClass` is
   // null because nothing failed at the hub: the upstream's error object — its code, its
   // message — is what the consumer receives, unchanged and unclassified. The fixture's
@@ -474,13 +474,13 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
   },
 
   // ── needs_reconnect: the one class produced without dialing ───────────────────────────
-  // §7: "A failed refresh flips the service to needs reconnect — calls fail -32000 and
-  // /services shows a Reconnect button." Zero dials is the whole assertion: a dead bundle
+  // §7: "A failed refresh flips the app to needs reconnect — calls fail -32000 and
+  // /apps shows a Reconnect button." Zero dials is the whole assertion: a dead bundle
   // spent on a round trip is a hub that hammers an upstream with credentials it knows are
   // dead, once per agent retry.
   {
     title:
-      "§7 · a service already flagged needs_reconnect → -32000 with ZERO dials, class needs_reconnect: a dead bundle is never spent on a round trip",
+      "§7 · an app already flagged needs_reconnect → -32000 with ZERO dials, class needs_reconnect: a dead bundle is never spent on a round trip",
     behavior: { act: "ok" },
     credentials: { auth: "oauth", token: "needs-reconnect" },
     operation: "call",
@@ -515,7 +515,7 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
   // somebody's upstream being down.
   {
     title:
-      "§7 · the SCOPED tools/list against a service already flagged needs_reconnect → -32000, class needs_reconnect, with ZERO dials — the list surface consults the stored bundle exactly as the call surface does",
+      "§7 · the SCOPED tools/list against an app already flagged needs_reconnect → -32000, class needs_reconnect, with ZERO dials — the list surface consults the stored bundle exactly as the call surface does",
     behavior: { act: "ok" },
     credentials: { auth: "oauth", token: "needs-reconnect" },
     operation: "list-scoped",
@@ -524,7 +524,7 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
   },
   {
     title:
-      "§7 · the AGGREGATED list over that same needs_reconnect service still SUCCEEDS on ZERO dials — a credential-dead slug contributes zero tools, and the fan-out swallows needs_reconnect rather than a hub defect",
+      "§7 · the AGGREGATED list over that same needs_reconnect app still SUCCEEDS on ZERO dials — a credential-dead slug contributes zero tools, and the fan-out swallows needs_reconnect rather than a hub defect",
     behavior: { act: "ok" },
     credentials: { auth: "oauth", token: "needs-reconnect" },
     operation: "list-aggregated",
@@ -536,7 +536,7 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
       dials: 0,
       tokenDials: 0,
     },
-    twin: "§7 · the AGGREGATED list over that same needs_reconnect service still SUCCEEDS on ZERO dials — a credential-dead slug contributes zero tools, and the fan-out swallows needs_reconnect rather than a hub defect",
+    twin: "§7 · the AGGREGATED list over that same needs_reconnect app still SUCCEEDS on ZERO dials — a credential-dead slug contributes zero tools, and the fan-out swallows needs_reconnect rather than a hub defect",
   },
 
   // ── the refreshed bundle has to LAND ──────────────────────────────────────────────────
@@ -544,7 +544,7 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
   // "single-use rotated refresh tokens"). Row 3 refreshes once and observes one call, which
   // an implementation that refreshes in MEMORY and forwards without ever writing the new
   // bundle back satisfies perfectly — and then, in production, the AS has already burned
-  // the rotated refresh token, the second call's refresh fails, and the service flips to
+  // the rotated refresh token, the second call's refresh fails, and the app flips to
   // needs_reconnect after exactly one successful call. Two calls is the shortest sequence
   // that can tell those apart: the totals say the second call went straight to the
   // resource, which is only possible if the first call's refresh was sealed back into
@@ -591,10 +591,10 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
  *    (401 → upstream_status). The headers mode has this as a case of its own; the oauth
  *    mode has no equivalent seam, so it lives here.
  * 3. THE FLIP HAS ONE TRIGGER. §7 binds needs_reconnect to a FAILED REFRESH and to nothing
- *    else, so after every row whose credential state is not `refresh-fails` the service's
+ *    else, so after every row whose credential state is not `refresh-fails` the app's
  *    `connectionStatus` reads exactly what it read before the row ran — a resource
  *    server's 401 or 503 leaves a live bundle live. The flip is a state change the owner
- *    has to undo by hand, so an over-eager one is a service bricked by somebody else's
+ *    has to undo by hand, so an over-eager one is an app bricked by somebody else's
  *    permission error.
  */
 export function runUpstreamFailureTable(rows: readonly UpstreamFailureRow[]): void {
@@ -723,8 +723,8 @@ export const CASE_BUDGET_MS = (CALL_TIMEOUT_MS + AGGREGATED_LIST_DEADLINE_MS) * 
  *  credential its requests carry. */
 type World = {
   ns: SeededNamespace;
-  service: ServiceDetail;
-  /** The fake-upstream scenario the row's service points at — its log IS `dials`. */
+  app: AppDetail;
+  /** The fake-upstream scenario the row's app points at — its log IS `dials`. */
   upstreamId: string;
   /** The fake AS, on oauth rows — the `/token` arrivals in its log ARE `tokenDials`. */
   asId?: string;
@@ -739,7 +739,7 @@ async function snapshot(world: World) {
     tokenDials:
       world.asId === undefined ? 0 : (await readObservations(world.asId)).filter(isTokenDial).length,
     auditCalls: (await query(env.DB, world.ns.owner.userId, { event: "tools/call", limit: 200 })).rows,
-    status: await connectionStatus(world.service),
+    status: await connectionStatus(world.app),
   };
 }
 
@@ -766,7 +766,7 @@ function classOf(entry: AuditRow | undefined): UpstreamFailureClass | null {
  */
 async function classFromModule(world: World): Promise<UpstreamFailureClass | null> {
   try {
-    await upstreamBackend.listTools(world.service, LIST_CTX);
+    await upstreamBackend.listTools(world.app, LIST_CTX);
     return null;
   } catch (err) {
     if (err instanceof UpstreamError) return err.failureClass;
@@ -801,14 +801,14 @@ function requestFor(world: World, row: UpstreamFailureRow): { url: string; messa
   if (row.operation === "list-aggregated") {
     return { url: base, message: { ...envelope, method: "tools/list" } };
   }
-  const url = `${base}/${world.service.slug}`;
+  const url = `${base}/${world.app.slug}`;
   if (row.operation === "list-scoped") return { url, message: { ...envelope, method: "tools/list" } };
   return { url, message: { ...envelope, method: "tools/call", params: { name: TOOL, arguments: ARGS } } };
 }
 
 /** One request through the composition root, read down to what every assertion needs. Takes
  *  the CREDENTIAL rather than a world, because that is the only thing it uses — the fan-out
- *  has no service and no sentinel to lend it. */
+ *  has no app and no sentinel to lend it. */
 async function request(
   credential: string,
   spec: { url: string; message: unknown },
@@ -828,7 +828,7 @@ async function request(
 }
 
 /**
- * The fixture the table's preamble names, built per row: one proxied service on a
+ * The fixture the table's preamble names, built per row: one proxied app on a
  * fake-upstream scenario carrying the row's behavior, seeded into the row's credential
  * state through the production seams alone (setHeaders, or a whole connect flow), plus —
  * on the aggregated rows — two healthy proxied siblings so the aggregate has something to
@@ -856,7 +856,7 @@ async function buildWorld(row: UpstreamFailureRow): Promise<World> {
       : [];
 
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
         slug: SLUG,
         kind: "proxy",
@@ -873,7 +873,7 @@ async function buildWorld(row: UpstreamFailureRow): Promise<World> {
         upstreamAuthMode: "headers" as const,
       })),
     ],
-    accounts: [
+    agents: [
       {
         slug: AGENT,
         grants: Object.fromEntries(
@@ -888,10 +888,10 @@ async function buildWorld(row: UpstreamFailureRow): Promise<World> {
   });
 
   const registry = new Registry(env.DB);
-  const service = await registry.getService(ns.owner.userId, SLUG);
-  if (service === null) throw new Error(`${row.title}: the seeded service vanished`);
+  const app = await registry.getApp(ns.owner.userId, SLUG);
+  if (app === null) throw new Error(`${row.title}: the seeded app vanished`);
   for (const scenario of siblings) {
-    const sibling = await registry.getService(
+    const sibling = await registry.getApp(
       ns.owner.userId,
       `${SIBLING}${siblings.indexOf(scenario)}`,
     );
@@ -900,7 +900,7 @@ async function buildWorld(row: UpstreamFailureRow): Promise<World> {
 
   const world: World = {
     ns,
-    service,
+    app,
     upstreamId: upstream.id,
     ...(as === undefined ? {} : { asId: as.id }),
     sentinel,
@@ -913,7 +913,7 @@ async function buildWorld(row: UpstreamFailureRow): Promise<World> {
 /**
  * The row's credential state, reached ONLY through production seams: headers mode through
  * `setHeaders`, every oauth state through a real begin→callback flow against the fake AS.
- * `needs-reconnect` is the one that takes two steps — a service is flagged by a failed
+ * `needs-reconnect` is the one that takes two steps — an app is flagged by a failed
  * refresh and by nothing else (§7), so the fixture spends one whole call provoking it,
  * before the row's own counters are taken.
  */
@@ -923,14 +923,14 @@ async function seedCredentials(
   as: AsScenario | undefined,
 ): Promise<void> {
   if (as === undefined) {
-    await setHeaders(world.service, HEADERS_CREDENTIAL);
+    await setHeaders(world.app, HEADERS_CREDENTIAL);
     return;
   }
-  await connectUpstream(world.ns, world.service);
+  await connectUpstream(world.ns, world.app);
   if (row.credentials.auth === "oauth" && row.credentials.token === "needs-reconnect") {
     await request(world.credential, requestFor(world, { ...row, operation: "call" }));
-    if ((await connectionStatus(world.service)) !== "needs_reconnect") {
-      throw new Error(`${row.title}: seeding failed to flip the service to needs_reconnect`);
+    if ((await connectionStatus(world.app)) !== "needs_reconnect") {
+      throw new Error(`${row.title}: seeding failed to flip the app to needs_reconnect`);
     }
   }
 }
@@ -943,12 +943,12 @@ async function seedCredentials(
  * that is the point (seed.ts's header), and it is what makes every oauth row below an
  * assertion about a credential the production code actually stored.
  */
-export async function connectUpstream(ns: SeededNamespace, service: ServiceDetail): Promise<void> {
+export async function connectUpstream(ns: SeededNamespace, app: AppDetail): Promise<void> {
   const session = await seedOwnerSession(ns.owner);
   const owner = await requireOwnerSession(
-    new Request(`${ORIGIN}/services`, { headers: { Cookie: session.cookie } }),
+    new Request(`${ORIGIN}/apps`, { headers: { Cookie: session.cookie } }),
   );
-  const authorize = await beginConnect(service, { id: owner.sessionId });
+  const authorize = await beginConnect(app, { id: owner.sessionId });
   const redirected = await fetch(authorize.toString(), { redirect: "manual" });
   const location = redirected.headers.get("Location");
   if (location === null) {
@@ -1065,7 +1065,7 @@ const UPSTREAM_ERROR = { code: -32602, message: "unknown tool: FAKE0000-not-a-to
 // ── the two smaller worlds the blocks below share ─────────────────────────────────────
 
 /**
- * One headers-mode proxied service on `upstream`, connected through `setHeaders` — the
+ * One headers-mode proxied app on `upstream`, connected through `setHeaders` — the
  * cheapest world in the file, and the one every case that is about the DIAL rather than
  * about credentials uses.
  */
@@ -1074,7 +1074,7 @@ async function buildHeadersWorld(
   options: { forwardIdentity?: boolean } = {},
 ): Promise<World> {
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
         slug: SLUG,
         kind: "proxy",
@@ -1084,16 +1084,16 @@ async function buildHeadersWorld(
         logBodies: true,
       },
     ],
-    accounts: [
+    agents: [
       { slug: AGENT, grants: { [SLUG]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: TOKEN }] },
     ],
   });
-  const service = await new Registry(env.DB).getService(ns.owner.userId, SLUG);
-  if (service === null) throw new Error("buildHeadersWorld: the seeded service vanished");
-  await setHeaders(service, HEADERS_CREDENTIAL);
+  const app = await new Registry(env.DB).getApp(ns.owner.userId, SLUG);
+  if (app === null) throw new Error("buildHeadersWorld: the seeded app vanished");
+  await setHeaders(app, HEADERS_CREDENTIAL);
   return {
     ns,
-    service,
+    app,
     upstreamId: upstream.id,
     sentinel: `FAKE0000-unused-${upstream.id}`,
     credential: ns.tokens[TOKEN].token,
@@ -1101,7 +1101,7 @@ async function buildHeadersWorld(
 }
 
 /**
- * One oauth-mode proxied service, connected through a whole real §7 flow against `as`.
+ * One oauth-mode proxied app, connected through a whole real §7 flow against `as`.
  * `generation` is the issuance the upstream must see by the time the dial happens — 1 for
  * a bundle that is live as connect left it, 2 for one the call has to refresh first.
  */
@@ -1118,7 +1118,7 @@ async function buildOAuthWorld(
     requireBearer: `Bearer ${fakeAccessToken(as.id, generation)}`,
   };
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
         slug: SLUG,
         kind: "proxy",
@@ -1127,16 +1127,16 @@ async function buildOAuthWorld(
         logBodies: true,
       },
     ],
-    accounts: [
+    agents: [
       { slug: AGENT, grants: { [SLUG]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: TOKEN }] },
     ],
   });
-  const service = await new Registry(env.DB).getService(ns.owner.userId, SLUG);
-  if (service === null) throw new Error("buildOAuthWorld: the seeded service vanished");
-  await connectUpstream(ns, service);
+  const app = await new Registry(env.DB).getApp(ns.owner.userId, SLUG);
+  if (app === null) throw new Error("buildOAuthWorld: the seeded app vanished");
+  await connectUpstream(ns, app);
   return {
     ns,
-    service,
+    app,
     upstreamId,
     asId: as.id,
     sentinel: `FAKE0000-unused-${upstreamId}`,
@@ -1151,7 +1151,7 @@ async function callThrough(
   tool: string = TOOL,
 ): Promise<{ status: number; body: JsonRpcResponse; text: string }> {
   return request(world.credential, {
-    url: `${ORIGIN}/${world.ns.owner.username}/mcp/${world.service.slug}`,
+    url: `${ORIGIN}/${world.ns.owner.username}/mcp/${world.app.slug}`,
     message: {
       jsonrpc: "2.0",
       id: 1,
@@ -1164,8 +1164,8 @@ async function callThrough(
 /**
  * The fan-out world: two proxied upstreams that cannot answer (one refusing, one hung),
  * two healthy proxied ones so the aggregate has something to succeed WITH, and a tunneled
- * service that has never connected — the one participant whose catalog comes from DO cache
- * and therefore cannot miss either deadline. One account granted on all five, so a single
+ * app that has never connected — the one participant whose catalog comes from DO cache
+ * and therefore cannot miss either deadline. One agent granted on all five, so a single
  * aggregated request exercises every branch of the fan-out at once.
  */
 async function buildFanOut(): Promise<FanOut> {
@@ -1176,7 +1176,7 @@ async function buildFanOut(): Promise<FanOut> {
     [BETA]: healthy(uniqueSlug("beta")),
   };
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       ...Object.entries(scenarios).map(([slug, scenario]) => ({
         slug,
         kind: "proxy" as const,
@@ -1185,7 +1185,7 @@ async function buildFanOut(): Promise<FanOut> {
       })),
       { slug: TUNNELED, kind: "tunnel" as const },
     ],
-    accounts: [
+    agents: [
       {
         slug: AGENT,
         grants: Object.fromEntries(
@@ -1202,8 +1202,8 @@ async function buildFanOut(): Promise<FanOut> {
   // Only the healthy pair is given a credential: the other two never get past their mode,
   // and connecting them would let the fan-out's omission be blamed on a missing bundle.
   for (const slug of [ALPHA, BETA]) {
-    const service = await registry.getService(ns.owner.userId, slug);
-    if (service !== null) await setHeaders(service, HEADERS_CREDENTIAL);
+    const app = await registry.getApp(ns.owner.userId, slug);
+    if (app !== null) await setHeaders(app, HEADERS_CREDENTIAL);
   }
   const credential = ns.tokens[TOKEN].token;
   const base = `${ORIGIN}/${ns.owner.username}/mcp`;
@@ -1273,7 +1273,7 @@ describe("§7 — the failure table: one code out, the class in", () => {
  * run. Without it, an implementation that warns on every -32000 passes the first half.
  */
 describe("§7/§15 — what one -32000 may disclose", () => {
-  it("§7/§15 · a proxied upstream that never answers refuses -32000 whose MESSAGE discloses that the call may have executed — the same disclosure a tunneled timeout carries, since one code out is all §7 leaves to say it with; the twin, a service whose stored bundle is already dead, discloses nothing because no dial was attempted", async () => {
+  it("§7/§15 · a proxied upstream that never answers refuses -32000 whose MESSAGE discloses that the call may have executed — the same disclosure a tunneled timeout carries, since one code out is all §7 leaves to say it with; the twin, an app whose stored bundle is already dead, discloses nothing because no dial was attempted", async () => {
     const hung = await buildHeadersWorld({ id: uniqueSlug("hang"), mode: { kind: "hang" } });
 
     const timedOut = await callThrough(hung);
@@ -1286,12 +1286,12 @@ describe("§7/§15 — what one -32000 may disclose", () => {
     // own dispatch, never a word the upstream said.
     expect(timedOut.body.error?.data).toBeUndefined();
 
-    // The twin. A failed refresh is the one thing that flips a service (§7), so the state
+    // The twin. A failed refresh is the one thing that flips an app (§7), so the state
     // is reached by provoking one rather than by writing a column.
     const as: AsScenario = { id: uniqueSlug("as"), quirks: ["stale_first_token", "refresh_fails"] };
     const dead = await buildOAuthWorld(uniqueSlug("dead"), as, 1);
     await callThrough(dead);
-    expect(await connectionStatus(dead.service), "the fixture never reached the dead state").toBe(
+    expect(await connectionStatus(dead.app), "the fixture never reached the dead state").toBe(
       "needs_reconnect",
     );
 
@@ -1315,18 +1315,18 @@ describe("§7 — aggregated fan-out vs the scoped surface", { timeout: CASE_BUD
     expect(body.result).toBeDefined();
   });
 
-  it("§7 · both slugs are named in `_meta[\"pmcp/unavailable\"]`, and the healthy services' tools are all present, slug-prefixed", async () => {
+  it("§7 · both slugs are named in `_meta[\"pmcp/unavailable\"]`, and the healthy apps' tools are all present, slug-prefixed", async () => {
     const fanOut = await buildFanOut();
     const { body } = await fanOut.list();
     expect(omittedBy(body)).toEqual([FAILING, HANGING].sort());
-    // One service's failure may not cost the consumer the other nine: both healthy
+    // One app's failure may not cost the consumer the other nine: both healthy
     // catalogs arrive whole, and prefixed, while two slugs are quietly omitted.
     expect(toolNames(body)).toEqual(
       UPSTREAM_TOOLS.flatMap((tool) => [`${ALPHA}_${tool.name}`, `${BETA}_${tool.name}`]).sort(),
     );
   });
 
-  it("§7 · the scoped list against the same failing service → -32000 — where the aggregate's silent omission surfaces", async () => {
+  it("§7 · the scoped list against the same failing app → -32000 — where the aggregate's silent omission surfaces", async () => {
     const fanOut = await buildFanOut();
     expect(omittedBy((await fanOut.list()).body)).toContain(FAILING);
     const scoped = await fanOut.list(FAILING);
@@ -1349,12 +1349,12 @@ describe("§7 — aggregated fan-out vs the scoped surface", { timeout: CASE_BUD
     expect(elapsed, "and never the call budget").toBeLessThan(CALL_TIMEOUT_MS);
   });
 
-  it("§7 · a tunneled service in the same fan-out answers from DO cache and is unaffected by either deadline", async () => {
+  it("§7 · a tunneled app in the same fan-out answers from DO cache and is unaffected by either deadline", async () => {
     const fanOut = await buildFanOut();
     const { body } = await fanOut.list();
-    // A tunneled service that has never connected lists no tools (§7) — but from CACHE, so
+    // A tunneled app that has never connected lists no tools (§7) — but from CACHE, so
     // it is not "unavailable": an empty catalog is an ANSWER, and the two states are the
-    // difference between a Reconnect button and a service nobody has registered yet.
+    // difference between a Reconnect button and an app nobody has registered yet.
     expect(omittedBy(body)).not.toContain(TUNNELED);
     expect(toolNames(body).filter((name) => name.startsWith(`${TUNNELED}_`))).toEqual([]);
   });
@@ -1394,7 +1394,7 @@ describe("§7 — credentials at call time", () => {
     const upstreamId = uniqueSlug("dead");
     const as: AsScenario = { id: uniqueSlug("as"), quirks: ["stale_first_token", "refresh_fails"] };
     const world = await buildOAuthWorld(upstreamId, as, 1);
-    expect(await connectionStatus(world.service), "connected until a refresh proves otherwise").toBe(
+    expect(await connectionStatus(world.app), "connected until a refresh proves otherwise").toBe(
       "connected",
     );
     // A DELTA, because connect already touched this host: RFC 9728 discovery is a request
@@ -1404,7 +1404,7 @@ describe("§7 — credentials at call time", () => {
 
     const { body } = await callThrough(world);
     expect(body.error?.code).toBe(-32000);
-    expect(await connectionStatus(world.service)).toBe("needs_reconnect");
+    expect(await connectionStatus(world.app)).toBe("needs_reconnect");
     // Stated as the arrivals themselves rather than as a count, so a row that goes red
     // says WHAT reached the resource instead of only how much did.
     expect(
@@ -1418,10 +1418,10 @@ describe("§7 — credentials at call time", () => {
       event: "upstream.oauth_refresh_failed",
     });
     expect(written.total, "the ledger records the credential's death").toBe(1);
-    expect(written.rows[0].service).toBe(SLUG);
+    expect(written.rows[0].app).toBe(SLUG);
   });
 
-  it("§7 · the TWIN of the flip: a token endpoint that fails to ANSWER costs the call and nothing else — the service is still `connected` and no refresh-failure row is written", async () => {
+  it("§7 · the TWIN of the flip: a token endpoint that fails to ANSWER costs the call and nothing else — the app is still `connected` and no refresh-failure row is written", async () => {
     // The same stale bundle, the same refused call, one thing different: this AS does not
     // reject the grant, it fails to answer it (a 503 — what a ten-second outage looks like).
     // §7 binds needs_reconnect to a FAILED REFRESH, and a blip is not one: flipping here
@@ -1434,7 +1434,7 @@ describe("§7 — credentials at call time", () => {
     expect(body.error?.code, "the call is refused like any other upstream failure").toBe(-32000);
     expect(body.error?.data, "and carries nothing of the AS").toBeUndefined();
     expect(
-      await connectionStatus(world.service),
+      await connectionStatus(world.app),
       "an unreachable token endpoint is not a dead credential",
     ).toBe("connected");
     const written = await query(env.DB, world.ns.owner.userId, {
@@ -1443,7 +1443,7 @@ describe("§7 — credentials at call time", () => {
     expect(written.total, "the credential did not die, so the ledger does not say it did").toBe(0);
   }, CASE_BUDGET_MS);
 
-  it("§7 · two CONCURRENT calls across one stale bundle leave the service connected — a rotating AS burns the loser's refresh token, and the flip is a compare-and-set rather than a brick", async () => {
+  it("§7 · two CONCURRENT calls across one stale bundle leave the app connected — a rotating AS burns the loser's refresh token, and the flip is a compare-and-set rather than a brick", async () => {
     // The failure the two-call row cannot see, because it is sequential: both calls open the
     // same bundle, both exchange, and the second presents a token the first already burned.
     // Whatever the interleaving, the credential must survive — at most one refused call.
@@ -1456,7 +1456,7 @@ describe("§7 — credentials at call time", () => {
     const answers = await Promise.all([callThrough(world), callThrough(world)]);
 
     expect(
-      await connectionStatus(world.service),
+      await connectionStatus(world.app),
       "a lost race is never a credential the owner has to repair by hand",
     ).toBe("connected");
     expect(
@@ -1510,7 +1510,7 @@ describe("§7 — caller identity forwarding, off by default", () => {
     await callThrough(world);
     const [dial] = await readObservations(upstream.id);
     expect(dial.pmcpHeaders).toEqual({
-      "x-pmcp-principal": `sa:${AGENT}`,
+      "x-pmcp-principal": `agent:${AGENT}`,
       // Literal, never expanded into the declared role names (§7) — an upstream branching
       // on it must see the same word the grant carries.
       "x-pmcp-roles": "all",
@@ -1539,7 +1539,7 @@ describe("§7 — caller identity forwarding, off by default", () => {
         env as unknown as Env,
       );
       const [dial] = await readObservations(upstream.id);
-      // The hub terminates auth entirely (§7): what rides upstream is the SERVICE's stored
+      // The hub terminates auth entirely (§7): what rides upstream is the APP's stored
       // credential, never the caller's — MCP's audience-binding rules forbid pass-through —
       // and the caller's cookie is not copied at all.
       expect(dial.authorization, `forwardIdentity: ${forwardIdentity}`).toBe(
@@ -1557,7 +1557,7 @@ describe("§7 — caller identity forwarding, off by default", () => {
     const [withCapabilities] = await readObservations(declaring.id);
     expect(withCapabilities.meta?.[CLIENT_CAPABILITIES]).toEqual(declared);
 
-    // Legacy consumers declare none and are forwarded `{}`, so services correctly refrain
+    // Legacy consumers declare none and are forwarded `{}`, so apps correctly refrain
     // from elicitation and sampling for them rather than guessing.
     const legacy = healthy(uniqueSlug("legacy"));
     await callThrough(await buildHeadersWorld(legacy));
@@ -1574,14 +1574,14 @@ describe("§10 — subrequest budgets asserted explicitly (workerd enforces none
     expect((await readObservations(upstream.id)).length).toBe(1);
   });
 
-  it("§10 · an aggregated list over N proxied services is N dials, and a second list dials again (no proxied catalog cache in v1)", async () => {
+  it("§10 · an aggregated list over N proxied apps is N dials, and a second list dials again (no proxied catalog cache in v1)", async () => {
     const fanOut = await buildFanOut();
     // Counted on the two HEALTHY slugs: what a failing or hung upstream costs is the
     // failure table's business, and this case is about the fan, not the failures.
     const before = await fanOut.healthyDials();
     await fanOut.list();
     const afterFirst = await fanOut.healthyDials();
-    expect(afterFirst - before, "one dial per proxied service in the fan").toBe(2);
+    expect(afterFirst - before, "one dial per proxied app in the fan").toBe(2);
     await fanOut.list();
     expect(
       (await fanOut.healthyDials()) - afterFirst,
@@ -1610,7 +1610,7 @@ describe("§7 — proxied redaction has no schema half", () => {
     // Both a tool the upstream lists and one it has never heard of: with no cached catalog
     // there is no "unknown", so neither direction has a writeOnly map to derive.
     for (const tool of [TOOL, "a-tool-this-upstream-never-heard-of"]) {
-      expect(await upstreamBackend.sensitivePaths(world.service, tool), tool).toEqual({
+      expect(await upstreamBackend.sensitivePaths(world.app, tool), tool).toEqual({
         args: [],
         results: [],
       });
@@ -1628,12 +1628,12 @@ describe("§7 — proxied redaction has no schema half", () => {
 
 // ══ §20.2 — the proxied path serves more than tools ═══════════════════════════════════
 //
-// §20 changes nothing about HOW a proxied service answers: `prompts/list` obeys every
+// §20 changes nothing about HOW a proxied app answers: `prompts/list` obeys every
 // sentence of §7's `tools/list` bullet (live fetch, same filter, same `<slug>_` prefix,
-// same fan-out, same `_meta`) and §20.5 keeps "proxied services cache nothing at all"
+// same fan-out, same `_meta`) and §20.5 keeps "proxied apps cache nothing at all"
 // exactly as it was. What is worth pinning HERE rather than in order.table.test.ts is the
 // part that is about the PROXIED backend specifically: that the fetch is live, that a
-// failing one costs the aggregate only its own slug, and that a proxied service's virtual
+// failing one costs the aggregate only its own slug, and that a proxied app's virtual
 // roles filter a family the config declares patterns for.
 
 /**
@@ -1661,11 +1661,11 @@ const UPSTREAM_RESOURCES: Resource[] = [
   { uri: UNGRANTED_RESOURCE_URI, name: "the vault" },
 ];
 
-/** A namespace of proxied services, one per scenario, all credentialed through
- *  `setHeaders` and all granted to one account. */
+/** A namespace of proxied apps, one per scenario, all credentialed through
+ *  `setHeaders` and all granted to one agent. */
 async function buildFamilyWorld(spec: {
   scenarios: Record<string, ServingScenario>;
-  /** The virtual roles every seeded service declares (§8) — absent means the wildcard. */
+  /** The virtual roles every seeded app declares (§8) — absent means the wildcard. */
   roles?: RoleDeclaration;
   grant?: GrantEntry[];
 }): Promise<{
@@ -1674,14 +1674,14 @@ async function buildFamilyWorld(spec: {
 }> {
   const slugs = Object.keys(spec.scenarios);
   const ns = await seedNamespace(env.DB, {
-    services: slugs.map((slug) => ({
+    apps: slugs.map((slug) => ({
       slug,
       kind: "proxy" as const,
       upstreamUrl: upstreamUrlFor(spec.scenarios[slug]),
       upstreamAuthMode: "headers" as const,
       ...(spec.roles === undefined ? {} : { roles: spec.roles }),
     })),
-    accounts: [
+    agents: [
       {
         slug: AGENT,
         grants: Object.fromEntries(
@@ -1693,9 +1693,9 @@ async function buildFamilyWorld(spec: {
   });
   const registry = new Registry(env.DB);
   for (const slug of slugs) {
-    const service = await registry.getService(ns.owner.userId, slug);
-    if (service === null) throw new Error(`buildFamilyWorld: "${slug}" vanished`);
-    await setHeaders(service, HEADERS_CREDENTIAL);
+    const app = await registry.getApp(ns.owner.userId, slug);
+    if (app === null) throw new Error(`buildFamilyWorld: "${slug}" vanished`);
+    await setHeaders(app, HEADERS_CREDENTIAL);
   }
   const credential = ns.tokens[TOKEN].token;
   const base = `${ORIGIN}/${ns.owner.username}/mcp`;
@@ -1722,7 +1722,7 @@ function resourceUrisOf(body: JsonRpcResponse): string[] {
 }
 
 describe("§20.2 — prompts and resources on the proxied backend", () => {
-  it("§20.2 · a proxied service's prompts are fetched live and contribute to the aggregated list", async () => {
+  it("§20.2 · a proxied app's prompts are fetched live and contribute to the aggregated list", async () => {
     const upstream: ServingScenario = { ...healthy(uniqueSlug("prompts")), prompts: UPSTREAM_PROMPTS };
     const world = await buildFamilyWorld({ scenarios: { [SLUG]: upstream } });
 
@@ -1754,15 +1754,15 @@ describe("§20.2 — prompts and resources on the proxied backend", () => {
     const { body } = await world.send(null, "prompts/list");
 
     expect(body.error, "the aggregate itself always succeeds (§7's rule, unchanged)").toBeUndefined();
-    expect(promptNamesOf(body), "one service's failure costs the consumer only its own").toEqual(
+    expect(promptNamesOf(body), "one app's failure costs the consumer only its own").toEqual(
       UPSTREAM_PROMPTS.map((prompt) => `${healthySlug}_${prompt.name}`).sort(),
     );
     const meta = (body.result as { _meta?: Record<string, unknown> } | undefined)?._meta;
     expect(meta?.["pmcp/unavailable"], "and the omission is named, never silent").toEqual([SLUG]);
   });
 
-  it("§20.2 · a proxied service's resources are served on its scoped endpoint and filtered by its virtual roles", async () => {
-    // A proxied service's declaration is its CONFIG (§8's virtual roles), and §20.3 gives
+  it("§20.2 · a proxied app's resources are served on its scoped endpoint and filtered by its virtual roles", async () => {
+    // A proxied app's declaration is its CONFIG (§8's virtual roles), and §20.3 gives
     // that config a family dimension: the resource patterns are the owner's, written in
     // the same place the tool patterns already are.
     const upstream: ServingScenario = {

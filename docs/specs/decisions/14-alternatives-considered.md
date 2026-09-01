@@ -1,6 +1,6 @@
 ## 14. Alternatives considered
 
-- **Tunnels per service (cloudflared/ngrok) + plain remote MCP servers** — no unified
+- **Tunnels per app (cloudflared/ngrok) + plain remote MCP servers** — no unified
   auth, roles, or registry; N tunnels to babysit. Rejected: the registry and grant model
   is the point of the project.
 - **Cloudflare `McpAgent`** — deprecated, frozen on MCP SDK v1. Rejected.
@@ -16,10 +16,10 @@
   plugin with MCP presets and cannot be combined with it, and §19 takes the
   provider alone because the hub is multi-tenant and mcp() serves exactly one
   resource identifier.)*
-- **D1 for per-service state** — network hop on every DO wake for no benefit; DO SQLite
+- **D1 for per-app state** — network hop on every DO wake for no benefit; DO SQLite
   is colocated and priced identically. D1 kept only for the shared control plane.
 - **OAuth to upstream servers** — originally deferred, now in scope as `auth: oauth`
-  proxied services (§7): the interactive connect flow was the missing piece for real
+  proxied apps (§7): the interactive connect flow was the missing piece for real
   upstreams like Linear, and the hub already had the encrypted credential store and
   browser surface it needs. Static headers remain the default for upstreams that take
   a token.

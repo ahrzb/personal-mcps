@@ -1,4 +1,4 @@
-// @personal-mcps/client — the service-author library (spec §6, §11). A plain MCP
+// @personal-mcps/client — the app-author library (spec §6, §11). A plain MCP
 // server object goes in; this module keeps it reachable through the hub's reverse
 // tunnel.
 //
@@ -34,7 +34,7 @@ import { WebSocket } from "ws";
  *
  * Stated structurally on purpose. A wider type (`unknown`, with a runtime probe for
  * `connect`) would let a wrong object through to a fallback that registers with the hub and
- * then never assigns `onmessage` — the hub believes the service is healthy while every
+ * then never assigns `onmessage` — the hub believes the app is healthy while every
  * forwarded call times out. Failing at the call site instead is the whole difference
  * between a typo and an unknown-unknown. A hand-rolled session is served by constructing
  * {@link HubTransport} directly, which is what that class documents.
@@ -44,7 +44,7 @@ export type McpServer = {
   /**
    * Optional: the SDK's own `ServerCapabilities`-shaped answer, read at
    * registration time to answer the hub's `server/discover` (§11/§6, added
-   * §20). Structural and optional on purpose — every service already in the
+   * §20). Structural and optional on purpose — every app already in the
    * field is an object with no such method, and §11 pins that absence as the
    * hub's "capabilities unknown" fallback rather than a TypeError here.
    */
@@ -56,7 +56,7 @@ export type JsonRpcMessage = unknown;
 
 /**
  * The role declaration sent in `hub/register`: role name → either a bare pattern
- * list — tools, forever, so every service written before §20 keeps registering
+ * list — tools, forever, so every app written before §20 keeps registering
  * unchanged — or a per-family object, each key optional (§20.3). Validation is
  * the hub's job, not this library's: names must match `[a-z0-9_-]{1,64}`, `all`
  * is reserved, an unknown family key is a violation, and pattern length (≤128)
@@ -134,14 +134,14 @@ export type ServeOptions = {
    */
   url?: string;
   /**
-   * The service token (`pmcp_svc_…`). Default: the PMCP_SERVICE_TOKEN env var.
-   * The service identity comes entirely from this token — there is deliberately
-   * no service/slug option (§6: a token for one slug can never touch another).
+   * The app token (`pmcp_app_…`). Default: the PMCP_APP_TOKEN env var.
+   * The app identity comes entirely from this token — there is deliberately
+   * no app/slug option (§6: a token for one slug can never touch another).
    */
   token?: string;
   /**
-   * Role declaration for this service. Omitted or `{}` declares none — the
-   * service is then reachable only by owner tokens or grants of the built-in
+   * Role declaration for this app. Omitted or `{}` declares none — the
+   * app is then reachable only by owner tokens or grants of the built-in
    * `all` role (§6).
    */
   roles?: Roles;
@@ -149,7 +149,7 @@ export type ServeOptions = {
 
 /**
  * The credential is dead: 401 at upgrade or close 4001 after establishment —
- * revoked/expired token, wrong token kind, or deleted service. Terminal; the
+ * revoked/expired token, wrong token kind, or deleted app. Terminal; the
  * library never retries a dead credential (§6's upgrade matrix).
  */
 export class CredentialsError extends Error {}
@@ -162,18 +162,18 @@ export class CredentialsError extends Error {}
 export class RegistrationError extends Error {}
 
 /**
- * Run `server` as a tunneled hub service: dial, register the role declaration,
+ * Run `server` as a tunneled hub app: dial, register the role declaration,
  * and stay reachable until the hub says otherwise. The returned promise pends for
- * the life of the service — hours to months; treat it as the bot's main loop.
+ * the life of the app — hours to months; treat it as the bot's main loop.
  *
  * Terminal outcomes are the whole resolution contract:
  * - resolves quietly when the hub replaces this connection with a newer one for
- *   the same service (`hub/replaced`, close 4000) — this copy steps aside and
+ *   the same app (`hub/replaced`, close 4000) — this copy steps aside and
  *   never reconnects (§6: two copies fighting for the slot is an operator error
  *   worth surfacing);
  * - rejects with CredentialsError or RegistrationError (see those types);
  * - every other failure — network drop, hub deploy, registration deadline (4004),
- *   archived service (403 at upgrade / close 4002) — reconnects forever and never
+ *   archived app (403 at upgrade / close 4002) — reconnects forever and never
  *   resolves. The full policy lives on HubTransport.
  *
  * Reconnects re-register and re-warm the hub's tool cache automatically; nothing
@@ -184,10 +184,10 @@ export async function serve(server: McpServer, options?: ServeOptions): Promise<
   // Options resolve BEFORE any I/O: an empty token dialed anyway comes back as upgrade
   // 401, turning a local config mistake into a revoked-token diagnosis (§10, §11).
   const url = options?.url ?? process.env.PMCP_URL;
-  const token = options?.token ?? process.env.PMCP_SERVICE_TOKEN;
+  const token = options?.token ?? process.env.PMCP_APP_TOKEN;
   if (url === undefined || url === "") throw new TypeError("no hub url: pass options.url or set PMCP_URL");
   if (token === undefined || token === "") {
-    throw new TypeError("no service token: pass options.token or set PMCP_SERVICE_TOKEN");
+    throw new TypeError("no app token: pass options.token or set PMCP_APP_TOKEN");
   }
   const transport = new HubTransport({ url, token, roles: options?.roles, discover: () => probeCapabilities(server) });
   // The SDK session owns the handshake and calls start() itself.
@@ -198,7 +198,7 @@ export async function serve(server: McpServer, options?: ServeOptions): Promise<
 /**
  * The author's declared capabilities, read the one way §11 sanctions: the SDK's
  * own optional `getCapabilities()`, never guessed from what this library can
- * carry. Absent — every service already in the field — is `undefined`, which
+ * carry. Absent — every app already in the field — is `undefined`, which
  * HubTransport answers `server/discover` with a `-32601` for: "capabilities
  * unknown", the hub's documented fallback (§6), not a fabricated empty set
  * (§20.5: an empty *answer* is an undeclare and clears a catalog; a missing
@@ -214,7 +214,7 @@ function probeCapabilities(server: McpServer): Record<string, unknown> | undefin
  * wss://<host>/connect. serve() is sugar over this; construct it directly only to
  * wire the SDK session yourself.
  *
- * One transport is one service lifetime, not one socket: reconnects — jittered
+ * One transport is one app lifetime, not one socket: reconnects — jittered
  * exponential backoff, 1 s → 60 s cap, forever (hub deploys sever every socket,
  * so this is routine; the schedule itself is backoffDelay, exported pure) —
  * happen inside, invisible to the SDK session, and
@@ -229,7 +229,7 @@ function probeCapabilities(server: McpServer): Record<string, unknown> | undefin
  *   quietly, never reconnect.
  * - register rejected — terminal, RegistrationError.
  * - everything else (network, deploy, close 4003/4004) — reconnect with backoff;
- *   a truly deleted service becomes 401 at the next upgrade, the fatal path.
+ *   a truly deleted app becomes 401 at the next upgrade, the fatal path.
  *
  * `hub/*` control frames never reach the SDK session; everything else is MCP
  * traffic, one JSON-RPC message per WS text frame. Liveness is WebSocket protocol
@@ -270,7 +270,7 @@ export class HubTransport {
 
   /**
    * `url` is the hub's https origin — a bare origin, no path; anything else is a
-   * TypeError here, before any I/O. `token` is the `pmcp_svc_` credential the
+   * TypeError here, before any I/O. `token` is the `pmcp_app_` credential the
    * whole connection authenticates as. No network happens until start().
    *
    * These three and nothing else (§11). The reconnect policy's two observation
@@ -341,7 +341,7 @@ export class HubTransport {
 
   // ── the connection lifetime ───────────────────────────────────────────────────────────
 
-  /** One transport is one service lifetime: this loop outlives every socket it opens. */
+  /** One transport is one app lifetime: this loop outlives every socket it opens. */
   private async loop(): Promise<void> {
     while (!this.stopped) {
       const ending = await this.connectOnce();
@@ -389,7 +389,7 @@ export class HubTransport {
       socket.on("open", () => {
         this.attempt = 0;
         this.startPings(socket);
-        // `hub/register` is re-sent on EVERY (re)connect, and carries no service or slug:
+        // `hub/register` is re-sent on EVERY (re)connect, and carries no app or slug:
         // identity comes from the token alone.
         void this.send({
           jsonrpc: "2.0",
@@ -430,7 +430,7 @@ export class HubTransport {
   /**
    * Answer the hub's registration-time `server/discover` (§6/§11/§20) — never
    * forwarded to the SDK session. `undefined` capabilities means "unknown", the
-   * fallback that keeps every service predating this method warming tools only
+   * fallback that keeps every app predating this method warming tools only
    * (§6); a real capability set is relayed exactly as the author's SDK reports
    * it, in the same DiscoverResult shape the reverse direction (hub→consumer)
    * uses, so both ends of the wire speak one envelope.
@@ -530,7 +530,7 @@ type Ending =
 function endingForUpgrade(status: number): Ending {
   if (status === 401) {
     // The message names the status, never the credential (§15).
-    return { behavior: "stop_fatal", error: new CredentialsError("the hub refused the service credential (401)") };
+    return { behavior: "stop_fatal", error: new CredentialsError("the hub refused the app credential (401)") };
   }
   if (status === 403) return { behavior: "reconnect", schedule: "max_only" };
   return { behavior: "reconnect", schedule: "exponential" };
@@ -597,10 +597,10 @@ export function backoffDelay(attempt: number, rng: () => number): number {
 
 /**
  * The hub-asserted caller of the current tool call (§7, "Caller identity
- * forwarding"). `principal` is `"user:<name>"` or `"sa:<slug>"`. `roles` is the
- * caller's granted role names on this service exactly as granted — the built-in
+ * forwarding"). `principal` is `"user:<name>"` or `"agent:<slug>"`. `roles` is the
+ * caller's granted role names on this app exactly as granted — the built-in
  * wildcard arrives literally as `"all"` (owners get `["all"]`), never expanded
- * into declared names. Informational for the service's own branching: the hub's
+ * into declared names. Informational for the app's own branching: the hub's
  * grant check has already run, and these are not secrets.
  */
 export type CallerIdentity = {
@@ -612,7 +612,7 @@ export type CallerIdentity = {
 
 /**
  * Read the caller identity off a forwarded request's `_meta` (`hub/principal`,
- * `hub/roles`). Trustworthy for fine-grained service-side checks: the hub strips
+ * `hub/roles`). Trustworthy for fine-grained app-side checks: the hub strips
  * consumer-supplied `hub/*` keys before injecting its own, so a consumer cannot
  * forge these (§7). On a request that never passed through the hub (e.g. local
  * testing), the fields are simply absent: principal is `""`, roles is empty, and

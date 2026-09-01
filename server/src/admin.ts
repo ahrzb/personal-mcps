@@ -1,6 +1,6 @@
 // admin.ts — the ops table: the ONE implementation of every management operation. Three
 // fronts render it with zero added capability (§8's parity invariant): the builtin `pmcp`
-// MCP service (adminBackend, below), the server-rendered web pages, and — over MCP — the
+// MCP app (adminBackend, below), the server-rendered web pages, and — over MCP — the
 // CLI. This module owns and hides: per-op input validation; cross-module cascade ordering
 // on every deleting op (D1 rows are deleted in one atomic batch BEFORE the tunnel DO is
 // severed/wiped, so §15's guarantee holds: a racing re-register finds no row and dies);
@@ -20,7 +20,7 @@ import type { Approvals } from "./approvals";
 import { query, record } from "./audit";
 import { approvalsFromEnv } from "./wiring";
 import { CODES, HubError, notPermitted } from "./errors";
-import type { ServiceBackend, Tool } from "./gateway";
+import type { AppBackend, Tool } from "./gateway";
 import {
   countTokensFor,
   deleteTokensForStatement,
@@ -37,11 +37,11 @@ import {
   PMCP_SLUG,
   Registry,
   RegistryRefusal,
-  SERVICE_CAPABILITIES,
+  APP_CAPABILITIES,
   SLUG_CHARSET,
   writeOnlyPaths,
 } from "./registry";
-import type { GrantEntry, RoleDeclaration, ServiceAccount, ServiceDetail } from "./registry";
+import type { GrantEntry, RoleDeclaration, Agent, AppDetail } from "./registry";
 import { CLOSE_ARCHIVED, CLOSE_REVOKED, sever, status, wipe } from "./tunnel";
 import { connectionStatus, disconnect, setHeaders } from "./upstream";
 import type { UpstreamConnectionStatus } from "./upstream";
@@ -100,7 +100,7 @@ export type AdminOp = {
  * better-auth as the only one), and eight kinds cover every §8 tool — a ninth is a new
  * line in `render` and `coerce`, which is where a reviewer would look for it anyway.
  *
- * - `slug` — a `[a-z0-9-]` name of a service or account. The shape is registry's
+ * - `slug` — a `[a-z0-9-]` name of an app or agent. The shape is registry's
  *   SLUG_CHARSET, read here so the constraint the tool ADVERTISES (the JSON Schema
  *   `pattern`) and the constraint the table ENFORCES are the same regex — a read op that
  *   advertised a shape nothing checked would be the false abstraction this table exists
@@ -110,13 +110,13 @@ export type AdminOp = {
  *   (`name` or `name:approval`), and §20.2's capability vocabulary, which is a CLOSED set
  *   and therefore renders as an `enum` an agent and the web form both read — the same
  *   "what the tool advertises is what the table refuses" the `slug` bullet states.
- * - `headerMap` — name → value, the shape `service_set_upstream_auth` seals.
+ * - `headerMap` — name → value, the shape `app_set_upstream_auth` seals.
  * - `pathMap` — tool-or-pattern → dot-paths, the shape `redact` / `redact_results` take (§7).
- * - `roleDeclaration` — a proxied service's virtual roles (§8, widened by §20.3): role
+ * - `roleDeclaration` — a proxied app's virtual roles (§8, widened by §20.3): role
  *   name → either a bare pattern list OR the per-family object, mixable across roles in
  *   one declaration. This layer checks only the SHAPE (registry.RoleDeclaration's own
  *   union) — never family names, pattern compilation, or the size caps, which is
- *   registry.validateRoles' job inside `createService`/`updateService` (via `domain`,
+ *   registry.validateRoles' job inside `createApp`/`updateApp` (via `domain`,
  *   below); a shape this loose still refuses every malformed value `pathMap` used to.
  * - `duration` — seconds, or the literal `never` (§8's `expires_in`).
  */
@@ -151,7 +151,7 @@ type OpSchema = { description: string; fields: Record<string, Field> };
  * An OpSchema as JSON Schema — the ONE rendering, used for the MCP `inputSchema`, the MCP
  * `outputSchema`, and (via registry.writeOnlyPaths over the latter) the redaction map.
  * `additionalProperties: false` is not decoration: it is how "a kind change is rejected,
- * not ignored" (§8) holds for `service_update` without service_update knowing about kind.
+ * not ignored" (§8) holds for `app_update` without app_update knowing about kind.
  */
 function jsonSchema(schema: OpSchema): Record<string, unknown> {
   const properties: Record<string, unknown> = {};
@@ -207,7 +207,7 @@ function render(field: Field): Record<string, unknown> {
 /**
  * The op's input, checked against the same declaration the tool advertises. Every refusal
  * is the wire's `invalid params`, and every message names a FIELD, never a value: several
- * ops carry credentials (`service_set_upstream_auth`'s headers), and an error that echoed
+ * ops carry credentials (`app_set_upstream_auth`'s headers), and an error that echoed
  * one would put it on the wire and in the ledger (§15).
  */
 function parseInput(schema: OpSchema, input: unknown): Record<string, unknown> {
@@ -323,7 +323,7 @@ function invalid(message: string): HubError {
  * per family and no name echoed: a namespace's contents are not a caller's to enumerate
  * through error prose, and the caller already knows what they asked for.
  */
-function absent(family: "service" | "service account" | "token" | "connection"): HubError {
+function absent(family: "app" | "agent" | "token" | "connection"): HubError {
   return invalid(`no such ${family} in this namespace`);
 }
 
@@ -349,8 +349,8 @@ async function domain<T>(work: Promise<T>): Promise<T> {
 }
 
 /**
- * The uniform `pmcp`-slug rejection (§8): every op that takes a service slug —
- * `service_*`, `grant_set`, `token_issue` alike — refuses the reserved builtin slug via
+ * The uniform `pmcp`-slug rejection (§8): every op that takes an app slug —
+ * `app_*`, `grant_set`, `token_issue` alike — refuses the reserved builtin slug via
  * this one check with its one error, so the reservation can never drift per-tool.
  * Internal seam, deliberately not exported: the reservation is reachable only through
  * the ops.
@@ -358,7 +358,7 @@ async function domain<T>(work: Promise<T>): Promise<T> {
 function assertSlugNotReserved(slug: string): void {
   // deps: errors.HubError
   if (slug === PMCP_SLUG) {
-    throw invalid(`the slug "${PMCP_SLUG}" is reserved for the builtin admin service`);
+    throw invalid(`the slug "${PMCP_SLUG}" is reserved for the builtin admin app`);
   }
 }
 
@@ -379,18 +379,18 @@ async function owner(ownerId: string): Promise<Extract<Principal, { kind: "user"
   return { kind: "user", userId: ownerId, username: row.username };
 }
 
-/** The service a slug names, with the reservation refused first — the order every op shares. */
-async function service(ownerId: string, slug: string): Promise<ServiceDetail> {
+/** The app a slug names, with the reservation refused first — the order every op shares. */
+async function app(ownerId: string, slug: string): Promise<AppDetail> {
   assertSlugNotReserved(slug);
-  const found = await registry().getService(ownerId, slug);
-  if (found === null) throw absent("service");
+  const found = await registry().getApp(ownerId, slug);
+  if (found === null) throw absent("app");
   return found;
 }
 
-/** The account a slug names. No reservation applies: §8 reserves `pmcp` for SERVICE slugs. */
-async function account(ownerId: string, slug: string): Promise<ServiceAccount> {
-  const found = await registry().getAccount(ownerId, slug);
-  if (found === null) throw absent("service account");
+/** The agent a slug names. No reservation applies: §8 reserves `pmcp` for APP slugs. */
+async function agent(ownerId: string, slug: string): Promise<Agent> {
+  const found = await registry().getAgent(ownerId, slug);
+  if (found === null) throw absent("agent");
   return found;
 }
 
@@ -409,7 +409,7 @@ async function summarise(
     ownerId,
     principal: formatPrincipal(await owner(ownerId)),
     event: `admin.${op}`,
-    ...(slug === undefined ? {} : { service: slug }),
+    ...(slug === undefined ? {} : { app: slug }),
     outcome: "ok",
     detail,
   });
@@ -418,7 +418,7 @@ async function summarise(
 // ── the tunnel DO's side of the ops that touch it ─────────────────────────────────────
 
 /**
- * A tunneled service's eviction — sever, or sever-then-wipe — as a VERDICT rather than a
+ * A tunneled app's eviction — sever, or sever-then-wipe — as a VERDICT rather than a
  * throw, and deliberately best-effort. D1 is the authority and every caller below has
  * already written it: by the time this runs the row is gone, the archived flag is set, or
  * the token is revoked, which is exactly §15's ordering pin. A DO that cannot be reached
@@ -440,20 +440,20 @@ async function evict(work: () => Promise<void>): Promise<"ok" | "unreachable"> {
 }
 
 /**
- * A tunneled service's connection state for the two read ops. A probe that cannot be
+ * A tunneled app's connection state for the two read ops. A probe that cannot be
  * answered reads as `offline`: a DO the hub cannot reach is holding no serving socket, and
- * a listing that failed because one service's DO was unreachable would be the wrong trade
+ * a listing that failed because one app's DO was unreachable would be the wrong trade
  * for a page whose job is to show the other nine.
  */
-async function tunnelStatus(serviceId: string): Promise<"online" | "offline"> {
+async function tunnelStatus(appId: string): Promise<"online" | "offline"> {
   try {
-    return await status(serviceId);
+    return await status(appId);
   } catch {
     return "offline";
   }
 }
 
-// ── the rows service_list and service_get serve ───────────────────────────────────────
+// ── the rows app_list and app_get serve ───────────────────────────────────────
 
 /**
  * §8's pinned cross-front row shape, as a type rather than three paragraphs of prose: the
@@ -462,11 +462,11 @@ async function tunnelStatus(serviceId: string): Promise<"online" | "offline"> {
  * `capabilities` in their place, plus the OAuth connection state where the mode is
  * `oauth`; the virtual builtin
  * carries neither, and says so with `builtin: true`. Credentials never appear in any
- * variant. The CLI diff/apply planner, both read ops and the /services page all read
+ * variant. The CLI diff/apply planner, both read ops and the /apps page all read
  * exactly this, so a field added to one variant is a compile error until every producer
  * carries it — which is what "§8 pins the completeness" has to mean to be worth anything.
  */
-export type ServiceRow = CommonRow & (BuiltinRow | TunnelRow | ProxyRow);
+export type AppRow = CommonRow & (BuiltinRow | TunnelRow | ProxyRow);
 
 type CommonRow = {
   slug: string;
@@ -484,26 +484,26 @@ type TunnelRow = { kind: "tunnel"; createdAt: number; status: "online" | "offlin
 type ProxyRow = {
   kind: "proxy";
   createdAt: number;
-  // Typed through registry's own row rather than re-declared: what a proxied service may
+  // Typed through registry's own row rather than re-declared: what a proxied app may
   // carry in these columns is registry's decision, and a second spelling here would be a
   // second answer to it.
-  endpoint: ServiceDetail["upstreamUrl"];
-  auth: ServiceDetail["upstreamAuthMode"];
+  endpoint: AppDetail["upstreamUrl"];
+  auth: AppDetail["upstreamAuthMode"];
   forwardIdentity: boolean;
   /**
    * §20.2's owner-declared advertisement, made readable by §8's 2026-08-27 amendment —
    * OPTIONAL, and that is the whole content of the amendment: the row reports what is
-   * STORED, so a service that never configured the key carries no key. Filling in the
+   * STORED, so an app that never configured the key carries no key. Filling in the
    * hub's `["tools"]` default here would be a second answer to "what did the owner
    * declare", and `pmcp diff` — whose file may equally omit the key — would then plan an
-   * update against every pre-amendment service, forever.
+   * update against every pre-amendment app, forever.
    */
-  capabilities?: NonNullable<ServiceDetail["capabilities"]>;
+  capabilities?: NonNullable<AppDetail["capabilities"]>;
   connection?: UpstreamConnectionStatus;
 };
 
-/** One real service as both read ops report it (§8's shape, above). */
-async function serviceRow(detail: ServiceDetail): Promise<ServiceRow> {
+/** One real app as both read ops report it (§8's shape, above). */
+async function appRow(detail: AppDetail): Promise<AppRow> {
   const common: CommonRow = {
     slug: detail.slug,
     name: detail.name,
@@ -538,13 +538,13 @@ async function serviceRow(detail: ServiceDetail): Promise<ServiceRow> {
 }
 
 /**
- * The virtual builtin row (§8): no `service` row exists for it, so its flags are
- * synthesized from the SAME constant gateway's virtualPmcpService reads (log_bodies ON,
+ * The virtual builtin row (§8): no `app` row exists for it, so its flags are
+ * synthesized from the SAME constant gateway's virtualPmcpApp reads (log_bodies ON,
  * nothing to redact, never archived, §15) rather than from a promise that the two agree.
- * Built per call — a shared mutable object handed out in every service_list result is one
+ * Built per call — a shared mutable object handed out in every app_list result is one
  * caller's mutation away from being everybody's.
  */
-function builtinRow(): ServiceRow {
+function builtinRow(): AppRow {
   return {
     slug: PMCP_SLUG,
     name: "pmcp",
@@ -560,20 +560,20 @@ function builtinRow(): ServiceRow {
 }
 
 /**
- * §15's log_bodies for the builtin, exported because gateway's virtualPmcpService is the
+ * §15's log_bodies for the builtin, exported because gateway's virtualPmcpApp is the
  * other half of the same decision: the builtin's schemas are the hub's own, so the
  * tunneled default applies and token_issue's key is masked by the uniform rule. One
  * constant is what makes "the same values gateway carries" true rather than claimed.
  */
 export const BUILTIN_LOG_BODIES = true;
 
-/** One service account as `account_list` reports it: the row plus its grants inline (§8). */
-async function accountRow(row: ServiceAccount): Promise<Record<string, unknown>> {
+/** One agent as `agent_list` reports it: the row plus its grants inline (§8). */
+async function agentRow(row: Agent): Promise<Record<string, unknown>> {
   const grants: Record<string, string[]> = {};
   for (const held of await registry().grantsFor(row.id)) {
-    // §9's own syntax, so what account_list reads back is what grant_set takes — the CLI
+    // §9's own syntax, so what agent_list reads back is what grant_set takes — the CLI
     // planner diffs one spelling against itself.
-    grants[held.serviceSlug] = held.entries.map((entry) =>
+    grants[held.appSlug] = held.entries.map((entry) =>
       entry.mode === "approval" ? `${entry.role}:approval` : entry.role,
     );
   }
@@ -623,14 +623,14 @@ function commonFields(input: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-/** The service fields both create and update declare, so the two forms cannot drift. */
-const SERVICE_FIELDS: Record<string, Field> = {
+/** The app fields both create and update declare, so the two forms cannot drift. */
+const APP_FIELDS: Record<string, Field> = {
   name: { kind: "text", description: "Display name; defaults to the slug.", optional: true },
-  description: { kind: "text", description: "Free-text note shown beside the service.", optional: true },
+  description: { kind: "text", description: "Free-text note shown beside the app.", optional: true },
   endpoint: { kind: "text", description: "Proxied only: the upstream MCP endpoint URL.", optional: true },
   auth: {
     kind: "text",
-    description: "Proxied only: which credential path this service uses.",
+    description: "Proxied only: which credential path this app uses.",
     values: ["headers", "oauth"],
     optional: true,
   },
@@ -648,8 +648,8 @@ const SERVICE_FIELDS: Record<string, Field> = {
   capabilities: {
     kind: "stringList",
     // The vocabulary itself is registry's export, not prose: what the tool advertises,
-    // what the /services form offers, and what the hub enforces are one constant (§20.2).
-    values: SERVICE_CAPABILITIES,
+    // what the /apps form offers, and what the hub enforces are one constant (§20.2).
+    values: APP_CAPABILITIES,
     description: "Proxied only: which MCP families this upstream serves (default: tools only).",
     optional: true,
   },
@@ -663,7 +663,7 @@ const SERVICE_FIELDS: Record<string, Field> = {
 };
 
 /** The slug field, spelled once — every op that takes one takes the same one. */
-const SLUG_FIELD: Field = { kind: "slug", description: "The service's slug, unique in this namespace." };
+const SLUG_FIELD: Field = { kind: "slug", description: "The app's slug, unique in this namespace." };
 
 /**
  * One row of the table, assembled so its schema is USED twice from one declaration rather
@@ -696,35 +696,35 @@ function defineOp(op: {
  */
 export const ops: Record<string, AdminOp> = {
   /**
-   * List the namespace's services as ServiceRow (above — the type is the shape §8 pins),
+   * List the namespace's apps as AppRow (above — the type is the shape §8 pins),
    * including the virtual builtin `pmcp` entry flagged `builtin: true`.
    */
-  service_list: defineOp({
-    schema: { description: "List this namespace's services, the builtin included.", fields: {} },
+  app_list: defineOp({
+    schema: { description: "List this namespace's apps, the builtin included.", fields: {} },
     async run(ownerId) {
-      // deps: registry.listServicesFor · tunnel.status · upstream.connectionStatus
-      const details = await registry().listServicesFor(await owner(ownerId));
-      const services = await Promise.all(details.map(serviceRow));
-      return { services: [...services, builtinRow()] };
+      // deps: registry.listAppsFor · tunnel.status · upstream.connectionStatus
+      const details = await registry().listAppsFor(await owner(ownerId));
+      const apps = await Promise.all(details.map(appRow));
+      return { apps: [...apps, builtinRow()] };
     },
   }),
 
   /**
-   * `{ slug }` → one service, same row shape as service_list. The reserved `pmcp` slug
-   * is rejected like everywhere else (the builtin surfaces only through service_list —
+   * `{ slug }` → one app, same row shape as app_list. The reserved `pmcp` slug
+   * is rejected like everywhere else (the builtin surfaces only through app_list —
    * uniformity is worth more than the corner case).
    */
-  service_get: defineOp({
-    schema: { description: "Read one service.", fields: { slug: SLUG_FIELD } },
+  app_get: defineOp({
+    schema: { description: "Read one app.", fields: { slug: SLUG_FIELD } },
     async run(ownerId, parsed) {
-      // deps: registry.getService · tunnel.status · upstream.connectionStatus
+      // deps: registry.getApp · tunnel.status · upstream.connectionStatus
       const { slug } = parsed as { slug: string };
-      return { service: await serviceRow(await service(ownerId, slug)) };
+      return { app: await appRow(await app(ownerId, slug)) };
     },
   }),
 
   /**
-   * Create a service. `{ slug, name?, description?, kind, redact?, redact_results?,
+   * Create an app. `{ slug, name?, description?, kind, redact?, redact_results?,
    * log_bodies? }` (log_bodies absent defaults by kind — tunneled on, proxied off,
    * §15) plus, for proxied
    * kind only: `endpoint`, `roles` (virtual role definitions), `auth` ('headers' |
@@ -735,22 +735,22 @@ export const ops: Record<string, AdminOp> = {
    * forever after (recreate to convert). Mints no token — `token_issue` is the sole
    * credential path (§6).
    */
-  service_create: defineOp({
+  app_create: defineOp({
     schema: {
-      description: "Create a service. `kind` is immutable afterwards — recreate to convert.",
+      description: "Create an app. `kind` is immutable afterwards — recreate to convert.",
       fields: {
         slug: SLUG_FIELD,
         kind: { kind: "text", description: "tunnel (dials in) or proxy (the hub forwards).", values: ["tunnel", "proxy"] },
-        ...SERVICE_FIELDS,
+        ...APP_FIELDS,
       },
     },
     async run(ownerId, parsed) {
-      // deps: registry.createService · registry.validateRoles · audit.record
+      // deps: registry.createApp · registry.validateRoles · audit.record
       const slug = parsed.slug as string;
       const kind = parsed.kind as "tunnel" | "proxy";
       assertSlugNotReserved(slug);
       const created = await domain(
-        registry().createService({
+        registry().createApp({
           ownerId,
           slug,
           kind,
@@ -763,37 +763,37 @@ export const ops: Record<string, AdminOp> = {
           ...(kind === "proxy" && parsed.auth === undefined ? { upstreamAuthMode: "headers" as const } : {}),
         }),
       );
-      await summarise(ownerId, "service_create", { slug, kind }, slug);
-      return { service: await serviceRow(created) };
+      await summarise(ownerId, "app_create", { slug, kind }, slug);
+      return { app: await appRow(created) };
     },
   }),
 
   /**
-   * Update a service: service_create's fields minus `kind` — a kind change is rejected,
+   * Update an app: app_create's fields minus `kind` — a kind change is rejected,
    * not ignored (§8). Flipping `auth` in either direction is accepted but destructive:
    * any stored upstream credential envelope is wiped in the same write (audit row
-   * `upstream.auth_mode_changed` beside this op's own `admin.service_update`), leaving
-   * the service not-connected until Connect or service_set_upstream_auth runs. Role
+   * `upstream.auth_mode_changed` beside this op's own `admin.app_update`), leaving
+   * the app not-connected until Connect or app_set_upstream_auth runs. Role
    * redefinitions revalidate like create.
    */
-  service_update: defineOp({
+  app_update: defineOp({
     schema: {
       // `kind` is absent from the fields, and additionalProperties is false — which is how
       // "a kind change is rejected, not ignored" holds without a check of its own.
-      description: "Update a service. `kind` is immutable; changing `auth` wipes stored credentials.",
-      fields: { slug: SLUG_FIELD, ...SERVICE_FIELDS },
+      description: "Update an app. `kind` is immutable; changing `auth` wipes stored credentials.",
+      fields: { slug: SLUG_FIELD, ...APP_FIELDS },
     },
     async run(ownerId, parsed) {
-      // deps: registry.updateService · registry.validateRoles · audit.record
+      // deps: registry.updateApp · registry.validateRoles · audit.record
       const slug = parsed.slug as string;
-      const before = await service(ownerId, slug);
+      const before = await app(ownerId, slug);
       const flipped = parsed.auth !== undefined && parsed.auth !== before.upstreamAuthMode;
       const patch = { ...commonFields(parsed), ...proxyFields(parsed) };
-      const updated = await domain(registry().updateService(before.id, patch));
+      const updated = await domain(registry().updateApp(before.id, patch));
       // The field NAMES, not their values: several are configuration an owner wants to see
       // changed in the ledger, and none of them is a credential (§8's write-only pair is
       // its own op).
-      await summarise(ownerId, "service_update", { slug, fields: Object.keys(patch) }, slug);
+      await summarise(ownerId, "app_update", { slug, fields: Object.keys(patch) }, slug);
       if (flipped) {
         // registry cleared the envelope in the same write (its row invariant); the row
         // SAYING so is this op's, because registry never audits.
@@ -801,37 +801,37 @@ export const ops: Record<string, AdminOp> = {
           ownerId,
           principal: formatPrincipal(await owner(ownerId)),
           event: "upstream.auth_mode_changed",
-          service: slug,
+          app: slug,
           outcome: "ok",
           detail: { from: before.upstreamAuthMode, to: parsed.auth, credentials: "wiped" },
         });
       }
-      return { service: await serviceRow(updated) };
+      return { app: await appRow(updated) };
     },
   }),
 
   /**
-   * `{ slug }` — terminal delete. Cascade ordering pinned (§15): the service row (grants
+   * `{ slug }` — terminal delete. Cascade ordering pinned (§15): the app row (grants
    * cascade by FK) and its token rows go FIRST, in ONE D1 batch — both or neither, D1
    * having no interactive transaction to offer instead; only then is the tunnel DO told
    * to sever the live socket (close 4001) and wipe cached state — so a racing re-register
-   * finds neither row nor token and fails, never rebinding. Proxied services stop after
-   * the batch (no DO, no tokens). The DO stays addressed by the opaque service.id, dead
+   * finds neither row nor token and fails, never rebinding. Proxied apps stop after
+   * the batch (no DO, no tokens). The DO stays addressed by the opaque app.id, dead
    * forever. Everything that can refuse — the reservation, the lookup — runs before the
    * batch, so a refused delete deletes nothing.
    */
-  service_delete: defineOp({
-    schema: { description: "Delete a service, its grants, and its tokens. Terminal.", fields: { slug: SLUG_FIELD } },
+  app_delete: defineOp({
+    schema: { description: "Delete an app, its grants, and its tokens. Terminal.", fields: { slug: SLUG_FIELD } },
     async run(ownerId, parsed) {
-      // deps: registry.deleteServiceStatement · identity.countTokensFor · identity.deleteTokensForStatement · tunnel.sever · tunnel.wipe · audit.record
+      // deps: registry.deleteAppStatement · identity.countTokensFor · identity.deleteTokensForStatement · tunnel.sever · tunnel.wipe · audit.record
       const { slug } = parsed as { slug: string };
-      const target = await service(ownerId, slug);
+      const target = await app(ownerId, slug);
       const tokens = await countTokensFor(target.id);
       // The credential leads the batch: if a future D1 ever tore one apart, the surviving
       // half must be "the token is dead and the row is not", never the reverse.
       await db().batch([
         deleteTokensForStatement(target.id),
-        registry().deleteServiceStatement(target.id),
+        registry().deleteAppStatement(target.id),
       ]);
       const tunnel =
         target.kind === "tunnel"
@@ -842,7 +842,7 @@ export const ops: Record<string, AdminOp> = {
           : undefined;
       await summarise(
         ownerId,
-        "service_delete",
+        "app_delete",
         { slug, kind: target.kind, tokens, ...(tunnel === undefined ? {} : { tunnel }) },
         slug,
       );
@@ -852,28 +852,28 @@ export const ops: Record<string, AdminOp> = {
 
   /**
    * `{ slug, headers }` — store the static headers the hub sends upstream. Proxied
-   * `auth: headers` services only: rejected on tunneled services and on `auth: oauth`
+   * `auth: headers` apps only: rejected on tunneled apps and on `auth: oauth`
    * ones (each mode has exactly one credential path, §8). Write-only and imperative
    * like token_issue: headers are sealed into the encrypted envelope and never readable
    * back through any tool, page, or YAML; the audit row says auth was set, not what to.
    */
-  service_set_upstream_auth: defineOp({
+  app_set_upstream_auth: defineOp({
     schema: {
-      description: "Store the upstream headers this proxied service is called with. Write-only.",
+      description: "Store the upstream headers this proxied app is called with. Write-only.",
       fields: {
         slug: SLUG_FIELD,
         headers: { kind: "headerMap", description: "Header name → value, sealed at rest and never readable back." },
       },
     },
     async run(ownerId, parsed) {
-      // deps: registry.getService · upstream.setHeaders · audit.record
+      // deps: registry.getApp · upstream.setHeaders · audit.record
       const { slug, headers } = parsed as { slug: string; headers: Record<string, string> };
-      const target = await service(ownerId, slug);
+      const target = await app(ownerId, slug);
       await setHeaders(target, headers);
       // The COUNT, never the names or the values: this row exists to say auth was set.
       await summarise(
         ownerId,
-        "service_set_upstream_auth",
+        "app_set_upstream_auth",
         { slug, headers: Object.keys(headers).length },
         slug,
       );
@@ -882,22 +882,22 @@ export const ops: Record<string, AdminOp> = {
   }),
 
   /**
-   * `{ slug }` — `auth: oauth` proxied services only: wipe the stored token bundle
-   * (audit row `upstream.disconnected`), leaving the service not-connected until the
+   * `{ slug }` — `auth: oauth` proxied apps only: wipe the stored token bundle
+   * (audit row `upstream.disconnected`), leaving the app not-connected until the
    * owner runs Connect again. The web Disconnect button fronts this; Connect itself has
    * no tool — the consent redirect is inherently a browser interaction (§8).
    */
-  service_disconnect: defineOp({
-    schema: { description: "Wipe an oauth-mode proxied service's stored token bundle.", fields: { slug: SLUG_FIELD } },
+  app_disconnect: defineOp({
+    schema: { description: "Wipe an oauth-mode proxied app's stored token bundle.", fields: { slug: SLUG_FIELD } },
     async run(ownerId, parsed) {
-      // deps: registry.getService · upstream.disconnect · audit.record
+      // deps: registry.getApp · upstream.disconnect · audit.record
       const { slug } = parsed as { slug: string };
-      const target = await service(ownerId, slug);
+      const target = await app(ownerId, slug);
       if (target.kind !== "proxy" || target.upstreamAuthMode !== "oauth") {
-        throw invalid("only an oauth-mode proxied service can be disconnected");
+        throw invalid("only an oauth-mode proxied app can be disconnected");
       }
       await disconnect(target);
-      await summarise(ownerId, "service_disconnect", { slug }, slug);
+      await summarise(ownerId, "app_disconnect", { slug }, slug);
       return { slug };
     },
   }),
@@ -908,16 +908,16 @@ export const ops: Record<string, AdminOp> = {
    * the client library keeps retrying at max backoff). Consumers see -32002 scoped and
    * nothing aggregated; roles, grants, tokens, and the cached catalog are all retained.
    */
-  service_archive: defineOp({
-    schema: { description: "Hide a service from consumers, retaining everything.", fields: { slug: SLUG_FIELD } },
+  app_archive: defineOp({
+    schema: { description: "Hide an app from consumers, retaining everything.", fields: { slug: SLUG_FIELD } },
     async run(ownerId, parsed) {
-      // deps: registry.archiveService · tunnel.sever · audit.record
+      // deps: registry.archiveApp · tunnel.sever · audit.record
       const { slug } = parsed as { slug: string };
-      const target = await service(ownerId, slug);
-      await registry().archiveService(target.id);
+      const target = await app(ownerId, slug);
+      await registry().archiveApp(target.id);
       const tunnel =
         target.kind === "tunnel" ? await evict(() => sever(target.id, CLOSE_ARCHIVED)) : undefined;
-      await summarise(ownerId, "service_archive", { slug, ...(tunnel === undefined ? {} : { tunnel }) }, slug);
+      await summarise(ownerId, "app_archive", { slug, ...(tunnel === undefined ? {} : { tunnel }) }, slug);
       return { slug };
     },
   }),
@@ -927,121 +927,121 @@ export const ops: Record<string, AdminOp> = {
    * again, and the bot's max-backoff retry reconnects within a minute without being
    * touched (§6).
    */
-  service_unarchive: defineOp({
-    schema: { description: "Make an archived service visible to consumers again.", fields: { slug: SLUG_FIELD } },
+  app_unarchive: defineOp({
+    schema: { description: "Make an archived app visible to consumers again.", fields: { slug: SLUG_FIELD } },
     async run(ownerId, parsed) {
-      // deps: registry.unarchiveService · audit.record
+      // deps: registry.unarchiveApp · audit.record
       const { slug } = parsed as { slug: string };
-      const target = await service(ownerId, slug);
-      await registry().unarchiveService(target.id);
-      await summarise(ownerId, "service_unarchive", { slug }, slug);
+      const target = await app(ownerId, slug);
+      await registry().unarchiveApp(target.id);
+      await summarise(ownerId, "app_unarchive", { slug }, slug);
       return { slug };
     },
   }),
 
   /**
-   * List service accounts with their grants inline — per service: role names and modes
-   * (§8). One service_list plus one account_list is the complete desired-state read the
+   * List agents with their grants inline — per app: role names and modes
+   * (§8). One app_list plus one agent_list is the complete desired-state read the
    * CLI diff planner depends on; there is deliberately no separate grant-read tool.
    */
-  account_list: defineOp({
-    schema: { description: "List this namespace's service accounts and their grants.", fields: {} },
+  agent_list: defineOp({
+    schema: { description: "List this namespace's agents and their grants.", fields: {} },
     async run(ownerId) {
-      // deps: registry.listAccounts · registry.grantsFor
-      const rows = await registry().listAccounts(ownerId);
-      return { accounts: await Promise.all(rows.map(accountRow)) };
+      // deps: registry.listAgents · registry.grantsFor
+      const rows = await registry().listAgents(ownerId);
+      return { agents: await Promise.all(rows.map(agentRow)) };
     },
   }),
 
-  /** `{ slug, name?, description? }` — create a service account. Slug `[a-z0-9-]`,
+  /** `{ slug, name?, description? }` — create an agent. Slug `[a-z0-9-]`,
    *  unique per owner. Holds no grants until grant_set. */
-  account_create: defineOp({
+  agent_create: defineOp({
     schema: {
-      description: "Create a service account. It holds no grants until grant_set runs.",
+      description: "Create an agent. It holds no grants until grant_set runs.",
       fields: {
-        slug: { kind: "slug", description: "The account's slug, unique in this namespace." },
+        slug: { kind: "slug", description: "The agent's slug, unique in this namespace." },
         name: { kind: "text", description: "Display name; defaults to the slug.", optional: true },
-        description: { kind: "text", description: "Free-text note shown beside the account.", optional: true },
+        description: { kind: "text", description: "Free-text note shown beside the agent.", optional: true },
       },
     },
     async run(ownerId, parsed) {
-      // deps: registry.createAccount · audit.record
+      // deps: registry.createAgent · audit.record
       const slug = parsed.slug as string;
       const created = await domain(
-        registry().createAccount({
+        registry().createAgent({
           ownerId,
           slug,
           name: (parsed.name as string) ?? slug,
           description: parsed.description as string | undefined,
         }),
       );
-      await summarise(ownerId, "account_create", { slug });
-      return { account: await accountRow(created) };
+      await summarise(ownerId, "agent_create", { slug });
+      return { agent: await agentRow(created) };
     },
   }),
 
   /**
-   * `{ slug }` — terminal delete: the account row (grants cascade by FK) and the
-   * account's token rows go together in one D1 batch, so a racing request can never
-   * authenticate against a half-deleted account. Accounts hold no sockets — the rows are
+   * `{ slug }` — terminal delete: the agent row (grants cascade by FK) and the
+   * agent's token rows go together in one D1 batch, so a racing request can never
+   * authenticate against a half-deleted agent. Agents hold no sockets — the rows are
    * the whole cascade (the §15 ordering pin is satisfied vacuously).
    */
-  account_delete: defineOp({
+  agent_delete: defineOp({
     schema: {
-      description: "Delete a service account, its grants, and its tokens. Terminal.",
-      fields: { slug: { kind: "slug", description: "The account's slug." } },
+      description: "Delete an agent, its grants, and its tokens. Terminal.",
+      fields: { slug: { kind: "slug", description: "The agent's slug." } },
     },
     async run(ownerId, parsed) {
-      // deps: registry.deleteAccountStatement · identity.countTokensFor · identity.deleteTokensForStatement · audit.record
+      // deps: registry.deleteAgentStatement · identity.countTokensFor · identity.deleteTokensForStatement · audit.record
       const { slug } = parsed as { slug: string };
-      const target = await account(ownerId, slug);
+      const target = await agent(ownerId, slug);
       const tokens = await countTokensFor(target.id);
       await db().batch([
         deleteTokensForStatement(target.id),
-        registry().deleteAccountStatement(target.id),
+        registry().deleteAgentStatement(target.id),
       ]);
-      await summarise(ownerId, "account_delete", { slug, tokens });
+      await summarise(ownerId, "agent_delete", { slug, tokens });
       return { slug };
     },
   }),
 
   /**
-   * `{ account, service, roles }` — replace the FULL grant set for the pair: roles
+   * `{ agent, app, roles }` — replace the FULL grant set for the pair: roles
    * absent from the list are revoked (§8). Each entry is `name` or `name:approval`
    * (§9's syntax — role names contain no colon, so the suffix is unambiguous); the same
    * role in both modes is a config error. Registry's role language validates: undeclared
-   * roles warn for tunneled services (the file may be ahead of first connect) and
+   * roles warn for tunneled apps (the file may be ahead of first connect) and
    * hard-error for proxied ones; `all` is grantable, never declarable. `pmcp` is
-   * rejected — service accounts can never hold admin grants (§8).
+   * rejected — agents can never hold admin grants (§8).
    */
   grant_set: defineOp({
     schema: {
-      description: "Replace the full grant set for one (account, service) pair.",
+      description: "Replace the full grant set for one (agent, app) pair.",
       fields: {
-        account: { kind: "slug", description: "The service account's slug." },
-        service: { kind: "slug", description: "The service's slug." },
+        agent: { kind: "slug", description: "The agent's slug." },
+        app: { kind: "slug", description: "The app's slug." },
         roles: { kind: "stringList", description: 'Role names, each optionally suffixed ":approval".' },
       },
     },
     async run(ownerId, parsed) {
       // deps: registry.setGrants · audit.record
-      // Aliased because `account` and `service` are the two resolvers on the next lines.
+      // Aliased because `agent` and `app` are the two resolvers on the next lines.
       const {
-        account: accountSlug,
-        service: serviceSlug,
+        agent: agentSlug,
+        app: appSlug,
         roles,
-      } = parsed as { account: string; service: string; roles: string[] };
-      const holder = await account(ownerId, accountSlug);
-      const target = await service(ownerId, serviceSlug);
+      } = parsed as { agent: string; app: string; roles: string[] };
+      const holder = await agent(ownerId, agentSlug);
+      const target = await app(ownerId, appSlug);
       const entries = grantEntries(roles);
       const warnings = await domain(registry().setGrants(holder.id, target.id, entries));
       await summarise(
         ownerId,
         "grant_set",
-        { account: accountSlug, service: serviceSlug, roles },
-        serviceSlug,
+        { agent: agentSlug, app: appSlug, roles },
+        appSlug,
       );
-      return { account: accountSlug, service: serviceSlug, roles, warnings };
+      return { agent: agentSlug, app: appSlug, roles, warnings };
     },
   }),
 
@@ -1094,14 +1094,14 @@ export const ops: Record<string, AdminOp> = {
   }),
 
   /**
-   * `{ kind: 'service_account' | 'service', slug, expires_in? }` → the plaintext token,
+   * `{ kind: 'agent' | 'app', slug, expires_in? }` → the plaintext token,
    * present ONLY in this result, once — never stored (SHA-256 at rest), never logged,
    * never readable again (§4, §8). The op declares an outputSchema with the key field
    * marked `writeOnly`, so §15's uniform body rule masks it wherever bodies are
    * recorded — the reply the CALLER sees is never redacted (§7), only persistence is.
-   * Defaults by kind (§8): service-account tokens 90 d
-   * (overridable, including 'never'); service tokens no expiry (revoke-on-compromise).
-   * `kind: 'service'` is rejected for proxied services (nothing connects) and `pmcp` is
+   * Defaults by kind (§8): agent tokens 90 d
+   * (overridable, including 'never'); app tokens no expiry (revoke-on-compromise).
+   * `kind: 'app'` is rejected for proxied apps (nothing connects) and `pmcp` is
    * rejected like everywhere. Result also carries the row id and display prefix.
    */
   token_issue: defineOp({
@@ -1110,13 +1110,13 @@ export const ops: Record<string, AdminOp> = {
       fields: {
         kind: {
           kind: "text",
-          description: "service_account (an agent's key) or service (a tunneled service's key).",
-          values: ["service_account", "service"],
+          description: "agent (an agent's key) or app (a tunneled app's key).",
+          values: ["agent", "app"],
         },
-        slug: { kind: "slug", description: "The account or service the key is bound to." },
+        slug: { kind: "slug", description: "The agent or app the key is bound to." },
         expires_in: {
           kind: "duration",
-          description: "Seconds until expiry, or never. Defaults by kind: 90 days for an account key, never for a service key.",
+          description: "Seconds until expiry, or never. Defaults by kind: 90 days for an agent key, never for an app key.",
           optional: true,
         },
       },
@@ -1139,7 +1139,7 @@ export const ops: Record<string, AdminOp> = {
       },
     },
     async run(ownerId, parsed) {
-      // deps: registry.getService · registry.getAccount · identity.issueToken · identity.tokenFor · audit.record
+      // deps: registry.getApp · registry.getAgent · identity.issueToken · identity.tokenFor · audit.record
       const { kind, slug, expires_in } = parsed as {
         kind: TokenKind;
         slug: string;
@@ -1182,7 +1182,7 @@ export const ops: Record<string, AdminOp> = {
   /**
    * `{ id }` — revoke a token; consumer checks see it immediately (§15). Ordering
    * pinned: the row is revoked in D1 BEFORE any socket action, so a racing reconnect
-   * presents a dead credential. Revoking a service token whose connection is live
+   * presents a dead credential. Revoking an app token whose connection is live
    * additionally severs that socket (close 4001, §8).
    */
   token_revoke: defineOp({
@@ -1196,17 +1196,17 @@ export const ops: Record<string, AdminOp> = {
       const target = await tokenFor(ownerId, id);
       if (target === null) throw absent("token");
       await revokeToken(ownerId, target.id);
-      // Only the socket THIS token opened (§8) — a service's other credentials are still
+      // Only the socket THIS token opened (§8) — an app's other credentials are still
       // good, and the connection they hold is not this revocation's business.
       const tunnel =
-        target.kind === "service"
+        target.kind === "app"
           ? await evict(() => sever(target.refId, CLOSE_REVOKED, target.id))
           : undefined;
       await summarise(
         ownerId,
         "token_revoke",
         { tokenId: target.id, kind: target.kind, slug: target.refSlug, ...(tunnel === undefined ? {} : { tunnel }) },
-        target.kind === "service" ? target.refSlug : undefined,
+        target.kind === "app" ? target.refSlug : undefined,
       );
       return { id: target.id };
     },
@@ -1214,7 +1214,7 @@ export const ops: Record<string, AdminOp> = {
 
   /**
    * §19/§8: the OAuth clients connected to this namespace — client name and id, the
-   * service account each is bound to, created/last-used. Never a token, a client secret,
+   * agent each is bound to, created/last-used. Never a token, a client secret,
    * or a JWT: a connection is a binding, and a binding holds no credential (oauth.ts's
    * `Connection` shape). Read-only, fronting oauth.listConnections exactly as every other
    * read here fronts its own module.
@@ -1259,7 +1259,7 @@ export const ops: Record<string, AdminOp> = {
   }),
 
   /**
-   * `{ principal?, service?, event?, tool?, session?, since?, until?, limit?, offset? }`
+   * `{ principal?, app?, event?, tool?, session?, since?, until?, limit?, offset? }`
    * → `{ rows, total }`, newest first (§8) — the ops-table front over audit.query, which
    * pins the filter semantics and defaults. Rows carry the recorded body fields when
    * present — post-redaction and stub-substituted, the only stored form (§15).
@@ -1270,8 +1270,8 @@ export const ops: Record<string, AdminOp> = {
     schema: {
       description: "Read the audit ledger, newest first.",
       fields: {
-        principal: { kind: "text", description: "Exact principal string, e.g. sa:claude.", optional: true },
-        service: { kind: "text", description: "Exact service slug.", optional: true },
+        principal: { kind: "text", description: "Exact principal string, e.g. agent:claude.", optional: true },
+        app: { kind: "text", description: "Exact app slug.", optional: true },
         event: { kind: "text", description: "Exact event name, e.g. tools/call.", optional: true },
         tool: { kind: "text", description: "Exact unprefixed tool name.", optional: true },
         session: { kind: "text", description: "Exact client session id.", optional: true },
@@ -1291,33 +1291,33 @@ export const ops: Record<string, AdminOp> = {
 /**
  * The opaque id a new token binds to. Both kinds resolve their slug through the row that
  * owns it, which is also where the two kind-specific refusals live: `pmcp` is reserved
- * (checked by the caller, uniformly), and a proxied service has nothing that connects.
+ * (checked by the caller, uniformly), and a proxied app has nothing that connects.
  */
 async function referentOf(ownerId: string, kind: TokenKind, slug: string): Promise<string> {
-  if (kind === "service_account") return (await account(ownerId, slug)).id;
-  const target = await service(ownerId, slug);
+  if (kind === "agent") return (await agent(ownerId, slug)).id;
+  const target = await app(ownerId, slug);
   if (target.kind !== "tunnel") {
-    throw invalid("a proxied service has nothing that connects, so it takes no service token");
+    throw invalid("a proxied app has nothing that connects, so it takes no app token");
   }
   return target.id;
 }
 
 /**
- * The builtin `pmcp` service — the third ServiceBackend beside tunnel and upstream, so
+ * The builtin `pmcp` app — the third AppBackend beside tunnel and upstream, so
  * the gateway pipeline (auth → filter → archived → approvals → dispatch) has no admin
  * special case. listTools renders every op as a Tool (name = ops key, inputSchema from
  * its schema, outputSchema where declared); call dispatches to ops[tool].handler with
- * `service.ownerId` and wraps a
+ * `app.ownerId` and wraps a
  * successful result — HubError escapes to the gateway, the only place errors become
  * JSON-RPC. sensitivePaths answers `{ args: [], results: [...] }` for known ops — no
  * admin tool takes a sensitive argument, and the only sensitive result is
  * token_issue's `writeOnly`-marked key, masked by §15's uniform body rule (no
  * pmcp-specific logging rule exists) — and
- * null for unknown names. Only `service.ownerId` is consulted — the pmcp Service value
+ * null for unknown names. Only `app.ownerId` is consulted — the pmcp App value
  * is virtual, no row exists for it (§8).
  */
-export const adminBackend: ServiceBackend = {
-  async listTools(service, ctx) {
+export const adminBackend: AppBackend = {
+  async listTools(app, ctx) {
     // deps: ops · jsonSchema (schema → inputSchema rendering)
     return Object.entries(ops).map(([name, op]) => {
       const schema = op.schema as OpSchema;
@@ -1330,16 +1330,16 @@ export const adminBackend: ServiceBackend = {
   // rather than -32601, because an empty family is a different fact from an unimplemented
   // method (§20.2), and declares neither capability (gateway.capabilitiesFor's own
   // special case for PMCP_SLUG, so this module states no capability list of its own).
-  async listPrompts(service, ctx) {
+  async listPrompts(app, ctx) {
     return [];
   },
-  async listResources(service, ctx) {
+  async listResources(app, ctx) {
     return [];
   },
-  async listResourceTemplates(service, ctx) {
+  async listResourceTemplates(app, ctx) {
     return [];
   },
-  async call(service, msg, ctx) {
+  async call(app, msg, ctx) {
     // deps: ops · errors.notPermitted
     const name = typeof msg.params?.name === "string" ? msg.params.name : "";
     const op = opNamed(name);
@@ -1347,7 +1347,7 @@ export const adminBackend: ServiceBackend = {
     // unknown admin tool must not be distinguishable from one (§7) — which is why this
     // reaches for the shared factory rather than spelling either half again.
     if (op === undefined) throw notPermitted();
-    const value = await op.handler(service.ownerId, msg.params?.arguments);
+    const value = await op.handler(app.ownerId, msg.params?.arguments);
     return {
       jsonrpc: "2.0",
       id: msg.id ?? null,
@@ -1356,7 +1356,7 @@ export const adminBackend: ServiceBackend = {
       result: { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value },
     };
   },
-  async sensitivePaths(service, tool) {
+  async sensitivePaths(app, tool) {
     // deps: ops · registry.writeOnlyPaths
     const op = opNamed(tool);
     if (op === undefined) return null;
@@ -1409,7 +1409,7 @@ export async function provisionUser(username: string): Promise<{ userId: string 
   const now = Date.now();
   // ponytail: the `user` row is written here rather than through better-auth. Upgrade path:
   // replace this INSERT with better-auth's user-create call — which mints the §12 password
-  // AND the `account` row behind it — and widen the return to carry it back once.
+  // AND the `agent` row behind it — and widen the return to carry it back once.
   await db()
     .prepare(
       `INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt", "username", "displayUsername")
@@ -1440,26 +1440,26 @@ export async function provisionUser(username: string): Promise<{ userId: string 
 }
 
 /**
- * Full namespace teardown (§15): every tunneled service gets the service_delete cascade
- * — D1 batch first, THEN sever (4001) + DO wipe — and only after all services are down
- * does the user row go, cascading accounts, grants, sessions, approvals, and the rest.
- * DOs are addressed by opaque service.id, so even a missed wipe can never be rebound by
+ * Full namespace teardown (§15): every tunneled app gets the app_delete cascade
+ * — D1 batch first, THEN sever (4001) + DO wipe — and only after all apps are down
+ * does the user row go, cascading agents, grants, sessions, approvals, and the rest.
+ * DOs are addressed by opaque app.id, so even a missed wipe can never be rebound by
  * recreating the username. Deleting a user that does not exist is a no-op, not an error
  * — the postcondition is absence. Audited as principal 'bootstrap'.
  */
 export async function deleteUser(username: string): Promise<void> {
-  // deps: ops.service_delete · better-auth (user delete) · D1 `user` · audit.record
+  // deps: ops.app_delete · better-auth (user delete) · D1 `user` · audit.record
   const user = await db()
     .prepare(`SELECT "id" FROM "user" WHERE "username" = ?`)
     .bind(username)
     .first<{ id: string }>();
   if (!user) return; // the postcondition is absence, so an absent user is already met
   const owner: Principal = { kind: "user", userId: user.id, username };
-  // Services first, one at a time through the op that owns the ordering (D1 batch, THEN
+  // Apps first, one at a time through the op that owns the ordering (D1 batch, THEN
   // sever + wipe) — the `user` row's own cascade cannot reach tokens or DOs.
-  const services = await new Registry(db()).listServicesFor(owner);
-  for (const service of services) {
-    await ops.service_delete.handler(user.id, { slug: service.slug });
+  const apps = await new Registry(db()).listAppsFor(owner);
+  for (const app of apps) {
+    await ops.app_delete.handler(user.id, { slug: app.slug });
   }
   // §19.3: the namespace's `oauthResource` row carries no FK to `user` (better-auth owns the
   // table and generates no owner column), so the user-row cascade below cannot reach it. This
@@ -1477,6 +1477,6 @@ export async function deleteUser(username: string): Promise<void> {
     principal: "bootstrap",
     event: "bootstrap.user_deleted",
     outcome: "ok",
-    detail: { username, services: services.length },
+    detail: { username, apps: apps.length },
   });
 }

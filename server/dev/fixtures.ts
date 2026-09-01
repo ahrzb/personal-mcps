@@ -1,7 +1,7 @@
 // fixtures.ts — every page state, as data.
 //
-// One namespace ("ahrzb"), one render instant (NOW), and one cast of services
-// and accounts, so a reviewer flipping between pages sees a coherent hub rather
+// One namespace ("ahrzb"), one render instant (NOW), and one cast of apps
+// and agents, so a reviewer flipping between pages sees a coherent hub rather
 // than eight unrelated screenshots. Each entry is a complete, type-checked
 // value of its page's Props: if model.ts changes shape, this file is where the
 // break surfaces — before any template is touched.
@@ -18,7 +18,7 @@
 // oversize audit bodies — and a long-content fixture wherever text can overflow.
 
 import type {
-  AccountProps,
+  SettingsProps,
   ApprovalDetailProps,
   ApprovalRow,
   ApprovalsProps,
@@ -31,9 +31,9 @@ import type {
   Notice,
   PagePropsByName,
   PasskeyRow,
-  ServiceNewProps,
-  ServiceRow,
-  ServicesProps,
+  AppNewProps,
+  AppRow,
+  AppsProps,
   SessionRow,
 } from "../src/pages/model";
 
@@ -177,7 +177,7 @@ const device = {
 } satisfies Record<string, DeviceProps>;
 
 /* ------------------------------------------------------------------ *
- * /account
+ * /settings
  * ------------------------------------------------------------------ */
 
 const passkeys: PasskeyRow[] = [
@@ -243,10 +243,10 @@ const BACKUP_CODES = [
   "e9f0-a1b2",
 ];
 
-const account = {
+const agent = {
   /** Fully secured: TOTP on, two passkeys, three live sessions. */
   default: {
-    ...shell("account"),
+    ...shell("settings"),
     csrfToken: CSRF,
     twoFactor: {
       enabled: true,
@@ -260,9 +260,9 @@ const account = {
     confirm: null,
   },
 
-  /** AccountStates "Two-factor — not enrolled" and "Passkeys — empty" together. */
+  /** SettingsStates "Two-factor — not enrolled" and "Passkeys — empty" together. */
   bare: {
-    ...shell("account", 0),
+    ...shell("settings", 0),
     csrfToken: CSRF,
     twoFactor: { enabled: false },
     enrollment: null,
@@ -272,9 +272,9 @@ const account = {
     confirm: null,
   },
 
-  /** AccountStates "TOTP setup": mid-enrollment, nothing stored yet. */
+  /** SettingsStates "TOTP setup": mid-enrollment, nothing stored yet. */
   totpEnrolling: {
-    ...shell("account", 0),
+    ...shell("settings", 0),
     csrfToken: CSRF,
     twoFactor: { enabled: false },
     enrollment: {
@@ -290,7 +290,7 @@ const account = {
 
   /** The enrollment code did not verify — the setup card re-renders with the error. */
   totpEnrollError: {
-    ...shell("account", 0),
+    ...shell("settings", 0),
     csrfToken: CSRF,
     twoFactor: { enabled: false },
     enrollment: {
@@ -304,9 +304,9 @@ const account = {
     confirm: null,
   },
 
-  /** AccountStates "Backup codes": the one render that ever shows them. */
+  /** SettingsStates "Backup codes": the one render that ever shows them. */
   backupCodesRevealed: {
-    ...shell("account", 0, {
+    ...shell("settings", 0, {
       tone: "success",
       message: "Two-factor authentication is on.",
     }),
@@ -325,7 +325,7 @@ const account = {
 
   /** Dialogs "Disable two-factor" — password-confirmed, destructive. */
   confirmDisableTwoFactor: {
-    ...shell("account"),
+    ...shell("settings"),
     csrfToken: CSRF,
     twoFactor: {
       enabled: true,
@@ -341,7 +341,7 @@ const account = {
 
   /** Dialogs "Remove passkey". */
   confirmRemovePasskey: {
-    ...shell("account"),
+    ...shell("settings"),
     csrfToken: CSRF,
     twoFactor: {
       enabled: true,
@@ -357,7 +357,7 @@ const account = {
 
   /** Dialogs, same pattern: revoking the CLI's device-flow session. */
   confirmRevokeSession: {
-    ...shell("account"),
+    ...shell("settings"),
     csrfToken: CSRF,
     twoFactor: {
       enabled: true,
@@ -373,7 +373,7 @@ const account = {
 
   /** A failed better-auth mutation redirected back with its reason. */
   error: {
-    ...shell("account", 2, {
+    ...shell("settings", 2, {
       tone: "danger",
       title: "Could not disable two-factor",
       message: "That password was not accepted. Nothing was changed.",
@@ -393,7 +393,7 @@ const account = {
 
   /** Edge: authenticator names and user agents nobody sized a column for. */
   longNames: {
-    ...shell("account"),
+    ...shell("settings"),
     csrfToken: CSRF,
     twoFactor: {
       enabled: true,
@@ -425,13 +425,13 @@ const account = {
     ],
     confirm: null,
   },
-} satisfies Record<string, AccountProps>;
+} satisfies Record<string, SettingsProps>;
 
 /* ------------------------------------------------------------------ *
- * /services
+ * /apps
  * ------------------------------------------------------------------ */
 
-const news: ServiceRow = {
+const news: AppRow = {
   slug: "news",
   name: "News MCP",
   kind: "tunnel",
@@ -445,7 +445,7 @@ const news: ServiceRow = {
   tokenCount: 2,
 };
 
-const notion: ServiceRow = {
+const notion: AppRow = {
   slug: "notion",
   name: "Notion",
   kind: "proxy",
@@ -459,7 +459,7 @@ const notion: ServiceRow = {
   tokenCount: 0,
 };
 
-const linear: ServiceRow = {
+const linear: AppRow = {
   slug: "linear",
   name: "Linear",
   kind: "proxy",
@@ -473,7 +473,7 @@ const linear: ServiceRow = {
   tokenCount: 0,
 };
 
-const github: ServiceRow = {
+const github: AppRow = {
   slug: "github",
   name: "GitHub",
   kind: "proxy",
@@ -487,7 +487,7 @@ const github: ServiceRow = {
   tokenCount: 0,
 };
 
-const slack: ServiceRow = {
+const slack: AppRow = {
   slug: "slack",
   name: "Slack",
   kind: "proxy",
@@ -502,7 +502,7 @@ const slack: ServiceRow = {
 };
 
 /** Provisioned but never dialed in: no declaration, so no declared roles. */
-const weather: ServiceRow = {
+const weather: AppRow = {
   slug: "weather",
   name: "Weather bot",
   kind: "tunnel",
@@ -516,7 +516,7 @@ const weather: ServiceRow = {
   tokenCount: 1,
 };
 
-const home: ServiceRow = {
+const home: AppRow = {
   slug: "home",
   name: "Home automation",
   kind: "tunnel",
@@ -530,19 +530,19 @@ const home: ServiceRow = {
   tokenCount: 1,
 };
 
-const services = {
+const apps = {
   /** The full board: every kind, every status, plus the archived section. */
   default: {
-    ...shell("services"),
+    ...shell("apps"),
     csrfToken: CSRF,
     active: [news, notion, linear, github, slack, weather],
     archived: [home],
     confirm: null,
   },
 
-  /** EmptyStates "Services — empty": a fresh namespace. */
+  /** EmptyStates "Apps — empty": a fresh namespace. */
   empty: {
-    ...shell("services", 0),
+    ...shell("apps", 0),
     csrfToken: CSRF,
     active: [],
     archived: [],
@@ -551,25 +551,25 @@ const services = {
 
   /** Nothing live, everything parked — the archived section carrying the page. */
   allArchived: {
-    ...shell("services", 0),
+    ...shell("apps", 0),
     csrfToken: CSRF,
     active: [],
     archived: [home, { ...weather, archived: true }],
     confirm: null,
   },
 
-  /** Dialogs "Delete service": the copy names the token count it will revoke. */
+  /** Dialogs "Delete app": the copy names the token count it will revoke. */
   confirmDelete: {
-    ...shell("services"),
+    ...shell("apps"),
     csrfToken: CSRF,
     active: [news, notion, linear, github, slack, weather],
     archived: [home],
-    confirm: { kind: "delete-service", row: news },
+    confirm: { kind: "delete-app", row: news },
   },
 
   /** A Connect attempt that came back from the provider without a credential. */
   connectFailed: {
-    ...shell("services", 2, {
+    ...shell("apps", 2, {
       tone: "danger",
       title: "Could not connect GitHub",
       message:
@@ -583,7 +583,7 @@ const services = {
 
   /** The happy redirect-back after an archive. */
   archivedNotice: {
-    ...shell("services", 2, {
+    ...shell("apps", 2, {
       tone: "success",
       message: "home is archived. Its roles, grants, and tokens are kept.",
     }),
@@ -595,7 +595,7 @@ const services = {
 
   /** Edge: names, slugs, endpoints, and role lists past every column's comfort. */
   longNames: {
-    ...shell("services"),
+    ...shell("apps"),
     csrfToken: CSRF,
     active: [
       {
@@ -624,17 +624,17 @@ const services = {
     archived: [],
     confirm: null,
   },
-} satisfies Record<string, ServicesProps>;
+} satisfies Record<string, AppsProps>;
 
 /* ------------------------------------------------------------------ *
- * /services/new
+ * /apps/new
  * ------------------------------------------------------------------ */
 
 /** Obviously fake, and shaped like the real thing so the layout is honest. */
-const FAKE_SERVICE_TOKEN = "pmcp_svc_FAKE0000000000000000000000000000000000";
+const FAKE_APP_TOKEN = "pmcp_app_FAKE0000000000000000000000000000000000";
 
-const serviceNew = {
-  /** The artboard's state: a proxied service about to be OAuth-connected. */
+const appNew = {
+  /** The artboard's state: a proxied app about to be OAuth-connected. */
   default: {
     now: NOW,
     username: "ahrzb",
@@ -652,7 +652,7 @@ const serviceNew = {
     },
   },
 
-  /** ServiceNewStates "TUNNELED": no endpoint, no auth — the token comes after. */
+  /** AppNewStates "TUNNELED": no endpoint, no auth — the token comes after. */
   tunneled: {
     now: NOW,
     username: "ahrzb",
@@ -670,7 +670,7 @@ const serviceNew = {
     },
   },
 
-  /** An untouched form — the first thing "Add service" shows. */
+  /** An untouched form — the first thing "Add app" shows. */
   blank: {
     now: NOW,
     username: "ahrzb",
@@ -682,7 +682,7 @@ const serviceNew = {
     },
   },
 
-  /** ServiceNewStates "SLUG ERROR": the reserved builtin, refused uniformly (§8). */
+  /** AppNewStates "SLUG ERROR": the reserved builtin, refused uniformly (§8). */
   slugReserved: {
     now: NOW,
     username: "ahrzb",
@@ -727,15 +727,15 @@ const serviceNew = {
         authMode: "headers",
       },
       errors: {
-        name: "Give the service a display name.",
-        slug: "You already have a service called notion.",
+        name: "Give the app a display name.",
+        slug: "You already have an app called notion.",
         endpoint: "Enter a full https:// URL.",
         form: "Nothing was created.",
       },
     },
   },
 
-  /** ServiceNewStates "TOKEN REVEAL": the one render that holds the token. */
+  /** AppNewStates "TOKEN REVEAL": the one render that holds the token. */
   tokenReveal: {
     now: NOW,
     username: "ahrzb",
@@ -744,11 +744,11 @@ const serviceNew = {
       kind: "created",
       slug: "news",
       name: "News MCP",
-      token: FAKE_SERVICE_TOKEN,
+      token: FAKE_APP_TOKEN,
     },
   },
 
-  /** A proxied service has no token — the same receipt, one card lighter. */
+  /** A proxied app has no token — the same receipt, one card lighter. */
   createdProxy: {
     now: NOW,
     username: "ahrzb",
@@ -774,7 +774,7 @@ const serviceNew = {
       errors: {},
     },
   },
-} satisfies Record<string, ServiceNewProps>;
+} satisfies Record<string, AppNewProps>;
 
 /* ------------------------------------------------------------------ *
  * /approvals and /approvals/<id>
@@ -782,8 +782,8 @@ const serviceNew = {
 
 const pendingSetScene: ApprovalRow = {
   id: "apr_8f2k",
-  accountSlug: "claude",
-  serviceSlug: "home",
+  agentSlug: "claude",
+  appSlug: "home",
   tool: "set_scene",
   args: { scene: "movie_night" },
   status: "pending",
@@ -794,8 +794,8 @@ const pendingSetScene: ApprovalRow = {
 
 const pendingCreatePage: ApprovalRow = {
   id: "apr_3d7m",
-  accountSlug: "cron",
-  serviceSlug: "notion",
+  agentSlug: "cron",
+  appSlug: "notion",
   tool: "create_page",
   args: {
     title: "Weekly report",
@@ -812,8 +812,8 @@ const pendingCreatePage: ApprovalRow = {
 const approvalHistory: ApprovalRow[] = [
   {
     id: "apr_7c1a",
-    accountSlug: "claude",
-    serviceSlug: "home",
+    agentSlug: "claude",
+    appSlug: "home",
     tool: "set_scene",
     args: { scene: "reading" },
     status: "approved",
@@ -823,8 +823,8 @@ const approvalHistory: ApprovalRow[] = [
   },
   {
     id: "apr_5b9e",
-    accountSlug: "claude",
-    serviceSlug: "home",
+    agentSlug: "claude",
+    appSlug: "home",
     tool: "set_scene",
     args: { scene: "away" },
     status: "used",
@@ -834,8 +834,8 @@ const approvalHistory: ApprovalRow[] = [
   },
   {
     id: "apr_2f4d",
-    accountSlug: "cron",
-    serviceSlug: "notion",
+    agentSlug: "cron",
+    appSlug: "notion",
     tool: "create_page",
     args: { title: "Nightly digest", parent: "Inbox" },
     status: "rejected",
@@ -845,8 +845,8 @@ const approvalHistory: ApprovalRow[] = [
   },
   {
     id: "apr_9a3b",
-    accountSlug: "claude",
-    serviceSlug: "home",
+    agentSlug: "claude",
+    appSlug: "home",
     tool: "unlock_door",
     args: { door: "front", duration_s: 30 },
     status: "rejected",
@@ -856,8 +856,8 @@ const approvalHistory: ApprovalRow[] = [
   },
   {
     id: "apr_4e8c",
-    accountSlug: "claude",
-    serviceSlug: "home",
+    agentSlug: "claude",
+    appSlug: "home",
     tool: "set_scene",
     args: { scene: "dinner" },
     status: "used",
@@ -867,8 +867,8 @@ const approvalHistory: ApprovalRow[] = [
   },
   {
     id: "apr_1d6f",
-    accountSlug: "cron",
-    serviceSlug: "news",
+    agentSlug: "cron",
+    appSlug: "news",
     tool: "purge_cache",
     args: { older_than: "24h" },
     status: "expired",
@@ -890,7 +890,7 @@ const bulkyArgs: Record<string, unknown> = {
   updates: Array.from({ length: 12 }, (_, i) => ({
     page_id: `page_${(i + 1).toString().padStart(4, "0")}`,
     title: `Postmortem ${i + 1}: sustained upstream latency in the eu-west region`,
-    properties: { status: "published", owner: "sa:cron", reviewed: i % 2 === 0 },
+    properties: { status: "published", owner: "agent:cron", reviewed: i % 2 === 0 },
   })),
   credentials: { token: "‹redacted›", refresh_token: "‹redacted›" },
   notify: { channel: "#eng-incidents", mention: ["@oncall"], webhook_secret: "‹redacted›" },
@@ -1061,9 +1061,9 @@ const auditRows: AuditEventRow[] = [
   {
     id: 41287,
     ts: ms("2026-08-24T14:32:07.000Z"),
-    principal: "sa:claude",
+    principal: "agent:claude",
     event: "tools/call",
-    service: "news",
+    app: "news",
     tool: "get_news",
     outcome: "ok",
     durationMs: 340,
@@ -1077,14 +1077,14 @@ const auditRows: AuditEventRow[] = [
   {
     id: 41286,
     ts: ms("2026-08-24T14:31:48.000Z"),
-    principal: "sa:claude",
+    principal: "agent:claude",
     event: "tools/call",
-    service: "notion",
+    app: "notion",
     tool: "create_page",
     outcome: "ok",
     durationMs: 1204,
     client: { name: "claude-code", version: "2.1.37", sessionId: "a3f9c2d1" },
-    // Proxied service with log_bodies opted in (§9) — config paths do the masking.
+    // Proxied app with log_bodies opted in (§9) — config paths do the masking.
     args: { title: "Weekly report", parent: "Reports", credentials: { token: "‹redacted›" } },
     result: { structuredContent: { page_id: "page_0091", url: "https://notion.so/page_0091" } },
   },
@@ -1093,16 +1093,16 @@ const auditRows: AuditEventRow[] = [
     ts: ms("2026-08-24T14:30:12.000Z"),
     principal: "user:ahrzb",
     event: "admin.grant_set",
-    service: "notion",
+    app: "notion",
     outcome: "ok",
-    detail: { account: "claude", roles: ["editor"], removed: ["reader"] },
+    detail: { agent: "claude", roles: ["editor"], removed: ["reader"] },
   },
   {
     id: 41284,
     ts: ms("2026-08-24T14:29:55.000Z"),
-    principal: "sa:claude",
+    principal: "agent:claude",
     event: "approval.requested",
-    service: "home",
+    app: "home",
     tool: "set_scene",
     outcome: "-32003",
     client: { name: "claude-code", version: "2.1.37", sessionId: "a3f9c2d1" },
@@ -1111,40 +1111,40 @@ const auditRows: AuditEventRow[] = [
   {
     id: 41283,
     ts: ms("2026-08-24T14:18:03.000Z"),
-    principal: "svc:news",
+    principal: "app:news",
     event: "connect.register",
-    service: "news",
+    app: "news",
     outcome: "ok",
     detail: { roles: ["reader", "admin"], client_version: "pmcp-client-py 0.4.1" },
   },
   {
     id: 41282,
     ts: ms("2026-08-24T14:17:59.000Z"),
-    principal: "svc:news",
+    principal: "app:news",
     event: "connect.replaced",
-    service: "news",
+    app: "news",
     outcome: "ok",
     detail: { reason: "newer connection accepted", close_code: 4000 },
   },
   {
     id: 41281,
     ts: ms("2026-08-24T13:58:31.000Z"),
-    principal: "sa:claude",
+    principal: "agent:claude",
     event: "tools/call",
-    service: "home",
+    app: "home",
     tool: "lights_on",
     outcome: "-32002",
     durationMs: 8,
     client: { name: "claude-code", version: "2.1.37", sessionId: "a3f9c2d1" },
     // A refusal never carries bodies (§15) — the detail names the class instead.
-    detail: { reason: "service archived" },
+    detail: { reason: "app archived" },
   },
   {
     id: 41280,
     ts: ms("2026-08-24T13:44:10.000Z"),
     principal: "user:ahrzb",
     event: "approval.approved",
-    service: "home",
+    app: "home",
     tool: "set_scene",
     outcome: "ok",
     detail: { approval: "apr_7c1a" },
@@ -1160,9 +1160,9 @@ const auditRows: AuditEventRow[] = [
   {
     id: 41278,
     ts: ms("2026-08-24T12:59:47.000Z"),
-    principal: "sa:cron",
+    principal: "agent:cron",
     event: "tools/call",
-    service: "news",
+    app: "news",
     tool: "search_news",
     outcome: "-32001",
     durationMs: 4,
@@ -1172,9 +1172,9 @@ const auditRows: AuditEventRow[] = [
   {
     id: 41277,
     ts: ms("2026-08-24T12:41:33.000Z"),
-    principal: "sa:claude",
+    principal: "agent:claude",
     event: "tools/call",
-    service: "notion",
+    app: "notion",
     tool: "search",
     outcome: "ok",
     durationMs: 890,
@@ -1184,17 +1184,17 @@ const auditRows: AuditEventRow[] = [
     id: 41276,
     ts: ms("2026-08-24T12:02:19.000Z"),
     principal: "user:ahrzb",
-    event: "admin.service_archive",
-    service: "home",
+    event: "admin.app_archive",
+    app: "home",
     outcome: "ok",
     detail: { slug: "home", severed: true },
   },
   {
     id: 41275,
     ts: ms("2026-08-24T11:47:02.000Z"),
-    principal: "sa:claude",
+    principal: "agent:claude",
     event: "tools/call",
-    service: "news",
+    app: "news",
     tool: "get_news",
     outcome: "ok",
     durationMs: 290,
@@ -1203,8 +1203,8 @@ const auditRows: AuditEventRow[] = [
 ];
 
 const auditOptions = {
-  principals: ["sa:claude", "sa:cron", "svc:news", "svc:home", "user:ahrzb", "bootstrap"],
-  services: ["news", "notion", "linear", "github", "slack", "home", "pmcp"],
+  principals: ["agent:claude", "agent:cron", "app:news", "app:home", "user:ahrzb", "bootstrap"],
+  apps: ["news", "notion", "linear", "github", "slack", "home", "pmcp"],
   events: [
     "tools/call",
     "approval.requested",
@@ -1216,8 +1216,8 @@ const auditOptions = {
     "connect.roles_widened",
     "auth.login",
     "auth.device_approved",
-    "admin.service_create",
-    "admin.service_archive",
+    "admin.app_create",
+    "admin.app_archive",
     "admin.grant_set",
     "admin.token_issue",
     "upstream.oauth_connected",
@@ -1317,8 +1317,8 @@ const audit = {
   empty: {
     ...shell("audit", 0),
     filters: {
-      principal: "sa:cron",
-      service: "linear",
+      principal: "agent:cron",
+      app: "linear",
       tool: "create_issue",
       range: "1h",
       since: ms("2026-08-24T13:47:00.000Z"),
@@ -1354,7 +1354,7 @@ const audit = {
   bodyStubs: {
     ...shell("audit"),
     filters: {
-      service: "news",
+      app: "news",
       range: "24h",
       since: ms("2026-08-23T14:47:00.000Z"),
       until: AUDIT_UNTIL,
@@ -1366,9 +1366,9 @@ const audit = {
       {
         id: 41290,
         ts: ms("2026-08-24T14:40:00.000Z"),
-        principal: "sa:claude",
+        principal: "agent:claude",
         event: "tools/call",
-        service: "news",
+        app: "news",
         tool: "render_front_page_screenshot_at_full_resolution",
         outcome: "ok",
         durationMs: 4820,
@@ -1382,9 +1382,9 @@ const audit = {
       {
         id: 41289,
         ts: ms("2026-08-24T14:36:12.000Z"),
-        principal: "sa:cron",
+        principal: "agent:cron",
         event: "tools/call",
-        service: "news",
+        app: "news",
         tool: "ingest_corpus",
         outcome: "ok",
         durationMs: 12470,
@@ -1396,9 +1396,9 @@ const audit = {
       {
         id: 41288,
         ts: ms("2026-08-24T14:33:41.000Z"),
-        principal: "svc:news",
+        principal: "app:news",
         event: "connect.roles_widened",
-        service: "news",
+        app: "news",
         outcome: "ok",
         detail: { roles: ["reader"], added: ["search_.*", "get_.*"] },
       },
@@ -1431,9 +1431,9 @@ const audit = {
 export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsByName[K]> } = {
   login,
   device,
-  account,
-  services,
-  "service-new": serviceNew,
+  agent,
+  apps,
+  "app-new": appNew,
   approvals,
   "approval-detail": approvalDetail,
   audit,
@@ -1442,9 +1442,9 @@ export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsB
 export {
   login,
   device,
-  account,
-  services,
-  serviceNew,
+  agent,
+  apps,
+  appNew,
   approvals,
   approvalDetail,
   audit,

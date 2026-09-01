@@ -29,7 +29,7 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
 /** "Never" / "just now" / "12m ago" / "3h ago" / an ISO date — the same relative-time shape
- *  services.tsx already draws, spelled again here rather than imported (a template concern,
+ *  apps.tsx already draws, spelled again here rather than imported (a template concern,
  *  never a shared runtime dependency between two pages). */
 function relative(at: number | null, nowIso: string): string {
   if (at === null) return "Never";
@@ -46,7 +46,7 @@ const ConnectionRowView: FC<{ row: ConnectionRow; csrfToken: string; now: string
       <div class="cell-name">{row.clientName ?? row.clientId}</div>
       <div class="cell-slug wide-only">{row.clientId}</div>
     </td>
-    <td class="wide-only">{row.accountSlug}</td>
+    <td class="wide-only">{row.agentSlug}</td>
     <td class="wide-only muted">{relative(row.createdAt, now)}</td>
     <td class="wide-only muted">{relative(row.lastUsedAt, now)}</td>
     <td class="cell-actions">
@@ -101,7 +101,7 @@ export const ConnectionsPage: FC<ConnectionsProps> = ({ now, csrfToken, connecti
                 <thead>
                   <tr>
                     <th>Client</th>
-                    <th class="wide-only">Account</th>
+                    <th class="wide-only">Settings</th>
                     <th class="wide-only">Created</th>
                     <th class="wide-only">Last used</th>
                     <th></th>
@@ -116,7 +116,7 @@ export const ConnectionsPage: FC<ConnectionsProps> = ({ now, csrfToken, connecti
             </div>
           )}
           <p class="note">
-            <a href={paths.services}>Back to services</a>
+            <a href={paths.apps}>Back to apps</a>
           </p>
         </div>
       </body>

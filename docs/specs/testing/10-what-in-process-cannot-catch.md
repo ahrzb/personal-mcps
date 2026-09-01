@@ -20,7 +20,7 @@ booleans for every binding and secret; `/api/whoami` shape). This converts the
 worst silent failure — a missing secret surfacing months later — into a red deploy.
 
 **Automated, on demand / pre-release (~2 min, local — no CF credentials in CI):**
-`scripts/e2e.ts` against the dev worker: the example service over real wss/TLS
+`scripts/e2e.ts` against the dev worker: the example app over real wss/TLS
 through the real edge, both endpoint shapes via the real MCP client, the approval
 loop end to end, and a deploy fired while a slow call is in flight (must yield a
 clean `-32000`, never a hang or 502, bot back online in ~5 s).
@@ -54,7 +54,7 @@ earns its five seconds by catching the whole config-drift family, including the
 
 Accepted risks are recorded with explicit revisit triggers (D1-under-real-
 concurrency: trigger = an approval consumed twice; deploy-storm behavior: trigger
-= >50 services; browser-side PWA mechanics: trigger = the web surface outgrowing
+= >50 apps; browser-side PWA mechanics: trigger = the web surface outgrowing
 §13 or a second contributor; RFC 9207 as likely-dead-branch; constant-time
 compare as reviewed-not-tested).
 

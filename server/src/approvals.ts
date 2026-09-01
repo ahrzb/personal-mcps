@@ -14,7 +14,7 @@
  *   `params.arguments`, computed POST-redaction — no digest of a secret is ever
  *   persisted. Callers never see or compute hashes.
  * - The concurrent-first-call race: a D1 partial unique index on
- *   (service_account_id, service_id, tool, args_hash) WHERE status = 'pending'
+ *   (agent_id, app_id, tool, args_hash) WHERE status = 'pending'
  *   (declared in this module's migration; §5's table plus this constraint) means
  *   the CONSTRAINT, not application code, kills the race — a losing insert
  *   re-reads and returns the winner's row.
@@ -28,8 +28,8 @@
  *   rewritten (flipped to `expired`, audited exactly once). No hourly job.
  *
  * The three-phase interface (check → claim → settle) exists to make the spec's
- * pinned ordering expressible: the gateway verifies service AVAILABILITY between
- * check and claim, so an approved retry that hits an offline service gets -32000
+ * pinned ordering expressible: the gateway verifies app AVAILABILITY between
+ * check and claim, so an approved retry that hits an offline app gets -32000
  * without consuming the approval — the owner never re-approves because a bot was
  * mid-reconnect.
  */
@@ -37,7 +37,7 @@
 import { formatPrincipal, HUB_PRINCIPAL } from "./principal";
 import type { Principal } from "./principal";
 import { applyRedaction } from "./registry";
-import type { Service } from "./registry";
+import type { App } from "./registry";
 import { CODES, HubError } from "./errors";
 import type { JsonRpcResponse } from "./gateway";
 import type { AuditEntry } from "./audit";
@@ -78,8 +78,8 @@ export type ApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "
  */
 export type ApprovalRow = {
   id: string;
-  accountSlug: string;
-  serviceSlug: string;
+  agentSlug: string;
+  appSlug: string;
   tool: string;
   args: Record<string, unknown>;
   status: ApprovalStatus;
@@ -161,14 +161,14 @@ export class Approvals {
   /**
    * Phase 1 — decide whether this call may proceed, without consuming anything.
    *
-   * Looks for an unexpired `approved` row matching (account, service, tool,
+   * Looks for an unexpired `approved` row matching (agent, app, tool,
    * args_hash), where args_hash binds the post-redaction canonical JSON of
    * `args` — `params.arguments` only; MRTR `inputResponses`/`requestState`
    * never enter the binding, and absent `args` binds as `{}` so an
    * argument-less retry matches however the client spells it. Found →
-   * `{ outcome: "ok" }`: the caller must verify service availability and then
+   * `{ outcome: "ok" }`: the caller must verify app availability and then
    * claim() — check() alone never authorizes dispatch, and it leaves the row
-   * untouched so an unavailable service costs the owner nothing.
+   * untouched so an unavailable app costs the owner nothing.
    *
    * Otherwise → `{ outcome: "required", … }`. An existing unexpired `pending`
    * row for the same binding is returned as-is — stable id across retries, no
@@ -178,11 +178,11 @@ export class Approvals {
    * pending wait and the post-approval retry), with an `approval.requested`
    * audit row and a best-effort push to the owner.
    *
-   * The caller refuses known-unavailable services with -32000 BEFORE invoking
+   * The caller refuses known-unavailable apps with -32000 BEFORE invoking
    * check (§7) — this module never probes availability itself, and a pending row
-   * is never created for a service the hub already knows cannot execute.
+   * is never created for an app the hub already knows cannot execute.
    *
-   * `principal` must be a service-account principal — owners are never
+   * `principal` must be an agent principal — owners are never
    * approval-gated, so the filter never routes them here. `redactPaths` are
    * dot-separated paths into `args` (the caller resolves the writeOnly/config
    * union); masking is registry.applyRedaction — the one definition — applied
@@ -190,16 +190,16 @@ export class Approvals {
    */
   async check(
     principal: Principal,
-    service: Service,
+    app: App,
     tool: string,
     args: Record<string, unknown> | undefined,
     redactPaths: string[],
   ): Promise<CheckResult> {
     // deps: canonicalJson · registry.applyRedaction · notifyOwner · crypto.subtle · D1 `approval` · audit.record
-    if (principal.kind !== "service_account") {
+    if (principal.kind !== "agent") {
       // Owners are never approval-gated (§7), so the filter never routes them here; a
       // caller that does has lost the principal, which is a bug rather than a refusal.
-      throw new Error("approvals.check: only a service-account principal is approval-gated");
+      throw new Error("approvals.check: only an agent principal is approval-gated");
     }
     const masked = applyRedaction(args ?? {}, redactPaths);
     const argsHash = await sha256Hex(canonicalJson(masked));
@@ -210,16 +210,16 @@ export class Approvals {
     const { results } = await this.db
       .prepare(
         `SELECT * FROM approval
-         WHERE service_account_id = ? AND service_id = ? AND tool = ? AND args_hash = ?
+         WHERE agent_id = ? AND app_id = ? AND tool = ? AND args_hash = ?
            AND status IN ('pending', 'approved')`,
       )
-      .bind(principal.accountId, service.id, tool, argsHash)
+      .bind(principal.agentId, app.id, tool, argsHash)
       .all<ApprovalDbRow>();
 
     // Lazy expiry, applied BEFORE the decision and before any insert: the flip is what makes
     // the owner's ledger read "expired, then re-requested" rather than the reverse (§7).
     for (const row of results) {
-      if (row.expires_at < now && row.status === "pending") await this.flipExpired(row, service.slug);
+      if (row.expires_at < now && row.status === "pending") await this.flipExpired(row, app.slug);
     }
     const live = results.filter((row) => row.expires_at >= now);
     const approved = live.find((row) => row.status === "approved");
@@ -229,9 +229,9 @@ export class Approvals {
 
     const fresh: ApprovalDbRow = {
       id: crypto.randomUUID(),
-      owner_id: service.ownerId,
-      service_account_id: principal.accountId,
-      service_id: service.id,
+      owner_id: app.ownerId,
+      agent_id: principal.agentId,
+      app_id: app.id,
       tool,
       args_hash: argsHash,
       args_json: JSON.stringify(masked),
@@ -243,15 +243,15 @@ export class Approvals {
     try {
       await this.db
         .prepare(
-          `INSERT INTO approval (id, owner_id, service_account_id, service_id, tool,
+          `INSERT INTO approval (id, owner_id, agent_id, app_id, tool,
              args_hash, args_json, status, created_at, decided_at, expires_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           fresh.id,
           fresh.owner_id,
-          fresh.service_account_id,
-          fresh.service_id,
+          fresh.agent_id,
+          fresh.app_id,
           fresh.tool,
           fresh.args_hash,
           fresh.args_json,
@@ -267,10 +267,10 @@ export class Approvals {
       const winner = await this.db
         .prepare(
           `SELECT * FROM approval
-           WHERE service_account_id = ? AND service_id = ? AND tool = ? AND args_hash = ?
+           WHERE agent_id = ? AND app_id = ? AND tool = ? AND args_hash = ?
              AND status = 'pending' AND expires_at >= ?`,
         )
-        .bind(principal.accountId, service.id, tool, argsHash, now)
+        .bind(principal.agentId, app.id, tool, argsHash, now)
         .first<ApprovalDbRow>();
       if (!winner) throw err;
       return required(winner, this.config.publicOrigin);
@@ -280,12 +280,12 @@ export class Approvals {
       ownerId: fresh.owner_id,
       principal: formatPrincipal(principal),
       event: "approval.requested",
-      service: service.slug,
+      app: app.slug,
       tool,
       outcome: "ok",
       detail: { approvalId: fresh.id },
     });
-    await this.notifyOwner(fresh.owner_id, fresh.id, service.slug, tool);
+    await this.notifyOwner(fresh.owner_id, fresh.id, app.slug, tool);
     return required(fresh, this.config.publicOrigin);
   }
 
@@ -321,11 +321,11 @@ export class Approvals {
    * Consumption already happened at claim(); settle's only power is
    * restoration: a result indicating an input-required MRTR leg flips the row
    * back to `approved` so follow-up legs ride the
-   * original approval until a complete result or service error. Any other
+   * original approval until a complete result or app error. Any other
    * result, and any error response, leaves the pass consumed. It takes the RAW
    * response precisely so MRTR's wire shape is known nowhere else. If dispatch
    * produced no response at all (timeout, socket drop), skip settle — the pass
-   * stays consumed, because the call may already have reached the service
+   * stays consumed, because the call may already have reached the app
    * (every tools/call is at-most-once, §15).
    */
   async settle(claim: ApprovalClaim, rawResult: JsonRpcResponse): Promise<void> {
@@ -336,7 +336,7 @@ export class Approvals {
       typeof result === "object" &&
       result !== null &&
       (result as Record<string, unknown>).resultType === "input_required";
-    if (!inputRequired) return; // complete result or service error: the pass stays spent.
+    if (!inputRequired) return; // complete result or app error: the pass stays spent.
     // Same CAS discipline as the claim (§7): only the row THIS claim consumed is restored.
     await this.db
       .prepare(`UPDATE approval SET status = 'approved' WHERE id = ? AND status = 'used'`)
@@ -360,18 +360,18 @@ export class Approvals {
     const now = this.config.now();
     const row = await this.db
       .prepare(
-        `SELECT a.*, s.slug AS service_slug, u."username" AS owner_username FROM approval a
-         JOIN service s ON s.id = a.service_id
+        `SELECT a.*, s.slug AS app_slug, u."username" AS owner_username FROM approval a
+         JOIN app s ON s.id = a.app_id
          JOIN "user" u ON u."id" = a.owner_id
          WHERE a.id = ? AND a.owner_id = ?`,
       )
       .bind(id, ownerId)
-      .first<ApprovalDbRow & { service_slug: string; owner_username: string }>();
+      .first<ApprovalDbRow & { app_slug: string; owner_username: string }>();
     // Lazy expiry is applied here too, before the refusal: a past-expiry pending row is
     // flipped (audited once) and only then refused, so `approval_decide` leaves the ledger
     // in the same state a read of the same row would have (§7).
     if (row && row.status === "pending" && row.expires_at < now) {
-      await this.flipExpired(row, row.service_slug);
+      await this.flipExpired(row, row.app_slug);
     }
     if (!row || row.status !== "pending" || row.expires_at < now) {
       // ONE message for all four refusals — unknown id, another namespace's row, an
@@ -395,7 +395,7 @@ export class Approvals {
         username: row.owner_username,
       }),
       event: `approval.${status}`,
-      service: row.service_slug,
+      app: row.app_slug,
       tool: row.tool,
       outcome: "ok",
       detail: { approvalId: id },
@@ -411,7 +411,7 @@ export class Approvals {
    * post-redaction — nothing else was ever stored.
    */
   async list(ownerId: string, filters?: ApprovalListFilters): Promise<ApprovalRow[]> {
-    // deps: D1 `approval` · D1 `service` · D1 `service_account` · audit.record
+    // deps: D1 `approval` · D1 `app` · D1 `agent` · audit.record
     const now = this.config.now();
     // ponytail: the whole namespace is read, then interpreted and filtered in JS, because a
     // `status` filter is a filter on the INTERPRETED status — a past-expiry `approved` row
@@ -420,21 +420,21 @@ export class Approvals {
     // small.
     const { results } = await this.db
       .prepare(
-        `SELECT a.*, s.slug AS service_slug, sa.slug AS account_slug FROM approval a
-         JOIN service s ON s.id = a.service_id
-         JOIN service_account sa ON sa.id = a.service_account_id
+        `SELECT a.*, s.slug AS app_slug, ag.slug AS agent_slug FROM approval a
+         JOIN app s ON s.id = a.app_id
+         JOIN agent ag ON ag.id = a.agent_id
          WHERE a.owner_id = ? ORDER BY a.created_at DESC`,
       )
       .bind(ownerId)
-      .all<ApprovalDbRow & { service_slug: string; account_slug: string }>();
+      .all<ApprovalDbRow & { app_slug: string; agent_slug: string }>();
 
     const rows: ApprovalRow[] = [];
     for (const row of results) {
-      if (row.expires_at < now && row.status === "pending") await this.flipExpired(row, row.service_slug);
+      if (row.expires_at < now && row.status === "pending") await this.flipExpired(row, row.app_slug);
       rows.push({
         id: row.id,
-        accountSlug: row.account_slug,
-        serviceSlug: row.service_slug,
+        agentSlug: row.agent_slug,
+        appSlug: row.app_slug,
         tool: row.tool,
         args: JSON.parse(row.args_json) as Record<string, unknown>,
         status: readStatus(row, now),
@@ -487,15 +487,15 @@ export class Approvals {
     const now = this.config.now();
     const { results } = await this.db
       .prepare(
-        `SELECT a.*, s.slug AS service_slug FROM approval a
-         JOIN service s ON s.id = a.service_id
+        `SELECT a.*, s.slug AS app_slug FROM approval a
+         JOIN app s ON s.id = a.app_id
          WHERE a.status = 'pending' AND a.expires_at < ?`,
       )
       .bind(now)
-      .all<ApprovalDbRow & { service_slug: string }>();
+      .all<ApprovalDbRow & { app_slug: string }>();
     let expired = 0;
     for (const row of results) {
-      if (await this.flipExpired(row, row.service_slug)) expired += 1;
+      if (await this.flipExpired(row, row.app_slug)) expired += 1;
     }
     // Flip first, prune second (§7): a row that is both past-expiry and past-retention still
     // leaves its `approval.expired` behind before the row itself goes.
@@ -508,7 +508,7 @@ export class Approvals {
 
   /**
    * Best-effort Web Push to every subscription of the namespace owner: names
-   * the service and tool plus the approval id — NEVER arguments (payloads rest
+   * the app and tool plus the approval id — NEVER arguments (payloads rest
    * on third-party push services; §15's hygiene rule). VAPID ES256 + RFC 8291
    * payload encryption via a small Workers-compatible webpush library (e.g.
    * webpush-webcrypto — do not hand-roll the crypto); tapping the notification
@@ -519,18 +519,18 @@ export class Approvals {
   private async notifyOwner(
     ownerId: string,
     approvalId: string,
-    serviceSlug: string,
+    appSlug: string,
     tool: string,
   ): Promise<void> {
     // deps: D1 `push_subscription` · config.push (VAPID ES256 + RFC 8291) · fetch
     const send = this.config.push;
     if (!send) return;
     try {
-      // Service, tool and id — never arguments, redacted or otherwise (§15: the payload rests
+      // App, tool and id — never arguments, redacted or otherwise (§15: the payload rests
       // on a third-party push service).
       const payload = JSON.stringify({
         approvalId,
-        service: serviceSlug,
+        app: appSlug,
         tool,
         url: approvalUrl(this.config.publicOrigin, approvalId),
       });
@@ -545,7 +545,7 @@ export class Approvals {
             payload,
           );
           // Gone for good — and ONLY these two: a 500 or a rejected fetch is a flaky push
-          // service, and unsubscribing the owner over one would be the worse failure.
+          // app, and unsubscribing the owner over one would be the worse failure.
           if (status === 404 || status === 410) {
             await this.db.prepare(`DELETE FROM push_subscription WHERE id = ?`).bind(sub.id).run();
           }
@@ -565,7 +565,7 @@ export class Approvals {
    * rows are ever rewritten: a past-expiry `approved` row reads as expired and stays
    * as it is.
    */
-  private async flipExpired(row: ApprovalDbRow, serviceSlug: string): Promise<boolean> {
+  private async flipExpired(row: ApprovalDbRow, appSlug: string): Promise<boolean> {
     const { meta } = await this.db
       .prepare(`UPDATE approval SET status = 'expired' WHERE id = ? AND status = 'pending'`)
       .bind(row.id)
@@ -575,7 +575,7 @@ export class Approvals {
       ownerId: row.owner_id,
       principal: HUB_PRINCIPAL,
       event: "approval.expired",
-      service: serviceSlug,
+      app: appSlug,
       tool: row.tool,
       outcome: "ok",
       detail: { approvalId: row.id },
@@ -588,8 +588,8 @@ export class Approvals {
 type ApprovalDbRow = {
   id: string;
   owner_id: string;
-  service_account_id: string;
-  service_id: string;
+  agent_id: string;
+  app_id: string;
   tool: string;
   args_hash: string;
   args_json: string;

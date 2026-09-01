@@ -1,0 +1,241 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
+    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
+    a:hover { color: #52525b; }
+  </style>
+</helmet>
+<div style="width: 520px; min-height: 1780px; box-sizing: border-box; background: #fafafa; display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 32px;">
+
+  <div style="width: 440px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.2;">EDITING &mdash; claude &times; news</div>
+    <div style="width: 440px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 16px; font-weight: 600;">Grants &mdash; <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</span> on News MCP</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">What this agent may call on this app.</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column;">
+
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f4f4f5;">
+          <div style="width: 16px; height: 16px; border-radius: 4px; background: #18181b; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fafafa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div>
+          <div style="flex-grow: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+            <span style="font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">reader</span>
+            <span style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news_*, search</span>
+          </div>
+          <div style="display: flex; flex-shrink: 0;">
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #18181b; color: #fafafa; border: 1px solid #18181b; border-radius: 8px 0 0 8px; font-size: 12px; font-weight: 500;">allow</div>
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #ffffff; color: #71717a; border: 1px solid #e4e4e7; border-left: none; border-radius: 0 8px 8px 0; font-size: 12px; font-weight: 500;">approval</div>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f4f4f5;">
+          <div style="width: 16px; height: 16px; border-radius: 4px; background: #18181b; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fafafa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div>
+          <div style="flex-grow: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+            <span style="font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">admin</span>
+            <span style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news_admin_*</span>
+          </div>
+          <div style="display: flex; flex-shrink: 0;">
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #ffffff; color: #71717a; border: 1px solid #e4e4e7; border-radius: 8px 0 0 8px; font-size: 12px; font-weight: 500;">allow</div>
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #18181b; color: #fafafa; border: 1px solid #18181b; border-radius: 0 8px 8px 0; font-size: 12px; font-weight: 500; margin-left: -1px;">approval</div>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #e4e4e7;">
+          <div style="width: 16px; height: 16px; box-sizing: border-box; border-radius: 4px; border: 1.5px solid #a1a1aa; background: #ffffff; flex-shrink: 0;"></div>
+          <div style="flex-grow: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+            <span style="font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">search</span>
+            <span style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">search</span>
+          </div>
+          <div style="display: flex; flex-shrink: 0;">
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #f4f4f5; color: #a1a1aa; border: 1px solid #e4e4e7; border-radius: 8px 0 0 8px; font-size: 12px; font-weight: 500;">allow</div>
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #f4f4f5; color: #a1a1aa; border: 1px solid #e4e4e7; border-left: none; border-radius: 0 8px 8px 0; font-size: 12px; font-weight: 500;">approval</div>
+          </div>
+        </div>
+
+        <div style="padding: 12px 0 0 0;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 16px; height: 16px; box-sizing: border-box; border-radius: 4px; border: 1.5px solid #a1a1aa; background: #ffffff; flex-shrink: 0;"></div>
+            <div style="flex-grow: 1; display: flex; align-items: center; gap: 8px; min-width: 0;">
+              <span style="font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">all</span>
+              <span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f4f4f5; color: #71717a;">built-in</span>
+            </div>
+            <div style="display: flex; flex-shrink: 0;">
+              <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #f4f4f5; color: #a1a1aa; border: 1px solid #e4e4e7; border-radius: 8px 0 0 8px; font-size: 12px; font-weight: 500;">allow</div>
+              <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #f4f4f5; color: #a1a1aa; border: 1px solid #e4e4e7; border-left: none; border-radius: 0 8px 8px 0; font-size: 12px; font-weight: 500;">approval</div>
+            </div>
+          </div>
+          <div style="margin: 6px 0 0 28px; font-size: 12px; color: #71717a; line-height: 1.5;">every tool, present and future &mdash; the app can widen what its roles match.</div>
+        </div>
+
+      </div>
+
+      <div style="background: #f4f4f5; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Saving replaces every grant <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</span> holds on <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news</span> &mdash; unchecked roles are removed.</div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Save</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="width: 440px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.2;">UNDECLARED &mdash; TUNNELED (WARNING)</div>
+    <div style="width: 440px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+
+      <div style="font-size: 16px; font-weight: 600;">Grants &mdash; <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</span> on News MCP</div>
+
+      <div style="display: flex; flex-direction: column;">
+
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f4f4f5;">
+          <div style="width: 16px; height: 16px; border-radius: 4px; background: #18181b; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fafafa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div>
+          <div style="flex-grow: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+            <span style="font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">reader</span>
+            <span style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news_*, search</span>
+          </div>
+          <div style="display: flex; flex-shrink: 0;">
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #18181b; color: #fafafa; border: 1px solid #18181b; border-radius: 8px 0 0 8px; font-size: 12px; font-weight: 500;">allow</div>
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #ffffff; color: #71717a; border: 1px solid #e4e4e7; border-left: none; border-radius: 0 8px 8px 0; font-size: 12px; font-weight: 500;">approval</div>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 0;">
+          <div style="width: 16px; height: 16px; border-radius: 4px; background: #18181b; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fafafa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div>
+          <div style="flex-grow: 1; display: flex; align-items: center; gap: 8px; min-width: 0;">
+            <span style="font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">triage</span>
+            <span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">undeclared</span>
+          </div>
+          <div style="display: flex; flex-shrink: 0;">
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #18181b; color: #fafafa; border: 1px solid #18181b; border-radius: 8px 0 0 8px; font-size: 12px; font-weight: 500;">allow</div>
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #ffffff; color: #71717a; border: 1px solid #e4e4e7; border-left: none; border-radius: 0 8px 8px 0; font-size: 12px; font-weight: 500;">approval</div>
+          </div>
+        </div>
+
+      </div>
+
+      <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#92400e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 2px;"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+        <div style="font-size: 13px; color: #92400e; line-height: 1.5;"><span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news</span> hasn&rsquo;t declared <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">triage</span>. Tunneled apps declare roles when they connect &mdash; this grant stays dormant until then.</div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Save</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="width: 440px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.2;">UNDECLARED &mdash; PROXIED (ERROR)</div>
+    <div style="width: 440px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+
+      <div style="font-size: 16px; font-weight: 600;">Grants &mdash; <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</span> on Linear</div>
+
+      <div style="display: flex; flex-direction: column;">
+
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f4f4f5;">
+          <div style="width: 16px; height: 16px; border-radius: 4px; background: #18181b; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fafafa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div>
+          <div style="flex-grow: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+            <span style="font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">reader</span>
+            <span style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">linear_*</span>
+          </div>
+          <div style="display: flex; flex-shrink: 0;">
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #18181b; color: #fafafa; border: 1px solid #18181b; border-radius: 8px 0 0 8px; font-size: 12px; font-weight: 500;">allow</div>
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #ffffff; color: #71717a; border: 1px solid #e4e4e7; border-left: none; border-radius: 0 8px 8px 0; font-size: 12px; font-weight: 500;">approval</div>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 0;">
+          <div style="width: 16px; height: 16px; border-radius: 4px; background: #18181b; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fafafa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div>
+          <div style="flex-grow: 1; display: flex; align-items: center; gap: 8px; min-width: 0;">
+            <span style="font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">triage</span>
+            <span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #fef2f2; color: #dc2626; border: 1px solid #fecaca;">undeclared</span>
+          </div>
+          <div style="display: flex; flex-shrink: 0;">
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #18181b; color: #fafafa; border: 1px solid #18181b; border-radius: 8px 0 0 8px; font-size: 12px; font-weight: 500;">allow</div>
+            <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #ffffff; color: #71717a; border: 1px solid #e4e4e7; border-left: none; border-radius: 0 8px 8px 0; font-size: 12px; font-weight: 500;">approval</div>
+          </div>
+        </div>
+
+      </div>
+
+      <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"></circle><path d="m15 9-6 6"></path><path d="m9 9 6 6"></path></svg>
+        <div style="font-size: 13px; color: #dc2626; line-height: 1.5;"><span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">linear</span> is proxied &mdash; its roles are fixed in config, so an undeclared role is an error.</div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #a1a1aa; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #a1a1aa;">Save</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="width: 440px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.2;">NOTHING DECLARED</div>
+    <div style="width: 440px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <div style="font-size: 16px; font-weight: 600;">Grants &mdash; <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</span> on News MCP</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">What this agent may call on this app.</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column;">
+
+        <div style="padding: 0 0 12px 0; border-bottom: 1px solid #e4e4e7; font-size: 13px; color: #71717a; line-height: 1.5;"><span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news</span> hasn&rsquo;t declared any roles yet.</div>
+
+        <div style="padding: 12px 0 0 0;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 16px; height: 16px; border-radius: 4px; background: #18181b; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fafafa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div>
+            <div style="flex-grow: 1; display: flex; align-items: center; gap: 8px; min-width: 0;">
+              <span style="font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">all</span>
+              <span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f4f4f5; color: #71717a;">built-in</span>
+            </div>
+            <div style="display: flex; flex-shrink: 0;">
+              <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #18181b; color: #fafafa; border: 1px solid #18181b; border-radius: 8px 0 0 8px; font-size: 12px; font-weight: 500;">allow</div>
+              <div style="height: 28px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; background: #ffffff; color: #71717a; border: 1px solid #e4e4e7; border-left: none; border-radius: 0 8px 8px 0; font-size: 12px; font-weight: 500;">approval</div>
+            </div>
+          </div>
+          <div style="margin: 6px 0 0 28px; font-size: 12px; color: #71717a; line-height: 1.5;">every tool, present and future &mdash; the app can widen what its roles match.</div>
+        </div>
+
+      </div>
+
+      <div style="background: #f4f4f5; border-radius: 8px; padding: 12px 14px; display: flex; gap: 10px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0; margin-top: 2px;"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Saving replaces every grant <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</span> holds on <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news</span> &mdash; unchecked roles are removed.</div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Save</div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":520,"height":1780}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

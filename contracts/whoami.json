@@ -6,10 +6,10 @@
       "namespace": "contracts-user"
     }
   },
-  "service_account": {
+  "agent": {
     "status": 200,
     "body": {
-      "principal": "sa:contracts-agent",
+      "principal": "agent:contracts-agent",
       "namespace": "contracts-user"
     }
   },

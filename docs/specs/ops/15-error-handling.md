@@ -5,30 +5,30 @@
   fetch is aborted at the same deadline. *(Amended 2026-09-01: §21's listen stream is
   the one deliberately held-open response — the timeout governs forwarded requests,
   never it.)*
-- Hub deploys terminate all WebSockets: services reconnect (backoff), consumers retry.
+- Hub deploys terminate all WebSockets: apps reconnect (backoff), consumers retry.
   Treat every `tools/call` as at-most-once.
-- Duplicate service connection: newest wins, oldest gets `hub/replaced` + close 4000.
-- Unavailable service (tunnel offline, proxied upstream unreachable, or proxied
+- Duplicate app connection: newest wins, oldest gets `hub/replaced` + close 4000.
+- Unavailable app (tunnel offline, proxied upstream unreachable, or proxied
   upstream HTTP/protocol failure — §7): `-32000` immediately, no queueing; archived
-  services return `-32002` instead (§6). (Queue-and-retry is a later feature if it
+  apps return `-32002` instead (§6). (Queue-and-retry is a later feature if it
   ever hurts.)
 - Token revocation: consumer tokens are checked on every request, so revocation is
   immediate there. *(Amended 2026-09-01, §21.2: for a held listen stream "every request"
-  becomes every keepalive tick — revocation lands within one `LISTEN_KEEPALIVE_MS`.)* A revoked *service* token (or a deleted service) additionally severs
+  becomes every keepalive tick — revocation lands within one `LISTEN_KEEPALIVE_MS`.)* A revoked *app* token (or a deleted app) additionally severs
   the live reverse connection — the Worker tells the DO to close the socket with code
-  `4001` (§8); a racing re-register fails because the service row / token is gone.
-- User deletion (`/internal/users`) performs the same teardown as `service_delete` for
-  every tunneled service in the namespace — close `4001`, wipe DO cached state — before
-  the row cascade. (DOs are addressed by `service.id`, so even a missed teardown can
+  `4001` (§8); a racing re-register fails because the app row / token is gone.
+- User deletion (`/internal/users`) performs the same teardown as `app_delete` for
+  every tunneled app in the namespace — close `4001`, wipe DO cached state — before
+  the row cascade. (DOs are addressed by `app.id`, so even a missed teardown can
   never be rebound by recreating the username.)
 - Rate limiting: one Cloudflare WAF rate-limiting rule (available on all plans) covers
   `/login`, `/device`, `/api/auth/*`, and `/internal/users` — brute-force protection
   for passwords, TOTP challenges, and device codes lives there. better-auth's built-in
   limiter is in-memory (per-isolate — a no-op on Workers) and is not relied on.
-- Log hygiene: `Authorization` headers and anything matching `pmcp_(sa|svc)_…` are
+- Log hygiene: `Authorization` headers and anything matching `pmcp_(agt|app)_…` are
   redacted from logs, error responses, and exception traces; `writeOnly`/config-declared
   sensitive fields are masked before any storage or display (§7). The rule is uniform
-  across services — the `pmcp` builtin needs no special case, because its one secret
+  across apps — the `pmcp` builtin needs no special case, because its one secret
   (`token_issue`'s key) is a `writeOnly`-marked output field masked like any other
   (§8). Every persisted body (approval `args_json`, the audit body columns) is
   post-redaction and pruned by the same daily cron as audit.
@@ -45,7 +45,7 @@
   `tool` column, the URI **query-redacted and length-capped** before it is stored,
   because a URI's query component is a routine carrier of somebody else's bearer token
   and the scrubbing grammar in this same bullet only knows the hub's own
-  `pmcp_(sa|svc)_` shape — §20.4 pins the exact rule — and §19's connection lifecycle,
+  `pmcp_(agt|app)_` shape — §20.4 pins the exact rule — and §19's connection lifecycle,
   `oauth.consented` /
   `oauth.rebound` / `oauth.revoked` / `oauth.client_registered`.)* Not recorded:
   `tools/list` (agent polling noise) — *(and, by the same rule, every §20 LIST method
@@ -53,15 +53,15 @@
   2026-09-01: §21's streams, doorbells and `updated` relays — while
   `resources/subscribe`/`unsubscribe` ARE recorded like reads, §21.6)* — and token
   material never, in any column.
-- Audit bodies: a `tools/call` row carries the call's bodies when the service's
+- Audit bodies: a `tools/call` row carries the call's bodies when the app's
   `log_bodies` flag is on AND the call was actually dispatched. Refusal rows
   (`-32000`/`-32001`/`-32002`/`-32003`) never carry bodies — several refusals happen
   before any redaction map exists (a catalog-miss has no schema, §7), so recording
   them would persist unmasked arguments. The flag's default is by kind: tunneled
   **on** (our libraries
   declare secrets in both schema directions, §7/§11), proxied **off** (no trustworthy
-  schema; the owner opts in per service and covers it with `redact` /
-  `redact_results` paths, §9); the virtual `pmcp` builtin has no service row and is
+  schema; the owner opts in per app and covers it with `redact` /
+  `redact_results` paths, §9); the virtual `pmcp` builtin has no app row and is
   fixed **on** (its schemas are the hub's own, §8 — which is how `token_issue`'s key
   is "masked wherever bodies are recorded" rather than special-cased). What is
   stored: `params.arguments` post-redaction, and

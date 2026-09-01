@@ -134,7 +134,7 @@ export function emitError(err: unknown, opts: EmitErrorOptions): 1 | 2 {
  * The did-you-mean behind every `not_found` / `invalid_arguments` enrichment (§10). Two
  * rules, prefix first: a candidate the input is a PREFIX of wins outright (shortest such
  * candidate), because prefix-shaped exploration is how a human or an agent probes a catalog
- * — `describe service/mcp-tools/paper` means `paper_fetch`, at edit distance 6, which no
+ * — `describe app/mcp-tools/paper` means `paper_fetch`, at edit distance 6, which no
  * distance rule would ever suggest. Otherwise the closest candidate within edit distance ≤2,
  * or `undefined`: a distance-3+ guess is worse than no suggestion. The prefix rule needs
  * three characters, so a two-letter typo like `ur` stays with the distance rule that turns

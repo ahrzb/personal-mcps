@@ -7,10 +7,10 @@
 // - catalogChanged: the canonical-catalog comparator the DO's bell rings on (§21.3).
 //   Absent and stored [] compare EQUAL, so a first registration writing [] into a
 //   never-warmed family key is not a change; array order is significant and never
-//   sorted for a service's list; entry-object property order is irrelevant because
+//   sorted for an app's list; entry-object property order is irrelevant because
 //   the comparison delegates to canonicalJson, not JSON.stringify.
 // - subscriberTag / parseSubscriberTag: the `sub:` tag is a CONSTRUCTION rule (§21.2)
-//   — the prefix is the sole class separator, since service ids are themselves UUIDs;
+//   — the prefix is the sole class separator, since app ids are themselves UUIDs;
 //   a bare id parses as no subscriber tag at all, and the builder/parser round-trip.
 // - admits(): the Worker-side endpoint-shape filter (§21.2/§21.3) — aggregated
 //   forwards tools and prompts bells ONLY; scoped forwards all three bells plus
@@ -75,31 +75,31 @@ describe("§21.3 · catalogChanged — the canonical-catalog comparator", () => 
     expect(catalogChanged(otherOrder, oneOrder)).toBe(false);
   });
 
-  it("§21.3 · a real change is detected — an entry whose description differs, and an entry appended to a non-empty catalog, each compare as changed · the same entries in a different ARRAY order also compare as changed (the canonicalizer preserves array order, and the hub does not sort a service's list)", () => {
+  it("§21.3 · a real change is detected — an entry whose description differs, and an entry appended to a non-empty catalog, each compare as changed · the same entries in a different ARRAY order also compare as changed (the canonicalizer preserves array order, and the hub does not sort an app's list)", () => {
     const base = [{ name: "get_news", description: "the news" }];
     const second = { name: "search_docs", description: "docs" };
 
     expect(catalogChanged(base, [{ name: "get_news", description: "the NEWS" }])).toBe(true);
     expect(catalogChanged(base, [...base, second])).toBe(true);
 
-    // The canonicalizer keeps array order — the hub does not sort a service's list —
+    // The canonicalizer keeps array order — the hub does not sort an app's list —
     // so the same entries in a different order are a change, not an equality.
     expect(catalogChanged([...base, second], [second, ...base])).toBe(true);
   });
 });
 
 describe("§21.2 · the sub: tag builder/parser — the class invariant", () => {
-  it("§21.2 · the sub: tag is a construction rule — built by prefixing, and a bare service id parses as no subscriber tag at all, while a sub:-tagged UUID parses back to the id it was built from", () => {
-    const serviceId = "d0f5c9e2-4b7a-4370-9c8d-1a2b3c4d5e6f";
+  it("§21.2 · the sub: tag is a construction rule — built by prefixing, and a bare app id parses as no subscriber tag at all, while a sub:-tagged UUID parses back to the id it was built from", () => {
+    const appId = "d0f5c9e2-4b7a-4370-9c8d-1a2b3c4d5e6f";
 
-    expect(subscriberTag(serviceId)).toBe(`sub:${serviceId}`);
+    expect(subscriberTag(appId)).toBe(`sub:${appId}`);
 
-    // A bare service id is not a subscriber tag: getWebSockets(service.id) can never
+    // A bare app id is not a subscriber tag: getWebSockets(app.id) can never
     // return a subscriber socket, because a prefixed tag never equals a bare id.
-    expect(parseSubscriberTag(serviceId)).toBeNull();
+    expect(parseSubscriberTag(appId)).toBeNull();
 
     // The round trip: a sub:-tagged UUID parses back to the id it was built from.
-    expect(parseSubscriberTag(subscriberTag(serviceId))).toBe(serviceId);
+    expect(parseSubscriberTag(subscriberTag(appId))).toBe(appId);
   });
 });
 
@@ -117,7 +117,7 @@ describe("§21.2/§21.3 · admits() — the Worker-side shape filter", () => {
     expect(admits(BELL_RESOURCES, "scoped")).toBe(true);
     expect(admits(RESOURCES_UPDATED, "scoped")).toBe(true);
 
-    // Everything else — the rest of the method table, service-originated frames
+    // Everything else — the rest of the method table, app-originated frames
     // included — is dropped on both shapes.
     const dropped = [
       "tools/list",

@@ -229,7 +229,7 @@ const Chevron: FC<{ open: boolean }> = ({ open }) => (open ? <IconChevronUp /> :
 function baseQuery(filters: AuditFilters): AuditLinkQuery {
   return {
     principal: filters.principal,
-    service: filters.service,
+    app: filters.app,
     event: filters.event,
     tool: filters.tool,
     session: filters.session,
@@ -280,7 +280,7 @@ function hasDetail(row: AuditEventRow): boolean {
 
 function mobileMeta(row: AuditEventRow): string {
   const parts = [fmtDateTimeShort(row.ts), row.principal];
-  if (row.service) parts.push(row.service);
+  if (row.app) parts.push(row.app);
   if (row.durationMs !== undefined) parts.push(fmtDuration(row.durationMs));
   return parts.join(" · ");
 }
@@ -326,7 +326,7 @@ const EventRow: FC<{ row: AuditEventRow; filters: AuditFilters; expandedId: numb
         <td class="wide-only cell-time">{fmtDateTime(row.ts)}</td>
         <td class="wide-only cell-mono">{row.principal}</td>
         <td class="wide-only">{row.event}</td>
-        <td class="wide-only">{row.service ?? <span class="cell-muted">—</span>}</td>
+        <td class="wide-only">{row.app ?? <span class="cell-muted">—</span>}</td>
         <td class="wide-only cell-mono">{row.tool ?? "—"}</td>
         <td class="wide-only cell-num">{row.durationMs !== undefined ? fmtDuration(row.durationMs) : "—"}</td>
         <td class="wide-only">
@@ -414,7 +414,7 @@ export const AuditPage: FC<AuditProps> = (props) => {
           {/* .filter-group ties these two rows together so the narrow breakpoint can
               flatten (`.filters{display:contents}`) and reorder them as one sequence —
               MobileAudit.dc.html's control order doesn't match either row on its own
-              (the tool search box moves after the selects; accounts/services pair up). */}
+              (the tool search box moves after the selects; agents/apps pair up). */}
           <div class="filter-group">
             <div class="filters">
               <RangeSegment filters={filters} now={now} />
@@ -432,17 +432,17 @@ export const AuditPage: FC<AuditProps> = (props) => {
             <div class="filters">
               <div class="filter-pair">
                 <select name="principal" onchange="this.form.submit()">
-                  <option value="">All accounts</option>
+                  <option value="">All agents</option>
                   {options.principals.map((p) => (
                     <option value={p} selected={p === filters.principal ? true : undefined}>
                       {p}
                     </option>
                   ))}
                 </select>
-                <select name="service" onchange="this.form.submit()">
-                  <option value="">All services</option>
-                  {options.services.map((s) => (
-                    <option value={s} selected={s === filters.service ? true : undefined}>
+                <select name="app" onchange="this.form.submit()">
+                  <option value="">All apps</option>
+                  {options.apps.map((s) => (
+                    <option value={s} selected={s === filters.app ? true : undefined}>
                       {s}
                     </option>
                   ))}
@@ -574,7 +574,7 @@ export const AuditPage: FC<AuditProps> = (props) => {
                   </th>
                   <th class="wide-only">Principal</th>
                   <th class="wide-only">Event</th>
-                  <th class="wide-only">Service</th>
+                  <th class="wide-only">App</th>
                   <th class="wide-only">Tool</th>
                   <th class="wide-only" style="text-align:right">
                     Duration

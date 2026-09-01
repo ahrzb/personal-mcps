@@ -1,4 +1,4 @@
-// account.tsx — /account: TOTP/passkey enrollment, active sessions.
+// settings.tsx — /settings: TOTP/passkey enrollment, active sessions.
 //
 // Pure (props) => JSX per model.ts's contract: no fetching, no cookies, no
 // Date.now() — every relative timestamp below is a function of `now` and an
@@ -8,14 +8,14 @@
 // server-rendered dialog state rather than firing on click.
 //
 // The two-factor card is one of three mutually exclusive shapes
-// (AccountStates.dc.html): not-enrolled, mid-enrollment (QR + code), or
+// (SettingsStates.dc.html): not-enrolled, mid-enrollment (QR + code), or
 // enabled — plus a transient fourth "backup codes" card that appears
 // alongside it exactly once, whenever `revealedBackupCodes` is set.
 
 import type { FC } from "hono/jsx";
 import type {
-  AccountConfirm,
-  AccountProps,
+  SettingsConfirm,
+  SettingsProps,
   Notice,
   PasskeyRow,
   SessionRow,
@@ -184,7 +184,7 @@ const TwoFactorCard: FC<{
             <button type="submit" class="btn btn--primary">
               Verify
             </button>
-            <a class="btn btn--ghost" href={paths.account}>
+            <a class="btn btn--ghost" href={paths.settings}>
               Cancel
             </a>
           </div>
@@ -202,7 +202,7 @@ const TwoFactorCard: FC<{
         </div>
         {/* ponytail: the password sits inline rather than behind a confirm dialog like
             Disable's. Enabling destroys nothing, and the dialog route would need an
-            AccountConfirm arm (model.ts) this card has no other use for — add one if a
+            SettingsConfirm arm (model.ts) this card has no other use for — add one if a
             third password-gated control ever appears here. */}
         <form method="post" action={paths.auth.totpEnable} class="form">
           <input type="hidden" name="csrf" value={csrfToken} />
@@ -235,7 +235,7 @@ const TwoFactorCard: FC<{
       </p>
       {/* Two long labels ("Regenerate backup codes", "Disable two-factor") overflow the
           generic `.actions .btn{flex:1}` narrow rule (flex items don't shrink below their
-          nowrap content width) — MobileAccount stacks them full-width instead, so wide and
+          nowrap content width) — MobileSettings stacks them full-width instead, so wide and
           narrow render as two separate rows rather than one flexing row. */}
       <div class="actions actions--start wide-only">
         <form method="post" action={paths.auth.backupCodesGenerate} class="form">
@@ -245,7 +245,7 @@ const TwoFactorCard: FC<{
             Regenerate backup codes
           </button>
         </form>
-        <a class="btn btn--danger-outline btn--sm" href={paths.accountConfirm("disable-two-factor")}>
+        <a class="btn btn--danger-outline btn--sm" href={paths.settingsConfirm("disable-two-factor")}>
           Disable two-factor
         </a>
       </div>
@@ -261,7 +261,7 @@ const TwoFactorCard: FC<{
               Regenerate backup codes
             </button>
           </form>
-          <a class="btn btn--danger-outline btn--block" href={paths.accountConfirm("disable-two-factor")}>
+          <a class="btn btn--danger-outline btn--block" href={paths.settingsConfirm("disable-two-factor")}>
             Disable two-factor
           </a>
         </div>
@@ -270,7 +270,7 @@ const TwoFactorCard: FC<{
   );
 };
 
-/** AccountStates "Backup codes" — the one render that ever shows the plaintext set. */
+/** SettingsStates "Backup codes" — the one render that ever shows the plaintext set. */
 const BackupCodesCard: FC<{ codes: string[] }> = ({ codes }) => (
   <div class="card card--pad">
     <div class="card-title">Backup codes</div>
@@ -290,7 +290,7 @@ const BackupCodesCard: FC<{ codes: string[] }> = ({ codes }) => (
       <button type="button" class="btn btn--outline">
         Copy codes
       </button>
-      <a class="btn btn--primary" href={paths.account}>
+      <a class="btn btn--primary" href={paths.settings}>
         Done
       </a>
     </div>
@@ -328,7 +328,7 @@ const PasskeysCard: FC<{ passkeys: PasskeyRow[]; now: string }> = ({ passkeys, n
                   </div>
                 </div>
               </div>
-              <a class="btn btn--danger-ghost btn--sm" href={paths.accountConfirm("remove-passkey", pk.id)}>
+              <a class="btn btn--danger-ghost btn--sm" href={paths.settingsConfirm("remove-passkey", pk.id)}>
                 Remove
               </a>
             </div>
@@ -353,7 +353,7 @@ function sessionLabel(session: SessionRow): string {
 
 const SessionsCard: FC<{ sessions: SessionRow[]; now: string }> = ({ sessions, now }) => (
   <div class="card">
-    {/* wide: header padded like a card, table full-bleed to the card's edges (Account.dc.html) */}
+    {/* wide: header padded like a card, table full-bleed to the card's edges (Settings.dc.html) */}
     <div class="wide-only" style="padding: var(--space-10) var(--space-10) var(--space-8);">
       <div class="card-title">Active sessions</div>
       <div class="card-desc">Web and CLI sessions currently signed in.</div>
@@ -380,7 +380,7 @@ const SessionsCard: FC<{ sessions: SessionRow[]; now: string }> = ({ sessions, n
             <td class="cell-muted">{formatRelative(session.lastActiveAt, now)}</td>
             <td class="cell-actions">
               {session.current ? null : (
-                <a class="btn btn--danger-ghost btn--sm" href={paths.accountConfirm("revoke-session", session.id)}>
+                <a class="btn btn--danger-ghost btn--sm" href={paths.settingsConfirm("revoke-session", session.id)}>
                   Revoke
                 </a>
               )}
@@ -390,7 +390,7 @@ const SessionsCard: FC<{ sessions: SessionRow[]; now: string }> = ({ sessions, n
       </tbody>
     </table>
 
-    {/* narrow: MobileAccount's list-item rows — one combined meta line, no columns */}
+    {/* narrow: MobileSettings's list-item rows — one combined meta line, no columns */}
     <div class="card--pad narrow-only" style="gap: var(--space-3);">
       <div>
         <div class="card-title">Active sessions</div>
@@ -409,7 +409,7 @@ const SessionsCard: FC<{ sessions: SessionRow[]; now: string }> = ({ sessions, n
               </div>
             </div>
             {session.current ? null : (
-              <a class="btn btn--danger-ghost btn--sm" href={paths.accountConfirm("revoke-session", session.id)}>
+              <a class="btn btn--danger-ghost btn--sm" href={paths.settingsConfirm("revoke-session", session.id)}>
                 Revoke
               </a>
             )}
@@ -422,11 +422,11 @@ const SessionsCard: FC<{ sessions: SessionRow[]; now: string }> = ({ sessions, n
 
 /* ---------------------------------------------------------------- dialogs --- */
 
-const DIALOG_ID = "confirm-account";
-const DIALOG_TITLE_ID = "confirm-account-title";
+const DIALOG_ID = "confirm-settings";
+const DIALOG_TITLE_ID = "confirm-settings-title";
 
 /** Dialogs.dc.html's three destructive confirmations, as server-rendered `<dialog open>` state. */
-const ConfirmDialog: FC<{ confirm: AccountConfirm; csrfToken: string; sessions: SessionRow[] }> = ({
+const ConfirmDialog: FC<{ confirm: SettingsConfirm; csrfToken: string; sessions: SessionRow[] }> = ({
   confirm,
   csrfToken,
   sessions,
@@ -442,7 +442,7 @@ const ConfirmDialog: FC<{ confirm: AccountConfirm; csrfToken: string; sessions: 
         <input type="hidden" name="csrf" value={csrfToken} />
         <PasswordField autofocus />
         <div class="actions">
-          <a class="btn btn--ghost" href={paths.account}>
+          <a class="btn btn--ghost" href={paths.settings}>
             Cancel
           </a>
           <button type="submit" class="btn btn--danger">
@@ -458,7 +458,7 @@ const ConfirmDialog: FC<{ confirm: AccountConfirm; csrfToken: string; sessions: 
       <form method="post" action={paths.auth.passkeyDelete} class="actions">
         <input type="hidden" name="csrf" value={csrfToken} />
         <input type="hidden" name="id" value={confirm.id} />
-        <a class="btn btn--ghost" href={paths.account}>
+        <a class="btn btn--ghost" href={paths.settings}>
           Cancel
         </a>
         <button type="submit" class="btn btn--danger">
@@ -474,7 +474,7 @@ const ConfirmDialog: FC<{ confirm: AccountConfirm; csrfToken: string; sessions: 
       <form method="post" action={paths.auth.sessionRevoke} class="actions">
         <input type="hidden" name="csrf" value={csrfToken} />
         <input type="hidden" name="id" value={confirm.id} />
-        <a class="btn btn--ghost" href={paths.account}>
+        <a class="btn btn--ghost" href={paths.settings}>
           Cancel
         </a>
         <button type="submit" class="btn btn--danger">
@@ -512,16 +512,16 @@ const ConfirmDialog: FC<{ confirm: AccountConfirm; csrfToken: string; sessions: 
 
 /* ------------------------------------------------------------------ page --- */
 
-export const AccountPage: FC<AccountProps> = (props) => {
+export const SettingsPage: FC<SettingsProps> = (props) => {
   const { now, username, section, pendingApprovals, notice, csrfToken, twoFactor, enrollment, revealedBackupCodes, passkeys, sessions, confirm } =
     props;
 
   return (
-    <Layout title="Account · personal-mcps" active={section} username={username} pendingApprovals={pendingApprovals}>
+    <Layout title="Settings · personal-mcps" active={section} username={username} pendingApprovals={pendingApprovals}>
       <main class="page page--narrow">
         <div class="page-head">
           <div>
-            <h1 class="page-title">Account</h1>
+            <h1 class="page-title">Settings</h1>
             <p class="page-subtitle">Security settings for {username}.</p>
           </div>
         </div>

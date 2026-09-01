@@ -1,7 +1,7 @@
-// registry.ts — the hub's domain model: services, service accounts, and grants,
+// registry.ts — the hub's domain model: apps, agents, and grants,
 // plus the ENTIRE role-pattern language in one place.
 //
-// OWNS: the D1 rows for `service`, `service_account`, and `grant_` (row-level
+// OWNS: the D1 rows for `app`, `agent`, and `grant_` (row-level
 // primitives only — cascade choreography across tokens, DO sever/wipe, and audit
 // belongs to admin), the role-pattern semantics (anchored ^(?:p)$ compilation,
 // the PER-FAMILY literal-grammar fast path, `*` as a `.*` alias, the built-in
@@ -23,7 +23,7 @@
 // plus a declaration resolve into a ToolFilter. This module never writes audit
 // rows, never maps errors to
 // JSON-RPC, and never reads or decrypts upstream credential envelopes — its one
-// touch is CLEARING the envelope column when updateService flips the auth mode,
+// touch is CLEARING the envelope column when updateApp flips the auth mode,
 // a row invariant (mode and envelope kind can never disagree), not a read.
 
 import type { Principal } from "./identity";
@@ -33,25 +33,25 @@ import { ROLE_NAME_MAX_LENGTH, ROLE_PATTERN_MAX_LENGTH, ROLE_PATTERNS_MAX } from
 type D1Database = unknown;
 
 /**
- * The two service shapes, in the wire vocabulary pinned by §5's CHECK constraint
+ * The two app shapes, in the wire vocabulary pinned by §5's CHECK constraint
  * and the YAML `kind:` field: `tunnel` dials in over the reverse WebSocket and
  * declares roles at registration; `proxy` is an upstream MCP endpoint the hub
  * forwards to, with roles defined in config. Immutable after create — a
- * conversion would orphan service tokens and DO state, so it's recreate-only.
+ * conversion would orphan app tokens and DO state, so it's recreate-only.
  */
-export type ServiceKind = "tunnel" | "proxy";
+export type AppKind = "tunnel" | "proxy";
 
 /**
- * The cross-module view of a service row — exactly what the request pipeline
- * needs to route, gate, and address. Richer reads go through ServiceDetail.
+ * The cross-module view of an app row — exactly what the request pipeline
+ * needs to route, gate, and address. Richer reads go through AppDetail.
  */
-export type Service = {
+export type App = {
   id: string;        // opaque row id — the DO addressing key; never derived from user/slug, never reused
   ownerId: string;
   slug: string;
-  kind: ServiceKind;
+  kind: AppKind;
   archived: boolean;
-  logBodies: boolean; // §15 — whether tools/call audit rows carry this service's bodies
+  logBodies: boolean; // §15 — whether tools/call audit rows carry this app's bodies
 };
 
 /**
@@ -81,7 +81,7 @@ export type ListKind = RoleFamily | "resourceTemplates";
 export type FamilyPatterns = Partial<Record<RoleFamily, string[]>>;
 
 /**
- * A caller's resolved access to one service, produced by resolveAccess and
+ * A caller's resolved access to one app, produced by resolveAccess and
  * consumed by the gateway. Pure and snapshot-in-time: it holds the union of the
  * principal's granted roles resolved against the declaration as of the resolve
  * call, and does no I/O of its own.
@@ -96,8 +96,8 @@ export type FamilyPatterns = Partial<Record<RoleFamily, string[]>>;
  * `uriTemplate` for templates (§20.2: filtering a URI keyspace by a display
  * string is the bug that rule exists to prevent). Both default to `tools`, the
  * only family that existed before §20.3 and the only one a caller may leave
- * unsaid. An empty roleNames on a service-account principal means the account
- * holds no grants at all on this service (the gateway's scoped-404 signal) —
+ * unsaid. An empty roleNames on an agent principal means the agent
+ * holds no grants at all on this app (the gateway's scoped-404 signal) —
  * distinct from granted-but-undeclared roles, which appear in roleNames but
  * match nothing (empty tools/list and -32001, a normal state). Owners always
  * carry ["all"].
@@ -115,8 +115,8 @@ type ListedItem = Partial<Record<"name" | "uri" | "uriTemplate", string>>;
  * A role declaration in wire shape — role name to patterns, in either of §20.3's
  * two spellings: a bare list (which MEANS `{tools: [...]}`, forever, so every
  * declaration in the field keeps its exact meaning) or the per-family object.
- * `{}` means "no roles declared": the service is reachable only by owners and
- * `all`-granted accounts.
+ * `{}` means "no roles declared": the app is reachable only by owners and
+ * `all`-granted agents.
  */
 export type RoleDeclaration = Record<string, string[] | FamilyPatterns>;
 
@@ -144,27 +144,27 @@ export type DriftReport = {
 /** The grant modes an owner can actually store — `deny` is never a grant. */
 export type GrantMode = "allow" | "approval";
 
-/** One granted role on one service, exactly as stored: name plus mode. */
+/** One granted role on one app, exactly as stored: name plus mode. */
 export type GrantEntry = { role: string; mode: GrantMode };
 
 /**
- * An account's grants on one service — the shape account_list returns inline
+ * An agent's grants on one app — the shape agent_list returns inline
  * and the CLI diff planner consumes, so desired state is readable in one
- * grantsFor call per account.
+ * grantsFor call per agent.
  */
-export type ServiceGrants = {
-  serviceId: string;
-  serviceSlug: string;
+export type AppGrants = {
+  appId: string;
+  appSlug: string;
   entries: GrantEntry[];
 };
 
 /**
- * The full owner-facing read of a service row — everything service_get and the
+ * The full owner-facing read of an app row — everything app_get and the
  * diff planner need. Timestamps are epoch milliseconds. The upstream credential
  * envelope is deliberately absent: credentials never surface through any
  * registry read.
  */
-export type ServiceDetail = Service & {
+export type AppDetail = App & {
   name: string;
   description: string;
   upstreamUrl: string | null;              // proxied only, null on tunneled
@@ -172,11 +172,11 @@ export type ServiceDetail = Service & {
   forwardIdentity: boolean;                // proxied only; X-Pmcp-* headers upstream
   declaredRoles: RoleDeclaration;          // §20.3's canonical form, never the stored one
   /**
-   * §20.2's owner-declared capability list — proxied only, and what that service's
+   * §20.2's owner-declared capability list — proxied only, and what that app's
    * SCOPED handshake advertises. `null` is "undeclared", which means `tools` only: the
-   * answer every proxied service in the field already gives.
+   * answer every proxied app in the field already gives.
    */
-  capabilities: ServiceCapability[] | null;
+  capabilities: AppCapability[] | null;
   redact: Record<string, string[]>;        // tool-or-pattern → argument paths (config-declared, §7)
   redactResults: Record<string, string[]>; // same shape, applied to result structuredContent (§7)
   createdAt: number;
@@ -184,25 +184,25 @@ export type ServiceDetail = Service & {
 };
 
 /**
- * §20.2's capability vocabulary: what a proxied service's owner may declare its
+ * §20.2's capability vocabulary: what a proxied app's owner may declare its
  * upstream serves. A superset of the role families — `completions` is a method a
- * service answers, never a keyspace grants are written against — which is why
+ * app answers, never a keyspace grants are written against — which is why
  * this list is its own and not ROLE_FAMILIES.
  */
-export const SERVICE_CAPABILITIES = ["tools", "prompts", "resources", "completions"] as const;
-export type ServiceCapability = (typeof SERVICE_CAPABILITIES)[number];
+export const APP_CAPABILITIES = ["tools", "prompts", "resources", "completions"] as const;
+export type AppCapability = (typeof APP_CAPABILITIES)[number];
 
 /**
- * Input to createService. Proxied drafts must carry upstreamUrl and a valid
+ * Input to createApp. Proxied drafts must carry upstreamUrl and a valid
  * roles declaration; tunneled drafts must not (their roles arrive at
  * registration). `kind` is here and only here — no patch can ever change it.
  */
-export type ServiceDraft = {
+export type AppDraft = {
   ownerId: string;
   slug: string;
   name: string;
   description?: string;
-  kind: ServiceKind;
+  kind: AppKind;
   upstreamUrl?: string;
   upstreamAuthMode?: "headers" | "oauth";
   forwardIdentity?: boolean;
@@ -216,10 +216,10 @@ export type ServiceDraft = {
 };
 
 /**
- * Input to updateService. `kind` and `archived` are absent by construction:
+ * Input to updateApp. `kind` and `archived` are absent by construction:
  * kind is immutable, and archive/unarchive are their own primitives.
  */
-export type ServicePatch = Partial<{
+export type AppPatch = Partial<{
   name: string;
   description: string;
   upstreamUrl: string;
@@ -232,8 +232,8 @@ export type ServicePatch = Partial<{
   logBodies: boolean;
 }>;
 
-/** A service-account row. Timestamps are epoch milliseconds. */
-export type ServiceAccount = {
+/** An agent row. Timestamps are epoch milliseconds. */
+export type Agent = {
   id: string;
   ownerId: string;
   slug: string;
@@ -242,8 +242,8 @@ export type ServiceAccount = {
   createdAt: number;
 };
 
-/** Input to createAccount. */
-export type AccountDraft = {
+/** Input to createAgent. */
+export type AgentDraft = {
   ownerId: string;
   slug: string;
   name: string;
@@ -251,11 +251,11 @@ export type AccountDraft = {
 };
 
 /**
- * The reserved slug of the built-in admin service. No `service` row ever exists
- * for it: createService rejects it, getService returns null for it, and every
+ * The reserved slug of the built-in admin app. No `app` row ever exists
+ * for it: createApp rejects it, getApp returns null for it, and every
  * admin op that takes a slug rejects it with one uniform error. Because the
- * builtin has no row id, service accounts can never accumulate grants on it —
- * the reservation is what makes "accounts can't hold pmcp grants" structural
+ * builtin has no row id, agents can never accumulate grants on it —
+ * the reservation is what makes "agents can't hold pmcp grants" structural
  * rather than checked.
  */
 export const PMCP_SLUG = "pmcp";
@@ -405,7 +405,7 @@ function normalizeRoles(decl: RoleDeclaration): Record<string, FamilyPatterns> {
  * §20.3's canonical READ shape, the inverse rendering every owner-facing surface
  * shows: a bare list when the role grants tools and nothing else, the per-family
  * object otherwise. A function of MEANING, not of history — the spelling a
- * service happened to register with is deliberately not recoverable, so
+ * app happened to register with is deliberately not recoverable, so
  * `pmcp diff` is stable for every YAML file written before §20.3 and noisy only
  * where a role genuinely spans families.
  */
@@ -424,7 +424,7 @@ const ROLE_NAME_CHARSET = /^[a-z0-9_-]+$/;
 
 /**
  * The pure heart of access resolution: grant entries (exactly as stored, or the
- * synthesized owner grant [{role: "all", mode: "allow"}]) plus the service's
+ * synthesized owner grant [{role: "all", mode: "allow"}]) plus the app's
  * declaration → a ToolFilter. A granted `all` contributes `.*` in EVERY family
  * without touching the declaration; a granted role absent from it contributes no
  * patterns but still appears in roleNames; a role's families are independent, so
@@ -647,7 +647,7 @@ function walk(schema: JsonObject): WalkResult {
  * is what makes an answer prefix-independent and so memoizable per node, which bounds
  * the walk by its own ANSWER: one visit per subschema plus one string per path returned.
  * Building absolute paths instead re-walks a `$defs` once per referring path and costs
- * 2^(sharing depth) even when the answer is EMPTY — on schemas the registered service
+ * 2^(sharing depth) even when the answer is EMPTY — on schemas the registered app
  * supplies and the hub walks at every catalog warm. A schema whose answer is genuinely
  * exponential (n shared levels above a mark really do name 2^n distinct dot-paths) still
  * costs that much; no memo can shrink an answer.
@@ -799,85 +799,85 @@ export class Registry {
     this.db = db as D1Like;
   }
 
-  /** The one `service` read every method below shares — by opaque id, reservation-blind. */
-  private async row(serviceId: string): Promise<ServiceRow | null> {
-    return this.db.prepare(`SELECT * FROM service WHERE id = ?`).bind(serviceId).first<ServiceRow>();
+  /** The one `app` read every method below shares — by opaque id, reservation-blind. */
+  private async row(appId: string): Promise<AppRow | null> {
+    return this.db.prepare(`SELECT * FROM app WHERE id = ?`).bind(appId).first<AppRow>();
   }
 
   /**
-   * Looks up one service row by (owner, slug), archived or not — the archived
+   * Looks up one app row by (owner, slug), archived or not — the archived
    * check is a later pipeline stage, not a lookup filter. Returns null for a
    * missing slug and for the reserved `pmcp` slug alike (the builtin is
    * virtual; admin materializes it). Never throws for absence.
    */
   /**
    * The same row by its opaque id — the read the /connect upgrade makes, which knows only
-   * the id resolveServiceToken hands back, and the one the tunnel DO re-checks with when
+   * the id resolveAppToken hands back, and the one the tunnel DO re-checks with when
    * a registration write fails. Registry's vocabulary, not the column format: `archived`
-   * is a boolean and `kind` a ServiceKind, so the `archived_at` timestamp stays owned
+   * is a boolean and `kind` an AppKind, so the `archived_at` timestamp stays owned
    * here. Null when the row is gone; the virtual `pmcp` builtin has none.
    */
-  async serviceById(serviceId: string): Promise<ServiceDetail | null> {
-    // deps: D1 `service`
-    const row = await this.row(serviceId);
+  async appById(appId: string): Promise<AppDetail | null> {
+    // deps: D1 `app`
+    const row = await this.row(appId);
     return row ? toDetail(row) : null;
   }
 
-  async getService(ownerId: string, slug: string): Promise<ServiceDetail | null> {
-    // deps: D1 `service`
+  async getApp(ownerId: string, slug: string): Promise<AppDetail | null> {
+    // deps: D1 `app`
     if (slug === PMCP_SLUG) return null;
     const row = await this.db
-      .prepare(`SELECT * FROM service WHERE owner_id = ? AND slug = ?`)
+      .prepare(`SELECT * FROM app WHERE owner_id = ? AND slug = ?`)
       .bind(ownerId, slug)
-      .first<ServiceRow>();
+      .first<AppRow>();
     return row ? toDetail(row) : null;
   }
 
   /**
-   * The services a principal can see, archived rows included: for an owner,
-   * every row in their namespace; for a service account, exactly the rows it
-   * holds at least one grant on — so a zero-grant account sees nothing and can
+   * The apps a principal can see, archived rows included: for an owner,
+   * every row in their namespace; for an agent, exactly the rows it
+   * holds at least one grant on — so a zero-grant agent sees nothing and can
    * enumerate nothing. Never contains the virtual `pmcp` builtin. Aggregation
    * skips archived rows itself; they are returned here because the -32002
-   * answer and the /services page both need them.
+   * answer and the /apps page both need them.
    */
-  async listServicesFor(principal: Principal): Promise<ServiceDetail[]> {
-    // deps: D1 `service` · D1 `grant_`
-    // A zero-grant account's subselect is empty, so "sees nothing" needs no special case.
+  async listAppsFor(principal: Principal): Promise<AppDetail[]> {
+    // deps: D1 `app` · D1 `grant_`
+    // A zero-grant agent's subselect is empty, so "sees nothing" needs no special case.
     const [sql, key] =
       principal.kind === "user"
-        ? [`SELECT * FROM service WHERE owner_id = ?`, principal.userId]
+        ? [`SELECT * FROM app WHERE owner_id = ?`, principal.userId]
         : [
-            `SELECT * FROM service
-             WHERE id IN (SELECT service_id FROM grant_ WHERE service_account_id = ?)`,
-            principal.accountId,
+            `SELECT * FROM app
+             WHERE id IN (SELECT app_id FROM grant_ WHERE agent_id = ?)`,
+            principal.agentId,
           ];
-    const { results } = await this.db.prepare(`${sql} ORDER BY slug`).bind(key).all<ServiceRow>();
+    const { results } = await this.db.prepare(`${sql} ORDER BY slug`).bind(key).all<AppRow>();
     return results.map(toDetail);
   }
 
   /**
-   * Creates a service row with a fresh opaque id (never derived from
+   * Creates an app row with a fresh opaque id (never derived from
    * user/slug, never reused — deleting and recreating a slug can never rebind
    * a stale DO). Rejects a malformed slug ([a-z0-9-] only — no underscore; §7's
    * prefix split relies on it), the reserved `pmcp` slug, a duplicate (owner,
    * slug), and kind/field mismatches: a proxied draft needs upstreamUrl and a
    * declaration that passes validateRoles, and a tunneled draft carries none of
-   * the PROXY_ONLY fields — the same set, and the same check, updateService
+   * the PROXY_ONLY fields — the same set, and the same check, updateApp
    * refuses to patch. Either kind's `redact` / `redact_results` keys must compile
    * as patterns (assertRedactKeys): storing one that cannot is fail-open masking.
    * An absent `logBodies` resolves here, by kind (tunnel true, proxy false,
    * §15) — the stored column is always concrete, never "default".
    */
-  async createService(draft: ServiceDraft): Promise<ServiceDetail> {
-    // deps: validateRoles · D1 `service` · crypto
+  async createApp(draft: AppDraft): Promise<AppDetail> {
+    // deps: validateRoles · D1 `app` · crypto
     assertSlug(draft.slug);
     if (draft.slug === PMCP_SLUG) {
       throw new RegistryRefusal("slug", `"${PMCP_SLUG}" is reserved for the builtin`);
     }
     const proxied = draft.kind === "proxy";
     if (proxied && !draft.upstreamUrl) {
-      throw new RegistryRefusal("upstreamUrl", "is required for a proxied service");
+      throw new RegistryRefusal("upstreamUrl", "is required for a proxied app");
     }
     assertKindFields(draft.kind, draft);
     const roles = draft.roles ?? {};
@@ -885,13 +885,13 @@ export class Registry {
     assertCapabilities(draft.capabilities);
     assertRedactKeys("redact", draft.redact);
     assertRedactKeys("redactResults", draft.redactResults);
-    if (await this.getService(draft.ownerId, draft.slug)) {
+    if (await this.getApp(draft.ownerId, draft.slug)) {
       throw new RegistryRefusal("slug", "already exists in this namespace");
     }
 
-    const row: ServiceRow = {
+    const row: AppRow = {
       // Opaque and fresh: never derived from user/slug, so a recreated slug can never be
-      // rebound to the deleted service's DO.
+      // rebound to the deleted app's DO.
       id: crypto.randomUUID(),
       owner_id: draft.ownerId,
       slug: draft.slug,
@@ -916,7 +916,7 @@ export class Registry {
     };
     await this.db
       .prepare(
-        `INSERT INTO service (id, owner_id, slug, name, description, kind, upstream_url,
+        `INSERT INTO app (id, owner_id, slug, name, description, kind, upstream_url,
            upstream_auth_mode, forward_identity, roles_json, capabilities_json, redact_json,
            redact_results_json, log_bodies, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -943,9 +943,9 @@ export class Registry {
   }
 
   /**
-   * Patches one service row. Kind is unpatchable by construction. The
+   * Patches one app row. Kind is unpatchable by construction. The
    * PROXY_ONLY fields are writable for proxied rows only — the same set
-   * createService refuses on a tunneled draft, through the same check (tunneled
+   * createApp refuses on a tunneled draft, through the same check (tunneled
    * declarations arrive via upsertDeclaredRoles) — and get the same validation
    * as create; redact/redactResults paths and logBodies are writable for
    * either kind — the redaction keys through create's compile check too, so a
@@ -954,10 +954,10 @@ export class Registry {
    * the mode column and the envelope kind can never disagree; the audit row
    * for that wipe is the caller's. Throws on an unknown id.
    */
-  async updateService(serviceId: string, patch: ServicePatch): Promise<ServiceDetail> {
-    // deps: validateRoles · D1 `service`
-    const row = await this.row(serviceId);
-    if (!row) throw new Error(`no service with id "${serviceId}"`);
+  async updateApp(appId: string, patch: AppPatch): Promise<AppDetail> {
+    // deps: validateRoles · D1 `app`
+    const row = await this.row(appId);
+    if (!row) throw new Error(`no app with id "${appId}"`);
     assertKindFields(row.kind, patch);
     if (patch.roles !== undefined) assertRoles(patch.roles);
     assertCapabilities(patch.capabilities);
@@ -983,17 +983,17 @@ export class Registry {
       set("upstream_auth_mode", patch.upstreamAuthMode);
       // The row invariant: mode and envelope kind can never disagree, so a FLIP wipes the
       // envelope in the SAME write. Re-declaring the mode it already has is not a flip —
-      // an idempotent `apply` must not disconnect the service it is re-applying.
+      // an idempotent `apply` must not disconnect the app it is re-applying.
       if (patch.upstreamAuthMode !== row.upstream_auth_mode) set("upstream_auth_json", null);
     }
     if (columns.length > 0) {
       await this.db
-        .prepare(`UPDATE service SET ${columns.join(", ")} WHERE id = ?`)
-        .bind(...values, serviceId)
+        .prepare(`UPDATE app SET ${columns.join(", ")} WHERE id = ?`)
+        .bind(...values, appId)
         .run();
     }
-    const updated = await this.row(serviceId);
-    if (!updated) throw new Error(`service "${serviceId}" vanished mid-update`);
+    const updated = await this.row(appId);
+    if (!updated) throw new Error(`app "${appId}" vanished mid-update`);
     return toDetail(updated);
   }
 
@@ -1002,20 +1002,20 @@ export class Registry {
    * deletion and DO sever/wipe are admin's cascade, ordered D1-first — this
    * method knows nothing of them. Deleting an already-absent id is a no-op.
    */
-  async deleteService(serviceId: string): Promise<void> {
-    // deps: D1 `service`
-    await this.deleteServiceStatement(serviceId).run();
+  async deleteApp(appId: string): Promise<void> {
+    // deps: D1 `app`
+    await this.deleteAppStatement(appId).run();
   }
 
   /**
    * The same delete as a STATEMENT rather than a write, so admin's cascade can put it and
    * the token delete into one `batch` — which is what §15 means by "one atomic D1 batch",
    * and the only way to have it: D1 offers no interactive transaction. Nothing else
-   * differs; a caller with only this row to remove uses deleteService.
+   * differs; a caller with only this row to remove uses deleteApp.
    */
-  deleteServiceStatement(serviceId: string): D1Stmt {
-    // deps: D1 `service`
-    return this.db.prepare(`DELETE FROM service WHERE id = ?`).bind(serviceId);
+  deleteAppStatement(appId: string): D1Stmt {
+    // deps: D1 `app`
+    return this.db.prepare(`DELETE FROM app WHERE id = ?`).bind(appId);
   }
 
   /**
@@ -1023,61 +1023,61 @@ export class Registry {
    * survive). Row flag only — severing a live socket is admin's choreography.
    * Archiving an archived row is a no-op; throws on an unknown id.
    */
-  async archiveService(serviceId: string): Promise<void> {
-    // deps: D1 `service`
-    await this.setArchived(serviceId, Date.now());
+  async archiveApp(appId: string): Promise<void> {
+    // deps: D1 `app`
+    await this.setArchived(appId, Date.now());
   }
 
   /** Both flags in one write, so idempotence and the unknown-id throw are stated once. */
-  private async setArchived(serviceId: string, at: number | null): Promise<void> {
-    const row = await this.row(serviceId);
-    if (!row) throw new Error(`no service with id "${serviceId}"`);
+  private async setArchived(appId: string, at: number | null): Promise<void> {
+    const row = await this.row(appId);
+    if (!row) throw new Error(`no app with id "${appId}"`);
     if ((row.archived_at !== null) === (at !== null)) return;
-    await this.db.prepare(`UPDATE service SET archived_at = ? WHERE id = ?`).bind(at, serviceId).run();
+    await this.db.prepare(`UPDATE app SET archived_at = ? WHERE id = ?`).bind(at, appId).run();
   }
 
   /**
-   * Clears the archived flag; the service is consumer-visible again on the
+   * Clears the archived flag; the app is consumer-visible again on the
    * next request (reconnecting bots heal on their own — the hub does nothing
    * active). Unarchiving an unarchived row is a no-op; throws on an unknown id.
    */
-  async unarchiveService(serviceId: string): Promise<void> {
-    // deps: D1 `service`
-    await this.setArchived(serviceId, null);
+  async unarchiveApp(appId: string): Promise<void> {
+    // deps: D1 `app`
+    await this.setArchived(appId, null);
   }
 
-  /** Looks up one service-account row by (owner, slug); null when absent. */
-  async getAccount(ownerId: string, slug: string): Promise<ServiceAccount | null> {
-    // deps: D1 `service_account`
+  /** Looks up one agent row by (owner, slug); null when absent. */
+  async getAgent(ownerId: string, slug: string): Promise<Agent | null> {
+    // deps: D1 `agent`
     const row = await this.db
-      .prepare(`SELECT * FROM service_account WHERE owner_id = ? AND slug = ?`)
+      .prepare(`SELECT * FROM agent WHERE owner_id = ? AND slug = ?`)
       .bind(ownerId, slug)
-      .first<AccountRow>();
-    return row ? toAccount(row) : null;
+      .first<AgentRow>();
+    return row ? toAgent(row) : null;
   }
 
-  /** Every service-account row in the namespace; grants ride grantsFor. */
-  async listAccounts(ownerId: string): Promise<ServiceAccount[]> {
-    // deps: D1 `service_account`
+  /** Every agent row in the namespace; grants ride grantsFor. */
+  async listAgents(ownerId: string): Promise<Agent[]> {
+    // deps: D1 `agent`
     const { results } = await this.db
-      .prepare(`SELECT * FROM service_account WHERE owner_id = ? ORDER BY slug`)
+      .prepare(`SELECT * FROM agent WHERE owner_id = ? ORDER BY slug`)
       .bind(ownerId)
-      .all<AccountRow>();
-    return results.map(toAccount);
+      .all<AgentRow>();
+    return results.map(toAgent);
   }
 
   /**
-   * Creates a service-account row with a fresh opaque id. Rejects a malformed
+   * Creates an agent row with a fresh opaque id. Rejects a malformed
    * slug and a duplicate (owner, slug). Tokens are a separate, imperative
-   * surface — an account is born credential-less.
+   * surface — an agent is born credential-less.
    */
-  async createAccount(draft: AccountDraft): Promise<ServiceAccount> {
-    // deps: D1 `service_account` · crypto
+  async createAgent(draft: AgentDraft): Promise<Agent> {
+    // deps: D1 `agent` · crypto
     assertSlug(draft.slug);
-    if (await this.getAccount(draft.ownerId, draft.slug)) {
+    if (await this.getAgent(draft.ownerId, draft.slug)) {
       throw new RegistryRefusal("slug", "already exists in this namespace");
     }
-    const account: ServiceAccount = {
+    const agent: Agent = {
       id: crypto.randomUUID(),
       ownerId: draft.ownerId,
       slug: draft.slug,
@@ -1087,49 +1087,49 @@ export class Registry {
     };
     await this.db
       .prepare(
-        `INSERT INTO service_account (id, owner_id, slug, name, description, created_at)
+        `INSERT INTO agent (id, owner_id, slug, name, description, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .bind(
-        account.id,
-        account.ownerId,
-        account.slug,
-        account.name,
-        account.description,
-        account.createdAt,
+        agent.id,
+        agent.ownerId,
+        agent.slug,
+        agent.name,
+        agent.description,
+        agent.createdAt,
       )
       .run();
-    return account;
+    return agent;
   }
 
   /**
    * Deletes the row; grant rows cascade via FK. Token deletion is admin's
    * cascade. Deleting an already-absent id is a no-op.
    */
-  async deleteAccount(accountId: string): Promise<void> {
-    // deps: D1 `service_account`
-    await this.deleteAccountStatement(accountId).run();
+  async deleteAgent(agentId: string): Promise<void> {
+    // deps: D1 `agent`
+    await this.deleteAgentStatement(agentId).run();
   }
 
-  /** The account delete as a statement — deleteServiceStatement's twin, same reason. */
-  deleteAccountStatement(accountId: string): D1Stmt {
-    // deps: D1 `service_account`
-    return this.db.prepare(`DELETE FROM service_account WHERE id = ?`).bind(accountId);
+  /** The agent delete as a statement — deleteAppStatement's twin, same reason. */
+  deleteAgentStatement(agentId: string): D1Stmt {
+    // deps: D1 `agent`
+    return this.db.prepare(`DELETE FROM agent WHERE id = ?`).bind(agentId);
   }
 
   /**
-   * Replaces the FULL grant set for (account, service) atomically — an empty
+   * Replaces the FULL grant set for (agent, app) atomically — an empty
    * entries list revokes everything on that pair. Rejects the same role in
-   * both modes and, for proxied services, roles absent from the declaration;
+   * both modes and, for proxied apps, roles absent from the declaration;
    * `all` is always grantable and never declared. Returns warnings instead of
    * failing for tunneled roles not yet declared (the file may legitimately be
    * ahead of the first connection). The `pmcp` builtin is unreachable here by
-   * construction — it has no service id.
+   * construction — it has no app id.
    */
-  async setGrants(accountId: string, serviceId: string, entries: GrantEntry[]): Promise<string[]> {
-    // deps: validateRoles · D1 `grant_` · D1 `service`
-    const row = await this.row(serviceId);
-    if (!row) throw new Error(`no service with id "${serviceId}"`);
+  async setGrants(agentId: string, appId: string, entries: GrantEntry[]): Promise<string[]> {
+    // deps: validateRoles · D1 `grant_` · D1 `app`
+    const row = await this.row(appId);
+    if (!row) throw new Error(`no app with id "${appId}"`);
     const declared: RoleDeclaration = JSON.parse(row.roles_json);
     const warnings: string[] = [];
     const seen = new Set<string>();
@@ -1139,7 +1139,7 @@ export class Registry {
       if (seen.has(entry.role)) {
         throw new RegistryRefusal(
           "roles",
-          `names "${entry.role}" twice — one grant row per (account, service, role)`,
+          `names "${entry.role}" twice — one grant row per (agent, app, role)`,
         );
       }
       seen.add(entry.role);
@@ -1148,77 +1148,77 @@ export class Registry {
       if (Object.prototype.hasOwnProperty.call(declared, entry.role)) continue;
       if (row.kind === "proxy") {
         // A proxied declaration is complete by construction, so this is an owner error.
-        throw new RegistryRefusal("roles", `names "${entry.role}", which this service does not declare`);
+        throw new RegistryRefusal("roles", `names "${entry.role}", which this app does not declare`);
       }
       // A tunneled declaration arrives at registration — the file may be ahead of it.
-      warnings.push(`role "${entry.role}" is not declared by service "${row.slug}" yet`);
+      warnings.push(`role "${entry.role}" is not declared by app "${row.slug}" yet`);
     }
 
     // The full set, replaced atomically: an empty entries list is a legal revoke-everything.
     await this.db.batch([
       this.db
-        .prepare(`DELETE FROM grant_ WHERE service_account_id = ? AND service_id = ?`)
-        .bind(accountId, serviceId),
+        .prepare(`DELETE FROM grant_ WHERE agent_id = ? AND app_id = ?`)
+        .bind(agentId, appId),
       ...entries.map((entry) =>
         this.db
-          .prepare(`INSERT INTO grant_ (service_account_id, service_id, role, mode) VALUES (?, ?, ?, ?)`)
-          .bind(accountId, serviceId, entry.role, entry.mode),
+          .prepare(`INSERT INTO grant_ (agent_id, app_id, role, mode) VALUES (?, ?, ?, ?)`)
+          .bind(agentId, appId, entry.role, entry.mode),
       ),
     ]);
     return warnings;
   }
 
   /**
-   * Every grant the account holds, grouped per service — the one read behind
-   * account_list's inline grants and the CLI diff planner's current-state
-   * picture. Services with no grants simply don't appear.
+   * Every grant the agent holds, grouped per app — the one read behind
+   * agent_list's inline grants and the CLI diff planner's current-state
+   * picture. Apps with no grants simply don't appear.
    */
-  async grantsFor(accountId: string): Promise<ServiceGrants[]> {
-    // deps: D1 `grant_` · D1 `service`
+  async grantsFor(agentId: string): Promise<AppGrants[]> {
+    // deps: D1 `grant_` · D1 `app`
     const { results } = await this.db
       .prepare(
-        `SELECT g.service_id, s.slug, g.role, g.mode
-         FROM grant_ g JOIN service s ON s.id = g.service_id
-         WHERE g.service_account_id = ?
+        `SELECT g.app_id, s.slug, g.role, g.mode
+         FROM grant_ g JOIN app s ON s.id = g.app_id
+         WHERE g.agent_id = ?
          ORDER BY s.slug, g.role`,
       )
-      .bind(accountId)
-      .all<{ service_id: string; slug: string; role: string; mode: GrantMode }>();
+      .bind(agentId)
+      .all<{ app_id: string; slug: string; role: string; mode: GrantMode }>();
 
-    const perService = new Map<string, ServiceGrants>();
+    const perApp = new Map<string, AppGrants>();
     for (const row of results) {
-      let grants = perService.get(row.service_id);
+      let grants = perApp.get(row.app_id);
       if (!grants) {
-        grants = { serviceId: row.service_id, serviceSlug: row.slug, entries: [] };
-        perService.set(row.service_id, grants);
+        grants = { appId: row.app_id, appSlug: row.slug, entries: [] };
+        perApp.set(row.app_id, grants);
       }
       grants.entries.push({ role: row.role, mode: row.mode });
     }
-    return [...perService.values()];
+    return [...perApp.values()];
   }
 
   /**
-   * Resolves what a principal may call on one service, at request time — the
+   * Resolves what a principal may call on one app, at request time — the
    * declaration is re-read on every call, so a role widened at reconnect takes
    * effect immediately. Owners get the everything-filter (roleNames ["all"]);
-   * service accounts get their stored grants resolved through buildToolFilter.
-   * Works unchanged for the virtual `pmcp` service: owners see everything,
-   * accounts resolve to zero grants — no special case. Never throws for
+   * agents get their stored grants resolved through buildToolFilter.
+   * Works unchanged for the virtual `pmcp` app: owners see everything,
+   * agents resolve to zero grants — no special case. Never throws for
    * "no access"; absence of grants is a normal ToolFilter (see roleNames).
    */
-  async resolveAccess(principal: Principal, service: Service): Promise<ToolFilter> {
-    // deps: buildToolFilter · D1 `grant_` · D1 `service`
+  async resolveAccess(principal: Principal, app: App): Promise<ToolFilter> {
+    // deps: buildToolFilter · D1 `grant_` · D1 `app`
     if (principal.kind === "user") return buildToolFilter([{ role: "all", mode: "allow" }], {});
     // Re-read, never trust the passed row: a role widened at reconnect must bite on the very
-    // next call. The virtual `pmcp` service has no row, which reads as "declares nothing".
-    const row = await this.row(service.id);
+    // next call. The virtual `pmcp` app has no row, which reads as "declares nothing".
+    const row = await this.row(app.id);
     const declared: RoleDeclaration = row ? JSON.parse(row.roles_json) : {};
     const { results } = await this.db
       .prepare(
         `SELECT role, mode FROM grant_
-         WHERE service_account_id = ? AND service_id = ? ORDER BY role`,
+         WHERE agent_id = ? AND app_id = ? ORDER BY role`,
       )
-      .bind(principal.accountId, service.id)
+      .bind(principal.agentId, app.id)
       .all<GrantEntry>();
     return buildToolFilter(results, declared);
   }
@@ -1233,12 +1233,12 @@ export class Registry {
    * stored or shown.
    */
   async redactPathsFor(
-    service: Service,
+    app: App,
     tool: string,
     direction: "args" | "results",
   ): Promise<string[]> {
-    // deps: matchesPattern · D1 `service`
-    const row = await this.row(service.id);
+    // deps: matchesPattern · D1 `app`
+    const row = await this.row(app.id);
     if (!row) return []; // the virtual `pmcp` builtin declares no redaction config
     const config: Record<string, string[]> = JSON.parse(
       direction === "args" ? row.redact_json : row.redact_results_json,
@@ -1253,29 +1253,29 @@ export class Registry {
   }
 
   /**
-   * The tunnel registration write: stores a service's self-declared roles —
+   * The tunnel registration write: stores an app's self-declared roles —
    * NORMALIZED, per §20.3, so the column holds one shape whichever spelling
    * registered — and reports drift. The DO hands the wire-shaped declaration
    * straight here; the stored column format never enters tunnel code. Throws on
    * an invalid
    * declaration (never partially writes; callers wanting the violation list
-   * for their error reply run validateRoles first), on a proxied service, and
+   * for their error reply run validateRoles first), on a proxied app, and
    * on a row that no longer exists (the caller's close-4003 signal). Also
    * stamps the row's last-connected timestamp — successful registration is the
    * only moment a tunnel comes online. Drift is textual only (see DriftReport);
    * auditing a non-empty report is the caller's job.
    */
-  async upsertDeclaredRoles(serviceId: string, roles: RoleDeclaration): Promise<DriftReport> {
-    // deps: validateRoles · D1 `service` · D1 `grant_`
-    const row = await this.row(serviceId);
-    if (!row) throw new Error(`service "${serviceId}" no longer exists`); // caller's close-4003
-    if (row.kind !== "tunnel") throw new Error(`proxied service "${row.slug}" declares roles in config`);
+  async upsertDeclaredRoles(appId: string, roles: RoleDeclaration): Promise<DriftReport> {
+    // deps: validateRoles · D1 `app` · D1 `grant_`
+    const row = await this.row(appId);
+    if (!row) throw new Error(`app "${appId}" no longer exists`); // caller's close-4003
+    if (row.kind !== "tunnel") throw new Error(`proxied app "${row.slug}" declares roles in config`);
     assertRoles(roles); // before any write: an invalid declaration never lands partially
 
     const previous: RoleDeclaration = JSON.parse(row.roles_json);
     const { results } = await this.db
-      .prepare(`SELECT DISTINCT role FROM grant_ WHERE service_id = ?`)
-      .bind(serviceId)
+      .prepare(`SELECT DISTINCT role FROM grant_ WHERE app_id = ?`)
+      .bind(appId)
       .all<{ role: string }>();
     const granted = new Set(results.map((g) => g.role));
 
@@ -1297,21 +1297,21 @@ export class Registry {
     }
 
     await this.db
-      .prepare(`UPDATE service SET roles_json = ?, last_connected_at = ? WHERE id = ?`)
-      .bind(JSON.stringify(normalized), Date.now(), serviceId)
+      .prepare(`UPDATE app SET roles_json = ?, last_connected_at = ? WHERE id = ?`)
+      .bind(JSON.stringify(normalized), Date.now(), appId)
       .run();
     return { widened };
   }
 }
 
-/** The `service` row as §5 declares it — the column format this module alone reads. */
-type ServiceRow = {
+/** The `app` row as §5 declares it — the column format this module alone reads. */
+type AppRow = {
   id: string;
   owner_id: string;
   slug: string;
   name: string;
   description: string | null;
-  kind: ServiceKind;
+  kind: AppKind;
   upstream_url: string | null;
   upstream_auth_mode: "headers" | "oauth" | null;
   forward_identity: number;
@@ -1326,8 +1326,8 @@ type ServiceRow = {
   archived_at: number | null;
 };
 
-/** The `service_account` row, same discipline. */
-type AccountRow = {
+/** The `agent` row, same discipline. */
+type AgentRow = {
   id: string;
   owner_id: string;
   slug: string;
@@ -1337,7 +1337,7 @@ type AccountRow = {
 };
 
 /** The one row→domain translation: archived is a timestamp column, the booleans are 0/1. */
-function toDetail(row: ServiceRow): ServiceDetail {
+function toDetail(row: AppRow): AppDetail {
   return {
     id: row.id,
     ownerId: row.owner_id,
@@ -1359,7 +1359,7 @@ function toDetail(row: ServiceRow): ServiceDetail {
   };
 }
 
-function toAccount(row: AccountRow): ServiceAccount {
+function toAgent(row: AgentRow): Agent {
   return {
     id: row.id,
     ownerId: row.owner_id,
@@ -1392,7 +1392,7 @@ function assertRoles(decl: RoleDeclaration): void {
  * §20.2's capability list, as the throw both write paths owe their caller: an owner
  * declaring `resource` or `sampling` has made a typo, and storing it would advertise a
  * capability no handshake knows how to spell. Absent is legal and means `tools` only —
- * the answer every proxied service already gives, which is why this check never demands
+ * the answer every proxied app already gives, which is why this check never demands
  * the key. It gates the HANDSHAKE alone: routing stays grant-filtered whatever is
  * declared, so a wrong-but-valid declaration misleads feature detection and widens
  * nothing.
@@ -1402,11 +1402,11 @@ function assertCapabilities(capabilities: string[] | undefined): void {
   // The value arrives from YAML and from the admin wire, so the list-ness is checked here
   // rather than trusted from the type — a bare string would otherwise be stored per letter.
   if (!Array.isArray(capabilities)) throw new RegistryRefusal("capabilities", "must be a list");
-  const unknown = capabilities.filter((entry) => !(SERVICE_CAPABILITIES as readonly string[]).includes(entry));
+  const unknown = capabilities.filter((entry) => !(APP_CAPABILITIES as readonly string[]).includes(entry));
   if (unknown.length > 0) {
     throw new RegistryRefusal(
       "capabilities",
-      `names ${unknown.map((entry) => `"${entry}"`).join(", ")} — one of ${SERVICE_CAPABILITIES.join(", ")}`,
+      `names ${unknown.map((entry) => `"${entry}"`).join(", ")} — one of ${APP_CAPABILITIES.join(", ")}`,
     );
   }
 }
@@ -1430,9 +1430,9 @@ function assertRedactKeys(field: "redact" | "redactResults", map: Record<string,
 }
 
 /**
- * The fields only a PROXIED service may carry, named ONCE: the upstream endpoint and its
+ * The fields only a PROXIED app may carry, named ONCE: the upstream endpoint and its
  * declared auth mode, the identity-forwarding flag, the role declaration a tunneled
- * service instead sends at registration, and §20.2's capability list — which a tunnel
+ * app instead sends at registration, and §20.2's capability list — which a tunnel
  * likewise never declares in config, because the hub learns its capability set at
  * registration and an owner-written one could only ever contradict it. Both write paths
  * ask the question through assertKindFields below, so create and patch can never answer
@@ -1445,18 +1445,18 @@ const PROXY_ONLY = ["upstreamUrl", "upstreamAuthMode", "forwardIdentity", "roles
 type ProxyOnlyFields = Partial<Record<(typeof PROXY_ONLY)[number], unknown>>;
 
 /**
- * The kind/field rule of §5, as the throw both createService and updateService owe their
+ * The kind/field rule of §5, as the throw both createApp and updateApp owe their
  * caller: a tunneled row carries none of PROXY_ONLY, in either direction. The message
  * names every offending field at once, so a caller fixes one draft rather than one field
  * per round trip.
  */
-function assertKindFields(kind: ServiceKind, fields: ProxyOnlyFields): void {
+function assertKindFields(kind: AppKind, fields: ProxyOnlyFields): void {
   if (kind === "proxy") return;
   const offending = PROXY_ONLY.filter((field) => fields[field] !== undefined);
   if (offending.length === 0) return;
   throw new RegistryRefusal(
     "kind",
-    `a tunneled service has no ${offending.join(", ")}: ` +
+    `a tunneled app has no ${offending.join(", ")}: ` +
       `upstream fields are proxied-only, and a tunnel declares its roles at registration`,
   );
 }

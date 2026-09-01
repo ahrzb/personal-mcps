@@ -13,8 +13,8 @@
 
 /**
  * The hub's one error vocabulary. `code` is a code from the pinned table — -32000
- * service unavailable · -32001 tool not permitted / unknown (deliberately
- * indistinguishable, §7) · -32002 service archived · -32003 approval required, `data`
+ * app unavailable · -32001 tool not permitted / unknown (deliberately
+ * indistinguishable, §7) · -32002 app archived · -32003 approval required, `data`
  * carrying { approvalId, approvalUrl, expiresAt } · -32601 method not found · -32602
  * invalid params (§21.4's over-cap subscribe, the sixth consumer-visible code). Thrown
  * anywhere in the pipeline or backends; it reaches the wire only through gateway's
@@ -73,13 +73,13 @@ export const CODES = {
  * beyond "not right now" (§7 — the class never leaves the ledger). Declared ABOVE its
  * reader, like everything else this module's temporal-dead-zone note is about.
  */
-const UNAVAILABLE = "service unavailable";
+const UNAVAILABLE = "app unavailable";
 
 /**
  * The failure classes that CERTAINLY dispatched nothing — the whole of the exception to
  * the disclosure rule in `unavailable`, and the reason each is in it: "offline" (a tunnel
  * with no live socket: nothing was sent and the hub has no outbox), "catalog_unreachable"
- * (a cached-catalog read, which never reaches the service at all), "needs_reconnect" (a
+ * (a cached-catalog read, which never reaches the app at all), "needs_reconnect" (a
  * stored credential the hub already knows is dead, so no dial is attempted).
  *
  * A SET rather than the inverse list, and that asymmetry is the safety rule: an unknown
@@ -99,7 +99,7 @@ const DISPATCHED_NOTHING: ReadonlySet<string> = new Set([
  * "disconnected" for a tunnel, upstream.ts's five classes for a proxy — and does two
  * things: it rides `auditDetail` to the ledger, and it decides §15's at-most-once
  * disclosure through the table above. A class that certainly dispatched nothing keeps the
- * bare "service unavailable"; every other class appends ": the call may have executed".
+ * bare "app unavailable"; every other class appends ": the call may have executed".
  *
  * The MESSAGE is where that disclosure has to live, and the message is the whole of what
  * a caller may vary: §7 makes dispatch failures indistinguishable by code, and -32000 is
@@ -123,7 +123,7 @@ export const unavailable = (failureClass?: string): HubError => {
 };
 
 export const notPermitted = (): HubError => new HubError(CODES.notPermitted, "tool not permitted");
-export const archived = (): HubError => new HubError(CODES.archived, "service archived");
+export const archived = (): HubError => new HubError(CODES.archived, "app archived");
 
 /**
  * -32602 as a CONSUMER meets it (§21.4): a `resources/subscribe` refused because the

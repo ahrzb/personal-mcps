@@ -36,11 +36,11 @@ export const OAUTH_STATE_TTL_MS = 10 * 60_000;
 export const RETENTION_DAYS = 7;
 
 /**
- * §5/§8 — the default life of a `pmcp_sa_` token: 90 days. Service tokens have no
+ * §5/§8 — the default life of a `pmcp_agt_` token: 90 days. App tokens have no
  * default expiry at all (the telegram-bot model, §18 decision 12), which is why only
  * one of the two kinds has a constant here — the other's default is the absence of one.
  */
-export const SERVICE_ACCOUNT_TOKEN_TTL_MS = 90 * 24 * 60 * 60_000;
+export const AGENT_TOKEN_TTL_MS = 90 * 24 * 60 * 60_000;
 
 /**
  * §5 — how coarse `token.last_used_at` is: a successful resolve advances it at most
@@ -103,7 +103,7 @@ export const LISTEN_SUBSCRIPTIONS_MAX = 6;
 export const SUBSCRIBE_URI_MAX_BYTES = 2048;
 
 /**
- * §21.2 — at most this many DO subscriber sockets one stream opens, services
+ * §21.2 — at most this many DO subscriber sockets one stream opens, apps
  * taken in deterministic slug order. The platform documents six simultaneous
  * open connections per invocation; the gate's live measurement can only LOWER
  * this, never raise it.

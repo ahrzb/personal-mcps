@@ -5,9 +5,9 @@
 // the built-in `all` contributes `.*` WITHOUT touching the declaration and is reserved
 // yet grantable (§2); a granted role no longer present in the declaration still counts
 // as a grant — it appears in `roleNames`, matches nothing, and so yields an empty
-// tools/list and -32001 rather than a 404; an account holding no grants at all
+// tools/list and -32001 rather than a 404; an agent holding no grants at all
 // resolves to an EMPTY `roleNames`, which is the gateway's scoped-404 signal and the
-// one distinction that keeps a zero-grant account from enumerating the namespace;
+// one distinction that keeps a zero-grant agent from enumerating the namespace;
 // allow beats approval per tool, whatever order the grant entries arrive in; and
 // filterList drops only `deny` — approval-gated tools list like any other, because an
 // agent must see a tool to call it.
@@ -27,7 +27,7 @@
 // validateRoles reads the per-family shape and refuses an unknown key.
 //
 // NOT HERE: that the DECLARATION is re-read per request (worker/registry.test.ts —
-// resolveAccess against real D1), that `roleNames` reaches a service as `hub/roles`
+// resolveAccess against real D1), that `roleNames` reaches an app as `hub/roles`
 // with `all` still literal (tunnel/pipeline-tunnel.test.ts), WHICH key of a listed item
 // each family is matched against — `uri` for resources, `uriTemplate` for templates,
 // `name` for the rest (worker/order.table.test.ts, §20.2) — and the codes the gateway
@@ -60,7 +60,7 @@ export type FilterScenario = {
   name: string;
   /** Grants exactly as stored — or the synthesized owner grant [{role: "all", mode: "allow"}]. */
   grants: GrantEntry[];
-  /** The service's declaration as of this resolve; `{}` is a legitimate value. */
+  /** The app's declaration as of this resolve; `{}` is a legitimate value. */
   declared: RoleDeclaration;
   /** The filter's roleNames: granted names verbatim — never expanded, never filtered by the declaration. */
   roleNames: string[];
@@ -109,7 +109,7 @@ export const filterScenarios: readonly FilterScenario[] = [
     note: "§2 · `all` granted against an empty declaration still allows — reserved, yet grantable",
   },
   // §7 step 2: "A granted role no longer present in `roles_json` resolves to the empty pattern
-  // set — it still counts as a grant (the account gets an empty `tools/list` and `-32001`, not a
+  // set — it still counts as a grant (the agent gets an empty `tools/list` and `-32001`, not a
   // 404)." All-deny, so it names the scenario that reaches the same tools with a grant that
   // resolves (§9 rule 2).
   {
@@ -138,8 +138,8 @@ export const filterScenarios: readonly FilterScenario[] = [
     ],
     note: "the same role once declared · matches its patterns, denies the rest",
   },
-  // §7 step 2: "On the scoped endpoint a service account gets 404 both for a nonexistent slug
-  // and for a service it holds no grants on — indistinguishable, so zero-grant accounts can't
+  // §7 step 2: "On the scoped endpoint an agent gets 404 both for a nonexistent slug
+  // and for an app it holds no grants on — indistinguishable, so zero-grant agents can't
   // enumerate the namespace." The empty roleNames IS that signal; the one-grant scenario below
   // is the contrast that makes it a signal rather than a coincidence.
   {
@@ -160,7 +160,7 @@ export const filterScenarios: readonly FilterScenario[] = [
     roleNames: ["reader"],
     verdicts: [{ tool: "get_news", mode: "deny" }],
     allowTwin: "declared-reader",
-    note: "one grant on the service · roleNames is non-empty even when no tool matches",
+    note: "one grant on the app · roleNames is non-empty even when no tool matches",
   },
   // §2: "A tool matched by both an allow-mode and an approval-mode role is allowed outright
   // (allow wins; approval is the weaker form of allow)." The approval-mode role is listed FIRST
@@ -181,8 +181,8 @@ export const filterScenarios: readonly FilterScenario[] = [
     ],
     note: "allow-mode and approval-mode roles both matching a tool · allow wins; approval-only → approval; no match → deny",
   },
-  // §2: "A service account may call exactly the tools matched by the UNION of its granted roles
-  // per service."
+  // §2: "An agent may call exactly the tools matched by the UNION of its granted roles
+  // per app."
   {
     name: "union-across-roles",
     grants: [
@@ -297,7 +297,7 @@ export function runFilterScenarioTable(rows: readonly FilterScenario[]): void {
     expect(filter.roleNames).toEqual(row.roleNames);
   });
 
-  it("§7 step 2 · one grant on the service · roleNames is non-empty even when no tool matches", () => {
+  it("§7 step 2 · one grant on the app · roleNames is non-empty even when no tool matches", () => {
     const row = scenario("one-grant-no-match");
     const filter = assertVerdicts(row, row.verdicts);
     expect(filter.roleNames).toEqual(row.roleNames);
@@ -360,7 +360,7 @@ export type FamilyFilterScenario = {
 
 /** OWNER-AUTHORED, separate commit, before implementation (strategy §9 rule 1). */
 export const familyFilterScenarios: readonly FamilyFilterScenario[] = [
-  // §20.3: "A bare list is normalized to `{ tools: [...] }` — so every service in the
+  // §20.3: "A bare list is normalized to `{ tools: [...] }` — so every app in the
   // field, every YAML file, and every `serve({roles})` call keeps its exact current
   // meaning, and a role that grants tools grants *nothing* in another family." The two
   // `get_news` deny verdicts are the second half of that sentence, and they are the half a

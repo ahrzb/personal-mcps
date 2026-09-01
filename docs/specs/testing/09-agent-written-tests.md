@@ -32,9 +32,9 @@
    a third-party mount, because it is our form that encodes the assumption
    about their contract.
 
-Never faked, anywhere: a sibling module, D1, the `ServiceConnection` DO,
+Never faked, anywhere: a sibling module, D1, the `AppConnection` DO,
 WebCrypto, or the MCP SDK on either side. The fakes that do exist (fake upstream,
-fake AS, fake push endpoint, fake tunneled service, fake hubs for the clients) do
+fake AS, fake push endpoint, fake tunneled app, fake hubs for the clients) do
 *real* protocol work — real JSON-RPC, real S256 PKCE checks, real decryptable
 push crypto — and each documents what it must NOT fake. The fake AS should be
 **adversarial**, not spec-shaped: no RFC 9728 document, CIMD rejected so DCR is

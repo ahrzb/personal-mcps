@@ -27,16 +27,16 @@
  * only what the hub emits.
  *
  * Project: `tunnel` — workerd, serial (`--max-workers=1 --no-isolate`): every case
- * holds a live socket and a real ServiceConnection instance (strategy §2).
+ * holds a live socket and a real AppConnection instance (strategy §2).
  *
  * Isolation and ordering, load-bearing: smoke.test.ts green first; protocol.test.ts
  * owns registration, so a socket here is either "registered" or "accepted" and the
  * handshake itself is never re-pinned. With --no-isolate each case seeds its own owner,
- * slug, service id and tokens — two tokens where the row exercises `onlyIfTokenId` —
+ * slug, app id and tokens — two tokens where the row exercises `onlyIfTokenId` —
  * and asserts only on rows it created.
  */
 
-// deps: harness/seed · harness/fake-service · harness/tunnel-do (connectionStub, liveSockets, stillOpen, untilStatus, backendCtx) · src/tunnel (handleConnect, sever, wipe, status, tunnelBackend, CLOSE_REVOKED, CLOSE_ARCHIVED, SeverCode) · src/identity (issueToken, revokeToken, resolveServiceToken) · src/admin (ops.service_delete, ops.service_archive, ops.token_revoke) · src/registry (Registry)
+// deps: harness/seed · harness/fake-app · harness/tunnel-do (connectionStub, liveSockets, stillOpen, untilStatus, backendCtx) · src/tunnel (handleConnect, sever, wipe, status, tunnelBackend, CLOSE_REVOKED, CLOSE_ARCHIVED, SeverCode) · src/identity (issueToken, revokeToken, resolveAppToken) · src/admin (ops.app_delete, ops.app_archive, ops.token_revoke) · src/registry (Registry)
 
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
@@ -45,11 +45,11 @@ import type { Tool } from "../../src/gateway";
 import { tokenFor } from "../../src/identity";
 import { CALL_TIMEOUT_MS } from "../../src/limits";
 import { Registry } from "../../src/registry";
-import type { Service } from "../../src/registry";
+import type { App } from "../../src/registry";
 import { CLOSE_ARCHIVED, CLOSE_REVOKED, status, tunnelBackend, wipe } from "../../src/tunnel";
 import type { SeverCode } from "../../src/tunnel";
-import { attemptUpgrade, connectFakeService, UpgradeRefused, waitFor } from "../harness/fake-service";
-import type { FakeService, FakeServiceOptions } from "../harness/fake-service";
+import { attemptUpgrade, connectFakeApp, UpgradeRefused, waitFor } from "../harness/fake-app";
+import type { FakeApp, FakeAppOptions } from "../harness/fake-app";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 import { backendCtx, connectionStub, liveSockets, stillOpen, untilStatus } from "../harness/tunnel-do";
@@ -65,22 +65,22 @@ export type LifecycleCloseCode = SeverCode | 4003;
 
 /** The credential a client presents at the /connect upgrade (§6's 401 list, enumerated). */
 export type UpgradeCredential =
-  | "live_service_token"
-  | "revoked_service_token"
-  | "expired_service_token"
+  | "live_app_token"
+  | "revoked_app_token"
+  | "expired_app_token"
   | "unknown_token"
   | "no_authorization_header"
-  | "service_account_token"
+  | "agent_token"
   | "session_token";
 
 /** The state of the token's referent at upgrade time — the other half of the matrix. */
-export type UpgradeServiceState = "live_tunnel" | "archived" | "row_deleted" | "proxy_kind";
+export type UpgradeAppState = "live_tunnel" | "archived" | "row_deleted" | "proxy_kind";
 
 /**
  * One row of the upgrade matrix (§6). `status` is the pinned client contract: 401
  * fatal, 403 archived-keep-retrying, 101 accepted. `accepted` is the invariant that
  * makes a refusal real — a refused upgrade must leave the DO holding no socket, or a
- * 403 would still have handed an archived service a live connection.
+ * 403 would still have handed an archived app a live connection.
  *
  * `twin` is the `name` of the 101 row in this same table that this row differs from by
  * ONE column — the credential state, or the referent's state, and nothing else. 101
@@ -95,7 +95,7 @@ export type UpgradeOutcomeRow = {
   /** Test title, in the doc's convention: "§6 · <what this row pins>". */
   name: string;
   credential: UpgradeCredential;
-  service: UpgradeServiceState;
+  app: UpgradeAppState;
   status: 101 | 401 | 403;
   accepted: boolean;
   twin: string;
@@ -111,9 +111,9 @@ export type UpgradeOutcomeRow = {
  */
 export const upgradeRows: readonly UpgradeOutcomeRow[] = [
   // The fixture these rows are written against, named once: one namespace holding a
-  // tunneled service with two live `pmcp_svc_` tokens (rotation, §6), a revoked and an
-  // expired token on the same service, a proxied service, a service account with a
-  // `pmcp_sa_` key, and the owner's session token. Every row dials /connect with ONE
+  // tunneled app with two live `pmcp_app_` tokens (rotation, §6), a revoked and an
+  // expired token on the same app, a proxied app, an agent with a
+  // `pmcp_agt_` key, and the owner's session token. Every row dials /connect with ONE
   // credential against ONE referent state, and asserts nothing about which check refused —
   // §6 makes 401 a single verdict on purpose.
   //
@@ -123,44 +123,44 @@ export const upgradeRows: readonly UpgradeOutcomeRow[] = [
 
   // ── the anchor: the credential and the referent that reach 101 ───────────────────────
   {
-    name: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
-    credential: "live_service_token",
-    service: "live_tunnel",
+    name: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
+    credential: "live_app_token",
+    app: "live_tunnel",
     status: 101,
     accepted: true,
-    twin: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
+    twin: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
   },
 
   // ── 401: every credential failure, one verdict (§6's fatal list) ─────────────────────
-  // §6: "**401** — no/invalid/expired/revoked token, wrong token kind (`pmcp_sa_`, session),
-  // or a token whose service row is gone or is `kind: proxy`. Client treats this as fatal."
+  // §6: "**401** — no/invalid/expired/revoked token, wrong token kind (`pmcp_agt_`, session),
+  // or a token whose app row is gone or is `kind: proxy`. Client treats this as fatal."
   // The rows below enumerate that sentence, one clause each, and nothing distinguishes them
   // on the wire — a client that could tell revoked from unknown could enumerate tokens.
   {
-    name: "§6 · a revoked service token is refused 401 — fatal, and revocation is immediate at the upgrade",
-    credential: "revoked_service_token",
-    service: "live_tunnel",
+    name: "§6 · a revoked app token is refused 401 — fatal, and revocation is immediate at the upgrade",
+    credential: "revoked_app_token",
+    app: "live_tunnel",
     status: 401,
     accepted: false,
-    twin: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
+    twin: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
   },
   // §6 lifecycle 1: "Expiry is checked at upgrade only — an established socket outlives its
   // token's `expires_at` until the next reconnect." This row is the half that IS checked.
   {
-    name: "§6 · an expired service token is refused 401 — expiry is checked at the upgrade, which is where this row lives",
-    credential: "expired_service_token",
-    service: "live_tunnel",
+    name: "§6 · an expired app token is refused 401 — expiry is checked at the upgrade, which is where this row lives",
+    credential: "expired_app_token",
+    app: "live_tunnel",
     status: 401,
     accepted: false,
-    twin: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
+    twin: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
   },
   {
     name: "§6 · a token string matching no row is refused 401, indistinguishably from a revoked one",
     credential: "unknown_token",
-    service: "live_tunnel",
+    app: "live_tunnel",
     status: 401,
     accepted: false,
-    twin: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
+    twin: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
   },
   // Trimmed deliberately to the verdict this row's INPUT can produce: it sends no
   // Authorization header and no other carrier either, so it cannot observe whether
@@ -172,77 +172,77 @@ export const upgradeRows: readonly UpgradeOutcomeRow[] = [
   {
     name: "§6 · no Authorization header at all is refused 401 — a missing credential is the same verdict as a bad one",
     credential: "no_authorization_header",
-    service: "live_tunnel",
+    app: "live_tunnel",
     status: 401,
     accepted: false,
-    twin: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
+    twin: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
   },
-  // §6's "wrong token kind (`pmcp_sa_`, session)" clause, one row each. Stated precisely,
+  // §6's "wrong token kind (`pmcp_agt_`, session)" clause, one row each. Stated precisely,
   // because the obvious claim would be false: a prefix-sniffing handleConnect refuses both
   // of these correctly, so neither row can fail one. The input that DISCRIMINATES §6's
   // "checking the token row's `kind` column explicitly, not just the prefix" is a
-  // `pmcp_svc_`-prefixed secret whose token row's `kind` column reads `service_account`,
+  // `pmcp_app_`-prefixed secret whose token row's `kind` column reads `agent`,
   // and it is pinned at the seam that reads the column — worker/identity-tokens.test.ts's
   // `wrong_kind_column` row, whose verdict this matrix inherits (that file's header divides
   // the labor: it owns the credential verdict, this table owns the referent's state).
   {
-    name: "§6 · a live service-account key is refused 401 — wrong token kind, whatever it can do on /<user>/mcp",
-    credential: "service_account_token",
-    service: "live_tunnel",
+    name: "§6 · a live agent key is refused 401 — wrong token kind, whatever it can do on /<user>/mcp",
+    credential: "agent_token",
+    app: "live_tunnel",
     status: 401,
     accepted: false,
-    twin: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
+    twin: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
   },
   {
-    name: "§6 · a live owner session token is refused 401 — a session is never a service credential",
+    name: "§6 · a live owner session token is refused 401 — a session is never an app credential",
     credential: "session_token",
-    service: "live_tunnel",
+    app: "live_tunnel",
     status: 401,
     accepted: false,
-    twin: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
+    twin: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
   },
   // The two referent clauses of the same 401 sentence: the credential is live and correct,
   // and what it points at is not connectable. Same code, so a bot cannot learn from the
-  // upgrade whether its service was deleted or converted.
+  // upgrade whether its app was deleted or converted.
   {
-    name: "§6 · a live token whose service row is gone is refused 401 — the deleted-service verdict is fatal, not a retry",
-    credential: "live_service_token",
-    service: "row_deleted",
+    name: "§6 · a live token whose app row is gone is refused 401 — the deleted-app verdict is fatal, not a retry",
+    credential: "live_app_token",
+    app: "row_deleted",
     status: 401,
     accepted: false,
-    twin: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
+    twin: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
   },
   {
-    name: "§6 · a live token whose service is kind proxy is refused 401 — proxied services have no connection of their own",
-    credential: "live_service_token",
-    service: "proxy_kind",
+    name: "§6 · a live token whose app is kind proxy is refused 401 — proxied apps have no connection of their own",
+    credential: "live_app_token",
+    app: "proxy_kind",
     status: 401,
     accepted: false,
-    twin: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
+    twin: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
   },
 
   // ── 403: exactly one thing ───────────────────────────────────────────────────────────
-  // §6: "**403** — means exactly one thing: the service is archived. Client keeps retrying
+  // §6: "**403** — means exactly one thing: the app is archived. Client keeps retrying
   // at max backoff so unarchiving heals automatically." The single 403 row is what case 2's
   // totality check measures the rest of the table against: if a second refusal ever borrows
   // this code, the archived row stops being the only one carrying it.
   {
-    name: "§6 · an archived service refuses the upgrade 403 — the one meaning that code has, and the one refusal a client keeps retrying past",
-    credential: "live_service_token",
-    service: "archived",
+    name: "§6 · an archived app refuses the upgrade 403 — the one meaning that code has, and the one refusal a client keeps retrying past",
+    credential: "live_app_token",
+    app: "archived",
     status: 403,
     accepted: false,
-    twin: "§6 · a live service token against a live tunneled service upgrades: 101, and the DO holds the socket",
+    twin: "§6 · a live app token against a live tunneled app upgrades: 101, and the DO holds the socket",
   },
 ];
 
 /** What the owner did, of the four actions that can close a live socket (§6, §8, §15). */
-export type SeverTrigger = "token_revoke" | "service_delete" | "service_archive" | "user_delete";
+export type SeverTrigger = "token_revoke" | "app_delete" | "app_archive" | "user_delete";
 
 /**
  * One row of the sever matrix.
  *
- * `openedWith` / `targets` are the two tokens a service may hold at once (§6's
+ * `openedWith` / `targets` are the two tokens an app may hold at once (§6's
  * rotation model, issue-new → deploy → revoke-old): the socket was opened with one,
  * and the trigger names one — equal or not, which is the whole content of §8's
  * `onlyIfTokenId` rule. `close` is what the client observes, or "none" for the rows
@@ -265,16 +265,16 @@ export type SeverRow = {
   trigger: SeverTrigger;
   connection: "registered" | "accepted_unregistered" | "offline";
   openedWith: "token_a" | "token_b";
-  targets: "token_a" | "token_b" | "whole_service";
+  targets: "token_a" | "token_b" | "whole_app";
   close: LifecycleCloseCode | "none";
   /**
    * What D1 must ALREADY show at the instant the close frame arrives. Revocation is a
    * FLAG, never a delete: §5's `token` table carries `revoked_at`, identity.revokeToken
    * is an `UPDATE … SET "revoked_at" = COALESCE(…)` that must still FIND the row (and
    * leaves it in `token_list` with its `last_used_at` history, §8), and
-   * resolveServiceToken refuses on `revoked_at != null`. So the revoke trigger's ordering
+   * resolveAppToken refuses on `revoked_at != null`. So the revoke trigger's ordering
    * pin is `revoked_flag_set`; `rows_gone` belongs to the delete cascades
-   * (identity.deleteTokensFor plus the service row), the only paths that remove rows.
+   * (identity.deleteTokensFor plus the app row), the only paths that remove rows.
    */
   d1AtClose: "rows_gone" | "revoked_flag_set" | "archived_flag_set" | "unchanged";
   /** Whether the DO's cached catalog is still served afterwards (archive keeps it, delete wipes it). */
@@ -290,7 +290,7 @@ export type SeverRow = {
  * rather than intended.
  */
 export const severRows: readonly SeverRow[] = [
-  // The fixture these rows are written against, named once: one tunneled service holding
+  // The fixture these rows are written against, named once: one tunneled app holding
   // TWO live tokens (§6's rotation model — issue-new, deploy, revoke-old), a socket opened
   // with `token_a`, and a cached catalog warmed by that socket's registration. Every
   // trigger is fired through the admin op that owns the cascade, never through
@@ -309,9 +309,9 @@ export const severRows: readonly SeverRow[] = [
   //   RECONNECT and lives in cases 11-12. The unused union member is that split, recorded.
 
   // ── token_revoke: the pair onlyIfTokenId exists for ──────────────────────────────────
-  // §15: "A revoked *service* token (or a deleted service) additionally severs the live
+  // §15: "A revoked *app* token (or a deleted app) additionally severs the live
   // reverse connection — the Worker tells the DO to close the socket with code `4001`;
-  // a racing re-register fails because the service row / token is gone" — for the revoke
+  // a racing re-register fails because the app row / token is gone" — for the revoke
   // trigger that is the token reading REVOKED, not missing: the row survives with
   // `revoked_at` set (§5) so `token_list` keeps showing the leaked token's `last_used_at`.
   // The ordering is the pin: the flag is already set at the instant of the 4001 frame, so a
@@ -326,13 +326,13 @@ export const severRows: readonly SeverRow[] = [
     close: 4001,
     d1AtClose: "revoked_flag_set",
     catalogSurvives: true,
-    twin: "§8 · revoking the service's OTHER live token leaves the socket up — the survivor a sever() that closes everything cannot produce",
+    twin: "§8 · revoking the app's OTHER live token leaves the socket up — the survivor a sever() that closes everything cannot produce",
   },
   // §8's rule as its own row, and the only row in this table that a `sever()` closing every
   // socket it can reach fails. Rotation depends on it: issue-new, deploy, revoke-old must
   // not kill the connection the NEW token is already holding.
   {
-    name: "§8 · revoking the service's OTHER live token leaves the socket up — the survivor a sever() that closes everything cannot produce",
+    name: "§8 · revoking the app's OTHER live token leaves the socket up — the survivor a sever() that closes everything cannot produce",
     trigger: "token_revoke",
     connection: "registered",
     openedWith: "token_a",
@@ -340,36 +340,36 @@ export const severRows: readonly SeverRow[] = [
     close: "none",
     d1AtClose: "unchanged",
     catalogSurvives: true,
-    twin: "§8 · revoking the service's OTHER live token leaves the socket up — the survivor a sever() that closes everything cannot produce",
+    twin: "§8 · revoking the app's OTHER live token leaves the socket up — the survivor a sever() that closes everything cannot produce",
   },
 
-  // ── service_delete: 4001, D1-first, and the wipe ─────────────────────────────────────
+  // ── app_delete: 4001, D1-first, and the wipe ─────────────────────────────────────
   // §6 lifecycle 4 plus §15's ordering: at the moment the client sees 4001 the rows are
   // already gone, so a racing re-register finds nothing to register against.
   {
-    name: "§15 · service_delete closes 4001 with the service's D1 rows already gone at that instant — the cascade is D1-first",
-    trigger: "service_delete",
+    name: "§15 · app_delete closes 4001 with the app's D1 rows already gone at that instant — the cascade is D1-first",
+    trigger: "app_delete",
     connection: "registered",
     openedWith: "token_a",
-    targets: "whole_service",
+    targets: "whole_app",
     close: 4001,
     d1AtClose: "rows_gone",
     catalogSurvives: false,
-    twin: "§6 · service_delete against an offline service closes nothing and still wipes — a sever with no socket is a no-op, never an error",
+    twin: "§6 · app_delete against an offline app closes nothing and still wipes — a sever with no socket is a no-op, never an error",
   },
-  // The survivor for the delete family: with `targets` pinned to whole_service, `connection`
-  // is the only column left to vary, and an offline service is the row that proves the
+  // The survivor for the delete family: with `targets` pinned to whole_app, `connection`
+  // is the only column left to vary, and an offline app is the row that proves the
   // teardown does not depend on there being a socket to close.
   {
-    name: "§6 · service_delete against an offline service closes nothing and still wipes — a sever with no socket is a no-op, never an error",
-    trigger: "service_delete",
+    name: "§6 · app_delete against an offline app closes nothing and still wipes — a sever with no socket is a no-op, never an error",
+    trigger: "app_delete",
     connection: "offline",
     openedWith: "token_a",
-    targets: "whole_service",
+    targets: "whole_app",
     close: "none",
     d1AtClose: "unchanged",
     catalogSurvives: false,
-    twin: "§6 · service_delete against an offline service closes nothing and still wipes — a sever with no socket is a no-op, never an error",
+    twin: "§6 · app_delete against an offline app closes nothing and still wipes — a sever with no socket is a no-op, never an error",
   },
   // §6: an accepted-but-not-yet-registered socket is still a live socket. It reads OFFLINE
   // (lifecycle 2) and must still be severed — otherwise a bot could hold a slot through a
@@ -382,69 +382,69 @@ export const severRows: readonly SeverRow[] = [
   // registers.
   {
     name: "§6 · an accepted-but-unregistered socket is severed exactly like a registered one — eviction is about the socket, not the handshake",
-    trigger: "service_delete",
+    trigger: "app_delete",
     connection: "accepted_unregistered",
     openedWith: "token_a",
-    targets: "whole_service",
+    targets: "whole_app",
     close: 4001,
     d1AtClose: "rows_gone",
     catalogSurvives: false,
-    twin: "§6 · service_delete against an offline service closes nothing and still wipes — a sever with no socket is a no-op, never an error",
+    twin: "§6 · app_delete against an offline app closes nothing and still wipes — a sever with no socket is a no-op, never an error",
   },
 
-  // ── service_archive: 4002, flag first, catalog kept ──────────────────────────────────
+  // ── app_archive: 4002, flag first, catalog kept ──────────────────────────────────
   // §6 lifecycle 3: archived retains "Roles, grants, tokens, and the cached catalog" — and
   // the flag must land BEFORE the close, or a client reconnecting on the close frame could
-  // be accepted 101 into a service the owner just parked.
+  // be accepted 101 into an app the owner just parked.
   {
-    name: "§6 · service_archive closes 4002 with the archived flag already set — a reconnect racing the close can only be refused 403",
-    trigger: "service_archive",
+    name: "§6 · app_archive closes 4002 with the archived flag already set — a reconnect racing the close can only be refused 403",
+    trigger: "app_archive",
     connection: "registered",
     openedWith: "token_a",
-    targets: "whole_service",
+    targets: "whole_app",
     close: 4002,
     d1AtClose: "archived_flag_set",
     catalogSurvives: true,
-    twin: "§6 · service_archive against an offline service closes nothing and keeps the catalog — unarchive restores a service that still lists",
+    twin: "§6 · app_archive against an offline app closes nothing and keeps the catalog — unarchive restores an app that still lists",
   },
   {
-    name: "§6 · service_archive against an offline service closes nothing and keeps the catalog — unarchive restores a service that still lists",
-    trigger: "service_archive",
+    name: "§6 · app_archive against an offline app closes nothing and keeps the catalog — unarchive restores an app that still lists",
+    trigger: "app_archive",
     connection: "offline",
     openedWith: "token_a",
-    targets: "whole_service",
+    targets: "whole_app",
     close: "none",
     d1AtClose: "unchanged",
     catalogSurvives: true,
-    twin: "§6 · service_archive against an offline service closes nothing and keeps the catalog — unarchive restores a service that still lists",
+    twin: "§6 · app_archive against an offline app closes nothing and keeps the catalog — unarchive restores an app that still lists",
   },
 
   // ── user_delete: the same teardown, one level up ─────────────────────────────────────
-  // §15: "User deletion (`/internal/users`) performs the same teardown as `service_delete`
-  // for every tunneled service in the namespace — close `4001`, wipe DO cached state —
+  // §15: "User deletion (`/internal/users`) performs the same teardown as `app_delete`
+  // for every tunneled app in the namespace — close `4001`, wipe DO cached state —
   // before the row cascade." A separate row because it is a separate cascade, and a hub
-  // that severed per-service but not per-user would pass every row above.
+  // that severed per-app but not per-user would pass every row above.
   {
-    name: "§15 · user_delete tears the namespace's tunneled service down exactly as service_delete does: 4001, rows already gone, catalog wiped",
+    name: "§15 · user_delete tears the namespace's tunneled app down exactly as app_delete does: 4001, rows already gone, catalog wiped",
     trigger: "user_delete",
     connection: "registered",
     openedWith: "token_a",
-    targets: "whole_service",
+    targets: "whole_app",
     close: 4001,
     d1AtClose: "rows_gone",
     catalogSurvives: false,
-    twin: "§15 · user_delete of a namespace whose service is offline closes nothing and still wipes the DO — the teardown never depends on a live socket",
+    twin: "§15 · user_delete of a namespace whose app is offline closes nothing and still wipes the DO — the teardown never depends on a live socket",
   },
   {
-    name: "§15 · user_delete of a namespace whose service is offline closes nothing and still wipes the DO — the teardown never depends on a live socket",
+    name: "§15 · user_delete of a namespace whose app is offline closes nothing and still wipes the DO — the teardown never depends on a live socket",
     trigger: "user_delete",
     connection: "offline",
     openedWith: "token_a",
-    targets: "whole_service",
+    targets: "whole_app",
     close: "none",
     d1AtClose: "unchanged",
     catalogSurvives: false,
-    twin: "§15 · user_delete of a namespace whose service is offline closes nothing and still wipes the DO — the teardown never depends on a live socket",
+    twin: "§15 · user_delete of a namespace whose app is offline closes nothing and still wipes the DO — the teardown never depends on a live socket",
   },
 ];
 
@@ -461,7 +461,7 @@ export async function runUpgradeCase(
   row: UpgradeOutcomeRow,
   rows: readonly UpgradeOutcomeRow[],
 ): Promise<void> {
-  // deps: harness/seed · harness/fake-service · src/tunnel.handleConnect · cloudflare:test runInDurableObject
+  // deps: harness/seed · harness/fake-app · src/tunnel.handleConnect · cloudflare:test runInDurableObject
   const twin = rows.find((candidate) => candidate.name === row.twin);
   expect(twin, `"${row.name}" names a twin that is not a row of this table`).toBeDefined();
   expect((twin as UpgradeOutcomeRow).status, `"${row.name}"'s twin must be the 101 row`).toBe(101);
@@ -470,24 +470,24 @@ export async function runUpgradeCase(
   const { status: observed } = await dial(fixture, credentialFor(row, fixture));
   expect(observed, `"${row.name}" expected HTTP ${row.status} at the upgrade`).toBe(row.status);
   // The invariant that makes a refusal real: a refused upgrade leaves the DO holding
-  // nothing, so a 403 can never have handed an archived service a live connection.
-  expect(await liveSockets(fixture.probeServiceId)).toBe(row.accepted ? 1 : 0);
+  // nothing, so a 403 can never have handed an archived app a live connection.
+  expect(await liveSockets(fixture.probeAppId)).toBe(row.accepted ? 1 : 0);
 }
 
 /**
  * The whole upgrade matrix's fixture, seeded per row: one namespace holding a tunneled
- * service with two live tokens plus a revoked and an expired one, a proxied service
- * carrying a `pmcp_svc_` token of its own, a service account with a `pmcp_sa_` key, and —
+ * app with two live tokens plus a revoked and an expired one, a proxied app
+ * carrying a `pmcp_app_` token of its own, an agent with a `pmcp_agt_` key, and —
  * only for the row that needs it, because the password hash is deliberately slow — the
  * owner's session.
  */
 async function seedUpgradeFixture(row: UpgradeOutcomeRow): Promise<UpgradeFixture> {
   const slug = uniqueSlug("bot");
   const proxied = uniqueSlug("proxied");
-  const account = uniqueSlug("agent");
+  const agent = uniqueSlug("agent");
   const namespace = await seedNamespace(env.DB, {
     username: uniqueSlug("life"),
-    services: [
+    apps: [
       {
         slug,
         kind: "tunnel",
@@ -497,32 +497,32 @@ async function seedUpgradeFixture(row: UpgradeOutcomeRow): Promise<UpgradeFixtur
         slug: proxied,
         kind: "proxy",
         upstreamUrl: "https://upstream.invalid/mcp",
-        // A `pmcp_svc_` token bound to a PROXIED service: identity mints it (the kind check
+        // A `pmcp_app_` token bound to a PROXIED app: identity mints it (the kind check
         // that refuses this is the admin op's, §8), which is the only way the "proxied
-        // services have no connection of their own" row gets a live credential to present.
+        // apps have no connection of their own" row gets a live credential to present.
         tokens: [{ as: "proxy" }],
       },
     ],
-    accounts: [{ slug: account, tokens: [{ as: "sa" }] }],
+    agents: [{ slug: agent, tokens: [{ as: "sa" }] }],
   });
   seeded.push(namespace);
 
   const registry = new Registry(env.DB);
-  const service = namespace.services[slug];
-  if (row.service === "archived") await registry.archiveService(service.id);
+  const app = namespace.apps[slug];
+  if (row.app === "archived") await registry.archiveApp(app.id);
   // Deleted through registry rather than the admin op: the op would also sever and wipe,
   // and this row is about what the UPGRADE does with a token whose referent is gone.
-  if (row.service === "row_deleted") await registry.deleteService(service.id);
+  if (row.app === "row_deleted") await registry.deleteApp(app.id);
 
   return {
     origin: (env as unknown as { PUBLIC_ORIGIN: string }).PUBLIC_ORIGIN,
     ownerId: namespace.owner.userId,
     username: namespace.owner.username,
     slug,
-    serviceId: service.id,
-    // The DO the row's credential POINTS AT — the proxied service's own for the proxy row,
+    appId: app.id,
+    // The DO the row's credential POINTS AT — the proxied app's own for the proxy row,
     // so "no socket was accepted" is asked of the right object.
-    probeServiceId: row.service === "proxy_kind" ? namespace.services[proxied].id : service.id,
+    probeAppId: row.app === "proxy_kind" ? namespace.apps[proxied].id : app.id,
     tokens: namespace.tokens,
     session: row.credential === "session_token" ? await seedOwnerSession(namespace.owner) : undefined,
   };
@@ -533,8 +533,8 @@ type UpgradeFixture = {
   ownerId: string;
   username: string;
   slug: string;
-  serviceId: string;
-  probeServiceId: string;
+  appId: string;
+  probeAppId: string;
   tokens: SeededNamespace["tokens"];
   session: { token: string } | undefined;
 };
@@ -542,20 +542,20 @@ type UpgradeFixture = {
 /** The one credential a row presents — `undefined` is the row that presents none. */
 function credentialFor(row: UpgradeOutcomeRow, fixture: UpgradeFixture): string | undefined {
   switch (row.credential) {
-    case "live_service_token":
-      return row.service === "proxy_kind" ? fixture.tokens.proxy.token : fixture.tokens.live.token;
-    case "revoked_service_token":
+    case "live_app_token":
+      return row.app === "proxy_kind" ? fixture.tokens.proxy.token : fixture.tokens.live.token;
+    case "revoked_app_token":
       return fixture.tokens.revoked.token;
-    case "expired_service_token":
+    case "expired_app_token":
       return fixture.tokens.expired.token;
-    case "service_account_token":
+    case "agent_token":
       return fixture.tokens.sa.token;
     case "session_token":
       return fixture.session?.token;
     case "unknown_token":
       // Obviously fake, and shaped like the real thing so the prefix check passes and the
       // row is refused by the lookup rather than by the grammar.
-      return "pmcp_svc_FAKE0000000000000000000000000000000000";
+      return "pmcp_app_FAKE0000000000000000000000000000000000";
     case "no_authorization_header":
       return undefined;
   }
@@ -569,12 +569,12 @@ function credentialFor(row: UpgradeOutcomeRow, fixture: UpgradeFixture): string 
 async function dial(
   fixture: UpgradeFixture,
   token: string | undefined,
-): Promise<{ status: number; service?: FakeService }> {
+): Promise<{ status: number; app?: FakeApp }> {
   if (token === undefined) return attemptUpgrade({ origin: fixture.origin });
   try {
-    const service = await connectFakeService({ origin: fixture.origin, token, skipRegister: true });
-    opened.push(service);
-    return { status: 101, service };
+    const app = await connectFakeApp({ origin: fixture.origin, token, skipRegister: true });
+    opened.push(app);
+    return { status: 101, app };
   } catch (err) {
     if (err instanceof UpgradeRefused) return { status: err.status };
     throw err;
@@ -593,37 +593,37 @@ async function dial(
  * scenario.
  */
 export async function runSeverCase(row: SeverRow, rows: readonly SeverRow[]): Promise<void> {
-  // deps: harness/seed · harness/fake-service · src/admin.ops · src/tunnel.status · src/registry.Registry
+  // deps: harness/seed · harness/fake-app · src/admin.ops · src/tunnel.status · src/registry.Registry
   const twin = rows.find((candidate) => candidate.name === row.twin);
   expect(twin, `"${row.name}" names a twin that is not a row of this table`).toBeDefined();
   expect((twin as SeverRow).close, `"${row.name}"'s twin must be a socket that SURVIVES`).toBe("none");
 
   const fixture = await seedSeverFixture();
-  const service = await bringConnectionTo(fixture, row.connection);
+  const app = await bringConnectionTo(fixture, row.connection);
 
   // The §15 ordering pin: D1 is read the moment the close frame lands, not after the
   // trigger returns — read afterwards, every ordering looks correct.
-  const atClose = service?.closed.then(() => snapshotD1(fixture, row));
+  const atClose = app?.closed.then(() => snapshotD1(fixture, row));
   await fireTrigger(fixture, row);
 
   if (row.close === "none") {
-    if (service !== undefined) expect(await stillOpen(service)).toBe(true);
+    if (app !== undefined) expect(await stillOpen(app)).toBe(true);
   } else {
-    expect((await (service as FakeService).closed).code).toBe(row.close);
+    expect((await (app as FakeApp).closed).code).toBe(row.close);
     expect(await atClose).toEqual(expectedD1(row));
   }
-  // The cached catalog is read from the DO, never through a service row: two of these
+  // The cached catalog is read from the DO, never through an app row: two of these
   // rows have just deleted theirs.
-  const catalog = await connectionStub(fixture.serviceId).listTools();
+  const catalog = await connectionStub(fixture.appId).listTools();
   expect(catalog.length > 0).toBe(row.catalogSurvives);
 }
 
-/** The sever matrix's fixture: one tunneled service holding two live tokens. */
+/** The sever matrix's fixture: one tunneled app holding two live tokens. */
 async function seedSeverFixture(): Promise<SeverFixture> {
   const slug = uniqueSlug("bot");
   const namespace = await seedNamespace(env.DB, {
     username: uniqueSlug("sever"),
-    services: [{ slug, kind: "tunnel", tokens: [{ as: "token_a" }, { as: "token_b" }] }],
+    apps: [{ slug, kind: "tunnel", tokens: [{ as: "token_a" }, { as: "token_b" }] }],
   });
   seeded.push(namespace);
   return {
@@ -631,7 +631,7 @@ async function seedSeverFixture(): Promise<SeverFixture> {
     ownerId: namespace.owner.userId,
     username: namespace.owner.username,
     slug,
-    serviceId: namespace.services[slug].id,
+    appId: namespace.apps[slug].id,
     tokens: namespace.tokens,
   };
 }
@@ -641,7 +641,7 @@ type SeverFixture = {
   ownerId: string;
   username: string;
   slug: string;
-  serviceId: string;
+  appId: string;
   tokens: SeededNamespace["tokens"];
 };
 
@@ -654,32 +654,32 @@ type SeverFixture = {
 async function bringConnectionTo(
   fixture: SeverFixture,
   connection: SeverRow["connection"],
-): Promise<FakeService | undefined> {
+): Promise<FakeApp | undefined> {
   const registered = await open(fixture, {});
   expect(await registered.registered).toEqual({ ok: true });
   expect(await waitFor(() => registered.lists.length > 0), "the catalog never warmed").toBe(true);
   if (connection === "registered") return registered;
   if (connection === "offline") {
     await registered.close();
-    await untilStatus(fixture.serviceId, "offline");
+    await untilStatus(fixture.appId, "offline");
     return undefined;
   }
   return open(fixture, { skipRegister: true });
 }
 
-/** One socket for the fixture's service, opened with `token_a` unless told otherwise. */
+/** One socket for the fixture's app, opened with `token_a` unless told otherwise. */
 async function open(
   fixture: SeverFixture,
-  options: Partial<FakeServiceOptions>,
-): Promise<FakeService> {
-  const service = await connectFakeService({
+  options: Partial<FakeAppOptions>,
+): Promise<FakeApp> {
+  const app = await connectFakeApp({
     origin: fixture.origin,
     token: fixture.tokens.token_a.token,
     tools: [CACHED_TOOL],
     ...options,
   });
-  opened.push(service);
-  return service;
+  opened.push(app);
+  return app;
 }
 
 /** The owner action under test, fired through the op that OWNS its cascade — never
@@ -689,11 +689,11 @@ async function fireTrigger(fixture: SeverFixture, row: SeverRow): Promise<void> 
     case "token_revoke":
       await ops.token_revoke.handler(fixture.ownerId, { id: fixture.tokens[row.targets].id });
       return;
-    case "service_delete":
-      await ops.service_delete.handler(fixture.ownerId, { slug: fixture.slug });
+    case "app_delete":
+      await ops.app_delete.handler(fixture.ownerId, { slug: fixture.slug });
       return;
-    case "service_archive":
-      await ops.service_archive.handler(fixture.ownerId, { slug: fixture.slug });
+    case "app_archive":
+      await ops.app_archive.handler(fixture.ownerId, { slug: fixture.slug });
       return;
     case "user_delete":
       await deleteUser(fixture.username);
@@ -703,12 +703,12 @@ async function fireTrigger(fixture: SeverFixture, row: SeverRow): Promise<void> 
 
 /** What D1 shows about this row's targets, in the vocabulary the `d1AtClose` column uses. */
 async function snapshotD1(fixture: SeverFixture, row: SeverRow): Promise<Record<string, unknown>> {
-  const service = await new Registry(env.DB).getService(fixture.ownerId, fixture.slug);
+  const app = await new Registry(env.DB).getApp(fixture.ownerId, fixture.slug);
   const targeted =
-    row.targets === "whole_service" ? null : await tokenFor(fixture.ownerId, fixture.tokens[row.targets].id);
+    row.targets === "whole_app" ? null : await tokenFor(fixture.ownerId, fixture.tokens[row.targets].id);
   return {
-    serviceRow: service === null ? "gone" : "present",
-    archived: service?.archived ?? false,
+    appRow: app === null ? "gone" : "present",
+    archived: app?.archived ?? false,
     tokenRevoked: targeted?.revokedAt != null,
   };
 }
@@ -716,7 +716,7 @@ async function snapshotD1(fixture: SeverFixture, row: SeverRow): Promise<Record<
 /** The same vocabulary, as the row asserts it. */
 function expectedD1(row: SeverRow): Record<string, unknown> {
   return {
-    serviceRow: row.d1AtClose === "rows_gone" ? "gone" : "present",
+    appRow: row.d1AtClose === "rows_gone" ? "gone" : "present",
     archived: row.d1AtClose === "archived_flag_set",
     tokenRevoked: row.d1AtClose === "revoked_flag_set",
   };
@@ -725,11 +725,11 @@ function expectedD1(row: SeverRow): Record<string, unknown> {
 // ── shared plumbing ───────────────────────────────────────────────────────────────────
 
 const seeded: SeededNamespace[] = [];
-const opened: FakeService[] = [];
+const opened: FakeApp[] = [];
 
 afterEach(async () => {
   // Sockets AND storage outlive a file in this project, so both are given back here.
-  for (const service of opened.splice(0)) await service.close();
+  for (const app of opened.splice(0)) await app.close();
   for (const namespace of seeded.splice(0)) await namespace.teardown();
 });
 
@@ -740,10 +740,10 @@ const CACHED_TOOL: Tool = {
   inputSchema: { type: "object", properties: { q: { type: "string" } } },
 };
 
-/** The fixture's service row, as the gateway would hand it to a backend. */
-async function serviceRow(fixture: SeverFixture): Promise<Service> {
-  const row = await new Registry(env.DB).getService(fixture.ownerId, fixture.slug);
-  if (row === null) throw new Error("the fixture's service vanished");
+/** The fixture's app row, as the gateway would hand it to a backend. */
+async function appRow(fixture: SeverFixture): Promise<App> {
+  const row = await new Registry(env.DB).getApp(fixture.ownerId, fixture.slug);
+  if (row === null) throw new Error("the fixture's app vanished");
   return row;
 }
 
@@ -764,14 +764,14 @@ describe("§6 the upgrade matrix", () => {
       // nothing until the same token, live, is shown reaching 101.
       const differences =
         (row.credential === (twin as UpgradeOutcomeRow).credential ? 0 : 1) +
-        (row.service === (twin as UpgradeOutcomeRow).service ? 0 : 1);
+        (row.app === (twin as UpgradeOutcomeRow).app ? 0 : 1);
       expect(differences, `"${row.name}" differs from its twin in more than one column`).toBe(1);
     }
   });
 
   it("2. §6 · 403 means exactly archived: over the whole table, the archived rows are the only 403s — a totality check on the oracle itself, so a new refusal can't quietly borrow the archived code", () => {
     for (const row of upgradeRows) {
-      expect(row.status === 403, `"${row.name}"`).toBe(row.service === "archived");
+      expect(row.status === 403, `"${row.name}"`).toBe(row.app === "archived");
     }
     expect(upgradeRows.some((row) => row.status === 403)).toBe(true);
   });
@@ -783,9 +783,9 @@ describe("§6 the upgrade matrix", () => {
       expect(row.accepted, `"${row.name}"`).toBe(row.status === 101);
     }
     const fixture = await seedUpgradeFixture(upgradeRows[0]);
-    expect(await liveSockets(fixture.serviceId)).toBe(0);
+    expect(await liveSockets(fixture.appId)).toBe(0);
     await dial(fixture, fixture.tokens.live.token);
-    expect(await liveSockets(fixture.serviceId)).toBe(1);
+    expect(await liveSockets(fixture.appId)).toBe(1);
   });
 
   it("4. §6 · an unarchive heals with no bot involvement: the same credential refused 403 is accepted 101 once the flag clears (the allow-twin of the 403 rows)", async () => {
@@ -793,7 +793,7 @@ describe("§6 the upgrade matrix", () => {
     const fixture = await seedUpgradeFixture(archivedRow);
     const token = credentialFor(archivedRow, fixture);
     expect((await dial(fixture, token)).status).toBe(403);
-    await new Registry(env.DB).unarchiveService(fixture.serviceId);
+    await new Registry(env.DB).unarchiveApp(fixture.appId);
     expect((await dial(fixture, token)).status).toBe(101);
   });
 });
@@ -817,152 +817,152 @@ describe("§6/§8 severing a live connection", () => {
     }
   });
 
-  it("6. §8 · token_revoke closes only the socket that token opened; a socket opened with the service's other live token stays up and still forwards", async () => {
+  it("6. §8 · token_revoke closes only the socket that token opened; a socket opened with the app's other live token stays up and still forwards", async () => {
     const fixture = await seedSeverFixture();
-    const service = await open(fixture, { token: fixture.tokens.token_b.token });
-    expect(await service.registered).toEqual({ ok: true });
+    const app = await open(fixture, { token: fixture.tokens.token_b.token });
+    expect(await app.registered).toEqual({ ok: true });
     await ops.token_revoke.handler(fixture.ownerId, { id: fixture.tokens.token_a.id });
-    expect(await stillOpen(service)).toBe(true);
-    expect(await status(fixture.serviceId)).toBe("online");
+    expect(await stillOpen(app)).toBe(true);
+    expect(await status(fixture.appId)).toBe("online");
     // Still FORWARDS, not merely still open: a socket the hub would refuse to use is not a
     // surviving connection.
     const answer = await tunnelBackend.call(
-      await serviceRow(fixture),
+      await appRow(fixture),
       { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search" } },
       backendCtx(),
     );
     expect(answer.error).toBeUndefined();
-    expect(service.callCount("search")).toBe(1);
+    expect(app.callCount("search")).toBe(1);
   });
 
-  it("7. §6 · sever against an offline service is a no-op and never throws", async () => {
+  it("7. §6 · sever against an offline app is a no-op and never throws", async () => {
     const fixture = await seedSeverFixture();
     // Never connected at all: the DO has not even been woken.
     await expect(ops.token_revoke.handler(fixture.ownerId, { id: fixture.tokens.token_a.id })).resolves.toBeDefined();
-    await expect(ops.service_archive.handler(fixture.ownerId, { slug: fixture.slug })).resolves.toBeDefined();
-    expect(await status(fixture.serviceId)).toBe("offline");
+    await expect(ops.app_archive.handler(fixture.ownerId, { slug: fixture.slug })).resolves.toBeDefined();
+    expect(await status(fixture.appId)).toBe("offline");
   });
 
   it("8. §6 · in-flight consumers are failed fast when the socket goes: a call awaiting a response gets -32000 at the close, not at limits.CALL_TIMEOUT_MS", async () => {
     const fixture = await seedSeverFixture();
-    const service = await open(fixture, { behavior: { mode: "hang" } });
-    expect(await service.registered).toEqual({ ok: true });
-    const row = await serviceRow(fixture);
+    const app = await open(fixture, { behavior: { mode: "hang" } });
+    expect(await app.registered).toEqual({ ok: true });
+    const row = await appRow(fixture);
     const call = tunnelBackend.call(
       row,
       { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search" } },
       backendCtx(),
     );
-    expect(await waitFor(() => service.callCount("search") === 1)).toBe(true);
+    expect(await waitFor(() => app.callCount("search") === 1)).toBe(true);
     const startedAt = Date.now();
-    await service.close();
+    await app.close();
     await expect(call).rejects.toMatchObject({ code: -32000 });
     expect(Date.now() - startedAt).toBeLessThan(CALL_TIMEOUT_MS);
   });
 });
 
 describe("§15 ordering, observed live", () => {
-  it("9. §15 · at the moment the client observes 4001, D1 already has no service row — the cascade is D1-first, so a racing re-register finds nothing", async () => {
+  it("9. §15 · at the moment the client observes 4001, D1 already has no app row — the cascade is D1-first, so a racing re-register finds nothing", async () => {
     const fixture = await seedSeverFixture();
-    const service = await open(fixture, {});
-    expect(await service.registered).toEqual({ ok: true });
-    const atClose = service.closed.then(() =>
-      new Registry(env.DB).getService(fixture.ownerId, fixture.slug),
+    const app = await open(fixture, {});
+    expect(await app.registered).toEqual({ ok: true });
+    const atClose = app.closed.then(() =>
+      new Registry(env.DB).getApp(fixture.ownerId, fixture.slug),
     );
-    await ops.service_delete.handler(fixture.ownerId, { slug: fixture.slug });
-    expect((await service.closed).code).toBe(CLOSE_REVOKED);
+    await ops.app_delete.handler(fixture.ownerId, { slug: fixture.slug });
+    expect((await app.closed).code).toBe(CLOSE_REVOKED);
     expect(await atClose, "the row was still there when the client saw 4001").toBeNull();
   });
 
   it("10. §6 · at the moment the client observes 4002, the archived flag is already set — a reconnect racing the close can only be refused 403", async () => {
     const fixture = await seedSeverFixture();
-    const service = await open(fixture, {});
-    expect(await service.registered).toEqual({ ok: true });
-    const atClose = service.closed.then(() =>
-      new Registry(env.DB).getService(fixture.ownerId, fixture.slug),
+    const app = await open(fixture, {});
+    expect(await app.registered).toEqual({ ok: true });
+    const atClose = app.closed.then(() =>
+      new Registry(env.DB).getApp(fixture.ownerId, fixture.slug),
     );
-    await ops.service_archive.handler(fixture.ownerId, { slug: fixture.slug });
-    expect((await service.closed).code).toBe(CLOSE_ARCHIVED);
+    await ops.app_archive.handler(fixture.ownerId, { slug: fixture.slug });
+    expect((await app.closed).code).toBe(CLOSE_ARCHIVED);
     expect((await atClose)?.archived).toBe(true);
   });
 
-  it("11. §6 · a re-register arriving after the row is gone closes 4003 instead of resurrecting the service (twin of case 9's ordering)", async () => {
+  it("11. §6 · a re-register arriving after the row is gone closes 4003 instead of resurrecting the app (twin of case 9's ordering)", async () => {
     const fixture = await seedSeverFixture();
     // The racing reconnect: accepted while the row existed, registering after it is gone.
     const racing = await open(fixture, { skipRegister: true });
     // The cascade's D1 HALF alone, which is the half this race is against — the full op
     // would also sever this socket (the sever table pins that), and a socket closed 4001
     // could never deliver the registration the row is about.
-    await new Registry(env.DB).deleteService(fixture.serviceId);
+    await new Registry(env.DB).deleteApp(fixture.appId);
     await racing.sendRegister();
     expect((await racing.closed).code).toBe(4003);
-    expect(await new Registry(env.DB).getService(fixture.ownerId, fixture.slug)).toBeNull();
+    expect(await new Registry(env.DB).getApp(fixture.ownerId, fixture.slug)).toBeNull();
   });
 
   it("12. §6 · a re-register arriving after an archive is refused at the upgrade, never at registration (twin of case 10)", async () => {
     const fixture = await seedSeverFixture();
     const first = await open(fixture, {});
     expect(await first.registered).toEqual({ ok: true });
-    await ops.service_archive.handler(fixture.ownerId, { slug: fixture.slug });
+    await ops.app_archive.handler(fixture.ownerId, { slug: fixture.slug });
     expect((await first.closed).code).toBe(CLOSE_ARCHIVED);
     await expect(
-      connectFakeService({ origin: fixture.origin, token: fixture.tokens.token_a.token }),
+      connectFakeApp({ origin: fixture.origin, token: fixture.tokens.token_a.token }),
     ).rejects.toMatchObject({ status: 403 });
   });
 });
 
 describe("§6 catalog and wipe", () => {
-  it("13. §6 · the cached catalog survives an ordinary disconnect: tools/list still serves it while the service is offline — deploy-induced flapping never churns an agent's tool list", async () => {
+  it("13. §6 · the cached catalog survives an ordinary disconnect: tools/list still serves it while the app is offline — deploy-induced flapping never churns an agent's tool list", async () => {
     const fixture = await seedSeverFixture();
-    const service = await open(fixture, {});
-    expect(await waitFor(() => service.lists.length > 0)).toBe(true);
-    await service.close();
-    await untilStatus(fixture.serviceId, "offline");
-    expect(await tunnelBackend.listTools(await serviceRow(fixture), backendCtx())).toEqual([CACHED_TOOL]);
+    const app = await open(fixture, {});
+    expect(await waitFor(() => app.lists.length > 0)).toBe(true);
+    await app.close();
+    await untilStatus(fixture.appId, "offline");
+    expect(await tunnelBackend.listTools(await appRow(fixture), backendCtx())).toEqual([CACHED_TOOL]);
   });
 
-  it("14. §6 · archival keeps the catalog: unarchive restores a service that lists exactly what it listed before (the allow-twin of case 15)", async () => {
+  it("14. §6 · archival keeps the catalog: unarchive restores an app that lists exactly what it listed before (the allow-twin of case 15)", async () => {
     const fixture = await seedSeverFixture();
-    const service = await open(fixture, {});
-    expect(await waitFor(() => service.lists.length > 0)).toBe(true);
-    const before = await tunnelBackend.listTools(await serviceRow(fixture), backendCtx());
-    await ops.service_archive.handler(fixture.ownerId, { slug: fixture.slug });
-    expect((await service.closed).code).toBe(CLOSE_ARCHIVED);
-    await new Registry(env.DB).unarchiveService(fixture.serviceId);
-    expect(await tunnelBackend.listTools(await serviceRow(fixture), backendCtx())).toEqual(before);
+    const app = await open(fixture, {});
+    expect(await waitFor(() => app.lists.length > 0)).toBe(true);
+    const before = await tunnelBackend.listTools(await appRow(fixture), backendCtx());
+    await ops.app_archive.handler(fixture.ownerId, { slug: fixture.slug });
+    expect((await app.closed).code).toBe(CLOSE_ARCHIVED);
+    await new Registry(env.DB).unarchiveApp(fixture.appId);
+    expect(await tunnelBackend.listTools(await appRow(fixture), backendCtx())).toEqual(before);
   });
 
   it("15. §6 · wipe() returns the DO to never-connected: listTools is empty afterwards", async () => {
     const fixture = await seedSeverFixture();
-    const service = await open(fixture, {});
-    expect(await waitFor(() => service.lists.length > 0)).toBe(true);
-    expect(await connectionStub(fixture.serviceId).listTools()).toEqual([CACHED_TOOL]);
-    await wipe(fixture.serviceId);
-    expect(await connectionStub(fixture.serviceId).listTools()).toEqual([]);
+    const app = await open(fixture, {});
+    expect(await waitFor(() => app.lists.length > 0)).toBe(true);
+    expect(await connectionStub(fixture.appId).listTools()).toEqual([CACHED_TOOL]);
+    await wipe(fixture.appId);
+    expect(await connectionStub(fixture.appId).listTools()).toEqual([]);
   });
 
   it("16. §6 · wipe() is idempotent, and safe against a DO that was never woken", async () => {
     const fixture = await seedSeverFixture();
-    await wipe(fixture.serviceId);
-    await wipe(fixture.serviceId);
-    expect(await connectionStub(fixture.serviceId).listTools()).toEqual([]);
+    await wipe(fixture.appId);
+    await wipe(fixture.appId);
+    expect(await connectionStub(fixture.appId).listTools()).toEqual([]);
   });
 
   it("17. §6 · wipe() leaves a live socket alone — severing first is admin's ordering, not the DO's business", async () => {
     const fixture = await seedSeverFixture();
-    const service = await open(fixture, {});
-    expect(await waitFor(() => service.lists.length > 0)).toBe(true);
-    await wipe(fixture.serviceId);
-    expect(await stillOpen(service)).toBe(true);
-    expect(await status(fixture.serviceId)).toBe("online");
+    const app = await open(fixture, {});
+    expect(await waitFor(() => app.lists.length > 0)).toBe(true);
+    await wipe(fixture.appId);
+    expect(await stillOpen(app)).toBe(true);
+    expect(await status(fixture.appId)).toBe("online");
   });
 
   it("18. §6 · status() reads offline for an accepted-but-unregistered socket and online only after hub/register — the twin pair the approval gate's availability-first refusal depends on", async () => {
     const fixture = await seedSeverFixture();
-    const service = await open(fixture, { skipRegister: true });
-    expect(await status(fixture.serviceId)).toBe("offline");
-    await service.sendRegister();
-    expect(await service.registered).toEqual({ ok: true });
-    expect(await status(fixture.serviceId)).toBe("online");
+    const app = await open(fixture, { skipRegister: true });
+    expect(await status(fixture.appId)).toBe("offline");
+    await app.sendRegister();
+    expect(await app.registered).toEqual({ ok: true });
+    expect(await status(fixture.appId)).toBe("online");
   });
 });

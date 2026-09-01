@@ -41,7 +41,7 @@ import { formatPrincipal, TOKEN_PREFIX } from "./principal";
 import type { Principal } from "./principal";
 import {
   DEVICE_CODE_TTL_MS,
-  SERVICE_ACCOUNT_TOKEN_TTL_MS,
+  AGENT_TOKEN_TTL_MS,
   TOKEN_LAST_USED_STAMP_MS,
 } from "./limits";
 
@@ -162,7 +162,7 @@ function buildAuth() {
  * The resolved caller identity that every downstream decision keys on — PRODUCED by
  * resolvePrincipal here, plus §19's one delegated producer: oauth.ts's binding leg, which
  * resolveCredential routes every JWT-shaped bearer through and which yields only
- * `service_account` principals (never a user). The type and its canonical string live in
+ * `agent` principals (never a user). The type and its canonical string live in
  * principal.ts, a leaf, so a module that only has to name a caller does not inherit
  * better-auth and `cloudflare:workers`; both are re-exported here because this is still
  * where a principal enters the pipeline.
@@ -171,16 +171,16 @@ export type { Principal };
 export { formatPrincipal };
 
 /**
- * The two machine-credential kinds in the token table. `service_account` keys
- * (`pmcp_sa_`) authenticate consumers within grants; `service` keys (`pmcp_svc_`)
- * authenticate a tunneled service's reverse connection and nothing else. Kind is
+ * The two machine-credential kinds in the token table. `agent` keys
+ * (`pmcp_agt_`) authenticate consumers within grants; `app` keys (`pmcp_app_`)
+ * authenticate a tunneled app's reverse connection and nothing else. Kind is
  * checked as a column, never inferred from the prefix alone.
  */
-export type TokenKind = "service_account" | "service";
+export type TokenKind = "agent" | "app";
 
 /**
  * One row of a token listing — display data only, no secret material beyond the
- * ~12-char `prefix`. `refSlug` names the service/account the token is bound to (the
+ * ~12-char `prefix`. `refSlug` names the app/settings the token is bound to (the
  * binding itself is the opaque `refId`). Timestamps are epoch milliseconds;
  * `expiresAt: null` means never expires, `lastUsedAt` is coarse (advanced at most
  * hourly — a rotation signal, not a request log), `revokedAt: null` means live.
@@ -202,9 +202,9 @@ export type TokenInfo = {
  * in the URL's namespace — the whole §7-step-1 matrix in one call. Bearer-only:
  * session cookies are never consulted (that single rule removes the browser-CSRF
  * surface) and query-string tokens are rejected. Resolution dispatches on prefix:
- * `pmcp_sa_` → token lookup (explicit kind column check; unrevoked, unexpired, live
- * account row) → service_account; `pmcp_svc_` → always 401, never a session
- * fallthrough (a service credential means nothing here); anything else → better-auth
+ * `pmcp_agt_` → token lookup (explicit kind column check; unrevoked, unexpired, live
+ * agent row) → agent; `pmcp_app_` → always 401, never a session
+ * fallthrough (an app credential means nothing here); anything else → better-auth
  * session → user. Failures throw a Response: 401 + `WWW-Authenticate: Bearer` when
  * no valid principal resolves — identical whether or not `<user>` exists — and 404
  * when a *resolved* principal names another user's namespace or a nonexistent one,
@@ -219,7 +219,7 @@ export type TokenInfo = {
  * twin. Production callers omit it.
  */
 export async function resolvePrincipal(req: Request, now?: () => number): Promise<Principal> {
-  // deps: better-auth · oauth.resolveOAuthPrincipal · D1 `token` · D1 `service_account` · D1 `user` · crypto.subtle
+  // deps: better-auth · oauth.resolveOAuthPrincipal · D1 `token` · D1 `agent` · D1 `user` · crypto.subtle
   // Credential FIRST, namespace second — that order IS the anti-enumeration rule: an
   // unauthenticated probe never reaches a lookup that could answer differently for a
   // username that exists, so its 401 is the same 401 either way. The namespace is read once,
@@ -253,16 +253,16 @@ async function resolveCredential(
 ): Promise<Principal | null> {
   const presented = bearerToken(req);
   if (presented === null) return null;
-  // A service credential means nothing on a consumer surface, and — the mutation this
+  // An app credential means nothing on a consumer surface, and — the mutation this
   // guards against — a `pmcp_`-prefixed token whose lookup MISSES must not fall through
   // to the session lookup below either. Both prefixes answer here, whatever the row says.
-  if (presented.startsWith(TOKEN_PREFIX.service)) return null;
-  if (presented.startsWith(TOKEN_PREFIX.service_account)) {
-    return serviceAccountFor(presented, now);
+  if (presented.startsWith(TOKEN_PREFIX.app)) return null;
+  if (presented.startsWith(TOKEN_PREFIX.agent)) {
+    return agentFor(presented, now);
   }
   // §19.6: a JWT-shaped bearer is a credential regime of its own — answered by the OAuth
   // leg ALONE, and that leg is TERMINAL. Whatever it fails on (bad signature, wrong issuer
-  // or audience, expired, missing `mcp` scope, no binding, revoked, deleted account), the
+  // or audience, expired, missing `mcp` scope, no binding, revoked, deleted agent), the
   // answer is `null` and control NEVER reaches the session lookup below — a fall-through
   // would promote a refused token to the OWNER, the exact §18-decision-23 inversion §19.6
   // step 3 forbids. Fail closed by STRUCTURE: every OAuth outcome returns from this branch.
@@ -290,12 +290,12 @@ function isJwtShaped(bearer: string): boolean {
 const JWT_SEGMENT = /^[A-Za-z0-9_-]+$/;
 
 /**
- * The `pmcp_sa_` leg: the token row must be of kind `service_account` BY COLUMN,
- * unrevoked and unexpired, and its `ref_id` must still resolve to a live account row
- * (§5 gives that reference no FK, so a deleted account leaves the token dangling —
+ * The `pmcp_agt_` leg: the token row must be of kind `agent` BY COLUMN,
+ * unrevoked and unexpired, and its `ref_id` must still resolve to a live agent row
+ * (§5 gives that reference no FK, so a deleted agent leaves the token dangling —
  * a live credential for nobody, which is nobody).
  */
-async function serviceAccountFor(presented: string, now: () => number): Promise<Principal | null> {
+async function agentFor(presented: string, now: () => number): Promise<Principal | null> {
   const row = await db()
     .prepare(
       `SELECT "id", "kind", "ref_id", "expires_at", "last_used_at", "revoked_at"
@@ -303,16 +303,16 @@ async function serviceAccountFor(presented: string, now: () => number): Promise<
     )
     .bind(await hashToken(presented))
     .first<TokenRow>();
-  if (row === null || row.kind !== "service_account" || row.revoked_at != null) return null;
+  if (row === null || row.kind !== "agent" || row.revoked_at != null) return null;
   const at = now();
   if (row.expires_at != null && row.expires_at <= at) return null;
-  const account = await db()
-    .prepare(`SELECT "id", "owner_id", "slug" FROM service_account WHERE id = ?`)
+  const agent = await db()
+    .prepare(`SELECT "id", "owner_id", "slug" FROM agent WHERE id = ?`)
     .bind(row.ref_id)
     .first<{ id: string; owner_id: string; slug: string }>();
-  if (account === null) return null;
+  if (agent === null) return null;
   await stampLastUsed(row, at);
-  return { kind: "service_account", accountId: account.id, ownerId: account.owner_id, slug: account.slug };
+  return { kind: "agent", agentId: agent.id, ownerId: agent.owner_id, slug: agent.slug };
 }
 
 /**
@@ -390,7 +390,7 @@ function challengeFor(namespace?: string): string {
 }
 
 /**
- * The hub's ONE 404: served for a foreign or absent namespace, for a service a caller
+ * The hub's ONE 404: served for a foreign or absent namespace, for an app a caller
  * holds no grants on, for the bootstrap route while its secret is unset — and by the
  * composition root for any unrouted path. Sharing the builder is what makes
  * "indistinguishable from route-not-found" true byte for byte rather than by intent.
@@ -403,8 +403,8 @@ export function anonymousNotFound(): Response {
 }
 
 /**
- * Validates the `pmcp_svc_` bearer on the /connect WebSocket upgrade — the only
- * surface where a service token means anything. Returns the token's bound service id
+ * Validates the `pmcp_app_` bearer on the /connect WebSocket upgrade — the only
+ * surface where an app token means anything. Returns the token's bound app id
  * (the DO addressing key) and the token ROW's id — §8's `onlyIfTokenId` rule needs the
  * latter, and answering it here is what keeps the plaintext, and the hashing scheme that
  * finds the row, from having a second custody site outside this module (§15). Null for
@@ -415,20 +415,20 @@ export function anonymousNotFound(): Response {
  * expires_at until the next reconnect (revocation is the immediate path, and
  * severing a live socket on revoke is the admin op's cascade, never this
  * function's). Row-level verdicts stay with the upgrade handler, which fetches the
- * service anyway: row gone or kind proxy → 401, archived → 403. Success coarsely
+ * app anyway: row gone or kind proxy → 401, archived → 403. Success coarsely
  * stamps last_used_at. `now` is the injected clock (see resolvePrincipal);
  * production callers omit it.
  */
-export async function resolveServiceToken(
+export async function resolveAppToken(
   req: Request,
   now: () => number = Date.now,
-): Promise<{ serviceId: string; tokenId: string } | null> {
+): Promise<{ appId: string; tokenId: string } | null> {
   // deps: D1 `token` · crypto.subtle
   // One `return null` vocabulary and no thrown error: nothing below distinguishes which
   // check failed, so the upgrade's 401 cannot either. The query-string case needs no
   // clause of its own — the header is the only place a credential is read from.
   const presented = bearerToken(req);
-  if (presented === null || !presented.startsWith(TOKEN_PREFIX.service)) return null;
+  if (presented === null || !presented.startsWith(TOKEN_PREFIX.app)) return null;
   const row = await db()
     .prepare(
       `SELECT "id", "kind", "ref_id", "expires_at", "last_used_at", "revoked_at"
@@ -438,12 +438,12 @@ export async function resolveServiceToken(
     .first<TokenRow>();
   if (row === null) return null;
   // kind from the COLUMN, never the prefix (§6): the two can disagree.
-  if (row.kind !== "service") return null;
+  if (row.kind !== "app") return null;
   if (row.revoked_at != null) return null;
   const at = now();
   if (row.expires_at != null && row.expires_at <= at) return null;
   await stampLastUsed(row, at);
-  return { serviceId: row.ref_id, tokenId: row.id };
+  return { appId: row.ref_id, tokenId: row.id };
 }
 
 /** The `token` columns every resolve reads — snake_case, as the table spells them. */
@@ -516,8 +516,8 @@ async function stampLastUsed(row: Pick<TokenRow, "id" | "last_used_at">, at: num
 
 /**
  * The ownership test both listTokens and revokeToken key on: `token.ref_id` has no
- * foreign key (§5), so a token belongs to a namespace only through the service or
- * service-account row its kind names. A token whose referent is gone belongs to nobody
+ * foreign key (§5), so a token belongs to a namespace only through the app or
+ * agent row its kind names. A token whose referent is gone belongs to nobody
  * and appears nowhere — which is also why deleteTokensFor exists.
  *
  * ONE placeholder, deliberately: the fragment's internals are not caller knowledge, so
@@ -526,11 +526,11 @@ async function stampLastUsed(row: Pick<TokenRow, "id" | "last_used_at">, at: num
  * re-pairing of somebody else's positional binds.
  */
 const OWNED_BY = `? IN (
-    SELECT s.owner_id FROM service s
-     WHERE token."kind" = 'service' AND s.id = token."ref_id"
+    SELECT s.owner_id FROM app s
+     WHERE token."kind" = 'app' AND s.id = token."ref_id"
     UNION ALL
-    SELECT a.owner_id FROM service_account a
-     WHERE token."kind" = 'service_account' AND a.id = token."ref_id")`;
+    SELECT a.owner_id FROM agent a
+     WHERE token."kind" = 'agent' AND a.id = token."ref_id")`;
 
 /**
  * A resolved cookie session: the signed-in owner plus the session's stable
@@ -544,13 +544,13 @@ export type OwnerSession = {
 };
 
 /**
- * The gate on every cookie-session web surface (/services, /approvals, /audit,
- * /account, the upstream-OAuth callback). Resolves the session cookie to the
+ * The gate on every cookie-session web surface (/apps, /approvals, /audit,
+ * /settings, the upstream-OAuth callback). Resolves the session cookie to the
  * signed-in user; on failure throws a Response that sends the browser through
  * /login. Two guards ride along: a session minted by the device flow (bearer-
  * sourced) never qualifies, even replayed as a cookie — a stolen CLI token must not
  * reach credential management and become persistent takeover — and with
- * `recent: true` (the /account routes) the session must also carry recent
+ * `recent: true` (the /settings routes) the session must also carry recent
  * authentication or the thrown Response forces a fresh sign-in. Never reads
  * Authorization headers.
  */
@@ -607,10 +607,10 @@ function loginRedirect(req: Request): Response {
  * Mints a credential and returns its plaintext exactly once — never recoverable
  * afterwards, through any surface.
  * `expiresIn` is seconds; `"never"` disables expiry. Defaults differ by kind and are
- * the point: service-account tokens 90 days (they get pasted into agent configs),
- * service tokens no expiry (bots on home servers must not silently die; revoke on
+ * the point: agent tokens 90 days (they get pasted into agent configs),
+ * app tokens no expiry (bots on home servers must not silently die; revoke on
  * compromise). Trusts `refId`: resolving slugs, refusing the reserved `pmcp` slug,
- * and rejecting service tokens on proxied services are the admin op's validations.
+ * and rejecting app tokens on proxied apps are the admin op's validations.
  * The returned `id` is the handle for revokeToken and the row listTokens shows.
  * `now` is the injected clock stamping created_at/expires_at (see
  * resolvePrincipal) — issuing at a fake t0 and resolving past t0+expiry is how the
@@ -660,18 +660,18 @@ function expiryFor(
 ): number | null {
   if (expiresIn === "never") return null;
   if (expiresIn !== undefined) return createdAt + expiresIn * 1000;
-  return kind === "service_account" ? createdAt + SERVICE_ACCOUNT_TOKEN_TTL_MS : null;
+  return kind === "agent" ? createdAt + AGENT_TOKEN_TTL_MS : null;
 }
 
 /**
  * Every token in the namespace, newest first — live, expired, and revoked rows
  * alike, because rotation state is what the listing is for (prefix plus coarse
  * lastUsedAt shows which token a bot is actually on). Ownership is resolved through
- * each token's referenced service/account row; tokens whose referent is gone are
+ * each token's referenced app/settings row; tokens whose referent is gone are
  * already deleted (deleteTokensFor) and never appear.
  */
 export async function listTokens(ownerId: string): Promise<TokenInfo[]> {
-  // deps: D1 `token` · D1 `service` · D1 `service_account`
+  // deps: D1 `token` · D1 `app` · D1 `agent`
   const { results } = await db()
     .prepare(`${TOKEN_READ} ORDER BY token."created_at" DESC`)
     .bind(ownerId)
@@ -688,7 +688,7 @@ export async function listTokens(ownerId: string): Promise<TokenInfo[]> {
  * the whole namespace to re-derive them.
  */
 export async function tokenFor(ownerId: string, id: string): Promise<TokenInfo | null> {
-  // deps: D1 `token` · D1 `service` · D1 `service_account`
+  // deps: D1 `token` · D1 `app` · D1 `agent`
   const row = await db()
     .prepare(`${TOKEN_READ} AND token."id" = ?`)
     .bind(ownerId, id)
@@ -697,7 +697,7 @@ export async function tokenFor(ownerId: string, id: string): Promise<TokenInfo |
 }
 
 /**
- * How many token rows are bound to this service or account id — what the deleting
+ * How many token rows are bound to this app or agent id — what the deleting
  * cascades report about what they removed. Keyed by REFERENT, exactly like
  * deleteTokensFor, so "how many will go" and "which go" cannot answer differently.
  */
@@ -718,11 +718,10 @@ export async function countTokensFor(refId: string): Promise<number> {
  */
 const TOKEN_READ = `SELECT token."id", token."kind", token."ref_id", token."prefix", token."created_at",
               token."expires_at", token."last_used_at", token."revoked_at",
-              COALESCE(svc.slug, acct.slug) AS ref_slug
+              COALESCE(app.slug, agent.slug) AS ref_slug
          FROM token
-         LEFT JOIN service svc ON token."kind" = 'service' AND svc.id = token."ref_id"
-         LEFT JOIN service_account acct
-                ON token."kind" = 'service_account' AND acct.id = token."ref_id"
+         LEFT JOIN app ON token."kind" = 'app' AND app.id = token."ref_id"
+         LEFT JOIN agent ON token."kind" = 'agent' AND agent.id = token."ref_id"
         WHERE ${OWNED_BY}`;
 
 type TokenListRow = TokenRow & { prefix: string; created_at: number; ref_slug: string };
@@ -746,11 +745,11 @@ function toTokenInfo(row: TokenListRow): TokenInfo {
  * carrying it gets 401. Returns false when `id` names no token inside `ownerId`'s
  * namespace (nonexistent and foreign are one answer, so the op layer shows a uniform
  * not-found). Idempotent: revoking a revoked token returns true and changes nothing.
- * Never touches live sockets — closing a tunneled service's connection when its
+ * Never touches live sockets — closing a tunneled app's connection when its
  * token is revoked (close 4001) is the admin op's cascade.
  */
 export async function revokeToken(ownerId: string, id: string): Promise<boolean> {
-  // deps: D1 `token` · D1 `service` · D1 `service_account`
+  // deps: D1 `token` · D1 `app` · D1 `agent`
   // COALESCE keeps the FIRST revocation's instant, so a re-revoke changes nothing while
   // still matching the row — which is exactly the idempotent `true`. A row outside the
   // namespace matches nothing, indistinguishably from one that does not exist.
@@ -763,8 +762,8 @@ export async function revokeToken(ownerId: string, id: string): Promise<boolean>
 }
 
 /**
- * Hard-deletes every token row bound to this service or account id — the
- * service_delete/account_delete/user-delete cascade helper (token.ref_id has no
+ * Hard-deletes every token row bound to this app or agent id — the
+ * app_delete/agent_delete/user-delete cascade helper (token.ref_id has no
  * foreign key; this is its other half). Deletion, not revocation: the rows leave the
  * listings entirely. Keyed by opaque id, so recreating a slug can never resurrect
  * old credentials. Idempotent; zero matching rows is a success.
@@ -821,7 +820,7 @@ export function authRoutes(): unknown {
  * construction, and answers the 403 below.
  *
  * Why a guard at the mount and not at `requireOwnerSession`: that function reads Cookie only
- * and is therefore already right, but it only runs on routes the hub wraps (`/account`,
+ * and is therefore already right, but it only runs on routes the hub wraps (`/settings`,
  * `/login`). better-auth's own endpoints are live on this public mount too, and §4's
  * `bearer()` plugin rewrites any `Authorization` header into a session before better-auth's
  * middleware — so a request straight at the mount routes through no wrapper, and the
@@ -949,7 +948,7 @@ export const AUTH_BASE_PATH = "/api/auth";
  * One call into the mounted better-auth surface from inside the worker, carrying the
  * caller's cookie and nothing else — the same door the browser uses. §4 gives better-auth
  * exactly one custodian, and this is how a non-custodian asks it something: the pages that
- * need an answer (/account's credential state, /device's verify and its approve/deny POST)
+ * need an answer (/settings's credential state, /device's verify and its approve/deny POST)
  * come through here rather than each hand-rolling the mount path, the sub-app cast and the
  * failure policy. A `body` makes it a POST.
  *
@@ -996,7 +995,7 @@ export async function callAuthResponse(
   // better-auth is entitled to see from the browser here — plus ONE header this call states
   // about itself. better-auth refuses a cookie-bearing write that carries no `Origin`
   // (MISSING_OR_NULL_ORIGIN, its CSRF rule for browsers), and that is every call made
-  // through here on a signed-in page: /account's credential writes, /device's approve and
+  // through here on a signed-in page: /settings's credential writes, /device's approve and
   // deny. The origin is the hub's own because the caller IS the hub — this request was
   // built three lines up, on PUBLIC_ORIGIN, out of a form the route already vouched for
   // (web.ts gates each one with either the CSRF token or its own origin rule). Forwarding
@@ -1019,14 +1018,14 @@ export async function callAuthResponse(
 /**
  * GET /api/whoami — the one non-MCP data route the CLI depends on; the response
  * shape `{ principal, namespace }` is the pinned CLI↔server contract (§8). Accepts
- * both consumer credential kinds: a `pmcp_sa_` key resolves to `sa:<slug>` with the
- * owner's username as namespace; a session token to `user:<name>`; `pmcp_svc_` is
+ * both consumer credential kinds: a `pmcp_agt_` key resolves to `agent:<slug>` with the
+ * owner's username as namespace; a session token to `user:<name>`; `pmcp_app_` is
  * always 401; no valid principal → 401 + `WWW-Authenticate: Bearer`. Exists outside
  * MCP because endpoint URLs embed the very username whoami discovers, and because it
- * must resolve service-account keys, which better-auth cannot.
+ * must resolve agent keys, which better-auth cannot.
  */
 export function whoamiRoute(): unknown {
-  // deps: better-auth · D1 `token` · D1 `service_account` · D1 `user` · crypto.subtle
+  // deps: better-auth · D1 `token` · D1 `agent` · D1 `user` · crypto.subtle
   const app = new Hono();
   app.get("/whoami", async (c) => {
     // resolveCredential, not resolvePrincipal: there is no `<user>` in this URL to prove
@@ -1050,9 +1049,9 @@ async function namespaceNameOf(p: Principal): Promise<string> {
     .prepare(`SELECT "username" FROM "user" WHERE "id" = ?`)
     .bind(p.ownerId)
     .first<{ username: string }>();
-  // An account row cannot outlive its owner (§5's cascade), so this is unreachable
+  // An agent row cannot outlive its owner (§5's cascade), so this is unreachable
   // rather than a case: answering "" would be inventing a namespace.
-  if (row === null) throw new Error(`service account ${p.slug} has no owner row`);
+  if (row === null) throw new Error(`agent ${p.slug} has no owner row`);
   return row.username;
 }
 

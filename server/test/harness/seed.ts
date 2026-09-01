@@ -19,7 +19,7 @@
 //
 // NOT THIS MODULE'S BUSINESS: migrations (applyD1Migrations runs once in each workerd
 // project's setup file, strategy §2 — idempotent, so re-runs are safe), the DO's cached
-// catalog (fake-service.ts warms it by registering), and upstream credentials (only
+// catalog (fake-app.ts warms it by registering), and upstream credentials (only
 // upstream.setHeaders / the connect flow may write an envelope, which is the point of
 // upstream-credentials.test.ts).
 //
@@ -31,9 +31,9 @@ import { Registry } from "../../src/registry";
 import type {
   GrantEntry,
   RoleDeclaration,
-  ServiceAccount,
-  ServiceDetail,
-  ServiceKind,
+  Agent,
+  AppDetail,
+  AppKind,
 } from "../../src/registry";
 import type { TokenKind } from "../../src/identity";
 
@@ -44,20 +44,20 @@ type D1Database = unknown;
  * FINDINGS — what building this harness against the skeletons reported back. Each is a
  * question for the owner, not a workaround taken here; the seam stays unbent.
  *
- * 1. A tunneled service's declared roles are reachable ONLY through
+ * 1. A tunneled app's declared roles are reachable ONLY through
  *    `Registry.upsertDeclaredRoles`, which also stamps last-connected — so "a tunneled
- *    service that declares roles and has never connected" is not a seedable state. Any
- *    fixture wanting declared tunnel roles must register a real fake service first
- *    (fake-service.ts), which puts those fixtures in the `tunnel` project even when the
- *    assertion has nothing to do with sockets. ServiceSpec.roles below therefore means
- *    "proxy roles" and is rejected on tunnel kind, matching createService.
+ *    app that declares roles and has never connected" is not a seedable state. Any
+ *    fixture wanting declared tunnel roles must register a real fake app first
+ *    (fake-app.ts), which puts those fixtures in the `tunnel` project even when the
+ *    assertion has nothing to do with sockets. AppSpec.roles below therefore means
+ *    "proxy roles" and is rejected on tunnel kind, matching createApp.
  *
  * 2. RESOLVED 2026-08-25. `identity.issueToken` could not mint an ALREADY-EXPIRED token —
  *    `expiresIn` counts seconds forward and identity read no clock but the global one —
  *    while `auth-matrix.test.ts` needs expired-beside-live to satisfy §9 rule 2 (every
  *    refusal carries its allow-twin). Of the three candidates (a negative `expiresIn`, an
  *    injected clock, dropping the row) the middle one was pinned: `resolvePrincipal`,
- *    `resolveServiceToken` and `issueToken` each take an optional `now?: () => number`,
+ *    `resolveAppToken` and `issueToken` each take an optional `now?: () => number`,
  *    the same seam `ApprovalsConfig.now` already is, omitted by every production caller.
  *    The MECHANISM is therefore: ISSUE at a fake t0 with a short `expiresIn`, then RESOLVE
  *    past that expiry — under the real clock, or under a `now()` moved forward. Nothing
@@ -77,11 +77,11 @@ type D1Database = unknown;
  *    else keeps paying nothing for it (the hash is deliberately slow). `SeededOwner` still
  *    carries no password: the credential is a separate act, not a property of every owner.
  *
- * 4. There is no seam for granting anything on the builtin `pmcp` service, because it has
+ * 4. There is no seam for granting anything on the builtin `pmcp` app, because it has
  *    no row id (registry's PMCP_SLUG comment). The harness cannot even express the
  *    illegal state — the reservation is structural, exactly as §8 claims.
  *
- * 5. `seedOwner` and `resetNamespace` take NO `db`, while seedService/seedAccount/
+ * 5. `seedOwner` and `resetNamespace` take NO `db`, while seedApp/seedAgent/
  *    seedGrants do: identity and admin resolve D1 ambiently through `cloudflare:workers`,
  *    registry takes it explicitly. The asymmetric signature is the honest one — a uniform
  *    `db` on the two builders that discard it would say the owner row and every token land
@@ -89,8 +89,8 @@ type D1Database = unknown;
  *
  * 6. `migrations.test.ts` needs something this module deliberately does NOT export: a
  *    valid COLUMN row per table, overridable field by field, for constraints that must be
- *    exercised as raw writes (a `service.kind` of "websocket" cannot be reached through
- *    createService, which is the point of the constraint). That builder writes no row
+ *    exercised as raw writes (a `app.kind` of "websocket" cannot be reached through
+ *    createApp, which is the point of the constraint). That builder writes no row
  *    either — it returns values the suite binds itself — but its shape is the schema's,
  *    not the domain's, so it belongs beside the table it describes rather than here, where
  *    every export is phrased in registry/identity/admin vocabulary.
@@ -102,29 +102,29 @@ export type SeededOwner = {
   username: string;
 };
 
-/** A seeded service, reduced to what fixtures address it by: the opaque DO key and the slug. */
-export type SeededService = {
+/** A seeded app, reduced to what fixtures address it by: the opaque DO key and the slug. */
+export type SeededApp = {
   id: string;
   slug: string;
-  kind: ServiceKind;
+  kind: AppKind;
 };
 
-/** A seeded service account — `id` is what grants and approvals key on. */
-export type SeededAccount = {
+/** A seeded agent — `id` is what grants and approvals key on. */
+export type SeededAgent = {
   id: string;
   slug: string;
 };
 
 /**
  * A minted credential with its plaintext, which no production read path can ever return
- * again. `refSlug` records what it is bound to so a fixture can say "the news service's
+ * again. `refSlug` records what it is bound to so a fixture can say "the news app's
  * token" without threading ids.
  */
 export type SeededToken = {
   id: string;
   kind: TokenKind;
   refSlug: string;
-  /** The full `pmcp_sa_…` / `pmcp_svc_…` string — present only in this object. */
+  /** The full `pmcp_agt_…` / `pmcp_app_…` string — present only in this object. */
   token: string;
 };
 
@@ -150,43 +150,43 @@ export type TokenSpec = {
 };
 
 /**
- * One service in a namespace spec, in the vocabulary of registry.ServiceDraft plus the
+ * One app in a namespace spec, in the vocabulary of registry.AppDraft plus the
  * two states that are separate primitives there (archived) or a separate module
- * (tokens). Kind-shape rules are NOT re-checked here — createService rejects a proxied
+ * (tokens). Kind-shape rules are NOT re-checked here — createApp rejects a proxied
  * draft without an endpoint and a tunneled draft carrying roles, and a fixture that
  * writes an impossible spec deserves that error rather than a friendlier one from the
  * harness.
  */
-export type ServiceSpec = {
+export type AppSpec = {
   slug: string;
-  kind: ServiceKind;
+  kind: AppKind;
   name?: string;
   description?: string;
   /** proxy kind only — tunnel roles arrive at registration (FINDINGS 1). */
   roles?: RoleDeclaration;
   redact?: Record<string, string[]>;
   redactResults?: Record<string, string[]>;
-  /** absent leaves createService's by-kind default in place (§15) — the point of several rows. */
+  /** absent leaves createApp's by-kind default in place (§15) — the point of several rows. */
   logBodies?: boolean;
   upstreamUrl?: string;
   upstreamAuthMode?: "headers" | "oauth";
   forwardIdentity?: boolean;
-  /** Applied after creation via archiveService — archived is a stage, not a create field. */
+  /** Applied after creation via archiveApp — archived is a stage, not a create field. */
   archived?: boolean;
-  /** `pmcp_svc_` credentials for this service; rejected by token_issue on proxy kind. */
+  /** `pmcp_app_` credentials for this app; rejected by token_issue on proxy kind. */
   tokens?: TokenSpec[];
 };
 
 /**
- * One service account plus the grants it holds, keyed by service slug — the same shape
- * account_list returns inline, so a fixture's "given" reads like the assertion's "when".
+ * One agent plus the grants it holds, keyed by app slug — the same shape
+ * agent_list returns inline, so a fixture's "given" reads like the assertion's "when".
  */
-export type AccountSpec = {
+export type AgentSpec = {
   slug: string;
   name?: string;
   description?: string;
   grants?: Record<string, GrantEntry[]>;
-  /** `pmcp_sa_` credentials for this account. */
+  /** `pmcp_agt_` credentials for this agent. */
   tokens?: TokenSpec[];
 };
 
@@ -197,20 +197,20 @@ export type AccountSpec = {
  */
 export type NamespaceSpec = {
   username?: string;
-  services?: ServiceSpec[];
-  accounts?: AccountSpec[];
+  apps?: AppSpec[];
+  agents?: AgentSpec[];
 };
 
 /**
- * The seeded namespace handle. Services and accounts are keyed by slug and tokens by
+ * The seeded namespace handle. Apps and agents are keyed by slug and tokens by
  * their spec's `as`, so assertions never carry ids around. `teardown` is REQUIRED in the
  * `tunnel` project (shared storage) and merely tidy in `worker` (per-file isolation
  * already discards everything).
  */
 export type SeededNamespace = {
   owner: SeededOwner;
-  services: Record<string, SeededService>;
-  accounts: Record<string, SeededAccount>;
+  apps: Record<string, SeededApp>;
+  agents: Record<string, SeededAgent>;
   tokens: Record<string, SeededToken>;
   teardown(): Promise<void>;
 };
@@ -322,20 +322,20 @@ export async function seedOwnerSession(owner: SeededOwner): Promise<SeededSessio
 }
 
 /**
- * Create one service through `Registry.createService`, then apply the states that are
- * separate primitives: archived via archiveService, proxied declarations via the draft
+ * Create one app through `Registry.createApp`, then apply the states that are
+ * separate primitives: archived via archiveApp, proxied declarations via the draft
  * itself. Returns the row as registry reports it, so a fixture asserting on defaults
  * (logBodies by kind, forwardIdentity false) reads the real resolved value rather than
  * the spec's absence.
  */
-export async function seedService(
+export async function seedApp(
   db: D1Database,
   ownerId: string,
-  spec: ServiceSpec,
-): Promise<ServiceDetail> {
-  // deps: registry.Registry.createService · registry.Registry.archiveService
+  spec: AppSpec,
+): Promise<AppDetail> {
+  // deps: registry.Registry.createApp · registry.Registry.archiveApp
   const registry = new Registry(db);
-  const created = await registry.createService({
+  const created = await registry.createApp({
     ownerId,
     slug: spec.slug,
     name: spec.name ?? spec.slug,
@@ -351,21 +351,21 @@ export async function seedService(
   });
   if (!spec.archived) return created;
   // Archived is a stage, not a create field: re-read so the caller sees the row as registry
-  // reports it AFTER the flag lands, rather than createService's pre-archive answer.
-  await registry.archiveService(created.id);
-  const archived = await registry.getService(ownerId, spec.slug);
-  if (!archived) throw new Error(`seedService: "${spec.slug}" vanished between create and archive`);
+  // reports it AFTER the flag lands, rather than createApp's pre-archive answer.
+  await registry.archiveApp(created.id);
+  const archived = await registry.getApp(ownerId, spec.slug);
+  if (!archived) throw new Error(`seedApp: "${spec.slug}" vanished between create and archive`);
   return archived;
 }
 
-/** Create one service account through `Registry.createAccount`. Born credential-less. */
-export async function seedAccount(
+/** Create one agent through `Registry.createAgent`. Born credential-less. */
+export async function seedAgent(
   db: D1Database,
   ownerId: string,
-  spec: AccountSpec,
-): Promise<ServiceAccount> {
-  // deps: registry.Registry.createAccount
-  return new Registry(db).createAccount({
+  spec: AgentSpec,
+): Promise<Agent> {
+  // deps: registry.Registry.createAgent
+  return new Registry(db).createAgent({
     ownerId,
     slug: spec.slug,
     name: spec.name ?? spec.slug,
@@ -374,19 +374,19 @@ export async function seedAccount(
 }
 
 /**
- * Replace the full grant set for one (account, service) pair through
+ * Replace the full grant set for one (agent, app) pair through
  * `Registry.setGrants`, returning its warnings verbatim. Warnings are RETURNED, never
  * swallowed: a fixture that silently accumulates "role not declared" warnings is a
  * fixture drifting away from the state it claims to establish.
  */
 export async function seedGrants(
   db: D1Database,
-  accountId: string,
-  serviceId: string,
+  agentId: string,
+  appId: string,
   entries: GrantEntry[],
 ): Promise<string[]> {
   // deps: registry.Registry.setGrants
-  return new Registry(db).setGrants(accountId, serviceId, entries);
+  return new Registry(db).setGrants(agentId, appId, entries);
 }
 
 /**
@@ -423,42 +423,42 @@ export async function seedToken(
 }
 
 /**
- * The one call most fixtures make: a whole namespace — owner, services, accounts, grants,
+ * The one call most fixtures make: a whole namespace — owner, apps, agents, grants,
  * credentials — from a single declarative spec, in the order the domain requires
- * (owner → services and accounts → grants → tokens), returning every plaintext and a
+ * (owner → apps and agents → grants → tokens), returning every plaintext and a
  * teardown. Composition only: it adds no state the primitives above cannot each reach.
  */
 export async function seedNamespace(
   db: D1Database,
   spec: NamespaceSpec,
 ): Promise<SeededNamespace> {
-  // deps: seedOwner · seedService · seedAccount · seedGrants · seedToken
+  // deps: seedOwner · seedApp · seedAgent · seedGrants · seedToken
   const owner = await seedOwner(spec.username);
-  const services: Record<string, SeededService> = {};
-  const accounts: Record<string, SeededAccount> = {};
+  const apps: Record<string, SeededApp> = {};
+  const agents: Record<string, SeededAgent> = {};
   const tokens: Record<string, SeededToken> = {};
 
-  for (const service of spec.services ?? []) {
-    const { id, slug, kind } = await seedService(db, owner.userId, service);
-    services[slug] = { id, slug, kind };
+  for (const app of spec.apps ?? []) {
+    const { id, slug, kind } = await seedApp(db, owner.userId, app);
+    apps[slug] = { id, slug, kind };
   }
-  for (const account of spec.accounts ?? []) {
-    const { id, slug } = await seedAccount(db, owner.userId, account);
-    accounts[slug] = { id, slug };
+  for (const agent of spec.agents ?? []) {
+    const { id, slug } = await seedAgent(db, owner.userId, agent);
+    agents[slug] = { id, slug };
   }
 
-  for (const account of spec.accounts ?? []) {
-    for (const [slug, entries] of Object.entries(account.grants ?? {})) {
-      const service = services[slug];
-      if (!service) {
-        throw new Error(`seedNamespace: account "${account.slug}" grants on unseeded service "${slug}"`);
+  for (const agent of spec.agents ?? []) {
+    for (const [slug, entries] of Object.entries(agent.grants ?? {})) {
+      const app = apps[slug];
+      if (!app) {
+        throw new Error(`seedNamespace: agent "${agent.slug}" grants on unseeded app "${slug}"`);
       }
-      const warnings = await seedGrants(db, accounts[account.slug].id, service.id, entries);
-      // Surfaced, never swallowed: warnings are legitimate here (a tunneled service's roles
+      const warnings = await seedGrants(db, agents[agent.slug].id, app.id, entries);
+      // Surfaced, never swallowed: warnings are legitimate here (a tunneled app's roles
       // are undeclared until it first connects — FINDINGS 1), so they print rather than
       // throw, and a fixture drifting from the state it claims is visible in the run log.
       if (warnings.length > 0) {
-        console.warn(`seedNamespace: grants ${account.slug} → ${slug}: ${warnings.join("; ")}`);
+        console.warn(`seedNamespace: grants ${agent.slug} → ${slug}: ${warnings.join("; ")}`);
       }
     }
   }
@@ -469,17 +469,17 @@ export async function seedNamespace(
       tokens[spec.as] = await seedToken(owner.userId, kind, refId, refSlug, spec);
     }
   }
-  for (const service of spec.services ?? []) {
-    await mint("service", services[service.slug].id, service.slug, service.tokens);
+  for (const app of spec.apps ?? []) {
+    await mint("app", apps[app.slug].id, app.slug, app.tokens);
   }
-  for (const account of spec.accounts ?? []) {
-    await mint("service_account", accounts[account.slug].id, account.slug, account.tokens);
+  for (const agent of spec.agents ?? []) {
+    await mint("agent", agents[agent.slug].id, agent.slug, agent.tokens);
   }
 
   return {
     owner,
-    services,
-    accounts,
+    apps,
+    agents,
     tokens,
     teardown: () => resetNamespace(owner.username),
   };
@@ -487,7 +487,7 @@ export async function seedNamespace(
 
 /**
  * Remove a seeded namespace through `admin.deleteUser` — the same teardown §15 pins for
- * real user deletion (per-service cascade, sever, DO wipe, then the row cascade), so the
+ * real user deletion (per-app cascade, sever, DO wipe, then the row cascade), so the
  * `tunnel` project's shared storage is left genuinely clean rather than
  * approximately-clean. Idempotent, like the op it fronts: tearing down twice is not an
  * error, and neither is tearing down a namespace a failing test never finished building.

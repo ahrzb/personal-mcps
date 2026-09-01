@@ -5,12 +5,12 @@
 // availability (-32000) — and that the order is observable, because only the order
 // decides which code a request that fails several checks receives. The regressions that
 // give the table its shape: ungranted + archived answers -32001, never -32002 (an
-// ungranted account must not learn a service is archived); an unknown aggregated prefix
+// ungranted agent must not learn an app is archived); an unknown aggregated prefix
 // and a name with no `_` at all both answer -32001, indistinguishable from
 // not-permitted; the aggregated name splits at the FIRST `_` (slugs contain no
 // underscore, §7); `server/discover` is answered by the hub itself, and every other method
 // is -32601. Plus the 2026-08-25 availability-first
-// decision: a service the hub already knows cannot execute fails -32000 with no pending
+// decision: an app the hub already knows cannot execute fails -32000 with no pending
 // row, no push, and no pass consumed. §7's 2026-08-26 amendment (`initialize` and the
 // `notifications/initialized` behind it) is pinned by two cases BESIDE the table — neither
 // message is ordered against anything the table ranks, and what a client needs from the
@@ -27,9 +27,9 @@
 // D1, no sockets. That bounds the table honestly: the tunnel side is reachable here only
 // in its OFFLINE state (a DO that has never had a socket), which is exactly what the
 // -32000 and availability-first rows need. Rows where a tunneled call must actually reach
-// a live service belong to tunnel/pipeline-tunnel.test.ts; the dispatch-reaching
+// a live app belong to tunnel/pipeline-tunnel.test.ts; the dispatch-reaching
 // allow-twins in THIS table ride the `pmcp` builtin (always available, no fake at all)
-// and a connected proxied service on the fake upstream. See the `backend` column.
+// and a connected proxied app on the fake upstream. See the `backend` column.
 //
 // Not pinned here: authentication in front of the pipeline (auth-matrix.test.ts), the
 // approval machine's internals — dedup, the CAS claim, MRTR settlement, lazy expiry
@@ -37,8 +37,8 @@
 // behind a -32000 (upstream-proxy.test.ts). This table pins WHICH answer, and which stage
 // produced it; the machinery behind each answer is its own file's.
 //
-// deps: harness/seed (owner + one account; one tunneled service never connected, one
-//   proxied service, plus grants in each mode) · harness/fake-upstream
+// deps: harness/seed (owner + one agent; one tunneled app never connected, one
+//   proxied app, plus grants in each mode) · harness/fake-upstream
 //   (miniflare.outboundService) · harness/push-service (one subscribed browser, because
 //   the transport under this table is the real one) · ../../src/index (default.fetch) · ../../src/gateway ·
 //   ../../src/registry · ../../src/approvals · applyD1Migrations (setup) · env.DB
@@ -51,7 +51,7 @@ import { Approvals } from "../../src/approvals";
 import type { JsonRpcResponse, Prompt, Resource, ResourceTemplate } from "../../src/gateway";
 import { AGGREGATED_LIST_DEADLINE_MS, APPROVAL_WINDOW_MS } from "../../src/limits";
 import { PMCP_SLUG, Registry } from "../../src/registry";
-import type { GrantEntry, GrantMode, RoleDeclaration, Service } from "../../src/registry";
+import type { GrantEntry, GrantMode, RoleDeclaration, App } from "../../src/registry";
 import type { Principal } from "../../src/identity";
 import { status } from "../../src/tunnel";
 import { setHeaders } from "../../src/upstream";
@@ -66,7 +66,7 @@ import type { SeededNamespace } from "../harness/seed";
  * The stage that produced a row's answer — the column that turns "the order is right"
  * from an inference into an assertion. `dispatch` means every check passed and the call
  * reached a backend; `hub` means the hub answered the method itself (`server/discover`)
- * or refused the method outright (-32601), before any service was resolved.
+ * or refused the method outright (-32601), before any app was resolved.
  *
  * `filter` is the one stage that can produce a SUCCESS as well as a refusal: on
  * `tools/call` it is -32001, while on `tools/list` an empty pattern set produces an empty
@@ -76,7 +76,7 @@ import type { SeededNamespace } from "../harness/seed";
 export type CheckStage = "hub" | "filter" | "archived" | "approval" | "availability" | "dispatch";
 
 /**
- * The caller's access to the service, exactly as §7 step 2 resolves it. `GrantMode` is
+ * The caller's access to the app, exactly as §7 step 2 resolves it. `GrantMode` is
  * the registry's own vocabulary (grants store `allow` or `approval`, never `deny`);
  * "ungranted" is the unmatched case and "granted-undeclared" is the distinct, normal
  * state where a granted role has vanished from the declaration — it still counts as a
@@ -85,7 +85,7 @@ export type CheckStage = "hub" | "filter" | "archived" | "approval" | "availabil
 export type RowAccess = GrantMode | "ungranted" | "granted-undeclared";
 
 /**
- * Which backend the row's service resolves to, and in what state the hub already KNOWS it
+ * Which backend the row's app resolves to, and in what state the hub already KNOWS it
  * to be — the availability-first input (§7). `tunnel` appears here only as `offline`: a
  * live registered socket cannot exist in this project, and the online rows are
  * tunnel/pipeline-tunnel.test.ts's. `proxy` carries upstream's own status vocabulary, so
@@ -122,7 +122,7 @@ export type OrderOutcome = {
  * green.
  */
 export type OrderEffects = {
-  /** The backend was actually reached (the fake service/upstream counted an invocation). */
+  /** The backend was actually reached (the fake app/upstream counted an invocation). */
   dispatched: boolean;
   /** A fresh `pending` approval row was inserted (dedup means a retry inserts none). */
   pendingCreated: boolean;
@@ -137,7 +137,7 @@ export type OrderEffects = {
  *
  * `toolName` is spelled as the CONSUMER spells it — prefixed on the aggregated endpoint,
  * bare on the scoped one — because the split itself is under test. `pass` is the state of
- * any existing approval row for this exact (account, service, tool, args) binding.
+ * any existing approval row for this exact (agent, app, tool, args) binding.
  * `twin` names the allow row this refusal sits beside (§9 rule 2): for most rows it is
  * the same row with one column flipped, which is precisely what makes the order
  * observable rather than merely asserted.
@@ -154,7 +154,7 @@ export type OrderRow = {
    */
   method: "tools/call" | "tools/list" | "server/discover" | "other";
   toolName: string;
-  principal: "owner" | "account";
+  principal: "owner" | "agent";
   access: RowAccess;
   archived: boolean;
   backend: RowBackend;
@@ -183,9 +183,9 @@ export type OrderRow = {
  * that implementation happens to have.
  */
 export const ORDER_ROWS: readonly OrderRow[] = [
-  // The fixture these rows are written against, named once: a tunneled service `news`
-  // (never connected — so offline, with an empty cached catalog), a proxied service
-  // `notion` on the fake upstream serving `search` and `search_pages`, one account holding
+  // The fixture these rows are written against, named once: a tunneled app `news`
+  // (never connected — so offline, with an empty cached catalog), a proxied app
+  // `notion` on the fake upstream serving `search` and `search_pages`, one agent holding
   // grants in each mode, and the `pmcp` builtin, which needs no fixture at all. `notion`'s
   // availability is a per-row input (the `backend` column carries upstream's own status
   // vocabulary), so one proxied slug serves both the available and the known-unavailable
@@ -198,24 +198,24 @@ export const ORDER_ROWS: readonly OrderRow[] = [
   //   catalog-miss row moved to tunnel/approval-e2e.test.ts (see below) no row's ANSWER
   //   turns on it either; the column stays as the honest record of an input this project
   //   holds constant, not as coverage it claims.
-  // · On hub-answered rows (`stage: "hub"`) no service is resolved at all, so `access`,
+  // · On hub-answered rows (`stage: "hub"`) no app is resolved at all, so `access`,
   //   `archived`, `backend` and `inCatalog` carry no expectation — they are set to the
   //   cheapest neutral values and the row is about `method` alone.
   // · Rows whose `code` is null name THEMSELVES in `twin`, so the runner's §9 rule 2 check
   //   is total over the table without a nullable column.
 
   // ── §7 step 3: the fixed order, filter first ──────────────────────────────────────────
-  // §7 step 3: "**filter first** (`-32001` "tool not permitted" — so an ungranted account
-  // can't even learn a service is archived), then **archived** (`-32002`)". The row is
-  // spelled on the aggregated endpoint deliberately: the scoped answer for a service an
-  // account holds no grants on is 404 (§7 step 2, auth-matrix.test.ts's row), so the
+  // §7 step 3: "**filter first** (`-32001` "tool not permitted" — so an ungranted agent
+  // can't even learn an app is archived), then **archived** (`-32002`)". The row is
+  // spelled on the aggregated endpoint deliberately: the scoped answer for an app an
+  // agent holds no grants on is 404 (§7 step 2, auth-matrix.test.ts's row), so the
   // aggregated shape is where an ungranted call has a JSON-RPC code to be wrong about.
   {
     title: "§7 step 3 · ungranted + archived → -32001, never -32002 (filter runs before archived)",
     endpoint: "aggregated",
     method: "tools/call",
     toolName: "news_get",
-    principal: "account",
+    principal: "agent",
     access: "ungranted",
     archived: true,
     backend: { kind: "tunnel", status: "offline" },
@@ -226,14 +226,14 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
     twin: "§7 step 3 · granted-allow + available → dispatch (the anchor allow-twin of the whole table)",
   },
-  // The same sentence against the LAST check instead of the second: an ungranted account
-  // learns nothing about whether the service is reachable either.
+  // The same sentence against the LAST check instead of the second: an ungranted agent
+  // learns nothing about whether the app is reachable either.
   {
     title: "§7 step 3 · ungranted + known-offline → -32001 (filter runs before availability)",
     endpoint: "aggregated",
     method: "tools/call",
     toolName: "news_get",
-    principal: "account",
+    principal: "agent",
     access: "ungranted",
     archived: false,
     backend: { kind: "tunnel", status: "offline" },
@@ -245,7 +245,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     twin: "§7 step 3 · granted-allow + available → dispatch (the anchor allow-twin of the whole table)",
   },
   // §7 step 2: "A granted role no longer present in `roles_json` resolves to the empty
-  // pattern set — it still counts as a grant (the account gets an empty `tools/list` and
+  // pattern set — it still counts as a grant (the agent gets an empty `tools/list` and
   // `-32001`, not a 404)." The distinction that makes this a row rather than a duplicate of
   // the one above: the grant EXISTS, so the scoped endpoint owes a code, not a 404.
   {
@@ -253,7 +253,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     endpoint: "scoped",
     method: "tools/call",
     toolName: "get",
-    principal: "account",
+    principal: "agent",
     access: "granted-undeclared",
     archived: false,
     backend: { kind: "tunnel", status: "offline" },
@@ -262,20 +262,20 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "filter",
     expect: { code: -32001, dataKeys: [] },
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
-    twin: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    twin: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
   },
   // The OTHER half of the sentence above, which the `tools/call` row cannot reach: "the
-  // account gets an empty `tools/list` and `-32001`, not a 404". Same request, one column
+  // agent gets an empty `tools/list` and `-32001`, not a 404". Same request, one column
   // (`method`) flipped — the grant exists, so the scoped list answers, and what it answers
   // is nothing. The tunnel is offline on purpose: §7 serves tunneled lists from the DO's
-  // cache ("a service that has never connected lists no tools"), so an offline tunnel owes
+  // cache ("an app that has never connected lists no tools"), so an offline tunnel owes
   // an empty list, never a -32000 — the proxied unreachable case is upstream-proxy's.
   {
     title: "§7 step 2 · granted-undeclared role · the scoped tools/list is EMPTY and succeeds — never a 404, never a refusal code",
     endpoint: "scoped",
     method: "tools/list",
     toolName: "",
-    principal: "account",
+    principal: "agent",
     access: "granted-undeclared",
     archived: false,
     backend: { kind: "tunnel", status: "offline" },
@@ -286,17 +286,17 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
     twin: "§7 step 2 · granted-undeclared role · the scoped tools/list is EMPTY and succeeds — never a 404, never a refusal code",
   },
-  // §7 step 3: "The scoped endpoint is where that failure surfaces: … an archived service
+  // §7 step 3: "The scoped endpoint is where that failure surfaces: … an archived app
   // fails with `-32002` like every other request to it." One column (`archived`) off the row
   // above, and the only place in the repo that pins -32002 for a LIST rather than a call —
-  // the aggregated shape merely skips archived services, so this shape is where the code is
+  // the aggregated shape merely skips archived apps, so this shape is where the code is
   // owed. Its twin is the row above: same request, unarchived.
   {
-    title: "§7 step 3 · a scoped tools/list against an archived service → -32002, like every other request to it",
+    title: "§7 step 3 · a scoped tools/list against an archived app → -32002, like every other request to it",
     endpoint: "scoped",
     method: "tools/list",
     toolName: "",
-    principal: "account",
+    principal: "agent",
     access: "granted-undeclared",
     archived: true,
     backend: { kind: "tunnel", status: "offline" },
@@ -307,8 +307,8 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
     twin: "§7 step 2 · granted-undeclared role · the scoped tools/list is EMPTY and succeeds — never a 404, never a refusal code",
   },
-  // §6/§7: an archived service fails `-32002` for a caller who may otherwise use it. The
-  // service is CONNECTED here, so archived is the only possible reason for the refusal —
+  // §6/§7: an archived app fails `-32002` for a caller who may otherwise use it. The
+  // app is CONNECTED here, so archived is the only possible reason for the refusal —
   // an implementation that checked availability first would still answer -32002, and one
   // that checked archived last would answer null.
   {
@@ -316,7 +316,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "allow",
     archived: true,
     backend: { kind: "proxy", status: "connected" },
@@ -327,7 +327,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
     twin: "§7 step 3 · granted-allow + available → dispatch (the anchor allow-twin of the whole table)",
   },
-  // The ordering claim stated where it costs the owner something: an archived service must
+  // The ordering claim stated where it costs the owner something: an archived app must
   // not generate approval requests. `pendingCreated: false` + `pushSent: false` is the whole
   // point — a code-only table would call a gate-then-archived implementation green.
   {
@@ -335,7 +335,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "approval",
     archived: true,
     backend: { kind: "proxy", status: "connected" },
@@ -344,19 +344,19 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "archived",
     expect: { code: -32002, dataKeys: [] },
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
-    twin: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    twin: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
   },
   // The one adjacent pair the two rows above cannot state: both carry a CONNECTED backend,
   // so an implementation that ran availability before archived would still answer -32002 on
   // them. This row flips exactly that one column off the first archived row — archived AND
   // known-unavailable — so stage 2 and stage 4 can no longer be swapped with the table
-  // green (§7 step 3's order; §15: "archived services return `-32002` instead").
+  // green (§7 step 3's order; §15: "archived apps return `-32002` instead").
   {
     title: "§7 step 3 · granted-allow + archived + known-offline → -32002, never -32000 (archived runs before availability)",
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "allow",
     archived: true,
     backend: { kind: "proxy", status: "not_connected" },
@@ -375,7 +375,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     endpoint: "aggregated",
     method: "tools/call",
     toolName: "notion_search",
-    principal: "account",
+    principal: "agent",
     access: "allow",
     archived: false,
     backend: { kind: "proxy", status: "connected" },
@@ -388,7 +388,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
   },
 
   // ── §7: availability-first inside the approval gate (decided 2026-08-25) ──────────────
-  // §7: "The gate consults **known availability first**: a service the hub already knows
+  // §7: "The gate consults **known availability first**: an app the hub already knows
   // cannot execute — tunneled with no live registered connection, proxied flagged
   // `not_connected` or `needs_reconnect` — fails `-32000` before any approval row is read,
   // created, or consumed."
@@ -399,11 +399,11 @@ export const ORDER_ROWS: readonly OrderRow[] = [
   // (the row below) and neither could be read alone. `not_connected` is §7's own second
   // spelling of "known unavailable", and it isolates the availability decision completely.
   {
-    title: "§7 · approval-mode, no pass, known-offline service → -32000: no pending row, no push, nothing read",
+    title: "§7 · approval-mode, no pass, known-offline app → -32000: no pending row, no push, nothing read",
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "approval",
     archived: false,
     backend: { kind: "proxy", status: "not_connected" },
@@ -412,17 +412,17 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "availability",
     expect: { code: -32000, dataKeys: [] },
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
-    twin: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    twin: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
   },
-  // §7: "an existing approved pass survives untouched; the agent's retry once the service
+  // §7: "an existing approved pass survives untouched; the agent's retry once the app
   // returns is what opens the pending" — so the owner never re-approves because a bot was
   // mid-reconnect. `passConsumed: false` is the entire assertion.
   {
-    title: "§7 · approval-mode, approved pass, known-offline service → -32000 with the pass NOT consumed",
+    title: "§7 · approval-mode, approved pass, known-offline app → -32000 with the pass NOT consumed",
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "approval",
     archived: false,
     backend: { kind: "proxy", status: "not_connected" },
@@ -431,17 +431,17 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "availability",
     expect: { code: -32000, dataKeys: [] },
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
-    twin: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    twin: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
   },
   // §7 step 2: "reply with JSON-RPC error **`-32003`** ("approval required"), whose `data`
   // carries `{ approvalId, approvalUrl, expiresAt }`", and §7's push clause. Presence only —
   // the prose is incidental (strategy §7), the three keys are not.
   {
-    title: "§7 · approval-mode, no pass, available service → -32003 carrying approvalId + approvalUrl + expiresAt",
+    title: "§7 · approval-mode, no pass, available app → -32003 carrying approvalId + approvalUrl + expiresAt",
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "approval",
     archived: false,
     backend: { kind: "proxy", status: "connected" },
@@ -450,17 +450,17 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "approval",
     expect: { code: -32003, dataKeys: ["approvalId", "approvalUrl", "expiresAt"] },
     effects: { dispatched: false, pendingCreated: true, passConsumed: false, pushSent: true },
-    twin: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    twin: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
   },
   // §7 step 1: "the Worker **claims the row atomically** before dispatching … and dispatches
   // only if the claim changed a row." The gate's own allow-twin, and the only row of this
   // table where `passConsumed` is true.
   {
-    title: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    title: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "approval",
     archived: false,
     backend: { kind: "proxy", status: "connected" },
@@ -469,7 +469,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "dispatch",
     expect: { code: null, dataKeys: [] },
     effects: { dispatched: true, pendingCreated: false, passConsumed: true, pushSent: false },
-    twin: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    twin: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
   },
   // §7 step 2: "no new row is inserted and no new `approval.requested` audit row is written
   // — the reply is `-32003` carrying that row's existing `approvalId`/`expiresAt`, so
@@ -480,7 +480,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "approval",
     archived: false,
     backend: { kind: "proxy", status: "connected" },
@@ -489,7 +489,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "approval",
     expect: { code: -32003, dataKeys: ["approvalId", "approvalUrl", "expiresAt"] },
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
-    twin: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    twin: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
   },
   // §7 step 4: "rejected or expired → `-32003` again with a fresh pending record and link."
   // Expiry is the lazy kind (§7): the stored row is past `expires_at`, and reading it is
@@ -499,7 +499,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "approval",
     archived: false,
     backend: { kind: "proxy", status: "connected" },
@@ -508,7 +508,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "approval",
     expect: { code: -32003, dataKeys: ["approvalId", "approvalUrl", "expiresAt"] },
     effects: { dispatched: false, pendingCreated: true, passConsumed: false, pushSent: true },
-    twin: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    twin: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
   },
   // The other half of the same sentence: a rejection is not a permanent no — the agent may
   // ask again, and the owner is asked again (a fresh row, a fresh push).
@@ -517,7 +517,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "approval",
     archived: false,
     backend: { kind: "proxy", status: "connected" },
@@ -526,13 +526,13 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "approval",
     expect: { code: -32003, dataKeys: ["approvalId", "approvalUrl", "expiresAt"] },
     effects: { dispatched: false, pendingCreated: true, passConsumed: false, pushSent: true },
-    twin: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    twin: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
   },
-  // The catalog-miss refusal (§7 step 2: "for tunneled services a pending row is only
+  // The catalog-miss refusal (§7 step 2: "for tunneled apps a pending row is only
   // created for a tool present in the cached catalog … refuse with `-32001` instead") was a
   // row here and is NOT one any more — the JUDGMENT CALL this row carried has been decided
   // the way the row's own escape hatch predicted. §7's availability-first sentence outranks
-  // it ("a service the hub already knows cannot execute … fails `-32000` before any
+  // it ("an app the hub already knows cannot execute … fails `-32000` before any
   // approval row is read, created, or consumed", restated verbatim in gateway.callTool's
   // contract header), and the only tunnel this project can seed is a never-connected one —
   // both catalog-less AND known-unavailable, so -32000 is its answer and the catalog check
@@ -564,7 +564,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
 
   // ── §7: name splitting and methods ────────────────────────────────────────────────────
   // §7: "Slugs contain no `_`, so the first `_` splits the name unambiguously" — a name with
-  // no `_` at all names no service. The caller here holds a real allow grant on `notion` and
+  // no `_` at all names no app. The caller here holds a real allow grant on `notion` and
   // the bare tool name is one it may use: only the NAME is defective, and the answer is
   // still the not-permitted code, never a distinct "malformed name" signal.
   {
@@ -572,7 +572,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     endpoint: "aggregated",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "allow",
     archived: false,
     backend: { kind: "proxy", status: "connected" },
@@ -583,14 +583,14 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
     twin: "§7 step 3 · granted-allow + available → dispatch (the anchor allow-twin of the whole table)",
   },
-  // §7 step 3: "a prefix matching no service → `-32001`, indistinguishable from
-  // not-permitted." A namespace's service list is not enumerable through tool names.
+  // §7 step 3: "a prefix matching no app → `-32001`, indistinguishable from
+  // not-permitted." A namespace's app list is not enumerable through tool names.
   {
-    title: "§7 · an aggregated prefix matching no visible service → the same -32001",
+    title: "§7 · an aggregated prefix matching no visible app → the same -32001",
     endpoint: "aggregated",
     method: "tools/call",
     toolName: "ghost_search",
-    principal: "account",
+    principal: "agent",
     access: "ungranted",
     archived: false,
     backend: { kind: "proxy", status: "connected" },
@@ -602,14 +602,14 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     twin: "§7 step 3 · granted-allow + available → dispatch (the anchor allow-twin of the whole table)",
   },
   // §7: "the first `_` splits the name unambiguously". The tool's OWN name contains `_`, so
-  // a greedy or last-`_` split resolves a service that does not exist — this row is green
+  // a greedy or last-`_` split resolves an app that does not exist — this row is green
   // only if the split is first-`_` and the remainder is forwarded intact.
   {
     title: "§7 · an aggregated name splits at the FIRST `_` — a tool whose own name contains `_` survives intact",
     endpoint: "aggregated",
     method: "tools/call",
     toolName: "notion_search_pages",
-    principal: "account",
+    principal: "agent",
     access: "allow",
     archived: false,
     backend: { kind: "proxy", status: "connected" },
@@ -632,7 +632,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
-    principal: "account",
+    principal: "agent",
     access: "approval",
     archived: false,
     backend: { kind: "proxy", status: "connected" },
@@ -642,17 +642,17 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "approval",
     expect: { code: -32003, dataKeys: ["approvalId", "approvalUrl", "expiresAt"] },
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
-    twin: "§7 · approval-mode, approved pass, available service → dispatch, pass consumed exactly once",
+    twin: "§7 · approval-mode, approved pass, available app → dispatch, pass consumed exactly once",
   },
   // §7 step 3: "`server/discover` → answered by the Worker (hub capabilities)." Spelled on
   // the SCOPED shape, which is the half that can break: a slug sits in the URL and must not
-  // be resolved, dialed, or filtered — the aggregated half has no service to be tempted by.
+  // be resolved, dialed, or filtered — the aggregated half has no app to be tempted by.
   {
-    title: "§7 · `server/discover` is answered by the hub on both endpoint shapes, no service resolved",
+    title: "§7 · `server/discover` is answered by the hub on both endpoint shapes, no app resolved",
     endpoint: "scoped",
     method: "server/discover",
     toolName: "",
-    principal: "account",
+    principal: "agent",
     access: "allow",
     archived: false,
     backend: { kind: "pmcp" },
@@ -661,18 +661,18 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "hub",
     expect: { code: null, dataKeys: [] },
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
-    twin: "§7 · `server/discover` is answered by the hub on both endpoint shapes, no service resolved",
+    twin: "§7 · `server/discover` is answered by the hub on both endpoint shapes, no app resolved",
   },
   // The aggregated half of the row above, without which its title states a coverage the
   // table does not have: §7 lists the dispatch rules under one "Dispatch:" heading that
   // L530 pins as "identical on both endpoint shapes", so a hub answering `server/discover`
-  // on one shape and resolving a service on the other satisfies neither sentence.
+  // on one shape and resolving an app on the other satisfies neither sentence.
   {
     title: "§7 · `server/discover` is answered by the hub on the aggregated shape too — the other half of the pair",
     endpoint: "aggregated",
     method: "server/discover",
     toolName: "",
-    principal: "account",
+    principal: "agent",
     access: "allow",
     archived: false,
     backend: { kind: "pmcp" },
@@ -684,13 +684,13 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     twin: "§7 · `server/discover` is answered by the hub on the aggregated shape too — the other half of the pair",
   },
   // §7 step 3: "anything else → `-32601`." The refusal belongs to the hub, before any
-  // service is resolved — which is why an unknown method leaks nothing about the namespace.
+  // app is resolved — which is why an unknown method leaks nothing about the namespace.
   {
     title: "§7 · any other method → -32601",
     endpoint: "aggregated",
     method: "other",
     toolName: "",
-    principal: "account",
+    principal: "agent",
     access: "allow",
     archived: false,
     backend: { kind: "pmcp" },
@@ -699,7 +699,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "hub",
     expect: { code: -32601, dataKeys: [] },
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
-    twin: "§7 · `server/discover` is answered by the hub on both endpoint shapes, no service resolved",
+    twin: "§7 · `server/discover` is answered by the hub on both endpoint shapes, no app resolved",
   },
   // The same refusal on the shape that carries a slug in its URL — the half where "leaks
   // nothing about the namespace" is a claim rather than a tautology: an unknown method must
@@ -710,7 +710,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     endpoint: "scoped",
     method: "other",
     toolName: "",
-    principal: "account",
+    principal: "agent",
     access: "allow",
     archived: false,
     backend: { kind: "pmcp" },
@@ -719,7 +719,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "hub",
     expect: { code: -32601, dataKeys: [] },
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
-    twin: "§7 · `server/discover` is answered by the hub on both endpoint shapes, no service resolved",
+    twin: "§7 · `server/discover` is answered by the hub on both endpoint shapes, no app resolved",
   },
   // §7's 2026-08-26 amendment (`initialize`, and the `notifications/initialized` that
   // follows it) is NOT in this table: neither message is ordered against filter, archived,
@@ -738,7 +738,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
  * inside the row's own case, because the evidence is already in hand at that point:
  * `data` rides -32003 and nothing else, and — §15 — a refusal records no audit body
  * (`args_json` and `result_json` absent on the audit row of every row whose
- * `effects.dispatched` is false, whatever the service's `log_bodies` says). That second
+ * `effects.dispatched` is false, whatever the app's `log_bodies` says). That second
  * law is why a `-32003` or a catalog-miss cannot persist unmasked arguments (no redaction
  * map exists yet at that point, §7), and this table is the only place it is reachable —
  * hygiene's AuditBodyRow drives dispatched calls exclusively. Asserting them per row is
@@ -792,7 +792,7 @@ export function runOrderTable(rows: readonly OrderRow[]): void {
       // All four columns at once: a wrong one prints beside the three that were right.
       expect(observed.effects, row.title).toEqual(row.effects);
 
-      // §15: a refusal row NEVER carries bodies. Both seeded services have log_bodies ON
+      // §15: a refusal row NEVER carries bodies. Both seeded apps have log_bodies ON
       // (buildFixture), so a row that recorded one recorded it in spite of the rule rather
       // than because of a default.
       if (!row.effects.dispatched) {
@@ -889,7 +889,7 @@ type Fixture = {
 
 /**
  * The fixture named in the table's own preamble, built per row: a tunneled `news` that
- * has never connected, a proxied `notion` on the fake upstream, one account with the
+ * has never connected, a proxied `notion` on the fake upstream, one agent with the
  * row's grants, and a push subscription for the owner — the last so a `pushSent: false`
  * row proves nothing was SENT rather than that nobody was listening.
  */
@@ -900,7 +900,7 @@ async function buildFixture(row: OrderRow): Promise<Fixture> {
   const push: UpstreamScenario = { id: uniqueSlug("push"), mode: { kind: "sink", status: 201 } };
   const home = homeSlug(row);
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       { slug: NEWS, kind: "tunnel", logBodies: true, archived: row.archived && home === NEWS },
       {
         slug: NOTION,
@@ -908,21 +908,21 @@ async function buildFixture(row: OrderRow): Promise<Fixture> {
         upstreamUrl: upstreamUrlFor(upstream),
         upstreamAuthMode: "headers",
         roles: { [ROLE]: [TOOL, `${TOOL}_pages`] },
-        // §15's "whatever log_bodies says": bodies are ON for both services, so a refusal
+        // §15's "whatever log_bodies says": bodies are ON for both apps, so a refusal
         // row that recorded one would be caught rather than excused by the default.
         logBodies: true,
         archived: row.archived && home === NOTION,
       },
     ],
-    accounts: [{ slug: AGENT, grants: grantsFor(row, home), tokens: [{ as: TOKEN }] }],
+    agents: [{ slug: AGENT, grants: grantsFor(row, home), tokens: [{ as: TOKEN }] }],
   });
 
   // `connected` means "a credential envelope this hub can open is stored"
   // (upstream.connectionStatus), so it is written through `upstream.setHeaders` — the seam
   // that owns the column — and never as raw SQL. Nothing in this file reads it back.
   if (row.backend.kind === "proxy" && row.backend.status === "connected") {
-    const notion = await new Registry(env.DB).getService(ns.owner.userId, NOTION);
-    if (notion === null) throw new Error(`${row.title}: the fixture's proxied service vanished`);
+    const notion = await new Registry(env.DB).getApp(ns.owner.userId, NOTION);
+    if (notion === null) throw new Error(`${row.title}: the fixture's proxied app vanished`);
     await setHeaders(notion, FAKE_UPSTREAM_HEADERS);
   }
   if (row.backend.kind === "proxy" && row.backend.status === "needs_reconnect") {
@@ -975,7 +975,7 @@ async function seedPass(row: OrderRow, ns: SeededNamespace): Promise<string | un
 
   const backdated = row.pass === "expired";
   const gate = seedingGate(backdated ? () => Date.now() - 2 * APPROVAL_WINDOW_MS : Date.now);
-  const opened = await gate.check(accountPrincipal(ns), serviceRow(ns), TOOL, ARGS, []);
+  const opened = await gate.check(agentPrincipal(ns), appRow(ns), TOOL, ARGS, []);
   if (opened.outcome !== "required") {
     throw new Error(`${row.title}: seeding expected a fresh pending row, got "${opened.outcome}"`);
   }
@@ -1019,14 +1019,14 @@ async function openViaEndpoint(row: OrderRow, ns: SeededNamespace): Promise<stri
 
 // ── the handshake's own world ─────────────────────────────────────────────────────────
 
-/** The smallest namespace the two handshake cases need: one account holding a grant on one
+/** The smallest namespace the two handshake cases need: one agent holding a grant on one
  *  tunneled slug, so the DOOR admits the scoped shape too (§7 step 2's 404 is decided before
  *  the body is read). No upstream and no push subscription — `initialize` resolves no
- *  service and can reach neither. */
+ *  app and can reach neither. */
 async function seedHandshakeNamespace(): Promise<SeededNamespace> {
   return seedNamespace(env.DB, {
-    services: [{ slug: NEWS, kind: "tunnel" }],
-    accounts: [{ slug: AGENT, grants: { [NEWS]: [{ role: ROLE, mode: "allow" }] }, tokens: [{ as: TOKEN }] }],
+    apps: [{ slug: NEWS, kind: "tunnel" }],
+    agents: [{ slug: AGENT, grants: { [NEWS]: [{ role: ROLE, mode: "allow" }] }, tokens: [{ as: TOKEN }] }],
   });
 }
 
@@ -1099,11 +1099,11 @@ async function listenAt(url: string, token: string): Promise<StreamAnswer> {
 /** The hub's own origin, as the worker under test knows it. */
 const ORIGIN = (env as unknown as Env).PUBLIC_ORIGIN;
 
-/** The two seeded services and the one account, named once. Neither slug contains `_`. */
+/** The two seeded apps and the one agent, named once. Neither slug contains `_`. */
 const NEWS = "news";
 const NOTION = "notion";
 const AGENT = "agent";
-/** The fixture-local handle the account's `pmcp_sa_` key appears under. */
+/** The fixture-local handle the agent's `pmcp_agt_` key appears under. */
 const TOKEN = "key";
 /** The one role name the table needs: declared on `notion`, never on the tunnel. */
 const ROLE = "reader";
@@ -1168,19 +1168,19 @@ function seedingGate(now: () => number): Approvals {
   });
 }
 
-function accountPrincipal(ns: SeededNamespace): Principal {
+function agentPrincipal(ns: SeededNamespace): Principal {
   return {
-    kind: "service_account",
-    accountId: ns.accounts[AGENT].id,
+    kind: "agent",
+    agentId: ns.agents[AGENT].id,
     ownerId: ns.owner.userId,
     slug: AGENT,
   };
 }
 
-/** The proxied service as the approvals seam takes it — every seeded pass is on `notion`. */
-function serviceRow(ns: SeededNamespace): Service {
+/** The proxied app as the approvals seam takes it — every seeded pass is on `notion`. */
+function appRow(ns: SeededNamespace): App {
   return {
-    id: ns.services[NOTION].id,
+    id: ns.apps[NOTION].id,
     ownerId: ns.owner.userId,
     slug: NOTION,
     kind: "proxy",
@@ -1190,10 +1190,10 @@ function serviceRow(ns: SeededNamespace): Service {
 }
 
 /**
- * The service a row is ABOUT — the one its archived flag and its grants apply to. On the
+ * The app a row is ABOUT — the one its archived flag and its grants apply to. On the
  * scoped shape the URL names it; on the aggregated shape the tool-name prefix does, except
  * where the prefix is the defect under test (`ghost_`, or no `_` at all), in which case
- * the caller's real service is `notion` and the name is simply wrong about it.
+ * the caller's real app is `notion` and the name is simply wrong about it.
  */
 function homeSlug(row: OrderRow): string {
   if (row.endpoint === "scoped") return scopedSlug(row);
@@ -1202,15 +1202,15 @@ function homeSlug(row: OrderRow): string {
 
 /**
  * The slug in a scoped row's URL. `pmcp` backends appear only on hub-answered rows, where
- * §7 resolves no service at all — but the DOOR still resolves visibility (auth-matrix's
- * §7 step 2 404), and a service account can never see `/mcp/pmcp`, so those rows ride the
- * granted `notion` slug. Their point is the method, not the service.
+ * §7 resolves no app at all — but the DOOR still resolves visibility (auth-matrix's
+ * §7 step 2 404), and an agent can never see `/mcp/pmcp`, so those rows ride the
+ * granted `notion` slug. Their point is the method, not the app.
  */
 function scopedSlug(row: OrderRow): string {
   return row.backend.kind === "tunnel" ? NEWS : NOTION;
 }
 
-/** The row's grants: on its home service, in the mode its `access` column names. */
+/** The row's grants: on its home app, in the mode its `access` column names. */
 function grantsFor(row: OrderRow, home: string): Record<string, GrantEntry[]> {
   switch (row.access) {
     case "ungranted":
@@ -1258,7 +1258,7 @@ const STAGE_CODES: Record<CheckStage, readonly OrderOutcome["code"][]> = {
  *  in order, and this is the smallest thing that has to stay in step with it. */
 const SECTIONS = sections([
   "§7 step 3 · ungranted + archived → -32001, never -32002 (filter runs before archived)",
-  "§7 · approval-mode, no pass, known-offline service → -32000: no pending row, no push, nothing read",
+  "§7 · approval-mode, no pass, known-offline app → -32000: no pending row, no push, nothing read",
   "§7 · an aggregated name with no `_` at all → -32001, indistinguishable from not-permitted",
 ]);
 
@@ -1278,7 +1278,7 @@ describe("§7 step 3 — the fixed order, filter first", () => {
 describe("§7 — availability-first inside the approval gate (decided 2026-08-25)", () => {
   // One half of the decision is NOT in this file: §7's availability-first sentence
   // outranks the catalog check, and this project can seed no connected tunnel, so that
-  // case is tunnel/approval-e2e.test.ts's case 23 — a service whose catalog is cold and
+  // case is tunnel/approval-e2e.test.ts's case 23 — an app whose catalog is cold and
   // whose socket is gone, answered -32000 and not case 22's catalog-miss -32001, over a
   // real socket. (Case 22 itself is the ONLINE catalog miss and makes no availability
   // claim; it was the wrong pointer here until D7's oracle stage.)
@@ -1314,7 +1314,7 @@ describe("§7's dispatch table, amended 2026-08-26 — the MCP handshake", () =>
 
     // Two of the three ARE the same answer on both shapes; `capabilities` stopped being so
     // on 2026-08-26. §20.2 gives the aggregated shape one static two-family constant and
-    // DERIVES the scoped one from what the hub stores for that service — and this
+    // DERIVES the scoped one from what the hub stores for that app — and this
     // namespace's `news` is a tunnel that has never connected, so it declares `tools`
     // alone. The two answers are pinned here per shape rather than dropped, so this case
     // keeps stating the whole handshake; §20.2's own cases below own the reasoning.
@@ -1322,7 +1322,7 @@ describe("§7's dispatch table, amended 2026-08-26 — the MCP handshake", () =>
       [aggregated, AGGREGATED_CAPABILITIES],
       // §21.5 flipped the aggregated flags to TRUE and left the scoped derivation alone;
       // `news` has never connected, so it declares `tools` — with the listChanged a
-      // tunneled service can now honor.
+      // tunneled app can now honor.
       [`${aggregated}/${NEWS}`, { tools: { listChanged: true } }],
     ] as const) {
       const answer = await rpc(url, token, { jsonrpc: "2.0", id: 1, method: "initialize", params: CLIENT_HANDSHAKE });
@@ -1457,23 +1457,23 @@ type ServingScenario = UpstreamScenario & {
   completionResult?: unknown;
 };
 
-/** The second proxied service §20 needs: the aggregated rows need two prefixes to prove
- *  one, and "a read is routed by the addressed slug, never by the URI" needs two services
+/** The second proxied app §20 needs: the aggregated rows need two prefixes to prove
+ *  one, and "a read is routed by the addressed slug, never by the URI" needs two apps
  *  serving one URI. No slug contains `_` (§7). */
 const LINEAR = "linear";
 
-/** The second account, for the row that compares one service against TWO callers'
+/** The second agent, for the row that compares one app against TWO callers'
  *  patterns — a claim no single-caller fixture can make. */
 const OTHER_AGENT = "auditor";
 const OTHER_TOKEN = "other-key";
 
-/** The role that second account holds: resource patterns only, and template-shaped. */
+/** The role that second agent holds: resource patterns only, and template-shaped. */
 const TEMPLATE_ROLE = "templar";
 
 /** The prompt the granted pattern matches. Its own name carries a `_`, so every
  *  aggregated row also states §7's first-`_` split rather than merely assuming it. */
 const PROMPT = "digest_daily";
-/** …and the prompt on the same service that no granted pattern matches. */
+/** …and the prompt on the same app that no granted pattern matches. */
 const UNGRANTED_PROMPT = "payroll_export";
 /** The prompt pattern the role declares — `*` is outside the tool-name charset, so this
  *  compiles rather than comparing literally (§20.3: prompts are matched by NAME). */
@@ -1565,16 +1565,16 @@ const CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
 /** What one §20 case needs seeded over and above the shared defaults. Every field is an
  *  override of exactly one thing, so a case reads as "the world, except…". */
 type D13Spec = {
-  /** The proxied service's per-family declaration (default: D13_ROLES). */
+  /** The proxied app's per-family declaration (default: D13_ROLES). */
   roles?: RoleDeclaration;
-  /** The account's grant on it (default: the role, allow-mode). */
+  /** The agent's grant on it (default: the role, allow-mode). */
   grant?: GrantEntry[];
   archived?: boolean;
   /** §20.2's owner-declared `capabilities` config — absent means `tools` only. */
   capabilities?: string[];
   /** What the proxied upstream serves, or does. */
   serves?: Partial<ServingScenario>;
-  /** A second proxied service: the aggregated prefix rows and the A-vs-B read row. */
+  /** A second proxied app: the aggregated prefix rows and the A-vs-B read row. */
   also?: { roles?: RoleDeclaration; grant?: GrantEntry[]; serves?: Partial<ServingScenario> };
   /**
    * Seed the never-connected tunnel too, granted the built-in `all`. `all` and not the
@@ -1583,18 +1583,18 @@ type D13Spec = {
    * step 2) — which would make the -32000 row assert the wrong stage entirely.
    */
   withTunnel?: boolean;
-  /** A second account and its grants — the two-callers rows. */
+  /** A second agent and its grants — the two-callers rows. */
   second?: Record<string, GrantEntry[]>;
 };
 
 /** One §20 case's seeded world: what its assertions read, and nothing more. */
 type D13World = {
   ns: SeededNamespace;
-  /** The service account's `pmcp_sa_` key. */
+  /** The agent's `pmcp_agt_` key. */
   agent: string;
-  /** The second account's key — throws when the case never asked for one. */
+  /** The second agent's key — throws when the case never asked for one. */
   otherAgent(): string;
-  /** The aggregated URL, or one service's scoped URL. */
+  /** The aggregated URL, or one app's scoped URL. */
   url(slug?: string): string;
   /** What one upstream saw. The forwarded `_meta` lives here and nowhere else. */
   arrivals(slug?: string): Promise<UpstreamObservation[]>;
@@ -1605,10 +1605,10 @@ type D13World = {
 };
 
 /**
- * The §20 world, built per case through production seams alone: one proxied service on a
+ * The §20 world, built per case through production seams alone: one proxied app on a
  * fake upstream serving every family, its credential written by `upstream.setHeaders`,
- * and — when the case asks — a second proxied service, a never-connected tunnel, and a
- * second account. Nothing is written as raw SQL, so a fixture can never reach a state the
+ * and — when the case asks — a second proxied app, a never-connected tunnel, and a
+ * second agent. Nothing is written as raw SQL, so a fixture can never reach a state the
  * hub itself cannot produce.
  */
 async function seedD13(spec: D13Spec = {}): Promise<D13World> {
@@ -1632,7 +1632,7 @@ async function seedD13(spec: D13Spec = {}): Promise<D13World> {
   }
 
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       ...Object.entries(scenarios).map(([slug, scenario]) => ({
         slug,
         kind: "proxy" as const,
@@ -1644,7 +1644,7 @@ async function seedD13(spec: D13Spec = {}): Promise<D13World> {
       })),
       ...(spec.withTunnel === true ? [{ slug: NEWS, kind: "tunnel" as const, logBodies: true }] : []),
     ],
-    accounts: [
+    agents: [
       {
         slug: AGENT,
         grants: {
@@ -1664,17 +1664,17 @@ async function seedD13(spec: D13Spec = {}): Promise<D13World> {
 
   const registry = new Registry(env.DB);
   for (const [slug, scenario] of Object.entries(scenarios)) {
-    const service = await registry.getService(ns.owner.userId, slug);
-    if (service === null) throw new Error(`seedD13: the proxied service "${slug}" vanished`);
-    // The credential envelope, through the seam that owns the column — a proxied service
+    const app = await registry.getApp(ns.owner.userId, slug);
+    if (app === null) throw new Error(`seedD13: the proxied app "${slug}" vanished`);
+    // The credential envelope, through the seam that owns the column — a proxied app
     // with none reads `not_connected` and is refused -32000 before any §20 rule is reached.
-    await setHeaders(service, FAKE_UPSTREAM_HEADERS);
+    await setHeaders(app, FAKE_UPSTREAM_HEADERS);
     if (spec.capabilities !== undefined && slug === NOTION) {
       // §20.2's owner-DECLARED set, written where an owner writes it. Not a cache, not a
       // probe of `scenario`: the declaration and what the upstream actually serves are
       // deliberately allowed to disagree, which is the whole of "a wrong declaration can
       // mislead feature detection but never widen access".
-      await registry.updateService(service.id, { capabilities: spec.capabilities });
+      await registry.updateApp(app.id, { capabilities: spec.capabilities });
     }
   }
 
@@ -1683,7 +1683,7 @@ async function seedD13(spec: D13Spec = {}): Promise<D13World> {
     agent: ns.tokens[TOKEN].token,
     otherAgent() {
       const token = ns.tokens[OTHER_TOKEN];
-      if (token === undefined) throw new Error("seedD13: this case seeded no second account");
+      if (token === undefined) throw new Error("seedD13: this case seeded no second agent");
       return token.token;
     },
     url: (slug?: string) =>
@@ -1788,22 +1788,22 @@ describe("§20.2 — prompts, on both endpoint shapes", () => {
     expect(promptNames(aggregated)).toEqual([`${LINEAR}_${PROMPT}`, `${NOTION}_${PROMPT}`].sort());
   });
 
-  it("§20.2 · aggregated prompts/get splits at the first underscore and reaches the right service", async () => {
-    // The two services answer DIFFERENTLY, which is what makes "the right service" a fact
+  it("§20.2 · aggregated prompts/get splits at the first underscore and reaches the right app", async () => {
+    // The two apps answer DIFFERENTLY, which is what makes "the right app" a fact
     // rather than an inference: `notion_digest_daily` carries two underscores, so a
-    // last-`_` split would address a service that does not exist and a greedy one would
+    // last-`_` split would address an app that does not exist and a greedy one would
     // address `linear` never at all.
     const elsewhere = { ...PROMPT_RESULT, description: "linear's own answer" };
     const world = await seedD13({ also: { serves: { promptResult: elsewhere } } });
 
     const answer = await rpc(world.url(), world.agent, getPrompt(`${NOTION}_${PROMPT}`));
     expect(answer.error, JSON.stringify(answer.error)).toBeUndefined();
-    expect(answer.result, "the addressed service's own answer, relayed").toEqual(PROMPT_RESULT);
+    expect(answer.result, "the addressed app's own answer, relayed").toEqual(PROMPT_RESULT);
     expect(matching(await world.arrivals(NOTION), "prompts/get"), "reached notion").toHaveLength(1);
     expect(matching(await world.arrivals(LINEAR), "prompts/get"), "and nobody else").toHaveLength(0);
   });
 
-  it("§20.2 · an aggregated prompt name whose prefix matches no visible service is -32001 — indistinguishable from not-permitted", async () => {
+  it("§20.2 · an aggregated prompt name whose prefix matches no visible app is -32001 — indistinguishable from not-permitted", async () => {
     const world = await seedD13();
 
     const ghost = await rpc(world.url(), world.agent, getPrompt(`ghost_${PROMPT}`));
@@ -1811,8 +1811,8 @@ describe("§20.2 — prompts, on both endpoint shapes", () => {
 
     expect(ghost.error?.code).toBe(-32001);
     // Indistinguishable is a SAMENESS claim, so the whole error object is compared —
-    // message included. A namespace's services are not enumerable through prompt names.
-    expect(ghost.error, "a missing service must answer exactly like a missing grant").toEqual(
+    // message included. A namespace's apps are not enumerable through prompt names.
+    expect(ghost.error, "a missing app must answer exactly like a missing grant").toEqual(
       ungranted.error,
     );
   });
@@ -1822,7 +1822,7 @@ describe("§20.2 — prompts, on both endpoint shapes", () => {
 
     const refused = await rpc(world.url(NOTION), world.agent, getPrompt(UNGRANTED_PROMPT));
     expect(refused.error?.code).toBe(-32001);
-    expect(matching(await world.arrivals(), "prompts/get"), "refused before the service").toHaveLength(0);
+    expect(matching(await world.arrivals(), "prompts/get"), "refused before the app").toHaveLength(0);
 
     // The twin, one prompt name away: the filter is a filter, not a wall.
     const allowed = await rpc(world.url(NOTION), world.agent, getPrompt(PROMPT));
@@ -1830,20 +1830,20 @@ describe("§20.2 — prompts, on both endpoint shapes", () => {
     expect((allowed.result as { messages?: unknown }).messages).toEqual(PROMPT_RESULT.messages);
   });
 
-  it("§20.2 · prompts/get on an archived service is -32002, after the filter check", async () => {
+  it("§20.2 · prompts/get on an archived app is -32002, after the filter check", async () => {
     const world = await seedD13({ archived: true });
 
     const granted = await rpc(world.url(NOTION), world.agent, getPrompt(PROMPT));
     expect(granted.error?.code, "archived, for a caller whose grants match").toBe(-32002);
 
     // "after the filter check" stated where it costs something: an ungranted caller must
-    // not learn from a prompt name that the service is archived (§7 step 3's ordering,
+    // not learn from a prompt name that the app is archived (§7 step 3's ordering,
     // reused unchanged — §20.2 grows no pipeline of its own).
     const ungranted = await rpc(world.url(NOTION), world.agent, getPrompt(UNGRANTED_PROMPT));
     expect(ungranted.error?.code, "filter first, always").toBe(-32001);
   });
 
-  it("§20.2 · prompts/get on an offline tunneled service is -32000", async () => {
+  it("§20.2 · prompts/get on an offline tunneled app is -32000", async () => {
     const world = await seedD13({ withTunnel: true });
 
     const answer = await rpc(world.url(NEWS), world.agent, getPrompt(PROMPT));
@@ -1866,7 +1866,7 @@ describe("§20.2 — prompts, on both endpoint shapes", () => {
 
 describe("§20.2 — resources are scoped-only, and matched by URI", () => {
   it("§20.2 · aggregated resources/list is -32601 and the aggregated endpoint declares no resources capability", async () => {
-    // The namespace's one service DECLARES resources, so the aggregated answer is a
+    // The namespace's one app DECLARES resources, so the aggregated answer is a
     // constant rather than a union that happened to come out empty (§20.2).
     const world = await seedD13({ capabilities: ["tools", "prompts", "resources"] });
 
@@ -1885,7 +1885,7 @@ describe("§20.2 — resources are scoped-only, and matched by URI", () => {
     // and `resources/templates/list` rides here because it is the member nothing else in
     // this file ever sends to the aggregated URL. A dispatch table that enumerated the
     // refusals method by method and forgot it would fan template listings across the
-    // namespace: every service's raw `uriTemplate` strings, unprefixed and unroutable, on
+    // namespace: every app's raw `uriTemplate` strings, unprefixed and unroutable, on
     // the one shape §18 decision 26 keeps resources off entirely.
     for (const request of [
       readResource(URI),
@@ -1930,13 +1930,13 @@ describe("§20.2 — resources are scoped-only, and matched by URI", () => {
     const byName = await rpc(world.url(NOTION), world.agent, readResource(UNGRANTED_URI));
     expect(byName.error?.code, "and unreadable").toBe(-32001);
 
-    // The twin: the same caller, the same service, a resource whose URI the pattern covers.
+    // The twin: the same caller, the same app, a resource whose URI the pattern covers.
     const byUri = await rpc(world.url(NOTION), world.agent, readResource(URI));
     expect(byUri.error, JSON.stringify(byUri.error)).toBeUndefined();
     expect((byUri.result as { contents?: unknown }).contents).toEqual(READ_RESULT.contents);
   });
 
-  it("§20.2 · a URI served by both service A and service B is readable on A's scoped endpoint by a caller granted it on A · B's scoped endpoint refuses the same URI -32001 (the twin — a read is routed by the addressed slug, never by the URI)", async () => {
+  it("§20.2 · a URI served by both app A and app B is readable on A's scoped endpoint by a caller granted it on A · B's scoped endpoint refuses the same URI -32001 (the twin — a read is routed by the addressed slug, never by the URI)", async () => {
     // B declares a TOOLS-ONLY role (§20.3's bare list), so the identical URI it genuinely
     // serves is covered by no resource pattern of this caller's grants ON B. The URI is
     // the same bytes on both endpoints; only the URL differs.
@@ -1950,12 +1950,12 @@ describe("§20.2 — resources are scoped-only, and matched by URI", () => {
     expect(onB.error?.code, "judged against the grants held on B").toBe(-32001);
     expect(
       matching(await world.arrivals(LINEAR), "resources/read"),
-      "and B is never dialed — the URI never selects the service",
+      "and B is never dialed — the URI never selects the app",
     ).toHaveLength(0);
   });
 
   it("§20.2 · scoped resources/templates/list is filtered by the resource patterns of the caller's roles, matched against the raw uriTemplate string — \"news://feed/*\" keeps \"news://feed/{id}\", and a template-shaped pattern keeps exactly its own template", async () => {
-    // Two callers, one service, two patterns — the only shape in which "matched against
+    // Two callers, one app, two patterns — the only shape in which "matched against
     // the RAW uriTemplate" is falsifiable: the wildcard keeps both feed templates, and the
     // template-shaped pattern keeps one of them and drops the other. A hub that expanded
     // templates, or that matched a pattern against a template's expansion, cannot produce
@@ -1977,7 +1977,7 @@ describe("§20.2 — resources are scoped-only, and matched by URI", () => {
     expect(templateStrings(exact), "an unquantified brace sequence is a literal").toEqual([TEMPLATE]);
   });
 
-  it("§20.2 · scoped completion/complete relays the service's suggestions verbatim for a ref the caller's patterns match · a ref naming an unmatched prompt or resource template is -32001 and never reaches the service (the twin)", async () => {
+  it("§20.2 · scoped completion/complete relays the app's suggestions verbatim for a ref the caller's patterns match · a ref naming an unmatched prompt or resource template is -32001 and never reaches the app (the twin)", async () => {
     const world = await seedD13();
 
     // BOTH `ref` kinds on the matched side, because §20.2 gives them two different
@@ -1997,7 +1997,7 @@ describe("§20.2 — resources are scoped-only, and matched by URI", () => {
 
     // The twin, on both `ref` kinds: a prompt no pattern matches, and a template no
     // pattern matches. Both refused, and — the half that makes the refusal worth having —
-    // refused BEFORE anything reaches the service.
+    // refused BEFORE anything reaches the app.
     const before = matching(await world.arrivals(), "completion/complete").length;
     for (const ref of [promptRef(UNGRANTED_PROMPT), resourceRef(UNGRANTED_TEMPLATE)]) {
       const refused = await rpc(world.url(NOTION), world.agent, message("completion/complete", ref));
@@ -2008,9 +2008,9 @@ describe("§20.2 — resources are scoped-only, and matched by URI", () => {
   });
 
   it("§20.2 · a caller with zero prompt and zero resource grants gets -32001 from completion/complete for every ref — the method cannot be used to enumerate past the role's patterns", async () => {
-    // A tools-only role, which every service in the field holds today (§20.3): the caller
+    // A tools-only role, which every app in the field holds today (§20.3): the caller
     // can call tools and must be able to complete NOTHING — not even the prompts and
-    // templates this service genuinely serves.
+    // templates this app genuinely serves.
     const world = await seedD13({ roles: TOOLS_ONLY_ROLES });
 
     for (const ref of [
@@ -2022,7 +2022,7 @@ describe("§20.2 — resources are scoped-only, and matched by URI", () => {
       const refused = await rpc(world.url(NOTION), world.agent, message("completion/complete", ref));
       expect(refused.error?.code, JSON.stringify(ref)).toBe(-32001);
     }
-    expect(matching(await world.arrivals(), "completion/complete"), "nothing reached the service")
+    expect(matching(await world.arrivals(), "completion/complete"), "nothing reached the app")
       .toHaveLength(0);
   });
 
@@ -2064,7 +2064,7 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
   });
 
   it("§21.5 · the aggregated endpoint declares tools and prompts with listChanged TRUE — still one static answer whatever the namespace holds, still never resources or completions (replaces :2002)", async () => {
-    // Two namespaces at the extremes of what a union would produce: one whose service
+    // Two namespaces at the extremes of what a union would produce: one whose app
     // declares every family, one whose role grants tools alone. The answer is the same
     // object, which is what "static" means and what the fixture pins. §21.5 flipped the
     // FLAGS and nothing else about it: `resources` and `completions` are still not served on
@@ -2083,9 +2083,9 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
     );
   });
 
-  it("§21.5 · a proxied service keeps every push flag false whatever its owner-declared capabilities list says, and so does the pmcp builtin — kind, not stored set (replaces :2020)", async () => {
+  it("§21.5 · a proxied app keeps every push flag false whatever its owner-declared capabilities list says, and so does the pmcp builtin — kind, not stored set (replaces :2020)", async () => {
     // KIND is the axis §21.5 added, and these are the two kinds with no channel to ring
-    // from: a proxied service has no DO (a Worker cannot hold an outbound stream past its
+    // from: a proxied app has no DO (a Worker cannot hold an outbound stream past its
     // own invocation) and the builtin's tools never change. An implementation that asked
     // "is it proxied?" instead of naming three kinds gets the BUILTIN wrong, which is why
     // both halves are one row.
@@ -2108,11 +2108,11 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
       prompts: { listChanged: false },
       // Whole-object, and `subscribe` is ABSENT rather than present-and-false: §21.5 gives
       // that key to tunneled resources alone, so a client that read it here at all would be
-      // reading a promise this kind of service can never keep.
+      // reading a promise this kind of app can never keep.
       resources: { listChanged: false },
     });
     expect(await world.arrivals(), "the handshake dials nobody").toEqual([]);
-    expect(elapsed, "…so a hung service cannot slow it").toBeLessThan(AGGREGATED_LIST_DEADLINE_MS);
+    expect(elapsed, "…so a hung app cannot slow it").toBeLessThan(AGGREGATED_LIST_DEADLINE_MS);
 
     // The builtin, on the same axis — owner-only (§8), so the credential is a session's.
     const owner = await world.ownerToken();
@@ -2121,7 +2121,7 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
     });
   });
 
-  it("§21.5 · a never-connected tunneled service declares exactly {tools: {listChanged: true}} on its scoped handshake, and an unresolvable slug answers the identical shape (replaces :2045; whole-object)", async () => {
+  it("§21.5 · a never-connected tunneled app declares exactly {tools: {listChanged: true}} on its scoped handshake, and an unresolvable slug answers the identical shape (replaces :2045; whole-object)", async () => {
     // Honest before the first registration (§21.5): the bell rings on the first write that
     // CHANGES a stored catalog, which the first non-empty registration is — and §21.3's
     // absent ≡ [] keeps an empty first warm silent. Whole-object, so a second family
@@ -2135,7 +2135,7 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
     // The unresolvable slug, answered as §7 answers it on this endpoint shape: the
     // anti-enumeration rule bites at the DOOR, before any handshake, so the caller never
     // reaches a capabilities object at all — byte-identical to the answer an ungranted
-    // service gives, which is strictly stronger than the shape-identity §21.5 asks for. The
+    // app gives, which is strictly stronger than the shape-identity §21.5 asks for. The
     // shape function's own identical answer for an unresolvable slug is pinned where it is
     // reachable: unit/capabilities.test.ts's never-connected row.
     expect(
@@ -2143,9 +2143,9 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
     ).toBe(404);
   });
 
-  it("§20.2 · a proxied service with no capabilities config declares tools only on its scoped endpoint · one whose config declares resources advertises it, listChanged and subscribe still forced false (the twin) — owner-declared configuration, never an upstream call", async () => {
+  it("§20.2 · a proxied app with no capabilities config declares tools only on its scoped endpoint · one whose config declares resources advertises it, listChanged and subscribe still forced false (the twin) — owner-declared configuration, never an upstream call", async () => {
     // The upstream serves every family in BOTH halves. What differs is the owner's
-    // declaration, which is the point: absent means `tools` only, so every proxied service
+    // declaration, which is the point: absent means `tools` only, so every proxied app
     // in the field is unchanged by §20.
     const silent = await seedD13();
     expect(capabilitiesOf(await rpc(silent.url(NOTION), silent.agent, initializeMessage()))).toEqual({
@@ -2157,7 +2157,7 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
       capabilitiesOf(await rpc(declaring.url(NOTION), declaring.agent, initializeMessage())),
     ).toEqual({
       tools: { listChanged: false },
-      // §21.5: `subscribe` is absent on a proxied service rather than present-and-false —
+      // §21.5: `subscribe` is absent on a proxied app rather than present-and-false —
       // the key belongs to tunneled resources alone, and this kind advertises no push.
       resources: { listChanged: false },
     });
@@ -2210,7 +2210,7 @@ describe("§20.2/§20.4 — identity, MRTR, the fan-out and the two relay rules"
     );
     expect(forwarded.map((arrival) => arrival.rpcMethod)).toEqual(["prompts/get", "resources/read"]);
     for (const arrival of forwarded) {
-      expect(arrival.meta?.["hub/principal"], arrival.rpcMethod).toBe(`sa:${AGENT}`);
+      expect(arrival.meta?.["hub/principal"], arrival.rpcMethod).toBe(`agent:${AGENT}`);
       expect(arrival.meta?.["hub/roles"], arrival.rpcMethod).toEqual([ROLE]);
       expect(arrival.meta?.[CLIENT_CAPABILITIES], arrival.rpcMethod).toEqual(declared);
     }
@@ -2233,8 +2233,8 @@ describe("§20.2/§20.4 — identity, MRTR, the fan-out and the two relay rules"
 
     const [forwarded] = matching(await world.arrivals(), "prompts/get");
     expect(forwarded, "the call was forwarded at all").toBeDefined();
-    // Overwrite, never merge: any `hub/*` a service sees was written by the hub.
-    expect(forwarded.meta?.["hub/principal"]).toBe(`sa:${AGENT}`);
+    // Overwrite, never merge: any `hub/*` an app sees was written by the hub.
+    expect(forwarded.meta?.["hub/principal"]).toBe(`agent:${AGENT}`);
     expect(forwarded.meta?.["hub/roles"]).toEqual([ROLE]);
     // The twin: everything outside the reserved prefix passes untouched.
     expect(forwarded.meta?.progressToken).toBe("FAKE0000-progress");
@@ -2262,12 +2262,12 @@ describe("§20.2/§20.4 — identity, MRTR, the fan-out and the two relay rules"
       .toHaveLength(2);
   });
 
-  it("§20.2 · aggregated prompts/list survives one failing service and names it in _meta[\"pmcp/unavailable\"] · the scoped list against the same service fails -32000 (the twin)", async () => {
+  it("§20.2 · aggregated prompts/list survives one failing app and names it in _meta[\"pmcp/unavailable\"] · the scoped list against the same app fails -32000 (the twin)", async () => {
     const world = await seedD13({ also: { serves: { mode: { kind: "status", status: 503 } } } });
 
     const aggregated = await rpc(world.url(), world.agent, message("prompts/list"));
     expect(aggregated.error, "the aggregate itself always succeeds (§7, unchanged)").toBeUndefined();
-    expect(promptNames(aggregated), "one service's failure costs the consumer only its own")
+    expect(promptNames(aggregated), "one app's failure costs the consumer only its own")
       .toEqual([`${NOTION}_${PROMPT}`]);
     expect(unavailableIn(aggregated)).toContain(LINEAR);
 
@@ -2276,7 +2276,7 @@ describe("§20.2/§20.4 — identity, MRTR, the fan-out and the two relay rules"
     expect(scoped.error?.code).toBe(-32000);
   });
 
-  it("§20.4 · a service's cacheScope \"public\" on resources/read is downgraded to \"private\" before relay", async () => {
+  it("§20.4 · an app's cacheScope \"public\" on resources/read is downgraded to \"private\" before relay", async () => {
     // The one place verbatim relay is actually unsafe: the hub's authorization context is
     // per-token, so a `public` result from an authenticated endpoint could be shared
     // across access tokens.
@@ -2321,21 +2321,21 @@ describe("§20.2/§20.4 — identity, MRTR, the fan-out and the two relay rules"
 //
 // BESIDE the table for §20's reason (an OrderRow observes four things, and "a held
 // text/event-stream was opened" is none of them) plus one of its own: `resources/subscribe`
-// exists on TUNNELED services alone (§21.4), and the table reaches a tunnel only in its
+// exists on TUNNELED apps alone (§21.4), and the table reaches a tunnel only in its
 // never-connected state. Two rows here need one that is genuinely ONLINE, so this section
 // holds a socket — dialled and closed inside the case, hand-rolled for the reason
-// hygiene.test.ts's is: `harness/fake-service` is pinned to the `tunnel` project, and one
+// hygiene.test.ts's is: `harness/fake-app` is pinned to the `tunnel` project, and one
 // case's socket must not import that project's assumptions.
 //
 // What these rows keep from the table is its discipline: one world per case, every refusal
 // stated beside its allow-twin, and the ORDER observable — which is the whole reason
 // §21.4's URI filter running before the archived check is a row at all.
 
-/** The tunneled service every §21 case is about. Its own slug, so a case that also seeds a
+/** The tunneled app every §21 case is about. Its own slug, so a case that also seeds a
  *  proxied `notion` reads unambiguously. */
 const FEED = "feed";
 
-/** A role the account is granted but the service never declared — the state §7 spells as
+/** A role the agent is granted but the app never declared — the state §7 spells as
  *  "still a grant, empty pattern set", which is how a caller reaches the URI filter's
  *  refusal while the DOOR still admits it. */
 const D14_ROLE = "watcher";
@@ -2343,19 +2343,19 @@ const D14_ROLE = "watcher";
 /** The URI a granted caller subscribes, and the one no pattern covers. */
 const D14_URI = "news://feed/tech";
 
-/** What the online service answers a forwarded `resources/subscribe` — relayed verbatim, so
- *  a distinguishable body is what makes "returns the service's result" assertable. */
+/** What the online app answers a forwarded `resources/subscribe` — relayed verbatim, so
+ *  a distinguishable body is what makes "returns the app's result" assertable. */
 const SUBSCRIBE_RESULT = { resultType: "complete" };
 
 /** How one §21 world differs from the default — every field one override. */
 type D14Spec = {
-  /** The grant the account holds on the tunneled service; absent is the built-in wildcard,
+  /** The grant the agent holds on the tunneled app; absent is the built-in wildcard,
    *  which spans every family (§20.3) and therefore passes every URI. */
   role?: string;
   archived?: boolean;
   /** Dial a real socket, so a forwarded subscribe can actually be answered. */
   online?: boolean;
-  /** Add a PROXIED service with NO stored credential — `not_connected`, which §7 counts as
+  /** Add a PROXIED app with NO stored credential — `not_connected`, which §7 counts as
    *  known-unavailable and refuses -32000 before any dial. */
   unreachableProxy?: boolean;
 };
@@ -2369,8 +2369,8 @@ type D14World = {
 };
 
 /**
- * One §21 world: a tunneled `feed`, an account holding one grant on it, and — when the case
- * asks — a proxied service the hub knows it cannot reach, an archive, or a live socket.
+ * One §21 world: a tunneled `feed`, an agent holding one grant on it, and — when the case
+ * asks — a proxied app the hub knows it cannot reach, an archive, or a live socket.
  * Seeded through production seams alone, like every other fixture in this file.
  */
 async function seedD14(spec: D14Spec = {}): Promise<D14World> {
@@ -2381,8 +2381,8 @@ async function seedD14(spec: D14Spec = {}): Promise<D14World> {
     ...D13_SERVES,
   };
   const ns = await seedNamespace(env.DB, {
-    services: [
-      { slug: FEED, kind: "tunnel", logBodies: true, tokens: [{ as: "svc" }] },
+    apps: [
+      { slug: FEED, kind: "tunnel", logBodies: true, tokens: [{ as: "app" }] },
       ...(spec.unreachableProxy === true
         ? [
             {
@@ -2396,13 +2396,13 @@ async function seedD14(spec: D14Spec = {}): Promise<D14World> {
           ]
         : []),
     ],
-    accounts: [
+    agents: [
       {
         slug: AGENT,
         grants: {
           [FEED]: [{ role: spec.role ?? "all", mode: "allow" }],
           // No `setHeaders` call anywhere below: that omission IS the not_connected state,
-          // written the way an owner reaches it (a service configured and never connected).
+          // written the way an owner reaches it (an app configured and never connected).
           ...(spec.unreachableProxy === true ? { [NOTION]: [{ role: ROLE, mode: "allow" as const }] } : {}),
         },
         tokens: [{ as: TOKEN }],
@@ -2410,10 +2410,10 @@ async function seedD14(spec: D14Spec = {}): Promise<D14World> {
     ],
   });
 
-  const close = spec.online === true ? await dialFeed(ns.tokens.svc.token) : async () => undefined;
+  const close = spec.online === true ? await dialFeed(ns.tokens.app.token) : async () => undefined;
   // Archived AFTER the socket, if a case ever wants both: archival is a stage, not a create
   // field, and it severs nothing here — admin's cascade owns that ordering (§6).
-  if (spec.archived === true) await new Registry(env.DB).archiveService(ns.services[FEED].id);
+  if (spec.archived === true) await new Registry(env.DB).archiveApp(ns.apps[FEED].id);
 
   return {
     ns,
@@ -2426,10 +2426,10 @@ async function seedD14(spec: D14Spec = {}): Promise<D14World> {
 }
 
 /**
- * One real service on the other end of §6's wire, answering `resources/subscribe` natively
+ * One real app on the other end of §6's wire, answering `resources/subscribe` natively
  * (§21.4: "the author's SDK answers it natively, so neither client library changes"). It
  * answers the registration-time `server/discover` with -32601 — §20.5's compatibility
- * fallback, the leg every service already in the field takes — so this file states nothing
+ * fallback, the leg every app already in the field takes — so this file states nothing
  * about that answer's shape, which is tunnel/**'s.
  */
 async function dialFeed(token: string): Promise<() => Promise<void>> {
@@ -2492,19 +2492,19 @@ async function dialFeed(token: string): Promise<() => Promise<void>> {
  *  check below consults. */
 async function untilOnline(world: D14World): Promise<void> {
   for (let turn = 0; turn < 250; turn++) {
-    if ((await status(world.ns.services[FEED].id)) === "online") return;
+    if ((await status(world.ns.apps[FEED].id)) === "online") return;
     await new Promise<void>((resolve) => {
       // REAL time: workerd is the runtime under test and vitest's fake timers do not reach
       // inside it. One millisecond per turn, and the loop exits on the condition itself.
       setTimeout(resolve, 1);
     });
   }
-  throw new Error("the tunneled service never registered");
+  throw new Error("the tunneled app never registered");
 }
 
 
 describe("§21.1 — what a listen request is refused for, and what it is not", () => {
-  it("§21.1 · a GRANTED caller's scoped subscriptions/listen against an archived service is -32002 before the stream opens · the same caller's aggregated stream opens with the archived service simply not subscribed (the allow-twin)", async () => {
+  it("§21.1 · a GRANTED caller's scoped subscriptions/listen against an archived app is -32002 before the stream opens · the same caller's aggregated stream opens with the archived app simply not subscribed (the allow-twin)", async () => {
     const world = await seedD14({ archived: true });
 
     const scoped = await listenAt(world.url(FEED), world.agent);
@@ -2512,7 +2512,7 @@ describe("§21.1 — what a listen request is refused for, and what it is not", 
     expect(scoped.contentType).not.toContain("text/event-stream");
     expect(scoped.sessionId, "a refused open mints nothing").toBeNull();
 
-    // The allow-twin: on the aggregated shape an archived service is not a refusal, it is
+    // The allow-twin: on the aggregated shape an archived app is not a refusal, it is
     // simply not in the subscribed set (§21.1) — and the stream is the same 200 either way.
     const aggregated = await listenAt(world.url(), world.agent);
     expect(aggregated.status).toBe(200);
@@ -2520,13 +2520,13 @@ describe("§21.1 — what a listen request is refused for, and what it is not", 
     expect(aggregated.code).toBeUndefined();
   });
 
-  it("§21.1 · availability is never checked on listen — an offline tunneled service and a needs-reconnect proxied one, each -32000 to every call, both hand back a scoped stream", async () => {
+  it("§21.1 · availability is never checked on listen — an offline tunneled app and a needs-reconnect proxied one, each -32000 to every call, both hand back a scoped stream", async () => {
     // FLAGGED, and stated rather than hidden: the proxied half rides `not_connected`, the
     // OTHER of §7's two known-unavailable proxied states, because this file's own seeder
     // hard-refuses needs_reconnect ("reaching it here would mean running a whole connect
     // flow, which is upstream-credentials.test.ts's subject and not this table's") and the
     // flip has exactly one production trigger — a rejected refresh. What the row needs of
-    // the fixture is a service the hub KNOWS it cannot reach, which is what both states are;
+    // the fixture is an app the hub KNOWS it cannot reach, which is what both states are;
     // needs_reconnect's own -32000 is pinned in upstream-proxy.test.ts.
     const world = await seedD14({ unreachableProxy: true });
 
@@ -2538,7 +2538,7 @@ describe("§21.1 — what a listen request is refused for, and what it is not", 
       );
       expect(call.error?.code, `${slug}: every CALL is refused`).toBe(-32000);
 
-      // …and the stream is handed back anyway: a stream against a service that is down is
+      // …and the stream is handed back anyway: a stream against an app that is down is
       // the point — the bell rings when it comes back changed (§21.1).
       const stream = await listenAt(world.url(slug), world.agent);
       expect(stream.code, `${slug}: availability was consulted`).toBeUndefined();
@@ -2549,17 +2549,17 @@ describe("§21.1 — what a listen request is refused for, and what it is not", 
 });
 
 describe("§21.4 — the two per-URI methods, in §7's order", () => {
-  it("§7/§21.4 · resources/subscribe and resources/unsubscribe are -32601 on the aggregated endpoint · and -32601 scoped against a proxied service and the builtin — the capability is never advertised and there is nowhere to forward", async () => {
+  it("§7/§21.4 · resources/subscribe and resources/unsubscribe are -32601 on the aggregated endpoint · and -32601 scoped against a proxied app and the builtin — the capability is never advertised and there is nowhere to forward", async () => {
     const world = await seedD13();
     const owner = await world.ownerToken();
 
     for (const method of ["resources/subscribe", "resources/unsubscribe"]) {
-      // Aggregated: a URI cannot take a `<slug>_` prefix and still be the URI the service
-      // knows (§18 decision 26), so the shape refuses before any service is resolved.
+      // Aggregated: a URI cannot take a `<slug>_` prefix and still be the URI the app
+      // knows (§18 decision 26), so the shape refuses before any app is resolved.
       const aggregated = await rpc(world.url(), world.agent, message(method, { uri: URI }));
       expect(aggregated.error?.code, `${method}: aggregated`).toBe(-32601);
 
-      // Scoped against a PROXIED service: no DO, no channel, nothing to forward to (§21.2),
+      // Scoped against a PROXIED app: no DO, no channel, nothing to forward to (§21.2),
       // and §21.5 never advertises the capability for it.
       const proxied = await rpc(world.url(NOTION), world.agent, message(method, { uri: URI }));
       expect(proxied.error?.code, `${method}: proxied`).toBe(-32601);
@@ -2570,10 +2570,10 @@ describe("§21.4 — the two per-URI methods, in §7's order", () => {
     }
   });
 
-  it("§21.4 · an ungranted URI against an ARCHIVED service is -32001, never -32002 — the URI filter runs first, per the table's overlapping-condition doctrine", async () => {
-    // A grant on a role the service never declared: §7 keeps it a GRANT (so the door admits
+  it("§21.4 · an ungranted URI against an ARCHIVED app is -32001, never -32002 — the URI filter runs first, per the table's overlapping-condition doctrine", async () => {
+    // A grant on a role the app never declared: §7 keeps it a GRANT (so the door admits
     // the caller — a 404 here would prove nothing about the order) whose pattern set is
-    // EMPTY, so every URI is ungranted. The service is archived as well, which is the
+    // EMPTY, so every URI is ungranted. The app is archived as well, which is the
     // overlapping condition: only the order decides which of the two codes comes back.
     const world = await seedD14({ role: D14_ROLE, archived: true });
 
@@ -2585,9 +2585,9 @@ describe("§21.4 — the two per-URI methods, in §7's order", () => {
     expect(refused.error?.code).toBe(-32001);
   });
 
-  it("§21.4 · a granted URI against an archived AND known-offline service is -32002, never -32000 · the granted, online subscribe dispatches and returns the service's result (the allow-twin)", async () => {
+  it("§21.4 · a granted URI against an archived AND known-offline app is -32002, never -32000 · the granted, online subscribe dispatches and returns the app's result (the allow-twin)", async () => {
     // Granted by the built-in wildcard, so the URI filter passes and the next two checks are
-    // the only ones left. The service is archived AND has never held a socket: -32000 is the
+    // the only ones left. The app is archived AND has never held a socket: -32000 is the
     // answer an implementation that checked availability first would give.
     const archived = await seedD14({ archived: true });
     const refused = await rpc(
@@ -2597,7 +2597,7 @@ describe("§21.4 — the two per-URI methods, in §7's order", () => {
     );
     expect(refused.error?.code).toBe(-32002);
 
-    // The allow-twin, on a service that is genuinely online: the frame reaches it and its
+    // The allow-twin, on an app that is genuinely online: the frame reaches it and its
     // answer is relayed verbatim. No stream is open, so the DO stores nothing and forwards
     // anyway — a legal MCP request whose notifications are simply undeliverable (§21.4).
     const live = await seedD14({ online: true });

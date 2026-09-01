@@ -1,7 +1,7 @@
 /**
  * tunnel/pipeline-tunnel.test.ts — §16's core integration test: a consumer POSTs into
- * the real worker entry, a fake service answers over a real WebSocket through the real
- * ServiceConnection DO, and everything in between is production code. Four green unit
+ * the real worker entry, a fake app answers over a real WebSocket through the real
+ * AppConnection DO, and everything in between is production code. Four green unit
  * tests compose into a wrong pipeline; only the pipeline exhibits the pipeline's bugs
  * (strategy §1), so this file is where both endpoint shapes, role filtering, `_meta`
  * hygiene and the audit chokepoint are pinned END TO END rather than per function.
@@ -9,10 +9,10 @@
  * WHAT THIS SUITE PINS. That both endpoint shapes are ONE pipeline — the same call
  * reaches the same tool with the same params through `/<user>/mcp` and
  * `/<user>/mcp/<slug>`, prefixed and unprefixed; role filtering bounding both the
- * listing and the call; `_meta` hygiene as the SERVICE observes it (consumer-supplied
+ * listing and the call; `_meta` hygiene as the APP observes it (consumer-supplied
  * `hub/*` keys stripped then the hub's own set — overwrite, never merge; the consumer's
  * clientCapabilities mirrored, `{}` when absent; everything else untouched); that a
- * service's `notifications/tools/list_changed` reaches the consumer's next listing, and
+ * app's `notifications/tools/list_changed` reaches the consumer's next listing, and
  * that a re-list drawing nothing leaves the previous one standing; that
  * JSON-RPC ids never cross the socket in either direction; that `writeOnly` is stripped
  * from served outputSchemas while inputSchemas keep theirs; the 30 s call deadline
@@ -42,12 +42,12 @@
  * D1 migrations are applied once by the project setup file (read Node-side with
  * readD1Migrations, applied with applyD1Migrations — idempotent); with --no-isolate the
  * database is shared across this project's files, so every case seeds its own owner,
- * service, account and tokens, and asserts on rows it created rather than on counts.
- * Nothing sleeps: the never-answering service reaches the deadline against a shrunk
- * constant, and the fake service's release gates make ordering explicit.
+ * app, agent and tokens, and asserts on rows it created rather than on counts.
+ * Nothing sleeps: the never-answering app reaches the deadline against a shrunk
+ * constant, and the fake app's release gates make ordering explicit.
  */
 
-// deps: harness/seed · harness/fake-service · harness/tunnel-do (backendCtx, untilStatus, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env) · src/gateway (JsonRpcRequest, JsonRpcResponse, Tool) · src/tunnel (tunnelBackend) · src/audit (query) · src/registry (Registry, buildToolFilter) · src/limits (CALL_TIMEOUT_MS) · src/errors (CODES)
+// deps: harness/seed · harness/fake-app · harness/tunnel-do (backendCtx, untilStatus, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env) · src/gateway (JsonRpcRequest, JsonRpcResponse, Tool) · src/tunnel (tunnelBackend) · src/audit (query) · src/registry (Registry, buildToolFilter) · src/limits (CALL_TIMEOUT_MS) · src/errors (CODES)
 
 import { abortAllDurableObjects, env } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
@@ -58,12 +58,12 @@ import { CODES } from "../../src/errors";
 import type { JsonRpcRequest, JsonRpcResponse, Tool } from "../../src/gateway";
 import { CALL_TIMEOUT_MS } from "../../src/limits";
 import { REDACTED, Registry } from "../../src/registry";
-import type { Service } from "../../src/registry";
+import type { App } from "../../src/registry";
 import { tunnelBackend } from "../../src/tunnel";
-import { connectFakeService, tick, waitFor } from "../harness/fake-service";
-import type { FakeService, ToolBehavior } from "../harness/fake-service";
+import { connectFakeApp, tick, waitFor } from "../harness/fake-app";
+import type { FakeApp, ToolBehavior } from "../harness/fake-app";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
-import type { SeededNamespace, SeededService } from "../harness/seed";
+import type { SeededNamespace, SeededApp } from "../harness/seed";
 import { backendCtx, untilCataloged, untilStatus } from "../harness/tunnel-do";
 
 /**
@@ -93,12 +93,12 @@ export type ConsumerCall = JsonRpcRequest & {
 
 /**
  * One row of the `_meta` hygiene table — the §7 reservation as data, always observed AT
- * THE SERVICE (the fake service records the frame it received) rather than by
+ * THE APP (the fake app records the frame it received) rather than by
  * inspecting the gateway, because "a consumer cannot inject `hub/*`" is a claim about
- * what a service sees.
+ * what an app sees.
  *
  * Three columns, because §7 makes exactly three promises about a forwarded `_meta`:
- * `absent` — keys the service must not see at all (every consumer-supplied `hub/*`
+ * `absent` — keys the app must not see at all (every consumer-supplied `hub/*`
  * copy); `passthrough` — keys that must arrive byte-identical to what the consumer sent,
  * AT THE POSITION they were sent (`_meta` keys like progressToken and vendor keys, and
  * the params-level `siblings` below); `written` — keys the hub sets itself, whose values
@@ -110,12 +110,12 @@ export type MetaHygieneRow = {
   name: string;
   /**
    * Who calls. Owners forward roles `["all"]` literally down a path that hardcodes it;
-   * accounts forward what they hold, resolved from the grant table — which is why the
-   * built-in wildcard needs a caller of its own (`service_account_all`): §7's "never
+   * agents forward what they hold, resolved from the grant table — which is why the
+   * built-in wildcard needs a caller of its own (`agent_all`): §7's "never
    * expanded into declared role names" is a claim about grant RESOLUTION, and the owner's
    * hardcoded `["all"]` cannot witness it.
    */
-  caller: "owner" | "service_account" | "service_account_all";
+  caller: "owner" | "agent" | "agent_all";
   sent: Record<string, unknown>;
   /**
    * Params-level keys sent beside `arguments` — MRTR's `inputResponses` / `requestState`
@@ -135,19 +135,19 @@ export type MetaHygieneRow = {
  * deletion is satisfied by forwarding no `_meta` at all.
  */
 export const metaHygieneRows: readonly MetaHygieneRow[] = [
-  // The fixture these rows are written against, named once: one tunneled service `notes`
-  // declaring `reader: ["search"]`, one service account with the FIXED slug `claude`
-  // holding `reader` in allow mode, a second account with the FIXED slug `wildcard`
+  // The fixture these rows are written against, named once: one tunneled app `notes`
+  // declaring `reader: ["search"]`, one agent with the FIXED slug `claude`
+  // holding `reader` in allow mode, a second agent with the FIXED slug `wildcard`
   // holding the built-in `all` in allow mode, and the namespace owner. Every row is the
   // same `tools/call` for `search` on the scoped endpoint — the message differs only in
   // its `_meta` and, on the MRTR row, its params-level siblings.
   //
   // Three conventions, so no row repeats them:
-  // · `written` lists only the keys whose expected value is STABLE across runs. `sa:claude`
-  //   is stable because the account slug is fixture-chosen; `user:<username>` is not (the
+  // · `written` lists only the keys whose expected value is STABLE across runs. `agent:claude`
+  //   is stable because the agent slug is fixture-chosen; `user:<username>` is not (the
   //   tunnel project mints a unique username per case, seed.uniqueSlug), so the owner row
   //   pins its `hub/roles` and its capabilities and leaves the principal VALUE to the
-  //   service-account rows, where the same code path writes it.
+  //   agent rows, where the same code path writes it.
   // · `io.modelcontextprotocol/protocolVersion` is hub-written on every forwarded frame
   //   (§6's stateless wire) but appears in no row's `written` map: its value is the wire
   //   version literal, which contracts.test.ts pins as a fixture and protocol.test.ts's
@@ -159,38 +159,38 @@ export const metaHygieneRows: readonly MetaHygieneRow[] = [
 
   // §7: `hub/principal` and `hub/roles` are the hub's resolution, and a consumer's copy is
   // stripped before they are stamped — strip-then-set, never merge. The forged roles here
-  // name a role the account does not hold and the wildcard it may never grant itself; the
-  // forged principal names another account. What arrives is what the hub resolved.
+  // name a role the agent does not hold and the wildcard it may never grant itself; the
+  // forged principal names another agent. What arrives is what the hub resolved.
   {
-    name: "§7 · a forged hub/roles and hub/principal never reach the service: the hub's own resolution arrives in their place, and an unknown hub/* key arrives not at all",
-    caller: "service_account",
+    name: "§7 · a forged hub/roles and hub/principal never reach the app: the hub's own resolution arrives in their place, and an unknown hub/* key arrives not at all",
+    caller: "agent",
     sent: {
       "hub/roles": ["admin", "all"],
-      "hub/principal": "sa:root",
+      "hub/principal": "agent:root",
       "hub/impersonate": "user:ahrzb",
       progressToken: "p-1",
     },
     absent: ["hub/impersonate"],
     passthrough: ["progressToken"],
     written: {
-      "hub/principal": "sa:claude",
+      "hub/principal": "agent:claude",
       "hub/roles": ["reader"],
       "io.modelcontextprotocol/clientCapabilities": {},
     },
   },
   // §7's identity forwarding: "the built-in wildcard is forwarded literally as `"all"`,
   // never expanded into declared role names; owners get `["all"]`". The row also carries
-  // the second half of the prefix rule — `hub/service` is a name the hub writes nothing
+  // the second half of the prefix rule — `hub/app` is a name the hub writes nothing
   // for, so it is dropped rather than passed through as a vendor key would be.
   {
-    name: "§7 · an owner's _meta is scrubbed the same way: hub/roles arrives as the literal [\"all\"], never expanded into the service's declared roles",
+    name: "§7 · an owner's _meta is scrubbed the same way: hub/roles arrives as the literal [\"all\"], never expanded into the app's declared roles",
     caller: "owner",
     sent: {
       "hub/roles": ["reader"],
-      "hub/service": "other",
+      "hub/app": "other",
       "vendor.example/trace": "t-1",
     },
-    absent: ["hub/service"],
+    absent: ["hub/app"],
     passthrough: ["vendor.example/trace"],
     written: {
       "hub/roles": ["all"],
@@ -203,7 +203,7 @@ export const metaHygieneRows: readonly MetaHygieneRow[] = [
   // capabilities the caller never declared, and may not drop the ones it did.
   {
     name: "§6 · the consumer's declared clientCapabilities are mirrored onto the forwarded request verbatim — the hub asserts the caller's capabilities, not its own",
-    caller: "service_account",
+    caller: "agent",
     sent: {
       "io.modelcontextprotocol/clientCapabilities": { elicitation: {}, sampling: {} },
       progressToken: 7,
@@ -211,7 +211,7 @@ export const metaHygieneRows: readonly MetaHygieneRow[] = [
     absent: [],
     passthrough: ["progressToken"],
     written: {
-      "hub/principal": "sa:claude",
+      "hub/principal": "agent:claude",
       "hub/roles": ["reader"],
       "io.modelcontextprotocol/clientCapabilities": { elicitation: {}, sampling: {} },
     },
@@ -226,7 +226,7 @@ export const metaHygieneRows: readonly MetaHygieneRow[] = [
   // weaker scrubbing than a first one.
   {
     name: "§7 · an MRTR follow-up leg's inputResponses and requestState arrive verbatim beside arguments, while its forged hub/roles is overwritten like any other",
-    caller: "service_account",
+    caller: "agent",
     sent: {
       "hub/roles": ["admin"],
     },
@@ -237,30 +237,30 @@ export const metaHygieneRows: readonly MetaHygieneRow[] = [
     absent: [],
     passthrough: ["inputResponses", "requestState"],
     written: {
-      "hub/principal": "sa:claude",
+      "hub/principal": "agent:claude",
       "hub/roles": ["reader"],
       "io.modelcontextprotocol/clientCapabilities": {},
     },
   },
-  // §7's identity forwarding again, on the one path the owner row cannot reach: an ACCOUNT
+  // §7's identity forwarding again, on the one path the owner row cannot reach: an AGENT
   // granted the built-in `all` resolves its roles through the grant table rather than the
   // owner's hardcoded `["all"]`, and the wildcard must still arrive LITERAL — never expanded
-  // into the service's declared role names (here `["reader"]`, which is what an expanding
+  // into the app's declared role names (here `["reader"]`, which is what an expanding
   // implementation would send while every other row stayed green). unit/filter.test.ts
-  // delegates exactly this claim to this file ("that `roleNames` reaches a service as
+  // delegates exactly this claim to this file ("that `roleNames` reaches an app as
   // `hub/roles` with `all` still literal"), and worker/upstream-proxy.test.ts pins the
-  // proxied twin (`x-pmcp-roles: all` for `sa:<agent>`), so this row is the tunneled half of
+  // proxied twin (`x-pmcp-roles: all` for `agent:<agent>`), so this row is the tunneled half of
   // one rule rather than a second opinion about the owner's.
   {
-    name: "§7 · a service account granted the built-in `all` forwards hub/roles as the literal [\"all\"] — granted wildcards are never expanded into the service's declared roles",
-    caller: "service_account_all",
+    name: "§7 · an agent granted the built-in `all` forwards hub/roles as the literal [\"all\"] — granted wildcards are never expanded into the app's declared roles",
+    caller: "agent_all",
     sent: {
       progressToken: "p-2",
     },
     absent: [],
     passthrough: ["progressToken"],
     written: {
-      "hub/principal": "sa:wildcard",
+      "hub/principal": "agent:wildcard",
       "hub/roles": ["all"],
       "io.modelcontextprotocol/clientCapabilities": {},
     },
@@ -270,31 +270,31 @@ export const metaHygieneRows: readonly MetaHygieneRow[] = [
 /**
  * Runs one hygiene row: seeds the caller, sends the row's ConsumerCall through
  * `exports.default.fetch`, and asserts the three columns against the frame the fake
- * service recorded — plus, always, that the response the consumer receives bears the
+ * app recorded — plus, always, that the response the consumer receives bears the
  * consumer's own id.
  */
 export async function runMetaHygieneCase(row: MetaHygieneRow): Promise<void> {
-  // deps: harness/seed · harness/fake-service · cloudflare:workers exports.default.fetch
+  // deps: harness/seed · harness/fake-app · cloudflare:workers exports.default.fetch
   const fixture = await seedFixture();
-  const answer = await rpc(fixture, await credentialFor(fixture, row.caller), SERVICE_SLUG, {
+  const answer = await rpc(fixture, await credentialFor(fixture, row.caller), APP_SLUG, {
     jsonrpc: "2.0",
     id: CONSUMER_ID,
     method: "tools/call",
     params: { name: TOOL, arguments: { q: "hygiene" }, ...(row.siblings ?? {}), _meta: row.sent },
   });
-  expect(answer.body.error, `"${row.name}" was refused before it reached the service`).toBeUndefined();
+  expect(answer.body.error, `"${row.name}" was refused before it reached the app`).toBeUndefined();
   expect(
     await waitFor(() => fixture.fake.callCount(TOOL) > 0),
-    `"${row.name}" never reached the service`,
+    `"${row.name}" never reached the app`,
   ).toBe(true);
 
-  // Observed AT THE SERVICE, always: "a consumer cannot inject hub/*" is a claim about what
-  // a service sees, and the frame — not the invocation projection — is where the
+  // Observed AT THE APP, always: "a consumer cannot inject hub/*" is a claim about what
+  // an app sees, and the frame — not the invocation projection — is where the
   // params-level siblings ride (ConsumerCall's doc).
   const params = servedParams(fixture.fake);
   const meta = (params._meta ?? {}) as Record<string, unknown>;
   for (const key of row.absent) {
-    expect(Object.keys(meta), `"${row.name}": ${key} reached the service`).not.toContain(key);
+    expect(Object.keys(meta), `"${row.name}": ${key} reached the app`).not.toContain(key);
   }
   for (const key of row.passthrough) {
     const rode = key in row.sent;
@@ -314,11 +314,11 @@ export async function runMetaHygieneCase(row: MetaHygieneRow): Promise<void> {
 const ORIGIN = (env as unknown as { PUBLIC_ORIGIN: string }).PUBLIC_ORIGIN;
 
 /** The fixture named once in metaHygieneRows' preamble, spelled here for every case. */
-const SERVICE_SLUG = "notes";
+const APP_SLUG = "notes";
 const OTHER_SLUG = "vault";
-const ACCOUNT = "claude";
-const WILDCARD_ACCOUNT = "wildcard";
-const UNDECLARED_ACCOUNT = "ghost";
+const AGENT = "claude";
+const WILDCARD_AGENT = "wildcard";
+const UNDECLARED_AGENT = "ghost";
 const TOOL = "search";
 const UNGRANTED_TOOL = "purge";
 
@@ -326,7 +326,7 @@ const UNGRANTED_TOOL = "purge";
  *  (case 12: ids never cross). A number, so a wire id (a UUID string) can never equal it. */
 const CONSUMER_ID = 4242;
 
-/** Planted in the service's answer, so "the consumer's relayed result is never masked" and
+/** Planted in the app's answer, so "the consumer's relayed result is never masked" and
  *  "the row written for that same call is" are two readings of one value (case 20). */
 const RESULT_SECRET = "FAKE0000-relayed-result-secret";
 
@@ -354,14 +354,14 @@ const PURGE_TOOL: Tool = {
 };
 
 /** A tool the seeded catalog does not hold, so a listing that serves it can only have been
- *  re-read after the service said its tool set changed (case 6a). */
+ *  re-read after the app said its tool set changed (case 6a). */
 const DIGEST_TOOL: Tool = {
   name: "digest",
   description: "catalogued only by the re-list",
   inputSchema: { type: "object", properties: {} },
 };
 
-/** What the fake service answers by default: both result carriers, the structured one
+/** What the fake app answers by default: both result carriers, the structured one
  *  carrying the planted secret. */
 const ANSWER = {
   structuredContent: { hits: 1, secret: RESULT_SECRET },
@@ -370,104 +370,104 @@ const ANSWER = {
 
 type Fixture = {
   ns: SeededNamespace;
-  service: SeededService;
-  other: SeededService;
-  fake: FakeService;
-  /** The second service's socket — present only when the row asked for it (case 2). */
-  otherFake?: FakeService;
+  app: SeededApp;
+  other: SeededApp;
+  fake: FakeApp;
+  /** The second app's socket — present only when the row asked for it (case 2). */
+  otherFake?: FakeApp;
 };
 
 const seeded: SeededNamespace[] = [];
-const opened: FakeService[] = [];
+const opened: FakeApp[] = [];
 
 afterEach(async () => {
   // Shared storage AND shared sockets across files in this project: a leak here is a leak
   // into the next file.
-  for (const service of opened.splice(0)) await service.close();
+  for (const app of opened.splice(0)) await app.close();
   for (const namespace of seeded.splice(0)) await namespace.teardown();
 });
 
 /**
  * The namespace metaHygieneRows names: one tunneled `notes` declaring `reader: ["search"]`,
- * the three accounts the rows call as, and a second tunneled service nobody but the owner
+ * the three agents the rows call as, and a second tunneled app nobody but the owner
  * can see. The socket is dialled and its catalog warmed before this resolves, so a case's
- * first line is "this service is online" as a fact.
+ * first line is "this app is online" as a fact.
  */
 async function seedFixture(
   options: { tools?: Tool[]; connectOther?: boolean; behavior?: ToolBehavior } = {},
 ): Promise<Fixture> {
   const ns = await seedNamespace(env.DB, {
     username: uniqueSlug("pipe"),
-    services: [
-      { slug: SERVICE_SLUG, kind: "tunnel", tokens: [{ as: "svc" }] },
-      { slug: OTHER_SLUG, kind: "tunnel", tokens: [{ as: "otherSvc" }] },
+    apps: [
+      { slug: APP_SLUG, kind: "tunnel", tokens: [{ as: "app" }] },
+      { slug: OTHER_SLUG, kind: "tunnel", tokens: [{ as: "otherApp" }] },
     ],
-    accounts: [
+    agents: [
       {
-        slug: ACCOUNT,
-        grants: { [SERVICE_SLUG]: [{ role: "reader", mode: "allow" }] },
-        tokens: [{ as: ACCOUNT }],
+        slug: AGENT,
+        grants: { [APP_SLUG]: [{ role: "reader", mode: "allow" }] },
+        tokens: [{ as: AGENT }],
       },
       {
         // The built-in wildcard, granted rather than owned — §7's "never expanded" is a
         // claim about grant RESOLUTION, which the owner's hardcoded ["all"] cannot witness.
-        slug: WILDCARD_ACCOUNT,
-        grants: { [SERVICE_SLUG]: [{ role: "all", mode: "allow" }] },
-        tokens: [{ as: WILDCARD_ACCOUNT }],
+        slug: WILDCARD_AGENT,
+        grants: { [APP_SLUG]: [{ role: "all", mode: "allow" }] },
+        tokens: [{ as: WILDCARD_AGENT }],
       },
       {
-        // Granted a role the service never declares: grants exist (so the door does not
+        // Granted a role the app never declares: grants exist (so the door does not
         // 404), and nothing matches (case 5).
-        slug: UNDECLARED_ACCOUNT,
-        grants: { [SERVICE_SLUG]: [{ role: "writer", mode: "allow" }] },
-        tokens: [{ as: UNDECLARED_ACCOUNT }],
+        slug: UNDECLARED_AGENT,
+        grants: { [APP_SLUG]: [{ role: "writer", mode: "allow" }] },
+        tokens: [{ as: UNDECLARED_AGENT }],
       },
     ],
   });
   seeded.push(ns);
   const fixture: Fixture = {
     ns,
-    service: ns.services[SERVICE_SLUG],
-    other: ns.services[OTHER_SLUG],
-    fake: await connect(ns.tokens.svc.token, options.tools ?? [SEARCH_TOOL, PURGE_TOOL], options.behavior),
+    app: ns.apps[APP_SLUG],
+    other: ns.apps[OTHER_SLUG],
+    fake: await connect(ns.tokens.app.token, options.tools ?? [SEARCH_TOOL, PURGE_TOOL], options.behavior),
   };
   if (options.connectOther === true) {
-    fixture.otherFake = await connect(ns.tokens.otherSvc.token, [SEARCH_TOOL]);
+    fixture.otherFake = await connect(ns.tokens.otherApp.token, [SEARCH_TOOL]);
   }
   await warmed(fixture);
   return fixture;
 }
 
-/** One registered socket for a service token, with the given catalog. */
-async function connect(token: string, tools: Tool[], behavior?: ToolBehavior): Promise<FakeService> {
-  const service = await connectFakeService({
+/** One registered socket for an app token, with the given catalog. */
+async function connect(token: string, tools: Tool[], behavior?: ToolBehavior): Promise<FakeApp> {
+  const app = await connectFakeApp({
     origin: ORIGIN,
     token,
     roles: { reader: [TOOL] },
     tools,
     behavior: behavior ?? { mode: "answer", result: ANSWER },
   });
-  opened.push(service);
-  return service;
+  opened.push(app);
+  return app;
 }
 
 /** Waits until the DO holds the catalog — the state every case's first assertion assumes. */
 async function warmed(fixture: Fixture): Promise<void> {
-  await untilCataloged(await serviceRow(fixture));
+  await untilCataloged(await appRow(fixture));
 }
 
-/** The service row as the gateway hands it to a backend. */
-async function serviceRow(fixture: Fixture, slug: string = SERVICE_SLUG): Promise<Service> {
-  const row = await new Registry(env.DB).getService(fixture.ns.owner.userId, slug);
-  if (row === null) throw new Error(`the fixture's service "${slug}" vanished`);
+/** The app row as the gateway hands it to a backend. */
+async function appRow(fixture: Fixture, slug: string = APP_SLUG): Promise<App> {
+  const row = await new Registry(env.DB).getApp(fixture.ns.owner.userId, slug);
+  if (row === null) throw new Error(`the fixture's app "${slug}" vanished`);
   return row;
 }
 
 /** The bearer each caller kind presents. The owner's is a real session (the device-flow
- *  credential a human holds); the accounts' are their `pmcp_sa_` keys. */
+ *  credential a human holds); the agents' are their `pmcp_agt_` keys. */
 async function credentialFor(fixture: Fixture, caller: MetaHygieneRow["caller"]): Promise<string> {
   if (caller === "owner") return (await seedOwnerSession(fixture.ns.owner)).token;
-  return fixture.ns.tokens[caller === "service_account" ? ACCOUNT : WILDCARD_ACCOUNT].token;
+  return fixture.ns.tokens[caller === "agent" ? AGENT : WILDCARD_AGENT].token;
 }
 
 type Answer = { status: number; body: JsonRpcResponse };
@@ -513,7 +513,7 @@ function servedTools(answer: Answer): Tool[] {
 /**
  * The scoped listing's tool names, polled until they are `expected` — the re-list a
  * `notifications/tools/list_changed` provokes is a hub round trip, so "has the catalog
- * changed yet" is a scheduling question and never a duration (fake-service.tick's doc).
+ * changed yet" is a scheduling question and never a duration (fake-app.tick's doc).
  * Answers the LAST listing either way, so a change that never lands fails as an assertion
  * naming both sides rather than as a test timeout with nothing to read. The polled thing
  * stays a consumer-facing listing: peeking at the DO's storage would answer a different
@@ -527,7 +527,7 @@ async function untilListed(
   let names: string[] = [];
   // waitFor's own default budget, spelled here because the predicate is a round trip.
   for (let turn = 0; turn < 250; turn++) {
-    const listed = await rpc(fixture, credential, SERVICE_SLUG, listMessage());
+    const listed = await rpc(fixture, credential, APP_SLUG, listMessage());
     names = servedTools(listed).map((tool) => tool.name);
     if (names.join() === expected.join()) return names;
     await tick();
@@ -537,15 +537,15 @@ async function untilListed(
 
 /** Every `tools/call` frame a socket received, verbatim — `invocations` is a projection of
  *  these, and the params-level siblings live only here. */
-function callFrames(service: FakeService): Record<string, unknown>[] {
-  return service.frames.filter((frame) => frame.method === "tools/call");
+function callFrames(app: FakeApp): Record<string, unknown>[] {
+  return app.frames.filter((frame) => frame.method === "tools/call");
 }
 
-/** The params of the last `tools/call` frame the service received. */
-function servedParams(service: FakeService): Record<string, unknown> {
-  const frames = callFrames(service);
+/** The params of the last `tools/call` frame the app received. */
+function servedParams(app: FakeApp): Record<string, unknown> {
+  const frames = callFrames(app);
   const last = frames[frames.length - 1];
-  if (last === undefined) throw new Error("no tools/call ever reached the service");
+  if (last === undefined) throw new Error("no tools/call ever reached the app");
   return (last.params ?? {}) as Record<string, unknown>;
 }
 
@@ -608,41 +608,41 @@ describe("§7 both endpoint shapes, one pipeline", () => {
   it("1. §7 · scoped tools/list serves the caller's filtered catalog with unprefixed names", async () => {
     const fixture = await seedFixture();
 
-    const listed = servedTools(await rpc(fixture, fixture.ns.tokens[ACCOUNT].token, SERVICE_SLUG, listMessage()));
+    const listed = servedTools(await rpc(fixture, fixture.ns.tokens[AGENT].token, APP_SLUG, listMessage()));
 
     // `reader: ["search"]` — the catalogued `purge` is outside it, and no name carries a prefix.
     expect(listed.map((tool) => tool.name)).toEqual([TOOL]);
   });
 
-  it("2. §7 · aggregated tools/list prefixes `<slug>_` and spans only services the caller holds a grant on", async () => {
+  it("2. §7 · aggregated tools/list prefixes `<slug>_` and spans only apps the caller holds a grant on", async () => {
     const fixture = await seedFixture({ connectOther: true });
 
-    const forAccount = servedTools(
-      await rpc(fixture, fixture.ns.tokens[ACCOUNT].token, null, listMessage()),
+    const forAgent = servedTools(
+      await rpc(fixture, fixture.ns.tokens[AGENT].token, null, listMessage()),
     );
     const forOwner = servedTools(
       await rpc(fixture, (await seedOwnerSession(fixture.ns.owner)).token, null, listMessage()),
     );
 
-    expect(forAccount.map((tool) => tool.name)).toEqual([`${SERVICE_SLUG}_${TOOL}`]);
-    // The second service is real, online and catalogued — the account simply holds no grant
+    expect(forAgent.map((tool) => tool.name)).toEqual([`${APP_SLUG}_${TOOL}`]);
+    // The second app is real, online and catalogued — the agent simply holds no grant
     // on it, which is what makes its absence a filtering claim rather than an empty one.
     expect(forOwner.map((tool) => tool.name)).toContain(`${OTHER_SLUG}_${TOOL}`);
-    expect(forOwner.map((tool) => tool.name)).toContain(`${SERVICE_SLUG}_${UNGRANTED_TOOL}`);
+    expect(forOwner.map((tool) => tool.name)).toContain(`${APP_SLUG}_${UNGRANTED_TOOL}`);
   });
 
-  it("3. §7 · the same tool called through both shapes reaches the service with identical params — the prefix is split before anything else runs", async () => {
+  it("3. §7 · the same tool called through both shapes reaches the app with identical params — the prefix is split before anything else runs", async () => {
     const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[ACCOUNT].token;
+    const credential = fixture.ns.tokens[AGENT].token;
 
-    await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL, { q: "both shapes" }));
-    await rpc(fixture, credential, null, callMessage(`${SERVICE_SLUG}_${TOOL}`, { q: "both shapes" }));
+    await rpc(fixture, credential, APP_SLUG, callMessage(TOOL, { q: "both shapes" }));
+    await rpc(fixture, credential, null, callMessage(`${APP_SLUG}_${TOOL}`, { q: "both shapes" }));
 
     expect(await waitFor(() => fixture.fake.callCount(TOOL) === 2)).toBe(true);
     const [scoped, aggregated] = callFrames(fixture.fake).map(
       (frame) => frame.params as Record<string, unknown>,
     );
-    // The service never learns the prefix existed: same name, same arguments, same _meta.
+    // The app never learns the prefix existed: same name, same arguments, same _meta.
     expect(aggregated.name).toBe(TOOL);
     expect(scoped.name).toBe(TOOL);
     expect(aggregated.arguments).toEqual(scoped.arguments);
@@ -651,27 +651,27 @@ describe("§7 both endpoint shapes, one pipeline", () => {
 
   it("4. §7 · role filtering bounds both surfaces: a tool outside the granted patterns is absent from the listing and answers -32001 on call, while a matched tool lists and executes (the refusal and its allow-twin in one pair)", async () => {
     const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[ACCOUNT].token;
+    const credential = fixture.ns.tokens[AGENT].token;
 
-    const listed = servedTools(await rpc(fixture, credential, SERVICE_SLUG, listMessage()));
-    const refused = await rpc(fixture, credential, SERVICE_SLUG, callMessage(UNGRANTED_TOOL, {}));
-    const allowed = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    const listed = servedTools(await rpc(fixture, credential, APP_SLUG, listMessage()));
+    const refused = await rpc(fixture, credential, APP_SLUG, callMessage(UNGRANTED_TOOL, {}));
+    const allowed = await rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
 
     expect(listed.map((tool) => tool.name)).not.toContain(UNGRANTED_TOOL);
     expect(refused.body.error?.code).toBe(-32001);
     expect(listed.map((tool) => tool.name)).toContain(TOOL);
     expect(allowed.body.result).toBeDefined();
-    // The refusal never left the hub: filtering is the FIRST check, so the service saw one
+    // The refusal never left the hub: filtering is the FIRST check, so the app saw one
     // call, not two.
     expect(fixture.fake.callCount()).toBe(1);
   });
 
-  it("5. §7 · a granted role the service has not declared yields an empty listing and -32001 — not a 404: the account still holds a grant", async () => {
+  it("5. §7 · a granted role the app has not declared yields an empty listing and -32001 — not a 404: the agent still holds a grant", async () => {
     const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[UNDECLARED_ACCOUNT].token;
+    const credential = fixture.ns.tokens[UNDECLARED_AGENT].token;
 
-    const listed = await rpc(fixture, credential, SERVICE_SLUG, listMessage());
-    const called = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    const listed = await rpc(fixture, credential, APP_SLUG, listMessage());
+    const called = await rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
 
     expect(listed.status, "a grant on an undeclared role is still a grant").toBe(200);
     expect(servedTools(listed)).toEqual([]);
@@ -683,9 +683,9 @@ describe("§7 both endpoint shapes, one pipeline", () => {
     const fixture = await seedFixture();
 
     const served = servedTools(
-      await rpc(fixture, fixture.ns.tokens[ACCOUNT].token, SERVICE_SLUG, listMessage()),
+      await rpc(fixture, fixture.ns.tokens[AGENT].token, APP_SLUG, listMessage()),
     )[0];
-    const cached = (await tunnelBackend.listTools(await serviceRow(fixture), backendCtx())).find(
+    const cached = (await tunnelBackend.listTools(await appRow(fixture), backendCtx())).find(
       (tool) => tool.name === TOOL,
     );
 
@@ -698,15 +698,15 @@ describe("§7 both endpoint shapes, one pipeline", () => {
     expect(cached, "the cache is the verbatim oracle").toEqual(SEARCH_TOOL);
   });
 
-  it("6a. §6 · a registered service's notifications/tools/list_changed reaches the consumer: the hub re-lists over that same socket and the NEXT tools/list serves the new set — the added tool present, the withdrawn one gone — with no reconnect and no second registration; and the twin, a re-list that draws no catalog, leaves the previous listing standing rather than emptying it (invalidation is a re-read, never a delete — §6 lifecycle 2)", async () => {
+  it("6a. §6 · a registered app's notifications/tools/list_changed reaches the consumer: the hub re-lists over that same socket and the NEXT tools/list serves the new set — the added tool present, the withdrawn one gone — with no reconnect and no second registration; and the twin, a re-list that draws no catalog, leaves the previous listing standing rather than emptying it (invalidation is a re-read, never a delete — §6 lifecycle 2)", async () => {
     const fixture = await seedFixture();
     // The owner, whose listing no grant bounds: role filtering is case 4's claim, and only
     // an unfiltered listing can show the whole catalog change.
     const credential = (await seedOwnerSession(fixture.ns.owner)).token;
-    const before = servedTools(await rpc(fixture, credential, SERVICE_SLUG, listMessage()));
+    const before = servedTools(await rpc(fixture, credential, APP_SLUG, listMessage()));
     expect(before.map((tool) => tool.name)).toEqual([TOOL, UNGRANTED_TOOL]);
 
-    // The real actor: the service itself, saying its tool set changed over its own socket.
+    // The real actor: the app itself, saying its tool set changed over its own socket.
     // Nothing reconnects and nothing re-registers, so the cache is the only thing that can
     // make the next listing differ.
     const warmed = fixture.fake.lists.length;
@@ -718,10 +718,10 @@ describe("§7 both endpoint shapes, one pipeline", () => {
     // notification's own payload (§6 — the notification carries no tools).
     expect(
       fixture.fake.lists.length,
-      "the catalog changed without the hub asking the service again",
+      "the catalog changed without the hub asking the app again",
     ).toBeGreaterThan(warmed);
 
-    // The twin, one state later on the same socket: the service can no longer list, so the
+    // The twin, one state later on the same socket: the app can no longer list, so the
     // re-list draws no catalog at all. A stale catalog serves better than an empty one, so
     // the previous listing stands — an invalidation that emptied the cache first would
     // serve nothing here.
@@ -732,27 +732,27 @@ describe("§7 both endpoint shapes, one pipeline", () => {
       await waitFor(() => fixture.fake.lists.length > relisted),
       "the second notification never re-listed",
     ).toBe(true);
-    const stale = servedTools(await rpc(fixture, credential, SERVICE_SLUG, listMessage()));
+    const stale = servedTools(await rpc(fixture, credential, APP_SLUG, listMessage()));
     expect(stale.map((tool) => tool.name)).toEqual(after);
   });
 });
 
-describe("§7 `_meta` hygiene, observed at the service", () => {
+describe("§7 `_meta` hygiene, observed at the app", () => {
   for (const row of metaHygieneRows) {
     it(`7. ${row.name}`, () => runMetaHygieneCase(row));
   }
 
-  it("8. §7 · a forged consumer `hub/roles` never reaches the service; the hub's own resolution arrives in its place (strip-then-set, overwrite never merge)", async () => {
+  it("8. §7 · a forged consumer `hub/roles` never reaches the app; the hub's own resolution arrives in its place (strip-then-set, overwrite never merge)", async () => {
     const fixture = await seedFixture();
 
-    await rpc(fixture, fixture.ns.tokens[ACCOUNT].token, SERVICE_SLUG, {
+    await rpc(fixture, fixture.ns.tokens[AGENT].token, APP_SLUG, {
       jsonrpc: "2.0",
       id: CONSUMER_ID,
       method: "tools/call",
       params: {
         name: TOOL,
         arguments: { q: "forged" },
-        _meta: { "hub/roles": ["admin"], "hub/principal": "sa:root" },
+        _meta: { "hub/roles": ["admin"], "hub/principal": "agent:root" },
       },
     });
 
@@ -761,13 +761,13 @@ describe("§7 `_meta` hygiene, observed at the service", () => {
     // Overwritten, not merged: the arriving value is the hub's resolution and nothing of
     // the consumer's copy survives beside it.
     expect(meta["hub/roles"]).toEqual(["reader"]);
-    expect(meta["hub/principal"]).toBe(`sa:${ACCOUNT}`);
+    expect(meta["hub/principal"]).toBe(`agent:${AGENT}`);
   });
 
   it("9. §7 · progressToken and unrecognized vendor `_meta` keys arrive untouched — the allow-twin of case 8", async () => {
     const fixture = await seedFixture();
 
-    await rpc(fixture, fixture.ns.tokens[ACCOUNT].token, SERVICE_SLUG, {
+    await rpc(fixture, fixture.ns.tokens[AGENT].token, APP_SLUG, {
       jsonrpc: "2.0",
       id: CONSUMER_ID,
       method: "tools/call",
@@ -784,12 +784,12 @@ describe("§7 `_meta` hygiene, observed at the service", () => {
     expect(meta["vendor.example/trace"]).toEqual({ span: "s-9" });
   });
 
-  it("10. §7 · the consumer's clientCapabilities are mirrored onto the forwarded request, and a consumer that declared none forwards `{}` so the service refrains from elicitation", async () => {
+  it("10. §7 · the consumer's clientCapabilities are mirrored onto the forwarded request, and a consumer that declared none forwards `{}` so the app refrains from elicitation", async () => {
     const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[ACCOUNT].token;
+    const credential = fixture.ns.tokens[AGENT].token;
     const capabilities = { elicitation: {}, sampling: {} };
 
-    await rpc(fixture, credential, SERVICE_SLUG, {
+    await rpc(fixture, credential, APP_SLUG, {
       jsonrpc: "2.0",
       id: CONSUMER_ID,
       method: "tools/call",
@@ -802,7 +802,7 @@ describe("§7 `_meta` hygiene, observed at the service", () => {
     expect(await waitFor(() => fixture.fake.callCount(TOOL) === 1)).toBe(true);
     const declared = servedParams(fixture.fake)._meta as Record<string, unknown>;
 
-    await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    await rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
     expect(await waitFor(() => fixture.fake.callCount(TOOL) === 2)).toBe(true);
     const silent = servedParams(fixture.fake)._meta as Record<string, unknown>;
 
@@ -810,11 +810,11 @@ describe("§7 `_meta` hygiene, observed at the service", () => {
     expect(silent["io.modelcontextprotocol/clientCapabilities"]).toEqual({});
   });
 
-  it("11. §7 · an owner's call forwards hub/roles [\"all\"] literally, never expanded into the service's declared role names", async () => {
+  it("11. §7 · an owner's call forwards hub/roles [\"all\"] literally, never expanded into the app's declared role names", async () => {
     const fixture = await seedFixture();
     const session = await seedOwnerSession(fixture.ns.owner);
 
-    await rpc(fixture, session.token, SERVICE_SLUG, callMessage(TOOL));
+    await rpc(fixture, session.token, APP_SLUG, callMessage(TOOL));
 
     expect(await waitFor(() => fixture.fake.callCount(TOOL) > 0)).toBe(true);
     const meta = servedParams(fixture.fake)._meta as Record<string, unknown>;
@@ -825,7 +825,7 @@ describe("§7 `_meta` hygiene, observed at the service", () => {
   it("12. §6 · ids never cross: the consumer's JSON-RPC id never appears on the socket, and the response the consumer receives bears the consumer's id, not the wire id", async () => {
     const fixture = await seedFixture();
 
-    const answer = await rpc(fixture, fixture.ns.tokens[ACCOUNT].token, SERVICE_SLUG, callMessage(TOOL));
+    const answer = await rpc(fixture, fixture.ns.tokens[AGENT].token, APP_SLUG, callMessage(TOOL));
 
     expect(await waitFor(() => fixture.fake.callCount(TOOL) > 0)).toBe(true);
     expect(answer.body.id).toBe(CONSUMER_ID);
@@ -834,60 +834,60 @@ describe("§7 `_meta` hygiene, observed at the service", () => {
     expect(fixture.fake.frames.some((frame) => String(frame.id) === String(CONSUMER_ID))).toBe(false);
   });
 
-  it("12a. §7 · \"relayed verbatim\" stops at the JSON-RPC error grammar: a service answering with an `error` member that is not an error OBJECT reaches the consumer as a well-formed one (code number, message string), while a well-formed service error passes through untouched — the service is the untrusted side of that socket", async () => {
+  it("12a. §7 · \"relayed verbatim\" stops at the JSON-RPC error grammar: an app answering with an `error` member that is not an error OBJECT reaches the consumer as a well-formed one (code number, message string), while a well-formed app error passes through untouched — the app is the untrusted side of that socket", async () => {
     const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[ACCOUNT].token;
+    const credential = fixture.ns.tokens[AGENT].token;
 
-    // The twin first: a service error the hub can read is the consumer's, verbatim.
+    // The twin first: an app error the hub can read is the consumer's, verbatim.
     fixture.fake.setBehavior(TOOL, { mode: "error", error: { code: -32050, message: "no such city" } });
-    const wellFormed = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    const wellFormed = await rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
     expect(wellFormed.body.error).toMatchObject({ code: -32050, message: "no such city" });
 
     // And the ill-formed one, which only a raw frame can express: park the call, then
     // answer its wire id with an `error` that is a bare string.
     fixture.fake.setBehavior(TOOL, { mode: "hang" });
-    const pending = rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    const pending = rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
     expect(await waitFor(() => fixture.fake.callCount(TOOL) > 1), "the call never left").toBe(true);
     const parked = fixture.fake.invocations[fixture.fake.invocations.length - 1];
     await fixture.fake.sendRaw({ jsonrpc: "2.0", id: parked.wireId, error: "boom" });
     const answer = await pending;
 
-    expect(typeof answer.body.error?.code, "the service's bytes sat in the error slot").toBe("number");
+    expect(typeof answer.body.error?.code, "the app's bytes sat in the error slot").toBe("number");
     expect(typeof answer.body.error?.message).toBe("string");
-    // Still an ERROR row: the call reached the service and failed there (§15's vocabulary),
+    // Still an ERROR row: the call reached the app and failed there (§15's vocabulary),
     // which is what separates this from a refusal.
     expect((await callRows(fixture))[0].outcome).toBe("error");
   });
 });
 
 describe("§15 deadline, disconnect, and the audit chokepoint", () => {
-  it("13. §15 · a service that never answers fails -32000 at limits.CALL_TIMEOUT_MS — asserted against the constant with the run's value shrunk, never waited out", async () => {
+  it("13. §15 · an app that never answers fails -32000 at limits.CALL_TIMEOUT_MS — asserted against the constant with the run's value shrunk, never waited out", async () => {
     const fixture = await seedFixture({ behavior: { mode: "hang" } });
 
     const startedAt = Date.now();
     const answer = await withShrunkCallTimeout(() =>
-      rpc(fixture, fixture.ns.tokens[ACCOUNT].token, SERVICE_SLUG, callMessage(TOOL)),
+      rpc(fixture, fixture.ns.tokens[AGENT].token, APP_SLUG, callMessage(TOOL)),
     );
     const elapsed = Date.now() - startedAt;
 
     expect(answer.body.error?.code).toBe(-32000);
-    // The service RECEIVED it — a timed-out call may already have executed (§15's
+    // The app RECEIVED it — a timed-out call may already have executed (§15's
     // at-most-once), which is exactly what separates this from an offline refusal.
     expect(fixture.fake.callCount(TOOL)).toBe(1);
     expect(elapsed, "the deadline was waited out rather than shrunk").toBeLessThan(CALL_TIMEOUT_MS);
   });
 
-  it("14. §15 · a disconnect mid-call fails the waiting consumer -32000 immediately rather than at the deadline (the allow-twin: a service that answers in time resolves)", async () => {
+  it("14. §15 · a disconnect mid-call fails the waiting consumer -32000 immediately rather than at the deadline (the allow-twin: an app that answers in time resolves)", async () => {
     const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[ACCOUNT].token;
+    const credential = fixture.ns.tokens[AGENT].token;
 
-    // The twin first, on the same socket: a service that answers in time resolves.
-    const answered = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    // The twin first, on the same socket: an app that answers in time resolves.
+    const answered = await rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
     expect(answered.body.result).toBeDefined();
 
     fixture.fake.setBehavior(TOOL, { mode: "drop" });
     const startedAt = Date.now();
-    const dropped = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    const dropped = await rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
 
     expect(dropped.body.error?.code).toBe(-32000);
     // Immediately: the pending map drains on close rather than waiting for the budget.
@@ -896,12 +896,12 @@ describe("§15 deadline, disconnect, and the audit chokepoint", () => {
 
   it("14a. §15 · a frame already on the wire is never reported as certainly-did-not-execute: the dropped call's -32000 discloses that it MAY have run and its row records the disconnect, while the next call — with the socket gone, so nothing left — discloses nothing and records `offline`", async () => {
     const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[ACCOUNT].token;
+    const credential = fixture.ns.tokens[AGENT].token;
 
     fixture.fake.setBehavior(TOOL, { mode: "drop" });
-    const dropped = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    const dropped = await rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
 
-    // The service RECEIVED it before dropping — which is what makes "certainly did not
+    // The app RECEIVED it before dropping — which is what makes "certainly did not
     // execute" a lie about this call, and §15's at-most-once question a real one.
     expect(fixture.fake.callCount(TOOL)).toBe(1);
     expect(dropped.body.error?.code).toBe(-32000);
@@ -915,19 +915,19 @@ describe("§15 deadline, disconnect, and the audit chokepoint", () => {
 
     // The twin, one state later on the same fixture: the socket is gone, so the frame
     // never leaves and the consumer is told nothing about execution.
-    await untilStatus(fixture.service.id, "offline");
-    const offline = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    await untilStatus(fixture.app.id, "offline");
+    const offline = await rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
     expect(offline.body.error?.code).toBe(-32000);
     expect(offline.body.error?.message).not.toMatch(/may have executed/);
-    expect(fixture.fake.callCount(TOOL), "nothing was queued for the absent service").toBe(1);
+    expect(fixture.fake.callCount(TOOL), "nothing was queued for the absent app").toBe(1);
   });
 
   it("14b. §10/§15 · a DO RPC that fails under a waiting consumer refuses -32000 with a failure class in the row, never the unclassified -32603: a forcibly restarted instance is downtime, and the ledger is where §15's at-most-once question about that call is answered", async () => {
     const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[ACCOUNT].token;
+    const credential = fixture.ns.tokens[AGENT].token;
     fixture.fake.setBehavior(TOOL, { mode: "hang" });
 
-    const pending = rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    const pending = rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
     expect(await waitFor(() => fixture.fake.callCount(TOOL) > 0), "the call never left").toBe(true);
     // The one in-process way to a real DO failure: the instance is reset under the
     // in-flight RPC, which is §6's "forcibly restarted" branch — no stub is mocked.
@@ -942,36 +942,36 @@ describe("§15 deadline, disconnect, and the audit chokepoint", () => {
     });
   });
 
-  it("15. §15 · an offline service fails -32000 on call while its cached tools/list still lists tools — the pair that keeps \"unavailable\" from meaning \"invisible\"", async () => {
+  it("15. §15 · an offline app fails -32000 on call while its cached tools/list still lists tools — the pair that keeps \"unavailable\" from meaning \"invisible\"", async () => {
     const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[ACCOUNT].token;
+    const credential = fixture.ns.tokens[AGENT].token;
 
     await fixture.fake.close();
-    await untilStatus(fixture.service.id, "offline");
+    await untilStatus(fixture.app.id, "offline");
 
-    const listed = servedTools(await rpc(fixture, credential, SERVICE_SLUG, listMessage()));
-    const called = await rpc(fixture, credential, SERVICE_SLUG, callMessage(TOOL));
+    const listed = servedTools(await rpc(fixture, credential, APP_SLUG, listMessage()));
+    const called = await rpc(fixture, credential, APP_SLUG, callMessage(TOOL));
 
     expect(listed.map((tool) => tool.name)).toEqual([TOOL]);
     expect(called.body.error?.code).toBe(-32000);
-    expect(fixture.fake.callCount(), "nothing was queued for the absent service").toBe(0);
+    expect(fixture.fake.callCount(), "nothing was queued for the absent app").toBe(0);
   });
 
   it("16. §15 · every resolved tools/call writes exactly one audit row carrying a hub-measured duration_ms", async () => {
     const fixture = await seedFixture();
 
-    await rpc(fixture, fixture.ns.tokens[ACCOUNT].token, SERVICE_SLUG, callMessage(TOOL));
+    await rpc(fixture, fixture.ns.tokens[AGENT].token, APP_SLUG, callMessage(TOOL));
 
     const rows = await callRows(fixture);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ service: SERVICE_SLUG, tool: TOOL, outcome: "ok" });
+    expect(rows[0]).toMatchObject({ app: APP_SLUG, tool: TOOL, outcome: "ok" });
     expect(typeof rows[0].durationMs).toBe("number");
   });
 
   it("17. §15 · a denied tools/call writes one row too, with its refusal code as outcome — denials are just fast (the twin of case 16)", async () => {
     const fixture = await seedFixture();
 
-    await rpc(fixture, fixture.ns.tokens[ACCOUNT].token, SERVICE_SLUG, callMessage(UNGRANTED_TOOL, {}));
+    await rpc(fixture, fixture.ns.tokens[AGENT].token, APP_SLUG, callMessage(UNGRANTED_TOOL, {}));
 
     const rows = await callRows(fixture);
     expect(rows).toHaveLength(1);
@@ -983,9 +983,9 @@ describe("§15 deadline, disconnect, and the audit chokepoint", () => {
 
   it("18. §15 · tools/list writes no audit row on either endpoint shape — kept out by vocabulary, not by filtering", async () => {
     const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[ACCOUNT].token;
+    const credential = fixture.ns.tokens[AGENT].token;
 
-    await rpc(fixture, credential, SERVICE_SLUG, listMessage());
+    await rpc(fixture, credential, APP_SLUG, listMessage());
     await rpc(fixture, credential, null, listMessage());
 
     expect(await callRows(fixture)).toEqual([]);
@@ -999,10 +999,10 @@ describe("§15 deadline, disconnect, and the audit chokepoint", () => {
     const fixture = await seedFixture();
 
     const answer = await withBrokenLedger(() =>
-      rpc(fixture, fixture.ns.tokens[ACCOUNT].token, SERVICE_SLUG, callMessage(TOOL)),
+      rpc(fixture, fixture.ns.tokens[AGENT].token, APP_SLUG, callMessage(TOOL)),
     );
 
-    // The service answered — availability was never the problem, and the call still fails.
+    // The app answered — availability was never the problem, and the call still fails.
     expect(fixture.fake.callCount(TOOL)).toBe(1);
     expect(answer.body.result, "a call the ledger cannot attest to must not succeed").toBeUndefined();
     expect(answer.body.error).toBeDefined();
@@ -1011,7 +1011,7 @@ describe("§15 deadline, disconnect, and the audit chokepoint", () => {
   it("20. §7 · the consumer's relayed result is never masked, while the audit row written for that same call is — masking exists for persistence, not for the wire", async () => {
     const fixture = await seedFixture();
 
-    const answer = await rpc(fixture, fixture.ns.tokens[ACCOUNT].token, SERVICE_SLUG, callMessage(TOOL));
+    const answer = await rpc(fixture, fixture.ns.tokens[AGENT].token, APP_SLUG, callMessage(TOOL));
 
     const relayed = (answer.body.result as { structuredContent: Record<string, unknown> })
       .structuredContent;

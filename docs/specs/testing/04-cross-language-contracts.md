@@ -3,7 +3,7 @@
 The spec deliberately COPIES wire shapes across boundaries with no shared package.
 The pin mechanism: checked-in JSON fixtures — whoami, the error codes + `-32003`
 data, tunnel frames, **close codes → required client behavior**, bootstrap
-request/response, admin op names + schemas, the `service_list`/`account_list` rows
+request/response, admin op names + schemas, the `app_list`/`agent_list` rows
 the diff planner reads, and the audit body-stub wire shape (`blob`/`oversize` —
 spec §15 defers its exact spelling to these fixtures).
 `server/test/worker/contracts.test.ts` is the **only

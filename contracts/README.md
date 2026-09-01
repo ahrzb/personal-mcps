@@ -36,7 +36,7 @@ otherwise here would make this table the drift it exists to prevent.
 | close codes | close code → **required client behavior**, one of `stop_fatal` / `stop_quiet` / `reconnect`, plus a `schedule` attribute (`exponential` / `max_only`) on the entries that reconnect (§6's upgrade matrix and 4000–4004) — emitted from `tunnel.ts`'s exported `CLOSE_*` vocabulary | the same two consumer suites, plus the two reconnect tables that transcribe it |
 | bootstrap | the `POST /internal/users` request and response bodies per op (§12) | `scripts/test/bootstrap-contract.test.ts` |
 | admin ops | op names and their rendered input/output schemas (§8) | producer only — parity directions C/D read `ops` and the CLI command table directly |
-| planner rows | the `service_list` / `account_list` row shapes the diff planner reads (§8, §9) | producer only — `cli/test/plan.test.ts` builds `CurrentState` from literals |
+| planner rows | the `app_list` / `agent_list` row shapes the diff planner reads (§8, §9) | producer only — `cli/test/plan.test.ts` builds `CurrentState` from literals |
 | audit body stubs | the wire spelling of the two typed size stubs §15 defers to this directory: the `blob` stub an unstructured result block collapses into and the `oversize` stub that replaces a whole over-cap body — the discriminator, the field names, and which fields carry a variable value | `server/test/worker/hygiene.test.ts` (its `BodyColumnShape` / `BodyStub` rows), and any client-side renderer of a recorded body |
 
 The close-code family is the one whose *content* is behavior rather than shape: it maps a

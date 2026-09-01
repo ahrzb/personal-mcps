@@ -90,7 +90,7 @@ export default defineConfig({
           setupFiles: ["./server/test/setup/d1.ts"],
           // Serial and un-isolated: a hibernating socket and a Durable Object outlive
           // the per-file storage reset, so this project trades isolation for them and
-          // every case mints its own service id instead (tunnel/smoke.test.ts).
+          // every case mints its own app id instead (tunnel/smoke.test.ts).
           fileParallelism: false,
           isolate: false,
           maxWorkers: 1,

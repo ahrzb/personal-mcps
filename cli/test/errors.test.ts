@@ -38,7 +38,7 @@ describe("CliError", () => {
   });
 
   it("defaults hints/detail to empty arrays and leaves usage/extra undefined", () => {
-    const err = new CliError("not_found", "no service \"x\"");
+    const err = new CliError("not_found", "no app \"x\"");
     expect(err.hints).toEqual([]);
     expect(err.detail).toEqual([]);
     expect(err.usage).toBeUndefined();
@@ -59,15 +59,15 @@ function classify(line: string): "error" | "usage" | "hint" | "detail" {
 describe("emitError · human grammar", () => {
   it("a bare error is exactly one `error: <code>: <message>` line", () => {
     const stream = captureStream();
-    const code = emitError(new CliError("not_found", "no service \"mcptools\""), { json: false, stream });
+    const code = emitError(new CliError("not_found", "no app \"mcptools\""), { json: false, stream });
     expect(code).toBe(1);
-    expect(stream.text).toBe("error: not_found: no service \"mcptools\"\n");
+    expect(stream.text).toBe("error: not_found: no app \"mcptools\"\n");
   });
 
   it("every line parses by column-0 prefix or indentation alone — detail before usage before hints, in order", () => {
     const err = new CliError("invalid_arguments", "unknown argument \"ur\"", {
-      usage: "pmcp call <service> <tool> [key=value … | --args '{…}']",
-      hints: ["pmcp describe service/mcp-tools/paper_fetch"],
+      usage: "pmcp call <app> <tool> [key=value … | --args '{…}']",
+      hints: ["pmcp describe app/mcp-tools/paper_fetch"],
       detail: ["did you mean \"url\"?", "paper_fetch expects\n  url        string    required  paper URL or arXiv id"],
     });
     const stream = captureStream();
@@ -84,12 +84,12 @@ describe("emitError · human grammar", () => {
   });
 
   it("multiple hints each get their own column-0 `hint:` line, in order", () => {
-    const err = new CliError("usage", "missing ref", { hints: ["pmcp ls lists your services", "pmcp describe -h"] });
+    const err = new CliError("usage", "missing ref", { hints: ["pmcp ls lists your apps", "pmcp describe -h"] });
     const stream = captureStream();
     const code = emitError(err, { json: false, stream });
     expect(code).toBe(2);
     const hintLines = stream.text.trim().split("\n").filter((l) => l.startsWith("hint:"));
-    expect(hintLines).toEqual(["hint: pmcp ls lists your services", "hint: pmcp describe -h"]);
+    expect(hintLines).toEqual(["hint: pmcp ls lists your apps", "hint: pmcp describe -h"]);
   });
 
   it("a plain Error (not a CliError) becomes a bare remote_error line, never a stack trace", () => {
@@ -104,28 +104,28 @@ describe("emitError · human grammar", () => {
 describe("emitError · --json", () => {
   it("emits exactly one {\"error\":{...}} document, code+message always present", () => {
     const stream = captureStream();
-    const code = emitError(new CliError("not_found", "no service \"mcptools\""), { json: true, stream });
+    const code = emitError(new CliError("not_found", "no app \"mcptools\""), { json: true, stream });
     expect(code).toBe(1);
     const doc = JSON.parse(stream.text.trim());
-    expect(doc).toEqual({ error: { code: "not_found", message: "no service \"mcptools\"" } });
+    expect(doc).toEqual({ error: { code: "not_found", message: "no app \"mcptools\"" } });
   });
 
   it("hint is the FIRST of hints — detail never rides the JSON document", () => {
-    const err = new CliError("not_found", "no service \"mcptools\"", {
-      hints: ["pmcp ls lists your services", "second hint never appears"],
+    const err = new CliError("not_found", "no app \"mcptools\"", {
+      hints: ["pmcp ls lists your apps", "second hint never appears"],
       detail: ["did you mean \"mcp-tools\"?"],
     });
     const stream = captureStream();
     emitError(err, { json: true, stream });
     const doc = JSON.parse(stream.text.trim());
-    expect(doc.error.hint).toBe("pmcp ls lists your services");
+    expect(doc.error.hint).toBe("pmcp ls lists your apps");
     expect(doc.error).not.toHaveProperty("detail");
     expect(JSON.stringify(doc)).not.toContain("second hint");
   });
 
   it("didYouMean and expectedArguments ride from extra when present, absent otherwise", () => {
     const withExtra = new CliError("invalid_arguments", "unknown argument \"ur\"", {
-      hints: ["pmcp describe service/mcp-tools/paper_fetch"],
+      hints: ["pmcp describe app/mcp-tools/paper_fetch"],
       extra: { didYouMean: "url", expectedArguments: { type: "object", required: ["url"] } },
     });
     const stream = captureStream();
@@ -157,7 +157,7 @@ describe("didYouMean", () => {
     expect(didYouMean("ur", ["url", "format", "max_pages"])).toBe("url");
   });
 
-  it("a candidate the input is a PREFIX of wins outright, at any edit distance — the mock's `describe service/mcp-tools/paper` suggests `paper_fetch` (distance 6), which the ≤2 rule alone could never reach", () => {
+  it("a candidate the input is a PREFIX of wins outright, at any edit distance — the mock's `describe app/mcp-tools/paper` suggests `paper_fetch` (distance 6), which the ≤2 rule alone could never reach", () => {
     const catalog = ["duocards_query", "duocards_schema", "jobfeed_crawl", "jobfeed_feed", "paper_fetch"];
     expect(didYouMean("paper", catalog)).toBe("paper_fetch");
     // The shortest of several prefix matches — the least the caller has to have typed wrong.

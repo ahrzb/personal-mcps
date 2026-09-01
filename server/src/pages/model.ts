@@ -16,7 +16,7 @@
 // parity invariant), so a page can show nothing a tool cannot, and a filter or
 // default the tool applies is applied here by construction rather than by
 // agreement. The exceptions are named where they are made: the VAPID public
-// key and the retention window are configuration, not a read, and /account's
+// key and the retention window are configuration, not a read, and /settings's
 // credential state is better-auth's, reached through identity's own mounted
 // endpoints because §4 gives that module sole custody.
 //
@@ -45,19 +45,19 @@
 //
 // Timestamps are mixed on purpose and the mix is inherited, not invented: the
 // skeleton read models spell time two ways — ISO-8601 strings in approvals
-// (ApprovalRow) and epoch milliseconds in registry/audit (ServiceDetail,
+// (ApprovalRow) and epoch milliseconds in registry/audit (AppDetail,
 // AuditRow) — and this file keeps each field exactly as its source states it.
 // `now` is ISO-8601; a template comparing it with an epoch-ms field parses it
 // (Date.parse) rather than reaching for a clock of its own.
 
 import { env } from "cloudflare:workers";
 import { ops } from "../admin";
-import type { ServiceRow as OpsServiceRow } from "../admin";
+import type { AppRow as OpsAppRow } from "../admin";
 import { config as auditConfig } from "../audit";
 import { AUTH_BASE_PATH, callAuth } from "../identity";
 import type { TokenInfo } from "../identity";
 import { DEVICE_CODE_TTL_MS } from "../limits";
-import type { ServiceDetail, ServiceKind } from "../registry";
+import type { AppDetail, AppKind } from "../registry";
 import type { ApprovalListFilters, ApprovalRow, ApprovalStatus } from "../approvals";
 import type { AuditRow, BodyStub, AuditQuery } from "../audit";
 import type { UpstreamConnectionStatus } from "../upstream";
@@ -80,10 +80,10 @@ export type PageProps = {
 /**
  * The four nav destinations of the signed-in shell (Main.dc.html's header), in
  * the order they are rendered. Pages outside the shell — /login, /device,
- * /services/new, /approvals/<id> — are chromeless card layouts and carry no
+ * /apps/new, /approvals/<id> — are chromeless card layouts and carry no
  * section at all, which is why this never has a "none" member.
  */
-export type NavSection = "services" | "audit" | "approvals" | "account";
+export type NavSection = "apps" | "audit" | "approvals" | "settings";
 
 /**
  * The redirect-back flash: every mutating page POST lands on an admin op and
@@ -138,7 +138,7 @@ function query(params: Record<string, string | number | undefined | null>): stri
  */
 export type AuditLinkQuery = Pick<
   AuditQuery,
-  "principal" | "service" | "event" | "tool" | "session" | "since" | "until" | "limit" | "offset"
+  "principal" | "app" | "event" | "tool" | "session" | "since" | "until" | "limit" | "offset"
 >;
 
 /**
@@ -147,8 +147,8 @@ export type AuditLinkQuery = Pick<
  * here instead of a search across eight templates. Page routes come straight
  * from §13; sub-paths under them are this file's decision and are what web.ts's
  * route table mounts. The reserved-segment rule of §2 holds by construction:
- * nothing here introduces a new top-level segment beyond login, device, account,
- * audit, approvals, services, api and oauth.
+ * nothing here introduces a new top-level segment beyond login, device, agent,
+ * audit, approvals, apps, api and oauth.
  *
  * Mutating targets are POST-only and CSRF-checked; the read targets are GET.
  * Both are named for what they do, not for their method.
@@ -172,17 +172,17 @@ export const paths = {
   /** RFC 8628 device approval; deep-linked from the CLI as `?user_code=…`. */
   device: "/device",
   /** Credential management — cookie session with recent auth only (§4). */
-  account: "/account",
-  /** Service management: active, archived, and the add-service entry point. */
-  services: "/services",
-  /** The add-service form (§13's "add-service flow"). */
-  serviceNew: "/services/new",
+  settings: "/settings",
+  /** App management: active, archived, and the add-app entry point. */
+  apps: "/apps",
+  /** The add-app form (§13's "add-app flow"). */
+  appNew: "/apps/new",
   /** Pending requests plus decision history. */
   approvals: "/approvals",
   /** Read-only view over audit.query with its exact filters. */
   audit: "/audit",
   /** §19.5's consent screen — an external client's authorization request, and the
-   *  service-account picker that decides how much power it gets. */
+   *  agent picker that decides how much power it gets. */
   oauthConsent: "/oauth/consent",
   /** §19.6/§8's connections list, with Revoke. */
   oauthConnections: "/oauth/connections",
@@ -237,30 +237,30 @@ export const paths = {
   },
   /** Where the browser's PushSubscription JSON is registered (approvals.subscribePush). */
   approvalsPush: "/approvals/push",
-  /** service_create; on `auth: oauth` the response redirects into consent (§7),
+  /** app_create; on `auth: oauth` the response redirects into consent (§7),
    *  and on a tunneled create it renders the once-only token instead of
    *  redirecting — which is why this one target is not a plain redirect-back. */
-  serviceCreate: "/services/service_create",
-  serviceArchive(slug: string): string {
-    return `/services/service_archive${query({ slug })}`;
+  appCreate: "/apps/app_create",
+  appArchive(slug: string): string {
+    return `/apps/app_archive${query({ slug })}`;
   },
-  serviceUnarchive(slug: string): string {
-    return `/services/service_unarchive${query({ slug })}`;
+  appUnarchive(slug: string): string {
+    return `/apps/app_unarchive${query({ slug })}`;
   },
-  serviceDelete(slug: string): string {
-    return `/services/service_delete${query({ slug })}`;
+  appDelete(slug: string): string {
+    return `/apps/app_delete${query({ slug })}`;
   },
   /**
    * Connect and Reconnect are the same target: both start upstream.beginConnect
    * and redirect to the provider (§7). The button label differs, the flow does
    * not — and neither fronts a tool, which is why this path names no op.
    */
-  serviceConnect(slug: string): string {
-    return `/services/connect${query({ slug })}`;
+  appConnect(slug: string): string {
+    return `/apps/connect${query({ slug })}`;
   },
-  /** service_disconnect — wipes the stored bundle, keeps everything else (§8). */
-  serviceDisconnect(slug: string): string {
-    return `/services/service_disconnect${query({ slug })}`;
+  /** app_disconnect — wipes the stored bundle, keeps everything else (§8). */
+  appDisconnect(slug: string): string {
+    return `/apps/app_disconnect${query({ slug })}`;
   },
   /** connection_revoke (§8/§19.6) — the /oauth/connections Revoke button. */
   connectionRevoke(id: string): string {
@@ -275,17 +275,17 @@ export const paths = {
    * fixture; a browser that supports invoker commands opens the identical dialog
    * without the round trip.
    */
-  servicesConfirmDelete(slug: string): string {
-    return `/services${query({ confirm: "delete", slug })}`;
+  appsConfirmDelete(slug: string): string {
+    return `/apps${query({ confirm: "delete", slug })}`;
   },
-  accountConfirm(kind: AccountConfirm["kind"], id?: string): string {
-    return `/account${query({ confirm: kind, id })}`;
+  settingsConfirm(kind: SettingsConfirm["kind"], id?: string): string {
+    return `/settings${query({ confirm: kind, id })}`;
   },
 
   /* --- the consumer endpoint a page only ever displays --- */
 
   /**
-   * The scoped MCP endpoint of one service — shown, never linked: /services/new
+   * The scoped MCP endpoint of one app — shown, never linked: /apps/new
    * spells it out under the slug field ("served at /ahrzb/mcp/linear") so the
    * owner sees what they are naming.
    */
@@ -331,16 +331,16 @@ export const paths = {
     signIn: "/login/sign-in/username",
     signInPasskey: "/api/auth/sign-in/passkey",
     signOut: "/login/sign-out",
-    /** /login's challenge card posts here, and so would /account's enrollment card —
-     *  which cannot render today (see accountProps's note on `enrollment`). */
+    /** /login's challenge card posts here, and so would /settings's enrollment card —
+     *  which cannot render today (see settingsProps's note on `enrollment`). */
     totpVerify: "/login/two-factor/verify-totp",
     backupCodeVerify: "/login/two-factor/verify-backup-code",
-    totpEnable: "/account/two-factor/enable",
-    totpDisable: "/account/two-factor/disable",
-    backupCodesGenerate: "/account/two-factor/generate-backup-codes",
+    totpEnable: "/settings/two-factor/enable",
+    totpDisable: "/settings/two-factor/disable",
+    backupCodesGenerate: "/settings/two-factor/generate-backup-codes",
     passkeyRegister: "/api/auth/passkey/generate-register-options",
-    passkeyDelete: "/account/passkey/delete-passkey",
-    sessionRevoke: "/account/revoke-session",
+    passkeyDelete: "/settings/passkey/delete-passkey",
+    sessionRevoke: "/settings/revoke-session",
   },
 } as const;
 
@@ -430,7 +430,7 @@ export type DeviceProps = PageProps & {
 };
 
 /* ------------------------------------------------------------------ *
- * /account
+ * /settings
  * ------------------------------------------------------------------ */
 
 /**
@@ -443,7 +443,7 @@ export type TwoFactorSummary =
   | { enabled: true; backupCodesRemaining: number; generatedAt: string };
 
 /**
- * The in-progress TOTP enrollment (AccountStates.dc.html "TOTP setup"): present
+ * The in-progress TOTP enrollment (SettingsStates.dc.html "TOTP setup"): present
  * only while the owner is between "Enable two-factor" and a verified code.
  * `secret` is the base32 shown under the QR for manual entry — it is a
  * credential in flight, never persisted by a page and never logged (§15).
@@ -488,13 +488,13 @@ export type SessionRow = {
  * exactly what its copy names — the passkey's name, the session's label — so the
  * dialog never has to look anything up.
  */
-export type AccountConfirm =
+export type SettingsConfirm =
   | { kind: "disable-two-factor" }
   | { kind: "remove-passkey"; id: string; name: string }
   | { kind: "revoke-session"; id: string; client: string };
 
 /**
- * /account — the pinned parity exception (§8): credential management rides
+ * /settings — the pinned parity exception (§8): credential management rides
  * better-auth's endpoints and has no pmcp tool, and §4's guards reject
  * bearer-sourced sessions here entirely.
  *
@@ -503,19 +503,19 @@ export type AccountConfirm =
  * `twoFactor.enabled` is false, and a fresh code set is revealed exactly once —
  * after enabling or regenerating — because nothing can show it again (§4).
  */
-export type AccountProps = ShellProps & {
-  section: "account";
+export type SettingsProps = ShellProps & {
+  section: "settings";
   csrfToken: string;
   twoFactor: TwoFactorSummary;
   enrollment: TotpEnrollment | null;
   revealedBackupCodes: string[] | null;
   passkeys: PasskeyRow[];
   sessions: SessionRow[];
-  confirm: AccountConfirm | null;
+  confirm: SettingsConfirm | null;
 };
 
 /* ------------------------------------------------------------------ *
- * /services
+ * /apps
  * ------------------------------------------------------------------ */
 
 /**
@@ -525,13 +525,13 @@ export type AccountProps = ShellProps & {
  */
 export type TunnelStatus = Awaited<ReturnType<typeof tunnelStatus>>;
 
-/** The upstream auth mode a proxied service declares (§7); tunneled rows have none. */
-export type UpstreamAuthMode = NonNullable<ServiceDetail["upstreamAuthMode"]>;
+/** The upstream auth mode a proxied app declares (§7); tunneled rows have none. */
+export type UpstreamAuthMode = NonNullable<AppDetail["upstreamAuthMode"]>;
 
 /**
- * One row of the services table — a projection of the service_list row (§8),
+ * One row of the apps table — a projection of the app_list row (§8),
  * narrowed to what the table draws. The two status fields are exclusive by
- * kind, exactly as service_list reports them: `connection` is tunnel-only and
+ * kind, exactly as app_list reports them: `connection` is tunnel-only and
  * `upstream` is proxy-only, each null on the other kind. That is what lets the
  * template pick a row's actions without a second lookup:
  *
@@ -542,55 +542,55 @@ export type UpstreamAuthMode = NonNullable<ServiceDetail["upstreamAuthMode"]>;
  *                         (not_connected | needs_reconnect | connected)
  *
  * `roleNames` lists the DECLARED roles (tunnel: whatever the last registration
- * declared; proxy: the config's virtual roles). It is empty for a service that
+ * declared; proxy: the config's virtual roles). It is empty for an app that
  * has never declared any — the built-in `all` is resolved at request time and is
  * never stored (§2), so the template renders "all" for an empty list rather than
  * this field ever carrying it.
  */
-export type ServiceRow = Pick<
-  ServiceDetail,
+export type AppRow = Pick<
+  AppDetail,
   "slug" | "name" | "kind" | "archived" | "upstreamUrl" | "upstreamAuthMode" | "lastConnectedAt"
 > & {
   roleNames: string[];
   connection: TunnelStatus | null;
   upstream: UpstreamConnectionStatus | null;
   /**
-   * Live tokens bound to this service — the number the delete dialog names
-   * ("Its 2 tokens are revoked"). Always 0 for proxied services, which have no
+   * Live tokens bound to this app — the number the delete dialog names
+   * ("Its 2 tokens are revoked"). Always 0 for proxied apps, which have no
    * tokens at all (§2).
    */
   tokenCount: number;
 };
 
-/** The one destructive confirmation /services raises (Dialogs.dc.html). */
-export type ServicesConfirm = { kind: "delete-service"; row: ServiceRow };
+/** The one destructive confirmation /apps raises (Dialogs.dc.html). */
+export type AppsConfirm = { kind: "delete-app"; row: AppRow };
 
 /**
- * /services. Active and archived are two lists because they are two sections
+ * /apps. Active and archived are two lists because they are two sections
  * with different actions, not one list with a flag — but both hold the same row
  * shape, and `archived` is still on every row so a row can be rendered outside
  * its section (the confirm dialog does exactly that).
  */
-export type ServicesProps = ShellProps & {
-  section: "services";
+export type AppsProps = ShellProps & {
+  section: "apps";
   csrfToken: string;
-  active: ServiceRow[];
-  archived: ServiceRow[];
-  confirm: ServicesConfirm | null;
+  active: AppRow[];
+  archived: AppRow[];
+  confirm: AppsConfirm | null;
 };
 
 /* ------------------------------------------------------------------ *
- * /services/new
+ * /apps/new
  * ------------------------------------------------------------------ */
 
 /**
- * The add-service form as submitted, echoed back verbatim on a validation
+ * The add-app form as submitted, echoed back verbatim on a validation
  * failure so nothing the owner typed is lost. `endpoint` and `authMode` are
  * proxy-only and are ignored — not rejected in the UI — while `kind` is
- * "tunnel"; service_create rejects them server-side (§8).
+ * "tunnel"; app_create rejects them server-side (§8).
  */
-export type ServiceNewForm = {
-  kind: ServiceKind;
+export type AppNewForm = {
+  kind: AppKind;
   name: string;
   slug: string;
   endpoint: string;
@@ -602,27 +602,27 @@ export type ServiceNewForm = {
  * "form" is the whole-form message (a create that failed for a reason no single
  * field owns). Every key is optional; an empty object is a clean form.
  */
-export type ServiceNewErrors = Partial<Record<"name" | "slug" | "endpoint" | "form", string>>;
+export type AppNewErrors = Partial<Record<"name" | "slug" | "endpoint" | "form", string>>;
 
 /**
  * The form, then its receipt. `created` is the TOKEN REVEAL state of
- * ServiceNewStates.dc.html: `token` is the plaintext service token, present in
+ * AppNewStates.dc.html: `token` is the plaintext app token, present in
  * this one render and never recoverable afterwards (§4) — null for proxied
- * services, which have no token to show. An `auth: oauth` create never reaches
+ * apps, which have no token to show. An `auth: oauth` create never reaches
  * this state at all: it redirects into the provider's consent screen (§7).
  */
-export type ServiceNewStep =
-  | { kind: "form"; form: ServiceNewForm; errors: ServiceNewErrors }
+export type AppNewStep =
+  | { kind: "form"; form: AppNewForm; errors: AppNewErrors }
   | { kind: "created"; slug: string; name: string; token: string | null };
 
 /**
- * /services/new — a chromeless card page like /login, so it carries `username`
+ * /apps/new — a chromeless card page like /login, so it carries `username`
  * for the slug helper line ("served at /ahrzb/mcp/news") without the nav.
  */
-export type ServiceNewProps = PageProps & {
+export type AppNewProps = PageProps & {
   username: string;
   csrfToken: string;
-  step: ServiceNewStep;
+  step: AppNewStep;
 };
 
 /* ------------------------------------------------------------------ *
@@ -707,7 +707,7 @@ export type AuditRange = "1h" | "24h" | "7d" | "30d" | "custom";
  */
 export type AuditFilters = Pick<
   AuditQuery,
-  "principal" | "service" | "event" | "tool" | "session"
+  "principal" | "app" | "event" | "tool" | "session"
 > & {
   range: AuditRange;
   since: number;
@@ -720,12 +720,12 @@ export type AuditFilters = Pick<
  * The values behind the three select controls, gathered from the namespace, not
  * from the visible rows — a filter must be able to select a principal whose
  * events fell outside the current window. `principals` are canonical principal
- * strings ("sa:claude", "user:ahrzb", "svc:news"), the same spelling audit rows
+ * strings ("agent:claude", "user:ahrzb", "app:news"), the same spelling audit rows
  * and `audit_query.principal` use.
  */
 export type AuditFilterOptions = {
   principals: string[];
-  services: string[];
+  apps: string[];
   events: string[];
 };
 
@@ -825,8 +825,8 @@ export type AuditProps = ShellProps & {
  * /oauth/consent (§19.5)
  * ------------------------------------------------------------------ */
 
-/** One entry of the service-account `<select>`, defaulted to nothing (§19.5). */
-export type ConsentAccountOption = { slug: string; name: string };
+/** One entry of the agent `<select>`, defaulted to nothing (§19.5). */
+export type ConsentAgentOption = { slug: string; name: string };
 
 /**
  * /oauth/consent — chromeless, like /login and /device: reached from the provider's own
@@ -854,9 +854,9 @@ export type ConsentProps = PageProps & {
   scopes: string[];
   /** The namespace the token will be audience-bound to, read off the request's `resource`. */
   namespace: string;
-  /** Every service account in the namespace — `account_list` unchanged (§8's parity
+  /** Every agent in the namespace — `agent_list` unchanged (§8's parity
    *  invariant). Empty is the first-run path, not an edge case (§19.5's empty state). */
-  accounts: ConsentAccountOption[];
+  agents: ConsentAgentOption[];
 };
 
 /* ------------------------------------------------------------------ *
@@ -870,7 +870,7 @@ export type ConnectionRow = {
   id: string;
   clientId: string;
   clientName: string | null;
-  accountSlug: string;
+  agentSlug: string;
   createdAt: number;
   lastUsedAt: number | null;
 };
@@ -896,9 +896,9 @@ export type ConnectionsProps = PageProps & {
 export type PagePropsByName = {
   login: LoginProps;
   device: DeviceProps;
-  account: AccountProps;
-  services: ServicesProps;
-  "service-new": ServiceNewProps;
+  agent: SettingsProps;
+  apps: AppsProps;
+  "app-new": AppNewProps;
   approvals: ApprovalsProps;
   "approval-detail": ApprovalDetailProps;
   audit: AuditProps;
@@ -921,7 +921,7 @@ export type PageName = keyof PagePropsByName;
 export type PageContext = {
   ownerId: string;
   username: string;
-  /** The session rendering this page — what /account badges as "current". */
+  /** The session rendering this page — what /settings badges as "current". */
   sessionId: string;
   csrfToken: string;
   /** ISO-8601: the render instant, and the only clock any template reads. */
@@ -972,43 +972,43 @@ async function pendingOf(ctx: PageContext): Promise<ApprovalRow[]> {
   return listed.approvals;
 }
 
-/* --------------------------------- /services --------------------------------- */
+/* --------------------------------- /apps --------------------------------- */
 
 /**
- * /services from `service_list` plus `token_list`: the table's rows are the
+ * /apps from `app_list` plus `token_list`: the table's rows are the
  * former, and the delete dialog's "its N tokens are revoked" line is the latter
- * counted per service. The builtin `pmcp` row service_list appends is dropped —
- * it is a virtual service with no row, no actions, and no slug an owner may
+ * counted per app. The builtin `pmcp` row app_list appends is dropped —
+ * it is a virtual app with no row, no actions, and no slug an owner may
  * touch (§8), so a table of things you can archive and delete is not where it
  * belongs.
  */
-export async function servicesProps(ctx: PageContext): Promise<ServicesProps> {
+export async function appsProps(ctx: PageContext): Promise<AppsProps> {
   const [listed, credentials] = await Promise.all([
-    read<{ services: OpsServiceRow[] }>(ctx, "service_list"),
+    read<{ apps: OpsAppRow[] }>(ctx, "app_list"),
     read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
   ]);
   const live = liveTokenCounts(credentials.tokens, Date.parse(ctx.now));
-  const rows = listed.services
-    .filter((row): row is Exclude<OpsServiceRow, { kind: "builtin" }> => row.kind !== "builtin")
-    .map((row) => serviceRow(row, live.get(row.slug) ?? 0));
+  const rows = listed.apps
+    .filter((row): row is Exclude<OpsAppRow, { kind: "builtin" }> => row.kind !== "builtin")
+    .map((row) => appRow(row, live.get(row.slug) ?? 0));
   const confirmSlug = ctx.query.get("confirm") === "delete" ? ctx.query.get("slug") : null;
   const confirmRow = rows.find((row) => row.slug === confirmSlug);
   return {
-    ...(await shell(ctx, "services")),
+    ...(await shell(ctx, "apps")),
     csrfToken: ctx.csrfToken,
     active: rows.filter((row) => !row.archived),
     archived: rows.filter((row) => row.archived),
-    confirm: confirmRow === undefined ? null : { kind: "delete-service", row: confirmRow },
+    confirm: confirmRow === undefined ? null : { kind: "delete-app", row: confirmRow },
   };
 }
 
 /**
- * One service_list row as the table draws it. The two status fields are
+ * One app_list row as the table draws it. The two status fields are
  * exclusive by kind and the mapping is the row's own: a tunneled row carries
  * `status`/`lastSeen`, a proxied one carries its endpoint and — only in oauth
  * mode — the upstream connection state.
  */
-function serviceRow(row: Exclude<OpsServiceRow, { kind: "builtin" }>, tokenCount: number): ServiceRow {
+function appRow(row: Exclude<OpsAppRow, { kind: "builtin" }>, tokenCount: number): AppRow {
   const common = {
     slug: row.slug,
     name: row.name,
@@ -1032,7 +1032,7 @@ function serviceRow(row: Exclude<OpsServiceRow, { kind: "builtin" }>, tokenCount
     kind: "proxy",
     upstreamUrl: row.endpoint,
     upstreamAuthMode: row.auth,
-    // A proxied service never dials in, so it has no last-connected instant of
+    // A proxied app never dials in, so it has no last-connected instant of
     // its own — the column reads "—" rather than borrowing another meaning.
     lastConnectedAt: null,
     connection: null,
@@ -1040,30 +1040,30 @@ function serviceRow(row: Exclude<OpsServiceRow, { kind: "builtin" }>, tokenCount
   };
 }
 
-/** Live credentials per service slug — neither revoked nor past expiry, which is
+/** Live credentials per app slug — neither revoked nor past expiry, which is
  *  what "its N tokens are revoked" promises to be about. */
 function liveTokenCounts(tokens: TokenInfo[], now: number): Map<string, number> {
   const counts = new Map<string, number>();
   for (const token of tokens) {
-    if (token.kind !== "service" || token.revokedAt !== null) continue;
+    if (token.kind !== "app" || token.revokedAt !== null) continue;
     if (token.expiresAt !== null && token.expiresAt <= now) continue;
     counts.set(token.refSlug, (counts.get(token.refSlug) ?? 0) + 1);
   }
   return counts;
 }
 
-/* ------------------------------- /services/new -------------------------------- */
+/* ------------------------------- /apps/new -------------------------------- */
 
-/** /services/new — a chromeless page whose whole state is the step web.ts is in:
+/** /apps/new — a chromeless page whose whole state is the step web.ts is in:
  *  the empty form, the form re-rendered with what the owner typed and why it was
  *  refused, or the once-only token reveal. No read at all. */
-export function serviceNewProps(ctx: PageContext, step: ServiceNewStep): ServiceNewProps {
+export function appNewProps(ctx: PageContext, step: AppNewStep): AppNewProps {
   return { now: ctx.now, username: ctx.username, csrfToken: ctx.csrfToken, step };
 }
 
-/** The add-service form as the query string carries it back — an empty form on a
+/** The add-app form as the query string carries it back — an empty form on a
  *  first visit, the owner's own values on a re-render. */
-export function serviceNewForm(query: URLSearchParams): ServiceNewForm {
+export function appNewForm(query: URLSearchParams): AppNewForm {
   const kind = query.get("kind") === "proxy" ? "proxy" : "tunnel";
   const authMode = query.get("authMode") === "oauth" ? "oauth" : "headers";
   return {
@@ -1218,7 +1218,7 @@ export function auditFilters(ctx: PageContext): AuditFilters {
   return {
     ...window,
     ...text(ctx.query, "principal"),
-    ...text(ctx.query, "service"),
+    ...text(ctx.query, "app"),
     ...text(ctx.query, "event"),
     ...text(ctx.query, "tool"),
     ...text(ctx.query, "session"),
@@ -1263,15 +1263,15 @@ function eventRow(row: AuditRow): AuditEventRow {
  *  page — sorted, so the control does not reshuffle as events arrive. */
 function filterOptions(rows: AuditRow[]): AuditFilterOptions {
   const principals = new Set<string>();
-  const services = new Set<string>();
+  const apps = new Set<string>();
   const events = new Set<string>();
   for (const row of rows) {
     principals.add(row.principal);
-    if (row.service !== undefined) services.add(row.service);
+    if (row.app !== undefined) apps.add(row.app);
     events.add(row.event);
   }
   const sorted = (values: Set<string>): string[] => [...values].sort();
-  return { principals: sorted(principals), services: sorted(services), events: sorted(events) };
+  return { principals: sorted(principals), apps: sorted(apps), events: sorted(events) };
 }
 
 /** The four tiles. `events` is exact; everything per-row is over the scan (see
@@ -1323,10 +1323,10 @@ function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram
   };
 }
 
-/* --------------------------------- /account ----------------------------------- */
+/* --------------------------------- /settings ----------------------------------- */
 
 /**
- * /account — the one page whose state is better-auth's rather than the ops
+ * /settings — the one page whose state is better-auth's rather than the ops
  * table's, and §4 gives better-auth exactly one custodian: identity. So this
  * reads it the way the browser does, through identity's own mounted endpoints,
  * rather than reaching into tables that module owns.
@@ -1344,22 +1344,22 @@ function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram
  * §4 gives identity sole custody of), so an owner with 2FA on is told "0 backup
  * codes remaining · generated <now>" on every render, which is false in both halves.
  * The honest shape is a nullable pair rendered as "—", exactly like the two above —
- * but `TwoFactorSummary`'s enabled arm is a template contract (account.tsx passes
+ * but `TwoFactorSummary`'s enabled arm is a template contract (settings.tsx passes
  * `generatedAt` straight into a `(iso: string)` formatter), so widening it is a
  * change to a page template and is REPORTED rather than made here. All three are
  * findings for the owner, not placeholders to be quietly kept.
  */
-export async function accountProps(ctx: PageContext, req: Request): Promise<AccountProps> {
+export async function settingsProps(ctx: PageContext, req: Request): Promise<SettingsProps> {
   const [me, sessions] = await Promise.all([
     callAuth<{ user?: { twoFactorEnabled?: boolean } }>(req, "/get-session"),
     callAuth<BetterAuthSession[]>(req, "/list-sessions"),
   ]);
   // better-auth's listing, defended: the shape is better-auth's own to change, and
-  // /account showing an empty list is a better answer than a 500 (callAuth's contract
+  // /settings showing an empty list is a better answer than a 500 (callAuth's contract
   // reads a bodiless success as `{}`, which is not a listing).
   const rows = (Array.isArray(sessions) ? sessions : []).map((row) => sessionRow(row, ctx.sessionId));
   return {
-    ...(await shell(ctx, "account")),
+    ...(await shell(ctx, "settings")),
     csrfToken: ctx.csrfToken,
     twoFactor: me?.user?.twoFactorEnabled
       ? { enabled: true, backupCodesRemaining: 0, generatedAt: ctx.now }
@@ -1368,14 +1368,14 @@ export async function accountProps(ctx: PageContext, req: Request): Promise<Acco
     revealedBackupCodes: null,
     passkeys: [],
     sessions: rows,
-    confirm: accountConfirm(ctx.query, rows),
+    confirm: settingsConfirm(ctx.query, rows),
   };
 }
 
 /**
- * Which destructive dialog /account is rendering, read off its own query string — the
+ * Which destructive dialog /settings is rendering, read off its own query string — the
  * `?confirm=…` link every Remove/Revoke/Disable control on the page already points at
- * (`paths.accountConfirm`). Server-rendered state, so the confirm step works with
+ * (`paths.settingsConfirm`). Server-rendered state, so the confirm step works with
  * scripting off; a `confirm` that names no row on the page is no dialog at all rather
  * than a dialog about nothing, which is also what keeps a guessed id from drawing one.
  *
@@ -1383,7 +1383,7 @@ export async function accountProps(ctx: PageContext, req: Request): Promise<Acco
  * is always empty (see this function's caller). It is spelled anyway, because the
  * missing arm would otherwise read as an oversight rather than as that ceiling.
  */
-function accountConfirm(query: URLSearchParams, sessions: SessionRow[]): AccountConfirm | null {
+function settingsConfirm(query: URLSearchParams, sessions: SessionRow[]): SettingsConfirm | null {
   const id = query.get("id") ?? "";
   switch (query.get("confirm")) {
     case "disable-two-factor":
@@ -1397,7 +1397,7 @@ function accountConfirm(query: URLSearchParams, sessions: SessionRow[]): Account
   }
 }
 
-/** The session fields /account draws, as better-auth's own listing spells them.
+/** The session fields /settings draws, as better-auth's own listing spells them.
  *  `token` is deliberately absent from this type: it is a credential, and a
  *  shape that named it is one careless spread away from rendering it (§15). */
 type BetterAuthSession = {
@@ -1546,12 +1546,12 @@ async function deviceStep(ctx: PageContext, req: Request): Promise<DeviceStep> {
  *
  * `clientSelfRegistered` is read directly off `oauthClient` rather than through an admin op:
  * no op fronts it (nothing else in this hub needs it), it names no capability an agent or
- * the CLI could invoke instead, and it is display-only — so it joins /account's better-auth
+ * the CLI could invoke instead, and it is display-only — so it joins /settings's better-auth
  * reads and /audit's stats as a named exception to "every loader reads through admin.ops"
  * rather than a silent one.
  */
 export async function consentProps(ctx: PageContext, req: Request): Promise<ConsentProps | null> {
-  // deps: identity.callAuth (public-client-prelogin) · admin.ops (account_list) · D1 `oauthClient`
+  // deps: identity.callAuth (public-client-prelogin) · admin.ops (agent_list) · D1 `oauthClient`
   const oauthQuery = new URL(req.url).search.slice(1);
   const requested = new URLSearchParams(oauthQuery);
   const clientId = requested.get("client_id") ?? "";
@@ -1563,7 +1563,7 @@ export async function consentProps(ctx: PageContext, req: Request): Promise<Cons
     oauth_query: oauthQuery,
   });
   if (client === null) return null;
-  const listed = await read<{ accounts: { slug: string; name: string }[] }>(ctx, "account_list");
+  const listed = await read<{ agents: { slug: string; name: string }[] }>(ctx, "agent_list");
   return {
     now: ctx.now,
     csrfToken: ctx.csrfToken,
@@ -1573,7 +1573,7 @@ export async function consentProps(ctx: PageContext, req: Request): Promise<Cons
     redirectOrigin: originOf(requested.get("redirect_uri") ?? ""),
     scopes: (requested.get("scope") ?? "").split(" ").filter((s) => s !== ""),
     namespace: namespaceOfResource(requested.get("resource") ?? ""),
-    accounts: listed.accounts.map((account) => ({ slug: account.slug, name: account.name })),
+    agents: listed.agents.map((agent) => ({ slug: agent.slug, name: agent.name })),
   };
 }
 

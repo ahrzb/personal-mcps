@@ -11,14 +11,14 @@
 // - capabilityShape — the KIND-AWARE capability shape for both handshakes (§21.5):
 //   kind is "tunnel" | "proxy" | "builtin", and the stored capability set gates only
 //   WHICH families appear — this is the kind-fallback an is-not-proxy implementation
-//   gets wrong. Resolves over SERVICE_CAPABILITIES order, never the stored set's own
+//   gets wrong. Resolves over APP_CAPABILITIES order, never the stored set's own
 //   (arbitrary for an owner-declared list), so the emitted object's key order is the
 //   canonical order the contracts fixtures pin byte-for-byte. AGGREGATED_CAPABILITIES
 //   is the §20.2/§21.5 constant this function renders.
 // - subscriberTag / parseSubscriberTag — the `sub:` prefix is the class invariant
-//   (§21.2): a getWebSockets(service.id) lookup can never return a subscriber socket,
+//   (§21.2): a getWebSockets(app.id) lookup can never return a subscriber socket,
 //   because a prefixed tag never equals a bare id. The prefix is the sole separator —
-//   service ids are themselves UUIDs, so nothing about an id's shape can carry it.
+//   app ids are themselves UUIDs, so nothing about an id's shape can carry it.
 // - admits — the Worker-side endpoint-shape filter (§21.2): the aggregated shape
 //   forwards tools and prompts bells ONLY; the scoped shape forwards all three bells
 //   plus notifications/resources/updated. Everything else is dropped on both.
@@ -45,8 +45,8 @@
 // owns the pure verdicts alone.
 
 import { canonicalJson } from "./approvals";
-import { SERVICE_CAPABILITIES } from "./registry";
-import type { ServiceCapability } from "./registry";
+import { APP_CAPABILITIES } from "./registry";
+import type { AppCapability } from "./registry";
 import { LISTEN_SUBSCRIPTIONS_MAX, SUBSCRIBE_URI_MAX_BYTES } from "./limits";
 
 /**
@@ -62,11 +62,11 @@ export function catalogChanged(stored: unknown, next: unknown): boolean {
   return canonicalJson(stored ?? []) !== canonicalJson(next ?? []);
 }
 
-/** §21.5 — the one axis a service's push posture flips on: kind, not stored set. */
+/** §21.5 — the one axis an app's push posture flips on: kind, not stored set. */
 export type CapabilityKind = "tunnel" | "proxy" | "builtin";
 
-/** §21.5/§20.2 — the family set an undeclared, never-connected, or unresolvable service is read as: tools only. */
-export const DEFAULT_SERVICE_CAPABILITIES: readonly ServiceCapability[] = ["tools"];
+/** §21.5/§20.2 — the family set an undeclared, never-connected, or unresolvable app is read as: tools only. */
+export const DEFAULT_APP_CAPABILITIES: readonly AppCapability[] = ["tools"];
 
 /**
  * §21.5 — the kind-aware capability shape for BOTH handshakes (`initialize` and
@@ -74,15 +74,15 @@ export const DEFAULT_SERVICE_CAPABILITIES: readonly ServiceCapability[] = ["tool
  * every flag: "tunnel" rings (listChanged true, resources gains subscribe: true),
  * "proxy" and "builtin" keep every push flag false and subscribe absent — proxy has
  * no channel to ring from (§21.2), the builtin has no DO to ring at all. Families
- * render in canonical SERVICE_CAPABILITIES order and completions renders as the empty
+ * render in canonical APP_CAPABILITIES order and completions renders as the empty
  * object, because no completions bell exists.
  */
 export function capabilityShape(
-  stored: readonly ServiceCapability[],
+  stored: readonly AppCapability[],
   kind: CapabilityKind,
 ): Record<string, Record<string, boolean>> {
   const result: Record<string, Record<string, boolean>> = {};
-  for (const family of SERVICE_CAPABILITIES) {
+  for (const family of APP_CAPABILITIES) {
     if (!stored.includes(family)) continue;
     if (family === "completions") {
       result[family] = {};
@@ -106,7 +106,7 @@ export const AGGREGATED_CAPABILITIES: Readonly<Record<string, Readonly<Record<st
   capabilityShape(["tools", "prompts"], "tunnel");
 
 /** §21.2 — the class invariant's prefix: a socket tagged `sub:<session-id>` is a subscriber
- *  socket; a bare id is the service socket. NOT exported: the builder and the parser below
+ *  socket; a bare id is the app socket. NOT exported: the builder and the parser below
  *  are the whole interface, so no caller can spell the prefix a second way. */
 const SUBSCRIBER_TAG_PREFIX = "sub:";
 
@@ -117,7 +117,7 @@ export function subscriberTag(sessionId: string): string {
 
 /**
  * §21.2 — the tag parser: a `sub:`-prefixed tag parses back to the session id it was
- * built from; anything else — a bare service id in particular — is no subscriber tag
+ * built from; anything else — a bare app id in particular — is no subscriber tag
  * at all (returns null).
  */
 export function parseSubscriberTag(tag: string): string | null {

@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
+    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
+    a:hover { color: #52525b; }
+  </style>
+</helmet>
+<div style="width: 560px; min-height: 1063px; box-sizing: border-box; background: #fafafa; display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 32px 30px;">
+
+  <div style="width: 500px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">EXPANDED — FULL DETAIL</div>
+    <div style="width: 500px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
+
+      <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f4f4f5;">
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">14:02:11</div>
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
+        <div style="font-size: 13px;">tool.call</div>
+        <div style="font-size: 13px; color: #71717a;">news</div>
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">news_search</div>
+        <div style="flex-grow: 1;"></div>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
+      </div>
+
+      <div style="background: #fafafa; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 6px; background: #f4f4f5; font-size: 12px; font-weight: 500; color: #71717a;">client<span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #52525b;">claude-ai/1.2</span></span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 6px; background: #f4f4f5; font-size: 12px; font-weight: 500; color: #71717a;">session<a href="#" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">s_8fk2…</a></span>
+          <span style="font-size: 12px; color: #71717a;">filter to session</span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 12px; font-weight: 500; color: #71717a; letter-spacing: 0.06em; text-transform: uppercase;">Arguments</div>
+          <div style="background: #f4f4f5; border-radius: 8px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.7; color: #09090b; white-space: pre-line;">{
+&nbsp;&nbsp;"query": "cloudflare outage",
+&nbsp;&nbsp;"password": "‹redacted›"
+}</div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="font-size: 12px; font-weight: 500; color: #71717a; letter-spacing: 0.06em; text-transform: uppercase;">Result</div>
+          <div style="background: #f4f4f5; border-radius: 8px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.7; color: #09090b; white-space: pre-line;">{
+&nbsp;&nbsp;"structuredContent": {
+&nbsp;&nbsp;&nbsp;&nbsp;"headline": "Cloudflare restores service",
+&nbsp;&nbsp;&nbsp;&nbsp;"screenshot": <span style="display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 6px; background: #ffffff; border: 1px solid #e4e4e7; color: #52525b; font-size: 11px; font-weight: 500; vertical-align: -4px;">‹blob image/png · 4.2 MB›</span>
+&nbsp;&nbsp;}
+}</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="width: 500px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">EXPANDED — LOADING</div>
+    <div style="width: 500px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
+
+      <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f4f4f5;">
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">14:02:11</div>
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
+        <div style="font-size: 13px;">tool.call</div>
+        <div style="font-size: 13px; color: #71717a;">news</div>
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">news_search</div>
+        <div style="flex-grow: 1;"></div>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
+      </div>
+
+      <div style="background: #fafafa; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <div style="width: 60%; height: 12px; background: #e4e4e7; border-radius: 6px;"></div>
+          <div style="width: 90%; height: 12px; background: #e4e4e7; border-radius: 6px;"></div>
+          <div style="width: 40%; height: 12px; background: #e4e4e7; border-radius: 6px;"></div>
+        </div>
+        <div style="font-size: 13px; color: #71717a;">Loading call detail…</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="width: 500px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">BODIES NOT RECORDED</div>
+    <div style="width: 500px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
+
+      <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f4f4f5;">
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">14:02:11</div>
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
+        <div style="font-size: 13px;">tool.call</div>
+        <div style="font-size: 13px; color: #71717a;">news</div>
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">news_search</div>
+        <div style="flex-grow: 1;"></div>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
+      </div>
+
+      <div style="background: #fafafa; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 6px; background: #f4f4f5; font-size: 12px; font-weight: 500; color: #71717a;">client<span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #52525b;">claude-ai/1.2</span></span>
+          <span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 6px; background: #f4f4f5; font-size: 12px; font-weight: 500; color: #71717a;">session<a href="#" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">s_8fk2…</a></span>
+          <span style="font-size: 12px; color: #71717a;">filter to session</span>
+        </div>
+        <div style="background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #71717a; line-height: 1.5;">Call bodies aren't recorded for this app (body logging is off).</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div style="width: 500px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">NON-CALL EVENT</div>
+    <div style="width: 500px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
+
+      <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f4f4f5;">
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">13:47:20</div>
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">user:ahrzb</div>
+        <div style="font-size: 13px;">admin.grant_set</div>
+        <div style="font-size: 13px; color: #71717a;">news</div>
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa;">—</div>
+        <div style="flex-grow: 1;"></div>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
+      </div>
+
+      <div style="background: #fafafa; padding: 16px; font-size: 13px; color: #09090b; line-height: 1.5;">Replaced grants for claude on news: reader (allow), admin (approval).</div>
+
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":560,"height":1063}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -39,7 +39,7 @@ import {
 } from "./config.ts";
 import { CliError, didYouMean, emitError } from "./errors.ts";
 import { parseDesired, planChanges } from "./plan.ts";
-import type { CurrentAccount, CurrentService, CurrentState, DesiredGrant, Plan, RoleDeclaration } from "./plan.ts";
+import type { CurrentAgent, CurrentApp, CurrentState, DesiredGrant, Plan, RoleDeclaration } from "./plan.ts";
 import { catalogLine, columnize, renderJson, schemaTable, styling, wrapText } from "./render.ts";
 
 /** Printed by `--version`; kept in step with cli/package.json by hand (dist has no reader for it). */
@@ -49,7 +49,7 @@ const VERSION = "0.1.0";
  * COPIED wire shape — the GET /api/whoami response, pinned by §8 as the
  * CLI↔server contract. Deliberately duplicated here rather than shared through
  * a package; tests pin both sides. `principal` is `"user:<name>"` or
- * `"sa:<slug>"`; `namespace` is the owner username every `/<user>/mcp…` URL is
+ * `"agent:<slug>"`; `namespace` is the owner username every `/<user>/mcp…` URL is
  * built from — the CLI never guesses it.
  */
 export type WhoamiResponse = { principal: string; namespace: string };
@@ -67,15 +67,15 @@ export type ApprovalRequiredData = {
 };
 
 /**
- * COPIED wire shape — one `service_list` / `service_get` row (§8's pinned cross-front
- * shape, the server's own `ServiceRow`; contracts/service-list.json is the lock).
+ * COPIED wire shape — one `app_list` / `app_get` row (§8's pinned cross-front
+ * shape, the server's own `AppRow`; contracts/app-list.json is the lock).
  * Deliberately duplicated (no shared package) and deliberately FLAT where the server's is
  * a discriminated union: the CLI branches on `kind` at runtime, so the per-kind fields are
- * optional here rather than three types. Declared once so `ls`, `account`, and the diff
+ * optional here rather than three types. Declared once so `ls`, `agent`, and the diff
  * planner's read share one decoding instead of three private ones — a field renamed
  * server-side then fails to compile here rather than emptying a column.
  */
-export type ServiceRow = {
+export type AppRow = {
   slug: string;
   name: string;
   description: string;
@@ -85,7 +85,7 @@ export type ServiceRow = {
   redact: Record<string, string[]>;
   redactResults: Record<string, string[]>;
   kind: "tunnel" | "proxy" | "builtin";
-  /** builtin rows only — the virtual `pmcp` service, which the planner never plans against */
+  /** builtin rows only — the virtual `pmcp` app, which the planner never plans against */
   builtin?: boolean;
   /** tunneled rows only */
   status?: "online" | "offline";
@@ -93,18 +93,18 @@ export type ServiceRow = {
   endpoint?: string;
   auth?: "headers" | "oauth";
   forwardIdentity?: boolean;
-  /** proxied rows only, and absent when the service never declared one (§8, §20.2) */
+  /** proxied rows only, and absent when the app never declared one (§8, §20.2) */
   capabilities?: string[];
   /** proxied `auth: oauth` rows only — the upstream connection state */
   connection?: string;
 };
 
 /**
- * COPIED wire shape — one `account_list` row, grants inline as the flat
+ * COPIED wire shape — one `agent_list` row, grants inline as the flat
  * `role[:approval]` strings `grant_set` takes (§8 pins that there is no separate
- * grant-read tool; contracts/account-list.json is the lock).
+ * grant-read tool; contracts/agent-list.json is the lock).
  */
-export type AccountRow = {
+export type AgentRow = {
   slug: string;
   name: string;
   description: string;
@@ -118,9 +118,9 @@ export type AccountRow = {
  * any other code as a plain failure.
  */
 export const HUB_ERRORS = {
-  serviceUnavailable: -32000,
+  appUnavailable: -32000,
   toolNotPermitted: -32001,
-  serviceArchived: -32002,
+  appArchived: -32002,
   approvalRequired: -32003,
   invalidParams: -32602,
   methodNotFound: -32601,
@@ -145,7 +145,7 @@ export class HubRpcError extends Error {
 
 /**
  * Everything a resolved command needs to reach the hub: the https origin, the
- * bearer token (session or `pmcp_sa_` — never `pmcp_svc_`, §10), and the
+ * bearer token (session or `pmcp_agt_` — never `pmcp_app_`, §10), and the
  * whoami-resolved identity. `namespace` is the sole source of `/<user>/mcp…`
  * URLs. Built once per invocation by resolveContext; commands never read
  * config or environment themselves.
@@ -161,8 +161,8 @@ export type CliContext = {
 
 /**
  * The flags that apply to every command, extracted from argv BEFORE commander sees it.
- * They are global in position as well as in meaning — `pmcp service --yes delete news` and
- * `pmcp service delete news --yes` are the same command — which commander's per-command
+ * They are global in position as well as in meaning — `pmcp app --yes delete news` and
+ * `pmcp app delete news --yes` are the same command — which commander's per-command
  * option model cannot express without redeclaring four options on thirty subcommands.
  *
  * `color` is the `--no-color` flag alone; the TTY and NO_COLOR halves of §10's gate are
@@ -227,9 +227,9 @@ function emitDocument(value: unknown): number {
 /**
  * Builds the per-invocation context: the ACTIVE profile's stored url/token overlaid
  * by the flat PMCP_URL / PMCP_TOKEN (the environment is profile-free, §10), then one
- * GET /api/whoami to learn principal and namespace (§10 — this is how a service-account
- * key learns whose namespace it lives in). A `pmcp_svc_`-prefixed token is refused here
- * with a clear message — every consumer surface rejects service tokens, so failing early
+ * GET /api/whoami to learn principal and namespace (§10 — this is how an agent
+ * key learns whose namespace it lives in). A `pmcp_app_`-prefixed token is refused here
+ * with a clear message — every consumer surface rejects app tokens, so failing early
  * beats a confusing server 401; no token at all fails with a "run pmcp login" hint that
  * names the profile, since a `--profile` typo and an expired session look identical
  * otherwise.
@@ -249,10 +249,10 @@ async function resolveContext(profileName?: string): Promise<CliContext> {
   if (token === "") {
     throw new CliError("unauthenticated", `not logged in (profile ${name})`, { hints: [`pmcp login --profile ${name}`] });
   }
-  if (token.startsWith("pmcp_svc_")) {
+  if (token.startsWith("pmcp_app_")) {
     throw new CliError(
       "unauthenticated",
-      "a pmcp_svc_ service token is refused by every consumer surface: use a session or a pmcp_sa_ key",
+      "a pmcp_app_ app token is refused by every consumer surface: use a session or a pmcp_agt_ key",
     );
   }
   const response = await fetch(`${origin}/api/whoami`, { headers: { Authorization: `Bearer ${token}` } });
@@ -282,7 +282,7 @@ async function rpc(ctx: CliContext, path: string, method: string, params?: unkno
   return body.result;
 }
 
-/** The scoped endpoint a service's own gateway methods are addressed to (§20.2). */
+/** The scoped endpoint an app's own gateway methods are addressed to (§20.2). */
 function scoped(ctx: CliContext, slug: string): string {
   return `/${ctx.namespace}/mcp/${slug}`;
 }
@@ -313,15 +313,15 @@ async function mcpCall(
   return rpc(ctx, scoped(ctx, slug), "tools/call", { name: tool, arguments: args });
 }
 
-/** One admin op through the builtin `pmcp` service, unwrapped to its structuredContent (§8). */
+/** One admin op through the builtin `pmcp` app, unwrapped to its structuredContent (§8). */
 async function adminOp(ctx: CliContext, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const result = (await mcpCall(ctx, PMCP_SLUG, name, args)) as { structuredContent?: Record<string, unknown> };
   return result?.structuredContent ?? {};
 }
 
 /**
- * The one reader of a list-shaped op result: `rows<ServiceRow>(await adminOp(…),
- * "services")`. The typed row is the point — every caller shares ServiceRow / AccountRow
+ * The one reader of a list-shaped op result: `rows<AppRow>(await adminOp(…),
+ * "apps")`. The typed row is the point — every caller shares AppRow / AgentRow
  * instead of re-deriving a row's shape by hand at each rendering site.
  */
 function rows<T>(result: Record<string, unknown>, key: string): T[] {
@@ -333,17 +333,17 @@ const PMCP_SLUG = "pmcp";
 
 /**
  * The diff planner's entire view of the server, read in exactly two calls —
- * service_list plus account_list (§8 pins that grants ride account_list
+ * app_list plus agent_list (§8 pins that grants ride agent_list
  * inline; there is no separate grant-read tool) — reshaped into
  * plan.CurrentState. Read-only.
  */
 async function readCurrentState(ctx: CliContext): Promise<CurrentState> {
   // deps: mcpCall
-  const services = rows<ServiceRow>(await adminOp(ctx, "service_list"), "services");
-  const accounts = rows<AccountRow>(await adminOp(ctx, "account_list"), "accounts");
+  const apps = rows<AppRow>(await adminOp(ctx, "app_list"), "apps");
+  const agents = rows<AgentRow>(await adminOp(ctx, "agent_list"), "agents");
   return {
-    services: services.map(
-      (row): CurrentService => ({
+    apps: apps.map(
+      (row): CurrentApp => ({
         slug: row.slug,
         // The builtin row reports `kind: "builtin"`; the planner only ever needs to know
         // that it is not plannable.
@@ -361,7 +361,7 @@ async function readCurrentState(ctx: CliContext): Promise<CurrentState> {
               endpoint: row.endpoint ?? "",
               auth: row.auth ?? "headers",
               forwardIdentity: row.forwardIdentity === true,
-              // Passed through UNDEFAULTED: absent on the row means the service declared
+              // Passed through UNDEFAULTED: absent on the row means the app declared
               // nothing, which is a value the planner compares (§20.2's default is applied
               // by plan.canonicalCapabilities, in one place, on both sides at once).
               ...(row.capabilities === undefined ? {} : { capabilities: row.capabilities }),
@@ -369,15 +369,15 @@ async function readCurrentState(ctx: CliContext): Promise<CurrentState> {
           : {}),
       }),
     ),
-    accounts: accounts.map(
-      (row): CurrentAccount => ({
+    agents: agents.map(
+      (row): CurrentAgent => ({
         slug: row.slug,
         name: row.name,
         description: row.description,
-        // account_list carries grants inline, as the flat `role[:approval]` strings
+        // agent_list carries grants inline, as the flat `role[:approval]` strings
         // grant_set takes — the planner works in the split shape.
         grants: Object.fromEntries(
-          Object.entries(row.grants).map(([service, roles]) => [service, roles.map(splitGrant)]),
+          Object.entries(row.grants).map(([app, roles]) => [app, roles.map(splitGrant)]),
         ),
       }),
     ),
@@ -417,7 +417,7 @@ const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 
 /**
  * `pmcp whoami` — the pinned WhoamiResponse from GET /api/whoami, principal AND namespace
- * in both renderings (§10: for a service-account key the two differ, and the namespace is
+ * in both renderings (§10: for an agent key the two differ, and the namespace is
  * what every `/<user>/mcp…` URL is built from). Logged out is `unauthenticated`, exit 1 —
  * resolveContext raises it before any request.
  */
@@ -654,23 +654,23 @@ export async function profile(cmd: ProfileCommand): Promise<number> {
 // ── the sugar: every other command is one or two admin ops ─────────────────────────────
 
 /**
- * `pmcp ls` — the namespace at a glance: every service with kind, status
+ * `pmcp ls` — the namespace at a glance: every app with kind, status
  * (online/offline for tunneled; not-connected/connected/needs-reconnect for
  * `auth: oauth` proxied, plain "proxy" otherwise), declared roles, and
  * archived flag; the builtin `pmcp` row shows as builtin. Sugar over
- * service_list — with a service-account key it fails like every admin-backed
- * command, since accounts never hold `pmcp` grants (§8, §10).
+ * app_list — with an agent key it fails like every admin-backed
+ * command, since agents never hold `pmcp` grants (§8, §10).
  *
- * `--json` passes the `service_list` rows through untouched: wire vocabulary, wire fields,
+ * `--json` passes the `app_list` rows through untouched: wire vocabulary, wire fields,
  * nothing renamed (§10).
  */
 export async function ls(ctx: CliContext): Promise<number> {
   // deps: mcpCall · render.columnize
-  const services = rows<ServiceRow>(await adminOp(ctx, "service_list"), "services");
-  if (globals.json) return emitDocument({ services });
+  const apps = rows<AppRow>(await adminOp(ctx, "app_list"), "apps");
+  if (globals.json) return emitDocument({ apps });
   const c = styling(decorated());
   const table = columnize(
-    services.map((row) => [
+    apps.map((row) => [
       row.slug,
       row.kind,
       statusOf(row),
@@ -678,7 +678,7 @@ export async function ls(ctx: CliContext): Promise<number> {
       row.archived ? "(archived)" : "",
     ]),
     {
-      headers: ["SERVICE", "KIND", "STATUS", "ROLES", ""],
+      headers: ["APP", "KIND", "STATUS", "ROLES", ""],
       tty: decorated(),
       // Painted per CELL: a slug that happens to contain the status word (`online-notes`,
       // `proxy-cache`) would make a search-and-replace over the rendered line colour the
@@ -701,26 +701,26 @@ function statusColor(c: ReturnType<typeof styling>, status: string): (value: str
 }
 
 /** The wire's own status word for a row — never a CLI-private respelling (§10). */
-function statusOf(row: ServiceRow): string {
+function statusOf(row: AppRow): string {
   if (row.builtin === true || row.kind === "builtin") return "builtin";
   if (row.kind === "proxy") return row.connection ?? "proxy";
   return row.status ?? "";
 }
 
-function declaredRoles(row: ServiceRow): string {
+function declaredRoles(row: AppRow): string {
   const declared = Object.keys(row.roles ?? {});
   return declared.length === 0 ? "-" : declared.join(", ");
 }
 
 /**
- * `pmcp tools <service>` (hidden alias; `describe service/<slug>` is the documented
- * surface) — the service's tools/list exactly as the current token sees it (hub-filtered
+ * `pmcp tools <app>` (hidden alias; `describe app/<slug>` is the documented
+ * surface) — the app's tools/list exactly as the current token sees it (hub-filtered
  * by grants, unprefixed names). Hub errors pass through as sent.
  */
-export async function tools(ctx: CliContext, service: string): Promise<number> {
+export async function tools(ctx: CliContext, app: string): Promise<number> {
   // deps: mcpList
-  const listed = (await mcpList(ctx, service)) as Record<string, any>[];
-  if (globals.json) return emitDocument({ service, tools: listed });
+  const listed = (await mcpList(ctx, app)) as Record<string, any>[];
+  if (globals.json) return emitDocument({ app, tools: listed });
   for (const tool of listed) write(`${catalogLine(String(tool.name), String(tool.description ?? ""), 28, decorated())}\n`);
   return 0;
 }
@@ -735,12 +735,12 @@ export async function tools(ctx: CliContext, service: string): Promise<number> {
  */
 export async function call(
   ctx: CliContext,
-  target: { service: string; tool: string },
+  target: { app: string; tool: string },
   args: Record<string, unknown>,
 ): Promise<number> {
   // deps: mcpCall · enrichCallFailure
   try {
-    const result = (await mcpCall(ctx, target.service, target.tool, args)) as { isError?: boolean };
+    const result = (await mcpCall(ctx, target.app, target.tool, args)) as { isError?: boolean };
     write(`${renderJson(result, documentColor())}\n`);
     return result?.isError === true ? 1 : 0;
   } catch (error) {
@@ -756,7 +756,7 @@ export async function call(
  */
 async function enrichCallFailure(
   ctx: CliContext,
-  target: { service: string; tool: string },
+  target: { app: string; tool: string },
   args: Record<string, unknown>,
   error: unknown,
 ): Promise<unknown> {
@@ -768,22 +768,22 @@ async function enrichCallFailure(
       extra: { approvalId: data.approvalId, approvalUrl: data.approvalUrl, expiresAt: data.expiresAt },
     });
   }
-  const catalog = await catalogOf(ctx, target.service);
+  const catalog = await catalogOf(ctx, target.app);
   if (error.code === HUB_ERRORS.toolNotPermitted) {
     if (catalog === undefined) {
-      // The service itself did not answer: the slug, not the tool, is what is wrong.
-      const slugs = await serviceSlugs(ctx);
-      const suggestion = slugs === undefined ? undefined : didYouMean(target.service, slugs);
-      return new CliError("not_found", `no service "${target.service}" in your namespace`, {
+      // The app itself did not answer: the slug, not the tool, is what is wrong.
+      const slugs = await appSlugs(ctx);
+      const suggestion = slugs === undefined ? undefined : didYouMean(target.app, slugs);
+      return new CliError("not_found", `no app "${target.app}" in your namespace`, {
         detail: suggestion === undefined ? [] : [`did you mean "${suggestion}"?`],
-        hints: ["pmcp ls lists your services"],
+        hints: ["pmcp ls lists your apps"],
         extra: suggestion === undefined ? undefined : { didYouMean: suggestion },
       });
     }
     const suggestion = didYouMean(target.tool, catalog.map((tool) => String(tool.name)));
-    return new CliError("not_found", `no tool "${target.tool}" on ${target.service}`, {
+    return new CliError("not_found", `no tool "${target.tool}" on ${target.app}`, {
       detail: suggestion === undefined ? [] : [`did you mean "${suggestion}"?`],
-      hints: [`pmcp describe service/${target.service} lists everything it serves`],
+      hints: [`pmcp describe app/${target.app} lists everything it serves`],
       extra: suggestion === undefined ? undefined : { didYouMean: suggestion },
     });
   }
@@ -798,7 +798,7 @@ async function enrichCallFailure(
     if (schema !== undefined) detail.push(`${target.tool} expects\n${indent(schemaTable(schema, decorated()), 2)}`);
     return new CliError("invalid_arguments", error.message, {
       detail,
-      hints: [`pmcp describe service/${target.service}/${target.tool}`],
+      hints: [`pmcp describe app/${target.app}/${target.tool}`],
       extra:
         schema === undefined && suggestion === undefined
           ? undefined
@@ -808,19 +808,19 @@ async function enrichCallFailure(
   return error;
 }
 
-/** The service's tools/list, or undefined when the fetch itself failed (best effort, §10). */
-async function catalogOf(ctx: CliContext, service: string): Promise<Record<string, any>[] | undefined> {
+/** The app's tools/list, or undefined when the fetch itself failed (best effort, §10). */
+async function catalogOf(ctx: CliContext, app: string): Promise<Record<string, any>[] | undefined> {
   try {
-    return (await mcpList(ctx, service)) as Record<string, any>[];
+    return (await mcpList(ctx, app)) as Record<string, any>[];
   } catch {
     return undefined;
   }
 }
 
-/** Every slug in the namespace, or undefined — a service-account key cannot read this (§8). */
-async function serviceSlugs(ctx: CliContext): Promise<string[] | undefined> {
+/** Every slug in the namespace, or undefined — an agent key cannot read this (§8). */
+async function appSlugs(ctx: CliContext): Promise<string[] | undefined> {
   try {
-    return rows<ServiceRow>(await adminOp(ctx, "service_list"), "services").map((row) => row.slug);
+    return rows<AppRow>(await adminOp(ctx, "app_list"), "apps").map((row) => row.slug);
   } catch {
     return undefined;
   }
@@ -838,70 +838,70 @@ function indent(text: string, spaces: number): string {
 //    already are — they front an MCP method on the scoped endpoint, never an admin op ─────
 
 /**
- * `pmcp prompts <service>` (hidden alias of `describe`) — `prompts/list` on the SCOPED
- * endpoint (§20.2/§20.6): only there does a prompt keep the unprefixed name the service
+ * `pmcp prompts <app>` (hidden alias of `describe`) — `prompts/list` on the SCOPED
+ * endpoint (§20.2/§20.6): only there does a prompt keep the unprefixed name the app
  * gave it. One row per prompt, name then description.
  */
-export async function prompts(ctx: CliContext, service: string): Promise<number> {
+export async function prompts(ctx: CliContext, app: string): Promise<number> {
   // deps: rpc
-  const result = (await rpc(ctx, scoped(ctx, service), "prompts/list")) as { prompts?: unknown[] };
+  const result = (await rpc(ctx, scoped(ctx, app), "prompts/list")) as { prompts?: unknown[] };
   const listed = (result?.prompts ?? []) as Record<string, any>[];
-  if (globals.json) return emitDocument({ service, prompts: listed });
+  if (globals.json) return emitDocument({ app, prompts: listed });
   for (const entry of listed) write(`${catalogLine(String(entry.name), String(entry.description ?? ""), 28, decorated())}\n`);
   return 0;
 }
 
 /**
- * `pmcp get prompt/<service>/<name> [key=value …]` (and the hidden `pmcp prompt` alias) —
+ * `pmcp get prompt/<app>/<name> [key=value …]` (and the hidden `pmcp prompt` alias) —
  * `prompts/get` on the scoped endpoint, the `key=value` grammar `pmcp call` already speaks
  * landing exactly where the method declares it: `params.arguments`, beside the prompt's own
  * `name` and nowhere else.
  */
 export async function prompt(
   ctx: CliContext,
-  service: string,
+  app: string,
   name: string,
   args: Record<string, unknown>,
 ): Promise<number> {
   // deps: rpc
-  const result = await rpc(ctx, scoped(ctx, service), "prompts/get", { name, arguments: args });
+  const result = await rpc(ctx, scoped(ctx, app), "prompts/get", { name, arguments: args });
   write(`${renderJson(result, documentColor())}\n`);
   return 0;
 }
 
 /**
- * `pmcp resources <service> [--templates]` (hidden alias of `describe`) — `resources/list`
+ * `pmcp resources <app> [--templates]` (hidden alias of `describe`) — `resources/list`
  * on the scoped endpoint, or `resources/templates/list` when `--templates` is given
  * (§20.2/§20.6). §20.2 keys this family by `uri`, never by `name`, so each row prints the
  * uri; a template row prints the RAW `uriTemplate`, unexpanded.
  */
-export async function resources(ctx: CliContext, service: string, opts: { templates?: boolean }): Promise<number> {
+export async function resources(ctx: CliContext, app: string, opts: { templates?: boolean }): Promise<number> {
   // deps: rpc
   if (opts.templates === true) {
-    const result = (await rpc(ctx, scoped(ctx, service), "resources/templates/list")) as { resourceTemplates?: unknown[] };
+    const result = (await rpc(ctx, scoped(ctx, app), "resources/templates/list")) as { resourceTemplates?: unknown[] };
     const listed = (result?.resourceTemplates ?? []) as Record<string, any>[];
-    if (globals.json) return emitDocument({ service, resourceTemplates: listed });
+    if (globals.json) return emitDocument({ app, resourceTemplates: listed });
     for (const template of listed) write(`${String(template.uriTemplate)}\n`);
     return 0;
   }
-  const result = (await rpc(ctx, scoped(ctx, service), "resources/list")) as { resources?: unknown[] };
+  const result = (await rpc(ctx, scoped(ctx, app), "resources/list")) as { resources?: unknown[] };
   const listed = (result?.resources ?? []) as Record<string, any>[];
-  if (globals.json) return emitDocument({ service, resources: listed });
+  if (globals.json) return emitDocument({ app, resources: listed });
   for (const resource of listed) write(`${String(resource.uri)}\n`);
   return 0;
 }
 
 /**
- * `pmcp get resource/<service>/<uri>` (and the hidden `pmcp read` alias) — `resources/read`
+ * `pmcp get resource/<app>/<uri>` (and the hidden `pmcp read` alias) — `resources/read`
  * on the SLUG's scoped endpoint, the URI sent verbatim as `params.uri`: never
  * percent-encoded (it is a param value, not part of the URL) and never `<slug>_`-prefixed
  * (§20.2 refuses the aggregated endpoint precisely because a URI cannot take a prefix and
- * still be the URI the service knows). Routed by the addressed slug alone, never by the
- * URI's own scheme — two services may legitimately serve the identical URI (§20.2).
+ * still be the URI the app knows). Routed by the addressed slug alone, never by the
+ * URI's own scheme — two apps may legitimately serve the identical URI (§20.2).
  */
-export async function read(ctx: CliContext, service: string, uri: string): Promise<number> {
+export async function read(ctx: CliContext, app: string, uri: string): Promise<number> {
   // deps: rpc
-  const result = await rpc(ctx, scoped(ctx, service), "resources/read", { uri });
+  const result = await rpc(ctx, scoped(ctx, app), "resources/read", { uri });
   write(`${renderJson(result, documentColor())}\n`);
   return 0;
 }
@@ -953,7 +953,7 @@ const FAMILIES = [
 type Catalog = Record<string, Record<string, any>[]>;
 
 /**
- * All four gateway lists for one service. A family the service does not serve answers
+ * All four gateway lists for one app. A family the app does not serve answers
  * `-32601` (§20.2's method-not-found) and becomes an empty array rather than a failure —
  * `describe` is family-agnostic and prints `(none)` for what is absent.
  */
@@ -973,23 +973,23 @@ async function readCatalog(ctx: CliContext, slug: string): Promise<Catalog> {
 }
 
 /**
- * `pmcp describe <ref>` — §10's one exploration verb. `service/<slug>` renders from the
- * four GATEWAY list calls alone, so it works with any token including a `pmcp_sa_` key; its
+ * `pmcp describe <ref>` — §10's one exploration verb. `app/<slug>` renders from the
+ * four GATEWAY list calls alone, so it works with any token including a `pmcp_agt_` key; its
  * kind/status/roles header is a best-effort admin read that degrades to the bare slug when
- * refused. `service/<slug>/<item>` matches tools and prompts by name, resources by `uri`
- * and templates by `uriTemplate`, and prints EVERY match. `account/<slug>` composes
- * `account_list` + `token_list` — the same reads the admin commands already make.
+ * refused. `app/<slug>/<item>` matches tools and prompts by name, resources by `uri`
+ * and templates by `uriTemplate`, and prints EVERY match. `agent/<slug>` composes
+ * `agent_list` + `token_list` — the same reads the admin commands already make.
  */
 export async function describe(ctx: CliContext, ref: Ref): Promise<number> {
-  if (ref.kind === "account") return describeAccount(ctx, ref.slug);
+  if (ref.kind === "agent") return describeAgent(ctx, ref.slug);
   const catalog = await readCatalog(ctx, ref.slug);
   if (ref.item !== undefined) return describeItem(ref.slug, ref.item, catalog);
-  // Best effort, and only for the header: a service account can read the catalog above but
-  // never `service_list` (§8), and the catalog is the part that matters.
-  const row = await serviceRow(ctx, ref.slug);
+  // Best effort, and only for the header: an agent can read the catalog above but
+  // never `app_list` (§8), and the catalog is the part that matters.
+  const row = await appRow(ctx, ref.slug);
   if (globals.json) {
     return emitDocument({
-      service: ref.slug,
+      app: ref.slug,
       ...(row === undefined ? {} : { kind: row.kind, status: statusOf(row), roles: Object.keys(row.roles ?? {}), archived: row.archived }),
       tools: catalog.tools,
       prompts: catalog.prompts,
@@ -1019,14 +1019,14 @@ export async function describe(ctx: CliContext, ref: Ref): Promise<number> {
     }
   }
   if (empty.length > 0) write(`\n${columnize(empty, { tty: decorated() })}\n`);
-  write(`\npmcp describe service/${ref.slug}/<item> shows an item's full shape\n`);
+  write(`\npmcp describe app/${ref.slug}/<item> shows an item's full shape\n`);
   return 0;
 }
 
-/** The admin row behind a service, or undefined when the caller may not read one (§8). */
-async function serviceRow(ctx: CliContext, slug: string): Promise<ServiceRow | undefined> {
+/** The admin row behind an app, or undefined when the caller may not read one (§8). */
+async function appRow(ctx: CliContext, slug: string): Promise<AppRow | undefined> {
   try {
-    return rows<ServiceRow>(await adminOp(ctx, "service_list"), "services").find((row) => row.slug === slug);
+    return rows<AppRow>(await adminOp(ctx, "app_list"), "apps").find((row) => row.slug === slug);
   } catch {
     return undefined;
   }
@@ -1046,14 +1046,14 @@ function describeItem(slug: string, item: string, catalog: Catalog): number {
       `nothing named "${item}" on ${slug} (searched ${FAMILIES.map((family) => family.label).join(", ")})`,
       {
         detail: closest === undefined ? [] : [`closest: ${closest.id} (${closest.family.singular})`],
-        hints: [`pmcp describe service/${slug} lists everything`],
+        hints: [`pmcp describe app/${slug} lists everything`],
         extra: closest === undefined ? undefined : { didYouMean: closest.id },
       },
     );
   }
   if (globals.json) {
     return emitDocument({
-      service: slug,
+      app: slug,
       matches: matches.map(({ family, entry }) => ({ family: family.key, ...entry })),
     });
   }
@@ -1094,22 +1094,22 @@ function describeItem(slug: string, item: string, catalog: Catalog): number {
   return 0;
 }
 
-/** `describe account/<slug>` — account_list + token_list, the same reads admin already makes. */
-async function describeAccount(ctx: CliContext, slug: string): Promise<number> {
-  const found = rows<AccountRow>(await adminOp(ctx, "account_list"), "accounts").find((row) => row.slug === slug);
+/** `describe agent/<slug>` — agent_list + token_list, the same reads admin already makes. */
+async function describeAgent(ctx: CliContext, slug: string): Promise<number> {
+  const found = rows<AgentRow>(await adminOp(ctx, "agent_list"), "agents").find((row) => row.slug === slug);
   if (found === undefined) {
-    throw new CliError("not_found", `no service account "${slug}"`, { hints: ["pmcp account list"] });
+    throw new CliError("not_found", `no agent "${slug}"`, { hints: ["pmcp agent list"] });
   }
   const tokens = rows<Record<string, any>>(await adminOp(ctx, "token_list"), "tokens").filter(
-    (row) => row.kind === "service_account" && row.refSlug === slug,
+    (row) => row.kind === "agent" && row.refSlug === slug,
   );
-  if (globals.json) return emitDocument({ account: found, tokens });
+  if (globals.json) return emitDocument({ agent: found, tokens });
   const c = styling(decorated());
-  write(`${c.bold(slug)} — service account\n`);
-  const grants = Object.entries(found.grants).flatMap(([service, roles]) =>
+  write(`${c.bold(slug)} — agent\n`);
+  const grants = Object.entries(found.grants).flatMap(([app, roles]) =>
     roles.map((role) => {
       const split = splitGrant(role);
-      return [service, split.role, split.mode];
+      return [app, split.role, split.mode];
     }),
   );
   write(`\n${c.dim("grants")}\n${indent(grants.length === 0 ? "(none)" : columnize(grants, { tty: decorated() }), 2)}\n`);
@@ -1126,46 +1126,46 @@ async function describeAccount(ctx: CliContext, slug: string): Promise<number> {
 // ── the imperative admin families ──────────────────────────────────────────────────────
 
 /**
- * One imperative service command, normalized from `pmcp service …` argv by
- * main. `create` of a tunneled service is two tool calls — service_create,
- * then token_issue — because a tunneled service is unusable without its token
+ * One imperative app command, normalized from `pmcp app …` argv by
+ * main. `create` of a tunneled app is two tool calls — app_create,
+ * then token_issue — because a tunneled app is unusable without its token
  * (§6 lifecycle); proxied create carries endpoint + auth mode instead.
  * `set-auth` holds the full replacement header set (repeatable `--header`
- * flags, write-only, headers-mode services only, §8); `disconnect` wipes an
+ * flags, write-only, headers-mode apps only, §8); `disconnect` wipes an
  * OAuth bundle (`auth: oauth` only).
  */
-export type ServiceCommand =
+export type AppCommand =
   | { sub: "create"; slug: string; kind: "tunnel" }
   | { sub: "create"; slug: string; kind: "proxy"; endpoint: string; auth: "headers" | "oauth" }
   | { sub: "archive" | "unarchive" | "delete" | "disconnect"; slug: string }
   | { sub: "set-auth"; slug: string; headers: Record<string, string> };
 
 /**
- * `pmcp service …` — the one-off actions the web UI does with buttons (§10);
+ * `pmcp app …` — the one-off actions the web UI does with buttons (§10);
  * declarative management belongs to diff/apply. Each sub maps onto its §8
- * tool. Tunneled `create` prints the minted service token exactly once — the
+ * tool. Tunneled `create` prints the minted app token exactly once — the
  * CLI never stores it. `delete` is destructive (grants cascade, tokens
  * deleted, socket severed — all server-side effects) and asks for
  * confirmation unless `--yes`. The reserved `pmcp` slug is rejected uniformly by
  * the server; no client-side gate duplicates that.
  */
-export async function service(ctx: CliContext, cmd: ServiceCommand): Promise<number> {
+export async function app(ctx: CliContext, cmd: AppCommand): Promise<number> {
   // deps: mcpCall · confirm
   if (cmd.sub === "create") {
-    const created = await adminOp(ctx, "service_create", {
+    const created = await adminOp(ctx, "app_create", {
       slug: cmd.slug,
       kind: cmd.kind,
       ...(cmd.kind === "proxy" ? { endpoint: cmd.endpoint, auth: cmd.auth } : {}),
     });
-    // A tunneled service is unusable without its credential (§6): mint it here, print once.
-    const minted = cmd.kind === "tunnel" ? await adminOp(ctx, "token_issue", { kind: "service", slug: cmd.slug }) : undefined;
-    if (globals.json) return emitDocument({ service: created.service ?? { slug: cmd.slug }, ...(minted === undefined ? {} : { token: minted }) });
-    write(`created ${String((created.service as Record<string, unknown>)?.slug ?? cmd.slug)}\n`);
-    if (minted !== undefined) write(`service token (shown once): ${String(minted.token)}\n`);
+    // A tunneled app is unusable without its credential (§6): mint it here, print once.
+    const minted = cmd.kind === "tunnel" ? await adminOp(ctx, "token_issue", { kind: "app", slug: cmd.slug }) : undefined;
+    if (globals.json) return emitDocument({ app: created.app ?? { slug: cmd.slug }, ...(minted === undefined ? {} : { token: minted }) });
+    write(`created ${String((created.app as Record<string, unknown>)?.slug ?? cmd.slug)}\n`);
+    if (minted !== undefined) write(`app token (shown once): ${String(minted.token)}\n`);
     return 0;
   }
   if (cmd.sub === "set-auth") {
-    await adminOp(ctx, "service_set_upstream_auth", { slug: cmd.slug, headers: cmd.headers });
+    await adminOp(ctx, "app_set_upstream_auth", { slug: cmd.slug, headers: cmd.headers });
     if (globals.json) return emitDocument({ slug: cmd.slug, headers: Object.keys(cmd.headers) });
     write(`upstream headers replaced for ${cmd.slug}\n`);
     return 0;
@@ -1173,7 +1173,7 @@ export async function service(ctx: CliContext, cmd: ServiceCommand): Promise<num
   if (cmd.sub === "delete" && !globals.yes) {
     if (!(await confirm(`delete ${cmd.slug}? its grants cascade and its tokens are deleted`))) return 1;
   }
-  const op = { archive: "service_archive", unarchive: "service_unarchive", delete: "service_delete", disconnect: "service_disconnect" }[
+  const op = { archive: "app_archive", unarchive: "app_unarchive", delete: "app_delete", disconnect: "app_disconnect" }[
     cmd.sub
   ];
   await adminOp(ctx, op, { slug: cmd.slug });
@@ -1182,38 +1182,38 @@ export async function service(ctx: CliContext, cmd: ServiceCommand): Promise<num
   return 0;
 }
 
-/** One service-account command, normalized from `pmcp account …` argv. */
-export type AccountCommand =
+/** One agent command, normalized from `pmcp agent …` argv. */
+export type AgentCommand =
   | { sub: "list" }
   | { sub: "create"; slug: string; name?: string; description?: string }
   | { sub: "delete"; slug: string };
 
 /**
- * `pmcp account …` — sugar over account_list / account_create /
- * account_delete (§8). `list` prints each account with its grants inline (per
- * service: role names and modes) — the same single read the diff planner
- * rides. `delete` is destructive — grants cascade and the account's tokens are
+ * `pmcp agent …` — sugar over agent_list / agent_create /
+ * agent_delete (§8). `list` prints each agent with its grants inline (per
+ * app: role names and modes) — the same single read the diff planner
+ * rides. `delete` is destructive — grants cascade and the agent's tokens are
  * deleted server-side — and asks for confirmation unless `--yes`.
  */
-export async function account(ctx: CliContext, cmd: AccountCommand): Promise<number> {
+export async function agent(ctx: CliContext, cmd: AgentCommand): Promise<number> {
   // deps: mcpCall · confirm
   if (cmd.sub === "list") {
-    const accounts = rows<AccountRow>(await adminOp(ctx, "account_list"), "accounts");
-    if (globals.json) return emitDocument({ accounts });
+    const agents = rows<AgentRow>(await adminOp(ctx, "agent_list"), "agents");
+    if (globals.json) return emitDocument({ agents });
     const table = columnize(
-      accounts.map((row) => [
+      agents.map((row) => [
         row.slug,
         Object.entries(row.grants)
-          .map(([svc, roles]) => `${svc}=[${roles.join(",")}]`)
+          .map(([app, roles]) => `${app}=[${roles.join(",")}]`)
           .join(" ") || "(no grants)",
       ]),
-      { headers: ["ACCOUNT", "GRANTS"], tty: decorated() },
+      { headers: ["AGENT", "GRANTS"], tty: decorated() },
     );
     write(`${table}\n`);
     return 0;
   }
   if (cmd.sub === "create") {
-    const created = await adminOp(ctx, "account_create", {
+    const created = await adminOp(ctx, "agent_create", {
       slug: cmd.slug,
       ...(cmd.name === undefined ? {} : { name: cmd.name }),
       ...(cmd.description === undefined ? {} : { description: cmd.description }),
@@ -1223,9 +1223,9 @@ export async function account(ctx: CliContext, cmd: AccountCommand): Promise<num
     return 0;
   }
   if (!globals.yes) {
-    if (!(await confirm(`delete account ${cmd.slug}? its grants cascade and its tokens are deleted`))) return 1;
+    if (!(await confirm(`delete agent ${cmd.slug}? its grants cascade and its tokens are deleted`))) return 1;
   }
-  await adminOp(ctx, "account_delete", { slug: cmd.slug });
+  await adminOp(ctx, "agent_delete", { slug: cmd.slug });
   if (globals.json) return emitDocument({ slug: cmd.slug, action: "delete" });
   write(`deleted ${cmd.slug}\n`);
   return 0;
@@ -1242,8 +1242,8 @@ export type ApprovalCommand =
 /**
  * `pmcp approvals | approve | reject` (§10) — the CLI front of the approval
  * dashboard (§8's approval_list / approval_decide; the web page is the other
- * front). The rendering reads the WIRE's own field names — `accountSlug`,
- * `serviceSlug`, `args` (approvals.ApprovalRow) — and prefixes `sa:` client-side, so the
+ * front). The rendering reads the WIRE's own field names — `agentSlug`,
+ * `appSlug`, `args` (approvals.ApprovalRow) — and prefixes `agent:` client-side, so the
  * WHO/WHAT columns carry what the hub actually sent.
  */
 export async function approval(ctx: CliContext, cmd: ApprovalCommand): Promise<number> {
@@ -1267,7 +1267,7 @@ export async function approval(ctx: CliContext, cmd: ApprovalCommand): Promise<n
   const c = styling(decorated());
   const table = columnize(
     approvals.flatMap((row) => [
-      [String(row.id), String(row.status ?? ""), `sa:${String(row.accountSlug ?? "")} → ${String(row.serviceSlug ?? "")}/${String(row.tool ?? "")}`],
+      [String(row.id), String(row.status ?? ""), `agent:${String(row.agentSlug ?? "")} → ${String(row.appSlug ?? "")}/${String(row.tool ?? "")}`],
       ["", "", `args ${JSON.stringify(row.args ?? {})} · ${expiryPhrase(row.expiresAt)}`],
     ]),
     { headers: ["APPROVAL", "STATUS", "WHO → WHAT"], tty: decorated() },
@@ -1330,13 +1330,13 @@ function expiryPhrase(expiresAt: unknown): string {
 
 /**
  * One token command, normalized from `pmcp token …` argv: `issue` targets a
- * service account or a (tunneled) service by slug; `expires` arrives ALREADY
+ * agent or a (tunneled) app by slug; `expires` arrives ALREADY
  * RESOLVED by main's expiresIn to what token_issue declares — a count of
  * SECONDS of lifetime, or the literal `never` — so the human spelling "90d"
  * never reaches this type (defaults differ by kind, §5).
  */
 export type TokenCommand =
-  | { sub: "issue"; kind: "service_account" | "service"; slug: string; expires?: number | "never" }
+  | { sub: "issue"; kind: "agent" | "app"; slug: string; expires?: number | "never" }
   | { sub: "list" }
   | { sub: "revoke"; id: string };
 
@@ -1344,8 +1344,8 @@ export type TokenCommand =
  * `pmcp token …` — sugar over token_issue / token_list / token_revoke (§8).
  * `issue` prints the plaintext key exactly once and the CLI never stores it.
  * `list` shows prefix, expiry, and the coarse last_used_at that makes
- * rotation state observable (§5). Revoking a service token also severs that
- * service's live socket — a server-side effect, merely reported here.
+ * rotation state observable (§5). Revoking an app token also severs that
+ * app's live socket — a server-side effect, merely reported here.
  */
 export async function token(ctx: CliContext, cmd: TokenCommand): Promise<number> {
   // deps: mcpCall
@@ -1387,15 +1387,15 @@ export async function token(ctx: CliContext, cmd: TokenCommand): Promise<number>
 
 /**
  * Filters for `pmcp audit`, mirroring audit_query's parameters (§8) with CLI
- * sugar main resolves before the call: `account` becomes principal
- * `"sa:<slug>"`; `since`/`until` arrive ALREADY RESOLVED by main's instantMs to
+ * sugar main resolves before the call: `agent` becomes principal
+ * `"agent:<slug>"`; `since`/`until` arrive ALREADY RESOLVED by main's instantMs to
  * the epoch MS audit_query declares, so the human spellings it accepts (a "7d"
  * duration ago, an ISO instant, a bare epoch) never reach this type. `limit` is
  * the page (and export chunk) size, server default 100.
  */
 export type AuditFilters = {
-  account?: string;
-  service?: string;
+  agent?: string;
+  app?: string;
   event?: string;
   tool?: string;
   session?: string;
@@ -1421,8 +1421,8 @@ export async function audit(
 ): Promise<number> {
   // deps: mcpCall
   const query: Record<string, unknown> = {
-    ...(filters.account === undefined ? {} : { principal: `sa:${filters.account}` }),
-    ...(filters.service === undefined ? {} : { service: filters.service }),
+    ...(filters.agent === undefined ? {} : { principal: `agent:${filters.agent}` }),
+    ...(filters.app === undefined ? {} : { app: filters.app }),
     ...(filters.event === undefined ? {} : { event: filters.event }),
     ...(filters.tool === undefined ? {} : { tool: filters.tool }),
     ...(filters.session === undefined ? {} : { session: filters.session }),
@@ -1443,7 +1443,7 @@ export async function audit(
             formatDateTime(Number(row.ts ?? 0)),
             String(row.principal ?? ""),
             String(row.event ?? ""),
-            `${String(row.service ?? "")}${row.tool === undefined ? "" : `/${String(row.tool)}`}`,
+            `${String(row.app ?? "")}${row.tool === undefined ? "" : `/${String(row.tool)}`}`,
             `${String(row.outcome ?? "")}${renderBodies(row)}`,
           ]),
           { tty: decorated() },
@@ -1499,8 +1499,8 @@ function formatDateTime(ms: number): string {
 }
 
 /**
- * `pmcp diff -f mcps.yaml` — read the file, read the server (one service_list
- * plus one account_list), print the plan: creates/updates/deletes and
+ * `pmcp diff -f mcps.yaml` — read the file, read the server (one app_list
+ * plus one agent_list), print the plan: creates/updates/deletes and
  * archive transitions with destructive steps flagged, then warnings, then
  * hard errors (§9). Exit 0 whenever the plan COMPUTES — empty or not, since drift
  * detection is `--json` + `steps.length` (§10) — and 1 when the file has hard errors.
@@ -1595,23 +1595,23 @@ function readYamlFile(file: string): unknown {
 }
 
 /**
- * `pmcp connect <service>` — prints the /services OAuth connect URL for an
- * `auth: oauth` proxied service (§7, §10). The consent redirect is inherently
+ * `pmcp connect <app>` — prints the /apps OAuth connect URL for an
+ * `auth: oauth` proxied app (§7, §10). The consent redirect is inherently
  * a browser interaction (§8 pins Connect outside the tool surface), so
  * printing the URL is the whole command — the CLI never runs the flow. Checks
- * the slug via service_get first, so a typo or a headers-mode service fails
+ * the slug via app_get first, so a typo or a headers-mode app fails
  * here, not in the browser.
  */
-export async function connect(ctx: CliContext, service: string): Promise<number> {
+export async function connect(ctx: CliContext, app: string): Promise<number> {
   // deps: mcpCall
-  const row = ((await adminOp(ctx, "service_get", { slug: service })).service ?? {}) as Record<string, unknown>;
+  const row = ((await adminOp(ctx, "app_get", { slug: app })).app ?? {}) as Record<string, unknown>;
   if (row.kind !== "proxy" || row.auth !== "oauth") {
-    throw new CliError("invalid_arguments", `${service} is not an \`auth: oauth\` proxied service — nothing to connect`, {
-      hints: ["pmcp ls lists your services"],
+    throw new CliError("invalid_arguments", `${app} is not an \`auth: oauth\` proxied app — nothing to connect`, {
+      hints: ["pmcp ls lists your apps"],
     });
   }
-  const url = `${ctx.origin}/services?connect=${encodeURIComponent(service)}`;
-  if (globals.json) return emitDocument({ service, connectUrl: url });
+  const url = `${ctx.origin}/apps?connect=${encodeURIComponent(app)}`;
+  if (globals.json) return emitDocument({ app, connectUrl: url });
   write(`${url}\n`);
   return 0;
 }
@@ -1628,7 +1628,7 @@ export type ConnectionCommand = { sub: "list" } | { sub: "revoke"; id: string };
  * connection_revoke (§8/§19, §10): the OAuth clients (claude.ai and friends) connected to
  * this namespace via §19's inbound authorization server — a DISTINCT thing from `connect`'s
  * outbound upstream-OAuth URL above. `list` prints each live binding: the client's name (its
- * id, when it registered without one, §19.3), the service account it is bound to, and its
+ * id, when it registered without one, §19.3), the agent it is bound to, and its
  * created/last-used timestamps — never a token, a client secret, or a JWT, because a
  * connection is a binding and a binding holds no credential (§8). `revoke` is immediate at
  * the door (§19.6): the connection's next call gets the 401 challenge, and the client's
@@ -1652,11 +1652,11 @@ export async function connection(ctx: CliContext, cmd: ConnectionCommand): Promi
     connections.map((row) => [
       String(row.id),
       String(row.clientName ?? row.clientId),
-      String(row.accountSlug ?? ""),
+      String(row.agentSlug ?? ""),
       row.createdAt === null || row.createdAt === undefined ? "" : formatDateTime(Number(row.createdAt)),
       row.lastUsedAt === null || row.lastUsedAt === undefined ? "never" : formatDateTime(Number(row.lastUsedAt)),
     ]),
-    { headers: ["CONNECTION", "CLIENT", "ACCOUNT", "CREATED", "LAST USED"], tty: decorated() },
+    { headers: ["CONNECTION", "CLIENT", "AGENT", "CREATED", "LAST USED"], tty: decorated() },
   ).split("\n");
   write(`${c.dim(table[0])}\n`);
   for (const line of table.slice(1)) write(`${line}\n`);
@@ -1677,13 +1677,13 @@ export type { CliCommand } from "./commands.ts";
 const OVERVIEW = `pmcp — personal MCP hub CLI
 
 Explore
-  ls                          services with kind, status, and your roles
-  describe <ref>              service/<slug>[/<item>] or account/<slug>
+  ls                          apps with kind, status, and your roles
+  describe <ref>              app/<slug>[/<item>] or agent/<slug>
 
 Invoke
-  call <service> <tool> [key=value … | --args '{…}']
-  get prompt/<service>/<name> [key=value … | --args '{…}']
-  get resource/<service>/<uri>
+  call <app> <tool> [key=value … | --args '{…}']
+  get prompt/<app>/<name> [key=value … | --args '{…}']
+  get resource/<app>/<uri>
 
 Auth & profiles
   login [--profile <name>] [--url <origin>]
@@ -1691,11 +1691,11 @@ Auth & profiles
   profile add|list|use|remove
 
 Admin
-  service create|archive|unarchive|delete|disconnect|set-auth
-  account list|create|delete
+  app create|archive|unarchive|delete|disconnect|set-auth
+  agent list|create|delete
   approvals · approve <id> · reject <id>
   token issue|list|revoke
-  connect <service> · connections · connection revoke <id>
+  connect <app> · connections · connection revoke <id>
   audit [--export jsonl]
 
 Declarative
@@ -1782,10 +1782,10 @@ function hubErrorToCliError(error: unknown): unknown {
  * (five of them hidden: `tools`, `prompts`, `resources`, `prompt`, `read`, whose documented
  * surface is now `describe`/`get` but whose COMMANDS rows the frozen parity suite still
  * asserts) plus §10's new `profile`, `describe` and `get`, and the guessable noun-verb
- * aliases `service list` / `connection list` / `approval list`.
+ * aliases `app list` / `connection list` / `approval list`.
  *
- * The global flags are NOT declared here: they are positional-free (`pmcp service --yes
- * delete news` and `pmcp service delete news --yes` are one command) and were consumed from
+ * The global flags are NOT declared here: they are positional-free (`pmcp app --yes
+ * delete news` and `pmcp app delete news --yes` are one command) and were consumed from
  * argv before commander saw it.
  */
 /** Appended to every subcommand's `-h`: the flags stripped from argv before commander parses. */
@@ -1867,38 +1867,38 @@ function buildProgram(): Command {
   // the global-flags footer here.
   for (const sub of profiles.commands) sub.addHelpText("after", GLOBAL_HELP);
 
-  on("ls", "services with kind, status, and your roles", "pmcp ls --json").action(async () => {
+  on("ls", "apps with kind, status, and your roles", "pmcp ls --json").action(async () => {
     pendingExit = (await ls(await context())) as 0 | 1;
   });
 
-  on("describe [ref]", "service/<slug>[/<item>] or account/<slug>", "pmcp describe service/mcp-tools/paper_fetch").action(async (ref?: string) => {
+  on("describe [ref]", "app/<slug>[/<item>] or agent/<slug>", "pmcp describe app/mcp-tools/paper_fetch").action(async (ref?: string) => {
     if (ref === undefined) {
       throw new CliError("usage", "missing ref", {
-        usage: "pmcp describe <service/<slug>[/<item>] | account/<slug>>",
-        hints: ["pmcp ls lists your services"],
+        usage: "pmcp describe <app/<slug>[/<item>] | agent/<slug>>",
+        hints: ["pmcp ls lists your apps"],
       });
     }
     // Parsed BEFORE the context, as in `get`/`call`: argument-list evaluation order would
     // otherwise report a malformed ref as whatever the hub said about the token (§10's
     // local-first rule) — and `describe news` with the ref type left off is the likeliest
     // typo on this verb.
-    const parsed = parseRef(ref, ["service", "account"], "describe");
+    const parsed = parseRef(ref, ["app", "agent"], "describe");
     pendingExit = (await describe(await context(), parsed)) as 0 | 1;
   });
 
-  on("get [ref] [args...]", "prompt/<service>/<name> or resource/<service>/<uri>", "pmcp get resource/notes/file:///todo.md")
+  on("get [ref] [args...]", "prompt/<app>/<name> or resource/<app>/<uri>", "pmcp get resource/notes/file:///todo.md")
     .option("--args <json>", "the arguments object, as JSON")
     .action(async (ref: string | undefined, words: string[], opts: { args?: string }) => {
       if (ref === undefined) {
         throw new CliError("usage", "missing ref", {
-          usage: "pmcp get <prompt/<service>/<name> | resource/<service>/<uri>>",
-          hints: ["pmcp describe service/<slug> lists what a service serves"],
+          usage: "pmcp get <prompt/<app>/<name> | resource/<app>/<uri>>",
+          hints: ["pmcp describe app/<slug> lists what an app serves"],
         });
       }
       const parsed = parseRef(ref, ["prompt", "resource"], "get");
       if (parsed.item === undefined) {
         throw new CliError("usage", `ref "${ref}" names no ${parsed.kind}`, {
-          usage: `pmcp get ${parsed.kind}/<service>/<${parsed.kind === "prompt" ? "name" : "uri"}>`,
+          usage: `pmcp get ${parsed.kind}/<app>/<${parsed.kind === "prompt" ? "name" : "uri"}>`,
         });
       }
       if (parsed.kind === "resource") {
@@ -1906,7 +1906,7 @@ function buildProgram(): Command {
         // from the one typed, which is worse than refusing.
         if (words.length > 0 || opts.args !== undefined) {
           throw new CliError("usage", "resources/read takes no arguments", {
-            usage: "pmcp get resource/<service>/<uri>",
+            usage: "pmcp get resource/<app>/<uri>",
           });
         }
         pendingExit = (await read(await context(), parsed.slug, parsed.item)) as 0 | 1;
@@ -1919,20 +1919,20 @@ function buildProgram(): Command {
       pendingExit = (await prompt(await context(), parsed.slug, parsed.item, args)) as 0 | 1;
     });
 
-  on("call [words...]", "call a tool: <service> <tool> or <slug>_<tool>, plus key=value args", "pmcp call mcp-tools paper_fetch url=https://arxiv.org/abs/2408.00001")
+  on("call [words...]", "call a tool: <app> <tool> or <slug>_<tool>, plus key=value args", "pmcp call mcp-tools paper_fetch url=https://arxiv.org/abs/2408.00001")
     .option("--args <json>", "the arguments object, as JSON")
     .action(async (words: string[], opts: { args?: string }) => {
       // Partitioned by SHAPE, never by count: a word carrying `=` is an argument wherever
       // it sits, so `pmcp call news_echo text=hi` is the aggregated name plus an argument
-      // and not a service called `news_echo` with a tool called `text=hi`.
+      // and not an app called `news_echo` with a tool called `text=hi`.
       const positionals = words.filter((word) => !word.includes("="));
       if (positionals.length > 2) {
-        throw new CliError("usage", `"${positionals[2]}" is neither a service, a tool, nor key=value`, {
-          usage: "pmcp call <service> <tool> [key=value … | --args '{…}']",
+        throw new CliError("usage", `"${positionals[2]}" is neither an app, a tool, nor key=value`, {
+          usage: "pmcp call <app> <tool> [key=value … | --args '{…}']",
         });
       }
-      const target = requireWord(positionals[0], "service", "pmcp call <service> <tool> [key=value … | --args '{…}']");
-      const split = positionals.length > 1 ? { service: target, tool: positionals[1] } : splitAggregated(target);
+      const target = requireWord(positionals[0], "app", "pmcp call <app> <tool> [key=value … | --args '{…}']");
+      const split = positionals.length > 1 ? { app: target, tool: positionals[1] } : splitAggregated(target);
       // Before the context, deliberately: `await context()` is a network whoami, and an
       // argument list evaluates left to right — a malformed `--args` resolved after it would
       // be reported as a hub failure on an unreachable hub (§10's local-first rule).
@@ -1940,11 +1940,11 @@ function buildProgram(): Command {
       pendingExit = (await call(await context(), split, args)) as 0 | 1;
     });
 
-  on("tools <service>", "list a service's tools", undefined, true).action(async (svc: string) => {
-    pendingExit = (await tools(await context(), svc)) as 0 | 1;
+  on("tools <app>", "list an app's tools", undefined, true).action(async (slug: string) => {
+    pendingExit = (await tools(await context(), slug)) as 0 | 1;
   });
-  on("prompts <service>", "list a service's prompts", undefined, true).action(async (svc: string) => {
-    pendingExit = (await prompts(await context(), svc)) as 0 | 1;
+  on("prompts <app>", "list an app's prompts", undefined, true).action(async (slug: string) => {
+    pendingExit = (await prompts(await context(), slug)) as 0 | 1;
   });
   on("prompt [words...]", "get one prompt", undefined, true)
     .option("--args <json>", "the arguments object, as JSON")
@@ -1952,15 +1952,15 @@ function buildProgram(): Command {
       const positionals = words.filter((word) => !word.includes("="));
       // Whole argv check before the context, as in `get`/`call`: `await context()` is a
       // network whoami, and an argument list evaluates left to right (§10's local-first rule).
-      const svc = requireWord(positionals[0], "service", "pmcp prompt <service> <name> [key=value …]");
-      const name = requireWord(positionals[1], "prompt name", "pmcp prompt <service> <name> [key=value …]");
+      const slug = requireWord(positionals[0], "app", "pmcp prompt <app> <name> [key=value …]");
+      const name = requireWord(positionals[1], "prompt name", "pmcp prompt <app> <name> [key=value …]");
       const args = toolArguments(words.filter((word) => word.includes("=")), opts.args);
-      pendingExit = (await prompt(await context(), svc, name, args)) as 0 | 1;
+      pendingExit = (await prompt(await context(), slug, name, args)) as 0 | 1;
     });
-  on("resources <service>", "list a service's resources", undefined, true)
+  on("resources <app>", "list an app's resources", undefined, true)
     .option("--templates", "list resource templates instead")
-    .action(async (svc: string, opts: { templates?: boolean }) => {
-      pendingExit = (await resources(await context(), svc, { templates: opts.templates })) as 0 | 1;
+    .action(async (slug: string, opts: { templates?: boolean }) => {
+      pendingExit = (await resources(await context(), slug, { templates: opts.templates })) as 0 | 1;
     });
   on("read [words...]", "read one resource", undefined, true).action(async (words: string[]) => {
     if (words.length >= 2) {
@@ -1968,45 +1968,45 @@ function buildProgram(): Command {
       return;
     }
     // §20.2: resources have no aggregated endpoint, so a lone word here is ambiguous only
-    // in FORM, never in meaning. One that looks like a URI means the service was left out —
+    // in FORM, never in meaning. One that looks like a URI means the app was left out —
     // this would have addressed the aggregate, which §20.2 refuses, and the refusal reason
     // travels with it so the operator is not sent looking for a slug that does not exist.
     // Anything else means the uri was left out, an ordinary usage error.
     if (words.length === 1 && words[0].includes("://")) {
       throw new CliError(
         "usage",
-        "pmcp read needs a <service> before the uri — resources are scoped-only, there is no aggregated endpoint for them (§20.2)",
-        { usage: "pmcp read <service> <uri>" },
+        "pmcp read needs a <app> before the uri — resources are scoped-only, there is no aggregated endpoint for them (§20.2)",
+        { usage: "pmcp read <app> <uri>" },
       );
     }
-    throw new CliError("usage", "missing uri", { usage: "pmcp read <service> <uri>" });
+    throw new CliError("usage", "missing uri", { usage: "pmcp read <app> <uri>" });
   });
 
-  const services = on("service", "create and manage services");
-  services
+  const apps = on("app", "create and manage apps");
+  apps
     .command("create <slug>")
-    .description("create a tunneled or proxied service")
-    .option("--tunneled", "a tunneled service (the default)")
-    .option("--proxied <endpoint>", "a proxied service at this endpoint")
+    .description("create a tunneled or proxied app")
+    .option("--tunneled", "a tunneled app (the default)")
+    .option("--proxied <endpoint>", "a proxied app at this endpoint")
     .option("--auth <mode>", "headers | oauth (proxied only)")
     .action(async (slug: string, opts: { proxied?: string; auth?: string }) => {
-      const cmd: ServiceCommand =
+      const cmd: AppCommand =
         opts.proxied === undefined
           ? { sub: "create", slug, kind: "tunnel" }
           : { sub: "create", slug, kind: "proxy", endpoint: opts.proxied, auth: opts.auth === "oauth" ? "oauth" : "headers" };
-      pendingExit = (await service(await context(), cmd)) as 0 | 1;
+      pendingExit = (await app(await context(), cmd)) as 0 | 1;
     });
   for (const sub of ["archive", "unarchive", "delete", "disconnect"] as const) {
-    services
+    apps
       .command(`${sub} <slug>`)
-      .description(`${sub} a service`)
+      .description(`${sub} an app`)
       .action(async (slug: string) => {
-        pendingExit = (await service(await context(), { sub, slug })) as 0 | 1;
+        pendingExit = (await app(await context(), { sub, slug })) as 0 | 1;
       });
   }
-  services
+  apps
     .command("set-auth <slug>")
-    .description("replace a proxied service's upstream headers")
+    .description("replace a proxied app's upstream headers")
     .option("--header <header...>", "'Name: value', repeatable")
     .action(async (slug: string, opts: { header?: string[] }) => {
       const headers: Record<string, string> = {};
@@ -2015,36 +2015,36 @@ function buildProgram(): Command {
         if (colon === -1) throw new CliError("usage", `--header wants 'Name: value', got ${header}`);
         headers[header.slice(0, colon).trim()] = header.slice(colon + 1).trim();
       }
-      pendingExit = (await service(await context(), { sub: "set-auth", slug, headers })) as 0 | 1;
+      pendingExit = (await app(await context(), { sub: "set-auth", slug, headers })) as 0 | 1;
     });
-  // The guessable noun-verb form (§10): `pmcp service list` is `pmcp ls`.
-  services
+  // The guessable noun-verb form (§10): `pmcp app list` is `pmcp ls`.
+  apps
     .command("list")
     .description("alias of `pmcp ls`")
     .action(async () => {
       pendingExit = (await ls(await context())) as 0 | 1;
     });
 
-  const accounts = on("account", "service accounts and their grants");
-  accounts
+  const agents = on("agent", "agents and their grants");
+  agents
     .command("list")
-    .description("every service account with its grants inline")
+    .description("every agent with its grants inline")
     .action(async () => {
-      pendingExit = (await account(await context(), { sub: "list" })) as 0 | 1;
+      pendingExit = (await agent(await context(), { sub: "list" })) as 0 | 1;
     });
-  accounts
+  agents
     .command("create <slug>")
-    .description("create a service account")
+    .description("create an agent")
     .option("--name <name>", "display name")
     .option("--description <text>", "description")
     .action(async (slug: string, opts: { name?: string; description?: string }) => {
-      pendingExit = (await account(await context(), { sub: "create", slug, name: opts.name, description: opts.description })) as 0 | 1;
+      pendingExit = (await agent(await context(), { sub: "create", slug, name: opts.name, description: opts.description })) as 0 | 1;
     });
-  accounts
+  agents
     .command("delete <slug>")
-    .description("delete a service account (grants cascade)")
+    .description("delete an agent (grants cascade)")
     .action(async (slug: string) => {
-      pendingExit = (await account(await context(), { sub: "delete", slug })) as 0 | 1;
+      pendingExit = (await agent(await context(), { sub: "delete", slug })) as 0 | 1;
     });
 
   on("approvals", "pending approval requests, newest first", "pmcp approvals --pending --json")
@@ -2071,22 +2071,22 @@ function buildProgram(): Command {
   const tokens = on("token", "issue, list and revoke credentials");
   tokens
     .command("issue")
-    .description("mint a key for a service account or a tunneled service")
-    .option("--account <slug>", "a service account")
-    .option("--service <slug>", "a tunneled service")
+    .description("mint a key for an agent or a tunneled app")
+    .option("--agent <slug>", "an agent")
+    .option("--app <slug>", "a tunneled app")
     .option("--expires <duration>", "90d | 3600 | never")
-    .action(async (opts: { account?: string; service?: string; expires?: string }) => {
+    .action(async (opts: { agent?: string; app?: string; expires?: string }) => {
       // Resolved before either branch, so an untranslatable lifetime fails the same way for
       // both kinds — and before anything is minted.
       const expires = expiresIn(opts.expires);
       const cmd: TokenCommand =
-        opts.account !== undefined
-          ? { sub: "issue", kind: "service_account", slug: opts.account, expires }
-          : opts.service !== undefined
-            ? { sub: "issue", kind: "service", slug: opts.service, expires }
+        opts.agent !== undefined
+          ? { sub: "issue", kind: "agent", slug: opts.agent, expires }
+          : opts.app !== undefined
+            ? { sub: "issue", kind: "app", slug: opts.app, expires }
             : (() => {
-                throw new CliError("usage", "pmcp token issue needs --account <slug> or --service <slug>", {
-                  usage: "pmcp token issue (--account <slug> | --service <slug>) [--expires 90d]",
+                throw new CliError("usage", "pmcp token issue needs --agent <slug> or --app <slug>", {
+                  usage: "pmcp token issue (--agent <slug> | --app <slug>) [--expires 90d]",
                 });
               })();
       pendingExit = (await token(await context(), cmd)) as 0 | 1;
@@ -2104,9 +2104,9 @@ function buildProgram(): Command {
       pendingExit = (await token(await context(), { sub: "revoke", id })) as 0 | 1;
     });
 
-  on("audit", "the namespace's event history", "pmcp audit --service mcp-tools --since 7d")
-    .option("--account <slug>", "narrow to one service account")
-    .option("--service <slug>", "narrow to one service")
+  on("audit", "the namespace's event history", "pmcp audit --app mcp-tools --since 7d")
+    .option("--agent <slug>", "narrow to one agent")
+    .option("--app <slug>", "narrow to one app")
     .option("--event <name>", "exact event name")
     .option("--tool <name>", "exact unprefixed tool name")
     .option("--session <id>", "exact client session id")
@@ -2119,8 +2119,8 @@ function buildProgram(): Command {
       // whoami, and an unparseable `--since` resolved after it would be reported as a hub
       // failure rather than the malformed argv it is (§10).
       const filters: AuditFilters = {
-        account: opts.account,
-        service: opts.service,
+        agent: opts.agent,
+        app: opts.app,
         event: opts.event,
         tool: opts.tool,
         session: opts.session,
@@ -2131,8 +2131,8 @@ function buildProgram(): Command {
       pendingExit = (await audit(await context(), filters, { exportJsonl: opts.export === "jsonl" })) as 0 | 1;
     });
 
-  on("connect <service>", "print a proxied service's OAuth connect URL", "pmcp connect linear").action(async (svc: string) => {
-    pendingExit = (await connect(await context(), svc)) as 0 | 1;
+  on("connect <app>", "print a proxied app's OAuth connect URL", "pmcp connect linear").action(async (slug: string) => {
+    pendingExit = (await connect(await context(), slug)) as 0 | 1;
   });
   on("connections", "the OAuth clients connected to this namespace").action(async () => {
     pendingExit = (await connection(await context(), { sub: "list" })) as 0 | 1;
@@ -2224,15 +2224,15 @@ function expiresIn(value: string | undefined): number | "never" | undefined {
 }
 
 /** `<slug>_<tool>` → its two halves; the first underscore is the split (§7). */
-function splitAggregated(target: string): { service: string; tool: string } {
+function splitAggregated(target: string): { app: string; tool: string } {
   const underscore = target.indexOf("_");
   if (underscore === -1) {
-    throw new CliError("usage", `"${target}" is not <service> <tool> or <slug>_<tool>`, {
-      usage: "pmcp call <service> <tool> [key=value … | --args '{…}']",
-      hints: [`pmcp describe service/${target} lists its tools`],
+    throw new CliError("usage", `"${target}" is not <app> <tool> or <slug>_<tool>`, {
+      usage: "pmcp call <app> <tool> [key=value … | --args '{…}']",
+      hints: [`pmcp describe app/${target} lists its tools`],
     });
   }
-  return { service: target.slice(0, underscore), tool: target.slice(underscore + 1) };
+  return { app: target.slice(0, underscore), tool: target.slice(underscore + 1) };
 }
 
 /**

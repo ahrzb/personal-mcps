@@ -1,15 +1,15 @@
 # personal-mcps
 
 A personal MCP hub on Cloudflare Workers. Long-running bots connect **out** to the
-hub over a reverse WebSocket tunnel (telegram-bot style) and become MCP services;
+hub over a reverse WebSocket tunnel (telegram-bot style) and become MCP apps;
 consumers — Claude Code, claude.ai, scripts — call them at a stable HTTPS endpoint
-with per-account grants, human approvals, and an audit trail. One deploy, no ports
+with per-agent grants, human approvals, and an audit trail. One deploy, no ports
 opened anywhere.
 
 ```
  bot (Python/JS, anywhere)                     consumer (Claude Code, scripts)
         │  wss://<hub>/connect                        │  POST https://<hub>/<user>/mcp
-        │  Authorization: Bearer pmcp_svc_…           │  Authorization: Bearer pmcp_sa_…
+        │  Authorization: Bearer pmcp_app_…           │  Authorization: Bearer pmcp_agt_…
         ▼                                             ▼
    ┌─────────────────────────── the hub (Cloudflare Worker) ───────────────────────────┐
    │  reverse tunnel (Durable Object,      grants · approvals · audit · admin MCP      │
@@ -19,20 +19,20 @@ opened anywhere.
 
 ## What's in the box
 
-- **Reverse tunnel** — services dial `wss://<hub>/connect` with a `pmcp_svc_` token
+- **Reverse tunnel** — apps dial `wss://<hub>/connect` with a `pmcp_app_` token
   and reconnect forever; the hub proxies consumer MCP calls to them and fails fast
-  while they're offline. One `ServiceConnection` Durable Object holds the sockets.
-- **Consumer proxy** — each service is an MCP endpoint at
-  `https://<hub>/<user>/mcp` (streamable HTTP). Access is per service account, per
+  while they're offline. One `AppConnection` Durable Object holds the sockets.
+- **Consumer proxy** — each app is an MCP endpoint at
+  `https://<hub>/<user>/mcp` (streamable HTTP). Access is per agent, per
   role; sensitive fields are masked before anything is stored or shown.
 - **Approvals** — tool calls can require a human yes, delivered as Web Push to the
   hub's PWA and decided on the `/approvals` page or from the CLI.
-- **Admin MCP** — hub administration (services, accounts, grants, approvals, audit)
-  is itself exposed as a built-in MCP service, so Claude can operate the hub.
+- **Admin MCP** — hub administration (apps, agents, grants, approvals, audit)
+  is itself exposed as a built-in MCP app, so Claude can operate the hub.
 - **Web surface** — login (password, TOTP, passkey), device approval for CLI login,
-  service management, approvals dashboard, audit view. `/` redirects to `/services`
+  app management, approvals dashboard, audit view. `/` redirects to `/apps`
   when signed in, `/login` otherwise.
-- **CLI** — `pmcp` covers login (RFC 8628 device flow), services, accounts, tokens,
+- **CLI** — `pmcp` covers login (RFC 8628 device flow), apps, agents, tokens,
   approvals, audit, and a YAML access config with `diff`/`apply`.
 - **Client libraries** — Python and TypeScript twins that keep an ordinary MCP
   server object reachable through the tunnel. See the
@@ -45,8 +45,8 @@ opened anywhere.
 | [server/src](server/src) | The Worker: router, tunnel, proxy, identity, approvals, web pages |
 | [server/test](server/test) | The suite (vitest, Workers pool + a real-tunnel project) |
 | [cli](cli) | The `pmcp` CLI (`cli/pmcp.mts`, TypeScript run via `--experimental-strip-types`) |
-| [clients/js](clients/js) | TypeScript service-author library |
-| [clients/py](clients/py) | Python service-author library (`pmcp-client`, standalone `uv` project) |
+| [clients/js](clients/js) | TypeScript app-author library |
+| [clients/py](clients/py) | Python app-author library (`pmcp-client`, standalone `uv` project) |
 | [contracts](contracts) | Checked-in wire fixtures (close codes, tunnel frames) shared by hub and both clients |
 | [scripts](scripts) | `users.mts` (bootstrap user management), `smoke.ts` (post-deploy probe), `test-inventory.mjs` |
 | [docs/specs](docs/specs/README.md) | **The source of truth.** The design spec (§-references throughout the code point here) and the testing strategy, one file per section — [docs/specs/README.md](docs/specs/README.md) is the index |
@@ -112,10 +112,10 @@ lists every command. Spec §10 is the full contract.
 - **Users** exist only via the `BOOTSTRAP_SECRET`-gated bootstrap script
   (`pnpm users`) — there is no public sign-up. Sign-in is password plus TOTP or
   passkey.
-- **`pmcp_svc_…`** — a service token: lets one bot hold one service's tunnel slot.
+- **`pmcp_app_…`** — an app token: lets one bot hold one app's tunnel slot.
   Refused by every consumer surface.
-- **`pmcp_sa_…`** — a service-account key: what consumers send to
-  `/<user>/mcp`. Issued per account (`pnpm pmcp token issue --account <slug>`)
+- **`pmcp_agt_…`** — an agent key: what consumers send to
+  `/<user>/mcp`. Issued per agent (`pnpm pmcp token issue --agent <slug>`)
   and scoped by role grants.
 - Browser sessions are cookie-based (better-auth); credential management demands
   recent authentication.

@@ -77,9 +77,9 @@
   --header-h: 56px;
 
   /* page widths */
-  --page-wide: 1140px;    /* services, audit */
-  --page-narrow: 760px;   /* approvals, account */
-  --card-auth: 400px;     /* login, device, two-factor, add-service */
+  --page-wide: 1140px;    /* apps, audit */
+  --page-narrow: 760px;   /* approvals, settings */
+  --card-auth: 400px;     /* login, device, two-factor, add-app */
 }
 
 /* ------------------------------------------------------------------ base ---- */
@@ -663,7 +663,7 @@ select {
   gap: var(--space-6);
 }
 
-/* Pairs "All accounts"/"All services" for the narrow breakpoint without
+/* Pairs "All agents"/"All apps" for the narrow breakpoint without
    touching the wide layout: `display:contents` here is invisible to the wide
    `.filters` row, so both selects stay flat, individually-ordered flex items
    of it (Audit.dc.html). The narrow override below turns this into their own
@@ -698,7 +698,7 @@ select {
 
 /* an invisible wrapper whose children join the PARENT's own flex rhythm — a
    <form> around otp/field/button (login's totp and backup-code cards) or around
-   a row of mutation buttons (a service row's Connect/Archive), so the form
+   a row of mutation buttons (an app row's Connect/Archive), so the form
    itself never introduces a gap of its own. */
 .contents {
   display: contents;
@@ -755,7 +755,7 @@ select {
   color: var(--danger-fg);
 }
 
-/* service kind — tunnel / proxy */
+/* app kind — tunnel / proxy */
 .badge--mono {
   background: var(--muted);
   color: var(--muted-fg);
@@ -963,7 +963,7 @@ select {
   margin-left: var(--space-2);
 }
 
-/* service name + slug stacked in one cell */
+/* app name + slug stacked in one cell */
 .cell-name {
   font-size: var(--text-base);
   font-weight: 500;
@@ -1127,7 +1127,7 @@ select {
   font-size: var(--text-sm);
 }
 
-/* the once-only service token + Copy */
+/* the once-only app token + Copy */
 .token-reveal {
   display: flex;
   align-items: center;
@@ -1520,7 +1520,7 @@ dialog .actions {
     font-size: 20px;
   }
 
-  /* the page's primary action drops to its own full-width row (MobileServices);
+  /* the page's primary action drops to its own full-width row (MobileApps);
      secondary actions — Export JSONL, Enable notifications — stay beside the title */
   .page-head {
     flex-wrap: wrap;
@@ -1569,7 +1569,7 @@ dialog .actions {
     height: 52px;
   }
 
-  /* the auth pages (login, device, approval-detail, add-service) drop the
+  /* the auth pages (login, device, approval-detail, add-app) drop the
      bordered/shadowed card and go full-bleed at the narrow breakpoint —
      MobileLogin.dc.html / MobileTwoFactor.dc.html / MobileDevice.dc.html /
      MobileApprovalDetail.dc.html. */
@@ -1592,7 +1592,7 @@ dialog .actions {
   }
 
   /* approval-detail's card heading wears the shared card-title/card-desc
-     classes, not auth-title/auth-desc — scope under .auth so account's
+     classes, not auth-title/auth-desc — scope under .auth so /settings's own
      settings cards keep their desktop scale. */
   .auth .card-title {
     font-size: 20px;
@@ -1642,7 +1642,7 @@ dialog .actions {
   }
 
   /* MobileAudit.dc.html's control order (segmented, date range, paired
-     accounts/services, all events, tool search, Export) isn't the wide two-row
+     agents/apps, all events, tool search, Export) isn't the wide two-row
      grouping (Audit.dc.html) — `.filter-group` takes over the column stack
      `.filters` used to do itself, and each `.filters` row flattens
      (display:contents) into it so `order` can reach every control at once

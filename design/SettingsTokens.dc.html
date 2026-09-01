@@ -14,7 +14,7 @@
     a:hover { color: #52525b; }
   </style>
 </helmet>
-<div style="width: 1080px; min-height: 1050px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
+<div style="width: 1240px; min-height: 1424px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
 
   <div style="height: 56px; box-sizing: border-box; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; padding: 0 32px;">
     <div style="display: flex; align-items: center; gap: 24px;">
@@ -23,10 +23,11 @@
         <div style="font-size: 15px; font-weight: 600;">personal-mcps</div>
       </div>
       <div style="display: flex; align-items: center; gap: 4px;">
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Services</div>
+        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Apps</div>
+        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Agents</div>
         <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Audit</div>
         <div style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Approvals<span style="display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #dc2626; color: #ffffff; font-size: 11px; font-weight: 600;">2</span></div>
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: #f4f4f5; color: #09090b;">Account</div>
+        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: #f4f4f5; color: #09090b;">Settings</div>
       </div>
     </div>
     <div style="display: flex; align-items: center; gap: 12px;">
@@ -35,11 +36,11 @@
     </div>
   </div>
 
-  <div style="width: 760px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 24px;">
+  <div style="width: 1140px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 24px;">
 
     <div style="display: flex; flex-direction: column; gap: 4px;">
-      <div style="font-size: 24px; font-weight: 600;">Account</div>
-      <div style="font-size: 14px; color: #71717a;">Security settings for ahrzb.</div>
+      <div style="font-size: 24px; font-weight: 600;">Settings</div>
+      <div style="font-size: 14px; color: #71717a;">Security settings for ahrzb — sign-in, sessions, and every key that can authenticate.</div>
     </div>
 
     <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
@@ -130,10 +131,79 @@
       </div>
     </div>
 
+    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden; display: flex; flex-direction: column;">
+      <div style="padding: 24px 24px 16px 24px; display: flex; justify-content: space-between; align-items: flex-start; gap: 24px;">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="font-size: 16px; font-weight: 600;">Tokens</div>
+          <div style="font-size: 13px; color: #71717a;">Every key issued in this namespace — agent and app tokens. Issue new keys from an app or agent page.</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+          <div style="display: flex; align-items: center; height: 28px; padding: 0 12px; border-radius: 999px; font-size: 13px; font-weight: 500; background: #18181b; color: #fafafa; border: 1px solid #18181b;">All</div>
+          <div style="display: flex; align-items: center; height: 28px; padding: 0 12px; border-radius: 999px; font-size: 13px; font-weight: 500; background: #ffffff; color: #71717a; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Agents</div>
+          <div style="display: flex; align-items: center; height: 28px; padding: 0 12px; border-radius: 999px; font-size: 13px; font-weight: 500; background: #ffffff; color: #71717a; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Apps</div>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 230px 150px 130px 110px 150px 1fr 110px; gap: 0; padding: 10px 24px; border-bottom: 1px solid #e4e4e7;">
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Token</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Kind</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Bound to</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Created</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Expires</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Last used</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;"></div>
+      </div>
+      <div style="display: grid; grid-template-columns: 230px 150px 130px 110px 150px 1fr 110px; gap: 0; padding: 12px 24px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+        <div style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pmcp_agt_4kJk…9fQ</div>
+        <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">agent</span></div>
+        <div><a href="#" style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</a></div>
+        <div style="font-size: 13px; color: #71717a;">Aug 12</div>
+        <div style="font-size: 13px; color: #71717a;">Nov 10 (90 d)</div>
+        <div style="font-size: 13px; color: #71717a;">2 h ago</div>
+        <div style="display: flex; justify-content: flex-end;">
+          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Revoke</div>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 230px 150px 130px 110px 150px 1fr 110px; gap: 0; padding: 12px 24px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+        <div style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pmcp_agt_7Qm2…Lx8</div>
+        <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">agent</span></div>
+        <div><a href="#" style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">cron</a></div>
+        <div style="font-size: 13px; color: #71717a;">Aug 20</div>
+        <div style="font-size: 13px; color: #71717a;">Nov 18 (90 d)</div>
+        <div style="font-size: 13px; color: #a1a1aa;">never</div>
+        <div style="display: flex; justify-content: flex-end;">
+          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Revoke</div>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 230px 150px 130px 110px 150px 1fr 110px; gap: 0; padding: 12px 24px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+        <div style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pmcp_app_9f3k…Xd2</div>
+        <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">app</span></div>
+        <div><a href="#" style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news</a></div>
+        <div style="font-size: 13px; color: #71717a;">Aug 14</div>
+        <div style="font-size: 13px; color: #71717a;">never</div>
+        <div style="font-size: 13px; color: #71717a;">now</div>
+        <div style="display: flex; justify-content: flex-end;">
+          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Revoke</div>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 230px 150px 130px 110px 150px 1fr 110px; gap: 0; padding: 12px 24px; align-items: center;">
+        <div style="font-size: 13px; color: #a1a1aa; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pmcp_agt_2xPv…Qc7</div>
+        <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f4f4f5; color: #a1a1aa; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">agent</span></div>
+        <div><a href="#" style="font-size: 13px; color: #a1a1aa; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</a></div>
+        <div style="font-size: 13px; color: #a1a1aa;">May 3</div>
+        <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">expired</span></div>
+        <div style="font-size: 13px; color: #a1a1aa;">Jun 28</div>
+        <div style="display: flex; justify-content: flex-end;">
+          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: transparent; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Remove</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="font-size: 12px; color: #71717a;">Revoking an app token closes that app's live connection. Keys are shown only once, at issue time.</div>
+
   </div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":1080,"height":1050}}'>
+<script data-dc-script data-props='{"$preview":{"width":1240,"height":1424}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

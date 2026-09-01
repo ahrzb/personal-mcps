@@ -3,8 +3,8 @@
 // what actually mints and signs the tokens. Every caller here asks for a PRINCIPAL or a
 // METADATA DOCUMENT and gets exactly that — never a token payload, never a better-auth
 // handle, never a JWKS. The door leg (identity.resolveCredential) hands this module a
-// JWT-shaped bearer and the addressed namespace and receives a `service_account` Principal
-// or `null`; the consent page hands it a chosen account and receives a written binding; the
+// JWT-shaped bearer and the addressed namespace and receives a `agent` Principal
+// or `null`; the consent page hands it a chosen agent and receives a written binding; the
 // connections surfaces hand it an owner id and receive rows with no secret in them. That the
 // authorization server underneath is better-auth is not knowledge any of them carry.
 //
@@ -14,7 +14,7 @@
 //     keeps off the root) and the per-namespace RFC 9728 protected-resource document (built
 //     here, five fields interpolated from a path parameter, never a lookup);
 //   · the `oauth_binding` table (§19.4) — every read and every write. One binding is one
-//     OAuth client bound to one service account in one namespace; the door reads it per call
+//     OAuth client bound to one agent in one namespace; the door reads it per call
 //     (which is what makes revocation immediate, §19.6), consent upserts it, revoke tombstones
 //     it and deletes the provider's consent row so a refresh cannot resurrect it;
 //   · the door's verification primitive — `verifyJwsAccessToken` against the hub's own JWKS,
@@ -24,8 +24,8 @@
 //
 // The audience is namespace-wide (§19.6): a token's `aud` is the aggregated
 // `https://<origin>/<user>/mcp`, the SAME string on the scoped `/<user>/mcp/<slug>` shape —
-// grants filter per slug downstream, exactly as they do for a `pmcp_sa_` key, so an
-// OAuth-resolved principal is indistinguishable from that account's key (§16). Audit rows are
+// grants filter per slug downstream, exactly as they do for a `pmcp_agt_` key, so an
+// OAuth-resolved principal is indistinguishable from that agent's key (§16). Audit rows are
 // deliberately NOT written here: the row a mutation earns is its CALLER's (web.ts writes
 // `oauth.consented`/`oauth.rebound`/`oauth.revoked`, admin.ts writes
 // `admin.connection_revoke`), because one binding write fronts two audit vocabularies and
@@ -133,8 +133,8 @@ function forwardToProvider(path: string): Promise<Response> {
 
 /**
  * §19.6, the whole OAuth leg of the door, as ONE answer: a JWT-shaped bearer and the
- * addressed namespace in, a `service_account` Principal or `null` out — the identical shape a
- * `pmcp_sa_` key produces, so nothing downstream branches on how the credential arrived (§16).
+ * addressed namespace in, a `agent` Principal or `null` out — the identical shape a
+ * `pmcp_agt_` key produces, so nothing downstream branches on how the credential arrived (§16).
  * `null` for EVERY way the token fails to name a live binding: bad signature, wrong issuer,
  * wrong or missing audience, expired, missing `mcp` scope, no `client_id`, an unknown or
  * deleted namespace, or no live `oauth_binding` row. The caller (identity.resolveCredential)
@@ -146,7 +146,7 @@ function forwardToProvider(path: string): Promise<Response> {
  * resource, so a correctly-signed JWT minted from a cookie session at `/api/auth/token` (no
  * matching `aud`, no `mcp` scope) is refused here, "hub-signed" never being sufficient. The
  * binding row is read per call, which is what makes revocation immediate rather than
- * `exp`-bound, and is the SAME one-per-request D1 cost a `pmcp_sa_` key already pays — the
+ * `exp`-bound, and is the SAME one-per-request D1 cost a `pmcp_agt_` key already pays — the
  * verify side adds none (§19.1).
  *
  * `now` is the injected clock the coarse `last_used_at` stamp reads, the same seam
@@ -157,7 +157,7 @@ export async function resolveOAuthPrincipal(
   username: string,
   now: () => number = Date.now,
 ): Promise<Principal | null> {
-  // deps: better-auth verifyJwsAccessToken · identity.authRoutes (JWKS) · D1 `user` · D1 `oauth_binding` · D1 `service_account`
+  // deps: better-auth verifyJwsAccessToken · identity.authRoutes (JWKS) · D1 `user` · D1 `oauth_binding` · D1 `agent`
   const payload = await verifyAccessToken(token, resourceIdentifier(username));
   if (payload === null) return null;
   if (!hasMcpScope(payload)) return null;
@@ -233,8 +233,8 @@ function hasMcpScope(payload: AccessTokenPayload): boolean {
 
 /**
  * §19.6 step 4: the verified `client_id` plus the addressed owner resolve `oauth_binding`. A
- * live row (not revoked, its account still present — the JOIN drops a cascade-deleted one)
- * yields the `service_account` Principal and coarsely stamps `last_used_at`; anything else is
+ * live row (not revoked, its agent still present — the JOIN drops a cascade-deleted one)
+ * yields the `agent` Principal and coarsely stamps `last_used_at`; anything else is
  * `null`, the same refusal a missing token gets, and also the actionable answer — the owner
  * re-consents.
  */
@@ -245,16 +245,16 @@ async function bindingPrincipal(
 ): Promise<Principal | null> {
   const row = await db()
     .prepare(
-      `SELECT b."id", b."service_account_id", b."last_used_at", a."slug"
+      `SELECT b."id", b."agent_id", b."last_used_at", a."slug"
          FROM oauth_binding b
-         JOIN service_account a ON a."id" = b."service_account_id"
+         JOIN agent a ON a."id" = b."agent_id"
         WHERE b."owner_id" = ? AND b."client_id" = ? AND b."revoked_at" IS NULL`,
     )
     .bind(ownerId, clientId)
-    .first<{ id: string; service_account_id: string; last_used_at: number | null; slug: string }>();
+    .first<{ id: string; agent_id: string; last_used_at: number | null; slug: string }>();
   if (row === null) return null;
   await stampBinding(row.id, row.last_used_at, now());
-  return { kind: "service_account", accountId: row.service_account_id, ownerId, slug: row.slug };
+  return { kind: "agent", agentId: row.agent_id, ownerId, slug: row.slug };
 }
 
 /** The coarse `last_used_at` stamp (§19.6/§5): advanced at most once per
@@ -283,22 +283,22 @@ async function ownerIdFor(username: string): Promise<string | null> {
 export type BindingUpsert = { id: string; action: "consented" | "rebound" };
 
 /**
- * §19.5 step 4: bind the chosen service account to this client, on the owner's consent. A
+ * §19.5 step 4: bind the chosen agent to this client, on the owner's consent. A
  * first consent INSERTs; a re-consent — same `(owner, client)` — UPDATEs that one row to the
- * new account and clears any prior revocation, so `oauth.rebound` replaces the old grant
+ * new agent and clears any prior revocation, so `oauth.rebound` replaces the old grant
  * rather than accumulating rows (the `UNIQUE (owner_id, client_id)` invariant, §19.4).
- * Returns `null` when the named account is NOT in this owner's namespace — the structural
- * refusal behind §19.5's "a consent POST naming a service account in another namespace is
+ * Returns `null` when the named agent is NOT in this owner's namespace — the structural
+ * refusal behind §19.5's "a consent POST naming an agent in another namespace is
  * refused", enforced here so no page can forget it. `now` stamps `created_at` on the INSERT.
  */
 export async function upsertBinding(
-  input: { ownerId: string; clientId: string; serviceAccountId: string },
+  input: { ownerId: string; clientId: string; agentId: string },
   now: () => number = Date.now,
 ): Promise<BindingUpsert | null> {
-  // deps: D1 `service_account` · D1 `oauth_binding`
+  // deps: D1 `agent` · D1 `oauth_binding`
   const owned = await db()
-    .prepare(`SELECT 1 AS ok FROM service_account WHERE "id" = ? AND "owner_id" = ?`)
-    .bind(input.serviceAccountId, input.ownerId)
+    .prepare(`SELECT 1 AS ok FROM agent WHERE "id" = ? AND "owner_id" = ?`)
+    .bind(input.agentId, input.ownerId)
     .first<{ ok: number }>();
   if (owned === null) return null;
   const existing = await db()
@@ -307,18 +307,18 @@ export async function upsertBinding(
     .first<{ id: string }>();
   if (existing !== null) {
     await db()
-      .prepare(`UPDATE oauth_binding SET "service_account_id" = ?, "revoked_at" = NULL WHERE "id" = ?`)
-      .bind(input.serviceAccountId, existing.id)
+      .prepare(`UPDATE oauth_binding SET "agent_id" = ?, "revoked_at" = NULL WHERE "id" = ?`)
+      .bind(input.agentId, existing.id)
       .run();
     return { id: existing.id, action: "rebound" };
   }
   const id = crypto.randomUUID();
   await db()
     .prepare(
-      `INSERT INTO oauth_binding ("id", "owner_id", "client_id", "service_account_id", "created_at")
+      `INSERT INTO oauth_binding ("id", "owner_id", "client_id", "agent_id", "created_at")
        VALUES (?, ?, ?, ?, ?)`,
     )
-    .bind(id, input.ownerId, input.clientId, input.serviceAccountId, now())
+    .bind(id, input.ownerId, input.clientId, input.agentId, now())
     .run();
   return { id, action: "consented" };
 }
@@ -326,13 +326,13 @@ export async function upsertBinding(
 // ─────────────────────────────── §19.6/§13 connections: read and revoke ───────────────────
 
 /** One live connection as the /oauth/connections page and `connection_list` show it — the
- *  client it binds, the account it is bound to, and its timestamps. Never a token, a client
+ *  client it binds, the agent it is bound to, and its timestamps. Never a token, a client
  *  secret, or a JWT (§8): a connection is a binding, and a binding holds no credential. */
 export type Connection = {
   id: string;
   clientId: string;
   clientName: string | null;
-  accountSlug: string;
+  agentSlug: string;
   createdAt: number;
   lastUsedAt: number | null;
 };
@@ -345,13 +345,13 @@ export type Connection = {
  * construction: the columns are the binding's, and the binding has none.
  */
 export async function listConnections(ownerId: string): Promise<Connection[]> {
-  // deps: D1 `oauth_binding` · D1 `service_account` · D1 `oauthClient`
+  // deps: D1 `oauth_binding` · D1 `agent` · D1 `oauthClient`
   const { results } = await db()
     .prepare(
       `SELECT b."id", b."client_id", b."created_at", b."last_used_at",
-              a."slug" AS account_slug, c."name" AS client_name
+              a."slug" AS agent_slug, c."name" AS client_name
          FROM oauth_binding b
-         JOIN service_account a ON a."id" = b."service_account_id"
+         JOIN agent a ON a."id" = b."agent_id"
     LEFT JOIN "oauthClient" c ON c."clientId" = b."client_id"
         WHERE b."owner_id" = ? AND b."revoked_at" IS NULL
         ORDER BY b."created_at" DESC`,
@@ -362,14 +362,14 @@ export async function listConnections(ownerId: string): Promise<Connection[]> {
       client_id: string;
       created_at: number;
       last_used_at: number | null;
-      account_slug: string;
+      agent_slug: string;
       client_name: string | null;
     }>();
   return results.map((row) => ({
     id: row.id,
     clientId: row.client_id,
     clientName: row.client_name ?? null,
-    accountSlug: row.account_slug,
+    agentSlug: row.agent_slug,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at ?? null,
   }));

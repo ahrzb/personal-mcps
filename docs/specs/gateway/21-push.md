@@ -6,12 +6,12 @@ workflow (D14), after §20.*
 
 §20 deferred `subscriptions/listen` and every server→consumer notification for one
 architectural reason: the consumer surface was POST/JSON with no stream, and the DO↔worker
-seam was request/response — delivering a service's notification into a consumer's open
+seam was request/response — delivering an app's notification into a consumer's open
 stream needed a push channel that did not exist, and holding a stream open in a DO
 inverts its hibernation discipline. The D14 probe (2026-08-31) measured that reason away
 rather than arguing with it: a **Worker invocation can hold the consumer's
 `text/event-stream` itself** — Workers bill CPU, not wall-clock, so an idle held stream
-is effectively free — and it reaches each service's DO over an **outbound WebSocket the
+is effectively free — and it reaches each app's DO over an **outbound WebSocket the
 DO accepts as a hibernatable socket**, which is precisely the missing push channel and
 hibernates like any other (~1e-5 USD/day per idle stream, measured). The shape the
 deferral rightly feared — the *DO* holding the stream — bills wall-clock (~$4/month per
@@ -33,14 +33,14 @@ empty stream is a legal answer exactly as an empty list is.
   changes, the same anti-enumeration posture as an empty `tools/list`. That sentence is
   shape-aware: on the **aggregated** endpoint it is literal (zero grants namespace-wide
   still opens a stream); on the **scoped** endpoint §7's access rules run first — a
-  caller with no grant on the addressed service gets §7's **404** exactly as for any
-  other method (the stream must not become the one method that leaks a service's
+  caller with no grant on the addressed app gets §7's **404** exactly as for any
+  other method (the stream must not become the one method that leaks an app's
   existence), and the never-ringing stream belongs to the caller §7 admits whose
   patterns match nothing. On the scoped
-  endpoint an archived service refuses `-32002` before the stream opens for a caller §7
+  endpoint an archived app refuses `-32002` before the stream opens for a caller §7
   admits — a 404-class caller stays 404 and never learns archived (every scoped
-  method's rule); on the aggregated endpoint archived services are simply not subscribed.
-  **Availability is never checked**: a stream against an offline service is the point —
+  method's rule); on the aggregated endpoint archived apps are simply not subscribed.
+  **Availability is never checked**: a stream against an offline app is the point —
   the bell rings when it comes back changed.
 - **The response is a `text/event-stream` held open by the Worker invocation**, carrying
   JSON-RPC notifications as SSE data frames and an SSE comment as keepalive every
@@ -67,15 +67,15 @@ empty stream is a legal answer exactly as an empty list is.
 
 On stream open the Worker resolves the principal and reads its grants — the same reads
 the aggregated fan-out already performs — and opens one outbound WebSocket to each
-granted **tunneled** service's DO, which the DO accepts via `ctx.acceptWebSocket`
+granted **tunneled** app's DO, which the DO accepts via `ctx.acceptWebSocket`
 tagged **`sub:<session-id>`**, with the resolved principal stored in the socket's
 attachment. The `sub:` prefix is the class invariant, not a convention: a
-`getWebSockets(service.id)` lookup can never return a subscriber socket, because a
+`getWebSockets(app.id)` lookup can never return a subscriber socket, because a
 prefixed tag never equals a bare id — and the prefix is the *only* thing separating the
-classes, since service ids are themselves UUIDs (§6 tags the service socket with the
+classes, since app ids are themselves UUIDs (§6 tags the app socket with the
 bare id), so nothing about an id's shape can carry the invariant. Every reader inside
-the DO therefore selects by **class, never by position**: the service socket is the one
-tagged with the bare service id, whatever else the DO holds and in whatever order the
+the DO therefore selects by **class, never by position**: the app socket is the one
+tagged with the bare app id, whatever else the DO holds and in whatever order the
 sockets were accepted. This is the mechanism behind every "subscriber sockets are
 different" claim below. Frames arriving on those sockets
 are pumped to the SSE stream **payload-verbatim, admission-filtered**: the invocation
@@ -86,47 +86,47 @@ the Worker, the only party that knows the shape.) The invocation ends when the c
 disconnects; the subscriber sockets close with it.
 
 - **Subscriber sockets are a class of their own.** §6's at-most-one-connection invariant
-  is about the *service* socket — the one the bot registers on. A DO holds at most one of
+  is about the *app* socket — the one the bot registers on. A DO holds at most one of
   those and any number of subscriber sockets; a subscriber socket never receives consumer
   traffic, never counts as "online", and is never evicted by `hub/replaced` — all three
   properties bought by the `sub:` tag prefix above. **Archive and token revocation touch
-  only the service socket**: `service_archive` severs the service connection (close
+  only the app socket**: `app_archive` severs the app connection (close
   `4002`, §6) and a token revoke severs the socket that token opened (`4001`) —
   subscriber sockets carry neither credential and stay open, and the archived case
-  reaches streams through the re-auth tick below. Service **delete** closes subscriber
+  reaches streams through the re-auth tick below. App **delete** closes subscriber
   sockets too. **Any subscriber-socket close the
-  Worker did not initiate ends the whole SSE stream** — service delete, DO restart, and
+  Worker did not initiate ends the whole SSE stream** — app delete, DO restart, and
   hub deploy (§15's "deploys terminate all WebSockets" covers this class too) alike.
-  Fail loud, not deaf: a stream that silently stopped hearing one of its services is the
+  Fail loud, not deaf: a stream that silently stopped hearing one of its apps is the
   one failure a doorbell design cannot afford, and the client's ordinary reopen rebuilds
   the fan-out against current state.
 - **The stream re-authorizes itself on the keepalive cadence.** A held stream is one
   request, and §15's "revocation is immediate" is a per-request property — so on every
   `LISTEN_KEEPALIVE_MS` tick the Worker re-resolves the bearer and re-reads the grant
-  set, the same reads the open performed. A revoked or expired token, a deleted account,
-  or (scoped) an archived or deleted service **closes the stream**; a grant revoked
-  mid-stream **drops that service's subscriber socket**, and the subscriptions riding it
+  set, the same reads the open performed. A revoked or expired token, a deleted agent,
+  or (scoped) an archived or deleted app **closes the stream**; a grant revoked
+  mid-stream **drops that app's subscriber socket**, and the subscriptions riding it
   (§21.4) die with the socket, so no `resources/updated` outlives the grant that
   authorized it — on the aggregated shape the stream narrows and stays open, while a
-  scoped stream whose caller lost its last grant on the service **closes** (a fresh open
+  scoped stream whose caller lost its last grant on the app **closes** (a fresh open
   would now 404, and the tick answers as the door would); a grant added mid-stream is
   subscribed on the next tick, and the Worker itself rings once **the family bells its
-  endpoint shape serves that the changed service's stored capability set contains** — a
-  tools-only service granted mid-stream rings the tools bell alone, because no other
+  endpoint shape serves that the changed app's stored capability set contains** — a
+  tools-only app granted mid-stream rings the tools bell alone, because no other
   family of the caller's view changed. Between ticks the stale window is at most one
   keepalive interval, and what fits in that window is a doorbell — content still
   re-enters the filter-first pipeline on every re-list.
 - **Fan-out width is capped, and must be measured before it is trusted.** The platform
   caps simultaneous open connections per invocation (documented at six), and the D14
   probe measured **one** held subscriber socket, not many. `LISTEN_FANOUT_MAX`
-  (`limits.ts`) bounds how many DOs one stream subscribes — services taken in
+  (`limits.ts`) bounds how many DOs one stream subscribes — apps taken in
   deterministic slug order, the excess silent until reopen (recorded ceiling, §21.7;
   upgrade path: fan in through one DO). Verifying the real concurrent-hold width is a
   D14 implementation-time probe obligation; the constant's value follows the
   measurement.
-- **Proxied services never ring.** There is no channel to ring from: a Worker cannot
+- **Proxied apps never ring.** There is no channel to ring from: a Worker cannot
   hold a long-lived outbound stream to the upstream past its own invocation, and proxied
-  services have no DO by design (§20.5 "proxied services cache nothing"). Their
+  apps have no DO by design (§20.5 "proxied apps cache nothing"). Their
   capabilities stay `listChanged: false` / no `subscribe` (§21.5) so a correct client
   never expects otherwise. The `pmcp` builtin contributes no bell either — its tools
   never change.
@@ -140,20 +140,20 @@ question never arises (there is no name to prefix), and push adds **no second pa
 content past grants**: the only way to learn *what* changed is to re-list, and the
 re-list is grant-filtered like every read since §7. This is the security half of
 decision 28. The qualifier is deliberate: the bell is computed on the **whole** stored
-catalog, not the caller's filtered view, so a caller granted a sliver of a service can
+catalog, not the caller's filtered view, so a caller granted a sliver of an app can
 learn *that* something changed, and when, in parts it cannot see — a change-**timing**
-oracle, confined to services the caller already holds some grant on, recorded as a
+oracle, confined to apps the caller already holds some grant on, recorded as a
 ceiling in §21.7 with its upgrade path.
 
-**The bell rings when the hub's stored catalog changes, not when the service says
-something changed.** The DO already invalidates and re-warms on a service's
+**The bell rings when the hub's stored catalog changes, not when the app says
+something changed.** The DO already invalidates and re-warms on an app's
 `list_changed` (§6); the consumer bell rings at the *write*, when the re-warmed
 catalog's **canonical JSON serialization** differs from the stored one's — the DO reads
 before it writes, and the comparison is over that serialization because DO storage
 round-trips structured clones, not bytes. **Absent and stored `[]` compare equal for
 ringing** (they already answer the same empty list, §20.5), so a first registration
 writing `[]` into never-warmed family keys rings nothing; the undeclare that rings is
-the one that emptied a non-empty catalog. Consequences, each intended: a noisy service
+the one that emptied a non-empty catalog. Consequences, each intended: a noisy app
 that spams `list_changed` without changing anything rings no consumer bell; a
 registration whose discover answer undeclares a non-empty family (§20.5 — the clear *is*
 a catalog change) rings; a failed warm (which changes nothing, §20.5) does not. A write
@@ -166,33 +166,33 @@ trailing ring at the interval's end, fired by the DO's alarm **unconditionally w
 runs** — so a burst delivers at most two frames, the leading one and the final state,
 and **the final state always rings**. The coalescing alarm shares the DO's single alarm
 slot with §6's registration deadline: multiplexed, never clobbered — a socket accept
-cancels no pending ring, and a subscriber accept never arms the deadline. A service flipping
+cancels no pending ring, and a subscriber accept never arms the deadline. An app flipping
 its catalog at socket speed therefore drives each consumer to at most one re-list per
 interval — no more than any consumer could already inflict on the fan-out unprompted, so
-push hands a rogue service no lever a curious consumer didn't have. Aggregated streams
-ring the family's bell whichever granted service changed; bursts across *services* are
+push hands a rogue app no lever a curious consumer didn't have. Aggregated streams
+ring the family's bell whichever granted app changed; bursts across *apps* are
 not coalesced (clients debounce their re-list).
 
 Families follow the endpoint shape of §20.2: an aggregated stream rings tools and
-prompts bells only; a scoped stream rings all three families for its service, plus
+prompts bells only; a scoped stream rings all three families for its app, plus
 `resources/updated` (§21.4).
 
 **Hub-originated changes ring only through the re-auth tick** (§21.2): a grant added or
-revoked, an archive, or a delete changes the stream's subscribed-service set within one
+revoked, an archive, or a delete changes the stream's subscribed-app set within one
 keepalive interval, and the Worker rings the affected family bells itself when the set
 changes — it is the party that knows. The residue is pattern-level drift: a role edit
-that changes *which entries* a caller sees without changing *which services* rings
-nothing (recorded ceiling — bells originate in service DOs, and the tick compares
-membership, not patterns). Proxied services stay unrung in every case.
+that changes *which entries* a caller sees without changing *which apps* rings
+nothing (recorded ceiling — bells originate in app DOs, and the tick compares
+membership, not patterns). Proxied apps stay unrung in every case.
 
 ### 21.4 `resources/subscribe` and `resources/updated`
 
-Scoped endpoint, tunneled services only — the one push feature that is per-URI rather
-than per-catalog. On a proxied service or the builtin both methods are `-32601`: the
+Scoped endpoint, tunneled apps only — the one push feature that is per-URI rather
+than per-catalog. On a proxied app or the builtin both methods are `-32601`: the
 capability is never advertised for them (§21.5) and there is nowhere to forward.
 
 - **Subscribe is filtered like a read.** The URI is matched against the caller's
-  resource patterns (§20.3) and refused `-32001` before anything reaches the service —
+  resource patterns (§20.3) and refused `-32001` before anything reaches the app —
   an unfiltered subscribe is a standing read past the role's patterns. Passing, the
   frame is forwarded with its params unrewritten over the socket (the frame shape is
   §6's, unchanged; the author's SDK answers it natively, so neither client library
@@ -220,9 +220,9 @@ capability is never advertised for them (§21.5) and there is nowhere to forward
 - **`notifications/resources/updated` joins the frames the DO reads** (§6's read-set
   amendment) and is routed **only** to subscriber sockets whose set contains the frame's
   URI, by exact string match. Grant filtering already happened at subscribe time; the
-  exact-match check is what makes a rogue frame inert — a service emitting `updated` for
+  exact-match check is what makes a rogue frame inert — an app emitting `updated` for
   URIs nobody subscribed rings nobody, and one for a URI *someone* subscribed reaches
-  exactly the streams that proved their right to it. Everything else the service
+  exactly the streams that proved their right to it. Everything else the app
   originates is still dropped.
 
 ### 21.5 Capabilities flip in lockstep with the transport
@@ -238,18 +238,18 @@ the client's reopen budget (§20.1's original warning).
   (`contracts/initialize.json`): `tools` and `prompts`, both `listChanged: true`.
 - **Scoped, tunneled**: `listChanged: true` on each family the stored capability set
   contains; `resources.subscribe: true` when `resources` is among them. A never-connected
-  service advertises `tools` with `listChanged: true` — honest before the first
+  app advertises `tools` with `listChanged: true` — honest before the first
   registration because the bell rings on the first write that **changes** a stored
   catalog, which the first non-empty registration is (§21.3's absent ≡ `[]` keeps an
   empty first warm silent, and an empty catalog has nothing to hear about). An
   **unresolvable slug** answers this same never-connected shape — the handshake must not
-  become a service-existence oracle (§20.2's anti-enumeration posture).
+  become an app-existence oracle (§20.2's anti-enumeration posture).
 - **Scoped, proxied**: unchanged — `listChanged: false` everywhere, `subscribe` never;
   §21.2 has the reason. The owner-declared `capabilities` list (§20.2) still gates only
   which families are *advertised*, and none of it advertises push.
 - **Scoped, `pmcp` builtin**: `listChanged: false` everywhere, `subscribe` never — no
   DO, no channel to ring from (§21.2), the same reason as proxied. The capability shape
-  is therefore a function of the service's *kind*, not only of its stored capability
+  is therefore a function of the app's *kind*, not only of its stored capability
   list.
 - `server/discover` (consumer-facing) answers from the same two pictures — §20.2's
   one-source-two-spellings rule carries the flip with no new rule.
@@ -268,7 +268,7 @@ the client's reopen budget (§20.1's original warning).
 
 No replay buffer (§21.1). The change-timing oracle: the bell is computed on the whole
 catalog, so a narrowly-granted caller learns *that* and *when* unseen parts of a granted
-service changed, and a revoked grant keeps that signal for at most one keepalive
+app changed, and a revoked grant keeps that signal for at most one keepalive
 interval (§21.2/§21.3; upgrade path: ring on the caller-filtered projection).
 Pattern-level role drift rings nothing (§21.3) — and, the other half of the same gap,
 it revokes nothing: the re-authorization tick compares grant MEMBERSHIP, so drift that
@@ -277,11 +277,11 @@ per-URI subscriptions in place, and `updated` keeps arriving for a URI the calle
 current patterns would now deny (grant filtering happened at subscribe time, §21.4).
 Bounded by the stream's own lifetime; ended by losing the grant, or by a reopen
 (§21.1's "subscriptions die with the stream"). Upgrade path: re-run `resolveAccess` per
-subscribed URI on the tick and prune the attachment. Cross-service bursts are not coalesced
-(§21.3). `LISTEN_FANOUT_MAX` bounds a stream's subscriber sockets, excess services
+subscribed URI on the tick and prune the attachment. Cross-app bursts are not coalesced
+(§21.3). `LISTEN_FANOUT_MAX` bounds a stream's subscriber sockets, excess apps
 silent until reopen (§21.2; upgrade path: fan in through one DO). A
 non-Worker-initiated subscriber-socket close ends the whole stream, so one DO restart
-costs an N-service stream a reopen (§21.2 — chosen over deafness). N open streams from
+costs an N-app stream a reopen (§21.2 — chosen over deafness). N open streams from
 one principal hold N subscriber-socket sets with no fan-in dedupe — at personal scale, N
 is small and the sockets are near-free. Each has its upgrade path written beside it;
 none blocks conformance, because MCP requires honoring the transport, not clairvoyance.

@@ -15,7 +15,7 @@
  * cache standing, a SUCCESSFUL registration that undeclares a family clears it, absent
  * means never-warmed and re-warms while a stored `[]` is an answer); the per-family
  * invalidation notifications; and §6's role drift comparison done PER FAMILY, which is
- * what keeps "a service widening itself is visible" true across three keyspaces.
+ * what keeps "an app widening itself is visible" true across three keyspaces.
  *
  * WHAT IT DELIBERATELY DOES NOT PIN. Pattern GRAMMAR per family and role normalization
  * SEMANTICS are registry's, pinned once in unit/pattern.test.ts and unit/filter.test.ts —
@@ -33,17 +33,17 @@
  * the titles' own.
  *
  * Project: `tunnel` — workerd, serial (`--max-workers=1 --no-isolate`): live WebSockets and
- * the real ServiceConnection DO, which per-file storage isolation cannot cover (strategy
+ * the real AppConnection DO, which per-file storage isolation cannot cover (strategy
  * §2). Nothing sleeps except the one row that is ABOUT elapsed time (§6's "worst-case two
  * correlation timeouts wide"), which measures against a shrunk limits.CALL_TIMEOUT_MS
  * rather than waiting the real budget out — the same seam pipeline-tunnel.test.ts uses.
  *
  * Isolation and ordering, load-bearing: smoke.test.ts and protocol.test.ts green first —
  * this file assumes the handshake works and only asks what §20 added to it. Every case
- * seeds its own owner, slug and service id, and asserts on rows and keys it created.
+ * seeds its own owner, slug and app id, and asserts on rows and keys it created.
  */
 
-// deps: harness/seed · harness/fake-service (connectFakeService, LIST_METHOD, tick, waitFor) · harness/tunnel-do (backendCtx, connectionStub, untilCataloged, untilStatus) · cloudflare:test (env, runInDurableObject) · src/tunnel (tunnelBackend, capabilities) · src/audit (query) · src/errors (CODES) · src/registry (Registry) · src/limits (CALL_TIMEOUT_MS)
+// deps: harness/seed · harness/fake-app (connectFakeApp, LIST_METHOD, tick, waitFor) · harness/tunnel-do (backendCtx, connectionStub, untilCataloged, untilStatus) · cloudflare:test (env, runInDurableObject) · src/tunnel (tunnelBackend, capabilities) · src/audit (query) · src/errors (CODES) · src/registry (Registry) · src/limits (CALL_TIMEOUT_MS)
 
 import { env, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -53,13 +53,13 @@ import { CODES } from "../../src/errors";
 import type { Tool } from "../../src/gateway";
 import { CALL_TIMEOUT_MS } from "../../src/limits";
 import { Registry } from "../../src/registry";
-import type { Service } from "../../src/registry";
+import type { App } from "../../src/registry";
 import { capabilities, tunnelBackend } from "../../src/tunnel";
-import type { ServiceConnection } from "../../src/tunnel";
-import { LIST_METHOD, connectFakeService, tick, waitFor } from "../harness/fake-service";
-import type { CatalogEntry, FakeService, FakeServiceOptions } from "../harness/fake-service";
+import type { AppConnection } from "../../src/tunnel";
+import { LIST_METHOD, connectFakeApp, tick, waitFor } from "../harness/fake-app";
+import type { CatalogEntry, FakeApp, FakeAppOptions } from "../harness/fake-app";
 import { seedNamespace, uniqueSlug } from "../harness/seed";
-import type { SeededNamespace, SeededService } from "../harness/seed";
+import type { SeededNamespace, SeededApp } from "../harness/seed";
 import { backendCtx, connectionStub, untilCataloged, untilStatus } from "../harness/tunnel-do";
 
 /**
@@ -94,7 +94,7 @@ const OTHER_TOOL: Tool = {
 };
 
 /** Prompt catalog entries — matched by `name` (§20.2), which is the only field any row
- *  here reads; the rest is what a real service would send. */
+ *  here reads; the rest is what a real app would send. */
 const PROMPT: CatalogEntry = { name: "digest_daily", description: "the daily digest" };
 const PROMPT_2: CatalogEntry = { name: "digest_weekly", description: "the weekly digest" };
 
@@ -107,22 +107,22 @@ const TEMPLATE: CatalogEntry = { uriTemplate: "news://feed/{id}", name: "feed by
 
 // ── the fixture every case in this file is built from ─────────────────────────────────
 
-/** One namespace holding one tunneled service with one live `pmcp_svc_` token — the whole
+/** One namespace holding one tunneled app with one live `pmcp_app_` token — the whole
  *  premise of a §20.5 row is one DO and what it cached. */
 type Fixture = {
   origin: string;
   ownerId: string;
-  service: SeededService;
+  app: SeededApp;
   token: string;
 };
 
 const seeded: SeededNamespace[] = [];
-const opened: FakeService[] = [];
+const opened: FakeApp[] = [];
 
 afterEach(async () => {
   // Shared storage AND shared sockets across files in this project: a leak here is a leak
   // into the next file.
-  for (const service of opened.splice(0)) await service.close();
+  for (const app of opened.splice(0)) await app.close();
   for (const namespace of seeded.splice(0)) await namespace.teardown();
 });
 
@@ -130,74 +130,74 @@ async function seedFixture(): Promise<Fixture> {
   const slug = uniqueSlug("bot");
   const namespace = await seedNamespace(env.DB, {
     username: uniqueSlug("data"),
-    services: [{ slug, kind: "tunnel", tokens: [{ as: "live" }] }],
+    apps: [{ slug, kind: "tunnel", tokens: [{ as: "live" }] }],
   });
   seeded.push(namespace);
   return {
     origin: (env as unknown as { PUBLIC_ORIGIN: string }).PUBLIC_ORIGIN,
     ownerId: namespace.owner.userId,
-    service: namespace.services[slug],
+    app: namespace.apps[slug],
     token: namespace.tokens.live.token,
   };
 }
 
-/** Dial one socket for the fixture's service, registered unless the options say otherwise. */
+/** Dial one socket for the fixture's app, registered unless the options say otherwise. */
 async function connect(
   fixture: Fixture,
-  options: Partial<FakeServiceOptions> = {},
-): Promise<FakeService> {
-  const service = await connectFakeService({
+  options: Partial<FakeAppOptions> = {},
+): Promise<FakeApp> {
+  const app = await connectFakeApp({
     origin: fixture.origin,
     token: fixture.token,
     tools: [TOOL],
     ...options,
   });
-  opened.push(service);
-  return service;
+  opened.push(app);
+  return app;
 }
 
-/** The service row as the gateway would hand it to a backend. */
-async function serviceRow(fixture: Fixture): Promise<Service> {
-  const row = await new Registry(env.DB).getService(fixture.ownerId, fixture.service.slug);
-  if (row === null) throw new Error("the fixture's service vanished");
+/** The app row as the gateway would hand it to a backend. */
+async function appRow(fixture: Fixture): Promise<App> {
+  const row = await new Registry(env.DB).getApp(fixture.ownerId, fixture.app.slug);
+  if (row === null) throw new Error("the fixture's app vanished");
   return row;
 }
 
 /** The declaration as the hub READS it — the canonical shape §20.3 pins for every
  *  owner-facing surface, which is a different question from what the column holds. */
 async function declaredRoles(fixture: Fixture): Promise<unknown> {
-  const row = await new Registry(env.DB).getService(fixture.ownerId, fixture.service.slug);
-  if (row === null) throw new Error("the fixture's service vanished");
+  const row = await new Registry(env.DB).getApp(fixture.ownerId, fixture.app.slug);
+  if (row === null) throw new Error("the fixture's app vanished");
   return row.declaredRoles;
 }
 
 /**
- * The `roles_json` COLUMN, parsed — the storage claim §20.3 makes ("service.roles_json
+ * The `roles_json` COLUMN, parsed — the storage claim §20.3 makes ("app.roles_json
  * holds the normalized per-family object"), which the canonical read deliberately does not
  * expose. Read raw for that reason: a row about normalization cannot go through the reader
  * that re-renders it.
  */
-async function storedRoles(serviceId: string): Promise<unknown> {
+async function storedRoles(appId: string): Promise<unknown> {
   const row = await (env.DB as D1Like)
-    .prepare(`SELECT roles_json FROM service WHERE id = ?`)
-    .bind(serviceId)
+    .prepare(`SELECT roles_json FROM app WHERE id = ?`)
+    .bind(appId)
     .first<{ roles_json: string }>();
-  if (row === null) throw new Error("the fixture's service vanished");
+  if (row === null) throw new Error("the fixture's app vanished");
   return JSON.parse(row.roles_json);
 }
 
 /**
- * Give the fixture's service one live grant on `reader` — drift is only audited for a role
+ * Give the fixture's app one live grant on `reader` — drift is only audited for a role
  * somebody holds (§6), so every widening row needs a grantee to exist at all.
  */
 async function grantReader(fixture: Fixture): Promise<void> {
   const registry = new Registry(env.DB);
-  const account = await registry.createAccount({
+  const agent = await registry.createAgent({
     ownerId: fixture.ownerId,
     slug: uniqueSlug("agent"),
     name: "agent",
   });
-  await registry.setGrants(account.id, fixture.service.id, [{ role: "reader", mode: "allow" }]);
+  await registry.setGrants(agent.id, fixture.app.id, [{ role: "reader", mode: "allow" }]);
 }
 
 /**
@@ -208,32 +208,32 @@ async function grantReader(fixture: Fixture): Promise<void> {
  */
 async function auditedAfterRegister(
   fixture: Fixture,
-  service: FakeService,
+  app: FakeApp,
   event: string,
 ): Promise<AuditRow[]> {
-  expect(await waitFor(() => service.lists.length > 0), "the registration never completed").toBe(true);
+  expect(await waitFor(() => app.lists.length > 0), "the registration never completed").toBe(true);
   return (await query(env.DB, fixture.ownerId, { event })).rows;
 }
 
 /** The hub-originated REQUESTS this socket received, in arrival order — notifications (the
  *  hub's schema warnings) carry no id and are not questions the warm sequence is about. */
-function asked(service: FakeService): string[] {
-  return service.frames
+function asked(app: FakeApp): string[] {
+  return app.frames
     .filter((frame) => typeof frame.method === "string" && frame.id !== undefined)
     .map((frame) => String(frame.method));
 }
 
 /** How many times the hub asked `method` on this socket. */
-function count(service: FakeService, method: string): number {
-  return asked(service).filter((seen) => seen === method).length;
+function count(app: FakeApp, method: string): number {
+  return asked(app).filter((seen) => seen === method).length;
 }
 
-/** One durable value of the service's DO, by key — §20.5's catalog keys, read where they
+/** One durable value of the app's DO, by key — §20.5's catalog keys, read where they
  *  live. `undefined` is the never-warmed answer, and telling it from `[]` is a row. */
-function stored(serviceId: string, key: string): Promise<unknown> {
+function stored(appId: string, key: string): Promise<unknown> {
   return runInDurableObject(
-    connectionStub(serviceId),
-    (_instance: ServiceConnection, state) => state.storage.get<unknown>(key),
+    connectionStub(appId),
+    (_instance: AppConnection, state) => state.storage.get<unknown>(key),
   );
 }
 
@@ -242,12 +242,12 @@ function stored(serviceId: string, key: string): Promise<unknown> {
  * whenever it dialled a socket to get there. Polled rather than slept on, and a value that
  * never arrives fails naming both sides instead of timing the test out.
  */
-async function untilStored(serviceId: string, key: string, expected: unknown): Promise<void> {
+async function untilStored(appId: string, key: string, expected: unknown): Promise<void> {
   for (let turn = 0; turn < POLL_TURNS; turn++) {
-    if (JSON.stringify(await stored(serviceId, key)) === JSON.stringify(expected)) return;
+    if (JSON.stringify(await stored(appId, key)) === JSON.stringify(expected)) return;
     await tick();
   }
-  expect(await stored(serviceId, key), `${key} never reached the expected value`).toEqual(expected);
+  expect(await stored(appId, key), `${key} never reached the expected value`).toEqual(expected);
 }
 
 /** The budget for the DO-backed poll above — one round trip per turn, so far longer in wall
@@ -312,53 +312,53 @@ async function withWarnings<T>(body: (warnings: string[]) => Promise<T>): Promis
 }
 
 describe("§6/§20.5 the capability warm", () => {
-  it("§6/§20.5 · hub/register issues one server/discover before any list warm, and warms only the families the service declared", async () => {
+  it("§6/§20.5 · hub/register issues one server/discover before any list warm, and warms only the families the app declared", async () => {
     const fixture = await seedFixture();
-    // Tools and prompts, and deliberately NOT resources: a warm the service never asked for
-    // is exactly what "warms only the families the service declared" forbids.
-    const service = await connect(fixture, { tools: [TOOL], prompts: [PROMPT] });
-    expect(await service.registered).toEqual({ ok: true });
-    expect(await waitFor(() => count(service, LIST_METHOD.prompts) > 0)).toBe(true);
+    // Tools and prompts, and deliberately NOT resources: a warm the app never asked for
+    // is exactly what "warms only the families the app declared" forbids.
+    const app = await connect(fixture, { tools: [TOOL], prompts: [PROMPT] });
+    expect(await app.registered).toEqual({ ok: true });
+    expect(await waitFor(() => count(app, LIST_METHOD.prompts) > 0)).toBe(true);
     // Given time to be wrong before the two absences are read.
     await quiesce();
 
-    const methods = asked(service);
+    const methods = asked(app);
     // ONE discover, and it is the first thing the connection was ever asked — §6's
     // "the first MCP message from the hub is server/discover", whose answer decides the rest.
     expect(methods.filter((seen) => seen === DISCOVER)).toEqual([DISCOVER]);
     expect(methods[0]).toBe(DISCOVER);
     // Exactly the declared families warmed, in whatever order they were dispatched.
     expect(methods.slice(1).sort()).toEqual([LIST_METHOD.prompts, LIST_METHOD.tools].sort());
-    expect(count(service, LIST_METHOD.resources)).toBe(0);
-    expect(count(service, LIST_METHOD.resourceTemplates)).toBe(0);
+    expect(count(app, LIST_METHOD.resources)).toBe(0);
+    expect(count(app, LIST_METHOD.resourceTemplates)).toBe(0);
   });
 
-  it("§6/§20.5 · a service declaring tools only logs no catalog-warm failure for prompts or resources", async () => {
+  it("§6/§20.5 · an app declaring tools only logs no catalog-warm failure for prompts or resources", async () => {
     await withWarnings(async (warnings) => {
       const fixture = await seedFixture();
-      // The service every deployment in the field is: a tool list and nothing else.
-      const service = await connect(fixture, { tools: [TOOL] });
-      expect(await service.registered).toEqual({ ok: true });
-      expect(await waitFor(() => service.lists.length > 0), "the tools warm never went out").toBe(true);
+      // The app every deployment in the field is: a tool list and nothing else.
+      const app = await connect(fixture, { tools: [TOOL] });
+      expect(await app.registered).toEqual({ ok: true });
+      expect(await waitFor(() => app.lists.length > 0), "the tools warm never went out").toBe(true);
       // Not vacuous: the one warm that WAS declared landed.
-      expect(await untilCataloged(await serviceRow(fixture))).toEqual([TOOL]);
+      expect(await untilCataloged(await appRow(fixture))).toEqual([TOOL]);
 
       // Given time to be wrong — a blind warm fails one whole correlation budget later, so
       // the absence is waited on rather than read the moment the tool list arrived.
       await waitFor(() => warnings.some((line) => /prompts|resources/i.test(line)), 60);
       // The requests were never SENT, which is the claim the log is downstream of: this
-      // service ANSWERS all four families (the harness seeds three empty catalogs, as any
+      // app ANSWERS all four families (the harness seeds three empty catalogs, as any
       // transparent library would), so a hub that warmed blind would take three clean empty
       // answers and log nothing at all — and the warnings line alone would be an assertion
       // about the fixture's generosity rather than about the hub.
-      expect(count(service, LIST_METHOD.prompts)).toBe(0);
-      expect(count(service, LIST_METHOD.resources)).toBe(0);
-      expect(count(service, LIST_METHOD.resourceTemplates)).toBe(0);
+      expect(count(app, LIST_METHOD.prompts)).toBe(0);
+      expect(count(app, LIST_METHOD.resources)).toBe(0);
+      expect(count(app, LIST_METHOD.resourceTemplates)).toBe(0);
       expect(warnings.filter((line) => /prompts|resources/i.test(line))).toEqual([]);
     });
   });
 
-  it("§6/§20.5 · a service whose library answers server/discover with -32601 still gets its tools warmed and its tool list served — the compatibility fallback, so no service in the field goes dark · a discover TIMEOUT behaves identically (the twin)", async () => {
+  it("§6/§20.5 · an app whose library answers server/discover with -32601 still gets its tools warmed and its tool list served — the compatibility fallback, so no app in the field goes dark · a discover TIMEOUT behaves identically (the twin)", async () => {
     // Leg 1: a library that predates the method. It SERVES prompts — the catalog is right
     // there — and the hub must still warm tools only, because nothing told it otherwise.
     const legacy = await seedFixture();
@@ -376,7 +376,7 @@ describe("§6/§20.5 the capability warm", () => {
     // demand (§6 lifecycle 2). A hub that gave up entirely after the refusal would heal
     // through that very read, and the catalog assertion below could not tell the two apart.
     expect(await waitFor(() => old.lists.length > 0), "the fallback warm never went out").toBe(true);
-    expect(await untilCataloged(await serviceRow(legacy))).toEqual([TOOL]);
+    expect(await untilCataloged(await appRow(legacy))).toEqual([TOOL]);
     await quiesce();
     // The premise, asserted rather than assumed: this row is about a discover that was
     // ASKED and refused, not about a hub that never asks — the two are indistinguishable
@@ -403,7 +403,7 @@ describe("§6/§20.5 the capability warm", () => {
         await waitFor(() => mute.lists.length > 0, WIDTH_TURNS),
         "the fallback warm never went out",
       ).toBe(true);
-      expect(await untilCataloged(await serviceRow(silent))).toEqual([TOOL]);
+      expect(await untilCataloged(await appRow(silent))).toEqual([TOOL]);
       await quiesce();
       expect(count(mute, DISCOVER)).toBe(1);
       const warmed = asked(mute).filter((method) => method !== DISCOVER);
@@ -426,9 +426,9 @@ describe("§6/§20.5 the capability warm", () => {
         resourceTemplates: [TEMPLATE],
       });
       expect(await first.registered).toEqual({ ok: true });
-      await untilStored(fixture.service.id, PROMPTS_KEY, [PROMPT]);
-      await untilStored(fixture.service.id, RESOURCES_KEY, [RESOURCE]);
-      await untilStored(fixture.service.id, TEMPLATES_KEY, [TEMPLATE]);
+      await untilStored(fixture.app.id, PROMPTS_KEY, [PROMPT]);
+      await untilStored(fixture.app.id, RESOURCES_KEY, [RESOURCE]);
+      await untilStored(fixture.app.id, TEMPLATES_KEY, [TEMPLATE]);
       await first.close();
 
       // The reconnect would answer EMPTY catalogs if it were asked, so a hub that warmed
@@ -447,14 +447,14 @@ describe("§6/§20.5 the capability warm", () => {
         await quiesce();
       });
 
-      expect(await stored(fixture.service.id, PROMPTS_KEY)).toEqual([PROMPT]);
-      expect(await stored(fixture.service.id, RESOURCES_KEY)).toEqual([RESOURCE]);
-      expect(await stored(fixture.service.id, TEMPLATES_KEY)).toEqual([TEMPLATE]);
+      expect(await stored(fixture.app.id, PROMPTS_KEY)).toEqual([PROMPT]);
+      expect(await stored(fixture.app.id, RESOURCES_KEY)).toEqual([RESOURCE]);
+      expect(await stored(fixture.app.id, TEMPLATES_KEY)).toEqual([TEMPLATE]);
       // "Touches no other key" (§20.5) reaches the capability set too, and it is the one
       // whose loss no catalog would show: reset to tools by a single reconnect blip, §20.2's
-      // scoped handshake stops advertising prompts and resources for a service still serving
+      // scoped handshake stops advertising prompts and resources for an app still serving
       // them — the field going dark by another door.
-      expect([...(await capabilities(fixture.service.id))].sort()).toEqual([
+      expect([...(await capabilities(fixture.app.id))].sort()).toEqual([
         "prompts",
         "resources",
         "tools",
@@ -469,37 +469,37 @@ describe("§6/§20.5 the capability warm", () => {
     // the DECLARED set is the only place it can have come from. A hub that derived the set
     // from the warms that succeeded, or from the catalog keys it happens to hold, agrees
     // with a tools+prompts fixture on every value and loses this one.
-    const service = await connect(fixture, {
+    const app = await connect(fixture, {
       tools: [TOOL],
       prompts: [PROMPT],
       capabilities: ["tools", "prompts", "completions"],
     });
-    expect(await service.registered).toEqual({ ok: true });
-    await untilStored(fixture.service.id, PROMPTS_KEY, [PROMPT]);
-    expect([...(await capabilities(fixture.service.id))].sort()).toEqual([
+    expect(await app.registered).toEqual({ ok: true });
+    await untilStored(fixture.app.id, PROMPTS_KEY, [PROMPT]);
+    expect([...(await capabilities(fixture.app.id))].sort()).toEqual([
       "completions",
       "prompts",
       "tools",
     ]);
 
     // The bot dies. Nothing re-registers, and §6's scoped handshake must still be able to
-    // say what this service serves — which is the whole reason the set is durable.
-    await service.close();
-    await untilStatus(fixture.service.id, "offline");
+    // say what this app serves — which is the whole reason the set is durable.
+    await app.close();
+    await untilStatus(fixture.app.id, "offline");
 
-    expect([...(await capabilities(fixture.service.id))].sort()).toEqual([
+    expect([...(await capabilities(fixture.app.id))].sort()).toEqual([
       "completions",
       "prompts",
       "tools",
     ]);
     // "Beside the catalogs": the same disconnect that left the set standing left them too.
-    expect(await stored(fixture.service.id, PROMPTS_KEY)).toEqual([PROMPT]);
+    expect(await stored(fixture.app.id, PROMPTS_KEY)).toEqual([PROMPT]);
   });
 
   it("§6/§20.5 · registration is worst-case TWO correlation timeouts wide — the discover leg, then the warms, which run concurrently with each other", async () => {
     await withWarnings(async (warnings) => {
       await withShrunkCallTimeout(async () => {
-        // The worst case: a service that answers nothing at all. The discover leg burns one
+        // The worst case: an app that answers nothing at all. The discover leg burns one
         // budget, the tools-only fallback warm burns the second, and there is no third —
         // the two legs are sequential BY CONSTRUCTION (§6: the answer decides the warms).
         const worst = await seedFixture();
@@ -518,7 +518,7 @@ describe("§6/§20.5 the capability warm", () => {
         // And the whole tail ends one budget after that: §6's catalog-warm failure is the
         // last thing a registration can log, so its arrival is the registration's width.
         expect(
-          await waitFor(() => warnings.some((line) => line.includes(worst.service.slug)), WIDTH_TURNS),
+          await waitFor(() => warnings.some((line) => line.includes(worst.app.slug)), WIDTH_TURNS),
           "the failed warm never logged",
         ).toBe(true);
         const width = Date.now() - startedWorst;
@@ -531,7 +531,7 @@ describe("§6/§20.5 the capability warm", () => {
         // before the first of them could possibly have timed out. Serialized warms would
         // put the second one a whole budget behind the first.
         const wide = await seedFixture();
-        const service = await connect(wide, {
+        const app = await connect(wide, {
           skipRegister: true,
           tools: [TOOL],
           prompts: [PROMPT],
@@ -540,15 +540,15 @@ describe("§6/§20.5 the capability warm", () => {
           listBehavior: { mode: "hang" },
         });
         const startedWide = Date.now();
-        await service.sendRegister();
-        expect(await service.registered).toEqual({ ok: true });
+        await app.sendRegister();
+        expect(await app.registered).toEqual({ ok: true });
         expect(
           await waitFor(
             () =>
-              count(service, LIST_METHOD.tools) > 0 &&
-              count(service, LIST_METHOD.prompts) > 0 &&
-              count(service, LIST_METHOD.resources) > 0 &&
-              count(service, LIST_METHOD.resourceTemplates) > 0,
+              count(app, LIST_METHOD.tools) > 0 &&
+              count(app, LIST_METHOD.prompts) > 0 &&
+              count(app, LIST_METHOD.resources) > 0 &&
+              count(app, LIST_METHOD.resourceTemplates) > 0,
             WIDTH_TURNS,
           ),
           "not every declared family was warmed",
@@ -565,67 +565,67 @@ describe("§6/§20.5 the capability warm", () => {
 describe("§20.5 the three further catalogs", () => {
   it("§20.5 · notifications/prompts/list_changed invalidates the prompts catalog and re-lists · notifications/tools/list_changed still invalidates only tools (the twin)", async () => {
     const fixture = await seedFixture();
-    const service = await connect(fixture, { tools: [TOOL], prompts: [PROMPT] });
-    expect(await service.registered).toEqual({ ok: true });
-    await untilStored(fixture.service.id, PROMPTS_KEY, [PROMPT]);
+    const app = await connect(fixture, { tools: [TOOL], prompts: [PROMPT] });
+    expect(await app.registered).toEqual({ ok: true });
+    await untilStored(fixture.app.id, PROMPTS_KEY, [PROMPT]);
     const warmed = {
-      tools: count(service, LIST_METHOD.tools),
-      prompts: count(service, LIST_METHOD.prompts),
+      tools: count(app, LIST_METHOD.tools),
+      prompts: count(app, LIST_METHOD.prompts),
     };
 
     // §6, amended: this frame used to be one the DO dropped. Now it invalidates its own key.
-    await service.notifyPromptsListChanged([PROMPT, PROMPT_2]);
+    await app.notifyPromptsListChanged([PROMPT, PROMPT_2]);
     expect(
-      await waitFor(() => count(service, LIST_METHOD.prompts) > warmed.prompts),
+      await waitFor(() => count(app, LIST_METHOD.prompts) > warmed.prompts),
       "the prompts notification drew no re-list",
     ).toBe(true);
-    await untilStored(fixture.service.id, PROMPTS_KEY, [PROMPT, PROMPT_2]);
+    await untilStored(fixture.app.id, PROMPTS_KEY, [PROMPT, PROMPT_2]);
     // ITS OWN key: a prompts notification is not a reason to re-ask for tools.
-    expect(count(service, LIST_METHOD.tools)).toBe(warmed.tools);
+    expect(count(app, LIST_METHOD.tools)).toBe(warmed.tools);
 
     // The twin, unchanged from §6: the tools notification still moves tools and nothing else.
     const before = {
-      tools: count(service, LIST_METHOD.tools),
-      prompts: count(service, LIST_METHOD.prompts),
+      tools: count(app, LIST_METHOD.tools),
+      prompts: count(app, LIST_METHOD.prompts),
     };
-    await service.notifyToolsListChanged([TOOL, OTHER_TOOL]);
+    await app.notifyToolsListChanged([TOOL, OTHER_TOOL]);
     expect(
-      await waitFor(() => count(service, LIST_METHOD.tools) > before.tools),
+      await waitFor(() => count(app, LIST_METHOD.tools) > before.tools),
       "the tools notification drew no re-list",
     ).toBe(true);
-    expect(await untilCataloged(await serviceRow(fixture))).toEqual([TOOL, OTHER_TOOL]);
+    expect(await untilCataloged(await appRow(fixture))).toEqual([TOOL, OTHER_TOOL]);
     await quiesce();
-    expect(count(service, LIST_METHOD.prompts)).toBe(before.prompts);
+    expect(count(app, LIST_METHOD.prompts)).toBe(before.prompts);
   });
 
   it("§20.5 · notifications/resources/list_changed invalidates the resources catalog", async () => {
     const fixture = await seedFixture();
-    const service = await connect(fixture, {
+    const app = await connect(fixture, {
       tools: [TOOL],
       resources: [RESOURCE],
       resourceTemplates: [TEMPLATE],
     });
-    expect(await service.registered).toEqual({ ok: true });
-    await untilStored(fixture.service.id, RESOURCES_KEY, [RESOURCE]);
-    const warmed = count(service, LIST_METHOD.resources);
+    expect(await app.registered).toEqual({ ok: true });
+    await untilStored(fixture.app.id, RESOURCES_KEY, [RESOURCE]);
+    const warmed = count(app, LIST_METHOD.resources);
 
-    await service.notifyResourcesListChanged([RESOURCE, RESOURCE_2]);
+    await app.notifyResourcesListChanged([RESOURCE, RESOURCE_2]);
     expect(
-      await waitFor(() => count(service, LIST_METHOD.resources) > warmed),
+      await waitFor(() => count(app, LIST_METHOD.resources) > warmed),
       "the resources notification drew no re-list",
     ).toBe(true);
-    await untilStored(fixture.service.id, RESOURCES_KEY, [RESOURCE, RESOURCE_2]);
+    await untilStored(fixture.app.id, RESOURCES_KEY, [RESOURCE, RESOURCE_2]);
   });
 
   it("§20.5 · a prompts warm that FAILS leaves the previous prompts cache in place · a successful re-registration that no longer declares prompts CLEARS it (the twin — a failure is not an undeclare)", async () => {
     const fixture = await seedFixture();
     const first = await connect(fixture, { tools: [TOOL], prompts: [PROMPT] });
     expect(await first.registered).toEqual({ ok: true });
-    await untilStored(fixture.service.id, PROMPTS_KEY, [PROMPT]);
+    await untilStored(fixture.app.id, PROMPTS_KEY, [PROMPT]);
     await first.close();
 
     // A FAILURE: prompts is still declared, and the warm draws nothing the hub can read as
-    // a prompt list. The service even holds a different catalog now — which the hub must
+    // a prompt list. The app even holds a different catalog now — which the hub must
     // not have, because it was never told.
     const failing = await connect(fixture, {
       tools: [TOOL],
@@ -635,51 +635,51 @@ describe("§20.5 the three further catalogs", () => {
     expect(await failing.registered).toEqual({ ok: true });
     expect(await waitFor(() => count(failing, LIST_METHOD.prompts) > 0), "the warm never went out").toBe(true);
     await quiesce();
-    expect(await stored(fixture.service.id, PROMPTS_KEY)).toEqual([PROMPT]);
+    expect(await stored(fixture.app.id, PROMPTS_KEY)).toEqual([PROMPT]);
     // The declaration is what the set is made of, never the warms that landed: this discover
     // ANSWERED prompts and only the list failed, so the family is still declared (§20.2, "a
     // capability the hub has never been told about is not declared" — it was told).
-    expect([...(await capabilities(fixture.service.id))].sort()).toEqual(["prompts", "tools"]);
+    expect([...(await capabilities(fixture.app.id))].sort()).toEqual(["prompts", "tools"]);
     await failing.close();
 
     // The twin: a SUCCESSFUL registration whose discover answer omits prompts. §20.5 inverts
-    // the conservatism here and only here — an omission in an answer is the service saying
+    // the conservatism here and only here — an omission in an answer is the app saying
     // it no longer serves the family, not a transient failure to say anything.
     const narrowed = await connect(fixture, { tools: [TOOL], capabilities: ["tools"] });
     expect(await narrowed.registered).toEqual({ ok: true });
     expect(await waitFor(() => narrowed.lists.length > 0), "the registration never warmed").toBe(true);
     // Cleared to the genuinely-empty answer, not back to never-warmed: an absent key would
-    // re-warm a family this service just stopped declaring.
-    await untilStored(fixture.service.id, PROMPTS_KEY, []);
+    // re-warm a family this app just stopped declaring.
+    await untilStored(fixture.app.id, PROMPTS_KEY, []);
     // The set REPLACES, it never accumulates — the half of the undeclare the handshake
     // reads. A hub that unioned each registration's families into a stored set passes every
-    // catalog assertion above and goes on advertising prompts forever for a service that has
+    // catalog assertion above and goes on advertising prompts forever for an app that has
     // stopped serving them, which is the same client-misleading state the clear exists to end.
-    expect([...(await capabilities(fixture.service.id))]).toEqual(["tools"]);
+    expect([...(await capabilities(fixture.app.id))]).toEqual(["tools"]);
   });
 
-  it("§20.5 · after an undeclare-clear, prompts/list on that service answers empty rather than serving the stale catalog", async () => {
+  it("§20.5 · after an undeclare-clear, prompts/list on that app answers empty rather than serving the stale catalog", async () => {
     const fixture = await seedFixture();
     const first = await connect(fixture, { tools: [TOOL], prompts: [PROMPT] });
     expect(await first.registered).toEqual({ ok: true });
-    await untilStored(fixture.service.id, PROMPTS_KEY, [PROMPT]);
-    const row = await serviceRow(fixture);
+    await untilStored(fixture.app.id, PROMPTS_KEY, [PROMPT]);
+    const row = await appRow(fixture);
     // Not vacuous: while the family is declared, that very catalog IS what is served.
     expect(await tunnelBackend.listPrompts(row, backendCtx())).toEqual([PROMPT]);
     await first.close();
 
     const narrowed = await connect(fixture, { tools: [TOOL], capabilities: ["tools"] });
     expect(await narrowed.registered).toEqual({ ok: true });
-    await untilStored(fixture.service.id, PROMPTS_KEY, []);
+    await untilStored(fixture.app.id, PROMPTS_KEY, []);
 
-    // Without this, every prompts/get against the service is a -32000 against a list the
+    // Without this, every prompts/get against the app is a -32000 against a list the
     // hub is still publishing (§20.5's own reason for the clear).
     expect(await tunnelBackend.listPrompts(row, backendCtx())).toEqual([]);
   });
 
   it("§20.5 · an absent prompts catalog key under a live socket triggers a rewarm; a stored [] does not", async () => {
     // ABSENT: the family is declared and the first warm drew nothing, so the key was never
-    // written at all — the state a service that registered before it could list sits in.
+    // written at all — the state an app that registered before it could list sits in.
     const absent = await seedFixture();
     const wedged = await connect(absent, {
       tools: [TOOL],
@@ -689,13 +689,13 @@ describe("§20.5 the three further catalogs", () => {
     expect(await wedged.registered).toEqual({ ok: true });
     expect(await waitFor(() => count(wedged, LIST_METHOD.prompts) > 0), "the warm never went out").toBe(true);
     await quiesce();
-    expect(await stored(absent.service.id, PROMPTS_KEY)).toBeUndefined();
+    expect(await stored(absent.app.id, PROMPTS_KEY)).toBeUndefined();
 
-    // The service can list now. Nothing reconnects: the only thing that may heal the catalog
+    // The app can list now. Nothing reconnects: the only thing that may heal the catalog
     // is the hub re-listing on demand.
     wedged.setListBehavior({ mode: "answer" }, "prompts");
     const askedBefore = count(wedged, LIST_METHOD.prompts);
-    const wedgedRow = await serviceRow(absent);
+    const wedgedRow = await appRow(absent);
     expect(
       await tunnelBackend.listPrompts(wedgedRow, backendCtx()),
       "a re-warm may not block the read",
@@ -704,18 +704,18 @@ describe("§20.5 the three further catalogs", () => {
       await waitFor(() => count(wedged, LIST_METHOD.prompts) > askedBefore),
       "the demand never re-listed",
     ).toBe(true);
-    await untilStored(absent.service.id, PROMPTS_KEY, [PROMPT]);
+    await untilStored(absent.app.id, PROMPTS_KEY, [PROMPT]);
 
-    // STORED []: a service with a genuinely empty prompt set. Present is an answer, and an
+    // STORED []: an app with a genuinely empty prompt set. Present is an answer, and an
     // answer is never re-asked — otherwise every read of an empty catalog is a socket round
     // trip, forever.
     const empty = await seedFixture();
-    const service = await connect(empty, { tools: [TOOL], prompts: [] });
-    expect(await service.registered).toEqual({ ok: true });
-    await untilStored(empty.service.id, PROMPTS_KEY, []);
-    const warmed = count(service, LIST_METHOD.prompts);
-    expect(await tunnelBackend.listPrompts(await serviceRow(empty), backendCtx())).toEqual([]);
-    expect(await waitFor(() => count(service, LIST_METHOD.prompts) > warmed, 30)).toBe(false);
+    const app = await connect(empty, { tools: [TOOL], prompts: [] });
+    expect(await app.registered).toEqual({ ok: true });
+    await untilStored(empty.app.id, PROMPTS_KEY, []);
+    const warmed = count(app, LIST_METHOD.prompts);
+    expect(await tunnelBackend.listPrompts(await appRow(empty), backendCtx())).toEqual([]);
+    expect(await waitFor(() => count(app, LIST_METHOD.prompts) > warmed, 30)).toBe(false);
   });
 });
 
@@ -730,11 +730,11 @@ describe("§6/§20.3 the per-family declaration on the wire", () => {
       curator: { tools: ["publish"], prompts: ["digest_.*"], resources: ["news://feed/*"] },
       reader: ["get_news"],
     };
-    const service = await connect(fixture, { roles: declared });
-    expect(await service.registered).toEqual({ ok: true });
+    const app = await connect(fixture, { roles: declared });
+    expect(await app.registered).toEqual({ ok: true });
     // §20.3's storage claim, whole: the COLUMN holds the per-family object for every role,
     // whichever way that role was spelled on the wire.
-    expect(await storedRoles(fixture.service.id)).toEqual({
+    expect(await storedRoles(fixture.app.id)).toEqual({
       curator: declared.curator,
       reader: { tools: ["get_news"] },
     });
@@ -742,10 +742,10 @@ describe("§6/§20.3 the per-family declaration on the wire", () => {
 
   it("§6 · a bare-list declaration still registers and is read as tools-only", async () => {
     const fixture = await seedFixture();
-    const service = await connect(fixture, { roles: { reader: ["get_news"] } });
-    expect(await service.registered).toEqual({ ok: true });
+    const app = await connect(fixture, { roles: { reader: ["get_news"] } });
+    expect(await app.registered).toEqual({ ok: true });
     // §20.3's canonical read: a tools-only role renders as the bare list it registered as,
-    // so every service in the field keeps its exact current meaning and diffs nothing.
+    // so every app in the field keeps its exact current meaning and diffs nothing.
     expect(await declaredRoles(fixture)).toEqual({ reader: ["get_news"] });
   });
 
@@ -768,7 +768,7 @@ describe("§6/§20.3 the per-family declaration on the wire", () => {
     expect(JSON.stringify(rows[0].detail)).toContain("digest_.*");
 
     // The twin: the SAME role in the other spelling. Normalization happens before the
-    // comparison (§6), so a service that merely restated itself must draw no row at all.
+    // comparison (§6), so an app that merely restated itself must draw no row at all.
     const same = await seedFixture();
     const bare = await connect(same, { roles: { reader: ["get_news"] } });
     expect(await bare.registered).toEqual({ ok: true });
@@ -786,8 +786,8 @@ describe("§6/§20.3 the per-family declaration on the wire", () => {
     await grantReader(fixture);
     await before.close();
 
-    // §6's own example: the tools set is a subset of itself, and the service has just handed
-    // every granted account the whole resource keyspace.
+    // §6's own example: the tools set is a subset of itself, and the app has just handed
+    // every granted agent the whole resource keyspace.
     const wider = await connect(fixture, {
       roles: { reader: { tools: ["get_news"], resources: ["file:///*"] } },
     });

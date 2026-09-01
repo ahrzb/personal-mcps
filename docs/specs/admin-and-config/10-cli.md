@@ -12,37 +12,37 @@ pmcp login [--profile <name>] [--url <origin>]   # RFC 8628 device flow; prompts
 pmcp logout | whoami
 pmcp profile add <name> --url <origin>           # url only; login fills the token
 pmcp profile list | use <name> | remove <name>
-pmcp ls                                          # services + kind/status/roles (wire vocabulary)
-pmcp describe <ref>                              # service/<slug>[/<item>] | account/<slug>
-pmcp call <service> <tool> [key=value … | --args '{…}']   # or the aggregated name:
+pmcp ls                                          # apps + kind/status/roles (wire vocabulary)
+pmcp describe <ref>                              # app/<slug>[/<item>] | agent/<slug>
+pmcp call <app> <tool> [key=value … | --args '{…}']       # or the aggregated name:
 pmcp call <slug>_<tool> [...]                             # unambiguous, slugs have no '_'
-pmcp get prompt/<service>/<name> [key=value … | --args '{…}']   # prompts/get
-pmcp get resource/<service>/<uri>                # resources/read — scoped endpoint only (§20)
+pmcp get prompt/<app>/<name> [key=value … | --args '{…}']       # prompts/get
+pmcp get resource/<app>/<uri>                    # resources/read — scoped endpoint only (§20)
 pmcp connections | connection revoke <id>        # connection_list / connection_revoke (§19)
 pmcp diff  [-f mcps.yaml]
 pmcp apply [-f mcps.yaml] [--yes]
-pmcp token issue (--account <slug> | --service <slug>) [--expires 90d]
+pmcp token issue (--agent <slug> | --app <slug>) [--expires 90d]
 pmcp token list | revoke <id>
-pmcp audit [--account <slug>] [--service <slug>] [--session <id>] [--since 7d]
+pmcp audit [--agent <slug>] [--app <slug>] [--session <id>] [--since 7d]
 pmcp audit --export jsonl > events.jsonl         # streams the same rows as the web export
 pmcp approvals | approve <id> | reject <id>
-pmcp connect <service>                           # prints the /services OAuth connect URL (§7)
-pmcp service create <slug> (--tunneled | --proxied <endpoint> [--auth headers|oauth])
-                                                 # tunneled create prints the service token once
-pmcp service archive|unarchive|delete|disconnect <slug>
-pmcp service set-auth <slug> --header 'Authorization: Bearer …'   # service_set_upstream_auth
+pmcp connect <app>                               # prints the /apps OAuth connect URL (§7)
+pmcp app create <slug> (--tunneled | --proxied <endpoint> [--auth headers|oauth])
+                                                 # tunneled create prints the app token once
+pmcp app archive|unarchive|delete|disconnect <slug>
+pmcp app set-auth <slug> --header 'Authorization: Bearer …'       # app_set_upstream_auth
 ```
 
 **Refs.** `describe` and `get` take one path-style ref whose **first segment names
-the kind of thing** (`service/`, `account/`, `prompt/`, `resource/`); splitting
+the kind of thing** (`app/`, `agent/`, `prompt/`, `resource/`); splitting
 stops after the second slash, so an item that is itself a URI keeps its slashes
 (`get resource/notes/file:///todo.md`). `describe` is family-agnostic: the
-service form lists all four catalog families (tools, prompts, resources,
+app form lists all four catalog families (tools, prompts, resources,
 templates — absent families print `(none)`), the item form matches tools and
 prompts by name, resources by `uri`, templates by `uriTemplate`, and prints
-every match. `describe service/…` renders from the gateway list calls alone and
+every match. `describe app/…` renders from the gateway list calls alone and
 works with any token; its kind/status/roles header is a best-effort admin read
-that degrades to the bare slug for service-account callers.
+that degrades to the bare slug for agent callers.
 
 **Transitional aliases.** The pre-redesign spellings `tools`, `prompts`,
 `resources` (+ `--templates`), `prompt`, and `read` survive as hidden aliases —
@@ -51,7 +51,7 @@ their rows in the CLI command table are asserted by name by the parity suite
 Retiring the rows and adding `describe`/`get` rows (they front several gateway
 methods each; the table's one-method shape needs widening or a declared
 exception) is that follow-up amendment. Guessable noun-verb forms resolve as
-aliases instead of erroring: `service list` → `ls`, `connection list` →
+aliases instead of erroring: `app list` → `ls`, `connection list` →
 `connections`, `approval list` → `approvals`.
 
 **Output contract.** Every command that emits data takes `--json` (boolean):
@@ -81,24 +81,24 @@ arguments rendered from `inputSchema`) — never a pre-flight cost, silently
 skipped if the fetch fails.
 
 **Interactivity.** Prompts (@clack) appear only in `login`/`profile add`, only
-on a TTY. Destructive commands (`service delete`, `account delete`, `apply`,
+on a TTY. Destructive commands (`app delete`, `agent delete`, `apply`,
 `profile remove`) keep a y/N confirm on a TTY, bypassed by `--yes`; non-TTY
 without `--yes` refuses on stderr, exit 1. Everything else is argv-in/text-out
 — the CLI is built to be driven by agents, which get discoverability from
 help text, error hints, and `--json` instead of pickers.
 
 Every subcommand except the auth and profile families is presentation sugar:
-`ls`, `describe`, `get`, `token`, `service`, `diff`, and `apply` are
+`ls`, `describe`, `get`, `token`, `app`, `diff`, and `apply` are
 compositions of the same `pmcp_*` and MCP tool calls that `pmcp call` (or any
 agent) can make directly — nicer output, zero extra capability. `describe`
 and `get` front MCP methods, not admin ops, so like `tools`/`call` before
 them they sit outside §8's parity list rather than being exceptions to it
-(`describe account/…` composes `account_list` + `token_list`; there is still
+(`describe agent/…` composes `agent_list` + `token_list`; there is still
 no `completion` command — nothing observably consumes `completion/complete`,
 §20 serves it for conformance). The converse holds too: every UI capability
 is reachable from the CLI (§8's parity invariant) — only the UX differs.
-YAML `diff`/`apply` is the CLI-native way to manage services and grants
-declaratively; the imperative `pmcp service` family covers the one-off
+YAML `diff`/`apply` is the CLI-native way to manage apps and grants
+declaratively; the imperative `pmcp app` family covers the one-off
 actions the UI does with buttons.
 
 Config: `~/.config/pmcp/config.toml` *(amended 2026-08-26; was config.json — an
@@ -139,13 +139,13 @@ write creates the file, and is otherwise touched only by an explicit
 credential — a url change on a profile with a token warns instead of clearing.
 `logout` clears the active profile's token only. Environment variables stay flat
 and profile-free: `PMCP_TOKEN` and `PMCP_URL` override whatever the active
-profile resolved — session or service-account tokens only (`pmcp_svc_` tokens
-are rejected by every consumer surface). With a service-account key, the gateway
-sugar (`call`, `get`, `describe service/…`) works within grants; `ls` and every
-admin-backed command fail (`ls` is sugar over `pmcp_service_list`, and service
-accounts can never hold `pmcp` grants, §8). The hub's `GET /api/whoami` route
+profile resolved — session or agent tokens only (`pmcp_app_` tokens
+are rejected by every consumer surface). With an agent key, the gateway
+sugar (`call`, `get`, `describe app/…`) works within grants; `ls` and every
+admin-backed command fail (`ls` is sugar over `pmcp_app_list`, and agents
+can never hold `pmcp` grants, §8). The hub's `GET /api/whoami` route
 (§8) accepts both token kinds and returns `{ principal, namespace }` — that's
-how the CLI builds `/<user>/mcp/…` URLs when it holds only a service-account
+how the CLI builds `/<user>/mcp/…` URLs when it holds only an agent
 key, and both fields survive into `whoami`'s human and `--json` output. `PMCP_URL`
 overrides the URL and is always the **https origin** — everywhere, including the client
 libraries, which derive `wss://<origin>/connect` from it.

@@ -61,7 +61,7 @@ afterEach(() => {
 
 describe("parseConfig / emitConfig — the smol-toml wrapper", () => {
   it("wraps a smol-toml parse error down to a bare line number, and the offending line's own text (a live credential) never appears in the message", () => {
-    const credential = "pmcp_sa_SUPER-SECRET-VALUE-000000000000";
+    const credential = "pmcp_agt_SUPER-SECRET-VALUE-000000000000";
     const text = `profile = "default"\ntoken == "${credential}"\n`;
     let caught: unknown;
     try {

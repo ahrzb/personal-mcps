@@ -1,7 +1,7 @@
 ## 11. Client libraries
 
-The service author writes a plain MCP server with the official SDK; our library owns the
-connection. Roles are part of the service's code because the service is what knows its
+The app author writes a plain MCP server with the official SDK; our library owns the
+connection. Roles are part of the app's code because the app is what knows its
 tools' semantics.
 
 Python (`pmcp-client` on PyPI):
@@ -18,7 +18,7 @@ def get_news(topic: str) -> str: ...
 serve(  # blocks; connects, registers, reconnects forever
     mcp,
     url="https://mcp.example.com",   # or PMCP_URL; wss://<origin>/connect is derived
-    token=...,                        # or PMCP_SERVICE_TOKEN
+    token=...,                        # or PMCP_APP_TOKEN
     roles={"reader": ["get_news", "search_.*"]},
     # per-family form, §20 (added 2026-08-26) — a bare list still means tools:
     # roles={"reader": {"tools": ["get_news"], "prompts": ["digest_.*"],
@@ -39,7 +39,7 @@ the library is what knows which families the author actually registered. It is t
 MCP-namespace method the library handles itself instead of bridging through. A library
 that does **not** implement it is not broken: the resulting `-32601` is the hub's
 "capabilities unknown" signal and the hub falls back to warming tools only, §6 — which is
-what keeps every service already in the field working unchanged)*, bridge WS frames to the
+what keeps every app already in the field working unchanged)*, bridge WS frames to the
 SDK's server session (custom transport), send `notifications/tools/list_changed` on tool
 mutations *(and, from 2026-08-26, whichever of the prompts/resources list_changed
 notifications the author's SDK emits — the bridge is transparent, so this is a

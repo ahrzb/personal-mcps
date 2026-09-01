@@ -114,7 +114,7 @@ class Dial(NamedTuple):
 
     ``path`` and ``authorization`` are captured verbatim because §6 pins both on
     the client side: the address is DERIVED (``wss://<host>/connect``) rather
-    than passed in, and the service token rides ``Authorization: Bearer`` and
+    than passed in, and the app token rides ``Authorization: Bearer`` and
     nowhere else. ``at`` is a real clock reading, so a table asserts the ORDER of
     arrivals and never a seconds literal (§7) — the delays themselves are read
     from conftest's recorded_sleep list, which is the schedule's only oracle."""
@@ -170,7 +170,7 @@ def _ping_recording_connection(hub: "FakeHub") -> type[ServerConnection]:
 
 
 class FakeHub:
-    """A live fake hub — one LISTENER, many connections. Unlike the fake service
+    """A live fake hub — one LISTENER, many connections. Unlike the fake app
     on the server side, this one deliberately survives the sockets it accepts:
     the entire subject of test_transport.py is what the client does after a
     connection ends, so the hub must outlive the ending to witness the redial (or

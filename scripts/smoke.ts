@@ -45,8 +45,8 @@ applyProfile(process.argv.slice(2)); // fills PMCP_URL / BOOTSTRAP_SECRET where 
 const ORIGIN = ((process.env.HUB_ORIGIN ?? "") !== "" ? required("HUB_ORIGIN") : required("PMCP_URL")).replace(/\/+$/, "");
 const SECRET = required("BOOTSTRAP_SECRET");
 const USERNAME = `smoke-${Date.now()}`;
-const ACCOUNT = "smoke-agent";
-const SERVICE = "smoke-svc";
+const AGENT = "smoke-agent";
+const APP = "smoke-app";
 const ROLE = "reader";
 const TOOL = "echo";
 /** The RFC 8628 client id cli/src/main.ts presents — the same string, on purpose. */
@@ -56,16 +56,16 @@ const DEVICE_CLIENT_ID = "pmcp-cli";
  *  well-formed, non-loopback https URL, which is what a "web" DCR client's redirect must be
  *  (§19.3). `.invalid` is RFC 2606's reserved never-resolves TLD. */
 const OAUTH_REDIRECT_URI = "https://smoke.invalid/callback";
-/** The service account §19's OAuth binding is made to — its OWN, separate from `ACCOUNT`,
+/** The agent §19's OAuth binding is made to — its OWN, separate from `AGENT`,
  *  so the scoped call below is never coupled to the approval-mode grant the main flow
- *  leaves on `ACCOUNT` by the time this step runs. */
-const OAUTH_ACCOUNT = "smoke-oauth-agent";
+ *  leaves on `AGENT` by the time this step runs. */
+const OAUTH_AGENT = "smoke-oauth-agent";
 /** The one call the walk makes through the tunnel. Reused verbatim on the approval retry —
  *  §7 binds an approval to the canonical JSON of `arguments`, so the retry must be
  *  byte-identical to match the row. */
 const CALL_ARGS = { text: "smoke" } as const;
 /**
- * The one tool this walk serves, spelled once. §21's listen leg re-registers the service
+ * The one tool this walk serves, spelled once. §21's listen leg re-registers the app
  * with this same tool under a CHANGED description, so a shared spelling is what makes the
  * description the single difference between the two registrations — and therefore what
  * makes the doorbell it rings attributable to the change rather than to the reconnect.
@@ -119,13 +119,13 @@ async function main(): Promise<number> {
   let sessionCookie = "";
   let cliSession = "";
   let agentToken = "";
-  let serviceToken = "";
+  let appToken = "";
   let approvalId = "";
   let tunnel: { close(): Promise<void> } | null = null;
   // What cleanup has to undo. A walk that stopped before creating something must not report
   // a failed cleanup for it — the exit code is the verdict, and noise in it is a lie.
   let userExists = false;
-  let serviceExists = false;
+  let appExists = false;
 
   const owner = (name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> =>
     adminOp(session, name, args);
@@ -211,20 +211,20 @@ async function main(): Promise<number> {
       return "pmcp whoami and pmcp ls both exited 0";
     });
 
-    await step("pmcp account_create", async () => {
-      const created = await owner("account_create", { slug: ACCOUNT });
-      const account = asRecord(created.account, "account");
-      return `service account ${String(account.slug)}`;
+    await step("pmcp agent_create", async () => {
+      const created = await owner("agent_create", { slug: AGENT });
+      const agent = asRecord(created.agent, "agent");
+      return `agent ${String(agent.slug)}`;
     });
 
-    await step("pmcp token_issue (pmcp_sa_)", async () => {
-      const minted = await owner("token_issue", { kind: "service_account", slug: ACCOUNT });
+    await step("pmcp token_issue (pmcp_agt_)", async () => {
+      const minted = await owner("token_issue", { kind: "agent", slug: AGENT });
       agentToken = asString(minted.token, "token");
-      expect(agentToken.startsWith("pmcp_sa_"), "minted key is not a pmcp_sa_ token");
-      return `pmcp_sa_ key ${String(minted.id)} (value withheld)`;
+      expect(agentToken.startsWith("pmcp_agt_"), "minted key is not a pmcp_agt_ token");
+      return `pmcp_agt_ key ${String(minted.id)} (value withheld)`;
     });
 
-    await step("MCP handshake as the service account", async () => {
+    await step("MCP handshake as the agent", async () => {
       const init = asRecord(await mcp(`${ORIGIN}/${USERNAME}/mcp`, agentToken, "initialize", {
         protocolVersion: "2026-07-28",
         capabilities: {},
@@ -242,48 +242,48 @@ async function main(): Promise<number> {
       return `initialize ${String(serverInfo.name)}, notifications/initialized 202, discover ${JSON.stringify(discovered.supportedVersions)}, tools/list ${asArray(listed.tools).length} tools`;
     });
 
-    await step("pmcp service_create (tunnel)", async () => {
-      const created = await owner("service_create", { slug: SERVICE, kind: "tunnel" });
-      const service = asRecord(created.service, "service");
-      expect(service.kind === "tunnel", `kind ${String(service.kind)}`);
-      serviceExists = true;
-      return `${String(service.slug)} (${String(service.kind)}, status ${String(service.status)})`;
+    await step("pmcp app_create (tunnel)", async () => {
+      const created = await owner("app_create", { slug: APP, kind: "tunnel" });
+      const app = asRecord(created.app, "app");
+      expect(app.kind === "tunnel", `kind ${String(app.kind)}`);
+      appExists = true;
+      return `${String(app.slug)} (${String(app.kind)}, status ${String(app.status)})`;
     });
 
-    await step("pmcp token_issue (pmcp_svc_)", async () => {
-      const minted = await owner("token_issue", { kind: "service", slug: SERVICE });
-      serviceToken = asString(minted.token, "token");
-      expect(serviceToken.startsWith("pmcp_svc_"), "minted key is not a pmcp_svc_ token");
-      return `pmcp_svc_ key ${String(minted.id)} (value withheld)`;
+    await step("pmcp token_issue (pmcp_app_)", async () => {
+      const minted = await owner("token_issue", { kind: "app", slug: APP });
+      appToken = asString(minted.token, "token");
+      expect(appToken.startsWith("pmcp_app_"), "minted key is not a pmcp_app_ token");
+      return `pmcp_app_ key ${String(minted.id)} (value withheld)`;
     });
 
     await step("client library connects and registers", async () => {
-      const service = serveOneTool(serviceToken, ECHO_TOOL);
-      tunnel = service;
-      await deadline(service.registered, 20_000, "hub/register was never accepted");
+      const app = serveOneTool(appToken, ECHO_TOOL);
+      tunnel = app;
+      await deadline(app.registered, 20_000, "hub/register was never accepted");
       return `registered role ${ROLE} declaring tool ${TOOL} through @personal-mcps/client`;
     });
 
-    await step("service reports online", async () => {
+    await step("app reports online", async () => {
       const status = await until(
-        async () => asRecord((await owner("service_get", { slug: SERVICE })).service, "service").status,
+        async () => asRecord((await owner("app_get", { slug: APP })).app, "app").status,
         (value) => value === "online",
         15_000,
       );
-      return `service_get status ${String(status)}`;
+      return `app_get status ${String(status)}`;
     });
 
     await step("pmcp grant_set", async () => {
-      const granted = await owner("grant_set", { account: ACCOUNT, service: SERVICE, roles: [ROLE] });
+      const granted = await owner("grant_set", { agent: AGENT, app: APP, roles: [ROLE] });
       const warnings = asArray(granted.warnings);
-      return `${ACCOUNT} → ${SERVICE}: [${ROLE}]${warnings.length === 0 ? "" : ` warnings ${JSON.stringify(warnings)}`}`;
+      return `${AGENT} → ${APP}: [${ROLE}]${warnings.length === 0 ? "" : ` warnings ${JSON.stringify(warnings)}`}`;
     });
 
     await step("tools/list through the tunnel", async () => {
       const names = await until(
         async () => {
           const listed = asRecord(
-            await mcp(`${ORIGIN}/${USERNAME}/mcp/${SERVICE}`, agentToken, "tools/list"),
+            await mcp(`${ORIGIN}/${USERNAME}/mcp/${APP}`, agentToken, "tools/list"),
             "tools/list result",
           );
           return asArray(listed.tools).map((tool) => String(asRecord(tool, "catalog entry").name));
@@ -298,7 +298,7 @@ async function main(): Promise<number> {
       const result = asRecord(await callTool(agentToken), "tools/call result");
       const structured = asRecord(result.structuredContent, "structuredContent");
       expect(structured.echo === CALL_ARGS.text, `echo ${String(structured.echo)}`);
-      expect(structured.principal === `sa:${ACCOUNT}`, `principal ${String(structured.principal)}`);
+      expect(structured.principal === `agent:${AGENT}`, `principal ${String(structured.principal)}`);
       return `echo "${String(structured.echo)}" from ${String(structured.principal)} roles ${JSON.stringify(structured.roles)}`;
     });
 
@@ -307,7 +307,7 @@ async function main(): Promise<number> {
       // The suites own every rule the stream obeys; what only a live origin can answer is
       // whether the platform delivers a HELD `text/event-stream` at all — that no
       // intermediary buffers the doorbell into silence, that a subscriber WebSocket opens
-      // from a Worker invocation into the service DO, and that the frame arrives while the
+      // from a Worker invocation into the app DO, and that the frame arrives while the
       // response is still open rather than at its close.
       const opened = await fetch(`${ORIGIN}/${USERNAME}/mcp`, {
         method: "POST",
@@ -334,12 +334,12 @@ async function main(): Promise<number> {
         const first = await stream.next(30_000);
         expect(first.startsWith(":"), `the opened stream's first block was ${JSON.stringify(first)}`);
 
-        // The provocation: the SAME service re-registers declaring the SAME tool under a
+        // The provocation: the SAME app re-registers declaring the SAME tool under a
         // changed description. The catalog therefore compares as changed (§21.3) while the
         // tool NAME is untouched, so every later step still calls what it called before and
         // the bell is attributable to the change rather than to the reconnect.
         await tunnel?.close();
-        const rebuilt = serveOneTool(serviceToken, {
+        const rebuilt = serveOneTool(appToken, {
           ...ECHO_TOOL,
           description: `${ECHO_TOOL.description} Re-declared to ring §21.3's bell.`,
         });
@@ -366,7 +366,7 @@ async function main(): Promise<number> {
     });
 
     await step("approval mode refuses the call (-32003)", async () => {
-      await owner("grant_set", { account: ACCOUNT, service: SERVICE, roles: [`${ROLE}:approval`] });
+      await owner("grant_set", { agent: AGENT, app: APP, roles: [`${ROLE}:approval`] });
       const refusal = await expectError(callTool(agentToken));
       expect(refusal.code === -32003, `code ${String(refusal.code)}`);
       approvalId = asString(asRecord(refusal.data, "-32003 data").approvalId, "approvalId");
@@ -386,34 +386,34 @@ async function main(): Promise<number> {
       return `identical retry executed, echo "${String(structured.echo)}"`;
     });
 
-    await step("§13 · the /services page renders for the browser session, and for nobody else", async () => {
+    await step("§13 · the /apps page renders for the browser session, and for nobody else", async () => {
       // The one page leg. The walk already holds the cookie the same sign-in set, so this
       // asks the deployment the question no MCP call can: does the browser surface render
       // at all — templates, stylesheet link, ops-backed reads — behind the cookie gate.
-      const rendered = await fetch(`${ORIGIN}/services`, { headers: { Cookie: sessionCookie } });
-      expect(rendered.status === 200, `authenticated /services → ${rendered.status}`);
+      const rendered = await fetch(`${ORIGIN}/apps`, { headers: { Cookie: sessionCookie } });
+      expect(rendered.status === 200, `authenticated /apps → ${rendered.status}`);
       const html = await rendered.text();
-      // A marker only the RENDERED page carries: the service the walk just created, drawn
+      // A marker only the RENDERED page carries: the app the walk just created, drawn
       // in the table by the same read the `pmcp` tools front.
-      expect(html.includes(SERVICE), `/services rendered no row for ${SERVICE}`);
-      const anonymous = await fetch(`${ORIGIN}/services`, { redirect: "manual" });
+      expect(html.includes(APP), `/apps rendered no row for ${APP}`);
+      const anonymous = await fetch(`${ORIGIN}/apps`, { redirect: "manual" });
       expect(
         anonymous.status === 302 && (anonymous.headers.get("location") ?? "").startsWith("/login"),
-        `unauthenticated /services → ${anonymous.status} ${anonymous.headers.get("location") ?? ""}`,
+        `unauthenticated /apps → ${anonymous.status} ${anonymous.headers.get("location") ?? ""}`,
       );
-      return `200 with ${SERVICE} in the table; no cookie → ${anonymous.status} ${anonymous.headers.get("location") ?? ""}`;
+      return `200 with ${APP} in the table; no cookie → ${anonymous.status} ${anonymous.headers.get("location") ?? ""}`;
     });
 
     await step("audit_query sees the calls", async () => {
-      const rows = asArray((await owner("audit_query", { service: SERVICE })).rows);
+      const rows = asArray((await owner("audit_query", { app: APP })).rows);
       const calls = rows.filter((row) => asRecord(row, "audit row").event === "tools/call");
       expect(calls.length >= 2, `only ${calls.length} tools/call rows`);
       const events = rows.map((row) => String(asRecord(row, "audit row").event));
-      return `${rows.length} rows for ${SERVICE}, ${calls.length} tools/call — ${JSON.stringify(unique(events))}`;
+      return `${rows.length} rows for ${APP}, ${calls.length} tools/call — ${JSON.stringify(unique(events))}`;
     });
 
     await step(
-      "SMOKE · §19 · the full OAuth round-trip mints a JWT that reaches tools/call as sa:<slug> on both endpoint shapes, and revoking it stops the next call",
+      "SMOKE · §19 · the full OAuth round-trip mints a JWT that reaches tools/call as agent:<slug> on both endpoint shapes, and revoking it stops the next call",
       async () => {
         // One step, one atomic leg: a mid-walk failure here must not print as a run of
         // separate passing steps — it is one claim, "the OAuth connector flow works end to
@@ -524,11 +524,11 @@ async function main(): Promise<number> {
         const csrf = hiddenField(consentHtml, "csrf");
         const oauthQuery = hiddenField(consentHtml, "oauth_query");
 
-        // A service account THIS step creates and grants, so the scoped call below rides on
+        // An agent THIS step creates and grants, so the scoped call below rides on
         // a grant this step controls — never on whatever approval state the main flow left
-        // `ACCOUNT` in.
-        await owner("account_create", { slug: OAUTH_ACCOUNT });
-        await owner("grant_set", { account: OAUTH_ACCOUNT, service: SERVICE, roles: [ROLE] });
+        // `AGENT` in.
+        await owner("agent_create", { slug: OAUTH_AGENT });
+        await owner("grant_set", { agent: OAUTH_AGENT, app: APP, roles: [ROLE] });
 
         const consentPost = await fetch(`${ORIGIN}/oauth/consent`, {
           method: "POST",
@@ -540,7 +540,7 @@ async function main(): Promise<number> {
             // the device-approval POST above carries it.
             Origin: ORIGIN,
           },
-          body: new URLSearchParams({ csrf, oauth_query: oauthQuery, service_account: OAUTH_ACCOUNT, decision: "accept" }),
+          body: new URLSearchParams({ csrf, oauth_query: oauthQuery, agent: OAUTH_AGENT, decision: "accept" }),
         });
         const codeLocation = await redirectTarget(consentPost);
         expect(
@@ -580,34 +580,34 @@ async function main(): Promise<number> {
         const audValues = Array.isArray(aud) ? aud : [aud];
         expect(audValues.includes(resource), `access token aud ${JSON.stringify(aud)}`);
 
-        // The aggregated endpoint, and the SAME token scoped to the tunneled service — the
+        // The aggregated endpoint, and the SAME token scoped to the tunneled app — the
         // audience is namespace-wide (§19.6 step 3), so both endpoint shapes accept it.
         const aggregate = asRecord(await mcp(`${ORIGIN}/${USERNAME}/mcp`, accessToken, "tools/list"), "tools/list result");
         const aggregateNames = asArray(aggregate.tools).map((tool) => String(asRecord(tool, "catalog entry").name));
-        expect(aggregateNames.includes(`${SERVICE}_${TOOL}`), `aggregated tools/list ${JSON.stringify(aggregateNames)}`);
+        expect(aggregateNames.includes(`${APP}_${TOOL}`), `aggregated tools/list ${JSON.stringify(aggregateNames)}`);
         const scoped = asRecord(
-          await mcp(`${ORIGIN}/${USERNAME}/mcp/${SERVICE}`, accessToken, "tools/call", {
+          await mcp(`${ORIGIN}/${USERNAME}/mcp/${APP}`, accessToken, "tools/call", {
             name: TOOL,
             arguments: CALL_ARGS,
           }),
           "scoped tools/call result",
         );
         const structured = asRecord(scoped.structuredContent, "structuredContent");
-        expect(structured.principal === `sa:${OAUTH_ACCOUNT}`, `scoped call principal ${String(structured.principal)}`);
+        expect(structured.principal === `agent:${OAUTH_AGENT}`, `scoped call principal ${String(structured.principal)}`);
 
-        // The audit trail names the bound ACCOUNT, never the client or the token (§19.6
+        // The audit trail names the bound AGENT, never the client or the token (§19.6
         // step 5 — nothing downstream branches on how the credential arrived).
-        const rows = asArray((await owner("audit_query", { principal: `sa:${OAUTH_ACCOUNT}` })).rows);
+        const rows = asArray((await owner("audit_query", { principal: `agent:${OAUTH_AGENT}` })).rows);
         const calls = rows.filter((row) => asRecord(row, "audit row").event === "tools/call");
-        expect(calls.length > 0, `audit_query found no tools/call rows for sa:${OAUTH_ACCOUNT}`);
+        expect(calls.length > 0, `audit_query found no tools/call rows for agent:${OAUTH_AGENT}`);
 
         // Revoke — immediate at the door (§19.6): the connection's next call gets the SAME
         // 401 challenge as no token at all.
         const connections = asArray((await owner("connection_list")).connections);
         const connection = connections.find(
-          (row) => asRecord(row, "connection row").accountSlug === OAUTH_ACCOUNT,
+          (row) => asRecord(row, "connection row").agentSlug === OAUTH_AGENT,
         );
-        if (connection === undefined) throw new Error(`connection_list carries no row for ${OAUTH_ACCOUNT}`);
+        if (connection === undefined) throw new Error(`connection_list carries no row for ${OAUTH_AGENT}`);
         await owner("connection_revoke", { id: String(asRecord(connection, "connection row").id) });
 
         const refused = await fetch(`${ORIGIN}/${USERNAME}/mcp`, {
@@ -621,7 +621,7 @@ async function main(): Promise<number> {
           `post-revoke challenge: ${refused.headers.get("WWW-Authenticate") ?? ""}`,
         );
 
-        return `client ${clientId} → aud ${resource}; aggregate+scoped tools/call both as sa:${OAUTH_ACCOUNT}; ${calls.length} audit row(s); revoked → 401 with challenge`;
+        return `client ${clientId} → aud ${resource}; aggregate+scoped tools/call both as agent:${OAUTH_AGENT}; ${calls.length} audit row(s); revoked → 401 with challenge`;
       },
     );
   } catch {
@@ -637,14 +637,14 @@ async function main(): Promise<number> {
   );
 
   await settle(
-    step("cleanup: delete the service", async () => {
-      if (!serviceExists) return "no service to delete";
-      await owner("service_delete", { slug: SERVICE });
-      const slugs = asArray((await owner("service_list")).services).map((row) =>
-        String(asRecord(row, "service_list row").slug),
+    step("cleanup: delete the app", async () => {
+      if (!appExists) return "no app to delete";
+      await owner("app_delete", { slug: APP });
+      const slugs = asArray((await owner("app_list")).apps).map((row) =>
+        String(asRecord(row, "app_list row").slug),
       );
-      expect(!slugs.includes(SERVICE), `service_list still lists ${SERVICE}`);
-      return `${SERVICE} gone; service_list ${JSON.stringify(slugs)}`;
+      expect(!slugs.includes(APP), `app_list still lists ${APP}`);
+      return `${APP} gone; app_list ${JSON.stringify(slugs)}`;
     }),
   );
 
@@ -795,7 +795,7 @@ async function notify(endpoint: string, bearer: string, method: string): Promise
   return response.status;
 }
 
-/** One §8 admin op through the builtin `pmcp` service, as the owner. */
+/** One §8 admin op through the builtin `pmcp` app, as the owner. */
 async function adminOp(session: string, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const result = asRecord(
     await mcp(`${ORIGIN}/${USERNAME}/mcp/pmcp`, session, "tools/call", { name, arguments: args }),
@@ -806,13 +806,13 @@ async function adminOp(session: string, name: string, args: Record<string, unkno
 
 /** The walk's one tunneled call, spelled once so the approval retry is byte-identical. */
 async function callTool(bearer: string): Promise<unknown> {
-  return mcp(`${ORIGIN}/${USERNAME}/mcp/${SERVICE}`, bearer, "tools/call", {
+  return mcp(`${ORIGIN}/${USERNAME}/mcp/${APP}`, bearer, "tools/call", {
     name: TOOL,
     arguments: CALL_ARGS,
   });
 }
 
-// ── the one tunneled service, served through the real client library ──────────────────
+// ── the one tunneled app, served through the real client library ──────────────────
 
 /** The one tool this walk serves. `run` returns the STRUCTURED value; both carriers of the
  *  2026-07-28 result (text and structuredContent) are built from it. */
@@ -824,7 +824,7 @@ type SmokeTool = {
 };
 
 /**
- * Run one tool as a tunneled service on `@personal-mcps/client`'s transport. The library
+ * Run one tool as a tunneled app on `@personal-mcps/client`'s transport. The library
  * owns everything below the frame — dial, `hub/register`, reconnects, close codes, pings;
  * this function is only the MCP session the walk has no SDK for, which is exactly the
  * split §11 draws (`serve(server, …)` is this, with a real SDK server in place of these
@@ -857,7 +857,7 @@ function answer(frame: { id?: unknown; method?: unknown; params?: unknown }, too
   }
   try {
     // `caller()` is the library's own reader of the hub's `_meta` assertion (§7) — the
-    // affordance a service author would use, exercised here on the live wire.
+    // affordance an app author would use, exercised here on the live wire.
     const value = tool.run(asRecord(params.arguments, "arguments"), caller(asRecord(params._meta, "_meta")));
     return {
       jsonrpc: "2.0",

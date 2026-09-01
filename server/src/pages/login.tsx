@@ -54,7 +54,7 @@ function switchMethod(method: "totp" | "backup-code"): string {
 
 /** The always-present redirect target, spelled out even when `redirectTo` is null. */
 function landingUrl(redirectTo: string | null): string {
-  return redirectTo ?? paths.services;
+  return redirectTo ?? paths.apps;
 }
 
 const CredentialsCard: FC<{ step: Extract<LoginStep, { kind: "credentials" }>; redirectTo: string | null }> = ({

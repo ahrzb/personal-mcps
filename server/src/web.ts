@@ -2,12 +2,12 @@
 // CSRF discipline for every form the hub serves. Deliberately the shallowest module in
 // the server — any depth here would be a web-only capability, which the parity
 // invariant (§8) forbids: every mutation a page performs calls an admin ops handler or
-// a better-auth endpoint (/login and /account ride better-auth — the pinned exception),
+// a better-auth endpoint (/login and /settings ride better-auth — the pinned exception),
 // so zero business logic lives here. What this module owns and hides: which
 // URL renders which template; CSRF issuance, and the ORDER in which a mutation is gated
 // (`mutation` — session, form, CSRF, then the body, written once so no handler can be
 // spelled without it); where cookie-session gating is applied
-// (identity.requireOwnerSession, with recent-auth on /account — the page AND every
+// (identity.requireOwnerSession, with recent-auth on /settings — the page AND every
 // credential POST it renders, both through that one wrapper); the CREDENTIAL
 // TRANSLATION routes, which are the only reason a credential form works at all —
 // better-auth's router takes `application/json` and nothing else, so a form posted at one
@@ -23,7 +23,7 @@
 // render — and the ops table is reached through that one seam on the read side and through
 // `dispatch` on the write side. better-auth is reached through identity's `callAuth` /
 // `callAuthResponse`, its one custodian (§4), and never dialled from this module directly —
-// the translation routes above call better-auth exactly the way /account's loader reads it.
+// the translation routes above call better-auth exactly the way /settings's loader reads it.
 //
 // Two things this module deliberately does not have. There is no route table export: a
 // page's URL is `paths`'s to spell (pages/model.ts) and the composition root mounts this
@@ -43,10 +43,10 @@ import { callAuth, callAuthResponse, formatPrincipal, requireOwnerSession } from
 import type { OwnerSession } from "./identity";
 import { upsertBinding } from "./oauth";
 import { Registry } from "./registry";
-import type { Service } from "./registry";
+import type { App } from "./registry";
 import { beginConnect } from "./upstream";
 import { approvalsFromEnv } from "./wiring";
-import { AccountPage } from "./pages/account";
+import { SettingsPage } from "./pages/settings";
 import { ApprovalDetail } from "./pages/approval-detail";
 import { ApprovalsPage } from "./pages/approvals";
 import { AuditPage } from "./pages/audit";
@@ -54,10 +54,10 @@ import { ConnectionsPage } from "./pages/connections";
 import { ConsentPage } from "./pages/consent";
 import { Device } from "./pages/device";
 import { Login } from "./pages/login";
-import { ServiceNewPage } from "./pages/service-new";
-import { ServicesPage } from "./pages/services";
+import { AppNewPage } from "./pages/app-new";
+import { AppsPage } from "./pages/apps";
 import {
-  accountProps,
+  settingsProps,
   approvalDetailProps,
   approvalsProps,
   auditFilters,
@@ -68,11 +68,11 @@ import {
   deviceProps,
   loginProps,
   paths,
-  serviceNewForm,
-  serviceNewProps,
-  servicesProps,
+  appNewForm,
+  appNewProps,
+  appsProps,
 } from "./pages/model";
-import type { Notice, PageContext, ServiceNewErrors } from "./pages/model";
+import type { Notice, PageContext, AppNewErrors } from "./pages/model";
 // The one stylesheet, as bytes a worker can serve (see the *.css declaration in
 // workers-env.d.ts for why an import is how it gets here).
 import styles from "./pages/styles.css";
@@ -99,7 +99,7 @@ type PageRouter = unknown;
  * - /device — the phishing-defense page (RFC 8628 §5.4): shows what the hub knows about
  *   the requesting client and states plainly that approval grants full admin CLI control
  *   of the namespace; the approval POST is CSRF-checked.
- * - /account — TOTP/passkey enrollment and removal, active sessions; requires recent
+ * - /settings — TOTP/passkey enrollment and removal, active sessions; requires recent
  *   authentication (§4), and its mutations ride better-auth's own endpoints — the
  *   pinned parity exception: no pmcp tool ever reaches credentials.
  * - /audit — read-only view over audit_query with its exact filters; desktop page
@@ -110,7 +110,7 @@ type PageRouter = unknown;
  *   reject POST into the approval_decide admin op; the per-browser "Enable
  *   notifications" control POSTs the browser's push subscription to
  *   approvals.subscribePush (approvals owns Web Push; this module only subscribes).
- * - /services, /services/new — service management fronting the service_* admin ops;
+ * - /apps, /apps/new — app management fronting the app_* admin ops;
  *   Connect/Reconnect redirect into the upstream module's OAuth initiation.
  * - /oauth/consent — §19.5's inbound-OAuth consent screen: the provider redirects an
  *   authenticated, uncovered authorization request here with a signed query the page
@@ -118,7 +118,7 @@ type PageRouter = unknown;
  *   BEFORE writing oauth_binding, so a refused request writes nothing.
  * - /oauth/connections — the bindings the consent screen produced, fronting
  *   connection_list/connection_revoke; Revoke rides the same generic dispatch as
- *   /services' own mutations.
+ *   /apps' own mutations.
  * - /manifest.webmanifest, /sw.js, /styles.css — the PWA shell: installability, push,
  *   and the one stylesheet. The service worker handles push + notificationclick
  *   (opening /approvals/<id>) and never intercepts navigation (the no-SPA pin, §13).
@@ -130,7 +130,7 @@ export function pageRoutes(): PageRouter {
   const app = new Hono();
 
   // A path under a browser segment that no page serves. The composition root hands this
-  // app whole subtrees, so this is where "/services/nonsense" is answered — and it is
+  // app whole subtrees, so this is where "/apps/nonsense" is answered — and it is
   // deliberately not the hub's anonymous 404 (index.ts's segmentNotFound says why).
   app.notFound(() => noSuchPage());
 
@@ -217,20 +217,20 @@ export function pageRoutes(): PageRouter {
     }),
   );
 
-  /* --------------------------------- /account --------------------------------- */
+  /* --------------------------------- /settings --------------------------------- */
 
   // §4/§13's recent-auth surface, whose other half is every credential POST below: a
   // session minted by the device flow never qualifies, and a browser session older than
   // better-auth's freshness window is sent through a fresh sign-in. Both refusals are
   // identity's, thrown as a redirect.
-  app.get(paths.account, async (c) => {
+  app.get(paths.settings, async (c) => {
     const session = await requireOwnerSession(c.req.raw, { recent: true });
     const ctx = await context(c.req.raw, session);
-    return render(AccountPage(await accountProps(ctx, c.req.raw)));
+    return render(SettingsPage(await settingsProps(ctx, c.req.raw)));
   });
 
-  // /account's credential forms, translated the same way /login's are and gated the way
-  // /account itself is: each is a `credential`, so session, RECENT AUTHENTICATION (§4) and
+  // /settings's credential forms, translated the same way /login's are and gated the way
+  // /settings itself is: each is a `credential`, so session, RECENT AUTHENTICATION (§4) and
   // CSRF are all proven before any of this runs. The pinned parity exception is untouched —
   // none of them names an op, and none of them reaches D1 except through better-auth (§8).
   app.post(
@@ -263,7 +263,7 @@ export function pageRoutes(): PageRouter {
 
   // The one translation that is more than a rename: the page knows a session by the `id`
   // its listing shows, and better-auth's revoke takes the session's TOKEN. Reading the
-  // listing again here is what maps one to the other — and is also why AccountProps'
+  // listing again here is what maps one to the other — and is also why SettingsProps'
   // session shape can keep leaving `token` out of the props entirely (§15).
   app.post(
     paths.auth.sessionRevoke,
@@ -323,17 +323,17 @@ export function pageRoutes(): PageRouter {
     return render(ApprovalDetail(props));
   });
 
-  /* -------------------------------- /services --------------------------------- */
+  /* -------------------------------- /apps --------------------------------- */
 
-  app.get(paths.services, async (c) => {
+  app.get(paths.apps, async (c) => {
     const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    return render(ServicesPage(await servicesProps(ctx)));
+    return render(AppsPage(await appsProps(ctx)));
   });
 
-  app.get(paths.serviceNew, async (c) => {
+  app.get(paths.appNew, async (c) => {
     const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
     return render(
-      ServiceNewPage(serviceNewProps(ctx, { kind: "form", form: serviceNewForm(ctx.query), errors: {} })),
+      AppNewPage(appNewProps(ctx, { kind: "form", form: appNewForm(ctx.query), errors: {} })),
     );
   });
 
@@ -342,12 +342,12 @@ export function pageRoutes(): PageRouter {
   // credential, and §4 shows that plaintext exactly once — in this response, never in a
   // URL (§15). An `auth: oauth` create redirects into consent instead (§7).
   app.post(
-    paths.serviceCreate,
+    paths.appCreate,
     mutation(async (c, session, form) => {
       const ctx = await context(c.req.raw, session);
-      const draft = serviceNewForm(formQuery(form));
+      const draft = appNewForm(formQuery(form));
       const created = await attempt(() =>
-        ops.service_create.handler(session.user.userId, {
+        ops.app_create.handler(session.user.userId, {
           slug: draft.slug,
           kind: draft.kind,
           name: draft.name,
@@ -359,8 +359,8 @@ export function pageRoutes(): PageRouter {
       );
       if ("reason" in created) {
         return render(
-          ServiceNewPage(
-            serviceNewProps(ctx, { kind: "form", form: draft, errors: createErrors(created.reason) }),
+          AppNewPage(
+            appNewProps(ctx, { kind: "form", form: draft, errors: createErrors(created.reason) }),
           ),
           400,
         );
@@ -368,16 +368,16 @@ export function pageRoutes(): PageRouter {
       if (draft.kind === "proxy" && draft.authMode === "oauth") {
         return connectRedirect(c, session, draft.slug);
       }
-      // A proxied service has nothing that connects, so it has no token to reveal (§6).
+      // A proxied app has nothing that connects, so it has no token to reveal (§6).
       const minted =
         draft.kind === "tunnel"
           ? await attempt(() =>
-              ops.token_issue.handler(session.user.userId, { kind: "service", slug: draft.slug }),
+              ops.token_issue.handler(session.user.userId, { kind: "app", slug: draft.slug }),
             )
           : null;
       return render(
-        ServiceNewPage(
-          serviceNewProps(ctx, {
+        AppNewPage(
+          appNewProps(ctx, {
             kind: "created",
             slug: draft.slug,
             name: draft.name === "" ? draft.slug : draft.name,
@@ -390,15 +390,15 @@ export function pageRoutes(): PageRouter {
 
   // Connect and Reconnect: §8's one browser-only interaction, which is why it fronts no
   // tool. Everything it does — discovery, client identity, the single-use state row —
-  // belongs to upstream; this hands it the service and the session and redirects.
+  // belongs to upstream; this hands it the app and the session and redirects.
   app.post(
-    paths.serviceConnect(""),
+    paths.appConnect(""),
     mutation((c, session) =>
       connectRedirect(c, session, new URL(c.req.url).searchParams.get("slug") ?? ""),
     ),
   );
 
-  app.post("/services/:op", dispatch(paths.services));
+  app.post("/apps/:op", dispatch(paths.apps));
 
   /* -------------------------------- /oauth/consent ------------------------------ */
   //
@@ -440,7 +440,7 @@ export function pageRoutes(): PageRouter {
         return new Response("Bad Request", { status: 400, headers: TEXT });
       }
       if (accept) {
-        const refused = await bindConsentedAccount(session, oauthQuery, field(form, "service_account") ?? "");
+        const refused = await bindConsentedAgent(session, oauthQuery, field(form, "agent") ?? "");
         if (refused !== null) return refused;
       }
       // The hub performs the final browser redirect (§19.5 step 4) — the provider already
@@ -456,7 +456,7 @@ export function pageRoutes(): PageRouter {
     return render(ConnectionsPage(await connectionsProps(ctx)));
   });
 
-  // Revoke, fronting connection_revoke exactly like /services fronts its own ops (§8's
+  // Revoke, fronting connection_revoke exactly like /apps fronts its own ops (§8's
   // parity direction B): the final path segment names the op, `id` rides the query string.
   app.post("/oauth/connections/:op", dispatch(paths.oauthConnections));
 
@@ -472,7 +472,7 @@ export function pageRoutes(): PageRouter {
         short_name: "pmcp",
         description: "The MCP hub's own console.",
         // Where an installed icon opens: the page an owner actually starts on.
-        start_url: paths.services,
+        start_url: paths.apps,
         scope: "/",
         display: "standalone",
         background_color: "#ffffff",
@@ -533,7 +533,7 @@ async function csrfTokenFor(sessionToken: string): Promise<string> {
  *
  * `gate` is what a stricter mutation asks the session gate for, and today that is §4's
  * recent authentication — `credential` below passes it, so every credential POST is held
- * to the same freshness /account's own render is. It rides HERE rather than at those five
+ * to the same freshness /settings's own render is. It rides HERE rather than at those five
  * routes because the gate is this wrapper's call to make: a route that named its own would
  * be a second place the order is written, and a route that forgot is the day-old-cookie
  * takeover §4 exists to refuse.
@@ -625,14 +625,14 @@ async function signInTranslation(
 }
 
 /**
- * /account's credential forms — the same translation with a session behind it, so it is a
+ * /settings's credential forms — the same translation with a session behind it, so it is a
  * `mutation` like every other page POST and the gate order is not restated here either.
  * `op` is the name the redirect-back flash reports the outcome under, exactly as an
  * ops-backed mutation reports its op key.
  *
  * ONE thing it asks of that gate beyond the ordinary: `recent: true`. §4 puts recent
  * authentication on credential MANAGEMENT, not on the page that displays it, so gating only
- * the /account render would leave a day-old cookie plus a password able to enrol a second
+ * the /settings render would leave a day-old cookie plus a password able to enrol a second
  * factor or revoke a session — and a browser posts these targets directly. It is spelled
  * once, here, because every credential route is spelled through this function: that is what
  * makes "all of them" true of the family rather than of the five that exist today.
@@ -647,7 +647,7 @@ function credential(
     const answered = await callAuthResponse(c.req.raw, endpoint, await body(form, c.req.raw));
     const succeeded = answered !== null && answered.ok;
     return redirectWith(
-      noticeUrl(paths.account, op, succeeded ? { value: null } : { reason: await refusalOf(answered) }),
+      noticeUrl(paths.settings, op, succeeded ? { value: null } : { reason: await refusalOf(answered) }),
       succeeded ? answered : null,
     );
   }, { recent: true });
@@ -673,7 +673,7 @@ function redirectWith(to: string, from: Response | null): Response {
  */
 function landingOf(form: FormData): string {
   const target = field(form, "callbackURL") ?? "";
-  return target.startsWith("/") && !target.startsWith("//") ? target : paths.services;
+  return target.startsWith("/") && !target.startsWith("//") ? target : paths.apps;
 }
 
 /** /login under a set of query fields; an absent or empty one leaves no trace. */
@@ -711,9 +711,9 @@ async function refusalOf(response: Response | null): Promise<string> {
 }
 
 /**
- * The session TOKEN behind one of /account's listed session ids. The page knows a session
+ * The session TOKEN behind one of /settings's listed session ids. The page knows a session
  * by the id its listing shows and better-auth's revoke takes the token, so the listing is
- * read again here to pair them — which is what lets AccountProps' session shape keep
+ * read again here to pair them — which is what lets SettingsProps' session shape keep
  * leaving `token` out of the props entirely (§15: a shape that named it is one careless
  * spread away from rendering it). The token exists in this function and dies with it.
  */
@@ -798,7 +798,7 @@ function noticeOf(query: URLSearchParams): Notice | null {
   };
 }
 
-/** `service_archive` → "Service archive" — an op key as a sentence's first words. */
+/** `app_archive` → "App archive" — an op key as a sentence's first words. */
 function humanize(op: string): string {
   const words = op.replace(/_/g, " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
@@ -849,7 +849,7 @@ function streamAuditJsonl(ownerId: string, filters: ReturnType<typeof auditQuery
  * ------------------------------------------------------------------ */
 
 /**
- * The Connect/Reconnect redirect. `beginConnect` needs the service ROW — its opaque id is
+ * The Connect/Reconnect redirect. `beginConnect` needs the app ROW — its opaque id is
  * what the state binds to — and no read op reports one (§3: the id is addressing, never
  * display data), which is the one place this module reads registry directly.
  */
@@ -858,13 +858,13 @@ async function connectRedirect(
   session: OwnerSession,
   slug: string,
 ): Promise<Response> {
-  const service: Service | null = await new Registry(env.DB).getService(session.user.userId, slug);
-  if (service === null) {
-    return c.redirect(noticeUrl(paths.services, "connect", { reason: "No such service." }), 303);
+  const app: App | null = await new Registry(env.DB).getApp(session.user.userId, slug);
+  if (app === null) {
+    return c.redirect(noticeUrl(paths.apps, "connect", { reason: "No such app." }), 303);
   }
-  const started = await attempt(() => beginConnect(service, { id: session.sessionId }));
+  const started = await attempt(() => beginConnect(app, { id: session.sessionId }));
   if ("reason" in started) {
-    return c.redirect(noticeUrl(paths.services, "connect", started), 303);
+    return c.redirect(noticeUrl(paths.apps, "connect", started), 303);
   }
   // No audit row of this module's own: the state row upstream just wrote IS the record
   // that a connect started, and `upstream.oauth_connected` records how it ended. A page
@@ -875,29 +875,29 @@ async function connectRedirect(
 /**
  * The consent POST's write half (§19.5 step 4), reached ONLY after the provider's own
  * `/oauth2/consent` has already accepted the request — this function never runs on a
- * refusal, so it never has to undo one. Resolves the CHOSEN account by slug scoped to the
- * signed-in owner (`Registry.getAccount`, the same scoping every op uses) — a slug naming
- * no account in THIS namespace, foreign or invented, is one refusal, and upsertBinding's own
+ * refusal, so it never has to undo one. Resolves the CHOSEN agent by slug scoped to the
+ * signed-in owner (`Registry.getAgent`, the same scoping every op uses) — a slug naming
+ * no agent in THIS namespace, foreign or invented, is one refusal, and upsertBinding's own
  * ownership check is the second independent proof of the same fact. `null` means it
  * succeeded; a Response means the whole POST answers that instead, writing nothing.
  */
-async function bindConsentedAccount(
+async function bindConsentedAgent(
   session: OwnerSession,
   oauthQuery: string,
-  accountSlug: string,
+  agentSlug: string,
 ): Promise<Response | null> {
   const clientId = new URLSearchParams(oauthQuery).get("client_id") ?? "";
-  const account =
-    clientId === "" || accountSlug === ""
+  const agent =
+    clientId === "" || agentSlug === ""
       ? null
-      : await new Registry(env.DB).getAccount(session.user.userId, accountSlug);
-  if (account === null) return new Response("Bad Request", { status: 400, headers: TEXT });
+      : await new Registry(env.DB).getAgent(session.user.userId, agentSlug);
+  if (agent === null) return new Response("Bad Request", { status: 400, headers: TEXT });
   const bound = await upsertBinding({
     ownerId: session.user.userId,
     clientId,
-    serviceAccountId: account.id,
+    agentId: agent.id,
   });
-  // Unreachable in practice — `account` was already scoped to this owner above, which is
+  // Unreachable in practice — `agent` was already scoped to this owner above, which is
   // the one thing upsertBinding refuses on — but the null case is answered rather than
   // asserted away, the same defensive posture domain() takes for a refusal it does not
   // expect either.
@@ -907,7 +907,7 @@ async function bindConsentedAccount(
     principal: formatPrincipal(session.user),
     event: bound.action === "consented" ? "oauth.consented" : "oauth.rebound",
     outcome: "ok",
-    detail: { clientId, account: accountSlug },
+    detail: { clientId, agent: agentSlug },
   });
   return null;
 }
@@ -936,15 +936,15 @@ function queryFields(req: Request): Record<string, string> {
   return Object.fromEntries(new URL(req.url).searchParams.entries());
 }
 
-/** A submitted form as a query bag, so the add-service form and the /services/new link
- *  are read back by exactly one function (pages/model's serviceNewForm). */
+/** A submitted form as a query bag, so the add-app form and the /apps/new link
+ *  are read back by exactly one function (pages/model's appNewForm). */
 function formQuery(form: FormData): URLSearchParams {
   return new URLSearchParams(Object.entries(formFields(form)));
 }
 
 /** A refused create, put under the control it is about — the field-scoped messages the
  *  form draws in red. admin's refusals name the field in quotes, which is what this reads. */
-function createErrors(reason: string): ServiceNewErrors {
+function createErrors(reason: string): AppNewErrors {
   for (const key of ["slug", "name", "endpoint"] as const) {
     if (reason.includes(`"${key}"`)) return { [key]: reason };
   }
@@ -999,14 +999,14 @@ const JAVASCRIPT = { "Content-Type": "text/javascript; charset=utf-8" } as const
 
 /**
  * The whole service worker (§13): a push handler and a notificationclick handler, and no
- * fetch handler at all. The payload approvals sends names the service, the tool and the
+ * fetch handler at all. The payload approvals sends names the app, the tool and the
  * approval id — never arguments (§15) — so what this displays is exactly what it was
  * given, and tapping it opens the decision page.
  */
 const SERVICE_WORKER = `self.addEventListener("push", function (event) {
   var payload = {};
   try { payload = event.data ? event.data.json() : {}; } catch (err) { payload = {}; }
-  var title = payload.service ? "Approval needed: " + payload.service : "Approval needed";
+  var title = payload.app ? "Approval needed: " + payload.app : "Approval needed";
   var body = payload.tool ? payload.tool + " is waiting for your decision" : "A request is waiting for your decision";
   event.waitUntil(
     self.registration.showNotification(title, {

@@ -24,7 +24,7 @@ are in **ordering, refusal, state, and concurrency**: the pipeline check order, 
 `hub/*` _meta stripping, redaction-before-hashing, the tunnel close-code protocol.
 Four green unit tests compose into a wrong order; only the pipeline exhibits the
 pipeline's bugs. So the center of gravity is **in-process integration inside
-workerd** (real D1, real Durable Object, fake service on a real WebSocket) — not
+workerd** (real D1, real Durable Object, fake app on a real WebSocket) — not
 per-function unit tests, and not deployed e2e, which can't express concurrency
 interleavings or exhaustive refusal matrices at all.
 

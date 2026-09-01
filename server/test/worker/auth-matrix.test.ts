@@ -4,11 +4,11 @@
 // hold honestly — that refusals are INDISTINGUISHABLE where the spec says they must be.
 // 401-vs-404 anti-enumeration (§7 step 1: no valid principal → 401 regardless of whether
 // `<user>` exists; a resolved principal on a foreign or absent namespace → 404,
-// indistinguishable from route-not-found), `pmcp_svc_` never falling through to session
+// indistinguishable from route-not-found), `pmcp_app_` never falling through to session
 // lookup, cookies never consulted on `/<user>/mcp*`, query-string tokens rejected, the
 // Content-Type requirement and the if-present-must-match Origin rule (403), §8's
 // `/api/whoami` mirror of the same resolution, §4/§13's session-scope guards (a
-// bearer-sourced device-flow session never reaches `/account`, and `/account` demands
+// bearer-sourced device-flow session never reaches `/settings`, and `/settings` demands
 // recent auth), §12's bootstrap route being 404-shaped while BOOTSTRAP_SECRET is
 // unset, and — since §7's 2026-08-26 amendment — that the `initialize` handshake is a
 // message behind that same door rather than a public preamble to it.
@@ -36,10 +36,10 @@
 // contracts.test.ts — this table pins the STATUS and the resolved principal, not the JSON.
 //
 // deps: harness/seed (two namespaces: the fixture owner and a foreign owner, each with an
-//   account, a live/revoked/expired token per kind, and a password session — the expired
+//   agent, a live/revoked/expired token per kind, and a password session — the expired
 //   one minted through TokenSpec.expired, i.e. issueToken at a backdated now(), so no row
 //   of this table sleeps) · ../../src/index (default.fetch, Env) · ../../src/identity
-//   (resolvePrincipal/resolveServiceToken and their optional now()) · ../../src/gateway ·
+//   (resolvePrincipal/resolveAppToken and their optional now()) · ../../src/gateway ·
 //   applyD1Migrations (setup) · env with and without BOOTSTRAP_SECRET
 
 import { env } from "cloudflare:test";
@@ -63,9 +63,9 @@ import type { SeededNamespace, SeededSession } from "../harness/seed";
  *
  * `namespace` is relative to the seeded fixture, never a literal username: "self" is the
  * credential's own namespace, "foreign" another live owner's, "absent" a username no row
- * has ever had. `slug` on the scoped route distinguishes the ways a service can be
- * invisible to a service account — ungranted, nonexistent, and the reserved `pmcp` no
- * account may ever hold a grant on (§8) — because §7 step 2 pins all three to ONE answer,
+ * has ever had. `slug` on the scoped route distinguishes the ways an app can be
+ * invisible to an agent — ungranted, nonexistent, and the reserved `pmcp` no
+ * agent may ever hold a grant on (§8) — because §7 step 2 pins all three to ONE answer,
  * beside the granted slug that is their allow-twin.
  *
  * `method` is what the row's JSON-RPC body ASKS for, and exists because the door is
@@ -83,7 +83,7 @@ export type AuthSurface =
       method?: McpMethod;
     }
   | { route: "whoami" }
-  | { route: "account"; recentAuth: boolean }
+  | { route: "settings"; recentAuth: boolean }
   | { route: "bootstrap"; secret: "unset" | "correct" | "wrong" };
 
 /**
@@ -96,7 +96,7 @@ export type McpMethod = "tools/list" | "initialize";
 
 /**
  * What the request carries. `kind` is the token table's own column (§4: kind is checked
- * as a column, never inferred from the prefix), so a row can express "a `pmcp_svc_` token
+ * as a column, never inferred from the prefix), so a row can express "a `pmcp_app_` token
  * presented as a consumer credential" — the never-a-session case — without the test
  * knowing the prefix strings. `state` covers every way a credential can be less than
  * valid; §7 pins them all to the SAME answer, which is why they are rows rather than
@@ -165,7 +165,7 @@ export type AuthOutcome =
  * themselves.
  */
 export type AuthMatrixRow = {
-  /** e.g. "§7 step 1 · `pmcp_svc_` bearer never falls through to session lookup". */
+  /** e.g. "§7 step 1 · `pmcp_app_` bearer never falls through to session lookup". */
   title: string;
   surface: AuthSurface;
   credential: AuthCredential;
@@ -186,11 +186,11 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   //
   // · `contentType`/`origin` are meaningful only on the `mcp-*` routes. Everywhere else
   //   they carry the neutral values ("absent"/"absent") and no expectation — the whoami,
-  //   /account, and bootstrap rows are about resolution and scope, not transport hygiene.
+  //   /settings, and bootstrap rows are about resolution and scope, not transport hygiene.
   // · Allow rows name THEMSELVES in `twin` (the type's rule), so the runner's twin check
   //   is total over the table without a nullable column.
   // · Every refusal names the allow row it differs from in as few columns as possible; the
-  //   anchor pair is row 1 (a live `pmcp_sa_` key) for machine credentials and row 6 (a
+  //   anchor pair is row 1 (a live `pmcp_agt_` key) for machine credentials and row 6 (a
   //   session as Bearer) for human ones. §9 rule 2 exists because a deny-only oracle is
   //   satisfied by `throw` everywhere — these two rows are what makes that impossible.
   // · The 401 rows on `/<user>/mcp*` and `/api/whoami` all set `wwwAuthenticate: true`:
@@ -201,71 +201,71 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   //   one, so its 401 row sets the column false.
 
   // ── §7 step 1: resolution dispatches on prefix ─────────────────────────────────────────
-  // §7 step 1: "`pmcp_sa_` prefix → SHA-256 lookup in `token` with an explicit
-  // `kind = 'service_account'` check (unrevoked, unexpired, `ref_id` resolves to a live
-  // service account) → service account." The anchor: the request every refusal below is one
+  // §7 step 1: "`pmcp_agt_` prefix → SHA-256 lookup in `token` with an explicit
+  // `kind = 'agent'` check (unrevoked, unexpired, `ref_id` resolves to a live
+  // agent) → agent." The anchor: the request every refusal below is one
   // column away from.
   {
-    title: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    title: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
     surface: { route: "mcp-aggregated", namespace: "self" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
-    expect: { verdict: "allow", principal: "service_account" },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    expect: { verdict: "allow", principal: "agent" },
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
   // §7 step 1's "unrevoked" clause; §15: "consumer tokens are checked on every request, so
   // revocation is immediate there."
   {
-    title: "§7 step 1 · a revoked `pmcp_sa_` key is refused 401 + WWW-Authenticate",
+    title: "§7 step 1 · a revoked `pmcp_agt_` key is refused 401 + WWW-Authenticate",
     surface: { route: "mcp-aggregated", namespace: "self" },
-    credential: { sort: "token", kind: "service_account", state: "revoked", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "revoked", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
   // §7 step 1's "unexpired" clause. The mechanism is seed's TokenSpec.expired (FINDINGS 2):
   // issue at a backdated now(), resolve under the real clock — the refusal sits beside its
   // live twin with nothing slept for and no mint-a-dead-token affordance in production code.
   {
-    title: "§7 step 1 · an expired `pmcp_sa_` key is refused identically to a revoked one — issued at a backdated now() and resolved past its expiry, never slept for",
+    title: "§7 step 1 · an expired `pmcp_agt_` key is refused identically to a revoked one — issued at a backdated now() and resolved past its expiry, never slept for",
     surface: { route: "mcp-aggregated", namespace: "self" },
-    credential: { sort: "token", kind: "service_account", state: "expired", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "expired", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
-  // §7 step 1's third clause: "`ref_id` resolves to a live service account". The token row
-  // itself is live and unexpired here — only its referent is gone (registry.deleteAccount
+  // §7 step 1's third clause: "`ref_id` resolves to a live agent". The token row
+  // itself is live and unexpired here — only its referent is gone (registry.deleteAgent
   // leaves `token.ref_id` dangling; §5 gives it no FK), so this row fails a check no other
   // row exercises and must still answer the same 401.
   {
-    title: "§7 step 1 · a `pmcp_sa_` key whose account row is gone is refused identically again",
+    title: "§7 step 1 · a `pmcp_agt_` key whose agent row is gone is refused identically again",
     surface: { route: "mcp-aggregated", namespace: "self" },
-    credential: { sort: "token", kind: "service_account", state: "referent-deleted", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "referent-deleted", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
-  // §7 step 1: "`pmcp_svc_` / `pmcp_sa_`-prefixed tokens **never** fall through to session
+  // §7 step 1: "`pmcp_app_` / `pmcp_agt_`-prefixed tokens **never** fall through to session
   // lookup". A perfectly valid credential — on /connect (§6) — and nothing at all here. The
   // mutation this catches is the "if the token lookup missed, try the session" shortcut.
   {
-    title: "§7 step 1 · a live `pmcp_svc_` key is refused and never falls through to session lookup",
+    title: "§7 step 1 · a live `pmcp_app_` key is refused and never falls through to session lookup",
     surface: { route: "mcp-aggregated", namespace: "self" },
-    credential: { sort: "token", kind: "service", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "app", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
   // §7 step 1: "anything else → better-auth session lookup → user", riding §4's `bearer()`
   // plugin. The human anchor — every session refusal below is one column from this row.
@@ -282,7 +282,7 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   // §4's device flow exists to issue "**session tokens** for the CLI", and §8 pins that the
   // CLI "performs every admin operation by calling these tools — the CLI has no private
   // admin API": a device-flow session MUST resolve to `user` on `/<user>/mcp*`, or the CLI
-  // cannot work at all. The row is here because its absence inverts the /account guard
+  // cannot work at all. The row is here because its absence inverts the /settings guard
   // below — a table holding only the reject half is satisfied by an implementation that
   // rejects bearer-sourced sessions EVERYWHERE, and §4's guard is a scope limit on the
   // credential-management routes, not a rejection of the credential.
@@ -319,34 +319,34 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
 
   // ── §7 step 1–2: namespaces never leak existence ──────────────────────────────────────
-  // The scoped allow-twin, spelled on the route where a service account can be told apart
+  // The scoped allow-twin, spelled on the route where an agent can be told apart
   // from a stranger: its own namespace, a slug it holds grants on. The 404 rows below each
   // differ from this row in exactly one column.
   {
-    title: "§7 step 1 · a resolved account on its own namespace is admitted",
+    title: "§7 step 1 · a resolved agent on its own namespace is admitted",
     surface: { route: "mcp-scoped", namespace: "self", slug: "granted" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
-    expect: { verdict: "allow", principal: "service_account" },
-    twin: "§7 step 1 · a resolved account on its own namespace is admitted",
+    expect: { verdict: "allow", principal: "agent" },
+    twin: "§7 step 1 · a resolved agent on its own namespace is admitted",
   },
   // §7 step 1: "A *resolved* principal on another user's namespace … → **404** (namespaces
   // don't leak existence)." 403 would confirm the namespace exists, which is the leak.
   {
-    title: "§7 step 1 · a resolved account on a foreign namespace gets 404, not 403",
+    title: "§7 step 1 · a resolved agent on a foreign namespace gets 404, not 403",
     surface: { route: "mcp-aggregated", namespace: "foreign" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 404, wwwAuthenticate: false },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
   // §18 decision 2: "Namespaces are silos … there is no sharing, no global admin." An OWNER
   // is not more privileged across the boundary than a machine — same answer, both kinds.
@@ -366,12 +366,12 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   {
     title: "§7 step 1 · any resolved principal on a nonexistent username gets 404 — byte-identical to route-not-found",
     surface: { route: "mcp-aggregated", namespace: "absent" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 404, wwwAuthenticate: false },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
   // §7 step 1: "**401** … regardless of whether `<user>` exists (so unauthenticated probes
   // can't enumerate usernames)". Byte-compared against the no-header row on the EXISTING
@@ -384,21 +384,21 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
-  // §7 step 2: "On the scoped endpoint a service account gets **404** both for a nonexistent
-  // slug and for a service it holds no grants on — indistinguishable, so zero-grant accounts
+  // §7 step 2: "On the scoped endpoint an agent gets **404** both for a nonexistent
+  // slug and for an app it holds no grants on — indistinguishable, so zero-grant agents
   // can't enumerate the namespace." One column from its twin (the granted slug), and byte-
   // compared by the runner against the same request on a slug no row has ever had.
   {
-    title: "§7 step 2 · a service account on a scoped slug it holds no grants on gets 404 — identical to a nonexistent slug",
+    title: "§7 step 2 · an agent on a scoped slug it holds no grants on gets 404 — identical to a nonexistent slug",
     surface: { route: "mcp-scoped", namespace: "self", slug: "ungranted" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 404, wwwAuthenticate: false },
-    twin: "§7 step 1 · a resolved account on its own namespace is admitted",
+    twin: "§7 step 1 · a resolved agent on its own namespace is admitted",
   },
   // The other half of that same sentence, and the reason it is a ROW rather than a request
   // the runner improvises: indistinguishability is a sameness property, so both sides have
@@ -406,26 +406,26 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   // describes. Every other sameness pair here is spelled as two rows for exactly that
   // reason (401-existing beside 401-absent, 404-foreign beside 404-absent-username).
   {
-    title: "§7 step 2 · a service account on a scoped slug that does not exist gets the same 404 — the pair's other half, byte-compared against it",
+    title: "§7 step 2 · an agent on a scoped slug that does not exist gets the same 404 — the pair's other half, byte-compared against it",
     surface: { route: "mcp-scoped", namespace: "self", slug: "absent" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 404, wwwAuthenticate: false },
-    twin: "§7 step 1 · a resolved account on its own namespace is admitted",
+    twin: "§7 step 1 · a resolved agent on its own namespace is admitted",
   },
   // §8: "The `pmcp` slug is **reserved and virtual** … Access is admin (user) tokens only in
-  // v1 — service accounts can't hold `pmcp` grants", and §7 step 2 supplies the answer: a
-  // slug an account holds no grants on is a 404. So the admin endpoint owes a machine
+  // v1 — agents can't hold `pmcp` grants", and §7 step 2 supplies the answer: a
+  // slug an agent holds no grants on is a 404. So the admin endpoint owes a machine
   // credential the ORDINARY 404 — never a 401 (which would say "authenticate differently"),
   // never a JSON-RPC code (which would confirm the builtin exists). §7 L470-471 names
   // `/<user>/mcp/pmcp` a first-class surface, so this is an auth-table answer, not an
   // admin-pipeline detail.
   {
-    title: "§8 · a live service-account key on scoped /mcp/pmcp gets 404 — the same answer as any slug it holds no grants on, never a 401",
+    title: "§8 · a live agent key on scoped /mcp/pmcp gets 404 — the same answer as any slug it holds no grants on, never a 401",
     surface: { route: "mcp-scoped", namespace: "self", slug: "pmcp" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
@@ -465,12 +465,12 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   {
     title: "§7 step 1 · a valid key in the query string is refused; the same key as a bearer is admitted (its twin)",
     surface: { route: "mcp-aggregated", namespace: "self" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "query-string",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
   // §7 step 1: "`Content-Type: application/json` is required". The status is pinned by
   // elimination, not by prose: the outcome vocabulary offers 401/403/404, the foreign-Origin
@@ -479,7 +479,7 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   //
   // OPEN, and deliberately left as it stands rather than guessed at a second time. §7 gives
   // the Origin failure an explicit 403 and gives this one no status at all, so the silence
-  // is conspicuous; the credential here is a live `pmcp_sa_` key, which DOES resolve to a
+  // is conspicuous; the credential here is a live `pmcp_agt_` key, which DOES resolve to a
   // valid principal, so §7 step 1's own definition of the 401 ("any request that doesn't
   // resolve to a valid principal") does not reach it, and the conventional answers (415,
   // 400) cannot even be spelled in AuthOutcome. Resolving this is an owner decision
@@ -489,12 +489,12 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   {
     title: "§7 step 1 · a non-JSON Content-Type is refused; `application/json` is admitted",
     surface: { route: "mcp-aggregated", namespace: "self" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "text/plain",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
   },
   // §7 step 1: "requests without an `Origin` pass — every legitimate consumer (CLI, agents,
   // server-side MCP clients) is a non-browser client that sends none". Deliberately the same
@@ -503,11 +503,11 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   {
     title: "§7 step 1 · an absent Origin is admitted — every legitimate consumer sends none",
     surface: { route: "mcp-aggregated", namespace: "self" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
-    expect: { verdict: "allow", principal: "service_account" },
+    expect: { verdict: "allow", principal: "agent" },
     twin: "§7 step 1 · an absent Origin is admitted — every legitimate consumer sends none",
   },
   // §7 step 1: "an `Origin` header, when present, must match the hub's own origin" — the
@@ -515,11 +515,11 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   {
     title: "§7 step 1 · an Origin equal to the hub's origin is admitted",
     surface: { route: "mcp-aggregated", namespace: "self" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "hub",
-    expect: { verdict: "allow", principal: "service_account" },
+    expect: { verdict: "allow", principal: "agent" },
     twin: "§7 step 1 · an Origin equal to the hub's origin is admitted",
   },
   // §7 step 1: "(else **403**)" — the same if-present-must-match semantics as the SDK's
@@ -527,7 +527,7 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   {
     title: "§7 step 1 · a foreign Origin is refused 403 — the one 403 on this surface",
     surface: { route: "mcp-aggregated", namespace: "self" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "foreign",
@@ -540,14 +540,14 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   // whoami suite for exactly that reason: a mirror that drifts is the bug, and it can only
   // be seen with both surfaces under one oracle. The body shape is contracts.test.ts's.
   {
-    title: "§8 · a `pmcp_sa_` key resolves to the service-account principal in the owner's namespace",
+    title: "§8 · a `pmcp_agt_` key resolves to the agent principal in the owner's namespace",
     surface: { route: "whoami" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "absent",
     origin: "absent",
-    expect: { verdict: "allow", principal: "service_account" },
-    twin: "§8 · a `pmcp_sa_` key resolves to the service-account principal in the owner's namespace",
+    expect: { verdict: "allow", principal: "agent" },
+    twin: "§8 · a `pmcp_agt_` key resolves to the agent principal in the owner's namespace",
   },
   {
     title: "§8 · a session resolves to the user principal",
@@ -559,17 +559,17 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
     expect: { verdict: "allow", principal: "user" },
     twin: "§8 · a session resolves to the user principal",
   },
-  // §8: "a `pmcp_svc_`-prefixed bearer → **401**, never a session lookup." The mirror of the
+  // §8: "a `pmcp_app_`-prefixed bearer → **401**, never a session lookup." The mirror of the
   // never-fall-through rule, on the one route the CLI reaches before it knows its own name.
   {
-    title: "§8 · a `pmcp_svc_` key is refused 401, never a session lookup",
+    title: "§8 · a `pmcp_app_` key is refused 401, never a session lookup",
     surface: { route: "whoami" },
-    credential: { sort: "token", kind: "service", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "app", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "absent",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§8 · a `pmcp_sa_` key resolves to the service-account principal in the owner's namespace",
+    twin: "§8 · a `pmcp_agt_` key resolves to the agent principal in the owner's namespace",
   },
   // §8: "no valid principal → **401** with `WWW-Authenticate: Bearer`."
   {
@@ -580,21 +580,21 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
     contentType: "absent",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§8 · a `pmcp_sa_` key resolves to the service-account principal in the owner's namespace",
+    twin: "§8 · a `pmcp_agt_` key resolves to the agent principal in the owner's namespace",
   },
 
-  // ── §4/§13: session-scope guards on /account ──────────────────────────────────────────
+  // ── §4/§13: session-scope guards on /settings ──────────────────────────────────────────
   // §4: credential-management endpoints "require a cookie-authenticated web session with
   // recent authentication". The twin both guards below are one column from.
   {
-    title: "§4 · a password session with recent auth reaches /account (the twin)",
-    surface: { route: "account", recentAuth: true },
+    title: "§4 · a password session with recent auth reaches /settings (the twin)",
+    surface: { route: "settings", recentAuth: true },
     credential: { sort: "session", source: "password", owner: "self" },
     carrier: "cookie",
     contentType: "absent",
     origin: "absent",
     expect: { verdict: "allow", principal: "user" },
-    twin: "§4 · a password session with recent auth reaches /account (the twin)",
+    twin: "§4 · a password session with recent auth reaches /settings (the twin)",
   },
   // §4: "bearer-sourced (CLI) sessions are rejected there, so a stolen CLI token cannot
   // enroll new credentials and become persistent account takeover" — and identity's guard
@@ -602,25 +602,25 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   // the CARRIER is right and the session's ORIGIN is not.
   {
     title: "§4 · a device-flow (bearer-sourced) session replayed as a cookie is sent to /login instead",
-    surface: { route: "account", recentAuth: true },
+    surface: { route: "settings", recentAuth: true },
     credential: { sort: "session", source: "device-flow", owner: "self" },
     carrier: "cookie",
     contentType: "absent",
     origin: "absent",
     expect: { verdict: "login-redirect" },
-    twin: "§4 · a password session with recent auth reaches /account (the twin)",
+    twin: "§4 · a password session with recent auth reaches /settings (the twin)",
   },
   // §13/§4: the recency half of the same guard — a week-old browser session is a session,
   // and still not enough to enroll a second factor.
   {
     title: "§13 · a password session without recent auth is forced through a fresh sign-in",
-    surface: { route: "account", recentAuth: false },
+    surface: { route: "settings", recentAuth: false },
     credential: { sort: "session", source: "password", owner: "self" },
     carrier: "cookie",
     contentType: "absent",
     origin: "absent",
     expect: { verdict: "login-redirect" },
-    twin: "§4 · a password session with recent auth reaches /account (the twin)",
+    twin: "§4 · a password session with recent auth reaches /settings (the twin)",
   },
 
   // ── §12: the bootstrap route exists only while its secret does ────────────────────────
@@ -692,14 +692,14 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   // scoped row, because §7 step 2's visibility 404 is decided at the same door and a
   // handshake that preceded it would leak slug existence the same way.
   {
-    title: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+    title: "§7 step 1 · a live `pmcp_agt_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
     surface: { route: "mcp-aggregated", namespace: "self", method: "initialize" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "allow", principal: "none" },
-    twin: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
   },
   // §7 step 1: "any request that doesn't resolve to a valid principal → **401**" — a
   // request, not a request whose method the hub happens to need state for.
@@ -711,7 +711,7 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
   },
   // The fall-through floor, re-asked: a bearer matching no prefix and no session.
   {
@@ -722,19 +722,19 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
   },
-  // §7 step 1's never-fall-through rule on the handshake: a `pmcp_svc_` key is a perfectly
+  // §7 step 1's never-fall-through rule on the handshake: a `pmcp_app_` key is a perfectly
   // valid credential on /connect (§6) and nothing at all here, whatever it asks for.
   {
-    title: "§7 step 1 · an `initialize` under a live `pmcp_svc_` key is refused 401 — the wrong-kind credential never falls through on the handshake either",
+    title: "§7 step 1 · an `initialize` under a live `pmcp_app_` key is refused 401 — the wrong-kind credential never falls through on the handshake either",
     surface: { route: "mcp-aggregated", namespace: "self", method: "initialize" },
-    credential: { sort: "token", kind: "service", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "app", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 401, wwwAuthenticate: true },
-    twin: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
   },
   // §7 step 2, on the shape the amendment also serves: visibility is decided before the
   // body is read, so a handshake at an ungranted slug is the namespace's ordinary 404 —
@@ -742,12 +742,12 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   {
     title: "§7 step 2 · an `initialize` at a scoped slug the caller holds no grants on gets the namespace's 404 — the handshake never precedes visibility",
     surface: { route: "mcp-scoped", namespace: "self", slug: "ungranted", method: "initialize" },
-    credential: { sort: "token", kind: "service_account", state: "live", owner: "self" },
+    credential: { sort: "token", kind: "agent", state: "live", owner: "self" },
     carrier: "authorization-bearer",
     contentType: "application/json",
     origin: "absent",
     expect: { verdict: "refuse", status: 404, wwwAuthenticate: false },
-    twin: "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+    twin: "§7 step 1 · a live `pmcp_agt_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
   },
 ];
 
@@ -842,7 +842,7 @@ export function runTableInvariants(): void {
     const trio = [
       await answerTo(TITLES.ungrantedSlug),
       await answerTo(TITLES.absentSlug),
-      await answerTo(TITLES.pmcpForAccount),
+      await answerTo(TITLES.pmcpForAgent),
     ];
     expect(new Set(trio).size, `the scoped 404s differ: ${trio.join(" | ")}`).toBe(1);
   });
@@ -876,13 +876,13 @@ const GARBAGE_BEARER = "FAKE0000-neither-a-token-nor-a-session";
 /** The statuses this table's refusals are spelled in; an allow row is none of them. */
 const REFUSAL_STATUSES = [401, 403, 404];
 
-/** The `pmcp_sa_` token states the credential column names, keyed as its `state` is. */
-type TokenHandle = "live" | "revoked" | "expired" | "referent-deleted" | "service";
+/** The `pmcp_agt_` token states the credential column names, keyed as its `state` is. */
+type TokenHandle = "live" | "revoked" | "expired" | "referent-deleted" | "app";
 
 /**
  * One session as a row presents it: the raw token, and the browser cookie IF one exists.
  * A device-flow session has none — the hub mints no cookie for the CLI — which is the
- * difference the /account rows turn on.
+ * difference the /settings rows turn on.
  */
 type PresentedSession = { token: string; cookie: string | null };
 
@@ -903,16 +903,16 @@ let fixture: Fixture;
 
 beforeAll(async () => {
   const self = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
         slug: GRANTED_SLUG,
         kind: "proxy",
         upstreamUrl: "https://upstream.invalid/mcp",
         roles: { reader: ["get.*"] },
       },
-      { slug: UNGRANTED_SLUG, kind: "tunnel", tokens: [{ as: "service" }] },
+      { slug: UNGRANTED_SLUG, kind: "tunnel", tokens: [{ as: "app" }] },
     ],
-    accounts: [
+    agents: [
       {
         slug: "agent",
         grants: { [GRANTED_SLUG]: [{ role: "reader", mode: "allow" }] },
@@ -927,12 +927,12 @@ beforeAll(async () => {
     ],
   });
   // §7 step 1's third clause, seeded through the seam that actually produces it:
-  // registry.deleteAccount removes the account and leaves `token.ref_id` dangling (§5
+  // registry.deleteAgent removes the agent and leaves `token.ref_id` dangling (§5
   // gives that reference no FK), so the credential is live and its referent is gone.
-  await new Registry(env.DB).deleteAccount(self.accounts.ghost.id);
+  await new Registry(env.DB).deleteAgent(self.agents.ghost.id);
 
   const foreign = await seedNamespace(env.DB, {});
-  // Two sign-ins, because the /account rows need a browser session on each side of the
+  // Two sign-ins, because the /settings rows need a browser session on each side of the
   // recency line and aging one must not age the other.
   const fresh = await seedOwnerSession(self.owner);
   const stale = await seedOwnerSession(self.owner);
@@ -1050,8 +1050,8 @@ function urlFor(row: AuthMatrixRow): string {
       return `${ORIGIN}/${namespaceFor(row.surface.namespace)}/mcp/${slugFor(row.surface.slug)}`;
     case "whoami":
       return `${ORIGIN}/api/whoami`;
-    case "account":
-      return `${ORIGIN}/account`;
+    case "settings":
+      return `${ORIGIN}/settings`;
     case "bootstrap":
       return `${ORIGIN}/internal/users`;
   }
@@ -1081,19 +1081,19 @@ function credentialFor(row: AuthMatrixRow): string | null {
 
 /** Which seeded token a `token` credential means — one handle per (kind, state) pair. */
 function tokenHandleFor(credential: Extract<AuthCredential, { sort: "token" }>): TokenHandle {
-  return credential.kind === "service" ? "service" : credential.state;
+  return credential.kind === "app" ? "app" : credential.state;
 }
 
 /**
  * Which seeded session a `session` credential means. The password sessions are two — a
  * fresh one and one aged past recency — and the row that asks for the aged one is the
- * /account row whose surface says `recentAuth: false`: recency is a property of the
+ * /settings row whose surface says `recentAuth: false`: recency is a property of the
  * session presented, and the surface column is where the table spells it.
  */
 function sessionFor(row: AuthMatrixRow): PresentedSession {
   if (row.credential.sort !== "session") throw new Error(`${row.title} presents no session`);
   if (row.credential.source === "device-flow") return fixture.sessions.device;
-  const stale = row.surface.route === "account" && !row.surface.recentAuth;
+  const stale = row.surface.route === "settings" && !row.surface.recentAuth;
   return stale ? fixture.sessions.stale : fixture.sessions.fresh;
 }
 
@@ -1120,7 +1120,7 @@ function bodyFor(row: AuthMatrixRow): string | undefined {
 }
 
 /** The JSON-RPC method a row asks for, or undefined on the surfaces that speak no
- *  JSON-RPC at all (whoami, /account, bootstrap). */
+ *  JSON-RPC at all (whoami, /settings, bootstrap). */
 function mcpMethodOf(surface: AuthSurface): McpMethod | undefined {
   if (surface.route !== "mcp-aggregated" && surface.route !== "mcp-scoped") return undefined;
   return surface.method ?? "tools/list";
@@ -1178,8 +1178,8 @@ function envFor(row: AuthMatrixRow): Partial<Env> {
  * own vocabulary:
  *
  * · whoami says it outright, in its body.
- * · The consumer endpoints say it through §8's one asymmetry: the builtin `pmcp` service
- *   participates in an OWNER's listing and can never appear in a service account's. So
+ * · The consumer endpoints say it through §8's one asymmetry: the builtin `pmcp` app
+ *   participates in an OWNER's listing and can never appear in an agent's. So
  *   "did the tools this caller was served include the builtin" IS the pipeline's
  *   statement about the principal it resolved, for the exact request the row made. That
  *   covers every aggregated row and the scoped `/mcp/pmcp` one.
@@ -1188,9 +1188,9 @@ function envFor(row: AuthMatrixRow): Partial<Env> {
  * back to calling the guard by hand — which is a stated CEILING, not an oracle: their
  * `principal` half is proven against identity, while the surface itself is proven only to
  * have admitted.
- * · /account — the page behind the guard is a 501 stub.
+ * · /settings — the page behind the guard is a 501 stub.
  * · scoped `/mcp/<granted>` — a tools/list there names tools, not callers, and the row's
- *   service is a proxied one whose far side is unreachable in this fixture.
+ *   app is a proxied one whose far side is unreachable in this fixture.
  * Both close the day the row's outcome vocabulary may say `principal: "none"` for a
  * surface that answers no principal — a member §12's bootstrap rows already use.
  */
@@ -1224,7 +1224,7 @@ async function expectAdmittedAs(row: AuthMatrixRow, response: Response): Promise
       expect(principalKindOf(body.principal)).toBe(expected);
       return;
     }
-    case "account": {
+    case "settings": {
       // Ceiling, not oracle — the header above says why.
       const session = await requireOwnerSession(requestFor(row), { recent: row.surface.recentAuth });
       expect(session.user.kind).toBe(expected);
@@ -1240,7 +1240,7 @@ async function expectAdmittedAs(row: AuthMatrixRow, response: Response): Promise
       expect(served, `${row.title}: the pipeline answered no tool list`).not.toBeNull();
       expect(
         (served ?? []).some(namesTheBuiltin),
-        `${row.title}: an owner's listing carries the builtin and an account's never can (§8) — got ${JSON.stringify(served)}`,
+        `${row.title}: an owner's listing carries the builtin and an agent's never can (§8) — got ${JSON.stringify(served)}`,
       ).toBe(expected === "user");
     }
   }
@@ -1257,18 +1257,18 @@ async function servedTools(response: Response): Promise<string[] | null> {
 /**
  * Whether a served tool name is one of the builtin's — `pmcp_<op>` on the aggregated
  * endpoint, bare on scoped `/mcp/pmcp`. One op name is enough to recognize the table, and
- * `service_list` is the op §8 pins first.
+ * `app_list` is the op §8 pins first.
  */
 function namesTheBuiltin(name: string): boolean {
   return name === BUILTIN_OP || name === `${PMCP_SLUG}_${BUILTIN_OP}`;
 }
 
-/** An op no other service could plausibly serve — the builtin's fingerprint (§8). */
-const BUILTIN_OP = "service_list";
+/** An op no other app could plausibly serve — the builtin's fingerprint (§8). */
+const BUILTIN_OP = "app_list";
 
-/** `user:` / `sa:` back to the kind — formatPrincipal's one format, read the other way. */
+/** `user:` / `agent:` back to the kind — formatPrincipal's one format, read the other way. */
 function principalKindOf(principal: string): Principal["kind"] {
-  if (principal.startsWith("sa:")) return "service_account";
+  if (principal.startsWith("agent:")) return "agent";
   if (principal.startsWith("user:")) return "user";
   throw new Error(`unrecognized principal string: ${principal}`);
 }
@@ -1296,15 +1296,15 @@ const TITLES = {
   noHeaderOnSelf: "§7 step 1 · no Authorization header at all is refused with the same 401",
   noHeaderOnAbsent:
     "§7 step 1 · an unauthenticated request gets the same 401 whether `<user>` exists or not",
-  foreignNamespace: "§7 step 1 · a resolved account on a foreign namespace gets 404, not 403",
+  foreignNamespace: "§7 step 1 · a resolved agent on a foreign namespace gets 404, not 403",
   absentUsername:
     "§7 step 1 · any resolved principal on a nonexistent username gets 404 — byte-identical to route-not-found",
   ungrantedSlug:
-    "§7 step 2 · a service account on a scoped slug it holds no grants on gets 404 — identical to a nonexistent slug",
+    "§7 step 2 · an agent on a scoped slug it holds no grants on gets 404 — identical to a nonexistent slug",
   absentSlug:
-    "§7 step 2 · a service account on a scoped slug that does not exist gets the same 404 — the pair's other half, byte-compared against it",
-  pmcpForAccount:
-    "§8 · a live service-account key on scoped /mcp/pmcp gets 404 — the same answer as any slug it holds no grants on, never a 401",
+    "§7 step 2 · an agent on a scoped slug that does not exist gets the same 404 — the pair's other half, byte-compared against it",
+  pmcpForAgent:
+    "§8 · a live agent key on scoped /mcp/pmcp gets 404 — the same answer as any slug it holds no grants on, never a 401",
 } as const;
 
 /**
@@ -1314,13 +1314,13 @@ const TITLES = {
  * be the change amplification this file exists to avoid).
  */
 const SECTION_ANCHORS = [
-  "§7 step 1 · a live `pmcp_sa_` key resolves to its service account (the anchor allow-twin)",
-  "§7 step 1 · a resolved account on its own namespace is admitted",
+  "§7 step 1 · a live `pmcp_agt_` key resolves to its agent (the anchor allow-twin)",
+  "§7 step 1 · a resolved agent on its own namespace is admitted",
   "§7 step 1 · a valid session cookie with no Authorization header is refused on /mcp — cookies are never consulted",
-  "§8 · a `pmcp_sa_` key resolves to the service-account principal in the owner's namespace",
-  "§4 · a password session with recent auth reaches /account (the twin)",
+  "§8 · a `pmcp_agt_` key resolves to the agent principal in the owner's namespace",
+  "§4 · a password session with recent auth reaches /settings (the twin)",
   "§12 · with BOOTSTRAP_SECRET unset, every request 404s — indistinguishable from an unknown path",
-  "§7 step 1 · a live `pmcp_sa_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
+  "§7 step 1 · a live `pmcp_agt_` key opens the MCP handshake — `initialize` is behind the auth door and answered through it (the handshake allow-twin)",
 ] as const;
 
 /** The sections as slices, computed once — a malformed anchor list fails at import. */
@@ -1348,7 +1348,7 @@ describe("§8 — /api/whoami mirrors step 1 exactly", () => {
   runAuthMatrix(SECTIONS[3]);
 });
 
-describe("§4/§13 — session-scope guards on /account", () => {
+describe("§4/§13 — session-scope guards on /settings", () => {
   runAuthMatrix(SECTIONS[4]);
 });
 
@@ -1376,7 +1376,7 @@ describe("§12 — the bootstrap route exists only while its secret does", () =>
     expect(response.ok).toBe(false);
     // And the namespace it tried to claim does not exist afterwards.
     const whoami = await call(
-      new Request(`${ORIGIN}/api/whoami`, { headers: { authorization: "Bearer pmcp_sa_FAKE0000" } }),
+      new Request(`${ORIGIN}/api/whoami`, { headers: { authorization: "Bearer pmcp_agt_FAKE0000" } }),
     );
     expect(whoami.status).toBe(401);
   });
@@ -1391,9 +1391,9 @@ describe("the table's own invariants", () => {
 });
 
 /**
- * §4's session-scope guard, at the door the /account wrappers do not stand in front of.
+ * §4's session-scope guard, at the door the /settings wrappers do not stand in front of.
  *
- * The rows above pin that a device-flow session cannot reach `/account`, and identity's
+ * The rows above pin that a device-flow session cannot reach `/settings`, and identity's
  * `requireOwnerSession` earns that by reading Cookie ONLY. But better-auth's own credential
  * endpoints are live on the same public `/api/auth` mount, and §4's `bearer()` plugin
  * rewrites any `Authorization` header into a session for better-auth's middleware — so a
@@ -1425,7 +1425,7 @@ describe("§4 — the credential family is out of a bearer's reach on better-aut
    * as a list of family names cannot see them: better-auth serves `/list-accounts` and
    * `/unlink-account` on this mount from its core, under no plugin this hub configured, so
    * a guard that enumerates has to have been told about them. §4's harm sentence is these
-   * two exactly — the login methods behind the account are what "enroll new credentials
+   * two exactly — the login methods behind the agent are what "enroll new credentials
    * and become persistent account takeover" means. `/unlink-account` is driven with a body
    * better-auth rejects on purpose: under red the guard is not there, and a valid body
    * would have taken the fixture owner's password login away with it.
@@ -1456,9 +1456,9 @@ describe("§4 — the credential family is out of a bearer's reach on better-aut
 
   // The carrier is what the gate reads, not the session's source — which is the whole
   // reason it is structural. A password session is the ONE session §4 lets near credential
-  // management, and even it may only arrive as the signed cookie the /account rows above
+  // management, and even it may only arrive as the signed cookie the /settings rows above
   // present (their allow-twin, not duplicated here).
-  it("§4 · a password-sourced session presented as a bearer is refused there too — the same session's cookie is what /account accepts", async () => {
+  it("§4 · a password-sourced session presented as a bearer is refused there too — the same session's cookie is what /settings accepts", async () => {
     const response = await call(bearerCall("POST", "/revoke-sessions", fixture.sessions.fresh.token, {}));
     expect(response.status).toBe(403);
     expect(await response.text()).not.toContain(fixture.sessions.fresh.token);
@@ -1562,7 +1562,7 @@ function bearerCall(
 // ─────────────────────────────── §19: the OAuth door ───────────────────────────────
 //
 // §19.6/§19.8, the OAuth leg of the same door §7 step 1 owns: a JWT-shaped bearer becomes a
-// `service_account` principal indistinguishable from that account's `pmcp_sa_` key, or one of
+// `agent` principal indistinguishable from that agent's `pmcp_agt_` key, or one of
 // many 401s. These are agent-written cases, NOT AUTH_MATRIX_ROWS (strategy §9 rule 1: agents
 // author no oracle rows), beside the §12 sign-up and §4 credential-family blocks — for the same
 // reason: the OAuth surface is a surface of ours whether or not a row of the owner's table names
@@ -1574,7 +1574,7 @@ function bearerCall(
 // header (§19.7), then binds the client with the same `oauth.upsertBinding` seam the consent page
 // uses. The refusal cases each reach a state the door must reject — a foreign audience, an expired
 // exp, a missing `mcp` scope, a scoped-URL audience, a tampered signature, no binding, a revoked
-// one, a deleted account — each beside its live allow-twin (the same valid token, or the account's
+// one, a deleted agent — each beside its live allow-twin (the same valid token, or the agent's
 // key). The crown jewel is `§7/§19.6 · no OAuth-leg failure resolves as the owner`: a JWT-shaped
 // bearer that fails on anything is a 401, never a fall-through to the session lookup.
 
@@ -1586,7 +1586,7 @@ const OAUTH_REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback";
 const PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 const PKCE_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
-/** The door fixture's two proxied services — one the account has a grant on, one it does not.
+/** The door fixture's two proxied apps — one the agent has a grant on, one it does not.
  *  Proxied to an unreachable upstream: the pipeline is reached (past the door) and answers the
  *  SAME bytes for either carrier, which is all these cases read. */
 const DOOR_GRANTED = "news";
@@ -1689,10 +1689,10 @@ async function driveOAuth(opts: {
   return { token: accessToken, clientId };
 }
 
-/** Bind a client to a service account through the consent page's own seam (§19.5). */
-async function bindClient(ownerId: string, clientId: string, serviceAccountId: string): Promise<{ id: string }> {
-  const upsert = await upsertBinding({ ownerId, clientId, serviceAccountId });
-  if (upsert === null) throw new Error("bindClient: the account is not in that namespace");
+/** Bind a client to an agent through the consent page's own seam (§19.5). */
+async function bindClient(ownerId: string, clientId: string, agentId: string): Promise<{ id: string }> {
+  const upsert = await upsertBinding({ ownerId, clientId, agentId });
+  if (upsert === null) throw new Error("bindClient: the agent is not in that namespace");
   return { id: upsert.id };
 }
 
@@ -1737,8 +1737,8 @@ async function bindingLastUsed(id: string): Promise<number | null> {
 }
 
 /**
- * The door fixture: one namespace with a granted and an ungranted proxied service, an `agent`
- * account holding a `pmcp_sa_` key and a live OAuth binding, and a SECOND namespace whose token's
+ * The door fixture: one namespace with a granted and an ungranted proxied app, an `agent`
+ * agent holding a `pmcp_agt_` key and a live OAuth binding, and a SECOND namespace whose token's
  * audience is deliberately foreign to the first.
  */
 type DoorFixture = {
@@ -1757,11 +1757,11 @@ let door: DoorFixture;
 describe("§19.6/§19.8 — the OAuth door", () => {
   beforeAll(async () => {
     const self = await seedNamespace(env.DB, {
-      services: [
+      apps: [
         { slug: DOOR_GRANTED, kind: "proxy", upstreamUrl: DOOR_UPSTREAM, roles: { reader: ["get.*"] } },
         { slug: DOOR_UNGRANTED, kind: "proxy", upstreamUrl: DOOR_UPSTREAM, roles: { reader: ["get.*"] } },
       ],
-      accounts: [
+      agents: [
         {
           slug: "agent",
           grants: { [DOOR_GRANTED]: [{ role: "reader", mode: "allow" }] },
@@ -1771,22 +1771,22 @@ describe("§19.6/§19.8 — the OAuth door", () => {
     });
     const session = await seedOwnerSession(self.owner);
     const validClient = await driveOAuth({ cookie: session.cookie, resource: oauthResourceFor(self.owner.username) });
-    await bindClient(self.owner.userId, validClient.clientId, self.accounts.agent.id);
+    await bindClient(self.owner.userId, validClient.clientId, self.agents.agent.id);
 
     // A real, live token for a DIFFERENT namespace — the audience-mismatch cases present it here.
-    const foreign = await seedNamespace(env.DB, { accounts: [{ slug: "agent" }] });
+    const foreign = await seedNamespace(env.DB, { agents: [{ slug: "agent" }] });
     const foreignSession = await seedOwnerSession(foreign.owner);
     const foreignClient = await driveOAuth({
       cookie: foreignSession.cookie,
       resource: oauthResourceFor(foreign.owner.username),
     });
-    await bindClient(foreign.owner.userId, foreignClient.clientId, foreign.accounts.agent.id);
+    await bindClient(foreign.owner.userId, foreignClient.clientId, foreign.agents.agent.id);
 
     door = {
       self,
       user: self.owner.username,
       ownerId: self.owner.userId,
-      agentId: self.accounts.agent.id,
+      agentId: self.agents.agent.id,
       session,
       validClient,
       agentKey: self.tokens.key.token,
@@ -1794,16 +1794,16 @@ describe("§19.6/§19.8 — the OAuth door", () => {
     };
   });
 
-  it("§19.6 · a valid OAuth access token resolves to sa:<slug> and reaches tools/call · the same account's pmcp_sa_ key resolves identically (the twin — nothing downstream branches on carrier)", async () => {
+  it("§19.6 · a valid OAuth access token resolves to agent:<slug> and reaches tools/call · the same agent's pmcp_agt_ key resolves identically (the twin — nothing downstream branches on carrier)", async () => {
     const aggregated = `${ORIGIN}/${door.user}/mcp`;
-    // Resolves to the SERVICE ACCOUNT — the aggregated listing carries no builtin (only an
-    // owner's does, §8) — and it is the SAME listing the account's own key produces.
+    // Resolves to the APP AGENT — the aggregated listing carries no builtin (only an
+    // owner's does, §8) — and it is the SAME listing the agent's own key produces.
     const oauthTools = await servedTools(await mcpCall(aggregated, door.validClient.token, "tools/list"));
     const keyTools = await servedTools(await mcpCall(aggregated, door.agentKey, "tools/list"));
     expect(oauthTools, "the OAuth token was refused at the door").not.toBeNull();
     expect(oauthTools?.some(namesTheBuiltin)).toBe(false);
     expect(oauthTools).toEqual(keyTools);
-    // Reaches tools/call on the granted service — past the door, the SAME bytes either carrier.
+    // Reaches tools/call on the granted app — past the door, the SAME bytes either carrier.
     const scoped = `${ORIGIN}/${door.user}/mcp/${DOOR_GRANTED}`;
     const oauthCall = await mcpCall(scoped, door.validClient.token, "tools/call", { name: "get.thing", arguments: {} });
     const keyCall = await mcpCall(scoped, door.agentKey, "tools/call", { name: "get.thing", arguments: {} });
@@ -1811,24 +1811,24 @@ describe("§19.6/§19.8 — the OAuth door", () => {
     expect(await oauthCall.text()).toEqual(await keyCall.text());
   });
 
-  it("§19.6/§8 · an OAuth-resolved principal on /<user>/mcp/pmcp gets the same 404 a pmcp_sa_ key gets — the namespace-wide audience resolves, and the refusal comes from grants, not from the door", async () => {
+  it("§19.6/§8 · an OAuth-resolved principal on /<user>/mcp/pmcp gets the same 404 a pmcp_agt_ key gets — the namespace-wide audience resolves, and the refusal comes from grants, not from the door", async () => {
     const url = `${ORIGIN}/${door.user}/mcp/${PMCP_SLUG}`;
     const oauth = await mcpCall(url, door.validClient.token, "tools/list");
     const key = await mcpCall(url, door.agentKey, "tools/list");
     expect(oauth.status).toBe(404);
-    // Byte-identical to the key's 404: the audience resolved, and a service account holds no
+    // Byte-identical to the key's 404: the audience resolved, and an agent holds no
     // `pmcp` grant (§8), so the refusal is the anonymous 404, not a door 401.
     expect(await bytesOf(oauth)).toEqual(await bytesOf(key));
   });
 
-  it("§19.6 · a namespace-audience JWT reaches /<user>/mcp/<slug> and is filtered by that account's grants · the same account's pmcp_sa_ key behaves identically on the same URL (the twin — the audience is namespace-wide, so neither carrier is weaker)", async () => {
-    // The granted slug: the namespace-wide audience reaches the scoped service, past the door.
+  it("§19.6 · a namespace-audience JWT reaches /<user>/mcp/<slug> and is filtered by that agent's grants · the same agent's pmcp_agt_ key behaves identically on the same URL (the twin — the audience is namespace-wide, so neither carrier is weaker)", async () => {
+    // The granted slug: the namespace-wide audience reaches the scoped app, past the door.
     const granted = `${ORIGIN}/${door.user}/mcp/${DOOR_GRANTED}`;
     const oauthGranted = await mcpCall(granted, door.validClient.token, "tools/list");
     const keyGranted = await mcpCall(granted, door.agentKey, "tools/list");
     expect(oauthGranted.status).toBe(200);
     expect(await oauthGranted.text()).toEqual(await keyGranted.text());
-    // A slug the account holds no grant on: the same 404 the key gets — grants filter, not the door.
+    // A slug the agent holds no grant on: the same 404 the key gets — grants filter, not the door.
     const ungranted = `${ORIGIN}/${door.user}/mcp/${DOOR_UNGRANTED}`;
     const oauthUngranted = await mcpCall(ungranted, door.validClient.token, "tools/list");
     const keyUngranted = await mcpCall(ungranted, door.agentKey, "tools/list");
@@ -1911,11 +1911,11 @@ describe("§19.6/§19.8 — the OAuth door", () => {
     const asOwner = await mcpCall(aggregated, door.session.token, "tools/list");
     expect(asOwner.status).toBe(200);
     expect((await servedTools(asOwner))?.some(namesTheBuiltin)).toBe(true);
-    // A three-segment access token takes the OAuth path and resolves to the SERVICE ACCOUNT
+    // A three-segment access token takes the OAuth path and resolves to the APP AGENT
     // (no builtin) — the other direction, observable in WHO each carrier resolves to.
-    const asAccount = await mcpCall(aggregated, door.validClient.token, "tools/list");
-    expect(asAccount.status).toBe(200);
-    expect((await servedTools(asAccount))?.some(namesTheBuiltin)).toBe(false);
+    const asAgent = await mcpCall(aggregated, door.validClient.token, "tools/list");
+    expect(asAgent.status).toBe(200);
+    expect((await servedTools(asAgent))?.some(namesTheBuiltin)).toBe(false);
     // Two- and four-segment bearers are not JWT-shaped → session path → refused (junk).
     expect((await mcpCall(aggregated, "aa.bb", "tools/list")).status).toBe(401);
     expect((await mcpCall(aggregated, "aa.bb.cc.dd", "tools/list")).status).toBe(401);
@@ -1941,7 +1941,7 @@ describe("§19.6/§19.8 — the OAuth door", () => {
   });
 
   it("§19.6 · an expired JWT is refused with the challenge", async () => {
-    const ns = await seedNamespace(env.DB, { accounts: [{ slug: "agent" }] });
+    const ns = await seedNamespace(env.DB, { agents: [{ slug: "agent" }] });
     const cookie = (await seedOwnerSession(ns.owner)).cookie;
     const resource = oauthResourceFor(ns.owner.username);
     // Born expired: a negative access-token TTL on this namespace's resource, so the minted
@@ -1952,7 +1952,7 @@ describe("§19.6/§19.8 — the OAuth door", () => {
       .run();
     try {
       const client = await driveOAuth({ cookie, resource });
-      await bindClient(ns.owner.userId, client.clientId, ns.accounts.agent.id);
+      await bindClient(ns.owner.userId, client.clientId, ns.agents.agent.id);
       const response = await mcpCall(`${ORIGIN}/${ns.owner.username}/mcp`, client.token, "tools/list");
       expect(response.status).toBe(401);
       expect(response.headers.has("WWW-Authenticate")).toBe(true);
@@ -1973,7 +1973,7 @@ describe("§19.6/§19.8 — the OAuth door", () => {
   });
 
   it("§19.8 · a JWT with no oauth_binding row is refused with the challenge (unknown client)", async () => {
-    // Minted and correctly signed for this namespace, but never bound to any account.
+    // Minted and correctly signed for this namespace, but never bound to any agent.
     const client = await driveOAuth({ cookie: door.session.cookie, resource: oauthResourceFor(door.user) });
     const response = await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list");
     expect(response.status).toBe(401);
@@ -1988,15 +1988,15 @@ describe("§19.6/§19.8 — the OAuth door", () => {
     expect((await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list")).status).toBe(401);
   });
 
-  it("§19.8 · deleting the bound service account refuses the next call (the FK cascade is the revocation)", async () => {
-    const ns = await seedNamespace(env.DB, { accounts: [{ slug: "agent" }] });
+  it("§19.8 · deleting the bound agent refuses the next call (the FK cascade is the revocation)", async () => {
+    const ns = await seedNamespace(env.DB, { agents: [{ slug: "agent" }] });
     const cookie = (await seedOwnerSession(ns.owner)).cookie;
     const client = await driveOAuth({ cookie, resource: oauthResourceFor(ns.owner.username) });
-    await bindClient(ns.owner.userId, client.clientId, ns.accounts.agent.id);
+    await bindClient(ns.owner.userId, client.clientId, ns.agents.agent.id);
     expect((await mcpCall(`${ORIGIN}/${ns.owner.username}/mcp`, client.token, "tools/list")).status).toBe(200);
-    // The binding's service_account_id FK is ON DELETE CASCADE (§19.4): deleting the account
+    // The binding's agent_id FK is ON DELETE CASCADE (§19.4): deleting the agent
     // removes the binding, so the door's per-call read finds nothing.
-    await new Registry(env.DB).deleteAccount(ns.accounts.agent.id);
+    await new Registry(env.DB).deleteAgent(ns.agents.agent.id);
     expect((await mcpCall(`${ORIGIN}/${ns.owner.username}/mcp`, client.token, "tools/list")).status).toBe(401);
   });
 
@@ -2028,16 +2028,16 @@ describe("§19.6/§19.8 — the OAuth door", () => {
     expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");
   });
 
-  it("§8/§19.6 · /api/whoami refuses a JWT-shaped bearer with 401 and runs neither the OAuth leg nor a session lookup for it · a pmcp_sa_ key still answers sa:<slug> (the twin — the leg lives only on /<user>/mcp*)", async () => {
+  it("§8/§19.6 · /api/whoami refuses a JWT-shaped bearer with 401 and runs neither the OAuth leg nor a session lookup for it · a pmcp_agt_ key still answers agent:<slug> (the twin — the leg lives only on /<user>/mcp*)", async () => {
     // A valid access token for `self`'s namespace, presented where there is no namespace to bind
     // its audience to: refused, with the bare Bearer challenge — no OAuth leg, no session lookup.
     const jwt = await call(new Request(`${ORIGIN}/api/whoami`, { headers: { authorization: `Bearer ${door.validClient.token}` } }));
     expect(jwt.status).toBe(401);
     expect(jwt.headers.get("WWW-Authenticate")).toBe("Bearer");
-    // The twin: the account's key still resolves on the same route.
+    // The twin: the agent's key still resolves on the same route.
     const key = await call(new Request(`${ORIGIN}/api/whoami`, { headers: { authorization: `Bearer ${door.agentKey}` } }));
     expect(key.status).toBe(200);
-    expect(((await key.json()) as { principal: string }).principal).toBe("sa:agent");
+    expect(((await key.json()) as { principal: string }).principal).toBe("agent:agent");
   });
 
   it("§19.7 · D11's allowlist admits an Authorization header under /api/auth only at /sign-out and /device/* · a bearer on /api/auth/token is refused there like every unlisted path (the twin — the gate is an allowlist, so a plugin's new endpoint is refused without being named)", async () => {
@@ -2070,7 +2070,7 @@ describe("§19.6/§19.8 — the OAuth door", () => {
     await bindClient(door.ownerId, client.clientId, door.agentId);
     // The whole round-trip carried no Authorization header to any /api/auth request…
     expect(withAuthorization).toEqual([]);
-    // …and the token it produced reaches the door as a service account.
+    // …and the token it produced reaches the door as an agent.
     expect((await mcpCall(`${ORIGIN}/${door.user}/mcp`, client.token, "tools/list")).status).toBe(200);
   });
 });

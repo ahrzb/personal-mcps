@@ -92,7 +92,7 @@ export type BodyStub = {
  * §20.4 — the literal that replaces a resource URI's query component before it enters
  * `audit.tool`: the query is DROPPED, not pattern-scrubbed (a URI's query string is a
  * routine carrier of somebody else's bearer token, and §15's scrubbing grammar only knows
- * the hub's own `pmcp_(sa|svc)_` shape). Pinned as a name, not a call-site literal, so the
+ * the hub's own `pmcp_(agt|app)_` shape). Pinned as a name, not a call-site literal, so the
  * gateway (which builds the `tool` value) and every test that reads it agree on the exact
  * spelling.
  */
@@ -103,7 +103,7 @@ export const REDACTED_QUERY = "?…";
  * write time, so neither appears here.
  *
  * - `ownerId` — the namespace the event happened in (every event has exactly one).
- * - `principal` — who acted: `user:<name>` | `sa:<slug>` | `svc:<slug>` | `bootstrap` |
+ * - `principal` — who acted: `user:<name>` | `agent:<slug>` | `app:<slug>` | `bootstrap` |
  *   `hub` (principal.HUB_PRINCIPAL — one spelling, one query). The fifth is the MACHINE
  *   principal: an event no caller asked for — lazy
  *   approval expiry, and every row a scheduled run writes (`cron.swept` included). It is
@@ -116,13 +116,13 @@ export const REDACTED_QUERY = "?…";
  *   `upstream.disconnected`, `cron.swept` (§15's one cron heartbeat, written by
  *   every scheduled run), and the bootstrap events of §12. New events extend this
  *   list here, not ad hoc at call sites. `tools/list` is deliberately absent.
- * - `service` / `tool` — slugs and unprefixed tool names, when applicable.
+ * - `app` / `tool` — slugs and unprefixed tool names, when applicable.
  * - `outcome` — `ok` | `-32000` | `-32001` | `-32002` | `-32003` | `error`.
  * - `durationMs` — hub-measured wall time, consumer request to response; set on every
  *   `tools/call` row (denials are just fast), absent for non-call events.
  * - `client` — the consumer's self-declared clientInfo plus allowlisted session id
  *   (§7): untrusted display data, never parsed, never an authorization input.
- * - `args` / `result` — the call bodies, set only on `tools/call` rows of services
+ * - `args` / `result` — the call bodies, set only on `tools/call` rows of apps
  *   whose `log_bodies` is on AND whose call was actually dispatched — refusal rows
  *   never carry bodies; several refusals predate any redaction map (§15). Both
  *   arrive ALREADY masked (the gateway applies §7's per-direction redaction
@@ -138,7 +138,7 @@ export type AuditEntry = {
   ownerId: string;
   principal: string;
   event: string;
-  service?: string;
+  app?: string;
   tool?: string;
   outcome: string;
   durationMs?: number;
@@ -177,7 +177,7 @@ export const HUB_NAMESPACE = "hub";
  */
 export type AuditQuery = {
   principal?: string;
-  service?: string;
+  app?: string;
   event?: string;
   tool?: string;
   session?: string;
@@ -206,7 +206,7 @@ export async function record(db: D1Database, entry: AuditEntry): Promise<void> {
   const client = entry.client ?? {};
   await (db as D1Like)
     .prepare(
-      `INSERT INTO audit (ts, owner_id, principal, event, service, tool, outcome,
+      `INSERT INTO audit (ts, owner_id, principal, event, app, tool, outcome,
          duration_ms, client_name, client_version, client_session_id,
          args_json, result_json, detail)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -216,7 +216,7 @@ export async function record(db: D1Database, entry: AuditEntry): Promise<void> {
       entry.ownerId,
       entry.principal,
       entry.event,
-      entry.service ?? null,
+      entry.app ?? null,
       entry.tool ?? null,
       entry.outcome,
       entry.durationMs ?? null,
@@ -302,7 +302,7 @@ function whereClause(ownerId: string, filters: AuditQuery): { sql: string; value
   const values: unknown[] = [ownerId];
   const exact: [keyof AuditQuery, string][] = [
     ["principal", "principal"],
-    ["service", "service"],
+    ["app", "app"],
     ["event", "event"],
     ["tool", "tool"],
     ["session", "client_session_id"],
@@ -330,7 +330,7 @@ type AuditDbRow = {
   owner_id: string;
   principal: string;
   event: string;
-  service: string | null;
+  app: string | null;
   tool: string | null;
   outcome: string;
   duration_ms: number | null;
@@ -359,7 +359,7 @@ function toRow(row: AuditDbRow): AuditRow {
     ownerId: row.owner_id,
     principal: row.principal,
     event: row.event,
-    ...(row.service === null ? {} : { service: row.service }),
+    ...(row.app === null ? {} : { app: row.app }),
     ...(row.tool === null ? {} : { tool: row.tool }),
     outcome: row.outcome,
     ...(row.duration_ms === null ? {} : { durationMs: row.duration_ms }),
@@ -476,7 +476,7 @@ export function beforeSend<Event>(event: Event): Event {
   return scrub(event) as Event;
 }
 
-/** `pmcp_sa_…` / `pmcp_svc_…` wherever it appears in prose. Built from the leaf that owns the
+/** `pmcp_agt_…` / `pmcp_app_…` wherever it appears in prose. Built from the leaf that owns the
  *  wire spelling, so a new prefix is hunted here without an edit. */
 const TOKEN_GRAMMAR = tokenPattern(1, "g");
 

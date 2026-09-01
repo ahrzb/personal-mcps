@@ -45,7 +45,7 @@ import {
   RETENTION_DAYS,
 } from "../../src/limits";
 import { Registry } from "../../src/registry";
-import type { Service } from "../../src/registry";
+import type { App } from "../../src/registry";
 import { beginConnect, handleCallback, setHeaders } from "../../src/upstream";
 import { upstreamUrlFor } from "../harness/fake-upstream";
 import type { AsScenario, UpstreamScenario } from "../harness/fake-upstream";
@@ -126,7 +126,7 @@ export const CRON_LEG_ROWS: readonly CronLegRow[] = [
   // · Every audit row a scheduled run writes — each leg's own events and the run's single
   //   `cron.swept` row alike — carries the principal `hub`: the machine principal
   //   approvals.ts already writes for lazy expiry, and the fifth member §5's enumerated
-  //   `principal` comment ('user:<name>' | 'sa:<slug>' | 'svc:<slug>' | 'bootstrap') gains
+  //   `principal` comment ('user:<name>' | 'agent:<slug>' | 'app:<slug>' | 'bootstrap') gains
   //   for it. Unpinned, a cron row can land under `""`, `system`, or — worst — the owner's
   //   own `user:<name>`, which forges owner attribution for a machine action in the very
   //   ledger the owner reads to audit themselves.
@@ -201,7 +201,7 @@ export const CRON_LEG_ROWS: readonly CronLegRow[] = [
   // clean run reports 0, which only a leg that actually removed the rows can produce.
   {
     spec:
-      "Connect initiation mints a one-time unguessable `state`, stored server-side bound to {owner, service, expected AS issuer + token endpoint, PKCE verifier} and to the initiating cookie session, expiring in ~10 minutes.",
+      "Connect initiation mints a one-time unguessable `state`, stored server-side bound to {owner, app, expected AS issuer + token endpoint, PKCE verifier} and to the initiating cookie session, expiring in ~10 minutes.",
     title:
       "upstream-OAuth state rows past limits.OAUTH_STATE_TTL_MS are dropped by the run · a row still inside its TTL survives and still redeems (hygiene, never the defense)",
     leg: "upstream.cleanupStaleState",
@@ -559,11 +559,11 @@ function approvalsAt(now: () => number, retentionDays = RETENTION_DAYS): Approva
   });
 }
 
-/** A namespace with one proxied service and one service account — the least a pending
+/** A namespace with one proxied app and one agent — the least a pending
  *  approval row needs to exist at all. */
-type ApprovalWorld = { ns: SeededNamespace; service: Service; principal: Principal };
+type ApprovalWorld = { ns: SeededNamespace; app: App; principal: Principal };
 
-/** The service-account principal an approval is bound to (approvals refuses an owner). */
+/** The agent principal an approval is bound to (approvals refuses an owner). */
 type Principal = Parameters<Approvals["check"]>[0];
 
 const APPROVAL_TOOL = "search";
@@ -571,23 +571,23 @@ const APPROVAL_ARGS = { query: "quarterly report" };
 
 async function seedApprovalWorld(): Promise<ApprovalWorld> {
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
         slug: "notion",
         kind: "proxy",
         upstreamUrl: upstreamUrlFor({ id: uniqueSlug("up"), mode: { kind: "ok" } }),
       },
     ],
-    accounts: [{ slug: "agent" }],
+    agents: [{ slug: "agent" }],
   });
-  const service = await new Registry(env.DB).getService(ns.owner.userId, "notion");
-  if (service === null) throw new Error("seedApprovalWorld: the seeded service vanished");
+  const app = await new Registry(env.DB).getApp(ns.owner.userId, "notion");
+  if (app === null) throw new Error("seedApprovalWorld: the seeded app vanished");
   return {
     ns,
-    service,
+    app,
     principal: {
-      kind: "service_account",
-      accountId: ns.accounts.agent.id,
+      kind: "agent",
+      agentId: ns.agents.agent.id,
       ownerId: ns.owner.userId,
       slug: "agent",
     },
@@ -595,14 +595,14 @@ async function seedApprovalWorld(): Promise<ApprovalWorld> {
 }
 
 /** `count` distinct pending rows through the production gate, at the given instant. Distinct
- *  arguments are what make them distinct rows: the binding is (account, service, tool, hash). */
+ *  arguments are what make them distinct rows: the binding is (agent, app, tool, hash). */
 async function request(world: ApprovalWorld, now: () => number, count: number): Promise<string[]> {
   const gate = approvalsAt(now);
   const ids: string[] = [];
   for (let k = 0; k < count; k++) {
     const verdict = await gate.check(
       world.principal,
-      world.service,
+      world.app,
       APPROVAL_TOOL,
       { ...APPROVAL_ARGS, page: `${uniqueSlug("p")}` },
       [],
@@ -618,9 +618,9 @@ async function recordMarked(ownerId: string, kind: string): Promise<string> {
   const tool = uniqueSlug(kind);
   await record(env.DB, {
     ownerId,
-    principal: "sa:agent",
+    principal: "agent:agent",
     event: "tools/call",
-    service: "notion",
+    app: "notion",
     tool,
     outcome: "ok",
   });
@@ -645,15 +645,15 @@ async function ageStateRow(state: string): Promise<void> {
     .run();
 }
 
-/** A namespace whose one service connects through OAuth, plus the owner session every
+/** A namespace whose one app connects through OAuth, plus the owner session every
  *  connect flow is bound to. */
-type OAuthWorld = { ns: SeededNamespace; service: Service; session: SeededSession; sessionId: string };
+type OAuthWorld = { ns: SeededNamespace; app: App; session: SeededSession; sessionId: string };
 
 async function seedOAuthWorld(): Promise<OAuthWorld> {
   const as: AsScenario = { id: uniqueSlug("as") };
   const upstream: UpstreamScenario = { id: uniqueSlug("up"), mode: { kind: "ok" }, as };
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
         slug: "notion",
         kind: "proxy",
@@ -662,13 +662,13 @@ async function seedOAuthWorld(): Promise<OAuthWorld> {
       },
     ],
   });
-  const service = await new Registry(env.DB).getService(ns.owner.userId, "notion");
-  if (service === null) throw new Error("seedOAuthWorld: the seeded service vanished");
+  const app = await new Registry(env.DB).getApp(ns.owner.userId, "notion");
+  if (app === null) throw new Error("seedOAuthWorld: the seeded app vanished");
   const session = await seedOwnerSession(ns.owner);
   const { sessionId } = await requireOwnerSession(
-    new Request(`${ORIGIN}/services`, { headers: { Cookie: session.cookie } }),
+    new Request(`${ORIGIN}/apps`, { headers: { Cookie: session.cookie } }),
   );
-  return { ns, service, session, sessionId };
+  return { ns, app, session, sessionId };
 }
 
 /** A connect flow carried to the AS's own redirect and left there — one state row, and the
@@ -676,7 +676,7 @@ async function seedOAuthWorld(): Promise<OAuthWorld> {
 type Started = { state: string; callbackUrl: string; cookie: string };
 
 async function beginState(world: OAuthWorld): Promise<Started> {
-  const authorize = await beginConnect(world.service, { id: world.sessionId });
+  const authorize = await beginConnect(world.app, { id: world.sessionId });
   const redirect = await fetch(authorize.toString(), { redirect: "manual" });
   const callbackUrl = redirect.headers.get("Location");
   if (callbackUrl === null) throw new Error("beginState: the fake AS answered no redirect");
@@ -913,7 +913,7 @@ async function seedCallWorld(): Promise<CallWorld> {
     tools: [{ name: APPROVAL_TOOL, inputSchema: { type: "object" } }],
   };
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
         slug: "notion",
         kind: "proxy",
@@ -921,13 +921,13 @@ async function seedCallWorld(): Promise<CallWorld> {
         upstreamAuthMode: "headers",
       },
     ],
-    accounts: [{ slug: "agent", grants: { notion: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "key" }] }],
+    agents: [{ slug: "agent", grants: { notion: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "key" }] }],
   });
-  const service = await new Registry(env.DB).getService(ns.owner.userId, "notion");
-  if (service === null) throw new Error("seedCallWorld: the seeded service vanished");
-  // A proxied service with no envelope reads not-connected and is refused before dispatch,
+  const app = await new Registry(env.DB).getApp(ns.owner.userId, "notion");
+  if (app === null) throw new Error("seedCallWorld: the seeded app vanished");
+  // A proxied app with no envelope reads not-connected and is refused before dispatch,
   // so the credential is what makes this a REQUEST PATH that actually ran.
-  await setHeaders(service, { Authorization: "Bearer FAKE0000-upstream-static-token" });
+  await setHeaders(app, { Authorization: "Bearer FAKE0000-upstream-static-token" });
   return { ns, credential: ns.tokens.key.token };
 }
 

@@ -4,8 +4,8 @@
  * §4's parity direction D asks "does every CLI subcommand front an §8 admin op", and
  * `server/test/worker/contracts.test.ts` answers it from `cli/src/commands.ts`'s table.
  * That table is DATA main.ts only prints, so nothing there ties a row's `ops` to what the
- * dispatcher actually calls: drop `token_issue` from the `service create` row, or point
- * `service()` at a different op, and both direction-D cases stay green. Direction C has no
+ * dispatcher actually calls: drop `token_issue` from the `app create` row, or point
+ * `app()` at a different op, and both direction-D cases stay green. Direction C has no
  * such gap — it runs the real planner and reads the steps it emitted — and this file closes
  * the asymmetry: it runs the real `main(argv)` for every row and asserts the admin ops the
  * dispatcher REACHED FOR equal the row's. The table stops being its own oracle.
@@ -51,32 +51,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COMMANDS } from "../src/commands";
 import { main } from "../src/main";
 
-/** Obviously fake, and never a `pmcp_svc_` value — main.ts refuses that kind outright. */
-const TOKEN = "pmcp_sa_FAKE0000000000000000000000000000";
+/** Obviously fake, and never a `pmcp_app_` value — main.ts refuses that kind outright. */
+const TOKEN = "pmcp_agt_FAKE0000000000000000000000000000";
 const ORIGIN = "https://hub.invalid";
 const NAMESPACE = "owner";
 
 /**
  * The namespace `diff` and `apply` are driven against, chosen — like direction C's own
- * fixture — to provoke every step kind the planner has: a server-only service and account
+ * fixture — to provoke every step kind the planner has: a server-only app and agent
  * (deletes), a file-only pair (creates), a changed field (update), and both archive
- * transitions, plus a grant. `apply` is the only front for service_update and grant_set,
+ * transitions, plus a grant. `apply` is the only front for app_update and grant_set,
  * so a thinner file would leave two of its ten ops unwitnessed.
  */
-const CONFIG = `services:
+const CONFIG = `apps:
   fresh:
   keep:
     name: Renamed
   parked:
     archived: true
   revived:
-service_accounts:
+agents:
   agent:
     grants:
       keep: [reader]
 `;
 
-const serverService = (slug: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
+const serverApp = (slug: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
   slug,
   kind: "tunnel",
   name: slug,
@@ -94,31 +94,31 @@ const serverService = (slug: string, over: Record<string, unknown> = {}): Record
 /** What each op answers, for the few ops whose reply the dispatcher reads on the way out. */
 function replyFor(op: string): Record<string, unknown> {
   switch (op) {
-    case "service_list":
+    case "app_list":
       return {
-        services: [
-          serverService("gone"),
-          serverService("keep"),
-          serverService("parked"),
-          serverService("revived", { archived: true }),
+        apps: [
+          serverApp("gone"),
+          serverApp("keep"),
+          serverApp("parked"),
+          serverApp("revived", { archived: true }),
         ],
       };
-    case "account_list":
-      return { accounts: [{ slug: "stale", name: "stale", description: "", grants: {} }] };
-    case "service_create":
-      return { service: { slug: "news" } };
-    case "service_get":
-      // `connect` refuses anything but an `auth: oauth` proxied service before printing.
-      return { service: { slug: "notion", kind: "proxy", auth: "oauth" } };
+    case "agent_list":
+      return { agents: [{ slug: "stale", name: "stale", description: "", grants: {} }] };
+    case "app_create":
+      return { app: { slug: "news" } };
+    case "app_get":
+      // `connect` refuses anything but an `auth: oauth` proxied app before printing.
+      return { app: { slug: "notion", kind: "proxy", auth: "oauth" } };
     case "token_issue":
-      return { id: "tok_FAKE", token: "pmcp_svc_FAKE0000000000000000000000000000" };
+      return { id: "tok_FAKE", token: "pmcp_app_FAKE0000000000000000000000000000" };
     case "audit_query":
       return { rows: [], total: 0 };
     case "connection_list":
       // One row exercises the print path, lastUsedAt: null its "never" fallback (§19).
       return {
         connections: [
-          { id: "conn_FAKE", clientId: "client_FAKE", clientName: "Claude", accountSlug: "bot", createdAt: 0, lastUsedAt: null },
+          { id: "conn_FAKE", clientId: "client_FAKE", clientName: "Claude", agentSlug: "bot", createdAt: 0, lastUsedAt: null },
         ],
       };
     default:
@@ -147,7 +147,7 @@ beforeEach(() => {
       return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
     }
     const message = JSON.parse(init?.body ?? "{}") as { method?: string; params?: { name?: string } };
-    // Only the builtin `pmcp` endpoint carries admin ops; `tools`/`call` reach a service's
+    // Only the builtin `pmcp` endpoint carries admin ops; `tools`/`call` reach an app's
     // own endpoint and are recorded as the zero ops their rows claim.
     if (message.method === "tools/call" && String(url).endsWith(`/${NAMESPACE}/mcp/pmcp`)) {
       const op = String(message.params?.name);
@@ -205,24 +205,24 @@ const ARGV: Record<string, string[]> = {
   prompt: ["prompt", "news", "digest"],
   resources: ["resources", "news"],
   read: ["read", "news", "news://feed/tech"],
-  "service create": ["service", "create", "news"],
-  "service archive": ["service", "archive", "news"],
-  "service unarchive": ["service", "unarchive", "news"],
-  "service delete": ["service", "delete", "news", "--yes"],
-  "service disconnect": ["service", "disconnect", "notion"],
-  "service set-auth": ["service", "set-auth", "notion", "--header", "X-Api-Key: k"],
-  "account list": ["account", "list"],
-  "account create": ["account", "create", "bot"],
-  "account delete": ["account", "delete", "bot", "--yes"],
+  "app create": ["app", "create", "news"],
+  "app archive": ["app", "archive", "news"],
+  "app unarchive": ["app", "unarchive", "news"],
+  "app delete": ["app", "delete", "news", "--yes"],
+  "app disconnect": ["app", "disconnect", "notion"],
+  "app set-auth": ["app", "set-auth", "notion", "--header", "X-Api-Key: k"],
+  "agent list": ["agent", "list"],
+  "agent create": ["agent", "create", "bot"],
+  "agent delete": ["agent", "delete", "bot", "--yes"],
   approvals: ["approvals", "--pending"],
   approve: ["approve", "ap_FAKE"],
   reject: ["reject", "ap_FAKE"],
-  "token issue": ["token", "issue", "--account", "bot"],
+  "token issue": ["token", "issue", "--agent", "bot"],
   "token list": ["token", "list"],
   "token revoke": ["token", "revoke", "tok_FAKE"],
   connections: ["connections"],
   "connection revoke": ["connection", "revoke", "conn_FAKE"],
-  audit: ["audit", "--service", "news"],
+  audit: ["audit", "--app", "news"],
   "audit --export jsonl": ["audit", "--export", "jsonl"],
   connect: ["connect", "notion"],
   diff: ["diff", "-f", "PATH"],
@@ -251,15 +251,15 @@ describe("§4 direction D · the dispatcher answers to the command table", () =>
   it("§9 · `apply` executes the planner's steps in plan order — deletes before creates before updates before grants — so the ops its row claims are also the sequence a namespace actually receives", async () => {
     await main(["apply", "-f", configPath, "--yes"]);
     expect(recorded).toEqual([
-      "service_list",
-      "account_list",
-      "service_delete",
-      "account_delete",
-      "service_create",
-      "account_create",
-      "service_update",
-      "service_archive",
-      "service_unarchive",
+      "app_list",
+      "agent_list",
+      "app_delete",
+      "agent_delete",
+      "app_create",
+      "agent_create",
+      "app_update",
+      "app_archive",
+      "app_unarchive",
       "grant_set",
     ]);
   });
@@ -271,13 +271,13 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
     // would fail to read rather than plan.
     const code = await main(["diff", "-f", configPath]);
     expect(code).toBe(0);
-    expect(recorded).toEqual(["service_list", "account_list"]);
+    expect(recorded).toEqual(["app_list", "agent_list"]);
   });
 
-  it("§10 · a boolean flag never swallows the word after it: `pmcp service --yes delete news` deletes, rather than reading `delete` as the value of `--yes` and failing with a usage error", async () => {
-    const code = await main(["service", "--yes", "delete", "news"]);
+  it("§10 · a boolean flag never swallows the word after it: `pmcp app --yes delete news` deletes, rather than reading `delete` as the value of `--yes` and failing with a usage error", async () => {
+    const code = await main(["app", "--yes", "delete", "news"]);
     expect(code).toBe(0);
-    expect(recorded).toEqual(["service_delete"]);
+    expect(recorded).toEqual(["app_delete"]);
   });
 
   // §10's two duration flags — the CLI's only TRANSLATED argument values, and so the only
@@ -394,27 +394,27 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
 
   it("§10 · `pmcp token issue --expires 90d` reaches the wire as the SECONDS integer token_issue declares — a LIFETIME, not an instant, and a different unit from audit's — while `never` and a bare count are the other two members of that union", async () => {
     const relative = recordingHub();
-    expect(await main(["token", "issue", "--account", "bot", "--expires", "90d"])).toBe(0);
+    expect(await main(["token", "issue", "--agent", "bot", "--expires", "90d"])).toBe(0);
     expect(relative.map((frame) => frame.arguments)).toEqual([
-      { kind: "service_account", slug: "bot", expires_in: 90 * 24 * 60 * 60 },
+      { kind: "agent", slug: "bot", expires_in: 90 * 24 * 60 * 60 },
     ]);
 
     const never = recordingHub();
-    expect(await main(["token", "issue", "--account", "bot", "--expires", "never"])).toBe(0);
+    expect(await main(["token", "issue", "--agent", "bot", "--expires", "never"])).toBe(0);
     expect(never.map((frame) => frame.arguments)).toEqual([
-      { kind: "service_account", slug: "bot", expires_in: "never" },
+      { kind: "agent", slug: "bot", expires_in: "never" },
     ]);
 
     const bare = recordingHub();
-    expect(await main(["token", "issue", "--service", "news", "--expires", "3600"])).toBe(0);
+    expect(await main(["token", "issue", "--app", "news", "--expires", "3600"])).toBe(0);
     expect(bare.map((frame) => frame.arguments)).toEqual([
-      { kind: "service", slug: "news", expires_in: 3600 },
+      { kind: "app", slug: "news", expires_in: 3600 },
     ]);
 
     // Same local refusal as `--since`: an untranslatable lifetime never becomes a token,
     // and never becomes a request of any kind either.
     const rejected = countingHub();
-    expect(await main(["token", "issue", "--account", "bot", "--expires", "90 days"])).toBe(2);
+    expect(await main(["token", "issue", "--agent", "bot", "--expires", "90 days"])).toBe(2);
     expect(rejected.calls).toBe(0);
 
     expect(declared("token_issue", "expires_in")).toMatchObject({
@@ -433,7 +433,7 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
     expect(sent).toEqual([
       { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "echo", arguments: { text: "hi" } } },
     ]);
-    // The service is `news` and the tool `echo` — never a service called `news_echo`.
+    // The app is `news` and the tool `echo` — never an app called `news_echo`.
     expect(await main(["call", "news", "echo", "hello"])).toBe(2);
     expect(sent).toHaveLength(1);
   });
@@ -447,7 +447,7 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
    * A stubbed hub that records the WHOLE frame rather than an op name: these four commands
    * front no admin op, so the oracle is the method they chose, the endpoint they chose it
    * on, and the params they built. `results` answers one method with the shape a real
-   * service returns; an unanswered method gets `{}`, which every renderer reads as an empty
+   * app returns; an unanswered method gets `{}`, which every renderer reads as an empty
    * family. Nothing about the CLI is mocked — argv parsing and the whoami handshake run.
    */
   function gatewayHub(results: Record<string, unknown> = {}): GatewayFrame[] {
@@ -477,13 +477,13 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
   const printed = (): string[] => written(process.stdout);
   const errored = (): string[] => written(process.stderr);
 
-  /** §20.2's mount for a prompt- or resource-heavy service: the scoped one, unprefixed. */
+  /** §20.2's mount for a prompt- or resource-heavy app: the scoped one, unprefixed. */
   const SCOPED = `/${NAMESPACE}/mcp/news`;
 
   /**
-   * A second service, whose slug is deliberately NOT the scheme of the URI read below.
+   * A second app, whose slug is deliberately NOT the scheme of the URI read below.
    * §20.2 routes a read by the ADDRESSED SLUG and never by the URI it names, and a fixture
-   * that reads `news://…` on the service `news` cannot tell the two apart: a CLI that built
+   * that reads `news://…` on the app `news` cannot tell the two apart: a CLI that built
    * its mount out of the URI's scheme would produce the identical frame.
    */
   const SCOPED_DOCS = `/${NAMESPACE}/mcp/docs`;
@@ -494,7 +494,7 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
    */
   const URI = "news://feed/tech?q=a b&limit=5";
 
-  it("§20.6 · pmcp prompts <service> calls prompts/list on the scoped endpoint and prints one row per prompt", async () => {
+  it("§20.6 · pmcp prompts <app> calls prompts/list on the scoped endpoint and prints one row per prompt", async () => {
     const frames = gatewayHub({
       "prompts/list": {
         prompts: [
@@ -504,8 +504,8 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
       },
     });
     expect(await main(["prompts", "news"])).toBe(0);
-    // The SCOPED mount, and one call: §20.2 makes it the home of a prompt-heavy service,
-    // and only there does a prompt keep the unprefixed name the service gave it.
+    // The SCOPED mount, and one call: §20.2 makes it the home of a prompt-heavy app,
+    // and only there does a prompt keep the unprefixed name the app gave it.
     expect(frames).toEqual([{ path: SCOPED, method: "prompts/list", params: {} }]);
     // One row per prompt, each carrying its name. Padding is presentation (file header)
     // and is not asserted; the COUNT is what a renderer that dumped the whole result blob,
@@ -516,7 +516,7 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
     expect(lines[1]).toContain("brief");
   });
 
-  it("§20.6 · pmcp prompt <service> <name> key=value sends the arguments as params.arguments", async () => {
+  it("§20.6 · pmcp prompt <app> <name> key=value sends the arguments as params.arguments", async () => {
     const frames = gatewayHub({
       "prompts/get": { messages: [{ role: "user", content: { type: "text", text: "tech, five lines" } }] },
     });
@@ -532,7 +532,7 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
     ]);
   });
 
-  it("§20.6 · pmcp resources <service> calls resources/list · --templates calls resources/templates/list (the twin)", async () => {
+  it("§20.6 · pmcp resources <app> calls resources/list · --templates calls resources/templates/list (the twin)", async () => {
     const listed = gatewayHub({ "resources/list": { resources: [{ uri: "news://feed/tech", name: "Tech" }] } });
     expect(await main(["resources", "news"])).toBe(0);
     expect(listed).toEqual([{ path: SCOPED, method: "resources/list", params: {} }]);
@@ -557,25 +557,25 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
 
     // §10 spells `--templates` as a value-less flag, and the argv grammar has to be told:
     // a flag outside BOOLEAN_FLAGS swallows the word after it, so this spelling would read
-    // `news` as the flag's value, find no service, and fail with a usage error — the exact
-    // silent misreading the `pmcp service --yes delete news` case above already forbids for
+    // `news` as the flag's value, find no app, and fail with a usage error — the exact
+    // silent misreading the `pmcp app --yes delete news` case above already forbids for
     // the flags that existed before this one.
     const leading = gatewayHub({ "resources/templates/list": { resourceTemplates: [] } });
     expect(await main(["resources", "--templates", "news"])).toBe(0);
     expect(leading).toEqual([{ path: SCOPED, method: "resources/templates/list", params: {} }]);
   });
 
-  it("§20.6 · pmcp read <service> <uri> calls resources/read with the URI verbatim — no encoding, no prefixing", async () => {
+  it("§20.6 · pmcp read <app> <uri> calls resources/read with the URI verbatim — no encoding, no prefixing", async () => {
     const frames = gatewayHub({ "resources/read": { contents: [{ uri: URI, mimeType: "text/plain", text: "…" }] } });
     expect(await main(["read", "docs", URI])).toBe(0);
     // Verbatim on both counts: not percent-encoded (the URI is a param value, never part
     // of the URL), and not `<slug>_`-prefixed — §20.2 refuses the aggregated endpoint
-    // precisely BECAUSE a URI cannot take a prefix and still be the URI the service knows.
-    // And the mount is the SLUG's, though the URI's scheme names another service entirely.
+    // precisely BECAUSE a URI cannot take a prefix and still be the URI the app knows.
+    // And the mount is the SLUG's, though the URI's scheme names another app entirely.
     expect(frames).toEqual([{ path: SCOPED_DOCS, method: "resources/read", params: { uri: URI } }]);
 
     // The routing twin: the same URI addressed to a second slug is a second endpoint with
-    // byte-identical params. Two services may legitimately serve one URI (§20.2 —
+    // byte-identical params. Two apps may legitimately serve one URI (§20.2 —
     // `file:///notes.txt` is nobody's private namespace), and which one answers is decided
     // by the URL the CLI built, never by the URI it carries. Routing by URI is the
     // confused-deputy shape this design avoids by construction, and the CLI is the half of
@@ -599,7 +599,7 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
     expect(refusal.join(" ")).toMatch(/scoped/i);
 
     // …and that reason is not the CLI's answer to every short argv. §10's grammar is
-    // `pmcp read <service> <uri>`, so a forgotten URI is an ordinary usage error naming
+    // `pmcp read <app> <uri>`, so a forgotten URI is an ordinary usage error naming
     // what is missing: answering it with "resources are scoped-only" would send an
     // operator who typed too little looking for an endpoint problem that is not there —
     // the mirror image of the confusion this row exists to prevent.
@@ -650,48 +650,48 @@ describe("§10 · describe and get, the composed exploration verbs", () => {
     "resources/templates/list": { resourceTemplates: [] },
   };
 
-  it("§10 · `pmcp describe service/<slug>` calls all FOUR gateway list methods on the scoped endpoint, plus ONE best-effort service_list for the header — the catalog is the command, the admin read is decoration", async () => {
-    const frames = hub({ ...CATALOG, service_list: { services: [serverService("news")] } });
-    expect(await main(["describe", "service/news"])).toBe(0);
+  it("§10 · `pmcp describe app/<slug>` calls all FOUR gateway list methods on the scoped endpoint, plus ONE best-effort app_list for the header — the catalog is the command, the admin read is decoration", async () => {
+    const frames = hub({ ...CATALOG, app_list: { apps: [serverApp("news")] } });
+    expect(await main(["describe", "app/news"])).toBe(0);
     expect(frames.filter((frame) => frame.method !== "tools/call").map((frame) => frame.method).sort()).toEqual([
       "prompts/list",
       "resources/list",
       "resources/templates/list",
       "tools/list",
     ]);
-    // Every list goes to the SERVICE's own mount; only the header read goes to `pmcp`.
+    // Every list goes to the APP's own mount; only the header read goes to `pmcp`.
     for (const frame of frames.filter((f) => f.method !== "tools/call")) expect(frame.path).toBe(`/${NAMESPACE}/mcp/news`);
-    expect(frames.filter((frame) => frame.method === "tools/call").map((frame) => frame.name)).toEqual(["service_list"]);
+    expect(frames.filter((frame) => frame.method === "tools/call").map((frame) => frame.name)).toEqual(["app_list"]);
   });
 
-  it("§10 · a service-account caller still gets the catalog: a refused service_list degrades the header, it does not fail the command — and a family answering -32601 prints as absent rather than propagating", async () => {
+  it("§10 · an agent caller still gets the catalog: a refused app_list degrades the header, it does not fail the command — and a family answering -32601 prints as absent rather than propagating", async () => {
     const frames = hub(
       { "tools/list": CATALOG["tools/list"] },
-      { service_list: -32001, "prompts/list": -32601, "resources/list": -32601, "resources/templates/list": -32601 },
+      { app_list: -32001, "prompts/list": -32601, "resources/list": -32601, "resources/templates/list": -32601 },
     );
-    expect(await main(["describe", "service/news"])).toBe(0);
-    expect(frames.some((frame) => frame.name === "service_list")).toBe(true);
+    expect(await main(["describe", "app/news"])).toBe(0);
+    expect(frames.some((frame) => frame.name === "app_list")).toBe(true);
   });
 
-  it("§10 · `describe service/<slug>/<item>` matches inside the catalog it already read — no per-item round trip — and a miss is `not_found` (exit 1), not malformed argv", async () => {
-    const found = hub({ ...CATALOG, service_list: { services: [serverService("news")] } });
-    expect(await main(["describe", "service/news/paper_fetch"])).toBe(0);
+  it("§10 · `describe app/<slug>/<item>` matches inside the catalog it already read — no per-item round trip — and a miss is `not_found` (exit 1), not malformed argv", async () => {
+    const found = hub({ ...CATALOG, app_list: { apps: [serverApp("news")] } });
+    expect(await main(["describe", "app/news/paper_fetch"])).toBe(0);
     // The four lists and nothing else: the item form makes no admin read at all, because
     // the header line it would decorate is not printed for a leaf.
     expect(found.filter((frame) => frame.method === "tools/call")).toEqual([]);
 
     const missed = hub(CATALOG);
-    expect(await main(["describe", "service/news/paper"])).toBe(1);
+    expect(await main(["describe", "app/news/paper"])).toBe(1);
     expect(missed.filter((frame) => frame.method === "tools/call")).toEqual([]);
   });
 
-  it("§10 · `describe account/<slug>` composes account_list + token_list — the same two reads the admin family already makes, and no gateway call at all", async () => {
+  it("§10 · `describe agent/<slug>` composes agent_list + token_list — the same two reads the admin family already makes, and no gateway call at all", async () => {
     const frames = hub({
-      account_list: { accounts: [{ slug: "ci", name: "ci", description: "", grants: { news: ["reader:approval"] } }] },
-      token_list: { tokens: [{ id: "tk_1", kind: "service_account", refSlug: "ci", prefix: "pmcp_sa_x9", expiresAt: null, lastUsedAt: null }] },
+      agent_list: { agents: [{ slug: "ci", name: "ci", description: "", grants: { news: ["reader:approval"] } }] },
+      token_list: { tokens: [{ id: "tk_1", kind: "agent", refSlug: "ci", prefix: "pmcp_agt_x9", expiresAt: null, lastUsedAt: null }] },
     });
-    expect(await main(["describe", "account/ci"])).toBe(0);
-    expect(frames.map((frame) => frame.name)).toEqual(["account_list", "token_list"]);
+    expect(await main(["describe", "agent/ci"])).toBe(0);
+    expect(frames.map((frame) => frame.name)).toEqual(["agent_list", "token_list"]);
   });
 
   it("§10 · `get` fronts exactly the two methods the retired `prompt`/`read` spellings did, chosen by the ref's FIRST segment", async () => {
@@ -809,7 +809,7 @@ describe("§10 · the output contract and the code vocabulary", () => {
       const out = stdoutText();
       expect(out).not.toContain("[");
       expect(() => JSON.parse(out) as unknown).not.toThrow();
-      expect((JSON.parse(out) as { services: unknown[] }).services).toHaveLength(4);
+      expect((JSON.parse(out) as { apps: unknown[] }).apps).toHaveLength(4);
     });
   });
 
@@ -853,7 +853,7 @@ describe("§10 · the output contract and the code vocabulary", () => {
   });
 
   it("§10 · a typo in mcps.yaml is `usage` (exit 2) — the file is the operator's, and `remote_error` would send an agent looking for a hub outage", async () => {
-    writeFileSync(configPath, "services:\n  notes:\n    rols: [reader]\n");
+    writeFileSync(configPath, "apps:\n  notes:\n    rols: [reader]\n");
     expect(await main(["diff", "-f", configPath])).toBe(2);
     const written = stderrText();
     expect(written).toContain("error: usage:");
@@ -864,8 +864,8 @@ describe("§10 · the output contract and the code vocabulary", () => {
   it("§10 · `approvals --history` is a CLIENT-side selection: `approval_list.status` is the wire enum and has no \"decided\" member, so the hub is asked for everything and the pending rows are dropped here", async () => {
     const frames: { name: string; arguments: Record<string, unknown> }[] = [];
     const approvals = [
-      { id: "ap_1", status: "pending", accountSlug: "ci", serviceSlug: "news", tool: "echo", args: {} },
-      { id: "ap_2", status: "approved", accountSlug: "ci", serviceSlug: "news", tool: "echo", args: {} },
+      { id: "ap_1", status: "pending", agentSlug: "ci", appSlug: "news", tool: "echo", args: {} },
+      { id: "ap_2", status: "approved", agentSlug: "ci", appSlug: "news", tool: "echo", args: {} },
     ];
     vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
       if (String(url).endsWith("/api/whoami")) return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
@@ -953,7 +953,7 @@ describe("§10 · the output contract and the code vocabulary", () => {
  * §10's help and version contract (2026-09-01). The rule with teeth is the ORDER: help is
  * answered before any context resolution, so it works logged out, offline, and with a
  * `--profile` that does not exist. Before the commander rewrite `pmcp tools --help` made a
- * network `whoami` first and then failed with `missing service` — the shape this block
+ * network `whoami` first and then failed with `missing app` — the shape this block
  * forbids by counting requests, not by reading text.
  */
 describe("§10 · help and --version, answered before anything is resolved", () => {

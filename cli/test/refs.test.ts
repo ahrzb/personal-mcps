@@ -2,7 +2,7 @@
  * cli/test/refs.test.ts — §10's ref grammar, the one piece of argv shared by `describe`
  * and `get`.
  *
- * A ref is a path whose FIRST segment names the kind of thing (`service/`, `account/`,
+ * A ref is a path whose FIRST segment names the kind of thing (`app/`, `agent/`,
  * `prompt/`, `resource/`), and splitting stops after the SECOND slash. That second rule is
  * the whole reason this file exists: a resource is addressed by a URI, and a URI has
  * slashes of its own (`resource/notes/file:///todo.md`). A splitter that kept going —
@@ -30,7 +30,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CliError } from "../src/errors";
 import { main, parseRef } from "../src/main";
 
-const TOKEN = "pmcp_sa_FAKE0000000000000000000000000000";
+const TOKEN = "pmcp_agt_FAKE0000000000000000000000000000";
 const ORIGIN = "https://hub.invalid";
 const NAMESPACE = "owner";
 
@@ -38,17 +38,17 @@ const NAMESPACE = "owner";
 const URI = "news://feed/tech?q=a b&limit=5";
 
 describe("§10 · a ref splits on its first two slashes and no further", () => {
-  it("§10 · `service/<slug>` and `service/<slug>/<item>` are the two service forms", () => {
-    expect(parseRef("service/mcp-tools", ["service", "account"], "describe")).toEqual({
-      kind: "service",
+  it("§10 · `app/<slug>` and `app/<slug>/<item>` are the two app forms", () => {
+    expect(parseRef("app/mcp-tools", ["app", "agent"], "describe")).toEqual({
+      kind: "app",
       slug: "mcp-tools",
     });
-    expect(parseRef("service/mcp-tools/paper_fetch", ["service", "account"], "describe")).toEqual({
-      kind: "service",
+    expect(parseRef("app/mcp-tools/paper_fetch", ["app", "agent"], "describe")).toEqual({
+      kind: "app",
       slug: "mcp-tools",
       item: "paper_fetch",
     });
-    expect(parseRef("account/ci", ["service", "account"], "describe")).toEqual({ kind: "account", slug: "ci" });
+    expect(parseRef("agent/ci", ["app", "agent"], "describe")).toEqual({ kind: "agent", slug: "ci" });
   });
 
   it("§10/§20.2 · an item that is itself a URI keeps every slash it carries — the split stops after the second one, so `resource/notes/file:///todo.md` names the file and not `file:`", () => {
@@ -65,10 +65,10 @@ describe("§10 · a ref splits on its first two slashes and no further", () => {
   });
 
   it("§10 · the first segment names the KIND, so a ref that is only a kind, or only a slug, is a usage error rather than a guess", () => {
-    for (const ref of ["service", "service/", "mcp-tools"]) {
+    for (const ref of ["app", "app/", "mcp-tools"]) {
       let thrown: unknown;
       try {
-        parseRef(ref, ["service", "account"], "describe");
+        parseRef(ref, ["app", "agent"], "describe");
       } catch (error) {
         thrown = error;
       }
@@ -96,7 +96,7 @@ describe("§10 · a ref splits on its first two slashes and no further", () => {
   it("§10 · a kind that resembles nothing valid still refuses, without inventing a suggestion", () => {
     let thrown: unknown;
     try {
-      parseRef("widget/mcp-tools", ["service", "account"], "describe");
+      parseRef("widget/mcp-tools", ["app", "agent"], "describe");
     } catch (error) {
       thrown = error;
     }

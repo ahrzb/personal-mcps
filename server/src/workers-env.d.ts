@@ -121,7 +121,7 @@ type D1Like = {
 
 /** A Durable Object namespace binding, generic in the stub its ids resolve to — the stub's
  *  methods ARE the class's, called over RPC. The id is opaque: minted from a name (the
- *  tunnel's is the service's opaque `service.id`) and handed straight back to `get`, never
+ *  tunnel's is the app's opaque `app.id`) and handed straight back to `get`, never
  *  inspected, which is why it needs no shape of its own. */
 type DurableObjectNamespaceLike<Stub> = {
   idFromName(name: string): unknown;

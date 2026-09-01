@@ -51,7 +51,7 @@ export type ServedSegment = (typeof import("../../src/index"))["ROUTES"][number]
  * - "not-found" — neither, the worker's plain 404.
  *
  * The classification is deliberately about ROUTING, not about status codes: /login's
- * redirect, /account's login bounce, and a 404 from a mounted group are all "served", while
+ * redirect, /settings's login bounce, and a 404 from a mounted group are all "served", while
  * a nonexistent username is "fallthrough" even though the caller sees 401. The distinction
  * is drawn from the namespace route's own observable behavior (a request that reaches it
  * carries the WWW-Authenticate signature §7 pins), which is what makes this a router walk
@@ -185,14 +185,14 @@ async function jsonRpcOf(response: Response): Promise<Record<string, unknown> | 
   return body !== null && body.jsonrpc === "2.0" ? body : null;
 }
 
-/** One seeded namespace with a live service-account key — every consumer-shape case here
+/** One seeded namespace with a live agent key — every consumer-shape case here
  *  needs a caller the gateway would actually admit, or it proves nothing about the door. */
 let fixture: SeededNamespace;
 
 beforeAll(async () => {
   fixture = await seedNamespace(env.DB, {
-    services: [{ slug: "news", kind: "tunnel" }],
-    accounts: [{ slug: "agent", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "live" }] }],
+    apps: [{ slug: "news", kind: "tunnel" }],
+    agents: [{ slug: "agent", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "live" }] }],
   });
 });
 
@@ -351,7 +351,7 @@ describe("§2/§7 · what the fallthrough serves", () => {
     );
     expect(answered.status).toBe(200);
     expect(await answered.json()).toEqual({
-      principal: "sa:agent",
+      principal: "agent:agent",
       namespace: fixture.owner.username,
     });
     // "api" is a segment, never a namespace: the consumer shape under it is not the

@@ -173,4 +173,26 @@
     deprecated it upstream — and server-initiated JSON-RPC requests stay impossible by
     MCP's own MUST NOT, so with §21 the hub's answer to "which of the revision's features
     do you proxy?" is: all of the live ones.
+29. **The domain nouns are `app` and `agent`** (2026-09-01, owner call, pre-1.0). A
+    registered MCP entry — tunneled or proxied — is an **app**, not a "service"; a
+    consumer identity holding grants (`claude`, `cron`, `pi`) is an **agent**, not a
+    "service account"; the owner's credential page is **Settings** at `/settings`, not
+    `/account`. "Service" had to carry the registry row, the protocol role, and the
+    generic English word at once, and "service account" read as infrastructure rather
+    than as the AI agents it actually names. The rename is **lexical and total**, with
+    no behavior, IA, or rule change riding along: SQL tables `app` / `agent` and columns
+    `app_id` / `agent_id` (§5); token prefixes `pmcp_app_` / `pmcp_agt_` and token kinds
+    `"app"` / `"agent"`; audit principals `app:<slug>` / `agent:<slug>` and the `audit.app`
+    column; admin tools `service_*` → `app_*` and `account_*` → `agent_*`, with their
+    audit events following (`admin.app_create`, …) — while `grant_set`, `token_*`,
+    `approval_*`, `audit_query` and `connection_*` keep their names and rename only their
+    fields; YAML keys `apps:` / `agents:` (§9); CLI nouns `pmcp app` / `pmcp agent` with
+    `--app` / `--agent` flags and `app/` / `agent/` refs (§10); routes `/apps`, `/agents`,
+    `/settings` (§13); the DO class `AppConnection` (§3). Deliberately unchanged: OAuth
+    **clients** stay clients (§19), "MCP server" stays the protocol role a tunneled bot
+    plays, better-auth's own `user`/`session`/`account` tables are untouched, and `pmcp`
+    stays the reserved slug, the CLI name, and the package prefix. **No legacy aliases**:
+    existing `pmcp_svc_` / `pmcp_sa_` tokens simply stop validating and are re-issued
+    after deploy — a pre-1.0 hub with one operator buys nothing from a compatibility
+    shim, and a shim is exactly the thing that would keep the old vocabulary alive.
 

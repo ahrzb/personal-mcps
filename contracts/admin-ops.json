@@ -1,41 +1,41 @@
 {
   "names": [
-    "account_create",
-    "account_delete",
-    "account_list",
+    "agent_create",
+    "agent_delete",
+    "agent_list",
+    "app_archive",
+    "app_create",
+    "app_delete",
+    "app_disconnect",
+    "app_get",
+    "app_list",
+    "app_set_upstream_auth",
+    "app_unarchive",
+    "app_update",
     "approval_decide",
     "approval_list",
     "audit_query",
     "connection_list",
     "connection_revoke",
     "grant_set",
-    "service_archive",
-    "service_create",
-    "service_delete",
-    "service_disconnect",
-    "service_get",
-    "service_list",
-    "service_set_upstream_auth",
-    "service_unarchive",
-    "service_update",
     "token_issue",
     "token_list",
     "token_revoke"
   ],
   "inputSchemas": {
-    "service_list": {
+    "app_list": {
       "type": "object",
-      "description": "List this namespace's services, the builtin included.",
+      "description": "List this namespace's apps, the builtin included.",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "service_get": {
+    "app_get": {
       "type": "object",
-      "description": "Read one service.",
+      "description": "Read one app.",
       "properties": {
         "slug": {
-          "description": "The service's slug, unique in this namespace.",
+          "description": "The app's slug, unique in this namespace.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         }
@@ -45,12 +45,12 @@
       ],
       "additionalProperties": false
     },
-    "service_create": {
+    "app_create": {
       "type": "object",
-      "description": "Create a service. `kind` is immutable afterwards — recreate to convert.",
+      "description": "Create an app. `kind` is immutable afterwards — recreate to convert.",
       "properties": {
         "slug": {
-          "description": "The service's slug, unique in this namespace.",
+          "description": "The app's slug, unique in this namespace.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         },
@@ -67,7 +67,7 @@
           "type": "string"
         },
         "description": {
-          "description": "Free-text note shown beside the service.",
+          "description": "Free-text note shown beside the app.",
           "type": "string"
         },
         "endpoint": {
@@ -75,7 +75,7 @@
           "type": "string"
         },
         "auth": {
-          "description": "Proxied only: which credential path this service uses.",
+          "description": "Proxied only: which credential path this app uses.",
           "type": "string",
           "enum": [
             "headers",
@@ -153,12 +153,12 @@
       ],
       "additionalProperties": false
     },
-    "service_update": {
+    "app_update": {
       "type": "object",
-      "description": "Update a service. `kind` is immutable; changing `auth` wipes stored credentials.",
+      "description": "Update an app. `kind` is immutable; changing `auth` wipes stored credentials.",
       "properties": {
         "slug": {
-          "description": "The service's slug, unique in this namespace.",
+          "description": "The app's slug, unique in this namespace.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         },
@@ -167,7 +167,7 @@
           "type": "string"
         },
         "description": {
-          "description": "Free-text note shown beside the service.",
+          "description": "Free-text note shown beside the app.",
           "type": "string"
         },
         "endpoint": {
@@ -175,7 +175,7 @@
           "type": "string"
         },
         "auth": {
-          "description": "Proxied only: which credential path this service uses.",
+          "description": "Proxied only: which credential path this app uses.",
           "type": "string",
           "enum": [
             "headers",
@@ -252,12 +252,12 @@
       ],
       "additionalProperties": false
     },
-    "service_delete": {
+    "app_delete": {
       "type": "object",
-      "description": "Delete a service, its grants, and its tokens. Terminal.",
+      "description": "Delete an app, its grants, and its tokens. Terminal.",
       "properties": {
         "slug": {
-          "description": "The service's slug, unique in this namespace.",
+          "description": "The app's slug, unique in this namespace.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         }
@@ -267,12 +267,12 @@
       ],
       "additionalProperties": false
     },
-    "service_set_upstream_auth": {
+    "app_set_upstream_auth": {
       "type": "object",
-      "description": "Store the upstream headers this proxied service is called with. Write-only.",
+      "description": "Store the upstream headers this proxied app is called with. Write-only.",
       "properties": {
         "slug": {
-          "description": "The service's slug, unique in this namespace.",
+          "description": "The app's slug, unique in this namespace.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         },
@@ -290,12 +290,12 @@
       ],
       "additionalProperties": false
     },
-    "service_disconnect": {
+    "app_disconnect": {
       "type": "object",
-      "description": "Wipe an oauth-mode proxied service's stored token bundle.",
+      "description": "Wipe an oauth-mode proxied app's stored token bundle.",
       "properties": {
         "slug": {
-          "description": "The service's slug, unique in this namespace.",
+          "description": "The app's slug, unique in this namespace.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         }
@@ -305,12 +305,12 @@
       ],
       "additionalProperties": false
     },
-    "service_archive": {
+    "app_archive": {
       "type": "object",
-      "description": "Hide a service from consumers, retaining everything.",
+      "description": "Hide an app from consumers, retaining everything.",
       "properties": {
         "slug": {
-          "description": "The service's slug, unique in this namespace.",
+          "description": "The app's slug, unique in this namespace.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         }
@@ -320,12 +320,12 @@
       ],
       "additionalProperties": false
     },
-    "service_unarchive": {
+    "app_unarchive": {
       "type": "object",
-      "description": "Make an archived service visible to consumers again.",
+      "description": "Make an archived app visible to consumers again.",
       "properties": {
         "slug": {
-          "description": "The service's slug, unique in this namespace.",
+          "description": "The app's slug, unique in this namespace.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         }
@@ -335,19 +335,19 @@
       ],
       "additionalProperties": false
     },
-    "account_list": {
+    "agent_list": {
       "type": "object",
-      "description": "List this namespace's service accounts and their grants.",
+      "description": "List this namespace's agents and their grants.",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "account_create": {
+    "agent_create": {
       "type": "object",
-      "description": "Create a service account. It holds no grants until grant_set runs.",
+      "description": "Create an agent. It holds no grants until grant_set runs.",
       "properties": {
         "slug": {
-          "description": "The account's slug, unique in this namespace.",
+          "description": "The agent's slug, unique in this namespace.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         },
@@ -356,7 +356,7 @@
           "type": "string"
         },
         "description": {
-          "description": "Free-text note shown beside the account.",
+          "description": "Free-text note shown beside the agent.",
           "type": "string"
         }
       },
@@ -365,12 +365,12 @@
       ],
       "additionalProperties": false
     },
-    "account_delete": {
+    "agent_delete": {
       "type": "object",
-      "description": "Delete a service account, its grants, and its tokens. Terminal.",
+      "description": "Delete an agent, its grants, and its tokens. Terminal.",
       "properties": {
         "slug": {
-          "description": "The account's slug.",
+          "description": "The agent's slug.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         }
@@ -382,15 +382,15 @@
     },
     "grant_set": {
       "type": "object",
-      "description": "Replace the full grant set for one (account, service) pair.",
+      "description": "Replace the full grant set for one (agent, app) pair.",
       "properties": {
-        "account": {
-          "description": "The service account's slug.",
+        "agent": {
+          "description": "The agent's slug.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         },
-        "service": {
-          "description": "The service's slug.",
+        "app": {
+          "description": "The app's slug.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         },
@@ -403,8 +403,8 @@
         }
       },
       "required": [
-        "account",
-        "service",
+        "agent",
+        "app",
         "roles"
       ],
       "additionalProperties": false
@@ -460,20 +460,20 @@
       "description": "Mint a credential. The plaintext key is shown once, here, and never again.",
       "properties": {
         "kind": {
-          "description": "service_account (an agent's key) or service (a tunneled service's key).",
+          "description": "agent (an agent's key) or app (a tunneled app's key).",
           "type": "string",
           "enum": [
-            "service_account",
-            "service"
+            "agent",
+            "app"
           ]
         },
         "slug": {
-          "description": "The account or service the key is bound to.",
+          "description": "The agent or app the key is bound to.",
           "type": "string",
           "pattern": "^[a-z0-9-]+$"
         },
         "expires_in": {
-          "description": "Seconds until expiry, or never. Defaults by kind: 90 days for an account key, never for a service key.",
+          "description": "Seconds until expiry, or never. Defaults by kind: 90 days for an agent key, never for an app key.",
           "oneOf": [
             {
               "type": "integer"
@@ -537,11 +537,11 @@
       "description": "Read the audit ledger, newest first.",
       "properties": {
         "principal": {
-          "description": "Exact principal string, e.g. sa:claude.",
+          "description": "Exact principal string, e.g. agent:claude.",
           "type": "string"
         },
-        "service": {
-          "description": "Exact service slug.",
+        "app": {
+          "description": "Exact app slug.",
           "type": "string"
         },
         "event": {

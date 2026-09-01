@@ -1,7 +1,7 @@
 /**
  * tunnel.ts — the reverse-connection subsystem: the worker-side /connect upgrade and the
- * ServiceConnection Durable Object (the hub's only DO class), one instance per tunneled
- * service, addressed by the opaque `service.id` — never user/slug, so deleting a user and
+ * AppConnection Durable Object (the hub's only DO class), one instance per tunneled
+ * app, addressed by the opaque `app.id` — never user/slug, so deleting a user and
  * recreating the username can never rebind to a stale DO.
  *
  * This module owns the whole §6 wire protocol so no other module ever learns its
@@ -22,12 +22,12 @@
  * resources, resource templates — are cached in DO SQLite beside the capability set the
  * registration-time `server/discover` learned, so all of it survives disconnects and
  * deploys (each catalog invalidated by its family's own list_changed frame, and re-listed
- * on the next demand when a registration's warm never landed one — an online service
+ * on the next demand when a registration's warm never landed one — an online app
  * serving no catalog refuses every call, so it may not be a terminal state).
  *
  * One MECHANIC is published rather than hidden, because a test leans on it: the
  * correlation deadline is armed ONCE per hub-originated request, as a single ambient
- * `setTimeout` at exactly limits.CALL_TIMEOUT_MS (ServiceConnection.request). That is the
+ * `setTimeout` at exactly limits.CALL_TIMEOUT_MS (AppConnection.request). That is the
  * seam tunnel/pipeline-tunnel.test.ts shrinks to observe §15's deadline against the
  * constant instead of waiting it out — so arming it differently (a storage alarm, a value
  * derived from the constant) is a change to this sentence and to that suite, never a
@@ -35,7 +35,7 @@
  *
  * Role declarations pass straight through registry.upsertDeclaredRoles — the roles_json
  * format never enters this module. The worker half reaches its DO namespace binding
- * (SERVICE_CONNECTION) via the importable env of `cloudflare:workers`, so callers never
+ * (APP_CONNECTION) via the importable env of `cloudflare:workers`, so callers never
  * thread an env object; the composition root owns the binding name.
  *
  * §21 gave this DO a SECOND CLASS of socket, and with it three mechanics the module now
@@ -50,9 +50,9 @@
  * handler runs both legs and neither purpose can clobber the other.
  *
  * The class invariant is the tag PREFIX and nothing else (§21.2): every reader below
- * selects the service socket by class rather than by position, so a subscriber socket
+ * selects the app socket by class rather than by position, so a subscriber socket
  * accepted first is never mistaken for the bot's connection, and a frame arriving on one
- * is never read as service traffic.
+ * is never read as app traffic.
  */
 
 import { DurableObject, env } from "cloudflare:workers";
@@ -63,7 +63,7 @@ import {
   BELL_TOOLS,
   bellFrame,
   catalogChanged,
-  DEFAULT_SERVICE_CAPABILITIES,
+  DEFAULT_APP_CAPABILITIES,
   familyBell,
   parseSubscriberTag,
   RESOURCES_UPDATED,
@@ -71,20 +71,20 @@ import {
   subscriberTag,
 } from "./capabilities";
 import { CODES, HubError, unavailable } from "./errors";
-import type { BackendCtx, JsonRpcRequest, JsonRpcResponse, ServiceBackend, Tool } from "./gateway";
+import type { BackendCtx, JsonRpcRequest, JsonRpcResponse, AppBackend, Tool } from "./gateway";
 import { formatPrincipal } from "./principal";
-import { resolveServiceToken } from "./identity";
+import { resolveAppToken } from "./identity";
 import { CALL_TIMEOUT_MS, LISTEN_BELL_MIN_INTERVAL_MS, REGISTRATION_DEADLINE_MS } from "./limits";
 import {
   patternFamilyOf,
   Registry,
-  SERVICE_CAPABILITIES,
+  APP_CAPABILITIES,
   subjectKeyOf,
   validateRoles,
   validateSchemaIndirection,
   writeOnlyPaths,
 } from "./registry";
-import type { ListKind, RoleDeclaration, Service, ServiceCapability } from "./registry";
+import type { ListKind, RoleDeclaration, App, AppCapability } from "./registry";
 
 /**
  * Close code for connection replacement: a newer socket took the slot (after the
@@ -94,7 +94,7 @@ import type { ListKind, RoleDeclaration, Service, ServiceCapability } from "./re
 export const CLOSE_REPLACED = 4000;
 
 /**
- * Close code for token-revoked / service-deleted evictions: the client library treats it
+ * Close code for token-revoked / app-deleted evictions: the client library treats it
  * like a 401 — stop reconnecting and surface a credentials error (§6).
  */
 export const CLOSE_REVOKED = 4001;
@@ -106,8 +106,8 @@ export const CLOSE_REVOKED = 4001;
 export const CLOSE_ARCHIVED = 4002;
 
 /**
- * Close code for the row-gone-during-register race: the service row vanished between
- * upgrade and registration — the client reconnects; a truly deleted service meets
+ * Close code for the row-gone-during-register race: the app row vanished between
+ * upgrade and registration — the client reconnects; a truly deleted app meets
  * 401 at the next upgrade (§6). Published vocabulary; never a SeverCode.
  */
 export const CLOSE_ROW_GONE = 4003;
@@ -177,7 +177,7 @@ export type SeverCode = typeof CLOSE_REVOKED | typeof CLOSE_ARCHIVED;
 export type ForwardFailure = "offline" | "timeout" | "disconnected";
 
 /**
- * Outcome of ServiceConnection.forward — the worker↔DO seam for one forwarded call.
+ * Outcome of AppConnection.forward — the worker↔DO seam for one forwarded call.
  * Every failure reason maps to -32000 at the backend, but they stay distinct because only
  * `offline` means the call certainly did not execute; the backend hands the reason to
  * errors.unavailable, which puts it on the thrown HubError as its `auditDetail` and — for
@@ -192,39 +192,39 @@ export type ForwardResult =
   | { ok: false; reason: ForwardFailure };
 
 /**
- * Worker half of `wss://<host>/connect`: authenticates the `pmcp_svc_` bearer, resolves
- * the tunneled service, and hands the upgrade to that service's DO by `service.id`.
+ * Worker half of `wss://<host>/connect`: authenticates the `pmcp_app_` bearer, resolves
+ * the tunneled app, and hands the upgrade to that app's DO by `app.id`.
  *
  * The response status is a pinned contract with the client libraries (§6): 401 for every
- * credential failure — missing/invalid/expired/revoked token, wrong token kind, service
+ * credential failure — missing/invalid/expired/revoked token, wrong token kind, app
  * row gone or of proxy kind — meaning fatal, stop and surface; 403 means exactly one
- * thing, the service is archived — keep retrying at max backoff so unarchiving heals on
+ * thing, the app is archived — keep retrying at max backoff so unarchiving heals on
  * its own; success is the 101 upgrade with the socket accepted by the DO. Never consults
- * cookies or query-string tokens. The DO learns the connection's identity (service, owner,
+ * cookies or query-string tokens. The DO learns the connection's identity (app, owner,
  * opening token) from this handler, not from re-validating anything itself.
  */
 export async function handleConnect(req: Request): Promise<Response> {
-  // deps: identity.resolveServiceToken · registry.serviceById · cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.fetch
+  // deps: identity.resolveAppToken · registry.appById · cloudflare:workers env.APP_CONNECTION · AppConnection.fetch
   if (!isUpgrade(req)) return refuse(426, "Upgrade Required");
-  const resolved = await resolveServiceToken(req);
+  const resolved = await resolveAppToken(req);
   // One verdict for every credential failure — which check refused is never observable.
   // The verdict carries the token ROW's id, so the plaintext bearer never leaves
   // identity.ts and the hashing scheme keeps one home (§15).
   if (resolved === null) return refuse(401, "Unauthorized");
-  const service = await new Registry(env.DB).serviceById(resolved.serviceId);
-  if (service === null || service.kind !== "tunnel") return refuse(401, "Unauthorized");
+  const app = await new Registry(env.DB).appById(resolved.appId);
+  if (app === null || app.kind !== "tunnel") return refuse(401, "Unauthorized");
   // The one thing 403 means (§6): archived, so the client keeps retrying and unarchiving
   // heals without touching the bot.
-  if (service.archived) return refuse(403, "Forbidden");
+  if (app.archived) return refuse(403, "Forbidden");
   // A FRESH request, not a forward of this one: the DO learns the connection's identity
   // from these four headers and must never see the bearer that produced them (§3, §15).
-  return connectionFor(service.id).fetch(
+  return connectionFor(app.id).fetch(
     new Request(req.url, {
       headers: {
         Upgrade: "websocket",
-        [IDENTITY_HEADER.service]: service.id,
-        [IDENTITY_HEADER.owner]: service.ownerId,
-        [IDENTITY_HEADER.slug]: service.slug,
+        [IDENTITY_HEADER.app]: app.id,
+        [IDENTITY_HEADER.owner]: app.ownerId,
+        [IDENTITY_HEADER.slug]: app.slug,
         [IDENTITY_HEADER.token]: resolved.tokenId,
       },
     }),
@@ -252,7 +252,7 @@ function refuse(status: number, text: string): Response {
  * trusts the Worker and validates nothing itself; §15: the bearer stops here).
  */
 const IDENTITY_HEADER = {
-  service: "x-pmcp-service-id",
+  app: "x-pmcp-app-id",
   owner: "x-pmcp-owner-id",
   slug: "x-pmcp-slug",
   token: "x-pmcp-token-id",
@@ -271,59 +271,59 @@ const SUBSCRIBER_HEADER = {
   principal: "x-pmcp-principal",
 } as const;
 
-/** The one place a service id becomes a DO stub — every export below goes through it. */
-function connectionFor(serviceId: Service["id"]): ServiceConnection {
-  const namespace = env.SERVICE_CONNECTION as DurableObjectNamespaceLike<ServiceConnection>;
-  return namespace.get(namespace.idFromName(serviceId));
+/** The one place an app id becomes a DO stub — every export below goes through it. */
+function connectionFor(appId: App["id"]): AppConnection {
+  const namespace = env.APP_CONNECTION as DurableObjectNamespaceLike<AppConnection>;
+  return namespace.get(namespace.idFromName(appId));
 }
 
 /**
- * The tunnel implementation of ServiceBackend — how the gateway pipeline reaches a
- * tunneled service, §20's three further listings included. Every method addresses the
- * service's DO by `service.id`; none of them performs authorization (the gateway's
+ * The tunnel implementation of AppBackend — how the gateway pipeline reaches a
+ * tunneled app, §20's three further listings included. Every method addresses the
+ * app's DO by `app.id`; none of them performs authorization (the gateway's
  * filter/archived/approval checks have already run by the time a backend is called).
- * What the service listed is cached and relayed VERBATIM; the hub reads no field of an
+ * What the app listed is cached and relayed VERBATIM; the hub reads no field of an
  * entry beyond the one key §20.2 matches its family on, and a second, weaker copy of the
  * MCP descriptors the gateway publishes is exactly what §20 must not grow.
  */
-export const tunnelBackend: ServiceBackend = {
+export const tunnelBackend: AppBackend = {
   /**
-   * Serves ServiceConnection.listTools's cached catalog — that method owns the contract.
+   * Serves AppConnection.listTools's cached catalog — that method owns the contract.
    * What this half adds: worker-side DO addressing, and that the list is returned
    * unfiltered, because role filtering is the gateway's job.
    */
-  async listTools(service, ctx) {
-    // deps: viaConnection · ServiceConnection.listTools
-    return cachedCatalog(service.id);
+  async listTools(app, ctx) {
+    // deps: viaConnection · AppConnection.listTools
+    return cachedCatalog(app.id);
   },
 
   /**
    * The cached prompt catalog (§20.5), under exactly the contract listTools answers under:
-   * whole-read from storage, empty for a service that never declared the family, never a
+   * whole-read from storage, empty for an app that never declared the family, never a
    * wait on the socket. Unfiltered — matching prompts by NAME against the caller's patterns
    * is the gateway's (§20.2).
    */
-  async listPrompts(service, ctx) {
-    // deps: viaConnection · ServiceConnection.listCatalog
-    return cachedFamily(service.id, "prompts");
+  async listPrompts(app, ctx) {
+    // deps: viaConnection · AppConnection.listCatalog
+    return cachedFamily(app.id, "prompts");
   },
 
   /** The cached resource catalog, same contract — matched by `uri` at the door, never by
    *  `name` (§20.2), which is why nothing here reads either. */
-  async listResources(service, ctx) {
-    // deps: viaConnection · ServiceConnection.listCatalog
-    return cachedFamily(service.id, "resources");
+  async listResources(app, ctx) {
+    // deps: viaConnection · AppConnection.listCatalog
+    return cachedFamily(app.id, "resources");
   },
 
   /** The cached resource-template catalog — its own key because §20.5 gives it one, warmed
    *  and cleared by the `resources` declaration that covers both. */
-  async listResourceTemplates(service, ctx) {
-    // deps: viaConnection · ServiceConnection.listCatalog
-    return cachedFamily(service.id, "resourceTemplates");
+  async listResourceTemplates(app, ctx) {
+    // deps: viaConnection · AppConnection.listCatalog
+    return cachedFamily(app.id, "resourceTemplates");
   },
 
   /**
-   * Forwards one request over the live registered socket and returns the service's
+   * Forwards one request over the live registered socket and returns the app's
    * response verbatim (the gateway re-addresses it to the consumer). Before the frame
    * leaves it is stamped with the §6 fields a self-contained hub-originated request must
    * carry — see `stamped`. Offline, unregistered, 30 s without an answer, a socket that
@@ -332,12 +332,12 @@ export const tunnelBackend: ServiceBackend = {
    * errors.unavailable into the audit row and, for everything but the offline case, tells
    * the consumer the call may still have executed (at-most-once, §15).
    */
-  async call(service, msg, ctx) {
-    // deps: viaConnection · ServiceConnection.forward · errors.unavailable
+  async call(app, msg, ctx) {
+    // deps: viaConnection · AppConnection.forward · errors.unavailable
     // A stub that breaks may have broken AFTER the frame left, so the DO's own failure is
     // a dispatch failure like any other rather than an unclassified -32603 (§10's code
     // contract: map any DO-stub throw to -32000).
-    const outcome = await viaConnection(service.id, "do_unreachable", (connection) =>
+    const outcome = await viaConnection(app.id, "do_unreachable", (connection) =>
       connection.forward(stamped(msg, ctx)),
     );
     // Every reason is one -32000 on the wire; which one it was rides the error's
@@ -354,15 +354,15 @@ export const tunnelBackend: ServiceBackend = {
    * `{ args, results }` (an absent outputSchema yields empty results); the caller
    * unions config-declared `redact` / `redact_results` paths in itself.
    * Returns null when the tool is absent from the cached catalog (never-connected
-   * services included) OR cached flagged schema-unsound (its schema tripped
+   * apps included) OR cached flagged schema-unsound (its schema tripped
    * validateSchemaIndirection at catalog warm, §7): the gateway answers -32001
    * (indistinguishable from
    * not-permitted, §7) and nothing downstream runs. Answers from the cache: the one thing
    * it can put on the live socket is listTools's own re-warm, which nothing here awaits.
    */
-  async sensitivePaths(service, tool) {
-    // deps: viaConnection · ServiceConnection.listTools · registry.writeOnlyPaths
-    const entry = (await cachedCatalog(service.id)).find((t) => t.name === tool);
+  async sensitivePaths(app, tool) {
+    // deps: viaConnection · AppConnection.listTools · registry.writeOnlyPaths
+    const entry = (await cachedCatalog(app.id)).find((t) => t.name === tool);
     if (entry === undefined) return null;
     if (schemaViolations(entry).length > 0) return null;
     return {
@@ -374,46 +374,46 @@ export const tunnelBackend: ServiceBackend = {
 
 /** The DO's cached TOOL catalog as the worker half reads it — the one place both backend
  *  methods that need it go through, so the RPC contract below is applied once. */
-function cachedCatalog(serviceId: Service["id"]): Promise<Tool[]> {
-  // deps: viaConnection · ServiceConnection.listTools
-  return viaConnection(serviceId, "catalog_unreachable", (connection) => connection.listTools());
+function cachedCatalog(appId: App["id"]): Promise<Tool[]> {
+  // deps: viaConnection · AppConnection.listTools
+  return viaConnection(appId, "catalog_unreachable", (connection) => connection.listTools());
 }
 
 /**
  * …and the same read for §20.5's other three catalogs. Generic in what the caller CALLS
- * the entries: the DO caches whatever the service listed and interprets none of it, so the
- * shape is the reader's to name — ServiceBackend names each family by the one key §20.2
+ * the entries: the DO caches whatever the app listed and interprets none of it, so the
+ * shape is the reader's to name — AppBackend names each family by the one key §20.2
  * matches it on.
  */
-function cachedFamily<T>(serviceId: Service["id"], family: CatalogFamily): Promise<T[]> {
-  // deps: viaConnection · ServiceConnection.listCatalog
-  return viaConnection(serviceId, "catalog_unreachable", (connection) =>
+function cachedFamily<T>(appId: App["id"], family: CatalogFamily): Promise<T[]> {
+  // deps: viaConnection · AppConnection.listCatalog
+  return viaConnection(appId, "catalog_unreachable", (connection) =>
     connection.listCatalog<T>(family),
   );
 }
 
 /**
- * The capability set this service DECLARED at its last successful registration (§20.5),
+ * The capability set this app DECLARED at its last successful registration (§20.5),
  * for §20.2's scoped handshake — configuration the hub was told, read from the DO's
- * durable state and never a live call, so a hung service still answers `initialize` at
+ * durable state and never a live call, so a hung app still answers `initialize` at
  * full speed.
  *
- * Answers `tools` for a service that has never connected, whose discover has never
+ * Answers `tools` for an app that has never connected, whose discover has never
  * succeeded, or whose DO cannot be reached at all — §20.2's "a capability the hub has
  * never been told about is not declared", and the same swallow-to-the-truthful-answer
- * policy status() takes: a handshake has no consumer to hand a refusal to, and a service
+ * policy status() takes: a handshake has no consumer to hand a refusal to, and an app
  * whose declaration cannot be consulted is certainly not known to serve more than tools.
  */
-export async function capabilities(serviceId: Service["id"]): Promise<ServiceCapability[]> {
-  // deps: viaConnection · ServiceConnection.capabilities
-  return viaConnection(serviceId, "catalog_unreachable", (connection) =>
+export async function capabilities(appId: App["id"]): Promise<AppCapability[]> {
+  // deps: viaConnection · AppConnection.capabilities
+  return viaConnection(appId, "catalog_unreachable", (connection) =>
     connection.capabilities(),
   ).catch(() => [...DEFAULT_CAPABILITIES]);
 }
 
 /**
  * One DO RPC on the consumer's path, inside §7's pinned contract. A stub call can fail for
- * reasons that are nothing to do with the service — the instance forcibly restarted, the
+ * reasons that are nothing to do with the app — the instance forcibly restarted, the
  * namespace refusing, the RPC itself breaking — and none of those is a HubError, so without
  * this the gateway maps them to -32603 with the cause discarded and the tools/call row
  * loses its failure class. §10 names it as a code contract for exactly that reason: map any
@@ -421,21 +421,21 @@ export async function capabilities(serviceId: Service["id"]): Promise<ServiceCap
  * passes through untouched.
  *
  * NOT applied to sever/wipe: those are owner-side cascades whose failure must reach the
- * owner as a failed admin op, and "service unavailable" is not what a failed teardown is.
+ * owner as a failed admin op, and "app unavailable" is not what a failed teardown is.
  */
 async function viaConnection<T>(
-  serviceId: Service["id"],
+  appId: App["id"],
   reason: DispatchFailure,
-  rpc: (connection: ServiceConnection) => Promise<T>,
+  rpc: (connection: AppConnection) => Promise<T>,
 ): Promise<T> {
   // deps: connectionFor · errors.unavailable
   try {
-    return await rpc(connectionFor(serviceId));
+    return await rpc(connectionFor(appId));
   } catch (err) {
     if (err instanceof HubError) throw err;
-    // The operator's line for a hub-side fault: the service id and the class, never a
+    // The operator's line for a hub-side fault: the app id and the class, never a
     // credential and never a frame (§15). The exception itself is Workers Logs' business.
-    console.error(`pmcp/do-rpc: ${reason} for ${serviceId}`, err);
+    console.error(`pmcp/do-rpc: ${reason} for ${appId}`, err);
     throw unavailable(reason);
   }
 }
@@ -458,7 +458,7 @@ type DispatchFailure = ForwardFailure | "do_unreachable" | "catalog_unreachable"
  * validateSchemaIndirection is pure over the very schema the cache keeps verbatim, so a
  * stored bit could only ever disagree with it — and the cache stays the verbatim oracle
  * listTools promises. The registration-time call (warmCatalog) is the LOUD half: it is
- * what puts the violations in front of the service and the operator.
+ * what puts the violations in front of the app and the operator.
  */
 function schemaViolations(tool: Tool): string[] {
   return [
@@ -468,13 +468,13 @@ function schemaViolations(tool: Tool): string[] {
 }
 
 /**
- * One forwarded frame as the service receives it: §6's identity keys, resolved from ctx,
+ * One forwarded frame as the app receives it: §6's identity keys, resolved from ctx,
  * over the protocol fields every hub-originated request carries.
  *
  * It does NOT filter the consumer's `_meta`. `hub/*` HYGIENE — which consumer keys are
  * dropped, and what the reserved prefix means — is gateway.prepareForward's, a chokepoint
  * this message has already passed (that module's header owns the decision, and
- * ServiceBackend.call's interface comment says `msg` arrives post-hygiene). A second pass
+ * AppBackend.call's interface comment says `msg` arrives post-hygiene). A second pass
  * here would be a second owner: idempotent today, and silently deleting the next `hub/*`
  * key the gateway learns to send.
  */
@@ -552,31 +552,31 @@ const LIST_METHOD: Readonly<Record<CatalogFamily, string>> = {
  * re-registration that no longer declares a family clears, and what a list_changed frame
  * re-lists. Splitting them would let the three disagree about what a family IS.
  */
-function catalogsOf(capability: ServiceCapability): CatalogFamily[] {
+function catalogsOf(capability: AppCapability): CatalogFamily[] {
   // deps: registry.patternFamilyOf
   return CATALOG_FAMILIES.filter((family) => patternFamilyOf(family) === capability);
 }
 
 /**
- * How the DO reads one service-originated notification — the WHOLE read-set (§6, as §21.4
+ * How the DO reads one app-originated notification — the WHOLE read-set (§6, as §21.4
  * amended it), and the two ways a frame in it is read. `invalidates` names the capability
  * whose catalogs the frame re-lists; `routes` names no capability at all, because
  * `notifications/resources/updated` invalidates nothing and re-warms nothing — it is
  * relayed to the subscriber sockets that subscribed its `uri` and to nobody else. Every
- * other frame a registered service sends is still dropped.
+ * other frame a registered app sends is still dropped.
  *
  * The distinction is a VALUE rather than two tables because the contracts fixture producer
  * emits this record whole (§4 of the testing strategy): a fifth frame cannot reach the
  * wire without reaching the fixture. The keys are the bell constants from capabilities.ts
- * — the consumer-facing bell and the service-originated notification are the same MCP
+ * — the consumer-facing bell and the app-originated notification are the same MCP
  * method, which is exactly why one write can be read as both (§21.3).
  */
-export type ServiceNotification =
-  | { reads: "invalidates"; capability: ServiceCapability }
+export type AppNotification =
+  | { reads: "invalidates"; capability: AppCapability }
   | { reads: "routes" };
 
-/** The four service-originated notifications the DO reads, by method (§6/§21.4). */
-export const SERVICE_NOTIFICATIONS: Readonly<Record<string, ServiceNotification>> = {
+/** The four app-originated notifications the DO reads, by method (§6/§21.4). */
+export const APP_NOTIFICATIONS: Readonly<Record<string, AppNotification>> = {
   [BELL_TOOLS]: { reads: "invalidates", capability: "tools" },
   [BELL_PROMPTS]: { reads: "invalidates", capability: "prompts" },
   [BELL_RESOURCES]: { reads: "invalidates", capability: "resources" },
@@ -591,11 +591,11 @@ const DISCOVER_METHOD = "server/discover";
  *  scoped handshake. */
 const CAPABILITIES_KEY = "capabilities";
 
-/** What a service the hub has never been told anything about serves: tools — §20.2's
+/** What an app the hub has never been told anything about serves: tools — §20.2's
  *  never-connected answer, and exactly what §6's discover fallback warms. Imported rather
  *  than respelled: capabilities.ts owns the value, and two copies of one default is how a
  *  handshake and a warm start disagreeing. */
-const DEFAULT_CAPABILITIES = DEFAULT_SERVICE_CAPABILITIES;
+const DEFAULT_CAPABILITIES = DEFAULT_APP_CAPABILITIES;
 
 /**
  * §21.3's floor state, DURABLE (constraint 5): when each bell last rang, and which bells
@@ -616,33 +616,33 @@ const BELL_PENDING_PREFIX = "bell:pending:";
 const ALARM_DEADLINE_KEY = "alarm:deadline";
 
 /**
- * Closes the service's live socket, if any, with the given code — the two owner-triggered
- * evictions: CLOSE_REVOKED for token revocation / service deletion, CLOSE_ARCHIVED for
+ * Closes the app's live socket, if any, with the given code — the two owner-triggered
+ * evictions: CLOSE_REVOKED for token revocation / app deletion, CLOSE_ARCHIVED for
  * archival (retry semantics on each constant). `onlyIfTokenId` makes the close
  * conditional on the connection having been opened with that token — token_revoke's
- * "sever only the socket this token opened" rule (§8). A no-op when the service is
+ * "sever only the socket this token opened" rule (§8). A no-op when the app is
  * offline. Never touches cached state: deletion cascades pair it with wipe, and admin
  * owns that ordering.
  */
-export async function sever(serviceId: Service["id"], code: SeverCode, onlyIfTokenId?: string): Promise<void> {
-  // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.sever
-  await connectionFor(serviceId).sever(code, onlyIfTokenId);
+export async function sever(appId: App["id"], code: SeverCode, onlyIfTokenId?: string): Promise<void> {
+  // deps: cloudflare:workers env.APP_CONNECTION · AppConnection.sever
+  await connectionFor(appId).sever(code, onlyIfTokenId);
 }
 
 /**
  * Erases the DO's durable footprint — everything it persists, which today is the cached
  * catalog — returning
- * the service to its never-connected state, for service-delete and user-delete cascades.
+ * the app to its never-connected state, for app-delete and user-delete cascades.
  * Idempotent, and safe against a DO that was never woken. Leaves any live socket alone:
  * callers sever first (admin's cascade closes CLOSE_REVOKED before wiping).
  */
-export async function wipe(serviceId: Service["id"]): Promise<void> {
-  // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.wipe
-  await connectionFor(serviceId).wipe();
+export async function wipe(appId: App["id"]): Promise<void> {
+  // deps: cloudflare:workers env.APP_CONNECTION · AppConnection.wipe
+  await connectionFor(appId).wipe();
 }
 
 /**
- * Worker half of §21.2's SECOND door: opens one subscriber socket into a service's DO and
+ * Worker half of §21.2's SECOND door: opens one subscriber socket into an app's DO and
  * hands back the Worker-side end, already accepted, for the held SSE invocation to pump.
  * A fresh request like handleConnect's, carrying no credential material — the Worker has
  * already resolved the principal and read the grants, and the DO trusts it (§3).
@@ -653,12 +653,12 @@ export async function wipe(serviceId: Service["id"]): Promise<void> {
  * make that decision silently.
  */
 export async function openSubscriber(
-  serviceId: Service["id"],
+  appId: App["id"],
   sessionId: string,
   principal: string,
 ): Promise<WebSocket> {
-  // deps: cloudflare:workers env.SERVICE_CONNECTION · ServiceConnection.fetch
-  const response = await connectionFor(serviceId).fetch(
+  // deps: cloudflare:workers env.APP_CONNECTION · AppConnection.fetch
+  const response = await connectionFor(appId).fetch(
     new Request("https://pmcp.invalid/subscribe", {
       headers: {
         Upgrade: "websocket",
@@ -691,13 +691,13 @@ export type SubscribeOutcome = "stored" | "no_stream" | "refused";
  * believing it had subscribed.
  */
 export function subscribe(
-  serviceId: Service["id"],
+  appId: App["id"],
   sessionId: string,
   principal: string,
   uri: string,
 ): Promise<SubscribeOutcome> {
-  // deps: viaConnection · ServiceConnection.subscribe
-  return viaConnection(serviceId, "do_unreachable", (connection) =>
+  // deps: viaConnection · AppConnection.subscribe
+  return viaConnection(appId, "do_unreachable", (connection) =>
     connection.subscribe(sessionId, principal, uri),
   );
 }
@@ -705,13 +705,13 @@ export function subscribe(
 /** §21.4's mirror: filter, match, remove, forward. Removing can exceed no cap, so unlike
  *  subscribe it has no refusal to report — the door forwards whatever this answers. */
 export function unsubscribe(
-  serviceId: Service["id"],
+  appId: App["id"],
   sessionId: string,
   principal: string,
   uri: string,
 ): Promise<void> {
-  // deps: viaConnection · ServiceConnection.unsubscribe
-  return viaConnection(serviceId, "do_unreachable", (connection) =>
+  // deps: viaConnection · AppConnection.unsubscribe
+  return viaConnection(appId, "do_unreachable", (connection) =>
     connection.unsubscribe(sessionId, principal, uri),
   );
 }
@@ -720,14 +720,14 @@ export function unsubscribe(
  * "online" iff the DO holds a live socket that has completed hub/register — an accepted
  * but not-yet-registered socket reads as offline (the 10 s deadline bounds that window,
  * §6). This is the availability probe the approval gate consults FIRST (a known-offline
- * service is refused -32000 before any approval row is read, created, or consumed, §7)
- * and again between check and claim, so an offline service never consumes an approval —
- * and the status column behind service_list / /services. Cheap and side-effect-free.
+ * app is refused -32000 before any approval row is read, created, or consumed, §7)
+ * and again between check and claim, so an offline app never consumes an approval —
+ * and the status column behind app_list / /apps. Cheap and side-effect-free.
  *
  * A DO this hub cannot reach at all reads "offline" rather than throwing: it is the
- * truthful answer to the question asked (a service whose connection cannot be consulted is
+ * truthful answer to the question asked (an app whose connection cannot be consulted is
  * certainly not known-online), and it keeps a broken instance from taking out a listing.
- * The refusal it produces at the approval gate is the same -32000 an offline service gets.
+ * The refusal it produces at the approval gate is the same -32000 an offline app gets.
  *
  * The POLICY is this function's — swallow to "offline" where the dispatch path throws — but
  * the MECHANISM is viaConnection's, so the seam has one try/catch and one operator log line
@@ -737,9 +737,9 @@ export function unsubscribe(
  * however the consultation failed. The passthrough exists for the dispatch path, where the
  * refusal IS the consumer's answer.
  */
-export async function status(serviceId: Service["id"]): Promise<"online" | "offline"> {
-  // deps: viaConnection · ServiceConnection.status
-  return viaConnection(serviceId, "do_unreachable", (connection) => connection.status()).catch(
+export async function status(appId: App["id"]): Promise<"online" | "offline"> {
+  // deps: viaConnection · AppConnection.status
+  return viaConnection(appId, "do_unreachable", (connection) => connection.status()).catch(
     () => "offline" as const,
   );
 }
@@ -756,7 +756,7 @@ export async function status(serviceId: Service["id"]): Promise<"online" | "offl
  */
 type ConnectionAttachment = {
   v: 1;
-  serviceId: string;
+  appId: string;
   ownerId: string;
   slug: string;
   /** Which token opened this connection — sever(code, onlyIfTokenId) compares against it. */
@@ -766,7 +766,7 @@ type ConnectionAttachment = {
 
 /**
  * A SUBSCRIBER socket's identity and its subscription set, as they ride
- * serializeAttachment through hibernation (§21.4/§5). Versioned like the service socket's
+ * serializeAttachment through hibernation (§21.4/§5). Versioned like the app socket's
  * attachment and for the same reason, and never confused with it: the socket's `sub:` tag
  * decides which reader runs, so the two shapes never meet at a read.
  *
@@ -781,15 +781,15 @@ type SubscriberAttachment = {
 };
 
 /**
- * The per-service Durable Object: at most one accepted socket ever (newest wins at
+ * The per-app Durable Object: at most one accepted socket ever (newest wins at
  * acceptance), the cached tools/list catalog in its own SQLite, in-flight correlation in
  * memory. It trusts the worker half completely — an upgrade only reaches fetch() after
- * handleConnect authenticated the service token, and no other entry point carries
+ * handleConnect authenticated the app token, and no other entry point carries
  * credentials at all. It extends DurableObject from `cloudflare:workers` with the
  * WebSocket hibernation API and SQLite storage (new_sqlite_classes); every non-fetch
  * entry point below is an RPC method the worker half calls through the namespace binding.
  */
-export class ServiceConnection extends DurableObject {
+export class AppConnection extends DurableObject {
   /**
    * Hub-initiated requests awaiting their response frame, keyed by wire id. Each entry
    * remembers the SOCKET it was sent on, so failing a socket fails exactly the calls that
@@ -838,7 +838,7 @@ export class ServiceConnection extends DurableObject {
     // Newest wins BEFORE the newcomer is accepted, so the two-socket window never exists.
     await this.evictCurrent(arriving);
     const pair = new WebSocketPair();
-    this.ctx.acceptWebSocket(pair[1], [arriving.serviceId]);
+    this.ctx.acceptWebSocket(pair[1], [arriving.appId]);
     pair[1].serializeAttachment(arriving);
     // A storage alarm, not a timer: an unregistered socket has no pending request to keep
     // this instance awake, so the deadline has to outlive hibernation (§6). Its PURPOSE is
@@ -853,11 +853,11 @@ export class ServiceConnection extends DurableObject {
 
   /**
    * §21.2's subscriber accept: a socket of the OTHER class — tagged `sub:<session-id>` so
-   * that no service-socket reader can ever return it, carrying the Worker's resolved
+   * that no app-socket reader can ever return it, carrying the Worker's resolved
    * principal and an empty subscription set. It evicts nothing (§6's at-most-one invariant
-   * counts service sockets), writes no audit row (§21.6, doorbells are listing-class), and
+   * counts app sockets), writes no audit row (§21.6, doorbells are listing-class), and
    * — the pin — arms NO registration deadline: a subscriber never registers, and a stream
-   * that opened before its service reconnects must not be killed by the bot's clock.
+   * that opened before its app reconnects must not be killed by the bot's clock.
    */
   private acceptSubscriber(attachment: SubscriberAttachment): Response {
     const pair = new WebSocketPair();
@@ -868,7 +868,7 @@ export class ServiceConnection extends DurableObject {
 
   /**
    * §6's replacement, at acceptance: the sitting socket is told `hub/replaced`, closed
-   * 4000, and the event is written to the ledger — with a stolen service token,
+   * 4000, and the event is written to the ledger — with a stolen app token,
    * eviction-and-impersonation looks exactly like this, so the row is the signal.
    */
   private async evictCurrent(arriving: ConnectionAttachment): Promise<void> {
@@ -888,19 +888,19 @@ export class ServiceConnection extends DurableObject {
    * One JSON-RPC message per WS text frame, routed by namespace. hub/register: the
    * declaration is handed to registry.upsertDeclaredRoles (which owns validation and
    * drift auditing); a rejected declaration gets a JSON-RPC error reply and close 4004,
-   * a vanished service row closes 4003, success replies {ok:true}, writes the
+   * a vanished app row closes 4003, success replies {ok:true}, writes the
    * connect.register audit row, and immediately runs the §6 capability warm — one
    * server/discover, then the catalogs its answer declared.
    * After registration: correlation replies resolve the pending map, and each frame of the
-   * DO's read-set (SERVICE_NOTIFICATIONS) is read the one way that record says — §6's
+   * DO's read-set (APP_NOTIFICATIONS) is read the one way that record says — §6's
    * three list_changed invalidate their own family's catalogs and re-list, §21.4's
    * `resources/updated` is routed by `uri` and invalidates nothing.
    * When the warmed catalog lands, each tool's input/output schemas run
-   * registry.validateSchemaIndirection: violations are LOUD — echoed to the service
+   * registry.validateSchemaIndirection: violations are LOUD — echoed to the app
    * as a warning frame and logged — and the tool is cached flagged schema-unsound,
    * which makes sensitivePaths answer null for it (§7's -32001 / no-body handling);
    * the registration itself still succeeds, so one exotic tool never bricks the
-   * service. Any
+   * app. Any
    * pre-registration message other than hub/register is a protocol error — error reply,
    * then close 4004. The hub never forwards consumer traffic to an unregistered socket.
    *
@@ -921,8 +921,8 @@ export class ServiceConnection extends DurableObject {
     if (frame === null) return;
     // A correlated answer to something this hub asked (a forwarded call, a catalog warm).
     if (frame.method === undefined) return this.settle(frame);
-    const notification = SERVICE_NOTIFICATIONS[String(frame.method)];
-    // Anything else from a registered service is a frame the hub does not read (§6: every
+    const notification = APP_NOTIFICATIONS[String(frame.method)];
+    // Anything else from a registered app is a frame the hub does not read (§6: every
     // MCP request on this socket is hub-originated). Ignored, never a close: the protocol
     // error is a PRE-registration rule.
     if (notification === undefined) return;
@@ -948,7 +948,7 @@ export class ServiceConnection extends DurableObject {
       this.send(ws, errorFrame(id, CODES.invalidRequest, "hub/register expected first"));
       return this.drop(ws, CLOSE_PROTOCOL, "protocol error");
     }
-    // The payload carries no service field, and this is where that is true: identity comes
+    // The payload carries no app field, and this is where that is true: identity comes
     // from `attachment`, which the worker half built from the token alone (§6).
     const roles = declarationOf(frame);
     const violations = roles === null ? ["roles must be an object of pattern lists"] : validateRoles(roles);
@@ -959,15 +959,15 @@ export class ServiceConnection extends DurableObject {
     const registry = new Registry(env.DB);
     let drift;
     try {
-      drift = await registry.upsertDeclaredRoles(attachment.serviceId, roles);
+      drift = await registry.upsertDeclaredRoles(attachment.appId, roles);
     } catch (err) {
       // WHICH refusal, asked rather than assumed. §6's reconnect race is the one this
       // socket answers 4003 to — told apart from a violation by carrying no reply at all.
       // Everything else registry or D1 can fail with is a hub defect or somebody's
-      // downtime, and disguising either as "your service row is gone, reconnect" would
+      // downtime, and disguising either as "your app row is gone, reconnect" would
       // send an operator to look at a healthy row and leave no trace of the real fault.
-      if ((await registry.serviceById(attachment.serviceId)) !== null) throw err;
-      return this.drop(ws, CLOSE_ROW_GONE, "service row is gone");
+      if ((await registry.appById(attachment.appId)) !== null) throw err;
+      return this.drop(ws, CLOSE_ROW_GONE, "app row is gone");
     }
     attachment.registered = true;
     ws.serializeAttachment(attachment);
@@ -992,16 +992,16 @@ export class ServiceConnection extends DurableObject {
    * The FALLBACK is the load-bearing half (§6): a `-32601` from a library that predates the
    * method, any other error, and a correlation timeout all mean "capabilities unknown", and
    * the hub then warms TOOLS ONLY and touches no other key — no catalog is emptied and the
-   * stored capability set stands, so a service already in the field keeps the tool list it
+   * stored capability set stands, so an app already in the field keeps the tool list it
    * has always had and its handshake keeps advertising what it last declared. Warming blind
-   * instead would make every tools-only service log three spurious warm failures.
+   * instead would make every tools-only app log three spurious warm failures.
    *
-   * A SUCCESSFUL answer replaces the stored set — never accumulates, or a family a service
+   * A SUCCESSFUL answer replaces the stored set — never accumulates, or a family an app
    * has stopped serving would be advertised forever — and CLEARS the catalogs of every
-   * family it omits: an omission in an answer is the service saying it no longer serves that
+   * family it omits: an omission in an answer is the app saying it no longer serves that
    * family, which is the one case §20.5 distinguishes from a failure. Cleared to `[]`, the
    * genuinely-empty answer, rather than to absent, which would re-warm on the next demand a
-   * family the service just undeclared.
+   * family the app just undeclared.
    */
   private async warmDeclared(ws: WebSocket, attachment: ConnectionAttachment): Promise<void> {
     const declared = await this.discover(ws);
@@ -1021,12 +1021,12 @@ export class ServiceConnection extends DurableObject {
   }
 
   /**
-   * §6's capability question, asked once per registration: which families does this service
+   * §6's capability question, asked once per registration: which families does this app
    * serve? Answered by the CLIENT LIBRARY rather than the author's SDK (§11), so every
    * answer this hub cannot read is a library that predates the method — null, meaning
    * "unknown", which is a different fact from an answer that declared nothing.
    */
-  private async discover(ws: WebSocket): Promise<ServiceCapability[] | null> {
+  private async discover(ws: WebSocket): Promise<AppCapability[] | null> {
     const outcome = await this.request(ws, {
       jsonrpc: "2.0",
       method: DISCOVER_METHOD,
@@ -1040,7 +1040,7 @@ export class ServiceConnection extends DurableObject {
   private async warmFamily(
     ws: WebSocket,
     attachment: ConnectionAttachment,
-    capability: ServiceCapability,
+    capability: AppCapability,
   ): Promise<void> {
     await this.warmAndRing(ws, attachment, catalogsOf(capability));
   }
@@ -1075,12 +1075,12 @@ export class ServiceConnection extends DurableObject {
   /**
    * One catalog's warm: a hub-originated list for that family, and — on the tool catalog —
    * the §7 indirection refuse-line applied LOUDLY to what comes back, so one exotic schema
-   * names itself to the service and the operator while the registration still stands. A
+   * names itself to the app and the operator while the registration still stands. A
    * warm that draws no catalog — unanswered, or answered with something that is not a list
    * — leaves the previous cache in place (a stale catalog serves better than an empty one,
    * §6 lifecycle 2; a failure is never an undeclare, §20.5) and is LOGGED: for a family that
    * never warmed the key stays ABSENT, which reads as never-warmed and re-lists on the next
-   * demand, since an online service serving no catalog is not a state to sit in.
+   * demand, since an online app serving no catalog is not a state to sit in.
    */
   private async warmCatalog(
     ws: WebSocket,
@@ -1100,9 +1100,9 @@ export class ServiceConnection extends DurableObject {
     });
     const entries = outcome.ok ? catalogOf(outcome.response, family) : null;
     if (entries === null) {
-      // §15 hygiene: the slug so an operator can find the service, the family so they know
+      // §15 hygiene: the slug so an operator can find the app, the family so they know
       // which list, and the failure class — never the answer's body. Loud because nothing
-      // else about this state is: the registration succeeded and the service reads online.
+      // else about this state is: the registration succeeded and the app reads online.
       console.warn(
         `pmcp/catalog-warm-failed: ${attachment.slug} ${family}: ${outcome.ok ? "answer was not a catalog" : outcome.reason}`,
       );
@@ -1190,7 +1190,7 @@ export class ServiceConnection extends DurableObject {
     if (scheduled === null || at < scheduled) await this.ctx.storage.setAlarm(at);
   }
 
-  /** The LOUD half of §7's indirection refuse-line: every unsound tool named to the service
+  /** The LOUD half of §7's indirection refuse-line: every unsound tool named to the app
    *  in a warning frame and to the operator in a log line. The registration still stands. */
   private reportUnsound(ws: WebSocket, attachment: ConnectionAttachment, tools: Tool[]): void {
     for (const tool of tools) {
@@ -1264,12 +1264,12 @@ export class ServiceConnection extends DurableObject {
   }
 
   /**
-   * The cached catalog, verbatim as last received from the service — names,
+   * The cached catalog, verbatim as last received from the app — names,
    * descriptions, inputSchema and outputSchema (the schemas are what sensitivePaths
    * walks, both directions §7; serving-time `writeOnly` stripping on outputSchemas
    * is the gateway's job, never done here — the cache stays the verbatim oracle).
    * Empty for a
-   * service that has never completed a registration. ALWAYS answers from storage and never
+   * app that has never completed a registration. ALWAYS answers from storage and never
    * waits on the socket — but it does fire the re-warm below when the cache is absent while
    * a registered socket is live, which is the only way out of a failed first warm.
    */
@@ -1280,13 +1280,13 @@ export class ServiceConnection extends DurableObject {
 
   /**
    * The same contract for §20.5's other three catalogs — prompts, resources and resource
-   * templates, each under its own key. Their entries are whatever the service listed, kept
+   * templates, each under its own key. Their entries are whatever the app listed, kept
    * VERBATIM: the hub reads only the key §20.2 matches the family on (and does that at the
    * door), so what an entry is called here is the caller's to say.
    *
-   * Empty both for a service that never declared the family and for one that just stopped
+   * Empty both for an app that never declared the family and for one that just stopped
    * declaring it — §20.5's clear stores `[]`, so an undeclared family answers empty instead
-   * of re-warming forever against a service that no longer serves it.
+   * of re-warming forever against an app that no longer serves it.
    */
   async listCatalog<T>(family: CatalogFamily): Promise<T[]> {
     // deps: DO ctx.storage `catalog:*` · warmCatalog
@@ -1317,28 +1317,28 @@ export class ServiceConnection extends DurableObject {
    * it. Absent — never connected, or never a discover this hub could read — is `tools`,
    * because a capability the hub has never been told about is not declared (§20.2).
    */
-  async capabilities(): Promise<ServiceCapability[]> {
+  async capabilities(): Promise<AppCapability[]> {
     // deps: DO ctx.storage `capabilities`
-    const declared = await this.ctx.storage.get<ServiceCapability[]>(CAPABILITIES_KEY);
+    const declared = await this.ctx.storage.get<AppCapability[]>(CAPABILITIES_KEY);
     return declared ?? [...DEFAULT_CAPABILITIES];
   }
 
   /**
    * The recovery from a warm that never landed: an ABSENT key under a live registered
    * socket means this connection has never produced a catalog, so ask again — on demand,
-   * because demand is the only thing that makes the answer worth anything. A service with a
+   * because demand is the only thing that makes the answer worth anything. An app with a
    * genuinely empty tool set is not this: a warm that landed stored `[]`, which is present.
    *
    * Derived from the cache rather than remembered in a field, for the same reason the
    * schema-unsound flag is: an in-memory mark is lost at the first hibernation, which is
-   * precisely when a wedged service would sit longest. Fired and not awaited — a tools/list
-   * read must never wait out CALL_TIMEOUT_MS on a service that cannot answer — so the
+   * precisely when a wedged app would sit longest. Fired and not awaited — a tools/list
+   * read must never wait out CALL_TIMEOUT_MS on an app that cannot answer — so the
    * demand that finds the gap serves the empty catalog and the one after it is served the
    * warm one; a rejection is swallowed for the same reason warmCatalog's failure is
    * survivable, and the next demand simply asks again.
    *
    * ONE at a time PER FAMILY, and that bound is the point: this runs on DEMAND, and the
-   * demand is tools/call's (sensitivePaths reads the same cache), so a wedged service that
+   * demand is tools/call's (sensitivePaths reads the same cache), so a wedged app that
    * never answers would otherwise draw one hub-originated list per consumer call — each
    * parking a waiter for CALL_TIMEOUT_MS, and each keeping the instance awake, unbounded in
    * exactly the state this recovery was written for. The guard is READ OFF `pending` rather
@@ -1421,7 +1421,7 @@ export class ServiceConnection extends DurableObject {
     const answer = answerOf(frame);
     // A frame that is not a JSON-RPC response is not an answer. Resolving it `ok` would
     // hand the gateway something whose `error === undefined` reads as outcome "ok" and
-    // relay a memberless response to the consumer. The call DID reach the service, so the
+    // relay a memberless response to the consumer. The call DID reach the app, so the
     // reason is the may-have-executed one — "timeout" is this type's word for exactly that.
     waiter.resolve(answer === null ? { ok: false, reason: "timeout" } : { ok: true, response: answer });
   }
@@ -1433,7 +1433,7 @@ export class ServiceConnection extends DurableObject {
    * `disconnected`, never `offline`: every entry in this map is a frame that was already
    * SENT (request() registers it and sends in the same synchronous step, and a send that
    * threw removes it again), so each of these calls may already have executed at the
-   * service. Reporting them as the certainly-did-not-execute reason is the exact
+   * app. Reporting them as the certainly-did-not-execute reason is the exact
    * at-most-once lie §15 exists to audit — and the consumer, told nothing left, retries.
    */
   private drain(ws: WebSocket): void {
@@ -1452,19 +1452,19 @@ export class ServiceConnection extends DurableObject {
    */
   private socket(): { ws: WebSocket; attachment: ConnectionAttachment | null } | null {
     // By CLASS, never by position (§21.2, constraint 1). Spelled as the COMPLEMENT — the
-    // socket carrying no `sub:` tag — rather than as a positive `getWebSockets(serviceId)`
-    // lookup, and deliberately: this DO learns its own service id from an attachment, which
+    // socket carrying no `sub:` tag — rather than as a positive `getWebSockets(appId)`
+    // lookup, and deliberately: this DO learns its own app id from an attachment, which
     // is exactly what a version-skewed or unintelligible attachment denies it (§10), and the
     // one socket that must still be findable then is this one. The prefix is what makes the
-    // complement exact — service ids are themselves UUIDs, so no id can carry it, and a
-    // `getWebSockets(service.id)` lookup can never return a subscriber socket either.
+    // complement exact — app ids are themselves UUIDs, so no id can carry it, and a
+    // `getWebSockets(app.id)` lookup can never return a subscriber socket either.
     for (const ws of this.ctx.getWebSockets()) {
       if (this.sessionOf(ws) === null) return { ws, attachment: attachmentOf(ws) };
     }
     return null;
   }
 
-  /** The session id a socket's `sub:` tag carries, or null for the service socket — the one
+  /** The session id a socket's `sub:` tag carries, or null for the app socket — the one
    *  place the class question is asked, so no reader can answer it differently. */
   private sessionOf(ws: WebSocket): string | null {
     for (const tag of this.ctx.getTags(ws)) {
@@ -1491,7 +1491,7 @@ export class ServiceConnection extends DurableObject {
    * component is a different resource and matches nobody. Grant filtering already happened
    * at subscribe time, which is what makes a rogue frame inert rather than dangerous.
    *
-   * Relayed VERBATIM, uri intact: the hub forwards the service's frame, it does not compose
+   * Relayed VERBATIM, uri intact: the hub forwards the app's frame, it does not compose
    * one of its own.
    */
   private route(frame: Frame): void {
@@ -1587,9 +1587,9 @@ export class ServiceConnection extends DurableObject {
   ): Promise<void> {
     await record(env.DB, {
       ownerId: attachment.ownerId,
-      principal: `svc:${attachment.slug}`,
+      principal: `app:${attachment.slug}`,
       event,
-      service: attachment.slug,
+      app: attachment.slug,
       outcome: "ok",
       detail,
     });
@@ -1612,12 +1612,12 @@ export class ServiceConnection extends DurableObject {
     // Everything this DO persists is durable storage, so the whole store IS the footprint
     // — and deleting all of it is idempotent on a DO that never woke.
     await this.ctx.storage.deleteAll();
-    // §21.2: service DELETE closes the subscriber sockets too — a stream listening to a
-    // service that no longer exists must end loudly rather than go quietly deaf, and the
+    // §21.2: app DELETE closes the subscriber sockets too — a stream listening to a
+    // app that no longer exists must end loudly rather than go quietly deaf, and the
     // consumer's reopen rebuilds the fan-out against current state. Archive and token
-    // revocation never come through here: they sever the service socket alone.
+    // revocation never come through here: they sever the app socket alone.
     for (const ws of this.ctx.getWebSockets()) {
-      if (this.sessionOf(ws) !== null) this.drop(ws, CLOSE_REVOKED, "service deleted");
+      if (this.sessionOf(ws) !== null) this.drop(ws, CLOSE_REVOKED, "app deleted");
     }
   }
 
@@ -1636,17 +1636,17 @@ export class ServiceConnection extends DurableObject {
  * under `ownerId: ""`, tag the socket `""`, and survive every targeted revoke (§8).
  */
 function identityFrom(req: Request): ConnectionAttachment | null {
-  const serviceId = req.headers.get(IDENTITY_HEADER.service);
+  const appId = req.headers.get(IDENTITY_HEADER.app);
   const ownerId = req.headers.get(IDENTITY_HEADER.owner);
   const slug = req.headers.get(IDENTITY_HEADER.slug);
   const tokenId = req.headers.get(IDENTITY_HEADER.token);
-  if (serviceId === null || ownerId === null || slug === null || tokenId === null) return null;
-  return { v: 1, serviceId, ownerId, slug, tokenId, registered: false };
+  if (appId === null || ownerId === null || slug === null || tokenId === null) return null;
+  return { v: 1, appId, ownerId, slug, tokenId, registered: false };
 }
 
 /**
  * A subscriber upgrade's identity as the worker half wrote it, or null when either header
- * is absent — which is how the service door and the subscriber door tell each other's
+ * is absent — which is how the app door and the subscriber door tell each other's
  * traffic apart, since neither writes the other's headers (§21.2).
  */
 function subscriberFrom(req: Request): SubscriberAttachment | null {
@@ -1740,7 +1740,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 /**
  * A correlated answer, or null for a frame that is not a JSON-RPC response at all —
- * JSON-RPC's own rule: the 2.0 envelope, and exactly one of `result`/`error`. The service
+ * JSON-RPC's own rule: the 2.0 envelope, and exactly one of `result`/`error`. The app
  * is the untrusted side of this socket, so ForwardResult's `response` is ESTABLISHED here
  * rather than asserted; nothing crosses into hub types on a cast.
  */
@@ -1756,13 +1756,13 @@ function answerOf(frame: Frame): JsonRpcResponse | null {
 }
 
 /**
- * The service's `error` member, NORMALIZED rather than cast. The gateway relays a service's
+ * The app's `error` member, NORMALIZED rather than cast. The gateway relays an app's
  * error to the consumer verbatim (§7), so whatever sits here becomes a JSON-RPC error
  * object on a consumer's wire — and JsonRpcResponse says error shapes come from the
  * gateway's own table, which a cast quietly makes untrue for the one member the untrusted
  * side of this socket writes. A member that is not an object, or whose `code`/`message` are
  * not an integer and a string, is replaced whole by the generic internal error: the answer
- * still counts as an error — the call DID reach the service and DID fail there, which is
+ * still counts as an error — the call DID reach the app and DID fail there, which is
  * the audit row's "error" outcome — it simply cannot put arbitrary bytes in the error slot.
  * `data` is free-form by JSON-RPC and passes through, but only alongside a well-formed rest.
  */
@@ -1770,14 +1770,14 @@ function errorMemberOf(raw: unknown): JsonRpcResponse["error"] {
   const carrier = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   const { code, message } = carrier;
   if (!Number.isInteger(code) || typeof message !== "string") {
-    return { code: CODES.internal, message: "service error" };
+    return { code: CODES.internal, message: "app error" };
   }
   const error = { code: code as number, message };
   return "data" in carrier ? { ...error, data: carrier.data } : error;
 }
 
 /**
- * One list answer's catalog, or null when the service answered with an error or with
+ * One list answer's catalog, or null when the app answered with an error or with
  * something that is not a list at all — either way the previous cache stands (§20.5: a
  * failure never empties one). MCP names the result member after the family in all four,
  * `resources/templates/list` included, so the family's own name is the key.
@@ -1809,19 +1809,19 @@ function catalogOf(response: JsonRpcResponse, family: CatalogFamily): Record<str
  * "capabilities unknown": an error reply — `-32601` from a library that predates the method,
  * or any other code — and an answer carrying no capabilities object at all, which is no
  * more legible than an error. Null and an answer that declared NOTHING are deliberately
- * different facts: only the second one is the service undeclaring itself (§20.5).
+ * different facts: only the second one is the app undeclaring itself (§20.5).
  *
  * Filtered to §20.2's vocabulary, so a family the handshake cannot spell is never stored,
  * never advertised, and never warmed.
  */
-function declaredOf(response: JsonRpcResponse): ServiceCapability[] | null {
+function declaredOf(response: JsonRpcResponse): AppCapability[] | null {
   const result = response.result;
   if (typeof result !== "object" || result === null) return null;
   const claimed = (result as { capabilities?: unknown }).capabilities;
   if (typeof claimed !== "object" || claimed === null) return null;
-  // The CLAIM alone: what a service says about listChanged or subscribe is not read here
-  // and never republished — §20.2 forces both false whatever the service claims.
-  return SERVICE_CAPABILITIES.filter((capability) => capability in claimed);
+  // The CLAIM alone: what an app says about listChanged or subscribe is not read here
+  // and never republished — §20.2 forces both false whatever the app claims.
+  return APP_CAPABILITIES.filter((capability) => capability in claimed);
 }
 
 /** A JSON-RPC error reply, the only error object this module builds — §7's consumer wire

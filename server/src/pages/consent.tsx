@@ -17,7 +17,7 @@
 
 import type { FC } from "hono/jsx";
 import { html } from "hono/html";
-import type { ConsentAccountOption, ConsentProps } from "./model";
+import type { ConsentAgentOption, ConsentProps } from "./model";
 import { paths } from "./model";
 
 const STYLESHEET = "/styles.css";
@@ -40,28 +40,28 @@ const WarningIcon: FC = () => (
   </svg>
 );
 
-/** The empty state (§19.5): consent is impossible until an account exists, so submit is
+/** The empty state (§19.5): consent is impossible until an agent exists, so submit is
  *  disabled rather than left to fail server-side, and Deny still works. */
-const NoAccounts: FC = () => (
+const NoAgents: FC = () => (
   <div class="empty">
-    <div class="empty-title">No service accounts yet</div>
+    <div class="empty-title">No agents yet</div>
     <div class="empty-text">
-      Create one at <a href={paths.services}>{paths.services}</a> before connecting a client — the account it is
+      Create one at <a href={paths.apps}>{paths.apps}</a> before connecting a client — the agent it is
       given decides everything the client can do.
     </div>
   </div>
 );
 
-const AccountPicker: FC<{ accounts: ConsentAccountOption[] }> = ({ accounts }) => (
+const AgentPicker: FC<{ agents: ConsentAgentOption[] }> = ({ agents }) => (
   <div class="field">
-    <label for="service_account">Service account</label>
-    <select id="service_account" name="service_account" required>
-      <option value="">Choose an account</option>
-      {accounts.map((account) => (
-        <option value={account.slug}>{account.name}</option>
+    <label for="agent">Agent</label>
+    <select id="agent" name="agent" required>
+      <option value="">Choose an agent</option>
+      {agents.map((agent) => (
+        <option value={agent.slug}>{agent.name}</option>
       ))}
     </select>
-    <div class="field-hint">The client will be able to do exactly what this account can.</div>
+    <div class="field-hint">The client will be able to do exactly what this agent can.</div>
   </div>
 );
 
@@ -73,7 +73,7 @@ export const ConsentPage: FC<ConsentProps> = ({
   redirectOrigin,
   scopes,
   namespace,
-  accounts,
+  agents,
 }) => {
   const displayName = clientName ?? "An application";
   return (
@@ -129,7 +129,7 @@ export const ConsentPage: FC<ConsentProps> = ({
               <form method="post" action={paths.oauthConsent} class="form">
                 <input type="hidden" name="csrf" value={csrfToken} />
                 <input type="hidden" name="oauth_query" value={oauthQuery} />
-                {accounts.length === 0 ? <NoAccounts /> : <AccountPicker accounts={accounts} />}
+                {agents.length === 0 ? <NoAgents /> : <AgentPicker agents={agents} />}
                 <div class="confirm-actions">
                   <button type="submit" name="decision" value="deny" class="btn btn--danger-outline">
                     Deny
@@ -139,7 +139,7 @@ export const ConsentPage: FC<ConsentProps> = ({
                     name="decision"
                     value="accept"
                     class="btn btn--primary"
-                    disabled={accounts.length === 0 ? true : undefined}
+                    disabled={agents.length === 0 ? true : undefined}
                   >
                     Allow
                   </button>

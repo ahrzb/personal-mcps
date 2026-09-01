@@ -30,7 +30,7 @@
       }
     },
     "forbiddenParamsKeys": [
-      "service",
+      "app",
       "slug"
     ],
     "ack": {

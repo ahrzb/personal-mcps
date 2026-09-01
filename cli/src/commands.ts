@@ -39,7 +39,7 @@ export const COMMANDS: readonly CliCommand[] = [
   { name: "login", ops: [], exception: "auth" },
   { name: "logout", ops: [], exception: "auth" },
   { name: "whoami", ops: [], exception: "auth" },
-  { name: "ls", ops: ["service_list"] },
+  { name: "ls", ops: ["app_list"] },
   { name: "tools", ops: [], method: "tools/list" },
   { name: "call", ops: [], method: "tools/call" },
   // §20.6 (added 2026-08-26): gateway sugar of exactly the same kind as the two rows above
@@ -49,17 +49,17 @@ export const COMMANDS: readonly CliCommand[] = [
   { name: "prompt", ops: [], method: "prompts/get" },
   { name: "resources", ops: [], method: "resources/list" },
   { name: "read", ops: [], method: "resources/read" },
-  // A tunneled service is unusable without its token, so §6's lifecycle makes this create
+  // A tunneled app is unusable without its token, so §6's lifecycle makes this create
   // two calls rather than one.
-  { name: "service create", ops: ["service_create", "token_issue"] },
-  { name: "service archive", ops: ["service_archive"] },
-  { name: "service unarchive", ops: ["service_unarchive"] },
-  { name: "service delete", ops: ["service_delete"] },
-  { name: "service disconnect", ops: ["service_disconnect"] },
-  { name: "service set-auth", ops: ["service_set_upstream_auth"] },
-  { name: "account list", ops: ["account_list"] },
-  { name: "account create", ops: ["account_create"] },
-  { name: "account delete", ops: ["account_delete"] },
+  { name: "app create", ops: ["app_create", "token_issue"] },
+  { name: "app archive", ops: ["app_archive"] },
+  { name: "app unarchive", ops: ["app_unarchive"] },
+  { name: "app delete", ops: ["app_delete"] },
+  { name: "app disconnect", ops: ["app_disconnect"] },
+  { name: "app set-auth", ops: ["app_set_upstream_auth"] },
+  { name: "agent list", ops: ["agent_list"] },
+  { name: "agent create", ops: ["agent_create"] },
+  { name: "agent delete", ops: ["agent_delete"] },
   { name: "approvals", ops: ["approval_list"] },
   { name: "approve", ops: ["approval_decide"] },
   { name: "reject", ops: ["approval_decide"] },
@@ -71,27 +71,27 @@ export const COMMANDS: readonly CliCommand[] = [
   { name: "audit --export jsonl", ops: ["audit_query"], exception: "jsonl-export" },
   // The consent REDIRECT is browser-only (§8); the command itself only checks the slug
   // and prints the URL.
-  { name: "connect", ops: ["service_get"], exception: "oauth-consent" },
+  { name: "connect", ops: ["app_get"], exception: "oauth-consent" },
   // §19/§8: the OAuth clients connected to this namespace (inbound OAuth, distinct from
   // `connect`'s outbound upstream flow above). No exception here — unlike the consent
   // SCREEN it manages, this pair is grants-shaped and fronts a real op each.
   { name: "connections", ops: ["connection_list"] },
   { name: "connection revoke", ops: ["connection_revoke"] },
-  { name: "diff", ops: ["service_list", "account_list"] },
+  { name: "diff", ops: ["app_list", "agent_list"] },
   {
     name: "apply",
     // The planner's whole vocabulary plus the two reads it plans against — `apply` is the
-    // only front for service_update and grant_set (§9: grants are declarative).
+    // only front for app_update and grant_set (§9: grants are declarative).
     ops: [
-      "service_list",
-      "account_list",
-      "service_create",
-      "service_update",
-      "service_delete",
-      "service_archive",
-      "service_unarchive",
-      "account_create",
-      "account_delete",
+      "app_list",
+      "agent_list",
+      "app_create",
+      "app_update",
+      "app_delete",
+      "app_archive",
+      "app_unarchive",
+      "agent_create",
+      "agent_delete",
       "grant_set",
     ],
   },

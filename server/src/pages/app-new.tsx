@@ -1,13 +1,13 @@
 /**
- * /services/new — the add-service form (ServiceNew.dc.html / MobileServiceNew.dc.html)
- * and its two follow-on renders (ServiceNewStates.dc.html): the once-only token reveal
- * for a tunneled service, and the same receipt one card lighter for a proxied one.
+ * /apps/new — the add-app form (AppNew.dc.html / MobileAppNew.dc.html)
+ * and its two follow-on renders (AppNewStates.dc.html): the once-only token reveal
+ * for a tunneled app, and the same receipt one card lighter for a proxied one.
  *
  * Chromeless like /login and /device (model.ts): no nav, no `Layout` shell — `Layout`
  * is built for the four-section signed-in chrome and this page's props carry no
  * `section`/`pendingApprovals` to feed it, so this template renders its own minimal
  * document with the shared `.auth`/`.auth-card` classes those pages are meant for
- * (styles.css: "auth pages ... login, device, two-factor, add-service").
+ * (styles.css: "auth pages ... login, device, two-factor, add-app").
  *
  * Pure `(props) => JSX`: no fetching, no cookies. The one bit of client-side script is
  * progressive enhancement — switching Tunneled/Proxied and Headers/OAuth updates which
@@ -19,7 +19,7 @@
 
 import type { FC } from "hono/jsx";
 import { html } from "hono/html";
-import { paths, type ServiceNewErrors, type ServiceNewForm, type ServiceNewProps, type ServiceNewStep } from "./model";
+import { paths, type AppNewErrors, type AppNewForm, type AppNewProps, type AppNewStep } from "./model";
 
 /** Not owned by `paths` (display-only asset routes) — same pattern as layout.tsx. */
 const STYLESHEET = "/styles.css";
@@ -35,21 +35,21 @@ const BrandMark: FC = () => (
   </svg>
 );
 
-/* The three notes under the fields (ServiceNew.dc.html / ServiceNewStates.dc.html).
+/* The three notes under the fields (AppNew.dc.html / AppNewStates.dc.html).
  * Which one shows is a function of kind + authMode; all three render (`data-note`),
  * and the enhancement script hides the two that don't match — so a fixture with
  * scripting off still shows exactly the right one. */
-const NOTE_TUNNEL = "After creating you'll get this service's token — shown once. Your bot uses it to dial in.";
+const NOTE_TUNNEL = "After creating you'll get this app's token — shown once. Your bot uses it to dial in.";
 const NOTE_PROXY_OAUTH =
   "After creating you'll be sent to the provider to connect. Tokens are stored encrypted; your config file only records the auth mode.";
 const NOTE_PROXY_HEADERS = "Tokens are stored encrypted; your config file only records the auth mode.";
 
-function activeNote(form: ServiceNewForm): "tunnel" | "proxy-headers" | "proxy-oauth" {
+function activeNote(form: AppNewForm): "tunnel" | "proxy-headers" | "proxy-oauth" {
   if (form.kind === "tunnel") return "tunnel";
   return form.authMode === "oauth" ? "proxy-oauth" : "proxy-headers";
 }
 
-const FormCard: FC<{ username: string; csrfToken: string; form: ServiceNewForm; errors: ServiceNewErrors }> = ({
+const FormCard: FC<{ username: string; csrfToken: string; form: AppNewForm; errors: AppNewErrors }> = ({
   username,
   csrfToken,
   form,
@@ -60,22 +60,22 @@ const FormCard: FC<{ username: string; csrfToken: string; form: ServiceNewForm; 
   const slugPath = paths.mcpScoped(username, form.slug || "…");
 
   return (
-    <form id="service-form" class="auth-card" method="post" action={paths.serviceCreate}>
+    <form id="app-form" class="auth-card" method="post" action={paths.appCreate}>
       <input type="hidden" name="csrf" value={csrfToken} />
 
       <div>
-        <div class="auth-title">Add service</div>
-        <div class="auth-desc">Register an MCP service in your namespace.</div>
+        <div class="auth-title">Add app</div>
+        <div class="auth-desc">Register an MCP app in your namespace.</div>
       </div>
 
       {errors.form ? <div class="alert alert--danger">{errors.form}</div> : null}
 
-      <div class="choice-list" role="radiogroup" aria-label="Service kind">
+      <div class="choice-list" role="radiogroup" aria-label="App kind">
         <label class="choice">
           <input type="radio" name="kind" value="tunnel" checked={form.kind === "tunnel"} />
           <div>
             <div class="choice-title">Tunneled</div>
-            <div class="choice-desc">A bot that dials in with a service token — shown once after creating.</div>
+            <div class="choice-desc">A bot that dials in with an app token — shown once after creating.</div>
           </div>
         </label>
         <label class="choice">
@@ -89,15 +89,15 @@ const FormCard: FC<{ username: string; csrfToken: string; form: ServiceNewForm; 
 
       <div class="form">
         <div class="field">
-          <label for="svc-name">Name</label>
-          <input id="svc-name" type="text" name="name" value={form.name} required aria-invalid={errors.name ? "true" : undefined} />
+          <label for="app-name">Name</label>
+          <input id="app-name" type="text" name="name" value={form.name} required aria-invalid={errors.name ? "true" : undefined} />
           {errors.name ? <div class="field-error">{errors.name}</div> : null}
         </div>
 
         <div class="field">
-          <label for="svc-slug">Slug</label>
+          <label for="app-slug">Slug</label>
           <input
-            id="svc-slug"
+            id="app-slug"
             class="input--mono"
             type="text"
             name="slug"
@@ -114,9 +114,9 @@ const FormCard: FC<{ username: string; csrfToken: string; form: ServiceNewForm; 
         </div>
 
         <div class="field" data-proxy-only hidden={!proxy}>
-          <label for="svc-endpoint">Endpoint</label>
+          <label for="app-endpoint">Endpoint</label>
           <input
-            id="svc-endpoint"
+            id="app-endpoint"
             class="input--mono"
             type="url"
             name="endpoint"
@@ -160,7 +160,7 @@ const FormCard: FC<{ username: string; csrfToken: string; form: ServiceNewForm; 
       </div>
 
       <div class="actions wide-only">
-        <a class="btn" href={paths.services}>
+        <a class="btn" href={paths.apps}>
           Cancel
         </a>
         <button type="submit" class="btn btn--primary">
@@ -172,7 +172,7 @@ const FormCard: FC<{ username: string; csrfToken: string; form: ServiceNewForm; 
           <button type="submit" class="btn btn--primary btn--block">
             <span data-submit-label>{proxy ? "Create and connect" : "Create"}</span>
           </button>
-          <a class="btn btn--outline btn--block" href={paths.services}>
+          <a class="btn btn--outline btn--block" href={paths.apps}>
             Cancel
           </a>
         </div>
@@ -181,7 +181,7 @@ const FormCard: FC<{ username: string; csrfToken: string; form: ServiceNewForm; 
       {html`
         <script>
           (function () {
-            var form = document.getElementById("service-form");
+            var form = document.getElementById("app-form");
             if (!form) return;
             function sync() {
               var proxy = form.kind.value === "proxy";
@@ -205,10 +205,10 @@ const FormCard: FC<{ username: string; csrfToken: string; form: ServiceNewForm; 
   );
 };
 
-const CreatedCard: FC<{ step: Extract<ServiceNewStep, { kind: "created" }> }> = ({ step }) => (
+const CreatedCard: FC<{ step: Extract<AppNewStep, { kind: "created" }> }> = ({ step }) => (
   <div class="auth-card">
     <div>
-      <div class="auth-title">Service created</div>
+      <div class="auth-title">App created</div>
       <div class="auth-desc">
         <span class="mono">{step.slug}</span> is ready for its first connection.
       </div>
@@ -241,14 +241,14 @@ const CreatedCard: FC<{ step: Extract<ServiceNewStep, { kind: "created" }> }> = 
     ) : null}
 
     <div class="actions">
-      <a class="btn btn--primary" href={paths.services}>
+      <a class="btn btn--primary" href={paths.apps}>
         Done
       </a>
     </div>
   </div>
 );
 
-export const ServiceNewPage: FC<ServiceNewProps> = ({ username, csrfToken, step }) => (
+export const AppNewPage: FC<AppNewProps> = ({ username, csrfToken, step }) => (
   <>
     {html`<!doctype html>`}
     <html lang="en">
@@ -256,7 +256,7 @@ export const ServiceNewPage: FC<ServiceNewProps> = ({ username, csrfToken, step 
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="theme-color" content="#ffffff" />
-        <title>Add service</title>
+        <title>Add app</title>
         <link rel="stylesheet" href={STYLESHEET} />
         <link rel="manifest" href={MANIFEST} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />

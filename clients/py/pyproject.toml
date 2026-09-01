@@ -1,4 +1,4 @@
-# personal-mcp-client — packaging for the Python service-author library (spec §6, §11) and
+# personal-mcp-client — packaging for the Python app-author library (spec §6, §11) and
 # for the pytest lane that pins it (strategy §2's `scripts` + clients project).
 #
 # This package is deliberately STANDALONE. It shares nothing with the TypeScript
@@ -40,7 +40,7 @@ dependencies = [
 
 [dependency-groups]
 # The test lane's own dependencies, declared here rather than under [project] so a
-# service author installing pmcp-client never pulls a test runner in. `uv sync
+# app author installing pmcp-client never pulls a test runner in. `uv sync
 # --group dev` installs them; `uv run pytest` from this directory runs the lane.
 dev = [
     # The runner for the whole `scripts` + clients lane on the Python side (§2).

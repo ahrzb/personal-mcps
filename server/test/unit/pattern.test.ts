@@ -495,8 +495,8 @@ export const roleValidationRows: readonly RoleValidationRow[] = [
     rule: "pattern-compiles",
     note: "a well-formed declaration yields no violations — the allow anchor every refusal row is read against",
   },
-  // §6: "A `roles` value of `{}` means 'no roles declared' — the service is then reachable only
-  // by admin tokens or accounts granted the built-in `all` role." Vacuous on every rule; `rule`
+  // §6: "A `roles` value of `{}` means 'no roles declared' — the app is then reachable only
+  // by admin tokens or agents granted the built-in `all` role." Vacuous on every rule; `rule`
   // names the charset one because zero names is where it bottoms out.
   {
     kind: "declaration",

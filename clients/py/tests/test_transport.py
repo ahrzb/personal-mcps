@@ -76,8 +76,8 @@ import pmcp_client
 from fake_hub import FakeHub, RegisterOutcome, start_fake_hub
 from pmcp_client import CredentialsError, HubTransport, RegistrationError, backoff_delay
 
-# An obviously fake service credential — the value every dial is checked to carry.
-TOKEN = "pmcp_svc_FAKE0000000000000000000000000000"
+# An obviously fake app credential — the value every dial is checked to carry.
+TOKEN = "pmcp_app_FAKE0000000000000000000000000000"
 
 # The declaration handed to the constructor, echoed verbatim in hub/register.
 ROLES: dict[str, list[str]] = {"reader": ["get_news", "search_.*"]}
@@ -124,7 +124,7 @@ class _Session:
     ``Server.run`` reads these streams unmodified; draining them is the smallest
     body that behaves the same at the endings these cases are about, and it lives
     in the SUITE rather than as a library fallback so a wrong object passed by a
-    service author fails at the call site instead of registering with the hub and
+    app author fails at the call site instead of registering with the hub and
     then discarding every forwarded call."""
 
     async def run(self, read_stream: Any, write_stream: Any, initialization_options: Any) -> None:
@@ -175,16 +175,16 @@ async def test_constructor_rejects_anything_but_a_bare_origin(registry) -> None:
 def test_derived_scheme_follows_the_origin_and_is_never_downgraded() -> None:
     """§6/§10 · https:// derives wss://, http:// (the local `wrangler dev` case,
     and what fake_hub hands every case in this file) derives ws:// — a
-    pmcp_svc_ credential rides this dial, so the https half is a rule and not a
+    pmcp_app_ credential rides this dial, so the https half is a rule and not a
     convenience."""
     assert pmcp_client._connect_address("https://mcp.example.com") == "wss://mcp.example.com/connect"
     assert pmcp_client._connect_address("http://127.0.0.1:8787") == "ws://127.0.0.1:8787/connect"
 
 
-async def test_dial_carries_the_service_token_and_no_slug(registry) -> None:
-    """§6 · the handshake sends the service token as Authorization: Bearer and
-    carries no service or slug anywhere — identity rides the token alone, so a
-    token for one slug can never touch another service."""
+async def test_dial_carries_the_app_token_and_no_slug(registry) -> None:
+    """§6 · the handshake sends the app token as Authorization: Bearer and
+    carries no app or slug anywhere — identity rides the token alone, so a
+    token for one slug can never touch another app."""
     hub, transport = await _connected(registry)
     await transport.__aenter__()
     dial = await hub.next_dial(1)
@@ -209,8 +209,8 @@ async def test_dial_never_carries_the_token_in_the_address(registry) -> None:
 
 async def test_no_surfaced_failure_echoes_the_credential(registry) -> None:
     """§15 · nothing the library raises echoes the credential: CredentialsError's
-    message never contains the pmcp_svc_ value, so a crashed bot's log cannot
-    leak the service's sole secret."""
+    message never contains the pmcp_app_ value, so a crashed bot's log cannot
+    leak the app's sole secret."""
     hub = await start_fake_hub(upgrades=[401])
     transport = HubTransport(hub.origin, TOKEN)
     registry.append((hub, transport))
@@ -218,7 +218,7 @@ async def test_no_surfaced_failure_echoes_the_credential(registry) -> None:
         await transport.__aenter__()
     message = str(excinfo.value)
     assert TOKEN not in message
-    assert "pmcp_svc_" not in message
+    assert "pmcp_app_" not in message
 
 
 async def test_idle_connections_are_kept_alive_by_protocol_pings(registry, monkeypatch) -> None:
@@ -358,7 +358,7 @@ async def test_aexit_is_idempotent_and_re_entrant_under_cancellation(registry) -
 
 async def test_reconnect_reregisters_and_keeps_the_streams_open(registry, recorded_sleep) -> None:
     """§6 · a mid-life drop reconnects and re-sends hub/register while the
-    yielded streams stay open — one transport is one service lifetime, not one
+    yielded streams stay open — one transport is one app lifetime, not one
     socket."""
     hub, transport = await _connected(registry)
     await transport.__aenter__()
@@ -396,7 +396,7 @@ async def test_unarchiving_heals_without_touching_the_bot(registry, monkeypatch,
     """§6 · the hub refuses 403 until the client is provably retrying, then
     accepts — and the very next dial connects and re-registers. The upgrade:403
     row pins that the client keeps dialing; this pins what the dialing is FOR,
-    and it is the one §6 sentence about an archived service that a retry count
+    and it is the one §6 sentence about an archived app that a retry count
     alone cannot witness. The JS twin is the same row against the same seam
     (``FakeHub.setUpgrades``)."""
     monkeypatch.setattr(pmcp_client, "_rng", lambda: DRAW)
@@ -408,7 +408,7 @@ async def test_unarchiving_heals_without_touching_the_bot(registry, monkeypatch,
         # Provably retrying: two refused dials, and nothing connected.
         await hub.next_dial(2)
         assert hub.connection_count() == 0
-        # The world changes — the service is unarchived — and nothing about the bot does.
+        # The world changes — the app is unarchived — and nothing about the bot does.
         hub.set_upgrades([101])
         registration = await hub.next_frame(1)
         assert registration.message["method"] == "hub/register"
@@ -463,11 +463,11 @@ async def test_serve_mirrors_the_transports_terminal_outcomes(registry) -> None:
 
 async def test_serve_resolves_url_and_token_before_any_io(registry, monkeypatch) -> None:
     """§10/§11 · serve() resolves its options before a socket exists: url and
-    token default to PMCP_URL and PMCP_SERVICE_TOKEN, an explicit argument wins
+    token default to PMCP_URL and PMCP_APP_TOKEN, an explicit argument wins
     over the env var, and neither being set is a ValueError with no dial
     attempted. An empty token dialed anyway comes back as upgrade 401 and is
     then classified as a dead credential, turning a local config mistake into a
-    revoked-token diagnosis. The env path is the one real services use, so it
+    revoked-token diagnosis. The env path is the one real apps use, so it
     is the untested path in production until this case exists."""
     from_env = await start_fake_hub()
     explicit = await start_fake_hub()
@@ -475,7 +475,7 @@ async def test_serve_resolves_url_and_token_before_any_io(registry, monkeypatch)
     registry.append((explicit, None))
 
     monkeypatch.delenv("PMCP_URL", raising=False)
-    monkeypatch.delenv("PMCP_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("PMCP_APP_TOKEN", raising=False)
 
     with pytest.raises(ValueError):
         await pmcp_client.serve(SESSION)
@@ -484,7 +484,7 @@ async def test_serve_resolves_url_and_token_before_any_io(registry, monkeypatch)
     assert len(from_env.dials) == 0
 
     monkeypatch.setenv("PMCP_URL", from_env.origin)
-    monkeypatch.setenv("PMCP_SERVICE_TOKEN", TOKEN)
+    monkeypatch.setenv("PMCP_APP_TOKEN", TOKEN)
 
     async with anyio.create_task_group() as tg:
         defaulted = _Awaited()
@@ -517,11 +517,11 @@ async def test_serve_resolves_url_and_token_before_any_io(registry, monkeypatch)
 # one MCP-namespace method the LIBRARY answers instead of bridging
 # (`server/discover`, §11/§6), and the prompt/resource traffic the bridge already
 # carries. The last is a regression pin rather than new behaviour — §20 opens by
-# saying a tunneled service that declares prompts answers them over the socket
+# saying a tunneled app that declares prompts answers them over the socket
 # TODAY and the hub was the only thing saying -32601 — and pinning it is what
 # keeps a future frame-inspecting transport from quietly becoming a tools-only
 # one. Every row drives `serve()` rather than HubTransport, because the surface
-# these rows may touch is exactly the surface a service author has.
+# these rows may touch is exactly the surface an app author has.
 
 #: The capability families §20 knows. ``completions`` is here so a library that
 #: declared it unasked is visible, not because any row expects it.
@@ -536,7 +536,7 @@ _DISCOVER_ID = "hub-discover-1"
 #: twin types its ``MIXED_ROLES`` against the exported ``Roles``. Python does not
 #: enforce an annotation at runtime and this package has no type checker in the
 #: exit criteria, so the annotation alone would let an un-widened alias ride
-#: through invisibly while every type-checked service author was told the
+#: through invisibly while every type-checked app author was told the
 #: per-family declaration is invalid — §11 pins the two libraries as "identical
 #: shape … the same two spellings", so the alias is asserted as a value in the row
 #: that uses it.
@@ -562,13 +562,13 @@ _PROMPT_RESULT = {
 #: that took) and distinctive enough that the round-trip rows can tell the
 #: response from a nil.
 _SUBSCRIBE_RESULT = {"resultType": "complete"}
-#: …and a ``resources/read``: contents keyed by the URI the service itself knows.
+#: …and a ``resources/read``: contents keyed by the URI the app itself knows.
 _RESOURCE_URI = "news://feed/tech"
 _RESOURCE_RESULT = {"contents": [{"uri": _RESOURCE_URI, "mimeType": "text/plain", "text": "headline"}]}
 
 
-class _AuthorService:
-    """The author's service as :func:`pmcp_client.serve` receives it — §11's
+class _AuthorApp:
+    """The author's app as :func:`pmcp_client.serve` receives it — §11's
     "plain MCP server written with the official SDK".
 
     The CAPABILITY half is a real ``mcp.server.Server``: ``get_capabilities()``
@@ -652,17 +652,17 @@ def _declared_roles(hub: FakeHub) -> dict[str, Any]:
 async def _serving_author(
     registry: list[tuple[FakeHub | None, HubTransport | None]],
     tg: Any,
-    service: _AuthorService,
+    app: _AuthorApp,
     roles: dict[str, Any] | None = None,
 ) -> FakeHub:
-    """One author's service running against one fresh hub, registered — the shape
+    """One author's app running against one fresh hub, registered — the shape
     every §20 row starts from. serve() owns the transport, so only the hub goes on
     the teardown registry; cancelling the task group is what ends the run."""
     hub = await start_fake_hub()
     registry.append((hub, None))
     tg.start_soon(
         _watch,
-        pmcp_client.serve(service, url=hub.origin, token=TOKEN, roles=ROLES if roles is None else roles),
+        pmcp_client.serve(app, url=hub.origin, token=TOKEN, roles=ROLES if roles is None else roles),
         _Awaited(),
     )
     await hub.next_frame(1)
@@ -678,7 +678,7 @@ async def test_serve_passes_a_bare_pattern_list_through_unchanged(registry, reco
     registry.validate_roles and the filter builder), and a library that did it here
     would be a second rule that could disagree with the first."""
     async with anyio.create_task_group() as tg:
-        hub = await _serving_author(registry, tg, _AuthorService("tools/list"), roles=ROLES)
+        hub = await _serving_author(registry, tg, _AuthorApp("tools/list"), roles=ROLES)
         declared = _declared_roles(hub)
         assert declared == ROLES
         assert isinstance(declared["reader"], list)
@@ -698,13 +698,13 @@ async def test_serve_passes_a_per_family_object_through_unchanged(registry, reco
     # that claim fail at `tsc` by typing its declaration against the exported
     # `Roles`. Nothing type-checks this package (no mypy, no pyright, and the exit
     # criteria run `uv run pytest` alone), so an un-widened alias would leave the
-    # rest of this row green while every annotated service author was told the
+    # rest of this row green while every annotated app author was told the
     # per-family declaration is invalid. GenericAlias and UnionType both compare by
     # value, so the pin is a plain equality.
     assert pmcp_client.Roles == dict[str, list[str] | dict[str, list[str]]]
     async with anyio.create_task_group() as tg:
-        service = _AuthorService("tools/list", "prompts/list", "resources/list")
-        hub = await _serving_author(registry, tg, service, roles=_MIXED_ROLES)
+        app = _AuthorApp("tools/list", "prompts/list", "resources/list")
+        hub = await _serving_author(registry, tg, app, roles=_MIXED_ROLES)
         declared = _declared_roles(hub)
         assert declared == _MIXED_ROLES
         assert declared["curator"] == _MIXED_ROLES["curator"]
@@ -728,7 +728,7 @@ async def test_a_roles_value_the_hub_rejects_is_still_sent_as_written(registry, 
     registry.append((refusing, None))
     with pytest.raises(RegistrationError):
         await pmcp_client.serve(
-            _AuthorService("tools/list"), url=refusing.origin, token=TOKEN, roles=_REJECTED_ROLES
+            _AuthorApp("tools/list"), url=refusing.origin, token=TOKEN, roles=_REJECTED_ROLES
         )
     assert _declared_roles(refusing) == {"curator": {"toolz": ["publish"]}}
     assert len(refusing.dials) == 1
@@ -743,49 +743,49 @@ async def test_the_library_answers_server_discover_itself(registry, recorded_sle
     bridging: it is a hub↔library control question, and the library is what knows
     which families were registered. The author wrote no handler for it."""
     async with anyio.create_task_group() as tg:
-        service = _AuthorService("tools/list", "prompts/list", "resources/list")
-        hub = await _serving_author(registry, tg, service)
+        app = _AuthorApp("tools/list", "prompts/list", "resources/list")
+        hub = await _serving_author(registry, tg, app)
         await hub.send({"jsonrpc": "2.0", "id": _DISCOVER_ID, "method": "server/discover"})
         answer = await hub.next_frame(2)
         assert answer.message["id"] == _DISCOVER_ID
         assert _families_in(answer.message) == ["prompts", "resources", "tools"]
-        assert "server/discover" not in [frame.get("method") for frame in service.reached]
+        assert "server/discover" not in [frame.get("method") for frame in app.reached]
         tg.cancel_scope.cancel()
 
 
 async def test_a_tools_only_sdk_answers_server_discover_with_tools_alone(registry, recorded_sleep) -> None:
-    """§11/§6 · a service whose SDK registers only tools answers server/discover
+    """§11/§6 · an app whose SDK registers only tools answers server/discover
     with tools alone — the declaration is observed, not assumed from the library's
     own capabilities.
 
     The library CAN carry all three — the bridge is transparent, and the two
     round-trip rows below prove it — so answering with what the LIBRARY can do
-    rather than with what the AUTHOR registered would make every tools-only service
+    rather than with what the AUTHOR registered would make every tools-only app
     in the field log three spurious catalog-warm failures at the hub (§6/§20.5).
     That is the whole reason the discover leg exists."""
     async with anyio.create_task_group() as tg:
-        service = _AuthorService("tools/list")
-        hub = await _serving_author(registry, tg, service)
+        app = _AuthorApp("tools/list")
+        hub = await _serving_author(registry, tg, app)
         await hub.send({"jsonrpc": "2.0", "id": _DISCOVER_ID, "method": "server/discover"})
         answer = await hub.next_frame(2)
         assert _families_in(answer.message) == ["tools"]
-        assert "server/discover" not in [frame.get("method") for frame in service.reached]
+        assert "server/discover" not in [frame.get("method") for frame in app.reached]
         tg.cancel_scope.cancel()
 
 
-async def test_a_service_the_library_cannot_introspect_answers_discover_32601(registry, recorded_sleep) -> None:
-    """§11/§6 · a service object the library cannot introspect for capabilities
+async def test_an_app_the_library_cannot_introspect_answers_discover_32601(registry, recorded_sleep) -> None:
+    """§11/§6 · an app object the library cannot introspect for capabilities
     answers server/discover with -32601 — the "capabilities unknown" signal — and
     never a successful empty capability set, because a successful answer that omits
     a family is an UNDECLARE and §20.5 makes an undeclare clear that family's
     catalog.
 
     §11 pins the answer for a server with no capability seam: the -32601 reaches
-    the hub, which warms tools only, "which is what keeps every service already in
+    the hub, which warms tools only, "which is what keeps every app already in
     the field working unchanged". §20.5 is why the plausible repair is worse than
     the fallback — a discover leg that ERRORS changes no catalog, while a
-    successful ``{}`` tells the hub this service no longer serves prompts or
-    resources and clears both catalogs for a service that is serving them right
+    successful ``{}`` tells the hub this app no longer serves prompts or
+    resources and clears both catalogs for an app that is serving them right
     now. Failure never empties one; success does, so the absence of a seam must
     stay a failure. Observed on the frame the HUB sees, never on a library
     internal."""
@@ -818,8 +818,8 @@ async def test_a_prompts_get_reaches_the_authors_server_and_answers_over_the_soc
     ``arguments`` included, which is what the hub's redact map keys on (§20.3) —
     and the answer goes back on the socket the hub asked over."""
     async with anyio.create_task_group() as tg:
-        service = _AuthorService("tools/list", "prompts/list", answers={"prompts/get": _PROMPT_RESULT})
-        hub = await _serving_author(registry, tg, service)
+        app = _AuthorApp("tools/list", "prompts/list", answers={"prompts/get": _PROMPT_RESULT})
+        hub = await _serving_author(registry, tg, app)
         request = {
             "jsonrpc": "2.0",
             "id": 21,
@@ -828,7 +828,7 @@ async def test_a_prompts_get_reaches_the_authors_server_and_answers_over_the_soc
         }
         await hub.send(request)
         relayed = await hub.next_frame(2)
-        assert service.reached == [request]
+        assert app.reached == [request]
         assert relayed.message == {"jsonrpc": "2.0", "id": 21, "result": _PROMPT_RESULT}
         tg.cancel_scope.cancel()
 
@@ -836,16 +836,16 @@ async def test_a_prompts_get_reaches_the_authors_server_and_answers_over_the_soc
 async def test_a_resources_read_round_trips_the_same_way(registry, recorded_sleep) -> None:
     """§11/§20.1 · a resources/read request round-trips the same way.
 
-    The URI the service knows is the URI it is asked for and the URI it answers
+    The URI the app knows is the URI it is asked for and the URI it answers
     with: §20.2 refuses to rewrite one anywhere, which is why resources are
     scoped-only."""
     async with anyio.create_task_group() as tg:
-        service = _AuthorService("tools/list", "resources/list", answers={"resources/read": _RESOURCE_RESULT})
-        hub = await _serving_author(registry, tg, service)
+        app = _AuthorApp("tools/list", "resources/list", answers={"resources/read": _RESOURCE_RESULT})
+        hub = await _serving_author(registry, tg, app)
         request = {"jsonrpc": "2.0", "id": 22, "method": "resources/read", "params": {"uri": _RESOURCE_URI}}
         await hub.send(request)
         relayed = await hub.next_frame(2)
-        assert service.reached == [request]
+        assert app.reached == [request]
         assert relayed.message == {"jsonrpc": "2.0", "id": 22, "result": _RESOURCE_RESULT}
         assert _RESOURCE_URI in json.dumps(relayed.message)
         tg.cancel_scope.cancel()
@@ -859,10 +859,10 @@ async def test_a_prompts_list_changed_notification_reaches_the_hub_unchanged(reg
     ``catalog:prompts`` key (§20.5), so a library that swallowed or renamed it would
     leave the hub serving a stale prompt list until the next registration."""
     async with anyio.create_task_group() as tg:
-        service = _AuthorService("tools/list", "prompts/list")
-        hub = await _serving_author(registry, tg, service)
+        app = _AuthorApp("tools/list", "prompts/list")
+        hub = await _serving_author(registry, tg, app)
         notification = {"jsonrpc": "2.0", "method": "notifications/prompts/list_changed"}
-        await service.emit(notification)
+        await app.emit(notification)
         relayed = await hub.next_frame(2)
         assert relayed.message == notification
         tg.cancel_scope.cancel()
@@ -889,12 +889,12 @@ async def test_a_resources_subscribe_and_unsubscribe_round_trip(registry, record
     vanish, but the set lives on the hub's socket (§21.4), never in the library,
     so there is nothing to remember."""
     async with anyio.create_task_group() as tg:
-        service = _AuthorService(
+        app = _AuthorApp(
             "tools/list",
             "resources/list",
             answers={"resources/subscribe": _SUBSCRIBE_RESULT, "resources/unsubscribe": _SUBSCRIBE_RESULT},
         )
-        hub = await _serving_author(registry, tg, service)
+        hub = await _serving_author(registry, tg, app)
         subscribe = {
             "jsonrpc": "2.0",
             "id": 23,
@@ -903,11 +903,11 @@ async def test_a_resources_subscribe_and_unsubscribe_round_trip(registry, record
         }
         await hub.send(subscribe)
         relayed = await hub.next_frame(2)
-        assert service.reached == [subscribe]
+        assert app.reached == [subscribe]
         assert relayed.message == {"jsonrpc": "2.0", "id": 23, "result": _SUBSCRIBE_RESULT}
         await hub.send(subscribe)
         again = await hub.next_frame(3)
-        assert service.reached == [subscribe, subscribe]
+        assert app.reached == [subscribe, subscribe]
         assert again.message == {"jsonrpc": "2.0", "id": 23, "result": _SUBSCRIBE_RESULT}
         unsubscribe = {
             "jsonrpc": "2.0",
@@ -917,7 +917,7 @@ async def test_a_resources_subscribe_and_unsubscribe_round_trip(registry, record
         }
         await hub.send(unsubscribe)
         unrelayed = await hub.next_frame(4)
-        assert service.reached == [subscribe, subscribe, unsubscribe]
+        assert app.reached == [subscribe, subscribe, unsubscribe]
         assert unrelayed.message == {"jsonrpc": "2.0", "id": 24, "result": _SUBSCRIBE_RESULT}
         tg.cancel_scope.cancel()
 
@@ -934,14 +934,14 @@ async def test_a_resources_updated_crosses_verbatim_without_any_subscribe(regist
     that filters would send a frame that is NOT this one. The observed wire is
     both frames, in order."""
     async with anyio.create_task_group() as tg:
-        service = _AuthorService("tools/list", "resources/list")
-        hub = await _serving_author(registry, tg, service)
+        app = _AuthorApp("tools/list", "resources/list")
+        hub = await _serving_author(registry, tg, app)
         updated = {
             "jsonrpc": "2.0",
             "method": "notifications/resources/updated",
             "params": {"uri": f"{_RESOURCE_URI}/late"},
         }
-        await service.emit(updated)
+        await app.emit(updated)
         relayed = await hub.next_frame(2)
         assert relayed.message == updated
         assert [frame.message["method"] for frame in hub.frames] == [
@@ -1007,7 +1007,7 @@ class ReconnectRow(NamedTuple):
     [0, 1 s]·2**n and the two windows OVERLAP at every attempt — no recorded
     delay under a live ``random.random`` distinguishes them, and a client that
     ran BOTH archived endings as ordinary exponential backoff (hammering an
-    archived service every ~1 s instead of ~30 s) would pass a table that only
+    archived app every ~1 s instead of ~30 s) would pass a table that only
     read delays. The runner therefore fixes the draw — the same seeded stub
     test_api.py's schedule table uses — and reads the resulting CEILING. That
     also settles the reading: ``max_only`` means the ceiling stops doubling and
@@ -1035,7 +1035,7 @@ class ReconnectRow(NamedTuple):
 # from the spec, never from the library.
 RECONNECT_ROWS: list[ReconnectRow] = [
     ReconnectRow(
-        spec="§6 · upgrade:401 · the credential is dead — absent, invalid, expired, revoked, of the wrong kind, or naming a service row that is gone or proxied. The handshake never completes, the context manager exits with CredentialsError, and the hub records no second dial.",
+        spec="§6 · upgrade:401 · the credential is dead — absent, invalid, expired, revoked, of the wrong kind, or naming an app row that is gone or proxied. The handshake never completes, the context manager exits with CredentialsError, and the hub records no second dial.",
         trigger=Trigger("upgrade", 401),
         redials=False,
         schedule=None,
@@ -1043,7 +1043,7 @@ RECONNECT_ROWS: list[ReconnectRow] = [
         raises=CredentialsError,
     ),
     ReconnectRow(
-        spec="§6 · upgrade:403 · archived, and nothing else — the client keeps dialing at max backoff so that unarchiving heals the service without anyone touching the bot. The alive twin of the 401 row above.",
+        spec="§6 · upgrade:403 · archived, and nothing else — the client keeps dialing at max backoff so that unarchiving heals the app without anyone touching the bot. The alive twin of the 401 row above.",
         trigger=Trigger("upgrade", 403),
         redials=True,
         schedule="max_only",
@@ -1051,7 +1051,7 @@ RECONNECT_ROWS: list[ReconnectRow] = [
         raises=None,
     ),
     ReconnectRow(
-        spec="§6 · close:4000 · a newer connection took this service's slot (hub/replaced, then the close). The context manager exits WITHOUT an error and does not dial again — two copies of one bot competing for the slot is an operator problem to surface, not to retry.",
+        spec="§6 · close:4000 · a newer connection took this app's slot (hub/replaced, then the close). The context manager exits WITHOUT an error and does not dial again — two copies of one bot competing for the slot is an operator problem to surface, not to retry.",
         trigger=Trigger("close", 4000),
         redials=False,
         schedule=None,
@@ -1059,7 +1059,7 @@ RECONNECT_ROWS: list[ReconnectRow] = [
         raises=None,
     ),
     ReconnectRow(
-        spec="§6 · close:4001 · the token was revoked or the service deleted after the socket was already up. Same ending as 401: exit with CredentialsError, and no retry loop on a credential that cannot come back.",
+        spec="§6 · close:4001 · the token was revoked or the app deleted after the socket was already up. Same ending as 401: exit with CredentialsError, and no retry loop on a credential that cannot come back.",
         trigger=Trigger("close", 4001),
         redials=False,
         schedule=None,
@@ -1067,7 +1067,7 @@ RECONNECT_ROWS: list[ReconnectRow] = [
         raises=CredentialsError,
     ),
     ReconnectRow(
-        spec="§6 · close:4002 · the service was archived while connected, so the hub severs the socket and the client resumes dialing at max backoff — the archived policy again, this time reached after establishment.",
+        spec="§6 · close:4002 · the app was archived while connected, so the hub severs the socket and the client resumes dialing at max backoff — the archived policy again, this time reached after establishment.",
         trigger=Trigger("close", 4002),
         redials=True,
         schedule="max_only",
@@ -1075,7 +1075,7 @@ RECONNECT_ROWS: list[ReconnectRow] = [
         raises=None,
     ),
     ReconnectRow(
-        spec="§6 · close:4003 · the service row vanished between the upgrade and hub/register. The client backs off exponentially rather than giving up: if the row is genuinely gone the next upgrade answers 401, which is where the fatal ending lives.",
+        spec="§6 · close:4003 · the app row vanished between the upgrade and hub/register. The client backs off exponentially rather than giving up: if the row is genuinely gone the next upgrade answers 401, which is where the fatal ending lives.",
         trigger=Trigger("close", 4003),
         redials=True,
         schedule="exponential",
@@ -1104,7 +1104,7 @@ RECONNECT_ROWS: list[ReconnectRow] = [
 #
 # They are pinned here instead and run by the same runner. What each costs if
 # unpinned: a bot that retried a REJECTED DECLARATION would hammer the hub's
-# registration path forever holding a perfectly valid service token; a transport
+# registration path forever holding a perfectly valid app token; a transport
 # that treated a bare TCP drop or a close code outside 4000-4004 as fatal would go
 # dark on every hub deploy. "Unknown means reconnect" is the safe default D7's
 # verified slice already had to decide privately (``CLOSE_POLICY[code] ?? "reconnect"``

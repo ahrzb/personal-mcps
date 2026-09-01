@@ -1,14 +1,14 @@
 ## 16. Testing
 
 - **server**: vitest + `@cloudflare/vitest-pool-workers`. Core integration test: fake
-  service connects over WS to the DO, consumer POSTs `tools/list`/`tools/call` through
+  app connects over WS to the DO, consumer POSTs `tools/list`/`tools/call` through
   both the aggregated and scoped endpoints, asserts role filtering, prefix routing,
   namespace isolation (cross-user 404), offline/archived errors, timeout behavior,
-  connection replacement; a proxied service backed by an in-test fake upstream asserts
+  connection replacement; a proxied app backed by an in-test fake upstream asserts
   forwarding, virtual-role filtering, and upstream-failure mapping (unreachable, HTTP
   401/500, non-JSON-RPC body — all `-32000`, upstream body never echoed) — including
   aggregated `tools/list` with one failing or hanging upstream: the aggregate succeeds
-  without that service's tools (slug listed in `_meta.pmcp/unavailable`) while the
+  without that app's tools (slug listed in `_meta.pmcp/unavailable`) while the
   scoped list fails `-32000`.
 - **clients/py**: pytest; the WS↔anyio bridge tested against an in-process websocket
   server; reconnect/backoff logic unit-tested with a fake clock.
@@ -50,8 +50,8 @@
   401 challenge on `/<user>/mcp` names the per-user `resource_metadata` and is the same
   bytes for a live and an absent namespace; a JWT for another namespace's audience, an
   unsigned/expired one, and one whose binding is revoked or gone are each refused with
-  that same challenge; a valid one resolves to `sa:<slug>` and is thereafter
-  indistinguishable from a `pmcp_sa_` key (same grants, same refusals, same audit
+  that same challenge; a valid one resolves to `agent:<slug>` and is thereafter
+  indistinguishable from a `pmcp_agt_` key (same grants, same refusals, same audit
   principal, still no `pmcp` grants — including on the scoped shape, which the
   namespace-wide audience of §19.6 keeps reachable); a JWT minted from a live session at
   `/api/auth/token` is refused at the door, because hub-signed is never the acceptance
@@ -59,7 +59,7 @@
   registration whose `redirect_uri` is not an exact registered string is refused before
   any consent screen renders, and one carrying its own `client_id` gets a different,
   server-assigned one; the consent screen names the client, the redirect origin and the
-  unverified-identity marker, and renders its empty state with no service accounts; the
+  unverified-identity marker, and renders its empty state with no agents; the
   consent POST without a CSRF token is refused;
   D11's allowlist admits an `Authorization` header under `/api/auth` only at `/sign-out`
   and `/device/*`, so `/api/auth/token` refuses one while the whole OAuth round-trip
@@ -81,9 +81,9 @@
   resource's **`uri`** — a resource whose *name* matches a granted pattern while its URI
   matches none is neither listed nor readable; `completion/complete` refuses a `ref` no
   pattern matches; a role that gains a family under live grants writes
-  `connect.roles_widened`; a service that stops declaring a family has that catalog
+  `connect.roles_widened`; an app that stops declaring a family has that catalog
   cleared while a merely *failed* warm still leaves the previous one; a public
-  `cacheScope` from a service is downgraded to private; read rows land in audit with the
+  `cacheScope` from an app is downgraded to private; read rows land in audit with the
   prompt name / query-redacted resource URI and their contents stubbed.
 - **push** (§21): the listen stream on both shapes (ungranted → a stream that never
   rings; scoped archived → `-32002`; availability never checked); the bell-at-the-write
@@ -95,8 +95,8 @@
   frame for an unsubscribed URI rings nobody); the re-auth tick (revoked token closes
   the stream, revoked grant drops the socket and its subscriptions); capability flags
   flip with the transport, fixture in the same commit; a `sub:`-tagged socket never
-  answers a `getWebSockets(service.id)` lookup. The held-stream economics and the real
+  answers a `getWebSockets(app.id)` lookup. The held-stream economics and the real
   fan-out width are out-of-process obligations (strategy §10).
-- One `scripts/e2e.md` runbook (manual): deploy to a dev worker, run the example service,
+- One `scripts/e2e.md` runbook (manual): deploy to a dev worker, run the example app,
   `pmcp call` round-trip.
 

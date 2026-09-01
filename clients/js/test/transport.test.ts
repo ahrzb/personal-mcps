@@ -54,7 +54,7 @@
  * through untouched, the one MCP-namespace method the LIBRARY answers instead of
  * bridging (`server/discover`, §11/§6), and the pass-through of the prompt and
  * resource families the bridge already carries. The last is a regression pin
- * rather than new behavior — §20 opens by saying a tunneled service that
+ * rather than new behavior — §20 opens by saying a tunneled app that
  * declares prompts answers them over the socket TODAY, and the hub is the only
  * thing that said -32601 — and pinning it here is what keeps a future
  * frame-inspecting transport from quietly becoming a tools-only one.
@@ -77,8 +77,8 @@ import { startFakeHub } from "./fake-hub";
 import type { FakeHub } from "./fake-hub";
 import { reconnectPolicyRows, unlistedEndingRows, type ReconnectPolicyRow } from "./policy-rows";
 
-/** An obviously fake service credential — the value every dial is checked to carry. */
-const TOKEN = "pmcp_svc_FAKE0000000000000000000000000000";
+/** An obviously fake app credential — the value every dial is checked to carry. */
+const TOKEN = "pmcp_app_FAKE0000000000000000000000000000";
 
 /** The declaration handed to the constructor, echoed verbatim in `hub/register`. */
 const ROLES = { reader: ["get_news", "search_.*"] };
@@ -183,12 +183,12 @@ describe("handshake · §6 \"Transport\", \"Framing\", \"Handshake\"", () => {
     expect(dial.path).toBe("/connect");
   });
 
-  it("§6/§10 · the derived scheme follows the origin's and is never downgraded: https:// derives wss://, http:// (the local `wrangler dev` case, and what the fake hub hands every case in this file) derives ws:// — a pmcp_svc_ credential rides this dial, so the https half is a rule and not a convenience", () => {
+  it("§6/§10 · the derived scheme follows the origin's and is never downgraded: https:// derives wss://, http:// (the local `wrangler dev` case, and what the fake hub hands every case in this file) derives ws:// — a pmcp_app_ credential rides this dial, so the https half is a rule and not a convenience", () => {
     expect(connectAddress("https://mcp.example.com")).toBe("wss://mcp.example.com/connect");
     expect(connectAddress("http://127.0.0.1:8787")).toBe("ws://127.0.0.1:8787/connect");
   });
 
-  it("§6 · the dial carries the service token as `Authorization: Bearer`, and carries no service or slug anywhere: identity rides the token alone", async () => {
+  it("§6 · the dial carries the app token as `Authorization: Bearer`, and carries no app or slug anywhere: identity rides the token alone", async () => {
     const { hub } = await connected();
     const dial = await hub.nextDial(1);
     expect(dial.authorization).toBe(`Bearer ${TOKEN}`);
@@ -205,7 +205,7 @@ describe("handshake · §6 \"Transport\", \"Framing\", \"Handshake\"", () => {
     expect(connectAddress("https://mcp.example.com")).not.toContain("token");
   });
 
-  it("§15 · nothing the library surfaces echoes the credential: neither CredentialsError's message nor the error handed to onerror contains the pmcp_svc_ value, so a crashed bot's log cannot leak the service's sole secret", async () => {
+  it("§15 · nothing the library surfaces echoes the credential: neither CredentialsError's message nor the error handed to onerror contains the pmcp_app_ value, so a crashed bot's log cannot leak the app's sole secret", async () => {
     useSeams();
     const hub = await startFakeHub({ upgrades: [{ kind: "reject", status: 401 }] });
     const transport = new HubTransport({ url: hub.origin, token: TOKEN });
@@ -219,7 +219,7 @@ describe("handshake · §6 \"Transport\", \"Framing\", \"Handshake\"", () => {
     expect(failure).toBeInstanceOf(CredentialsError);
     for (const error of [failure as Error, ...seen]) {
       expect(error.message, error.message).not.toContain(TOKEN);
-      expect(error.message).not.toContain("pmcp_svc_");
+      expect(error.message).not.toContain("pmcp_app_");
     }
   });
 
@@ -325,7 +325,7 @@ describe("handshake · §6 \"Transport\", \"Framing\", \"Handshake\"", () => {
 });
 
 describe("reconnection is invisible to the SDK session · §6, §11", () => {
-  it("§6 · a mid-life network drop reconnects and re-sends hub/register, while onclose never fires and `closed` never settles — one transport is one service lifetime, not one socket", async () => {
+  it("§6 · a mid-life network drop reconnects and re-sends hub/register, while onclose never fires and `closed` never settles — one transport is one app lifetime, not one socket", async () => {
     const { hub, transport, state } = await connected();
     let closes = 0;
     transport.onclose = () => (closes += 1);
@@ -389,21 +389,21 @@ describe("reconnection is invisible to the SDK session · §6, §11", () => {
     );
   });
 
-  it("§10/§11 · serve() resolves its options before any I/O: url and token default to PMCP_URL and PMCP_SERVICE_TOKEN, an explicit argument wins over the env var, and neither being set is a TypeError before a socket exists — an empty token dialed anyway would come back as upgrade 401 and be classified as a dead credential, turning a local config mistake into a revoked-token diagnosis", async () => {
+  it("§10/§11 · serve() resolves its options before any I/O: url and token default to PMCP_URL and PMCP_APP_TOKEN, an explicit argument wins over the env var, and neither being set is a TypeError before a socket exists — an empty token dialed anyway would come back as upgrade 401 and be classified as a dead credential, turning a local config mistake into a revoked-token diagnosis", async () => {
     useSeams();
     const fromEnv = await startFakeHub();
     const explicit = await startFakeHub();
     opened.push({ hub: fromEnv }, { hub: explicit });
-    const before = { url: process.env.PMCP_URL, token: process.env.PMCP_SERVICE_TOKEN };
+    const before = { url: process.env.PMCP_URL, token: process.env.PMCP_APP_TOKEN };
     try {
       delete process.env.PMCP_URL;
-      delete process.env.PMCP_SERVICE_TOKEN;
+      delete process.env.PMCP_APP_TOKEN;
       await expect(serve(SESSION, {})).rejects.toBeInstanceOf(TypeError);
       await expect(serve(SESSION, { url: fromEnv.origin })).rejects.toBeInstanceOf(TypeError);
       expect(fromEnv.dials.length, "a socket was opened before the options resolved").toBe(0);
 
       process.env.PMCP_URL = fromEnv.origin;
-      process.env.PMCP_SERVICE_TOKEN = TOKEN;
+      process.env.PMCP_APP_TOKEN = TOKEN;
       const defaulted = watch(serve(SESSION, {}));
       await fromEnv.nextFrame(1);
       await fromEnv.end({ kind: "replaced" });
@@ -419,8 +419,8 @@ describe("reconnection is invisible to the SDK session · §6, §11", () => {
     } finally {
       if (before.url === undefined) delete process.env.PMCP_URL;
       else process.env.PMCP_URL = before.url;
-      if (before.token === undefined) delete process.env.PMCP_SERVICE_TOKEN;
-      else process.env.PMCP_SERVICE_TOKEN = before.token;
+      if (before.token === undefined) delete process.env.PMCP_APP_TOKEN;
+      else process.env.PMCP_APP_TOKEN = before.token;
     }
   });
 });
@@ -434,7 +434,7 @@ describe("the policy itself · §6 upgrade matrix + close codes", () => {
     runReconnectPolicy(unlistedEndingRows);
   });
 
-  it("§6 · unarchiving heals without touching the bot: the hub refuses 403 until the client is provably retrying, then accepts — and the very next dial connects and re-registers. The 403 row above pins that the client keeps dialing; this pins what the dialing is FOR, and it is the one §6 sentence about an archived service that a retry count alone cannot witness", async () => {
+  it("§6 · unarchiving heals without touching the bot: the hub refuses 403 until the client is provably retrying, then accepts — and the very next dial connects and re-registers. The 403 row above pins that the client keeps dialing; this pins what the dialing is FOR, and it is the one §6 sentence about an archived app that a retry count alone cannot witness", async () => {
     useSeams(10);
     const hub = await startFakeHub({ upgrades: [{ kind: "reject", status: 403 }] });
     const transport = new HubTransport({ url: hub.origin, token: TOKEN, roles: ROLES });
@@ -443,7 +443,7 @@ describe("the policy itself · §6 upgrade matrix + close codes", () => {
     // Provably retrying: two refused dials, and nothing connected.
     await hub.nextDial(2);
     expect(hub.connectionCount()).toBe(0);
-    // The world changes — the service is unarchived — and nothing about the bot does.
+    // The world changes — the app is unarchived — and nothing about the bot does.
     hub.setUpgrades([{ kind: "accept" }]);
     const registration = await hub.nextFrame(1);
     expect(registration.message.method).toBe("hub/register");
@@ -453,7 +453,7 @@ describe("the policy itself · §6 upgrade matrix + close codes", () => {
 });
 
 /**
- * §20's data model beyond tools, seen from the service author's side: the widened role
+ * §20's data model beyond tools, seen from the app author's side: the widened role
  * declaration going out untouched, the one MCP-namespace method the library answers itself,
  * and the prompt/resource traffic the bridge carries in both directions.
  *
@@ -464,7 +464,7 @@ describe("the policy itself · §6 upgrade matrix + close codes", () => {
  */
 describe("the data model beyond tools · §20, §11", () => {
   it("§11/§20.3 · serve({roles}) passes a bare pattern list through to hub/register unchanged", async () => {
-    const hub = await servingAuthor(new AuthorService({ tools: {} }), ROLES);
+    const hub = await servingAuthor(new AuthorApp({ tools: {} }), ROLES);
     const declared = declaredRoles(hub);
     expect(declared).toEqual(ROLES);
     // Unchanged means UNNORMALIZED: `["get_news"]` becoming `{tools: ["get_news"]}` is the
@@ -475,7 +475,7 @@ describe("the data model beyond tools · §20, §11", () => {
   }, OBSERVATION_BUDGET_MS);
 
   it("§11/§20.3 · serve({roles}) passes a per-family object through unchanged — the library normalizes nothing", async () => {
-    const hub = await servingAuthor(new AuthorService({ tools: {}, prompts: {}, resources: {} }), MIXED_ROLES);
+    const hub = await servingAuthor(new AuthorApp({ tools: {}, prompts: {}, resources: {} }), MIXED_ROLES);
     const declared = declaredRoles(hub);
     expect(declared).toEqual(MIXED_ROLES);
     // The two spellings survive SIDE BY SIDE in one declaration (§20.3's own example): the
@@ -491,7 +491,7 @@ describe("the data model beyond tools · §20, §11", () => {
       registrations: [{ kind: "reject", error: { code: -32602, message: "unknown role family" } }],
     });
     opened.push({ hub });
-    const served = watch(serve(new AuthorService({ tools: {} }), { url: hub.origin, token: TOKEN, roles: REJECTED_ROLES }));
+    const served = watch(serve(new AuthorApp({ tools: {} }), { url: hub.origin, token: TOKEN, roles: REJECTED_ROLES }));
     await hub.nextFrame(1);
     // AS WRITTEN: not repaired into `{tools: […]}`, not dropped, not refused locally. §20.3
     // gives the family vocabulary exactly one validator and it is the hub's — a library
@@ -507,8 +507,8 @@ describe("the data model beyond tools · §20, §11", () => {
   }, OBSERVATION_BUDGET_MS);
 
   it("§11/§6 · the library answers the hub's server/discover itself with the families the author's SDK actually registered — the author writes nothing, and the request never reaches the SDK", async () => {
-    const service = new AuthorService({ tools: {}, prompts: {}, resources: {} });
-    const hub = await servingAuthor(service);
+    const app = new AuthorApp({ tools: {}, prompts: {}, resources: {} });
+    const hub = await servingAuthor(app);
     await hub.send({ jsonrpc: "2.0", id: DISCOVER_ID, method: "server/discover" });
     const answer = await hub.nextFrame(2);
     expect(answer.message.id).toBe(DISCOVER_ID);
@@ -517,32 +517,32 @@ describe("the data model beyond tools · §20, §11", () => {
     // this the one MCP-namespace method the library handles itself, because it is a
     // hub↔library control question and the library is what knows which families were
     // registered.
-    expect(service.reached.map((frame) => frame.method)).not.toContain("server/discover");
+    expect(app.reached.map((frame) => frame.method)).not.toContain("server/discover");
   }, OBSERVATION_BUDGET_MS);
 
-  it("§11/§6 · a service whose SDK registers only tools answers server/discover with tools alone — the declaration is observed, not assumed from the library's own capabilities", async () => {
-    const service = new AuthorService({ tools: {} });
-    const hub = await servingAuthor(service);
+  it("§11/§6 · an app whose SDK registers only tools answers server/discover with tools alone — the declaration is observed, not assumed from the library's own capabilities", async () => {
+    const app = new AuthorApp({ tools: {} });
+    const hub = await servingAuthor(app);
     await hub.send({ jsonrpc: "2.0", id: DISCOVER_ID, method: "server/discover" });
     const answer = await hub.nextFrame(2);
     // The library CAN carry all three — the bridge is transparent, and the two round-trip
     // rows below prove it — so answering with what the LIBRARY can do rather than with what
-    // the AUTHOR registered would make every tools-only service in the field log three
+    // the AUTHOR registered would make every tools-only app in the field log three
     // spurious catalog-warm failures at the hub (§6/§20.5). That is the whole reason the
     // discover leg exists.
     expect(familiesIn(answer.message)).toEqual(["tools"]);
-    expect(service.reached.map((frame) => frame.method)).not.toContain("server/discover");
+    expect(app.reached.map((frame) => frame.method)).not.toContain("server/discover");
   }, OBSERVATION_BUDGET_MS);
 
-  it("§11/§6 · a service object the library cannot introspect for capabilities answers server/discover with -32601 — the \"capabilities unknown\" signal — and never a successful empty capability set, because a successful answer that omits a family is an UNDECLARE and §20.5 makes an undeclare clear that family's catalog", async () => {
+  it("§11/§6 · an app object the library cannot introspect for capabilities answers server/discover with -32601 — the \"capabilities unknown\" signal — and never a successful empty capability set, because a successful answer that omits a family is an UNDECLARE and §20.5 makes an undeclare clear that family's catalog", async () => {
     // Not a corner case: this package deliberately has no MCP SDK dependency and types the
     // author's server by the one method serve() calls, so an object with no capability seam
-    // is the ORDINARY object — every service already in the field is one. §11 pins the
+    // is the ORDINARY object — every app already in the field is one. §11 pins the
     // answer for it (the -32601 falls through to the hub, which warms tools only, "which is
-    // what keeps every service already in the field working unchanged"), and §20.5 is why
+    // what keeps every app already in the field working unchanged"), and §20.5 is why
     // the plausible repair is worse than the fallback: a discover leg that ERRORS changes no
-    // catalog, while a successful `{}` tells the hub this service no longer serves prompts
-    // or resources — clearing both catalogs for a service that is serving them right now.
+    // catalog, while a successful `{}` tells the hub this app no longer serves prompts
+    // or resources — clearing both catalogs for an app that is serving them right now.
     // Failure never empties one; success does. So the absence of a seam must stay a failure.
     const opaque = { connect: (transport: HubTransport): Promise<void> => transport.start() };
     useSeams();
@@ -561,8 +561,8 @@ describe("the data model beyond tools · §20, §11", () => {
   }, OBSERVATION_BUDGET_MS);
 
   it("§11/§20.1 · a prompts/get request from the hub reaches the author's SDK server and its response returns over the socket", async () => {
-    const service = new AuthorService({ tools: {}, prompts: {} }, { "prompts/get": PROMPT_RESULT });
-    const hub = await servingAuthor(service);
+    const app = new AuthorApp({ tools: {}, prompts: {} }, { "prompts/get": PROMPT_RESULT });
+    const hub = await servingAuthor(app);
     const request = {
       jsonrpc: "2.0",
       id: 21,
@@ -574,28 +574,28 @@ describe("the data model beyond tools · §20, §11", () => {
     // Both directions verbatim: the request arrives at the author's server exactly as the
     // hub sent it — `arguments` included, which is what the hub's redact map keys on (§20.3)
     // — and the answer goes back on the socket the hub asked over.
-    expect(service.reached).toEqual([request]);
+    expect(app.reached).toEqual([request]);
     expect(relayed.message).toEqual({ jsonrpc: "2.0", id: 21, result: PROMPT_RESULT });
   }, OBSERVATION_BUDGET_MS);
 
   it("§11/§20.1 · a resources/read request round-trips the same way", async () => {
-    const service = new AuthorService({ tools: {}, resources: {} }, { "resources/read": RESOURCE_RESULT });
-    const hub = await servingAuthor(service);
+    const app = new AuthorApp({ tools: {}, resources: {} }, { "resources/read": RESOURCE_RESULT });
+    const hub = await servingAuthor(app);
     const request = { jsonrpc: "2.0", id: 22, method: "resources/read", params: { uri: RESOURCE_URI } };
     await hub.send(request);
     const relayed = await hub.nextFrame(2);
-    expect(service.reached).toEqual([request]);
+    expect(app.reached).toEqual([request]);
     expect(relayed.message).toEqual({ jsonrpc: "2.0", id: 22, result: RESOURCE_RESULT });
-    // The URI the service knows is the URI it is asked for and the URI it answers with:
+    // The URI the app knows is the URI it is asked for and the URI it answers with:
     // §20.2 refuses to rewrite one anywhere, which is why resources are scoped-only.
     expect(JSON.stringify(relayed.message)).toContain(RESOURCE_URI);
   }, OBSERVATION_BUDGET_MS);
 
   it("§11/§20.5 · a prompts/list_changed notification emitted by the author's SDK reaches the hub unchanged", async () => {
-    const service = new AuthorService({ tools: {}, prompts: {} });
-    const hub = await servingAuthor(service);
+    const app = new AuthorApp({ tools: {}, prompts: {} });
+    const hub = await servingAuthor(app);
     const notification = { jsonrpc: "2.0", method: "notifications/prompts/list_changed" };
-    await service.emit(notification);
+    await app.emit(notification);
     const relayed = await hub.nextFrame(2);
     // A pass-through, not a feature (§11): the DO routes this frame to invalidate its
     // `catalog:prompts` key (§20.5), so a library that swallowed or renamed it would leave
@@ -611,11 +611,11 @@ describe("the data model beyond tools · §20, §11", () => {
   // the shortcut looked.
 
   it("§11/§21.4 · a resources/subscribe from the hub reaches the author's SDK and its response returns over the socket — the library keeps no subscription set · resources/unsubscribe round-trips identically", async () => {
-    const service = new AuthorService({ tools: {}, resources: {} }, {
+    const app = new AuthorApp({ tools: {}, resources: {} }, {
       "resources/subscribe": SUBSCRIBE_RESULT,
       "resources/unsubscribe": SUBSCRIBE_RESULT,
     });
-    const hub = await servingAuthor(service);
+    const hub = await servingAuthor(app);
     const subscribe = {
       jsonrpc: "2.0",
       id: 23,
@@ -627,7 +627,7 @@ describe("the data model beyond tools · §20, §11", () => {
     // hub sent it — URI included, which §21.4 keys on — and the answer goes back on the
     // socket the hub asked over.
     const relayed = await hub.nextFrame(2);
-    expect(service.reached).toEqual([subscribe]);
+    expect(app.reached).toEqual([subscribe]);
     expect(relayed.message).toEqual({ jsonrpc: "2.0", id: 23, result: SUBSCRIBE_RESULT });
     // The no-set half of the row: the SAME URI subscribed TWICE reaches the SDK twice.
     // A library that retained subscriptions would dedupe, cache, or prefetch here and the
@@ -635,7 +635,7 @@ describe("the data model beyond tools · §20, §11", () => {
     // library, so there is nothing to remember.
     await hub.send(subscribe);
     const again = await hub.nextFrame(3);
-    expect(service.reached).toEqual([subscribe, subscribe]);
+    expect(app.reached).toEqual([subscribe, subscribe]);
     expect(again.message).toEqual({ jsonrpc: "2.0", id: 23, result: SUBSCRIBE_RESULT });
     const unsubscribe = {
       jsonrpc: "2.0",
@@ -645,13 +645,13 @@ describe("the data model beyond tools · §20, §11", () => {
     };
     await hub.send(unsubscribe);
     const unrelayed = await hub.nextFrame(4);
-    expect(service.reached).toEqual([subscribe, subscribe, unsubscribe]);
+    expect(app.reached).toEqual([subscribe, subscribe, unsubscribe]);
     expect(unrelayed.message).toEqual({ jsonrpc: "2.0", id: 24, result: SUBSCRIBE_RESULT });
   }, OBSERVATION_BUDGET_MS);
 
   it("§11/§21.4 · a notifications/resources/updated the SDK emits crosses the socket verbatim, its uri untouched — for a URI no subscribe ever crossed this socket, so a library that secretly kept a set would fail it", async () => {
-    const service = new AuthorService({ tools: {}, resources: {} });
-    const hub = await servingAuthor(service);
+    const app = new AuthorApp({ tools: {}, resources: {} });
+    const hub = await servingAuthor(app);
     // The one outbound frame §21.4 adds. The DO routes it by EXACT uri match against the
     // subscriber socket's set (§21.4) — nothing for the SDK session to do, and nothing for
     // a transparent bridge to decide, so the frame must arrive untouched.
@@ -660,7 +660,7 @@ describe("the data model beyond tools · §20, §11", () => {
       method: "notifications/resources/updated",
       params: { uri: `${RESOURCE_URI}/late` },
     };
-    await service.emit(updated);
+    await app.emit(updated);
     const relayed = await hub.nextFrame(2);
     expect(relayed.message).toEqual(updated);
     // …for a URI NO subscribe ever crossed this socket: frame 1 is the registration and
@@ -683,7 +683,7 @@ describe("the data model beyond tools · §20, §11", () => {
 const OBSERVATION_BUDGET_MS = 10_000;
 
 /**
- * The author's service as `serve()` receives it — §11's "plain MCP server written with the
+ * The author's app as `serve()` receives it — §11's "plain MCP server written with the
  * official SDK", stood in for here because this package deliberately has no SDK dependency
  * (which is also why the library names it structurally). The Python twin wraps a REAL
  * `mcp.server.Server` for the capability half; this side cannot, so the capabilities are
@@ -694,7 +694,7 @@ const OBSERVATION_BUDGET_MS = 10_000;
  * `reached` records at ARRIVAL, before any scripted answer runs, which is what makes "the
  * request never reaches the SDK" an observation rather than an absence.
  */
-class AuthorService {
+class AuthorApp {
   /** Every message that reached the session, in arrival order. */
   readonly reached: Record<string, unknown>[] = [];
 
@@ -747,13 +747,13 @@ class AuthorService {
   }
 }
 
-/** One author's service running against one fresh hub, registered — the shape every §20 row
+/** One author's app running against one fresh hub, registered — the shape every §20 row
  *  starts from. The hub is torn down by the shared teardown; the transport is serve()'s own. */
-async function servingAuthor(service: AuthorService, roles?: Roles): Promise<FakeHub> {
+async function servingAuthor(app: AuthorApp, roles?: Roles): Promise<FakeHub> {
   useSeams();
   const hub = await startFakeHub();
   opened.push({ hub });
-  watch(serve(service, { url: hub.origin, token: TOKEN, roles: roles ?? ROLES }));
+  watch(serve(app, { url: hub.origin, token: TOKEN, roles: roles ?? ROLES }));
   await hub.nextFrame(1);
   return hub;
 }
@@ -810,7 +810,7 @@ const PROMPT_RESULT = {
   messages: [{ role: "user", content: { type: "text", text: "headlines" } }],
 };
 
-/** …and a `resources/read`: contents keyed by the URI the service itself knows. */
+/** …and a `resources/read`: contents keyed by the URI the app itself knows. */
 const RESOURCE_URI = "news://feed/tech";
 const RESOURCE_RESULT = {
   contents: [{ uri: RESOURCE_URI, mimeType: "text/plain", text: "headline" }],

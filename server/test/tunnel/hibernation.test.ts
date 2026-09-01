@@ -47,11 +47,11 @@
  * ConnectionAttachment needs a durable-storage fallback and these cases get rewritten
  * around it. protocol.test.ts owns the handshake, so cases here start from an already
  * registered socket except where the deadline is the subject. Under --no-isolate every
- * case mints its own service id: a stale hibernated socket answering the wrong case is
+ * case mints its own app id: a stale hibernated socket answering the wrong case is
  * the flake this whole directory is arranged to avoid.
  */
 
-// deps: harness/seed · harness/fake-service (connectFakeService, openSubscriber) · harness/tunnel-do (connectionStub, backendCtx) · cloudflare:test (evictDurableObject, runInDurableObject, runDurableObjectAlarm) · src/tunnel (tunnelBackend, status, sever, subscribe, ServiceConnection) · src/capabilities (BELL_TOOLS, RESOURCES_UPDATED) · src/errors (CODES) · src/limits (REGISTRATION_DEADLINE_MS, CALL_TIMEOUT_MS)
+// deps: harness/seed · harness/fake-app (connectFakeApp, openSubscriber) · harness/tunnel-do (connectionStub, backendCtx) · cloudflare:test (evictDurableObject, runInDurableObject, runDurableObjectAlarm) · src/tunnel (tunnelBackend, status, sever, subscribe, AppConnection) · src/capabilities (BELL_TOOLS, RESOURCES_UPDATED) · src/errors (CODES) · src/limits (REGISTRATION_DEADLINE_MS, CALL_TIMEOUT_MS)
 
 import { env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
@@ -59,7 +59,7 @@ import { CODES } from "../../src/errors";
 import type { Tool } from "../../src/gateway";
 import { tokenPattern } from "../../src/principal";
 import { Registry } from "../../src/registry";
-import type { Service } from "../../src/registry";
+import type { App } from "../../src/registry";
 import { BELL_TOOLS, RESOURCES_UPDATED } from "../../src/capabilities";
 import {
   CLOSE_PROTOCOL,
@@ -70,19 +70,19 @@ import {
   tunnelBackend,
   wipe,
 } from "../../src/tunnel";
-import type { ServiceConnection } from "../../src/tunnel";
-import { connectFakeService, openSubscriber, tick, waitFor } from "../harness/fake-service";
-import type { FakeService, FakeServiceOptions, FakeSubscriber } from "../harness/fake-service";
+import type { AppConnection } from "../../src/tunnel";
+import { connectFakeApp, openSubscriber, tick, waitFor } from "../harness/fake-app";
+import type { FakeApp, FakeAppOptions, FakeSubscriber } from "../harness/fake-app";
 import { seedNamespace, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 import { backendCtx, connectionStub, stillOpen } from "../harness/tunnel-do";
 
 /**
  * What a forward answers on the far side of the boundary, in the vocabulary the SEAM
- * really exposes: the backend either relays the service's response or throws the one
+ * really exposes: the backend either relays the app's response or throws the one
  * -32000 every dispatch failure collapses into. The offline/timeout distinction is not a
  * column here because this file cannot observe it — it survives in the audit row's
- * detail, and reading it off the fake service's counter instead would make the row pass
+ * detail, and reading it off the fake app's counter instead would make the row pass
  * on the helper's guess rather than on the DO's answer.
  */
 export type PostEvictionForward = "ok" | typeof CODES.unavailable;
@@ -151,9 +151,9 @@ export const evictionSurvivalRows: readonly EvictionSurvivalRow[] = [
     survives: true,
     observedBy: "socket_round_trip",
   },
-  // §6 puts serviceId, ownerId, slug and tokenId in the attachment precisely so a wake can
+  // §6 puts appId, ownerId, slug and tokenId in the attachment precisely so a wake can
   // resolve them without an instance field. Observed through a forward, because identity is
-  // what stamps `hub/principal` / `hub/roles` onto the frame the service receives — an
+  // what stamps `hub/principal` / `hub/roles` onto the frame the app receives — an
   // attachment that came back empty would answer offline, not "ok".
   {
     name: "§6 · identity rides serializeAttachment: a forward after eviction resolves and answers ok",
@@ -164,7 +164,7 @@ export const evictionSurvivalRows: readonly EvictionSurvivalRow[] = [
   },
   // The one attachment field with its own observable: `registered` decides status(), which
   // the approval gate consults FIRST (§7). If it were an instance field, every hibernation
-  // would silently turn an online service into an availability-first -32000.
+  // would silently turn an online app into an availability-first -32000.
   {
     name: "§6 · the registered flag survives: status() still reads online after eviction, so availability-first refusals stay correct across a hibernation",
     state: "registered_flag",
@@ -183,7 +183,7 @@ export const evictionSurvivalRows: readonly EvictionSurvivalRow[] = [
   // identity may CONTAIN. ConnectionAttachment carries `tokenId` — an id, never the secret —
   // and §3 gives the DO no reason to hold credential material at all ("it never validates
   // tokens itself for consumer traffic — it trusts the Worker"), while §15 keeps
-  // `Authorization` values and anything matching `pmcp_(sa|svc)_…` out of every persisted
+  // `Authorization` values and anything matching `pmcp_(agt|app)_…` out of every persisted
   // surface. Nothing else in the repository can observe this: worker/hygiene.test.ts sweeps
   // persisted D1 rows and never reads DO storage or an attachment, and the worker project
   // cannot reach a DO holding a live socket. Without this row, an implementation that
@@ -229,7 +229,7 @@ export const evictionSurvivalRows: readonly EvictionSurvivalRow[] = [
  * setup.
  */
 export async function runEvictionSurvivalCase(row: EvictionSurvivalRow): Promise<void> {
-  // deps: harness/fake-service · cloudflare:test evictDurableObject · src/tunnel.tunnelBackend · src/tunnel.status
+  // deps: harness/fake-app · cloudflare:test evictDurableObject · src/tunnel.tunnelBackend · src/tunnel.status
   // A probe may only ever assert that something did NOT survive: a probe claiming survival
   // would be pinning an implementation detail rather than a contract (the type's rule,
   // stated here as the runner's first act).
@@ -239,40 +239,40 @@ export async function runEvictionSurvivalCase(row: EvictionSurvivalRow): Promise
   // Every row but the alarm's starts from the same registered socket — one boundary, read
   // through different state.
   const registered = row.state !== "registration_alarm";
-  const service = await connect(fixture, registered ? {} : { skipRegister: true });
+  const app = await connect(fixture, registered ? {} : { skipRegister: true });
   if (registered) {
-    expect(await service.registered).toEqual({ ok: true });
-    expect(await waitFor(() => service.lists.length > 0), "the catalog never warmed").toBe(true);
+    expect(await app.registered).toEqual({ ok: true });
+    expect(await waitFor(() => app.lists.length > 0), "the catalog never warmed").toBe(true);
   }
 
-  await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
+  await evictDurableObject(connectionStub(fixture.appId), { webSockets: "hibernate" });
 
   switch (row.observedBy) {
     case "socket_round_trip": {
       // A frame each way through the hibernated socket: the notification in, the re-list out.
-      const listed = service.lists.length;
-      await service.notifyToolsListChanged([CACHED_TOOL]);
-      expect(await waitFor(() => service.lists.length > listed)).toBe(row.survives);
+      const listed = app.lists.length;
+      await app.notifyToolsListChanged([CACHED_TOOL]);
+      expect(await waitFor(() => app.lists.length > listed)).toBe(row.survives);
       return;
     }
     case "forward_result":
       expect(await forwardOnce(fixture)).toBe(row.forward);
       return;
     case "status":
-      expect(await status(fixture.serviceId)).toBe(row.survives ? "online" : "offline");
+      expect(await status(fixture.appId)).toBe(row.survives ? "online" : "offline");
       return;
     case "list_tools":
-      expect((await tunnelBackend.listTools(await serviceRow(fixture), backendCtx())).length > 0).toBe(
+      expect((await tunnelBackend.listTools(await appRow(fixture), backendCtx())).length > 0).toBe(
         row.survives,
       );
       return;
     case "alarm_close":
-      expect(await runDurableObjectAlarm(connectionStub(fixture.serviceId))).toBe(row.survives);
-      expect((await service.closed).code).toBe(CLOSE_PROTOCOL);
+      expect(await runDurableObjectAlarm(connectionStub(fixture.appId))).toBe(row.survives);
+      expect((await app.closed).code).toBe(CLOSE_PROTOCOL);
       return;
     case "instance_probe":
       if (row.state === "pending_map") {
-        expect(await pendingSize(fixture.serviceId)).toBe(0);
+        expect(await pendingSize(fixture.appId)).toBe(0);
         return;
       }
       await expectNoCredentialMaterial(fixture);
@@ -287,8 +287,8 @@ export async function runEvictionSurvivalCase(row: EvictionSurvivalRow): Promise
  */
 async function expectNoCredentialMaterial(fixture: Fixture): Promise<void> {
   const atRest = await runInDurableObject(
-    connectionStub(fixture.serviceId),
-    async (_instance: ServiceConnection, state) => ({
+    connectionStub(fixture.appId),
+    async (_instance: AppConnection, state) => ({
       attachment: state.getWebSockets()[0].deserializeAttachment(),
       storage: [...(await state.storage.list()).entries()],
     }),
@@ -310,36 +310,36 @@ type Fixture = {
   origin: string;
   ownerId: string;
   slug: string;
-  serviceId: string;
+  appId: string;
   token: string;
   tokenId: string;
   otherTokenId: string;
 };
 
 const seeded: SeededNamespace[] = [];
-const opened: FakeService[] = [];
+const opened: FakeApp[] = [];
 const streams: FakeSubscriber[] = [];
 
 afterEach(async () => {
   for (const stream of streams.splice(0)) await stream.close();
-  for (const service of opened.splice(0)) await service.close();
+  for (const app of opened.splice(0)) await app.close();
   for (const namespace of seeded.splice(0)) await namespace.teardown();
 });
 
-/** One namespace, one tunneled service, two live tokens — the second exists only so
+/** One namespace, one tunneled app, two live tokens — the second exists only so
  *  `onlyIfTokenId` has a token to NOT match after the boundary. */
 async function seedFixture(): Promise<Fixture> {
   const slug = uniqueSlug("bot");
   const namespace = await seedNamespace(env.DB, {
     username: uniqueSlug("hib"),
-    services: [{ slug, kind: "tunnel", tokens: [{ as: "token_a" }, { as: "token_b" }] }],
+    apps: [{ slug, kind: "tunnel", tokens: [{ as: "token_a" }, { as: "token_b" }] }],
   });
   seeded.push(namespace);
   return {
     origin: (env as unknown as { PUBLIC_ORIGIN: string }).PUBLIC_ORIGIN,
     ownerId: namespace.owner.userId,
     slug,
-    serviceId: namespace.services[slug].id,
+    appId: namespace.apps[slug].id,
     token: namespace.tokens.token_a.token,
     tokenId: namespace.tokens.token_a.id,
     otherTokenId: namespace.tokens.token_b.id,
@@ -348,26 +348,26 @@ async function seedFixture(): Promise<Fixture> {
 
 async function connect(
   fixture: Fixture,
-  options: Partial<FakeServiceOptions> = {},
-): Promise<FakeService> {
-  const service = await connectFakeService({
+  options: Partial<FakeAppOptions> = {},
+): Promise<FakeApp> {
+  const app = await connectFakeApp({
     origin: fixture.origin,
     token: fixture.token,
     tools: [CACHED_TOOL],
     ...options,
   });
-  opened.push(service);
-  return service;
+  opened.push(app);
+  return app;
 }
 
 /** A registered socket with a warm catalog, then the boundary — the setup of nearly every
  *  case below, so no case spells it twice. */
-async function evicted(fixture: Fixture): Promise<FakeService> {
-  const service = await connect(fixture);
-  expect(await service.registered).toEqual({ ok: true });
-  expect(await waitFor(() => service.lists.length > 0), "the catalog never warmed").toBe(true);
-  await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
-  return service;
+async function evicted(fixture: Fixture): Promise<FakeApp> {
+  const app = await connect(fixture);
+  expect(await app.registered).toEqual({ ok: true });
+  expect(await waitFor(() => app.lists.length > 0), "the catalog never warmed").toBe(true);
+  await evictDurableObject(connectionStub(fixture.appId), { webSockets: "hibernate" });
+  return app;
 }
 
 /**
@@ -380,7 +380,7 @@ async function openStream(
   fixture: Fixture,
   options: { principal?: string } = {},
 ): Promise<FakeSubscriber> {
-  const stream = await openSubscriber(connectionStub(fixture.serviceId), {
+  const stream = await openSubscriber(connectionStub(fixture.appId), {
     principal: options.principal ?? STREAM_PRINCIPAL,
   });
   streams.push(stream);
@@ -390,21 +390,21 @@ async function openStream(
 /** A registered socket serving an EMPTY tool catalog, its warm landed — the start of the
  *  §21 rows, whose subject is a change made AFTER the wake: a non-empty first registration
  *  is itself a change and would put the provocation inside the floor's window (§21.3). */
-async function quietlyRegistered(fixture: Fixture): Promise<FakeService> {
-  const service = await connect(fixture, { tools: [] });
-  expect(await service.registered).toEqual({ ok: true });
-  expect(await waitFor(() => service.lists.length > 0), "the catalog never warmed").toBe(true);
+async function quietlyRegistered(fixture: Fixture): Promise<FakeApp> {
+  const app = await connect(fixture, { tools: [] });
+  expect(await app.registered).toEqual({ ok: true });
+  expect(await waitFor(() => app.lists.length > 0), "the catalog never warmed").toBe(true);
   await settle();
-  return service;
+  return app;
 }
 
 /** One catalog change that has LANDED — the notification sent, the re-list answered, the
- *  write done. A burst is a sequence of these: the fake service installs its catalog before
+ *  write done. A burst is a sequence of these: the fake app installs its catalog before
  *  it sends the frame, so un-awaited notifications collapse into one change. */
-async function landedChange(service: FakeService, tools: Tool[]): Promise<void> {
-  const listed = service.lists.length;
-  await service.notifyToolsListChanged(tools);
-  expect(await waitFor(() => service.lists.length > listed), "the re-list never arrived").toBe(true);
+async function landedChange(app: FakeApp, tools: Tool[]): Promise<void> {
+  const listed = app.lists.length;
+  await app.notifyToolsListChanged(tools);
+  expect(await waitFor(() => app.lists.length > listed), "the re-list never arrived").toBe(true);
   await settle();
 }
 
@@ -414,16 +414,16 @@ async function settle(): Promise<void> {
 }
 
 /** The principal a held stream carries — opaque to the DO, which never resolves it. */
-const STREAM_PRINCIPAL = "acct:reader";
-const OTHER_PRINCIPAL = "acct:intruder";
+const STREAM_PRINCIPAL = "agt:reader";
+const OTHER_PRINCIPAL = "agt:intruder";
 const SUBSCRIBED_URI = "file:///notes.md";
 
 /** The in-memory correlation map's size — the documented exception to observing from
  *  outside, used only where the claim is that it is EMPTY. */
-function pendingSize(serviceId: string): Promise<number> {
+function pendingSize(appId: string): Promise<number> {
   return runInDurableObject(
-    connectionStub(serviceId),
-    (instance: ServiceConnection) =>
+    connectionStub(appId),
+    (instance: AppConnection) =>
       (instance as unknown as { pending: Map<string, unknown> }).pending.size,
   );
 }
@@ -431,13 +431,13 @@ function pendingSize(serviceId: string): Promise<number> {
 /**
  * One forwarded call through the ordinary backend seam, answered in exactly what that
  * seam exposes: "ok" for a relayed response, or the refusal code it threw. Nothing is
- * inferred — a helper that reconstructed offline-vs-timeout from the fake service's
+ * inferred — a helper that reconstructed offline-vs-timeout from the fake app's
  * counter would be answering with its own guess in the DO's vocabulary.
  */
 async function forwardOnce(fixture: Fixture): Promise<PostEvictionForward> {
   try {
     await tunnelBackend.call(
-      await serviceRow(fixture),
+      await appRow(fixture),
       { jsonrpc: "2.0", id: CONSUMER_ID, method: "tools/call", params: { name: CACHED_TOOL.name } },
       backendCtx(),
     );
@@ -450,9 +450,9 @@ async function forwardOnce(fixture: Fixture): Promise<PostEvictionForward> {
 /** The consumer's own JSON-RPC id, which §6 forbids from ever crossing the socket. */
 const CONSUMER_ID = 4242;
 
-async function serviceRow(fixture: Fixture): Promise<Service> {
-  const row = await new Registry(env.DB).getService(fixture.ownerId, fixture.slug);
-  if (row === null) throw new Error("the fixture's service vanished");
+async function appRow(fixture: Fixture): Promise<App> {
+  const row = await new Registry(env.DB).getApp(fixture.ownerId, fixture.slug);
+  if (row === null) throw new Error("the fixture's app vanished");
   return row;
 }
 
@@ -468,16 +468,16 @@ describe("§6 across an evictDurableObject boundary", () => {
 
   it("2. §6 · a registered socket still round-trips a tools/call after eviction — this file's premise, and the protocol-level twin of smoke.test.ts's A2", async () => {
     const fixture = await seedFixture();
-    const service = await evicted(fixture);
+    const app = await evicted(fixture);
     expect(await forwardOnce(fixture)).toBe("ok");
-    expect(service.callCount(CACHED_TOOL.name)).toBe(1);
+    expect(app.callCount(CACHED_TOOL.name)).toBe(1);
   });
 
   it("3. §6 · identity survives: the frame forwarded after eviction still carries the hub's own hub/principal and hub/roles, resolved from the attachment", async () => {
     const fixture = await seedFixture();
-    const service = await evicted(fixture);
+    const app = await evicted(fixture);
     expect(await forwardOnce(fixture)).toBe("ok");
-    expect(service.invocations[0].meta).toMatchObject({
+    expect(app.invocations[0].meta).toMatchObject({
       "hub/principal": "user:fixture-owner",
       "hub/roles": ["all"],
     });
@@ -486,167 +486,167 @@ describe("§6 across an evictDurableObject boundary", () => {
   it("4. §6 · status() reads online after eviction — `registered` rides the attachment, not an instance field, so availability-first refusals stay correct across a hibernation", async () => {
     const fixture = await seedFixture();
     await evicted(fixture);
-    expect(await status(fixture.serviceId)).toBe("online");
+    expect(await status(fixture.appId)).toBe("online");
   });
 
   it("5. §6 · the cached catalog is served after eviction, and after eviction *while offline* too (DO SQLite, not memory)", async () => {
     const fixture = await seedFixture();
-    const service = await evicted(fixture);
-    const row = await serviceRow(fixture);
+    const app = await evicted(fixture);
+    const row = await appRow(fixture);
     expect(await tunnelBackend.listTools(row, backendCtx())).toEqual([CACHED_TOOL]);
-    await service.close();
-    await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
-    expect(await status(fixture.serviceId)).toBe("offline");
+    await app.close();
+    await evictDurableObject(connectionStub(fixture.appId), { webSockets: "hibernate" });
+    expect(await status(fixture.appId)).toBe("offline");
     expect(await tunnelBackend.listTools(row, backendCtx())).toEqual([CACHED_TOOL]);
   });
 
   it("6. §6 · the pending map is EMPTY after eviction — §6's hibernation-safety assumption, validated rather than assumed; nothing here asserts it survives", async () => {
     const fixture = await seedFixture();
     await evicted(fixture);
-    expect(await pendingSize(fixture.serviceId)).toBe(0);
+    expect(await pendingSize(fixture.appId)).toBe(0);
   });
 
   it("7. §6 · a forward issued after eviction correlates on a fresh wire id and resolves normally: the empty map costs the next caller nothing (the allow-twin of case 6)", async () => {
     const fixture = await seedFixture();
-    const service = await evicted(fixture);
+    const app = await evicted(fixture);
     expect(await forwardOnce(fixture)).toBe("ok");
-    const wireId = service.invocations[0].wireId;
+    const wireId = app.invocations[0].wireId;
     expect(wireId).not.toBe(String(CONSUMER_ID));
     expect(wireId.length).toBeGreaterThan(8);
     // And the entry is gone again once it resolved: a settled call leaves nothing behind.
-    expect(await pendingSize(fixture.serviceId)).toBe(0);
+    expect(await pendingSize(fixture.appId)).toBe(0);
   });
 });
 
 describe("§6 the deadline alarm across hibernation", () => {
   it("8. §6 · an accepted-but-unregistered socket evicted, then runDurableObjectAlarm → close 4004: the deadline is a storage alarm precisely so it outlives hibernation", async () => {
     const fixture = await seedFixture();
-    const service = await connect(fixture, { skipRegister: true });
-    await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
-    expect(await runDurableObjectAlarm(connectionStub(fixture.serviceId))).toBe(true);
-    expect((await service.closed).code).toBe(CLOSE_PROTOCOL);
+    const app = await connect(fixture, { skipRegister: true });
+    await evictDurableObject(connectionStub(fixture.appId), { webSockets: "hibernate" });
+    expect(await runDurableObjectAlarm(connectionStub(fixture.appId))).toBe(true);
+    expect((await app.closed).code).toBe(CLOSE_PROTOCOL);
   });
 
   it("9. §6 · a registered socket evicted, then the same alarm → a no-op, socket still open and still online (the allow-twin of case 8)", async () => {
     const fixture = await seedFixture();
-    const service = await evicted(fixture);
-    expect(await runDurableObjectAlarm(connectionStub(fixture.serviceId))).toBe(true);
-    expect(await stillOpen(service)).toBe(true);
-    expect(await status(fixture.serviceId)).toBe("online");
+    const app = await evicted(fixture);
+    expect(await runDurableObjectAlarm(connectionStub(fixture.appId))).toBe(true);
+    expect(await stillOpen(app)).toBe(true);
+    expect(await status(fixture.appId)).toBe("online");
   });
 });
 
 describe("§6/§10 attachment versioning", () => {
   it("10. §6 · a wake reading an attachment with an unknown or absent `v` closes 4004, so deploy version-skew heals as a routine reconnect", async () => {
     const fixture = await seedFixture();
-    const service = await evicted(fixture);
+    const app = await evicted(fixture);
     // A socket left behind by code that wrote a shape this build cannot read.
-    await runInDurableObject(connectionStub(fixture.serviceId), (_i: ServiceConnection, state) =>
-      state.getWebSockets()[0].serializeAttachment({ v: 99, serviceId: fixture.serviceId }),
+    await runInDurableObject(connectionStub(fixture.appId), (_i: AppConnection, state) =>
+      state.getWebSockets()[0].serializeAttachment({ v: 99, appId: fixture.appId }),
     );
-    await service.notifyToolsListChanged([CACHED_TOOL]);
-    expect((await service.closed).code).toBe(CLOSE_PROTOCOL);
-    expect(await status(fixture.serviceId)).toBe("offline");
+    await app.notifyToolsListChanged([CACHED_TOOL]);
+    expect((await app.closed).code).toBe(CLOSE_PROTOCOL);
+    expect(await status(fixture.appId)).toBe("offline");
   });
 
   it("11. §6 · a wake reading the current `v: 1` attachment proceeds normally — the allow-twin of case 10, and what keeps case 10 from being satisfied by closing every woken socket", async () => {
     const fixture = await seedFixture();
-    const service = await evicted(fixture);
-    const listed = service.lists.length;
-    await service.notifyToolsListChanged([CACHED_TOOL]);
-    expect(await waitFor(() => service.lists.length > listed)).toBe(true);
-    expect(await status(fixture.serviceId)).toBe("online");
+    const app = await evicted(fixture);
+    const listed = app.lists.length;
+    await app.notifyToolsListChanged([CACHED_TOOL]);
+    expect(await waitFor(() => app.lists.length > listed)).toBe(true);
+    expect(await status(fixture.appId)).toBe("online");
   });
 });
 
 describe("§6 owner actions across the boundary", () => {
   it("12. §6 · sever() after eviction closes with the right code and still honors onlyIfTokenId — the opening token id rides the attachment", async () => {
     const fixture = await seedFixture();
-    const service = await evicted(fixture);
+    const app = await evicted(fixture);
     // The other token: no match, no close — the survivor half of §8's rule, after a wake.
-    await sever(fixture.serviceId, CLOSE_REVOKED, fixture.otherTokenId);
-    expect(await stillOpen(service)).toBe(true);
+    await sever(fixture.appId, CLOSE_REVOKED, fixture.otherTokenId);
+    expect(await stillOpen(app)).toBe(true);
     // The opening token: closed, with the code the caller asked for.
-    await sever(fixture.serviceId, CLOSE_REVOKED, fixture.tokenId);
-    expect((await service.closed).code).toBe(CLOSE_REVOKED);
+    await sever(fixture.appId, CLOSE_REVOKED, fixture.tokenId);
+    expect((await app.closed).code).toBe(CLOSE_REVOKED);
   });
 
   it("13. §6 · wipe() after eviction still returns the DO to never-connected (the catalog it erases is the one case 5 proved survived)", async () => {
     const fixture = await seedFixture();
     await evicted(fixture);
-    expect(await connectionStub(fixture.serviceId).listTools()).toEqual([CACHED_TOOL]);
-    await wipe(fixture.serviceId);
-    expect(await connectionStub(fixture.serviceId).listTools()).toEqual([]);
+    expect(await connectionStub(fixture.appId).listTools()).toEqual([CACHED_TOOL]);
+    await wipe(fixture.appId);
+    expect(await connectionStub(fixture.appId).listTools()).toEqual([]);
   });
 });
 
 describe("§21 the subscriber socket across the boundary", () => {
   it('§21.4/§5 · the subscription set survives evictDurableObject({webSockets:"hibernate"}) — an updated for a subscribed URI still routes after the wake', async () => {
     const fixture = await seedFixture();
-    const service = await quietlyRegistered(fixture);
+    const app = await quietlyRegistered(fixture);
     const stream = await openStream(fixture);
-    expect(await subscribe(fixture.serviceId, stream.sessionId, STREAM_PRINCIPAL, SUBSCRIBED_URI)).toBe(
+    expect(await subscribe(fixture.appId, stream.sessionId, STREAM_PRINCIPAL, SUBSCRIBED_URI)).toBe(
       "stored",
     );
 
-    await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
+    await evictDurableObject(connectionStub(fixture.appId), { webSockets: "hibernate" });
 
-    await service.notifyResourcesUpdated(SUBSCRIBED_URI);
+    await app.notifyResourcesUpdated(SUBSCRIBED_URI);
     expect(await waitFor(() => stream.count(RESOURCES_UPDATED) > 0)).toBe(true);
   });
 
   it("§21.4 · the stored principal survives the same eviction — a post-wake subscribe from another principal still mutates nothing", async () => {
     const fixture = await seedFixture();
-    const service = await quietlyRegistered(fixture);
+    const app = await quietlyRegistered(fixture);
     const stream = await openStream(fixture);
 
-    await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
+    await evictDurableObject(connectionStub(fixture.appId), { webSockets: "hibernate" });
 
     // The id selects and the principal authorizes — and the principal is on the socket, so
     // an instance that lost it would either refuse everything or accept anybody.
     expect(
-      await subscribe(fixture.serviceId, stream.sessionId, OTHER_PRINCIPAL, SUBSCRIBED_URI),
+      await subscribe(fixture.appId, stream.sessionId, OTHER_PRINCIPAL, SUBSCRIBED_URI),
     ).toBe("no_stream");
-    await service.notifyResourcesUpdated(SUBSCRIBED_URI);
+    await app.notifyResourcesUpdated(SUBSCRIBED_URI);
     await settle();
     expect(stream.count(RESOURCES_UPDATED)).toBe(0);
 
     // …and the socket's own principal still owns it after the wake (the allow-twin).
     expect(
-      await subscribe(fixture.serviceId, stream.sessionId, STREAM_PRINCIPAL, SUBSCRIBED_URI),
+      await subscribe(fixture.appId, stream.sessionId, STREAM_PRINCIPAL, SUBSCRIBED_URI),
     ).toBe("stored");
-    await service.notifyResourcesUpdated(SUBSCRIBED_URI);
+    await app.notifyResourcesUpdated(SUBSCRIBED_URI);
     expect(await waitFor(() => stream.count(RESOURCES_UPDATED) > 0)).toBe(true);
   });
 
-  it("§21.2 · class selection survives the wake — status still reads by the service socket alone, and a post-wake bell still reaches the subscriber socket (the ring path enumerates by tag, not memory)", async () => {
+  it("§21.2 · class selection survives the wake — status still reads by the app socket alone, and a post-wake bell still reaches the subscriber socket (the ring path enumerates by tag, not memory)", async () => {
     const fixture = await seedFixture();
     // The subscriber socket is accepted FIRST, so an instance that woke reading position
     // instead of class answers every question below with the wrong socket.
     const stream = await openStream(fixture);
-    const service = await quietlyRegistered(fixture);
+    const app = await quietlyRegistered(fixture);
 
-    await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
+    await evictDurableObject(connectionStub(fixture.appId), { webSockets: "hibernate" });
 
-    expect(await status(fixture.serviceId)).toBe("online");
-    await landedChange(service, [CACHED_TOOL]);
+    expect(await status(fixture.appId)).toBe("online");
+    await landedChange(app, [CACHED_TOOL]);
     expect(await waitFor(() => stream.count(BELL_TOOLS) > 0)).toBe(true);
     expect(stream.open).toBe(true);
   });
 
   it("§21.3 · a pending coalesced ring survives eviction — evict with the ring pending, runDurableObjectAlarm, the frame lands (floor state is durable, constraint 5)", async () => {
     const fixture = await seedFixture();
-    const service = await quietlyRegistered(fixture);
+    const app = await quietlyRegistered(fixture);
     const stream = await openStream(fixture);
 
     // Two changes inside one interval: the first rings, the second is suppressed and owed.
-    await landedChange(service, [CACHED_TOOL]);
-    await landedChange(service, [{ name: "other", inputSchema: { type: "object" } }]);
+    await landedChange(app, [CACHED_TOOL]);
+    await landedChange(app, [{ name: "other", inputSchema: { type: "object" } }]);
     expect(await waitFor(() => stream.count(BELL_TOOLS) === 1)).toBe(true);
 
-    await evictDurableObject(connectionStub(fixture.serviceId), { webSockets: "hibernate" });
+    await evictDurableObject(connectionStub(fixture.appId), { webSockets: "hibernate" });
 
-    expect(await runDurableObjectAlarm(connectionStub(fixture.serviceId))).toBe(true);
+    expect(await runDurableObjectAlarm(connectionStub(fixture.appId))).toBe(true);
     expect(await waitFor(() => stream.count(BELL_TOOLS) === 2)).toBe(true);
   });
 });

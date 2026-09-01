@@ -1,7 +1,7 @@
 /**
  * tunnel/stream.test.ts — the held listen stream, end to end: a real `subscriptions/listen`
  * request through the running worker, a real `text/event-stream` held open by the
- * invocation, real subscriber sockets into real service DOs, and a real service changing
+ * invocation, real subscriber sockets into real app DOs, and a real app changing
  * its catalog on the other side of them.
  *
  * WHAT THIS SUITE PINS that no other file can. push.test.ts and subscriptions.test.ts stop
@@ -36,7 +36,7 @@
  * assumes the DO rings and routes correctly and asserts only what the Worker does with it.
  */
 
-// deps: harness/seed · harness/fake-service (connectFakeService, tick, waitFor) · harness/tunnel-do (connectionStub, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env, runInDurableObject, runDurableObjectAlarm) · src/identity (revokeToken) · src/registry (Registry, seedGrants) · src/limits (LISTEN_KEEPALIVE_MS, LISTEN_FANOUT_MAX, CALL_TIMEOUT_MS) · src/capabilities (BELL_*, RESOURCES_UPDATED)
+// deps: harness/seed · harness/fake-app (connectFakeApp, tick, waitFor) · harness/tunnel-do (connectionStub, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env, runInDurableObject, runDurableObjectAlarm) · src/identity (revokeToken) · src/registry (Registry, seedGrants) · src/limits (LISTEN_KEEPALIVE_MS, LISTEN_FANOUT_MAX, CALL_TIMEOUT_MS) · src/capabilities (BELL_*, RESOURCES_UPDATED)
 
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
@@ -51,8 +51,8 @@ import type { JsonRpcRequest, Tool } from "../../src/gateway";
 import { revokeToken } from "../../src/identity";
 import { CALL_TIMEOUT_MS, LISTEN_FANOUT_MAX, LISTEN_KEEPALIVE_MS } from "../../src/limits";
 import { Registry } from "../../src/registry";
-import { connectFakeService, tick, waitFor } from "../harness/fake-service";
-import type { CatalogEntry, FakeService } from "../harness/fake-service";
+import { connectFakeApp, tick, waitFor } from "../harness/fake-app";
+import type { CatalogEntry, FakeApp } from "../harness/fake-app";
 import { seedGrants, seedNamespace, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 import { connectionStub } from "../harness/tunnel-do";
@@ -177,22 +177,22 @@ const SHRUNK_CALL_MS = 40;
 
 type Fixture = {
   ns: SeededNamespace;
-  services: FakeService[];
+  apps: FakeApp[];
 };
 
 const seeded: SeededNamespace[] = [];
-const opened: FakeService[] = [];
+const opened: FakeApp[] = [];
 const held: HeldStream[] = [];
 
 afterEach(async () => {
   for (const stream of held.splice(0)) await stream.cancel();
-  for (const service of opened.splice(0)) await service.close();
+  for (const app of opened.splice(0)) await app.close();
   for (const namespace of seeded.splice(0)) await namespace.teardown();
 });
 
 const ORIGIN = (env as unknown as { PUBLIC_ORIGIN: string }).PUBLIC_ORIGIN;
 
-/** The consumer's own JSON-RPC id, which §6 forbids from ever crossing a service socket. */
+/** The consumer's own JSON-RPC id, which §6 forbids from ever crossing an app socket. */
 const CONSUMER_ID = 4242;
 
 const TOOL: Tool = { name: "search", inputSchema: { type: "object" } };
@@ -253,12 +253,12 @@ async function listen(
   return stream;
 }
 
-/** One registered tunneled service with a warm catalog, dialled against a seeded token. */
+/** One registered tunneled app with a warm catalog, dialled against a seeded token. */
 async function connect(
   token: string,
   options: { tools?: Tool[]; prompts?: CatalogEntry[]; resources?: CatalogEntry[] } = {},
-): Promise<FakeService> {
-  const service = await connectFakeService({
+): Promise<FakeApp> {
+  const app = await connectFakeApp({
     origin: ORIGIN,
     token,
     roles: { reader: ["*"] },
@@ -266,11 +266,11 @@ async function connect(
     ...(options.prompts === undefined ? {} : { prompts: options.prompts }),
     ...(options.resources === undefined ? {} : { resources: options.resources }),
   });
-  opened.push(service);
-  expect(await service.registered).toEqual({ ok: true });
-  expect(await waitFor(() => service.lists.length > 0), "the catalog never warmed").toBe(true);
+  opened.push(app);
+  expect(await app.registered).toEqual({ ok: true });
+  expect(await waitFor(() => app.lists.length > 0), "the catalog never warmed").toBe(true);
   await settle();
-  return service;
+  return app;
 }
 
 /**
@@ -301,10 +301,10 @@ async function waitUntil(predicate: () => boolean, budgetMs: number): Promise<bo
   return predicate();
 }
 
-/** How many subscriber sockets one service's DO is holding — how "this stream subscribed
- *  that service" is observed from outside the Worker. */
-async function subscriberSockets(serviceId: string): Promise<number> {
-  return runInDurableObject(connectionStub(serviceId), (_instance, state) =>
+/** How many subscriber sockets one app's DO is holding — how "this stream subscribed
+ *  that app" is observed from outside the Worker. */
+async function subscriberSockets(appId: string): Promise<number> {
+  return runInDurableObject(connectionStub(appId), (_instance, state) =>
     state
       .getWebSockets()
       .filter((ws) => state.getTags(ws).some((tag) => tag.startsWith("sub:"))).length,
@@ -312,12 +312,12 @@ async function subscriberSockets(serviceId: string): Promise<number> {
 }
 
 /** …polled to what a row expects, since a socket the tick drops goes on its own turn. */
-async function untilSockets(serviceId: string, expected: number): Promise<number> {
-  let held = await subscriberSockets(serviceId);
+async function untilSockets(appId: string, expected: number): Promise<number> {
+  let held = await subscriberSockets(appId);
   const deadline = Date.now() + SHRUNK_KEEPALIVE_MS * 6;
   while (held !== expected && Date.now() < deadline) {
     await tick();
-    held = await subscriberSockets(serviceId);
+    held = await subscriberSockets(appId);
   }
   return held;
 }
@@ -325,19 +325,19 @@ async function untilSockets(serviceId: string, expected: number): Promise<number
 // ── the rows ──────────────────────────────────────────────────────────────────────────
 
 describe("§21.1 the stream a caller gets", () => {
-  it("§21.1 · a granted caller's stream receives a doorbell when its service's catalog changes · an ungranted caller's aggregated stream, driven by the same provocation, receives nothing — same status, same content-type, same keepalive cadence, session ids differing by construction (the twin that makes silence evidence)", async () => {
+  it("§21.1 · a granted caller's stream receives a doorbell when its app's catalog changes · an ungranted caller's aggregated stream, driven by the same provocation, receives nothing — same status, same content-type, same keepalive cadence, session ids differing by construction (the twin that makes silence evidence)", async () => {
     await withShrunkTimers(async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [{ slug, kind: "tunnel", tokens: [{ as: "svc" }] }],
-        accounts: [
+        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
+        agents: [
           { slug: "granted", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "granted" }] },
           { slug: "ungranted", tokens: [{ as: "ungranted" }] },
         ],
       });
       seeded.push(ns);
-      const service = await connect(ns.tokens.svc.token);
+      const app = await connect(ns.tokens.app.token);
 
       const granted = await listen(ns, ns.tokens.granted.token, null);
       const ungranted = await listen(ns, ns.tokens.ungranted.token, null);
@@ -348,7 +348,7 @@ describe("§21.1 the stream a caller gets", () => {
       expect(ungranted.contentType).toContain("text/event-stream");
       expect(granted.sessionId).not.toBe(ungranted.sessionId);
 
-      await service.notifyToolsListChanged([TOOL]);
+      await app.notifyToolsListChanged([TOOL]);
       expect(await waitFor(() => granted.count(BELL_TOOLS) > 0)).toBe(true);
 
       await ticks(2);
@@ -365,25 +365,25 @@ describe("§21.1 the stream a caller gets", () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [{ slug, kind: "tunnel", tokens: [{ as: "svc" }] }],
-        accounts: [{ slug: "reader", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] }],
+        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
+        agents: [{ slug: "reader", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] }],
       });
       seeded.push(ns);
-      const service = await connect(ns.tokens.svc.token);
+      const app = await connect(ns.tokens.app.token);
 
       const first = await listen(ns, ns.tokens.reader.token, slug);
       await first.cancel();
       await settle();
 
       // Rung into the void: nobody is listening, and nothing buffers it.
-      await service.notifyToolsListChanged([TOOL]);
+      await app.notifyToolsListChanged([TOOL]);
       await settle();
 
       const second = await listen(ns, ns.tokens.reader.token, slug);
       await ticks(2);
       expect(second.notifications).toEqual([]);
 
-      await service.notifyToolsListChanged([TOOL, { name: "other", inputSchema: { type: "object" } }]);
+      await app.notifyToolsListChanged([TOOL, { name: "other", inputSchema: { type: "object" } }]);
       expect(await waitFor(() => second.count(BELL_TOOLS) > 0)).toBe(true);
       // A bare data frame: no resumption vocabulary anywhere on the wire.
       expect(second.lines.some((line) => line.startsWith("id:"))).toBe(false);
@@ -393,14 +393,14 @@ describe("§21.1 the stream a caller gets", () => {
 });
 
 describe("§21.2 the re-authorization tick", () => {
-  it("§21.2 · the re-auth tick: a bearer revoked mid-stream closes it within one shrunk LISTEN_KEEPALIVE_MS, an expired one identically — and a deleted account closes on the principal re-read leg, constructed with its token still resolvable · a live bearer's stream survives the same ticks (the twin)", async () => {
+  it("§21.2 · the re-auth tick: a bearer revoked mid-stream closes it within one shrunk LISTEN_KEEPALIVE_MS, an expired one identically — and a deleted agent closes on the principal re-read leg, constructed with its token still resolvable · a live bearer's stream survives the same ticks (the twin)", async () => {
     await withShrunkTimers(async () => {
       const slug = uniqueSlug("notes");
       const grants = { [slug]: [{ role: "all", mode: "allow" as const }] };
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [{ slug, kind: "tunnel", tokens: [{ as: "svc" }] }],
-        accounts: [
+        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
+        agents: [
           { slug: "revoked", grants, tokens: [{ as: "revoked" }] },
           // A life measured in seconds: the row waits on the token's own expiry, which is a
           // wall-clock fact the hub reads off the row — not a hub deadline to be shrunk.
@@ -410,7 +410,7 @@ describe("§21.2 the re-authorization tick", () => {
         ],
       });
       seeded.push(ns);
-      await connect(ns.tokens.svc.token);
+      await connect(ns.tokens.app.token);
 
       const revoked = await listen(ns, ns.tokens.revoked.token, slug);
       const expiring = await listen(ns, ns.tokens.expiring.token, slug);
@@ -422,9 +422,9 @@ describe("§21.2 the re-authorization tick", () => {
 
       expect(await waitUntil(() => expiring.closed, 3_000)).toBe(true);
 
-      // The account row goes; its token still resolves, so only the principal re-read can
+      // The agent row goes; its token still resolves, so only the principal re-read can
       // notice — which is the leg this constructs.
-      await new Registry(env.DB).deleteAccount(ns.accounts.doomed.id);
+      await new Registry(env.DB).deleteAgent(ns.agents.doomed.id);
       expect(await waitUntil(() => doomed.closed, SHRUNK_KEEPALIVE_MS * 4)).toBe(true);
 
       // The twin: same ticks, same everything, a credential nobody touched.
@@ -433,7 +433,7 @@ describe("§21.2 the re-authorization tick", () => {
     });
   });
 
-  it("§21.2 · a service archived mid-stream closes its scoped stream on the next tick · the same archive narrows an aggregated stream — that service's subscriber socket is gone on the next tick and its bells stop, while the stream and its other services' bells continue (the twin)", async () => {
+  it("§21.2 · an app archived mid-stream closes its scoped stream on the next tick · the same archive narrows an aggregated stream — that app's subscriber socket is gone on the next tick and its bells stop, while the stream and its other apps' bells continue (the twin)", async () => {
     await withShrunkTimers(async () => {
       const doomedSlug = uniqueSlug("a-doomed");
       const otherSlug = uniqueSlug("b-other");
@@ -443,48 +443,48 @@ describe("§21.2 the re-authorization tick", () => {
       };
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [
-          { slug: doomedSlug, kind: "tunnel", tokens: [{ as: "doomedSvc" }] },
-          { slug: otherSlug, kind: "tunnel", tokens: [{ as: "otherSvc" }] },
+        apps: [
+          { slug: doomedSlug, kind: "tunnel", tokens: [{ as: "doomedApp" }] },
+          { slug: otherSlug, kind: "tunnel", tokens: [{ as: "otherApp" }] },
         ],
-        accounts: [{ slug: "reader", grants, tokens: [{ as: "reader" }] }],
+        agents: [{ slug: "reader", grants, tokens: [{ as: "reader" }] }],
       });
       seeded.push(ns);
-      const doomedService = await connect(ns.tokens.doomedSvc.token);
-      const otherService = await connect(ns.tokens.otherSvc.token);
+      const doomedApp = await connect(ns.tokens.doomedApp.token);
+      const otherApp = await connect(ns.tokens.otherApp.token);
 
       const scoped = await listen(ns, ns.tokens.reader.token, doomedSlug);
       const aggregated = await listen(ns, ns.tokens.reader.token, null);
 
-      await new Registry(env.DB).archiveService(ns.services[doomedSlug].id);
+      await new Registry(env.DB).archiveApp(ns.apps[doomedSlug].id);
 
       expect(await waitUntil(() => scoped.closed, SHRUNK_KEEPALIVE_MS * 4)).toBe(true);
       expect(aggregated.closed).toBe(false);
-      // The aggregated stream narrows instead: the archived service's socket is dropped.
-      expect(await untilSockets(ns.services[doomedSlug].id, 0)).toBe(0);
+      // The aggregated stream narrows instead: the archived app's socket is dropped.
+      expect(await untilSockets(ns.apps[doomedSlug].id, 0)).toBe(0);
 
-      // The archived service's bells stop…
-      await doomedService.notifyToolsListChanged([TOOL]);
+      // The archived app's bells stop…
+      await doomedApp.notifyToolsListChanged([TOOL]);
       await ticks(2);
       expect(aggregated.count(BELL_TOOLS)).toBe(0);
-      // …while the stream and its other services carry on.
-      await otherService.notifyToolsListChanged([TOOL]);
+      // …while the stream and its other apps carry on.
+      await otherApp.notifyToolsListChanged([TOOL]);
       expect(await waitFor(() => aggregated.count(BELL_TOOLS) > 0)).toBe(true);
       expect(aggregated.closed).toBe(false);
     });
   });
 
-  it("§21.2 · a grant revoked mid-stream: aggregated narrows (socket dropped, subscriptions dead, other services' bells continue) · scoped, the caller's last grant on the service, closes the stream — a fresh open would now 404 (the twin)", async () => {
+  it("§21.2 · a grant revoked mid-stream: aggregated narrows (socket dropped, subscriptions dead, other apps' bells continue) · scoped, the caller's last grant on the app, closes the stream — a fresh open would now 404 (the twin)", async () => {
     await withShrunkTimers(async () => {
       const lostSlug = uniqueSlug("a-lost");
       const keptSlug = uniqueSlug("b-kept");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [
-          { slug: lostSlug, kind: "tunnel", tokens: [{ as: "lostSvc" }] },
-          { slug: keptSlug, kind: "tunnel", tokens: [{ as: "keptSvc" }] },
+        apps: [
+          { slug: lostSlug, kind: "tunnel", tokens: [{ as: "lostApp" }] },
+          { slug: keptSlug, kind: "tunnel", tokens: [{ as: "keptApp" }] },
         ],
-        accounts: [
+        agents: [
           {
             slug: "reader",
             grants: {
@@ -496,26 +496,26 @@ describe("§21.2 the re-authorization tick", () => {
         ],
       });
       seeded.push(ns);
-      const lostService = await connect(ns.tokens.lostSvc.token);
-      const keptService = await connect(ns.tokens.keptSvc.token);
+      const lostApp = await connect(ns.tokens.lostApp.token);
+      const keptApp = await connect(ns.tokens.keptApp.token);
 
       const aggregated = await listen(ns, ns.tokens.reader.token, null);
       const scoped = await listen(ns, ns.tokens.reader.token, lostSlug);
 
-      // The caller's LAST grant on that service, taken away.
-      await seedGrants(env.DB, ns.accounts.reader.id, ns.services[lostSlug].id, []);
+      // The caller's LAST grant on that app, taken away.
+      await seedGrants(env.DB, ns.agents.reader.id, ns.apps[lostSlug].id, []);
 
       expect(await waitUntil(() => scoped.closed, SHRUNK_KEEPALIVE_MS * 4)).toBe(true);
       expect(
         await waitUntil(() => aggregated.closed, SHRUNK_KEEPALIVE_MS * 4),
         "the aggregated stream narrows rather than closing",
       ).toBe(false);
-      expect(await untilSockets(ns.services[lostSlug].id, 0)).toBe(0);
+      expect(await untilSockets(ns.apps[lostSlug].id, 0)).toBe(0);
 
-      await lostService.notifyToolsListChanged([TOOL]);
+      await lostApp.notifyToolsListChanged([TOOL]);
       await ticks(2);
       expect(aggregated.count(BELL_TOOLS)).toBe(0);
-      await keptService.notifyToolsListChanged([TOOL]);
+      await keptApp.notifyToolsListChanged([TOOL]);
       expect(await waitFor(() => aggregated.count(BELL_TOOLS) > 0)).toBe(true);
 
       // …and a fresh scoped open is now the 404 §7 gives any ungranted caller.
@@ -528,37 +528,37 @@ describe("§21.2 the re-authorization tick", () => {
     });
   });
 
-  it("§21.2/§21.3 · a grant added mid-stream is subscribed on the next tick and the Worker rings exactly the family bells its shape serves that the service's stored set contains — a tools-only service rings the tools bell alone · a further tick with no change rings nothing (the twin)", async () => {
+  it("§21.2/§21.3 · a grant added mid-stream is subscribed on the next tick and the Worker rings exactly the family bells its shape serves that the app's stored set contains — a tools-only app rings the tools bell alone · a further tick with no change rings nothing (the twin)", async () => {
     await withShrunkTimers(async () => {
       const heldSlug = uniqueSlug("a-held");
       const addedSlug = uniqueSlug("b-added");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [
-          { slug: heldSlug, kind: "tunnel", tokens: [{ as: "heldSvc" }] },
-          { slug: addedSlug, kind: "tunnel", tokens: [{ as: "addedSvc" }] },
+        apps: [
+          { slug: heldSlug, kind: "tunnel", tokens: [{ as: "heldApp" }] },
+          { slug: addedSlug, kind: "tunnel", tokens: [{ as: "addedApp" }] },
         ],
-        accounts: [
+        agents: [
           { slug: "reader", grants: { [heldSlug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] },
         ],
       });
       seeded.push(ns);
-      await connect(ns.tokens.heldSvc.token);
-      // Tools only: the added service declares no prompts, so no prompts bell may ring.
-      await connect(ns.tokens.addedSvc.token, { tools: [TOOL] });
+      await connect(ns.tokens.heldApp.token);
+      // Tools only: the added app declares no prompts, so no prompts bell may ring.
+      await connect(ns.tokens.addedApp.token, { tools: [TOOL] });
 
       const aggregated = await listen(ns, ns.tokens.reader.token, null);
       await ticks(1);
       expect(aggregated.notifications).toEqual([]);
 
-      await seedGrants(env.DB, ns.accounts.reader.id, ns.services[addedSlug].id, [
+      await seedGrants(env.DB, ns.agents.reader.id, ns.apps[addedSlug].id, [
         { role: "all", mode: "allow" },
       ]);
 
       expect(await waitUntil(() => aggregated.count(BELL_TOOLS) > 0, SHRUNK_KEEPALIVE_MS * 4)).toBe(
         true,
       );
-      expect(await untilSockets(ns.services[addedSlug].id, 1)).toBe(1);
+      expect(await untilSockets(ns.apps[addedSlug].id, 1)).toBe(1);
       expect(aggregated.count(BELL_TOOLS)).toBe(1);
       expect(aggregated.count(BELL_PROMPTS)).toBe(0);
 
@@ -566,25 +566,25 @@ describe("§21.2 the re-authorization tick", () => {
       // nothing" is told from "was suppressed" only after the coalescing alarm has run
       // (constraint 10), so BOTH DOs drain theirs before this concludes.
       await ticks(3);
-      await runDurableObjectAlarm(connectionStub(ns.services[heldSlug].id));
-      await runDurableObjectAlarm(connectionStub(ns.services[addedSlug].id));
+      await runDurableObjectAlarm(connectionStub(ns.apps[heldSlug].id));
+      await runDurableObjectAlarm(connectionStub(ns.apps[addedSlug].id));
       await ticks(1);
       expect(aggregated.count(BELL_TOOLS)).toBe(1);
       expect(aggregated.closed).toBe(false);
     });
   });
 
-  it("§21.2 · a subscriber-socket close the Worker did not initiate — closed DO-side through runInDurableObject — ends the WHOLE stream rather than leaving it deaf to one service (deploy and restart stay out-of-process, strategy §10)", async () => {
+  it("§21.2 · a subscriber-socket close the Worker did not initiate — closed DO-side through runInDurableObject — ends the WHOLE stream rather than leaving it deaf to one app (deploy and restart stay out-of-process, strategy §10)", async () => {
     await withShrunkTimers(async () => {
       const firstSlug = uniqueSlug("a-first");
       const secondSlug = uniqueSlug("b-second");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [
-          { slug: firstSlug, kind: "tunnel", tokens: [{ as: "firstSvc" }] },
-          { slug: secondSlug, kind: "tunnel", tokens: [{ as: "secondSvc" }] },
+        apps: [
+          { slug: firstSlug, kind: "tunnel", tokens: [{ as: "firstApp" }] },
+          { slug: secondSlug, kind: "tunnel", tokens: [{ as: "secondApp" }] },
         ],
-        accounts: [
+        agents: [
           {
             slug: "reader",
             grants: {
@@ -596,14 +596,14 @@ describe("§21.2 the re-authorization tick", () => {
         ],
       });
       seeded.push(ns);
-      await connect(ns.tokens.firstSvc.token);
-      await connect(ns.tokens.secondSvc.token);
+      await connect(ns.tokens.firstApp.token);
+      await connect(ns.tokens.secondApp.token);
 
       const aggregated = await listen(ns, ns.tokens.reader.token, null);
-      expect(await untilSockets(ns.services[firstSlug].id, 1)).toBe(1);
+      expect(await untilSockets(ns.apps[firstSlug].id, 1)).toBe(1);
 
       // Not the Worker's doing: the DO drops one of the stream's sockets under it.
-      await runInDurableObject(connectionStub(ns.services[firstSlug].id), (_instance, state) => {
+      await runInDurableObject(connectionStub(ns.apps[firstSlug].id), (_instance, state) => {
         for (const ws of state.getWebSockets()) {
           if (state.getTags(ws).some((tag) => tag.startsWith("sub:"))) ws.close(1011, "restart");
         }
@@ -621,22 +621,22 @@ describe("§21.2/§21.4 what each shape forwards", () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [{ slug, kind: "tunnel", tokens: [{ as: "svc" }] }],
-        accounts: [{ slug: "reader", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] }],
+        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
+        agents: [{ slug: "reader", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] }],
       });
       seeded.push(ns);
-      const service = await connect(ns.tokens.svc.token, { prompts: [], resources: [] });
+      const app = await connect(ns.tokens.app.token, { prompts: [], resources: [] });
 
       const aggregated = await listen(ns, ns.tokens.reader.token, null);
       const scoped = await listen(ns, ns.tokens.reader.token, slug);
       await settle();
 
-      await service.notifyResourcesListChanged([RESOURCE]);
+      await app.notifyResourcesListChanged([RESOURCE]);
       expect(await waitFor(() => scoped.count(BELL_RESOURCES) > 0)).toBe(true);
       // The DO rang BOTH sockets; the aggregated shape simply does not serve this family.
       expect(aggregated.count(BELL_RESOURCES)).toBe(0);
 
-      await service.notifyPromptsListChanged([PROMPT]);
+      await app.notifyPromptsListChanged([PROMPT]);
       expect(await waitFor(() => aggregated.count(BELL_PROMPTS) > 0)).toBe(true);
       expect(await waitFor(() => scoped.count(BELL_PROMPTS) > 0)).toBe(true);
 
@@ -649,7 +649,7 @@ describe("§21.2/§21.4 what each shape forwards", () => {
         { "Mcp-Session-Id": scoped.sessionId ?? "" },
       );
       expect(subscribed.status).toBe(200);
-      await service.notifyResourcesUpdated(URI);
+      await app.notifyResourcesUpdated(URI);
       expect(await waitFor(() => scoped.count(RESOURCES_UPDATED) > 0)).toBe(true);
       expect(aggregated.count(RESOURCES_UPDATED)).toBe(0);
     });
@@ -661,14 +661,14 @@ describe("§21.2/§21.4 what each shape forwards", () => {
       const grants = { [slug]: [{ role: "all", mode: "allow" as const }] };
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [{ slug, kind: "tunnel", tokens: [{ as: "svc" }] }],
-        accounts: [
+        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
+        agents: [
           { slug: "alice", grants, tokens: [{ as: "alice" }] },
           { slug: "bob", grants, tokens: [{ as: "bob" }] },
         ],
       });
       seeded.push(ns);
-      const service = await connect(ns.tokens.svc.token, { resources: [RESOURCE] });
+      const app = await connect(ns.tokens.app.token, { resources: [RESOURCE] });
 
       const alice = await listen(ns, ns.tokens.alice.token, slug);
       const bob = await listen(ns, ns.tokens.bob.token, slug);
@@ -684,7 +684,7 @@ describe("§21.2/§21.4 what each shape forwards", () => {
       );
       expect(stolen.status).toBe(200);
 
-      await service.notifyResourcesUpdated(URI);
+      await app.notifyResourcesUpdated(URI);
       await ticks(2);
       expect(alice.count(RESOURCES_UPDATED)).toBe(0);
 
@@ -696,22 +696,22 @@ describe("§21.2/§21.4 what each shape forwards", () => {
         { jsonrpc: "2.0", id: CONSUMER_ID, method: "resources/subscribe", params: { uri: URI } },
         { "Mcp-Session-Id": bob.sessionId ?? "" },
       );
-      await service.notifyResourcesUpdated(URI);
+      await app.notifyResourcesUpdated(URI);
       expect(await waitFor(() => bob.count(RESOURCES_UPDATED) > 0)).toBe(true);
       expect(alice.count(RESOURCES_UPDATED)).toBe(0);
     });
   });
 
-  it("§21.1/§21.4 · subscriptions die with the stream — subscribe on stream A, close A, reopen: the service's next updated for that URI reaches nobody, and the new stream's minted session id inherits nothing", async () => {
+  it("§21.1/§21.4 · subscriptions die with the stream — subscribe on stream A, close A, reopen: the app's next updated for that URI reaches nobody, and the new stream's minted session id inherits nothing", async () => {
     await withShrunkTimers(async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [{ slug, kind: "tunnel", tokens: [{ as: "svc" }] }],
-        accounts: [{ slug: "reader", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] }],
+        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
+        agents: [{ slug: "reader", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] }],
       });
       seeded.push(ns);
-      const service = await connect(ns.tokens.svc.token, { resources: [RESOURCE] });
+      const app = await connect(ns.tokens.app.token, { resources: [RESOURCE] });
 
       const first = await listen(ns, ns.tokens.reader.token, slug);
       await rpc(
@@ -721,16 +721,16 @@ describe("§21.2/§21.4 what each shape forwards", () => {
         { jsonrpc: "2.0", id: CONSUMER_ID, method: "resources/subscribe", params: { uri: URI } },
         { "Mcp-Session-Id": first.sessionId ?? "" },
       );
-      await service.notifyResourcesUpdated(URI);
+      await app.notifyResourcesUpdated(URI);
       expect(await waitFor(() => first.count(RESOURCES_UPDATED) > 0)).toBe(true);
 
       await first.cancel();
       await settle();
-      expect(await untilSockets(ns.services[slug].id, 0)).toBe(0);
+      expect(await untilSockets(ns.apps[slug].id, 0)).toBe(0);
 
       const second = await listen(ns, ns.tokens.reader.token, slug);
       expect(second.sessionId).not.toBe(first.sessionId);
-      await service.notifyResourcesUpdated(URI);
+      await app.notifyResourcesUpdated(URI);
       await ticks(2);
       // The new stream inherited nothing: no subscription, so no frame.
       expect(second.count(RESOURCES_UPDATED)).toBe(0);
@@ -739,7 +739,7 @@ describe("§21.2/§21.4 what each shape forwards", () => {
 });
 
 describe("§21.2 the fan-out", () => {
-  it("§21.2 · LISTEN_FANOUT_MAX bounds the subscribed set in deterministic slug order — the same services chosen across two concurrent streams over one namespace and across a close-and-reopen, the excess silent with no time qualifier", async () => {
+  it("§21.2 · LISTEN_FANOUT_MAX bounds the subscribed set in deterministic slug order — the same apps chosen across two concurrent streams over one namespace and across a close-and-reopen, the excess silent with no time qualifier", async () => {
     await withShrunkTimers(async () => {
       const slugs = Array.from({ length: LISTEN_FANOUT_MAX + 2 }, (_, index) =>
         uniqueSlug(`s${String(index).padStart(2, "0")}`),
@@ -749,17 +749,17 @@ describe("§21.2 the fan-out", () => {
       );
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: slugs.map((slug, index) => ({
+        apps: slugs.map((slug, index) => ({
           slug,
           kind: "tunnel" as const,
-          tokens: [{ as: `svc${index}` }],
+          tokens: [{ as: `app${index}` }],
         })),
-        accounts: [{ slug: "reader", grants, tokens: [{ as: "reader" }] }],
+        agents: [{ slug: "reader", grants, tokens: [{ as: "reader" }] }],
       });
       seeded.push(ns);
-      const services: FakeService[] = [];
+      const apps: FakeApp[] = [];
       for (let index = 0; index < slugs.length; index++) {
-        services.push(await connect(ns.tokens[`svc${index}`].token));
+        apps.push(await connect(ns.tokens[`app${index}`].token));
       }
 
       const first = await listen(ns, ns.tokens.reader.token, null);
@@ -769,18 +769,18 @@ describe("§21.2 the fan-out", () => {
       const chosen = async (): Promise<string[]> => {
         const held: string[] = [];
         for (const slug of slugs) {
-          if ((await subscriberSockets(ns.services[slug].id)) > 0) held.push(slug);
+          if ((await subscriberSockets(ns.apps[slug].id)) > 0) held.push(slug);
         }
         return held;
       };
 
       // Deterministic slug order, and the SAME choice for both streams: two sockets each on
-      // the first LISTEN_FANOUT_MAX services, none at all on the excess.
+      // the first LISTEN_FANOUT_MAX apps, none at all on the excess.
       expect(await chosen()).toEqual(slugs.slice(0, LISTEN_FANOUT_MAX));
-      expect(await untilSockets(ns.services[slugs[0]].id, 2)).toBe(2);
+      expect(await untilSockets(ns.apps[slugs[0]].id, 2)).toBe(2);
 
       // The excess is silent with no time qualifier: it never rings, not "not yet".
-      const excess = services[slugs.length - 1];
+      const excess = apps[slugs.length - 1];
       await excess.notifyToolsListChanged([TOOL]);
       await ticks(3);
       expect(first.notifications).toEqual([]);
@@ -796,14 +796,14 @@ describe("§21.2 the fan-out", () => {
     });
   });
 
-  it("§21.2 · a mixed grant set discriminates: the tunneled service rings, the proxied service and the pmcp builtin never ring and no upstream is dialed", async () => {
+  it("§21.2 · a mixed grant set discriminates: the tunneled app rings, the proxied app and the pmcp builtin never ring and no upstream is dialed", async () => {
     await withShrunkTimers(async () => {
       const tunneled = uniqueSlug("a-tunnel");
       const proxied = uniqueSlug("b-proxy");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [
-          { slug: tunneled, kind: "tunnel", tokens: [{ as: "svc" }] },
+        apps: [
+          { slug: tunneled, kind: "tunnel", tokens: [{ as: "app" }] },
           {
             slug: proxied,
             kind: "proxy",
@@ -811,7 +811,7 @@ describe("§21.2 the fan-out", () => {
             roles: { reader: ["*"] },
           },
         ],
-        accounts: [
+        agents: [
           {
             slug: "reader",
             grants: {
@@ -823,18 +823,18 @@ describe("§21.2 the fan-out", () => {
         ],
       });
       seeded.push(ns);
-      const service = await connect(ns.tokens.svc.token);
+      const app = await connect(ns.tokens.app.token);
 
       const aggregated = await listen(ns, ns.tokens.reader.token, null);
       await ticks(2);
-      // No DO, no channel, nothing dialled: a proxied service is not subscribed at all, and
+      // No DO, no channel, nothing dialled: a proxied app is not subscribed at all, and
       // the invocation that would have dialled an unroutable upstream never ran.
-      expect(await subscriberSockets(ns.services[proxied].id)).toBe(0);
+      expect(await subscriberSockets(ns.apps[proxied].id)).toBe(0);
       expect(aggregated.notifications).toEqual([]);
       expect(aggregated.closed).toBe(false);
 
       // The tunneled one in the same grant set still rings.
-      await service.notifyToolsListChanged([TOOL]);
+      await app.notifyToolsListChanged([TOOL]);
       expect(await waitFor(() => aggregated.count(BELL_TOOLS) > 0)).toBe(true);
 
       // …and the builtin, which every owner-scoped caller can address, rings nothing ever.
@@ -844,17 +844,17 @@ describe("§21.2 the fan-out", () => {
     });
   });
 
-  it("§15/§21.1 · with CALL_TIMEOUT_MS shrunk by the suite's shim, a forwarded call against a hanging tunneled service fails at the shrunk deadline while the stream on the same hub is still delivering keepalives past it — the 30 s budget governs forwarded requests, never the held response", async () => {
+  it("§15/§21.1 · with CALL_TIMEOUT_MS shrunk by the suite's shim, a forwarded call against a hanging tunneled app fails at the shrunk deadline while the stream on the same hub is still delivering keepalives past it — the 30 s budget governs forwarded requests, never the held response", async () => {
     await withShrunkTimers(async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        services: [{ slug, kind: "tunnel", tokens: [{ as: "svc" }] }],
-        accounts: [{ slug: "reader", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] }],
+        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
+        agents: [{ slug: "reader", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] }],
       });
       seeded.push(ns);
-      const service = await connect(ns.tokens.svc.token, { tools: [TOOL] });
-      service.setBehavior(TOOL.name, { mode: "hang" });
+      const app = await connect(ns.tokens.app.token, { tools: [TOOL] });
+      app.setBehavior(TOOL.name, { mode: "hang" });
 
       const stream = await listen(ns, ns.tokens.reader.token, slug);
       const before = stream.comments.length;

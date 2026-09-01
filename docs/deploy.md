@@ -79,13 +79,18 @@ Leave the Durable Object block alone:
 
 ```jsonc
 "durable_objects": {
-  "bindings": [{ "name": "SERVICE_CONNECTION", "class_name": "ServiceConnection" }]
+  "bindings": [{ "name": "APP_CONNECTION", "class_name": "AppConnection" }]
 },
-"migrations": [{ "tag": "v1", "new_sqlite_classes": ["ServiceConnection"] }]
+"migrations": [
+  { "tag": "v1", "new_sqlite_classes": ["ServiceConnection"] },
+  { "tag": "v2", "renamed_classes": [{ "from": "ServiceConnection", "to": "AppConnection" }] }
+]
 ```
 
 `new_sqlite_classes` (not `new_classes`) is load-bearing: the storage backend is
-fixed when the class is first created and cannot be changed afterwards.
+fixed when the class is first created and cannot be changed afterwards. The v1 tag
+keeps the name the class was *created* under — migration tags are history — and v2
+carries its state over to today's `AppConnection`; a fresh deploy just replays both.
 
 ## 3. Set PUBLIC_ORIGIN
 
@@ -212,7 +217,7 @@ PMCP_URL=https://personal-mcps.<your-subdomain>.workers.dev BOOTSTRAP_SECRET=<yo
 
 It prints the username and a generated password on stdout — **once**. There is no
 self-serve password change anywhere in the system, so store it now. Second factors
-(TOTP, passkey) are enrolled through the account page after first login.
+(TOTP, passkey) are enrolled through the settings page after first login.
 
 If it answers `the bootstrap route does not exist`, the Worker has no
 `BOOTSTRAP_SECRET` — that 404 is the route being switched off, not a missing path.
@@ -300,14 +305,14 @@ which is why [§0](#0-prerequisites) ends with `wrangler whoami`.
 ## 11. Connect clients
 
 Your hub serves two MCP endpoint shapes, both streamable HTTP, both taking a
-`pmcp_sa_…` service-account key as a bearer token:
+`pmcp_agt_…` agent key as a bearer token:
 
 ```
-https://<origin>/<user>/mcp            # aggregated — every service the account can reach
-https://<origin>/<user>/mcp/<service>  # scoped to one service
+https://<origin>/<user>/mcp        # aggregated — every app the agent can reach
+https://<origin>/<user>/mcp/<app>  # scoped to one app
 ```
 
-Issue a key with `pnpm pmcp token issue --account <slug>`. To write a bot, put it
+Issue a key with `pnpm pmcp token issue --agent <slug>`. To write a bot, put it
 behind the tunnel, and point Claude Code at it, read the
 [client quickstart](quickstart-clients.md) — substituting your origin for the one in
 its examples.

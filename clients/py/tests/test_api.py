@@ -46,24 +46,24 @@ from pmcp_client import Secret, backoff_delay, caller, sensitive
 def test_caller_reads_principal_and_roles_off_meta() -> None:
     """§7 · hub/principal and hub/roles are read into principal and roles, with
     roles kept exactly as granted — never expanded into declared names."""
-    identity = caller({"hub/principal": "sa:claude", "hub/roles": ["all"]})
-    assert identity.principal == "sa:claude"
+    identity = caller({"hub/principal": "agent:claude", "hub/roles": ["all"]})
+    assert identity.principal == "agent:claude"
     assert identity.roles == ("all",)
 
 
 def test_has_role_answers_both_directions() -> None:
     """§7 · has_role is true for a granted role and false for an ungranted one —
     both directions in one case, so a uniformly-true implementation fails."""
-    identity = caller({"hub/principal": "sa:cron", "hub/roles": ["reader"]})
+    identity = caller({"hub/principal": "agent:cron", "hub/roles": ["reader"]})
     assert identity.has_role("reader") is True
     assert identity.has_role("editor") is False
 
 
 def test_has_role_is_true_for_everything_when_all_is_granted() -> None:
     """§7 · roles containing "all" makes has_role uniformly true, so an owner
-    (("all",)) and an all-granted account behave identically in service code."""
+    (("all",)) and an all-granted agent behave identically in app code."""
     owner = caller({"hub/principal": "user:ada", "hub/roles": ["all"]})
-    granted = caller({"hub/principal": "sa:claude", "hub/roles": ["all"]})
+    granted = caller({"hub/principal": "agent:claude", "hub/roles": ["all"]})
     for identity in (owner, granted):
         assert identity.has_role("editor") is True
         assert identity.has_role("anything-at-all") is True

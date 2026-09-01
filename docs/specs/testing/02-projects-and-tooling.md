@@ -35,6 +35,6 @@ The projects:
 |---|---|---|---|
 | `unit` | plain Node | parallel, ms | pure seams only — functions whose deps line is `none` |
 | `worker` | workerd | parallel, per-file isolation | modules against **real D1** with every sibling real; socket-free pipeline tables via `exports.default.fetch` |
-| `tunnel` | workerd | **serial** (`--max-workers=1 --no-isolate`) | everything touching `ServiceConnection`, a WebSocket frame, a DO alarm, or the hibernation boundary |
+| `tunnel` | workerd | **serial** (`--max-workers=1 --no-isolate`) | everything touching `AppConnection`, a WebSocket frame, a DO alarm, or the hibernation boundary |
 | `scripts` + clients | Node / pytest | parallel | CLI planner, contract consumers, client transports against in-process fake hubs |
 

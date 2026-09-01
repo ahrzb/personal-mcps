@@ -14,8 +14,8 @@
  *    the submit button's `value`, exactly like `paths.deviceDecide`.
  *  - History: decided/expired/spent rows, newest first, one <table> whose narrow
  *    breakpoint collapses via the existing `.wide-only` / `.cell-summary` pair
- *    (the same technique the services table review already verified against
- *    MobileServices) rather than a second markup tree.
+ *    (the same technique the apps table review already verified against
+ *    MobileApps) rather than a second markup tree.
  *  - The per-browser push opt-in: the one bit of client script this page ships,
  *    mirroring the service-worker registration script layout.tsx already embeds.
  *    Its wire format (a CSRF-carrying FormData POST to `paths.approvalsPush`) is
@@ -52,9 +52,9 @@ function minutesUntil(now: string, target: string): number {
   return Math.max(0, Math.round((Date.parse(target) - Date.parse(now)) / 60_000));
 }
 
-/** approvals.ts: "principal must be a service-account principal" — every row here is one. */
+/** approvals.ts: "principal must be an agent principal" — every row here is one. */
 function principalOf(row: ApprovalRow): string {
-  return `sa:${row.accountSlug}`;
+  return `agent:${row.agentSlug}`;
 }
 
 type Tone = "warning" | "success" | "danger";
@@ -139,14 +139,14 @@ const PendingCard: FC<{ row: ApprovalRow; now: string; csrfToken: string }> = ({
             vs MobileApprovals), not two data shapes. */}
         <div class="wide-only" style="display: flex; align-items: baseline; gap: var(--space-4);">
           <div class="approval-tool">{row.tool}</div>
-          <div class="approval-where">on {row.serviceSlug}</div>
+          <div class="approval-where">on {row.appSlug}</div>
         </div>
         <div class="approval-tool narrow-only">{row.tool}</div>
         <div class="approval-meta wide-only">
           {principalOf(row)} · requested {formatStamp(row.createdAt)}
         </div>
         <div class="note narrow-only">
-          {row.serviceSlug} · {principalOf(row)} · {formatStamp(row.createdAt)}
+          {row.appSlug} · {principalOf(row)} · {formatStamp(row.createdAt)}
         </div>
       </div>
       <div class="approval-status">
@@ -184,7 +184,7 @@ const HistoryRow: FC<{ row: ApprovalRow }> = ({ row }) => {
     <tr>
       <td class="wide-only cell-time">{formatStamp(when)}</td>
       <td class="wide-only cell-mono">{principalOf(row)}</td>
-      <td class="wide-only">{row.serviceSlug}</td>
+      <td class="wide-only">{row.appSlug}</td>
       <td class="wide-only cell-mono">
         <a href={paths.approval(row.id)}>{row.tool}</a>
       </td>
@@ -197,7 +197,7 @@ const HistoryRow: FC<{ row: ApprovalRow }> = ({ row }) => {
             {row.tool}
           </a>
           <div class="note">
-            {formatStamp(when)} · {principalOf(row)} · {row.serviceSlug}
+            {formatStamp(when)} · {principalOf(row)} · {row.appSlug}
           </div>
         </div>
         <span class={`badge badge--${out.tone}`}>{out.label}</span>
@@ -279,7 +279,7 @@ export function ApprovalsPage(props: ApprovalsProps) {
           <div>
             <h1 class="page-title">Approvals</h1>
             <p class="page-subtitle wide-only">
-              Approval-gated requests from your service accounts. Approving lets the agent retry the exact call once;
+              Approval-gated requests from your agents. Approving lets the agent retry the exact call once;
               approvals expire after an hour.
             </p>
             <p class="page-subtitle narrow-only">Single use · expire after an hour</p>
@@ -324,7 +324,7 @@ export function ApprovalsPage(props: ApprovalsProps) {
                   <tr>
                     <th>Decided</th>
                     <th>Principal</th>
-                    <th>Service</th>
+                    <th>App</th>
                     <th>Tool</th>
                     <th>Outcome</th>
                   </tr>

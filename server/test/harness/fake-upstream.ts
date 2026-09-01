@@ -1,4 +1,4 @@
-// fake-upstream.ts — the far side of every proxied service: an in-test MCP upstream and,
+// fake-upstream.ts — the far side of every proxied app: an in-test MCP upstream and,
 // beside it, a deliberately ADVERSARIAL OAuth authorization server that performs REAL
 // S256 PKCE verification.
 //
@@ -37,7 +37,7 @@
 // `outboundService` function is configured ONCE for the pool, outside any test's scope,
 // and does not share memory with the test that provoked the request. So this harness
 // carries NO per-test registration step and NO shared mutable state. A scenario is named
-// in the URL the seeded service points at (`upstreamUrlFor`), and everything a test wants
+// in the URL the seeded app points at (`upstreamUrlFor`), and everything a test wants
 // to know afterwards is read back over the wire (`readObservations`) rather than out of a
 // variable. That is not a workaround; it is what makes two files running in parallel
 // against the same router impossible to confuse.
@@ -171,7 +171,7 @@ export type UpstreamScenario = {
  * - `no_expires_in` — omit `expires_in` from the token response: the hub must still know
  *   when to refresh, or must refresh eagerly, rather than treating absence as forever.
  * - `rotate_refresh` — issue a new refresh token each time and reject the old one: a hub
- *   that stores the bundle non-atomically loses the account on the second refresh.
+ *   that stores the bundle non-atomically loses the agent on the second refresh.
  * - `refresh_fails` — reject every refresh with OAuth's own `invalid_grant`: the ONLY
  *   producer of `needs_reconnect`, and the row where `-32000` must arrive with no dial
  *   attempted.
@@ -179,7 +179,7 @@ export type UpstreamScenario = {
  *   lost: the token endpoint does not REFUSE the grant, it fails to answer (a 503, the shape
  *   a ten-second AS outage takes). Both cost the call, and only the first may cost the owner
  *   a Reconnect — a hub that reads every non-token answer as "this credential is dead" bricks
- *   a live service on a blip, and no persona but this one can tell the two apart.
+ *   a live app on a blip, and no persona but this one can tell the two apart.
  * - `advertise_iss` — advertise RFC 9207 and return `iss`, so the hub's `iss` check has
  *   something to check; its twin `wrong_iss` returns a different issuer and must be
  *   rejected with nothing stored.
@@ -593,7 +593,7 @@ async function token(
     observe(scenario.id, request, undefined);
     const presented = form.get("refresh_token") ?? "";
     // The ONLY producer of needs_reconnect (this type's own note): the hub must flip the
-    // service and never reach the resource.
+    // app and never reach the resource.
     if (quirks.includes("refresh_fails")) return tokenError();
     // The twin: no refusal, no answer. A 503 carries no OAuth `error`, so a hub reading the
     // difference leaves the credential alone and only loses the call.
@@ -603,7 +603,7 @@ async function token(
     if (quirks.includes("rotate_refresh")) {
       // Single-use, and the whole reason the two-call row is load-bearing: a hub that
       // refreshed in memory without re-sealing spends this token twice and loses the
-      // account on the second call.
+      // agent on the second call.
       const spent = `${scenario.id}:${presented}`;
       if (spentRefreshTokens.has(spent)) return tokenError();
       spentRefreshTokens.add(spent);
@@ -685,7 +685,7 @@ const TOKEN_LIFETIME_SECONDS = 3600;
 const spentRefreshTokens = new Set<string>();
 
 /**
- * The endpoint URL a seeded proxied service should carry so it lands on `scenario`. Built
+ * The endpoint URL a seeded proxied app should carry so it lands on `scenario`. Built
  * here rather than assembled in fixtures so the URL grammar the router parses has exactly
  * one author.
  */

@@ -14,7 +14,7 @@
 // Project: `worker` — the only project with a real D1 binding, and this file touches no
 // socket, so it runs parallel under the pool's automatic per-file storage isolation.
 // That isolation is load-bearing here and nowhere else: the cascade cases delete `user`
-// and `service` rows out from under the seeded namespace, which would wreck any file
+// and `app` rows out from under the seeded namespace, which would wreck any file
 // sharing the database. Case order inside the file is free.
 //
 // One isolation caveat is a real design question for implementation, not a mechanic to
@@ -37,7 +37,7 @@ import { describe, expect, it } from "vitest";
 import { deleteUser, provisionUser } from "../../src/admin";
 import type { ApprovalStatus } from "../../src/approvals";
 import { APPROVAL_WINDOW_MS, OAUTH_STATE_TTL_MS } from "../../src/limits";
-import type { ServiceKind } from "../../src/registry";
+import type { AppKind } from "../../src/registry";
 
 /** PUBLIC_ORIGIN as the worker env carries it (wrangler.jsonc) — the origin half of every
  *  §19 oauthResource identifier, so the test reads the SAME value provisionUser and 0005 do. */
@@ -45,12 +45,12 @@ const ORIGIN = (env as unknown as { PUBLIC_ORIGIN: string }).PUBLIC_ORIGIN;
 
 /**
  * The two behavior-bearing CHECK vocabularies of §5, named from the modules that own
- * them: `service.kind` is ServiceKind, `approval.status` is ApprovalStatus. Stating the
+ * them: `app.kind` is AppKind, `approval.status` is ApprovalStatus. Stating the
  * correspondence here is the drift guard — a union widened in src while the CHECK stays
  * put (or the reverse) is exactly the failure this file exists to catch, and a
  * constraint row naming a value outside these unions is testing the column, as intended.
  */
-export type CheckedVocabulary = { kind: ServiceKind; status: ApprovalStatus };
+export type CheckedVocabulary = { kind: AppKind; status: ApprovalStatus };
 
 /**
  * The tables §5 defines as ours; better-auth's own tables are not this file's subject.
@@ -62,8 +62,8 @@ export type CheckedVocabulary = { kind: ServiceKind; status: ApprovalStatus };
  * below and is stale where it still stands.
  */
 export type SchemaTable =
-  | "service"
-  | "service_account"
+  | "app"
+  | "agent"
   | "grant_"
   | "approval"
   | "token"
@@ -100,14 +100,14 @@ export type SchemaConstraintRow = {
  * afterwards, and which must NOT be.
  *
  * `survives` is the load-bearing half. `token.ref_id` carries no foreign key by design
- * (§5), so token rows outliving a `service` delete is correct — their removal is admin's
+ * (§5), so token rows outliving a `app` delete is correct — their removal is admin's
  * cascade, not D1's, and a test that only checked "everything is gone" would quietly
  * bless an FK someone added to token later, moving that removal out of the code that
  * audits it.
  */
 export type CascadeRow = {
   title: string;
-  parent: "user" | "service" | "service_account";
+  parent: "user" | "app" | "agent";
   cascades: readonly SchemaTable[];
   survives: readonly SchemaTable[];
 };
@@ -131,13 +131,13 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
   //  · every fixture id, hash and prefix is spelled FAKE on purpose (§15 log hygiene: no
   //    realistic-looking credential material in this repo, tests included).
 
-  // ——— service (§5) ———
+  // ——— app (§5) ———
   // "kind TEXT NOT NULL DEFAULT 'tunnel' CHECK (kind IN ('tunnel', 'proxy'))" — the CHECK
-  // and registry's ServiceKind are the same vocabulary (CheckedVocabulary above), so a
+  // and registry's AppKind are the same vocabulary (CheckedVocabulary above), so a
   // value outside it is the drift this row exists to catch.
   {
-    title: "§5 · service.kind CHECK refuses 'websocket' · twin stores 'proxy'",
-    table: "service",
+    title: "§5 · app.kind CHECK refuses 'websocket' · twin stores 'proxy'",
+    table: "app",
     kind: "check",
     column: "kind",
     rejected: { kind: "websocket" },
@@ -147,72 +147,72 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
   // declared mode is configuration (§7); the column is nullable, so the CHECK's whole job
   // is refusing a third spelling.
   {
-    title: "§5 · service.upstream_auth_mode CHECK refuses 'basic' · twin stores 'oauth'",
-    table: "service",
+    title: "§5 · app.upstream_auth_mode CHECK refuses 'basic' · twin stores 'oauth'",
+    table: "app",
     kind: "check",
     column: "upstream_auth_mode",
     rejected: { upstream_auth_mode: "basic" },
     accepted: { upstream_auth_mode: "oauth" },
   },
   {
-    title: "§5 · service.owner_id NOT NULL refuses null · twin stores under the seeded owner",
-    table: "service",
+    title: "§5 · app.owner_id NOT NULL refuses null · twin stores under the seeded owner",
+    table: "app",
     kind: "not_null",
     column: "owner_id",
     rejected: { owner_id: null },
     accepted: {},
   },
   {
-    title: "§5 · service.slug NOT NULL refuses null · twin stores 'slug-twin'",
-    table: "service",
+    title: "§5 · app.slug NOT NULL refuses null · twin stores 'slug-twin'",
+    table: "app",
     kind: "not_null",
     column: "slug",
     rejected: { slug: null },
     accepted: { slug: "slug-twin" },
   },
   {
-    title: "§5 · service.name NOT NULL refuses null · twin stores a name",
-    table: "service",
+    title: "§5 · app.name NOT NULL refuses null · twin stores a name",
+    table: "app",
     kind: "not_null",
     column: "name",
     rejected: { name: null },
     accepted: { name: "Name Twin" },
   },
   {
-    title: "§5 · service.kind NOT NULL refuses null · twin stores 'tunnel'",
-    table: "service",
+    title: "§5 · app.kind NOT NULL refuses null · twin stores 'tunnel'",
+    table: "app",
     kind: "not_null",
     column: "kind",
     rejected: { kind: null },
     accepted: { kind: "tunnel" },
   },
   {
-    title: "§5 · service.forward_identity NOT NULL refuses null · twin stores 0",
-    table: "service",
+    title: "§5 · app.forward_identity NOT NULL refuses null · twin stores 0",
+    table: "app",
     kind: "not_null",
     column: "forward_identity",
     rejected: { forward_identity: null },
     accepted: { forward_identity: 0 },
   },
   {
-    title: "§5 · service.roles_json NOT NULL refuses null · twin stores '{}'",
-    table: "service",
+    title: "§5 · app.roles_json NOT NULL refuses null · twin stores '{}'",
+    table: "app",
     kind: "not_null",
     column: "roles_json",
     rejected: { roles_json: null },
     accepted: { roles_json: "{}" },
   },
   {
-    title: "§5 · service.redact_json NOT NULL refuses null · twin stores '{}'",
-    table: "service",
+    title: "§5 · app.redact_json NOT NULL refuses null · twin stores '{}'",
+    table: "app",
     kind: "not_null",
     column: "redact_json",
     rejected: { redact_json: null },
     accepted: { redact_json: "{}" },
   },
   {
-    title: "§5 · service.redact_results_json NOT NULL refuses null · twin stores '{}'",
-    table: "service",
+    title: "§5 · app.redact_results_json NOT NULL refuses null · twin stores '{}'",
+    table: "app",
     kind: "not_null",
     column: "redact_results_json",
     rejected: { redact_results_json: null },
@@ -222,106 +222,106 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
   // stored column is always concrete. What this row proves is only that an explicit null is
   // refused — in SQLite a column DEFAULT applies when the column is OMITTED, so
   // `NOT NULL DEFAULT 1` (the tempting migration, since every other NOT NULL column here
-  // carries one) passes this row unchanged while silently giving proxied services
+  // carries one) passes this row unchanged while silently giving proxied apps
   // bodies-on. Isolating THAT would need a write omitting the column, which the
   // rejected/accepted override shape cannot express; the by-kind resolution is pinned where
-  // it actually lives, on createService (registry.test.ts, §15).
+  // it actually lives, on createApp (registry.test.ts, §15).
   {
-    title: "§5/§15 · service.log_bodies NOT NULL refuses an explicit null · twin stores 1",
-    table: "service",
+    title: "§5/§15 · app.log_bodies NOT NULL refuses an explicit null · twin stores 1",
+    table: "app",
     kind: "not_null",
     column: "log_bodies",
     rejected: { log_bodies: null },
     accepted: { log_bodies: 1 },
   },
   {
-    title: "§5 · service.created_at NOT NULL refuses null · twin stores a timestamp",
-    table: "service",
+    title: "§5 · app.created_at NOT NULL refuses null · twin stores a timestamp",
+    table: "app",
     kind: "not_null",
     column: "created_at",
     rejected: { created_at: null },
     accepted: { created_at: 1_700_000_000_000 },
   },
-  // "UNIQUE (owner_id, slug)" — §2's "(owner, slug) identifies a service", enforced.
+  // "UNIQUE (owner_id, slug)" — §2's "(owner, slug) identifies an app", enforced.
   {
-    title: "§5 · service UNIQUE (owner_id, slug) refuses a second 'twice-over' for one owner · twin stores 'twice-over-2'",
-    table: "service",
+    title: "§5 · app UNIQUE (owner_id, slug) refuses a second 'twice-over' for one owner · twin stores 'twice-over-2'",
+    table: "app",
     kind: "unique",
     column: "(owner_id, slug)",
     rejected: { slug: "twice-over" },
     accepted: { slug: "twice-over-2" },
   },
   {
-    title: "§5 · service.id PRIMARY KEY refuses a duplicate id · twin stores a distinct id",
-    table: "service",
+    title: "§5 · app.id PRIMARY KEY refuses a duplicate id · twin stores a distinct id",
+    table: "app",
     kind: "unique",
     column: "id",
-    rejected: { id: "svc_FAKE0000_dup" },
-    accepted: { id: "svc_FAKE0000_other" },
+    rejected: { id: "app_FAKE0000_dup" },
+    accepted: { id: "app_FAKE0000_other" },
   },
   // "owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE" — better-auth owns the
   // `user` table (§5), and this is one of the four columns that reference it.
   {
-    title: "§5 · service.owner_id FK refuses an absent user · twin stores under the seeded owner",
-    table: "service",
+    title: "§5 · app.owner_id FK refuses an absent user · twin stores under the seeded owner",
+    table: "app",
     kind: "foreign_key",
     column: "owner_id",
     rejected: { owner_id: "usr_FAKE0000_absent" },
     accepted: {},
   },
 
-  // ——— service_account (§5) ———
+  // ——— agent (§5) ———
   {
-    title: "§5 · service_account.owner_id NOT NULL refuses null · twin stores under the seeded owner",
-    table: "service_account",
+    title: "§5 · agent.owner_id NOT NULL refuses null · twin stores under the seeded owner",
+    table: "agent",
     kind: "not_null",
     column: "owner_id",
     rejected: { owner_id: null },
     accepted: {},
   },
   {
-    title: "§5 · service_account.slug NOT NULL refuses null · twin stores 'account-twin'",
-    table: "service_account",
+    title: "§5 · agent.slug NOT NULL refuses null · twin stores 'agent-twin'",
+    table: "agent",
     kind: "not_null",
     column: "slug",
     rejected: { slug: null },
-    accepted: { slug: "account-twin" },
+    accepted: { slug: "agent-twin" },
   },
   {
-    title: "§5 · service_account.name NOT NULL refuses null · twin stores a name",
-    table: "service_account",
+    title: "§5 · agent.name NOT NULL refuses null · twin stores a name",
+    table: "agent",
     kind: "not_null",
     column: "name",
     rejected: { name: null },
-    accepted: { name: "Account Twin" },
+    accepted: { name: "Agent Twin" },
   },
   {
-    title: "§5 · service_account.created_at NOT NULL refuses null · twin stores a timestamp",
-    table: "service_account",
+    title: "§5 · agent.created_at NOT NULL refuses null · twin stores a timestamp",
+    table: "agent",
     kind: "not_null",
     column: "created_at",
     rejected: { created_at: null },
     accepted: { created_at: 1_700_000_000_000 },
   },
   {
-    title: "§5 · service_account UNIQUE (owner_id, slug) refuses a second 'twice-over' for one owner · twin stores 'twice-over-2'",
-    table: "service_account",
+    title: "§5 · agent UNIQUE (owner_id, slug) refuses a second 'twice-over' for one owner · twin stores 'twice-over-2'",
+    table: "agent",
     kind: "unique",
     column: "(owner_id, slug)",
     rejected: { slug: "twice-over" },
     accepted: { slug: "twice-over-2" },
   },
   {
-    title: "§5 · service_account.id PRIMARY KEY refuses a duplicate id · twin stores a distinct id",
-    table: "service_account",
+    title: "§5 · agent.id PRIMARY KEY refuses a duplicate id · twin stores a distinct id",
+    table: "agent",
     kind: "unique",
     column: "id",
-    rejected: { id: "sa_FAKE0000_dup" },
-    accepted: { id: "sa_FAKE0000_other" },
+    rejected: { id: "agt_FAKE0000_dup" },
+    accepted: { id: "agt_FAKE0000_other" },
   },
   {
-    title: "§5 · service_account.owner_id FK refuses an absent user · twin stores under the seeded owner",
-    table: "service_account",
+    title: "§5 · agent.owner_id FK refuses an absent user · twin stores under the seeded owner",
+    table: "agent",
     kind: "foreign_key",
     column: "owner_id",
     rejected: { owner_id: "usr_FAKE0000_absent" },
@@ -341,19 +341,19 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     accepted: { mode: "approval" },
   },
   {
-    title: "§5 · grant_.service_account_id NOT NULL refuses null · twin stores the seeded account",
+    title: "§5 · grant_.agent_id NOT NULL refuses null · twin stores the seeded agent",
     table: "grant_",
     kind: "not_null",
-    column: "service_account_id",
-    rejected: { service_account_id: null },
+    column: "agent_id",
+    rejected: { agent_id: null },
     accepted: {},
   },
   {
-    title: "§5 · grant_.service_id NOT NULL refuses null · twin stores the seeded service",
+    title: "§5 · grant_.app_id NOT NULL refuses null · twin stores the seeded app",
     table: "grant_",
     kind: "not_null",
-    column: "service_id",
-    rejected: { service_id: null },
+    column: "app_id",
+    rejected: { app_id: null },
     accepted: {},
   },
   {
@@ -373,27 +373,27 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     accepted: { mode: "allow" },
   },
   {
-    title: "§5 · grant_ PRIMARY KEY (service_account_id, service_id, role) refuses the same role twice · twin stores a second role",
+    title: "§5 · grant_ PRIMARY KEY (agent_id, app_id, role) refuses the same role twice · twin stores a second role",
     table: "grant_",
     kind: "unique",
-    column: "(service_account_id, service_id, role)",
+    column: "(agent_id, app_id, role)",
     rejected: { role: "twice-over" },
     accepted: { role: "twice-over-2" },
   },
   {
-    title: "§5 · grant_.service_account_id FK refuses an absent account · twin stores the seeded account",
+    title: "§5 · grant_.agent_id FK refuses an absent agent · twin stores the seeded agent",
     table: "grant_",
     kind: "foreign_key",
-    column: "service_account_id",
-    rejected: { service_account_id: "sa_FAKE0000_absent" },
+    column: "agent_id",
+    rejected: { agent_id: "agt_FAKE0000_absent" },
     accepted: {},
   },
   {
-    title: "§5 · grant_.service_id FK refuses an absent service · twin stores the seeded service",
+    title: "§5 · grant_.app_id FK refuses an absent app · twin stores the seeded app",
     table: "grant_",
     kind: "foreign_key",
-    column: "service_id",
-    rejected: { service_id: "svc_FAKE0000_absent" },
+    column: "app_id",
+    rejected: { app_id: "app_FAKE0000_absent" },
     accepted: {},
   },
 
@@ -417,19 +417,19 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     accepted: {},
   },
   {
-    title: "§5 · approval.service_account_id NOT NULL refuses null · twin stores the seeded account",
+    title: "§5 · approval.agent_id NOT NULL refuses null · twin stores the seeded agent",
     table: "approval",
     kind: "not_null",
-    column: "service_account_id",
-    rejected: { service_account_id: null },
+    column: "agent_id",
+    rejected: { agent_id: null },
     accepted: {},
   },
   {
-    title: "§5 · approval.service_id NOT NULL refuses null · twin stores the seeded service",
+    title: "§5 · approval.app_id NOT NULL refuses null · twin stores the seeded app",
     table: "approval",
     kind: "not_null",
-    column: "service_id",
-    rejected: { service_id: null },
+    column: "app_id",
+    rejected: { app_id: null },
     accepted: {},
   },
   {
@@ -502,37 +502,37 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     accepted: {},
   },
   {
-    title: "§5 · approval.service_account_id FK refuses an absent account · twin stores the seeded account",
+    title: "§5 · approval.agent_id FK refuses an absent agent · twin stores the seeded agent",
     table: "approval",
     kind: "foreign_key",
-    column: "service_account_id",
-    rejected: { service_account_id: "sa_FAKE0000_absent" },
+    column: "agent_id",
+    rejected: { agent_id: "agt_FAKE0000_absent" },
     accepted: {},
   },
   {
-    title: "§5 · approval.service_id FK refuses an absent service · twin stores the seeded service",
+    title: "§5 · approval.app_id FK refuses an absent app · twin stores the seeded app",
     table: "approval",
     kind: "foreign_key",
-    column: "service_id",
-    rejected: { service_id: "svc_FAKE0000_absent" },
+    column: "app_id",
+    rejected: { app_id: "app_FAKE0000_absent" },
     accepted: {},
   },
-  // §7 step 2's partial unique index on (service_account_id, service_id, tool, args_hash)
+  // §7 step 2's partial unique index on (agent_id, app_id, tool, args_hash)
   // WHERE status = 'pending' (declared with approvals' migration; §5's table plus this
   // constraint). Here it is pinned as a constraint like any other — that it is PARTIAL, and
   // that the losing insert re-reads the winner, are the §7-step-2 cases below.
   {
-    title: "§7 step 2 · approval UNIQUE (service_account_id, service_id, tool, args_hash) WHERE status='pending' refuses the second pending row for one binding · twin stores a different args_hash",
+    title: "§7 step 2 · approval UNIQUE (agent_id, app_id, tool, args_hash) WHERE status='pending' refuses the second pending row for one binding · twin stores a different args_hash",
     table: "approval",
     kind: "unique",
-    column: "(service_account_id, service_id, tool, args_hash) WHERE status = 'pending'",
+    column: "(agent_id, app_id, tool, args_hash) WHERE status = 'pending'",
     rejected: { status: "pending", args_hash: "sha256_FAKE0000_binding" },
     accepted: { status: "pending", args_hash: "sha256_FAKE0000_binding-2" },
   },
   // The same constraint from the other side: `tool` is a KEY column of the binding, not
-  // payload. An index over (service_account_id, service_id, args_hash) WHERE status =
+  // payload. An index over (agent_id, app_id, args_hash) WHERE status =
   // 'pending' passes the row above and every §7-step-2 case below, and is not academic —
-  // two no-argument approval-gated tools on one service hash to the identical canonical
+  // two no-argument approval-gated tools on one app hash to the identical canonical
   // `{}` (unit/canonical.test.ts pins `undefined ≡ {}`), so the second pending row would be
   // refused and the gate would re-read the OTHER tool's row: approving tool A silently
   // authorizes tool B. The twin holds args_hash fixed and differs only in `tool`.
@@ -540,29 +540,29 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     title: "§7 step 2 · the same pending binding under a DIFFERENT tool opens its own row — `tool` is a key column of the index, so one approval can never answer for another tool",
     table: "approval",
     kind: "unique",
-    column: "(service_account_id, service_id, tool, args_hash) WHERE status = 'pending'",
+    column: "(agent_id, app_id, tool, args_hash) WHERE status = 'pending'",
     rejected: { status: "pending", tool: "gate_tool", args_hash: "sha256_FAKE0000_tool-key" },
     accepted: { status: "pending", tool: "gate_tool-2", args_hash: "sha256_FAKE0000_tool-key" },
   },
 
   // ——— token (§5, §6) ———
-  // "kind TEXT NOT NULL CHECK (kind IN ('service_account', 'service'))" — the column §6
-  // insists is read explicitly rather than inferred from the pmcp_sa_/pmcp_svc_ prefix.
+  // "kind TEXT NOT NULL CHECK (kind IN ('agent', 'app'))" — the column §6
+  // insists is read explicitly rather than inferred from the pmcp_agt_/pmcp_app_ prefix.
   {
-    title: "§5 · token.kind CHECK refuses 'user' — session tokens are better-auth's, never rows here · twin stores 'service_account'",
+    title: "§5 · token.kind CHECK refuses 'user' — session tokens are better-auth's, never rows here · twin stores 'agent'",
     table: "token",
     kind: "check",
     column: "kind",
     rejected: { kind: "user" },
-    accepted: { kind: "service_account" },
+    accepted: { kind: "agent" },
   },
   {
-    title: "§5 · token.kind NOT NULL refuses null · twin stores 'service'",
+    title: "§5 · token.kind NOT NULL refuses null · twin stores 'app'",
     table: "token",
     kind: "not_null",
     column: "kind",
     rejected: { kind: null },
-    accepted: { kind: "service" },
+    accepted: { kind: "app" },
   },
   // "(`ref_id` can't be a foreign key to two tables …)" — so the twin here doubles as the
   // evidence that the column is deliberately unconstrained: a dangling ref_id STORES, and
@@ -573,7 +573,7 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     kind: "not_null",
     column: "ref_id",
     rejected: { ref_id: null },
-    accepted: { ref_id: "svc_FAKE0000_dangling" },
+    accepted: { ref_id: "app_FAKE0000_dangling" },
   },
   {
     title: "§5 · token.hash NOT NULL refuses null · twin stores a hash",
@@ -589,7 +589,7 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     kind: "not_null",
     column: "prefix",
     rejected: { prefix: null },
-    accepted: { prefix: "pmcp_svc_FAKE" },
+    accepted: { prefix: "pmcp_app_FAKE" },
   },
   {
     title: "§5 · token.created_at NOT NULL refuses null · twin stores a timestamp",
@@ -733,7 +733,7 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
   },
 
   // ——— upstream_oauth_state (§5, §7) ———
-  // 0004's table: the connect flow's one-time `state` record, "bound to {owner, service,
+  // 0004's table: the connect flow's one-time `state` record, "bound to {owner, app,
   // expected AS issuer + token endpoint, PKCE verifier} and to the initiating cookie
   // session". Every column is one clause of that sentence, and every clause is NOT NULL —
   // an absent one would leave the callback resolving a binding it cannot check. Two
@@ -776,19 +776,19 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     accepted: {},
   },
   {
-    title: "§5 · upstream_oauth_state.service_id NOT NULL refuses null · twin stores the seeded service",
+    title: "§5 · upstream_oauth_state.app_id NOT NULL refuses null · twin stores the seeded app",
     table: "upstream_oauth_state",
     kind: "not_null",
-    column: "service_id",
-    rejected: { service_id: null },
+    column: "app_id",
+    rejected: { app_id: null },
     accepted: {},
   },
   {
-    title: "§5 · upstream_oauth_state.service_id FK refuses an absent service · twin stores the seeded service",
+    title: "§5 · upstream_oauth_state.app_id FK refuses an absent app · twin stores the seeded app",
     table: "upstream_oauth_state",
     kind: "foreign_key",
-    column: "service_id",
-    rejected: { service_id: "svc_FAKE0000_absent" },
+    column: "app_id",
+    rejected: { app_id: "app_FAKE0000_absent" },
     accepted: {},
   },
   // "identity.OwnerSession.sessionId — only the browser session that began the flow may
@@ -879,8 +879,8 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
   },
 
   // ——— oauth_binding (§19.4) ———
-  // The hub's own §19 table: one OAuth client ↔ one service account. Its two FKs are the
-  // revocation mechanism (§19.6/§19.8 — a deleted account or user takes the binding with it),
+  // The hub's own §19 table: one OAuth client ↔ one agent. Its two FKs are the
+  // revocation mechanism (§19.6/§19.8 — a deleted agent or user takes the binding with it),
   // and UNIQUE(owner_id, client_id) is what makes re-consent an UPDATE, not a second row.
   {
     title: "§19.4 · oauth_binding.id PRIMARY KEY refuses a duplicate id · twin stores a distinct id",
@@ -915,19 +915,19 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     accepted: { client_id: "oab-client-twin" },
   },
   {
-    title: "§19.4 · oauth_binding.service_account_id NOT NULL refuses null · twin stores the seeded account",
+    title: "§19.4 · oauth_binding.agent_id NOT NULL refuses null · twin stores the seeded agent",
     table: "oauth_binding",
     kind: "not_null",
-    column: "service_account_id",
-    rejected: { service_account_id: null },
+    column: "agent_id",
+    rejected: { agent_id: null },
     accepted: {},
   },
   {
-    title: "§19.4 · oauth_binding.service_account_id FK refuses an absent account — the account is what the connection binds to · twin stores the seeded account",
+    title: "§19.4 · oauth_binding.agent_id FK refuses an absent agent — the agent is what the connection binds to · twin stores the seeded agent",
     table: "oauth_binding",
     kind: "foreign_key",
-    column: "service_account_id",
-    rejected: { service_account_id: "sa_FAKE0000_absent" },
+    column: "agent_id",
+    rejected: { agent_id: "agt_FAKE0000_absent" },
     accepted: {},
   },
   {
@@ -950,39 +950,39 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
 
 /** Rows are OWNER-AUTHORED, as above (strategy §9 rule 1). */
 export const cascadeRows: readonly CascadeRow[] = [
-  // §5: four columns REFERENCE user(id) ON DELETE CASCADE — service.owner_id,
-  // service_account.owner_id, approval.owner_id, push_subscription.user_id — and grant_
+  // §5: four columns REFERENCE user(id) ON DELETE CASCADE — app.owner_id,
+  // agent.owner_id, approval.owner_id, push_subscription.user_id — and grant_
   // rides along behind its two parents. What is NOT reached is the point: token.ref_id
   // carries no FK (§5's parenthetical) and audit.owner_id carries none either (§15: the
   // record of record is pruned by retention, never by a cascade), so a delete that emptied
   // those tables would be a schema someone quietly changed.
   {
-    title: "§5 · deleting the user cascades service, service_account, grant_, approval, push_subscription and upstream_oauth_state · token and audit rows survive",
+    title: "§5 · deleting the user cascades app, agent, grant_, approval, push_subscription and upstream_oauth_state · token and audit rows survive",
     parent: "user",
-    cascades: ["service", "service_account", "grant_", "approval", "push_subscription", "upstream_oauth_state"],
+    cascades: ["app", "agent", "grant_", "approval", "push_subscription", "upstream_oauth_state"],
     survives: ["token", "audit"],
   },
-  // §5/§8: service_delete's D1 half is exactly these two child tables. Deleting the
-  // service's token rows is admin's cascade (deleteTokensFor), which is where it gets
+  // §5/§8: app_delete's D1 half is exactly these two child tables. Deleting the
+  // app's token rows is admin's cascade (deleteTokensFor), which is where it gets
   // audited — an FK added to token later would move that removal out of audited code, and
   // this row is what notices.
-  // 0004's two FKs both cascade, so a deleted service takes its half-finished connect flows
-  // with it: a `state` row outliving its service would resolve a callback against a binding
-  // whose service no longer exists.
+  // 0004's two FKs both cascade, so a deleted app takes its half-finished connect flows
+  // with it: a `state` row outliving its app would resolve a callback against a binding
+  // whose app no longer exists.
   {
-    title: "§5/§8 · deleting a service cascades its grant_, approval and upstream_oauth_state rows · its token rows survive — ref_id has no FK, so deletion stays admin's cascade",
-    parent: "service",
+    title: "§5/§8 · deleting an app cascades its grant_, approval and upstream_oauth_state rows · its token rows survive — ref_id has no FK, so deletion stays admin's cascade",
+    parent: "app",
     cascades: ["grant_", "approval", "upstream_oauth_state"],
-    survives: ["token", "audit", "service_account", "push_subscription"],
+    survives: ["token", "audit", "agent", "push_subscription"],
   },
   // The other side of the same FK pair: upstream_oauth_state references `user` and
-  // `service` and NOT `service_account`, so an account delete leaves an owner's in-flight
+  // `app` and NOT `agent`, so an agent delete leaves an owner's in-flight
   // connect flow alone.
   {
-    title: "§5/§8 · deleting a service_account cascades its grant_ and approval rows · its token and upstream_oauth_state rows survive, and the service it was granted on is untouched",
-    parent: "service_account",
+    title: "§5/§8 · deleting an agent cascades its grant_ and approval rows · its token and upstream_oauth_state rows survive, and the app it was granted on is untouched",
+    parent: "agent",
     cascades: ["grant_", "approval"],
-    survives: ["token", "audit", "service", "push_subscription", "upstream_oauth_state"],
+    survives: ["token", "audit", "app", "push_subscription", "upstream_oauth_state"],
   },
 ];
 
@@ -1022,14 +1022,14 @@ async function insertRow(table: string, row: Record<string, unknown>): Promise<v
 }
 
 /** The one namespace every constraint/cascade case seeds fresh — never shared across
- * `it()`s, so a test poking `user`/`service` rows can never bleed into a sibling case
+ * `it()`s, so a test poking `user`/`app` rows can never bleed into a sibling case
  * regardless of how fine-grained the pool's isolation turns out to be. */
-type FixtureCtx = { ownerId: string; serviceId: string; accountId: string };
+type FixtureCtx = { ownerId: string; appId: string; agentId: string };
 
 async function seedFixture(): Promise<FixtureCtx> {
   const ownerId = `usr_FAKE0000_${crypto.randomUUID()}`;
-  const serviceId = `svc_FAKE0000_${crypto.randomUUID()}`;
-  const accountId = `sa_FAKE0000_${crypto.randomUUID()}`;
+  const appId = `app_FAKE0000_${crypto.randomUUID()}`;
+  const agentId = `agt_FAKE0000_${crypto.randomUUID()}`;
   const now = Date.now();
   // better-auth's own table (0001) — camelCase columns, no password row (§12's provisioning
   // seam is a sibling module's, unimplemented as of this file; only the FK target matters here).
@@ -1041,11 +1041,11 @@ async function seedFixture(): Promise<FixtureCtx> {
     createdAt: now,
     updatedAt: now,
   });
-  await insertRow("service", {
-    id: serviceId,
+  await insertRow("app", {
+    id: appId,
     owner_id: ownerId,
-    slug: `svc-${crypto.randomUUID()}`,
-    name: "Fixture Service",
+    slug: `app-${crypto.randomUUID()}`,
+    name: "Fixture App",
     kind: "tunnel",
     forward_identity: 0,
     roles_json: "{}",
@@ -1054,19 +1054,19 @@ async function seedFixture(): Promise<FixtureCtx> {
     log_bodies: 1,
     created_at: now,
   });
-  await insertRow("service_account", {
-    id: accountId,
+  await insertRow("agent", {
+    id: agentId,
     owner_id: ownerId,
-    slug: `sa-${crypto.randomUUID()}`,
-    name: "Fixture Account",
+    slug: `agt-${crypto.randomUUID()}`,
+    name: "Fixture Agent",
     created_at: now,
   });
-  return { ownerId, serviceId, accountId };
+  return { ownerId, appId, agentId };
 }
 
 /**
  * The valid column set for one table, in the vocabulary the CHECKed columns share with
- * ServiceKind/ApprovalStatus. A fresh id (and, where uniqueness might otherwise be the
+ * AppKind/ApprovalStatus. A fresh id (and, where uniqueness might otherwise be the
  * thing that bites, a fresh secondary column) is minted on EVERY call — the exact
  * discipline the oracle rows' header calls for, so a `unique` row's rejected pair never
  * collides on the wrong column.
@@ -1074,13 +1074,13 @@ async function seedFixture(): Promise<FixtureCtx> {
 function baseRow(table: SchemaTable, ctx: FixtureCtx): Record<string, unknown> {
   const now = 1_700_000_000_000;
   switch (table) {
-    case "service":
+    case "app":
       return {
-        id: `svc_FAKE0000_${crypto.randomUUID()}`,
+        id: `app_FAKE0000_${crypto.randomUUID()}`,
         owner_id: ctx.ownerId,
-        slug: `svc-${crypto.randomUUID()}`,
-        name: "Service",
-        kind: "tunnel" satisfies ServiceKind,
+        slug: `app-${crypto.randomUUID()}`,
+        name: "App",
+        kind: "tunnel" satisfies AppKind,
         forward_identity: 0,
         roles_json: "{}",
         redact_json: "{}",
@@ -1088,18 +1088,18 @@ function baseRow(table: SchemaTable, ctx: FixtureCtx): Record<string, unknown> {
         log_bodies: 1,
         created_at: now,
       };
-    case "service_account":
+    case "agent":
       return {
-        id: `sa_FAKE0000_${crypto.randomUUID()}`,
+        id: `agt_FAKE0000_${crypto.randomUUID()}`,
         owner_id: ctx.ownerId,
         slug: `sa-${crypto.randomUUID()}`,
-        name: "Account",
+        name: "Agent",
         created_at: now,
       };
     case "grant_":
       return {
-        service_account_id: ctx.accountId,
-        service_id: ctx.serviceId,
+        agent_id: ctx.agentId,
+        app_id: ctx.appId,
         role: `role-${crypto.randomUUID()}`,
         mode: "allow",
       };
@@ -1107,8 +1107,8 @@ function baseRow(table: SchemaTable, ctx: FixtureCtx): Record<string, unknown> {
       return {
         id: `apr_FAKE0000_${crypto.randomUUID()}`,
         owner_id: ctx.ownerId,
-        service_account_id: ctx.accountId,
-        service_id: ctx.serviceId,
+        agent_id: ctx.agentId,
+        app_id: ctx.appId,
         tool: "get_news",
         args_hash: `sha256_FAKE0000_${crypto.randomUUID()}`,
         args_json: "{}",
@@ -1119,10 +1119,10 @@ function baseRow(table: SchemaTable, ctx: FixtureCtx): Record<string, unknown> {
     case "token":
       return {
         id: `tok_FAKE0000_${crypto.randomUUID()}`,
-        kind: "service",
-        ref_id: ctx.serviceId,
+        kind: "app",
+        ref_id: ctx.appId,
         hash: `sha256_FAKE0000_${crypto.randomUUID()}`,
-        prefix: "pmcp_svc_FAKE",
+        prefix: "pmcp_app_FAKE",
         created_at: now,
       };
     case "audit":
@@ -1147,7 +1147,7 @@ function baseRow(table: SchemaTable, ctx: FixtureCtx): Record<string, unknown> {
         // must be the column the row NAMES, never the id that happened to collide.
         state: `oas_FAKE0000_${crypto.randomUUID()}`,
         owner_id: ctx.ownerId,
-        service_id: ctx.serviceId,
+        app_id: ctx.appId,
         session_id: `ses_FAKE0000_${crypto.randomUUID()}`,
         issuer: "https://as.pmcp-test.invalid",
         token_endpoint: "https://as.pmcp-test.invalid/token",
@@ -1168,7 +1168,7 @@ function baseRow(table: SchemaTable, ctx: FixtureCtx): Record<string, unknown> {
         id: `oab_FAKE0000_${crypto.randomUUID()}`,
         owner_id: ctx.ownerId,
         client_id: `client-${crypto.randomUUID()}`,
-        service_account_id: ctx.accountId,
+        agent_id: ctx.agentId,
         created_at: now,
       };
   }
@@ -1188,27 +1188,27 @@ function buildRow(
  * table's before/after row counts. */
 function ctxFilter(table: SchemaTable, ctx: FixtureCtx): { sql: string; params: unknown[] } {
   switch (table) {
-    case "service":
-      return { sql: "id = ?", params: [ctx.serviceId] };
-    case "service_account":
-      return { sql: "id = ?", params: [ctx.accountId] };
+    case "app":
+      return { sql: "id = ?", params: [ctx.appId] };
+    case "agent":
+      return { sql: "id = ?", params: [ctx.agentId] };
     case "grant_":
     case "approval":
-      return { sql: "service_account_id = ? AND service_id = ?", params: [ctx.accountId, ctx.serviceId] };
+      return { sql: "agent_id = ? AND app_id = ?", params: [ctx.agentId, ctx.appId] };
     // Both of its parents at once: a cascade case must see the row go whichever FK carried
     // it away, and scoping by one parent alone would read the other's delete as "survived".
     case "upstream_oauth_state":
-      return { sql: "owner_id = ? AND service_id = ?", params: [ctx.ownerId, ctx.serviceId] };
+      return { sql: "owner_id = ? AND app_id = ?", params: [ctx.ownerId, ctx.appId] };
     case "push_subscription":
       return { sql: "user_id = ?", params: [ctx.ownerId] };
     case "token":
-      return { sql: "ref_id = ? OR ref_id = ?", params: [ctx.serviceId, ctx.accountId] };
+      return { sql: "ref_id = ? OR ref_id = ?", params: [ctx.appId, ctx.agentId] };
     case "audit":
       return { sql: "owner_id = ?", params: [ctx.ownerId] };
     // Both of its parents at once (like upstream_oauth_state): a cascade must be seen whichever
-    // FK carried the row away — owner_id (user delete) or service_account_id (account delete).
+    // FK carried the row away — owner_id (user delete) or agent_id (agent delete).
     case "oauth_binding":
-      return { sql: "owner_id = ? AND service_account_id = ?", params: [ctx.ownerId, ctx.accountId] };
+      return { sql: "owner_id = ? AND agent_id = ?", params: [ctx.ownerId, ctx.agentId] };
   }
 }
 
@@ -1228,13 +1228,13 @@ async function seedCascadeChildren(ctx: FixtureCtx): Promise<void> {
   await insertRow("approval", buildRow("approval", ctx, {}));
   await insertRow("push_subscription", buildRow("push_subscription", ctx, {}));
   await insertRow("upstream_oauth_state", buildRow("upstream_oauth_state", ctx, {}));
-  await insertRow("token", buildRow("token", ctx, { kind: "service", ref_id: ctx.serviceId }));
-  await insertRow("token", buildRow("token", ctx, { kind: "service_account", ref_id: ctx.accountId }));
+  await insertRow("token", buildRow("token", ctx, { kind: "app", ref_id: ctx.appId }));
+  await insertRow("token", buildRow("token", ctx, { kind: "agent", ref_id: ctx.agentId }));
   await insertRow("audit", buildRow("audit", ctx, {}));
 }
 
 async function deleteParent(parent: CascadeRow["parent"], ctx: FixtureCtx): Promise<void> {
-  const id = parent === "user" ? ctx.ownerId : parent === "service" ? ctx.serviceId : ctx.accountId;
+  const id = parent === "user" ? ctx.ownerId : parent === "app" ? ctx.appId : ctx.agentId;
   await db().prepare(`DELETE FROM ${tableIdent(parent)} WHERE id = ?`).bind(id).run();
 }
 
@@ -1291,16 +1291,24 @@ export function runCascadeTable(rows: readonly CascadeRow[]): void {
 // straight from the migration SQL (env.TEST_MIGRATIONS — the same queries d1.ts's
 // applyD1Migrations runs), so a constraint added to the SQL without a row here fails
 // this case instead of going unpinned. Deliberately not a parsed-once general SQL
-// parser: it knows exactly the shapes 0002/0003 use (inline CHECK/UNIQUE/REFERENCES,
-// table-level UNIQUE/PRIMARY KEY tuples, one partial CREATE UNIQUE INDEX) and nothing
-// more — a schema shape outside that vocabulary is not this repo's, so a regex tuned
-// wider than that would be speculative.
+// parser: it knows exactly the shapes 0002/0003/0007 use (inline CHECK/UNIQUE/REFERENCES,
+// table-level UNIQUE/PRIMARY KEY tuples, one partial CREATE UNIQUE INDEX, and 0007's two
+// ALTER … RENAME forms) and nothing more — a schema shape outside that vocabulary is not
+// this repo's, so a regex tuned wider than that would be speculative.
+//
+// Renames are read rather than assumed, and that is load-bearing since 0007: a constraint
+// is DECLARED under the name the table had when it was created and must be credited to the
+// name it has at head, or `app`'s rules would look unpinned while `service`'s pinned
+// nothing — the exhaustiveness case passing because it derived no constraints at all.
 
 type ConstraintIdentity = { table: SchemaTable; kind: SchemaConstraintRow["kind"]; column: string };
 
+/** One `ALTER TABLE … RENAME COLUMN a TO b`, against the table as that statement spells it. */
+type ColumnRename = { table: string; from: string; to: string };
+
 const SCHEMA_TABLES = new Set<string>([
-  "service",
-  "service_account",
+  "app",
+  "agent",
   "grant_",
   "approval",
   "token",
@@ -1352,30 +1360,64 @@ function parseTableDef(table: SchemaTable, def: string): ConstraintIdentity[] {
 }
 
 function deriveSchemaConstraints(migrations: readonly { queries: readonly string[] }[]): ConstraintIdentity[] {
-  const identities: ConstraintIdentity[] = [];
+  // Declared under whatever name the statement used; resolved to head names below, which is
+  // also where SCHEMA_TABLES filters — a table created as `token_renamed` and renamed to
+  // `token` is `token`'s constraint, and filtering before the rename would drop it.
+  const declared: ConstraintIdentity[] = [];
+  const tableRenames = new Map<string, string>();
+  const columnRenames: ColumnRename[] = [];
   for (const migration of migrations) {
     for (const rawQuery of migration.queries) {
       const query = stripSqlComments(rawQuery);
       const createTable = /CREATE\s+TABLE\s+"?(\w+)"?\s*\(/i.exec(query);
       if (createTable) {
         const table = createTable[1];
-        if (!SCHEMA_TABLES.has(table)) continue;
         const body = query.slice(query.indexOf("(") + 1, query.lastIndexOf(")"));
-        for (const def of splitTopLevel(body)) identities.push(...parseTableDef(table as SchemaTable, def));
+        for (const def of splitTopLevel(body)) declared.push(...parseTableDef(table as SchemaTable, def));
+        continue;
+      }
+      const renameTable = /ALTER\s+TABLE\s+"?(\w+)"?\s+RENAME\s+TO\s+"?(\w+)"?/i.exec(query);
+      if (renameTable) {
+        tableRenames.set(renameTable[1], renameTable[2]);
+        continue;
+      }
+      const renameColumn = /ALTER\s+TABLE\s+"?(\w+)"?\s+RENAME\s+COLUMN\s+"?(\w+)"?\s+TO\s+"?(\w+)"?/i.exec(query);
+      if (renameColumn) {
+        columnRenames.push({ table: renameColumn[1], from: renameColumn[2], to: renameColumn[3] });
         continue;
       }
       const createIndex = /CREATE\s+(UNIQUE\s+)?INDEX\s+\w+\s+ON\s+(\w+)\s*\(([^)]*)\)(?:\s+WHERE\s+([\s\S]*?))?\s*;?\s*$/i.exec(
         query.trim(),
       );
-      if (createIndex && createIndex[1] && SCHEMA_TABLES.has(createIndex[2])) {
+      if (createIndex && createIndex[1]) {
         const cols = createIndex[3].trim();
         const where = createIndex[4]?.trim();
         const column = where ? `(${cols}) WHERE ${where}` : `(${cols})`;
-        identities.push({ table: createIndex[2] as SchemaTable, kind: "unique", column });
+        declared.push({ table: createIndex[2] as SchemaTable, kind: "unique", column });
       }
     }
   }
-  return identities;
+
+  /** A table's name at head, following the rename chain (`service` → `app`). */
+  const atHead = (name: string): string => {
+    let current = name;
+    for (let hop = 0; hop < tableRenames.size && tableRenames.has(current); hop++) {
+      current = tableRenames.get(current)!;
+    }
+    return current;
+  };
+  // Applied in file order and word-bounded, so a tuple column list (`(agent_id, app_id,
+  // role)`) renames member by member and `service_account_id` is never mistaken for
+  // `service_id`.
+  const renamedColumns = (table: string, column: string): string =>
+    columnRenames
+      .filter((rename) => atHead(rename.table) === table)
+      .reduce((text, rename) => text.replace(new RegExp(`\\b${rename.from}\\b`, "g"), rename.to), column);
+
+  return declared
+    .map((identity) => ({ ...identity, table: atHead(identity.table) as SchemaTable }))
+    .filter((identity) => SCHEMA_TABLES.has(identity.table))
+    .map((identity) => ({ ...identity, column: renamedColumns(identity.table, identity.column) }));
 }
 
 describe("§5 · constraints bite", () => {
@@ -1409,10 +1451,10 @@ describe("§5 · cascades", () => {
   it(
     "§5 · token rows survive every parent delete — ref_id has no FK, so deletion stays admin's cascade where it is audited",
     async () => {
-      for (const parent of ["user", "service", "service_account"] as const) {
+      for (const parent of ["user", "app", "agent"] as const) {
         const ctx = await seedFixture();
-        await insertRow("token", buildRow("token", ctx, { kind: "service", ref_id: ctx.serviceId }));
-        await insertRow("token", buildRow("token", ctx, { kind: "service_account", ref_id: ctx.accountId }));
+        await insertRow("token", buildRow("token", ctx, { kind: "app", ref_id: ctx.appId }));
+        await insertRow("token", buildRow("token", ctx, { kind: "agent", ref_id: ctx.agentId }));
         await deleteParent(parent, ctx);
         expect(await countFor("token", ctx)).toBe(2);
       }
@@ -1434,9 +1476,9 @@ describe("§7 step 2 · the pending partial unique index", () => {
       ).rejects.toThrow();
       const winner = await db()
         .prepare(
-          "SELECT id FROM approval WHERE service_account_id = ? AND service_id = ? AND tool = ? AND args_hash = ? AND status = 'pending'",
+          "SELECT id FROM approval WHERE agent_id = ? AND app_id = ? AND tool = ? AND args_hash = ? AND status = 'pending'",
         )
-        .bind(ctx.accountId, ctx.serviceId, tool, argsHash)
+        .bind(ctx.agentId, ctx.appId, tool, argsHash)
         .all<{ id: string }>();
       expect(winner.results).toEqual([{ id: winnerId }]);
     },
@@ -1457,7 +1499,7 @@ describe("§7 step 2 · the pending partial unique index", () => {
   );
 
   it(
-    "§7 step 2 · same (account, service, tool) with a different args_hash opens a second pending row — the binding, not the tool, is what dedups",
+    "§7 step 2 · same (agent, app, tool) with a different args_hash opens a second pending row — the binding, not the tool, is what dedups",
     async () => {
       const ctx = await seedFixture();
       const tool = "gate_tool";
@@ -1465,9 +1507,9 @@ describe("§7 step 2 · the pending partial unique index", () => {
       await insertRow("approval", buildRow("approval", ctx, { tool, args_hash: "sha256_FAKE0000_b", status: "pending" }));
       const count = await db()
         .prepare(
-          "SELECT COUNT(*) AS c FROM approval WHERE service_account_id = ? AND service_id = ? AND tool = ? AND status = 'pending'",
+          "SELECT COUNT(*) AS c FROM approval WHERE agent_id = ? AND app_id = ? AND tool = ? AND status = 'pending'",
         )
-        .bind(ctx.accountId, ctx.serviceId, tool)
+        .bind(ctx.agentId, ctx.appId, tool)
         .first<{ c: number }>();
       expect(count?.c).toBe(2);
     },
@@ -1498,7 +1540,7 @@ describe("§10 · applying the set", () => {
   it("§10 · every migration applies to an empty database in order (the fresh-install path)", async () => {
     await dropEverything();
     await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
-    // Every migration landed, in order: 0001's `user`, 0002's `service`, 0003's `approval`,
+    // Every migration landed, in order: 0001's `user`, 0002's `app`, 0003's `approval`,
     // 0004's `upstream_oauth_state` — the last one named explicitly, because it is the only
     // table whose absence the OTHER inserts here would not notice.
     const ctx = await seedFixture();
@@ -1523,17 +1565,79 @@ describe("§10 · applying the set", () => {
       await dropEverything();
       const migrations = env.TEST_MIGRATIONS;
       await applyD1Migrations(env.DB, migrations.slice(0, migrations.length - 1)); // 1..N-1: auth + hub + approval
-      const ctx = await seedFixture(); // rows written under N-1
-      await applyD1Migrations(env.DB, migrations); // N: upstream_oauth_state, on top of live data
-      expect(await countFor("service", ctx)).toBe(1);
-      expect(await countFor("service_account", ctx)).toBe(1);
-      // N's own schema object — 0006's `capabilities_json` column today, and named rather
-      // than derived, so a migration 0007 makes this line visibly stale instead of silently
-      // witnessing N−1 (which is what the `upstream_oauth_state` insert it replaces had
-      // quietly become once 0005 and 0006 landed).
-      await db()
-        .prepare(`UPDATE "service" SET "capabilities_json" = '["tools"]'`)
-        .run();
+      // Rows written under N−1 — spelled by hand rather than through seedFixture, because N
+      // IS the 2026-09-01 rename: under N−1 the two tables are still `service` and
+      // `service_account`, and the harness writes the names N leaves behind. That is also
+      // what makes this the case for a renaming migration rather than an additive one — the
+      // rows below are inserted under the old vocabulary and read back under the new.
+      const ctx: FixtureCtx = {
+        ownerId: `usr_FAKE0000_${crypto.randomUUID()}`,
+        appId: `app_FAKE0000_${crypto.randomUUID()}`,
+        agentId: `agt_FAKE0000_${crypto.randomUUID()}`,
+      };
+      const now = Date.now();
+      await insertRow("user", {
+        id: ctx.ownerId,
+        name: "Fixture Owner",
+        email: `${ctx.ownerId}@fixture.invalid`,
+        emailVerified: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await insertRow("service", {
+        id: ctx.appId,
+        owner_id: ctx.ownerId,
+        slug: `app-${crypto.randomUUID()}`,
+        name: "Fixture App",
+        kind: "tunnel",
+        forward_identity: 0,
+        roles_json: "{}",
+        redact_json: "{}",
+        redact_results_json: "{}",
+        log_bodies: 1,
+        created_at: now,
+      });
+      await insertRow("service_account", {
+        id: ctx.agentId,
+        owner_id: ctx.ownerId,
+        slug: `agt-${crypto.randomUUID()}`,
+        name: "Fixture Agent",
+        created_at: now,
+      });
+      // One token per kind, in N−1's CHECK vocabulary — the column N cannot ALTER and has
+      // to rebuild the table for.
+      await insertRow("token", {
+        id: `tok_FAKE0000_${crypto.randomUUID()}`,
+        kind: "service",
+        ref_id: ctx.appId,
+        hash: `sha256_FAKE0000_${crypto.randomUUID()}`,
+        prefix: "pmcp_svc_FAK",
+        created_at: now,
+      });
+      await insertRow("token", {
+        id: `tok_FAKE0000_${crypto.randomUUID()}`,
+        kind: "service_account",
+        ref_id: ctx.agentId,
+        hash: `sha256_FAKE0000_${crypto.randomUUID()}`,
+        prefix: "pmcp_sa_FAKE",
+        created_at: now,
+      });
+
+      await applyD1Migrations(env.DB, migrations); // N: the rename, on top of live data
+
+      // N's own schema objects, named rather than derived, so migration 0008 makes these
+      // lines visibly stale instead of silently witnessing N−1.
+      expect(await countFor("app", ctx)).toBe(1);
+      expect(await countFor("agent", ctx)).toBe(1);
+      // The rebuilt table is the one that could have LOST rows: both survive, each with its
+      // kind translated — which is the whole difference between a rename and a recreate.
+      const tokens = await db()
+        .prepare(`SELECT "kind", "ref_id", "prefix" FROM token ORDER BY "kind"`)
+        .all<{ kind: string; ref_id: string; prefix: string }>();
+      expect(tokens.results).toEqual([
+        { kind: "agent", ref_id: ctx.agentId, prefix: "pmcp_sa_FAKE" },
+        { kind: "app", ref_id: ctx.appId, prefix: "pmcp_svc_FAK" },
+      ]);
     },
   );
 });
@@ -1641,12 +1745,12 @@ describe("§19.4 · 0005 applies", () => {
   );
 
   it(
-    "§19.4 · deleting a service account deletes its oauth_binding rows (ON DELETE CASCADE)",
+    "§19.4 · deleting an agent deletes its oauth_binding rows (ON DELETE CASCADE)",
     async () => {
       const ctx = await seedFixture();
       await insertRow("oauth_binding", buildRow("oauth_binding", ctx, {}));
       expect(await countFor("oauth_binding", ctx)).toBe(1);
-      await db().prepare("DELETE FROM service_account WHERE id = ?").bind(ctx.accountId).run();
+      await db().prepare("DELETE FROM agent WHERE id = ?").bind(ctx.agentId).run();
       expect(await countFor("oauth_binding", ctx)).toBe(0);
     },
   );
@@ -1654,22 +1758,22 @@ describe("§19.4 · 0005 applies", () => {
   it(
     "§19.4 · deleting a user deletes its oauth_binding rows and its oauthResource row",
     async () => {
-      // A real provisioned namespace (user + oauthResource), plus an account and a binding.
+      // A real provisioned namespace (user + oauthResource), plus an agent and a binding.
       const username = `oauser-${crypto.randomUUID().slice(0, 8)}`;
       const { userId } = await provisionUser(username);
-      const accountId = `sa_FAKE0000_${crypto.randomUUID()}`;
-      await insertRow("service_account", {
-        id: accountId,
+      const agentId = `agt_FAKE0000_${crypto.randomUUID()}`;
+      await insertRow("agent", {
+        id: agentId,
         owner_id: userId,
         slug: `sa-${crypto.randomUUID()}`,
-        name: "Bound Account",
+        name: "Bound Agent",
         created_at: Date.now(),
       });
       await insertRow("oauth_binding", {
         id: `oab_FAKE0000_${crypto.randomUUID()}`,
         owner_id: userId,
         client_id: `client-${crypto.randomUUID()}`,
-        service_account_id: accountId,
+        agent_id: agentId,
         created_at: Date.now(),
       });
       const bindingsBefore = await db()
@@ -1720,7 +1824,18 @@ describe("§19.4 · 0005 applies", () => {
       );
       const usernames = [await seedNamedUser(), await seedNamedUser(), await seedNamedUser()];
       // A username-less user exists too — it owns no namespace, so the back-fill must skip it.
-      await seedFixture();
+      // Written directly rather than through seedFixture: this world is pre-0005 and therefore
+      // pre-0007, where the two tables the fixture also seeds are still `service` and
+      // `service_account`, and the only row this case is about is the user.
+      const anonymousAt = Date.now();
+      await insertRow("user", {
+        id: `usr_FAKE0000_${crypto.randomUUID()}`,
+        name: "Fixture Owner",
+        email: `usr_FAKE0000_${crypto.randomUUID()}@fixture.invalid`,
+        emailVerified: 0,
+        createdAt: anonymousAt,
+        updatedAt: anonymousAt,
+      });
       await applyD1Migrations(env.DB, migrations); // 0005: creates oauthResource and back-fills
 
       // Matched by the namespace suffix `/<user>/mcp`, ORIGIN-agnostically: a .sql migration

@@ -78,7 +78,7 @@ export type ReconnectPolicyRow = {
    * `max_only` draws over [0, 60 s] and `exponential` over [0, 1 s]·2ⁿ — so the two windows
    * OVERLAP at every attempt and no delay observed under a live `Math.random` distinguishes
    * them: a client that ran BOTH archived endings as ordinary exponential backoff (hammering
-   * an archived service every ~1 s instead of ~30 s) would pass a table that only looked at
+   * an archived app every ~1 s instead of ~30 s) would pass a table that only looked at
    * delays. The runner therefore fixes the jitter draw — the same seeded stub api.test.ts's
    * schedule table uses — and reads the resulting CEILING: at a draw just under 1, attempt 0
    * answers ~59.94 s on `max_only` and ~0.999 s on `exponential`.
@@ -112,7 +112,7 @@ export type ReconnectPolicyRow = {
  */
 export const reconnectPolicyRows: readonly ReconnectPolicyRow[] = [
   {
-    spec: "§6 · upgrade 401 · a missing, invalid, expired, revoked or wrong-kind token — or one whose service row is gone or proxied — is fatal before a single frame exists: CredentialsError, and the hub never sees a second dial",
+    spec: "§6 · upgrade 401 · a missing, invalid, expired, revoked or wrong-kind token — or one whose app row is gone or proxied — is fatal before a single frame exists: CredentialsError, and the hub never sees a second dial",
     trigger: { kind: "upgrade", status: 401 },
     redials: false,
     schedule: null,
@@ -126,28 +126,28 @@ export const reconnectPolicyRows: readonly ReconnectPolicyRow[] = [
     settlement: { kind: "pending" },
   },
   {
-    spec: "§6 · close 4000 · hub/replaced gave the slot to a newer connection for the same service: this copy stops QUIETLY — `closed` resolves, and it must never dial back and fight for the slot",
+    spec: "§6 · close 4000 · hub/replaced gave the slot to a newer connection for the same app: this copy stops QUIETLY — `closed` resolves, and it must never dial back and fight for the slot",
     trigger: { kind: "close", code: 4000 },
     redials: false,
     schedule: null,
     settlement: { kind: "resolve" },
   },
   {
-    spec: "§6 · close 4001 · a token revoked or a service deleted AFTER establishment is the same fatal ending as 401 — surface a credentials error, never retry a dead credential",
+    spec: "§6 · close 4001 · a token revoked or an app deleted AFTER establishment is the same fatal ending as 401 — surface a credentials error, never retry a dead credential",
     trigger: { kind: "close", code: 4001 },
     redials: false,
     schedule: null,
     settlement: { kind: "reject", error: CredentialsError },
   },
   {
-    spec: "§6 · close 4002 · a service archived mid-life is severed and reconnects on the max_only schedule — the same archived policy as the 403 refusal, reached from the other side of the handshake",
+    spec: "§6 · close 4002 · an app archived mid-life is severed and reconnects on the max_only schedule — the same archived policy as the 403 refusal, reached from the other side of the handshake",
     trigger: { kind: "close", code: 4002 },
     redials: true,
     schedule: "max_only",
     settlement: { kind: "pending" },
   },
   {
-    spec: "§6 · close 4003 · the row-gone-between-upgrade-and-register race reconnects on the exponential schedule; if the service really is gone the next upgrade answers 401 and THAT is the fatal ending, so the race never needs its own",
+    spec: "§6 · close 4003 · the row-gone-between-upgrade-and-register race reconnects on the exponential schedule; if the app really is gone the next upgrade answers 401 and THAT is the fatal ending, so the race never needs its own",
     trigger: { kind: "close", code: 4003 },
     redials: true,
     schedule: "exponential",
@@ -175,7 +175,7 @@ export const reconnectPolicyRows: readonly ReconnectPolicyRow[] = [
  *
  * They are pinned here instead, run by the same runner. What each one costs if unpinned:
  * a bot that retried a REJECTED DECLARATION would hammer the hub's registration path
- * forever with a valid service token; a transport that treated a bare TCP DROP or a close
+ * forever with a valid app token; a transport that treated a bare TCP DROP or a close
  * code outside 4000–4004 as fatal would go dark on every hub deploy. The safe default —
  * anything unlabelled reconnects — is D7's verified slice's rule (`CLOSE_POLICY[code] ??
  * "reconnect"`, scripts/thin-serve.ts — deleted at D8, the table now lives in

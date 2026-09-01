@@ -45,8 +45,8 @@ vi.mock("node:os", async (importOriginal) => ({
 import { applyProfile, main } from "../src/main";
 import { parseConfig } from "../src/config";
 
-/** Obviously fake, and never a `pmcp_svc_` value — main.ts refuses that kind outright. */
-const TOKEN = "pmcp_sa_FAKE0000000000000000000000000000";
+/** Obviously fake, and never a `pmcp_app_` value — main.ts refuses that kind outright. */
+const TOKEN = "pmcp_agt_FAKE0000000000000000000000000000";
 const DEVICE_TOKEN = "pmcp_sess_FAKE00000000000000000000000000";
 const SECRET = "FAKE-bootstrap-secret";
 
@@ -150,10 +150,10 @@ describe("§10 · which profile is active", () => {
   it("§10 · the environment stays flat and profile-free: PMCP_URL and PMCP_TOKEN override whatever the active profile resolved, so a one-off command against another hub needs no file at all", async () => {
     writeConfigFile(FOUR_PROFILES);
     vi.stubEnv("PMCP_URL", "https://override.invalid");
-    vi.stubEnv("PMCP_TOKEN", "pmcp_sa_FAKE1111111111111111111111111111");
+    vi.stubEnv("PMCP_TOKEN", "pmcp_agt_FAKE1111111111111111111111111111");
     expect(await main(["whoami"])).toBe(0);
     expect(seen).toEqual([
-      { url: "https://override.invalid/api/whoami", token: "pmcp_sa_FAKE1111111111111111111111111111" },
+      { url: "https://override.invalid/api/whoami", token: "pmcp_agt_FAKE1111111111111111111111111111" },
     ]);
   });
 

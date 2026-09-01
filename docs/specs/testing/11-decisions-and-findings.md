@@ -7,7 +7,7 @@ Resolved:
 - The router-walk test §2 mandates is now a named suite (`routes.test.ts`).
 
 Resolved 2026-08-25 — **availability-first**: the approval gate consults known
-availability before touching any approval row — a service the hub already knows
+availability before touching any approval row — an app the hub already knows
 cannot execute (tunnel offline; proxied `not_connected`/`needs_reconnect`) fails
 `-32000` with no pending row, no push, and no pass consumed. Spec §7 + gateway/
 approvals skeleton comments updated; the order-table and approval-e2e rows encode
@@ -46,7 +46,7 @@ declared in both directions: the client libraries' `Secret` field type /
 `secret()` wrapper emits `writeOnly` in input and output schemas (the hub strips
 it from served outputSchemas — internal marker only), and config gains
 `redact_results` beside `redact`. Audit `tools/call` rows carry bodies per the
-per-service `log_bodies` flag (tunneled default on, proxied default off — no
+per-app `log_bodies` flag (tunneled default on, proxied default off — no
 trustworthy proxied schema, so the owner opts in with config paths): args and
 result structuredContent post-redaction; unstructured blocks and over-cap bodies
 become typed size stubs (`AUDIT_BODY_CAP_BYTES`, default 16 KiB). Retention
@@ -54,11 +54,11 @@ drops to **7 days** default; both knobs are env vars parsed once at the
 composition root (`AUDIT_RETENTION_DAYS`, `AUDIT_BODY_CAP_BYTES`), with
 limits.ts holding the defaults. `hygiene.test.ts` owns the body table;
 `unit/redact.test.ts` walks both directions. (Also fixed while pinning: §5's
-`service` table had never materialized the config `redact` column — it now has
+`app` table had never materialized the config `redact` column — it now has
 `redact_json`, `redact_results_json`, and `log_bodies`.)
 
 Resolved 2026-08-25 — **the skeleton-authoring escalations**, decided as a batch:
-- **Injected clock in identity** (`resolvePrincipal` / `resolveServiceToken` /
+- **Injected clock in identity** (`resolvePrincipal` / `resolveAppToken` /
   `issueToken` take optional `now()`): the expired-token refusal is seeded by
   issuing at a fake t0 and resolving past expiry — no sleeping, no test-only
   mint-dead-token affordance; same rationale as `ApprovalsConfig.now()`.

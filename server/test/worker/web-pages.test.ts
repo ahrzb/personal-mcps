@@ -5,7 +5,7 @@
 // `/approvals/<id>` owner-only, the one paging contract behind two presentations
 // (`{ rows, total }`) with the JSONL export's line count equal to `total`, parity
 // DIRECTION B: every mutating form's fields are exactly the fronted op's schema keys — and
-// §4's recent-auth gate on /account's credential MUTATIONS, not merely on its read.
+// §4's recent-auth gate on /settings's credential MUTATIONS, not merely on its read.
 //
 // Two more, both because a form nobody submits is a contract nobody checked (§9 rule 4b):
 // /device's approve/deny form is POSTED, as a browser posts it, through the whole RFC 8628
@@ -49,7 +49,7 @@ import type { Env } from "../../src/index";
 import { paths } from "../../src/pages/model";
 import { tokenPattern } from "../../src/principal";
 import { Registry } from "../../src/registry";
-import type { Service } from "../../src/registry";
+import type { App } from "../../src/registry";
 import { beginConnect } from "../../src/upstream";
 import { upstreamUrlFor } from "../harness/fake-upstream";
 import type { AsScenario, UpstreamScenario } from "../harness/fake-upstream";
@@ -61,7 +61,7 @@ import type { SeededNamespace, SeededSession } from "../harness/seed";
  * fronts plus the field names it submits. How a form DECLARES its op — action path, hidden
  * field, whatever web.ts chooses at implementation — is known only here, so Direction B
  * survives that choice being made or changed. A page with no mutating form yields [], which
- * is the correct answer for /audit and the required answer for /account.
+ * is the correct answer for /audit and the required answer for /settings.
  *
  * What web.ts chose (pages/model's `paths` states it): the FINAL PATH SEGMENT of a
  * mutating target names the op, and the arguments that are not form controls ride the
@@ -163,8 +163,8 @@ type World = {
   /** A pending approval in this namespace, and one in a foreign namespace. */
   approvalId: string;
   foreign: { ns: SeededNamespace; approvalId: string };
-  /** The oauth-mode proxied service the callback case connects. */
-  oauth: { service: Service; scenario: UpstreamScenario };
+  /** The oauth-mode proxied app the callback case connects. */
+  oauth: { app: App; scenario: UpstreamScenario };
 };
 
 let world: World;
@@ -176,7 +176,7 @@ beforeAll(async () => {
     as: { id: uniqueSlug("as") } as AsScenario,
   };
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       { slug: "news", kind: "tunnel", tokens: [{ as: "news" }] },
       { slug: "parked", kind: "tunnel", archived: true },
       {
@@ -186,7 +186,7 @@ beforeAll(async () => {
         upstreamAuthMode: "oauth",
       },
     ],
-    accounts: [
+    agents: [
       {
         slug: "agent",
         grants: { news: [{ role: "all", mode: "approval" }] },
@@ -197,10 +197,10 @@ beforeAll(async () => {
   const session = await seedOwnerSession(ns.owner);
   const other = await seedOwnerSession(ns.owner);
   const { sessionId } = await requireOwnerSession(
-    new Request(`${ORIGIN}${paths.services}`, { headers: { Cookie: session.cookie } }),
+    new Request(`${ORIGIN}${paths.apps}`, { headers: { Cookie: session.cookie } }),
   );
-  const service = await new Registry(env.DB).getService(ns.owner.userId, "notion");
-  if (service === null) throw new Error("web-pages: the seeded oauth service vanished");
+  const app = await new Registry(env.DB).getApp(ns.owner.userId, "notion");
+  if (app === null) throw new Error("web-pages: the seeded oauth app vanished");
 
   await seedAuditRows(ns.owner.userId);
 
@@ -212,7 +212,7 @@ beforeAll(async () => {
     deviceToken: await deviceFlowToken(session.cookie),
     approvalId: await openApproval(ns, "news"),
     foreign: await foreignWorld(),
-    oauth: { service, scenario },
+    oauth: { app, scenario },
   };
 });
 
@@ -220,8 +220,8 @@ beforeAll(async () => {
  *  the only way to ask "does /approvals/<id> refuse someone else's id" honestly. */
 async function foreignWorld(): Promise<World["foreign"]> {
   const ns = await seedNamespace(env.DB, {
-    services: [{ slug: "news", kind: "tunnel" }],
-    accounts: [{ slug: "agent", grants: { news: [{ role: "all", mode: "approval" }] } }],
+    apps: [{ slug: "news", kind: "tunnel" }],
+    agents: [{ slug: "agent", grants: { news: [{ role: "all", mode: "approval" }] } }],
   });
   return { ns, approvalId: await openApproval(ns, "news") };
 }
@@ -232,8 +232,8 @@ async function foreignWorld(): Promise<World["foreign"]> {
  * would be pinning a shape rather than a behavior.
  */
 async function openApproval(ns: SeededNamespace, slug: string): Promise<string> {
-  const service = await new Registry(env.DB).getService(ns.owner.userId, slug);
-  if (service === null) throw new Error(`openApproval: no service "${slug}"`);
+  const app = await new Registry(env.DB).getApp(ns.owner.userId, slug);
+  if (app === null) throw new Error(`openApproval: no app "${slug}"`);
   const approvals = new Approvals({
     db: env.DB,
     publicOrigin: ORIGIN,
@@ -242,8 +242,8 @@ async function openApproval(ns: SeededNamespace, slug: string): Promise<string> 
     now: Date.now,
   });
   const checked = await approvals.check(
-    { kind: "service_account", accountId: ns.accounts.agent.id, ownerId: ns.owner.userId, slug: "agent" },
-    service,
+    { kind: "agent", agentId: ns.agents.agent.id, ownerId: ns.owner.userId, slug: "agent" },
+    app,
     "search",
     { q: "term" },
     [],
@@ -260,9 +260,9 @@ async function seedAuditRows(ownerId: string): Promise<void> {
   for (let at = 0; at < SEEDED_EVENTS; at++) {
     await record(env.DB, {
       ownerId,
-      principal: "sa:agent",
+      principal: "agent:agent",
       event: "tools/call",
-      service: "news",
+      app: "news",
       tool: `${TOOL_PREFIX}${at}`,
       outcome: at === 0 ? "-32001" : "ok",
       durationMs: 10 + at,
@@ -527,8 +527,8 @@ async function ageSession(token: string): Promise<void> {
 const AGED_SESSION_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
- * Make one owner's second factor LIVE. No hub route can: /account never renders the
- * mid-enrollment card (model.ts's `accountProps` says why), so the verify step that flips
+ * Make one owner's second factor LIVE. No hub route can: /settings never renders the
+ * mid-enrollment card (model.ts's `settingsProps` says why), so the verify step that flips
  * this column in production needs a code derived from a secret no page ever shows. The
  * column is better-auth's own, and the row it makes live is the one the rendered enable
  * form just created — everything asserted after it still goes through that page's own form
@@ -546,29 +546,29 @@ async function enrollTwoFactor(userId: string): Promise<void> {
 const WRONG_PASSWORD = "FAKE0000-not-the-seeded-password";
 
 /** Every page that renders a credential form — /login's three cards, the signed-in shell's
- *  Sign out, /account's two-factor controls, and the destructive confirm dialog. */
+ *  Sign out, /settings's two-factor controls, and the destructive confirm dialog. */
 async function credentialPages(cookie: string): Promise<string[]> {
   return [
     await anonymousPage(paths.login),
     await anonymousPage(`${paths.login}?step=totp`),
     await anonymousPage(`${paths.login}?step=backup-code`),
-    await page(paths.services, cookie),
-    await page(paths.account, cookie),
-    await page(paths.accountConfirm("disable-two-factor"), cookie),
+    await page(paths.apps, cookie),
+    await page(paths.settings, cookie),
+    await page(paths.settingsConfirm("disable-two-factor"), cookie),
   ];
 }
 
-/** The confirm link /account renders beside one session's Revoke button, or null when it
+/** The confirm link /settings renders beside one session's Revoke button, or null when it
  *  rendered none — built from `paths` so the page and the walk cannot spell it differently. */
 function revokeLinkFor(html: string, sessionId: string): string | null {
-  const link = paths.accountConfirm("revoke-session", sessionId);
+  const link = paths.settingsConfirm("revoke-session", sessionId);
   return html.includes(link.replace(/&/g, "&amp;")) ? link : null;
 }
 
-/** The session id behind a cookie — identity's own answer, the same one /account badges. */
+/** The session id behind a cookie — identity's own answer, the same one /settings badges. */
 async function sessionIdOf(cookie: string): Promise<string> {
   const { sessionId } = await requireOwnerSession(
-    new Request(`${ORIGIN}${paths.account}`, { headers: { Cookie: cookie } }),
+    new Request(`${ORIGIN}${paths.settings}`, { headers: { Cookie: cookie } }),
   );
   return sessionId;
 }
@@ -577,7 +577,7 @@ async function sessionIdOf(cookie: string): Promise<string> {
  * Substitutes counting handlers into the ops table for the length of one case and restores
  * them there — the mechanism the "was it invoked" cases rest on. The substitute records
  * its input and does NOTHING else, so a page that mutated D1 on its own would leave a
- * change nothing accounts for (case 19).
+ * change nothing agents for (case 19).
  */
 async function withCountedOps<T>(
   names: readonly string[],
@@ -612,12 +612,12 @@ const times = (invocations: Map<string, unknown[]>, name: string): number =>
  * ------------------------------------------------------------------ */
 
 describe("§13 · the bare root sends people where they can act", () => {
-  // `/` names no segment, so it must not 404: a signed-in owner lands on their services,
+  // `/` names no segment, so it must not 404: a signed-in owner lands on their apps,
   // an anonymous visitor on sign-in. Both are 302s, driven through the real composition root.
-  it("GET / with an owner cookie → 302 /services", async () => {
+  it("GET / with an owner cookie → 302 /apps", async () => {
     const response = await call(new Request(`${ORIGIN}/`, { headers: { Cookie: world.session.cookie } }));
     expect(response.status).toBe(302);
-    expect(response.headers.get("Location")).toBe("/services");
+    expect(response.headers.get("Location")).toBe("/apps");
   });
 
   it("GET / with no session → 302 /login", async () => {
@@ -629,36 +629,36 @@ describe("§13 · the bare root sends people where they can act", () => {
 
 describe("§13 · CSRF on every mutating POST", () => {
   it("1. §13 · a mutating POST with no CSRF field is 403 AND the substituted ops handler was never invoked (a rejected-but-executed mutation is the bug this case exists for)", async () => {
-    await withCountedOps(["service_archive"], async (invocations) => {
-      const refused = await post(paths.serviceArchive("news"), {});
+    await withCountedOps(["app_archive"], async (invocations) => {
+      const refused = await post(paths.appArchive("news"), {});
       expect(refused.status).toBe(403);
-      expect(times(invocations, "service_archive")).toBe(0);
+      expect(times(invocations, "app_archive")).toBe(0);
     });
   });
 
   it("2. §13 · the same POST carrying the token the page rendered succeeds and the handler ran exactly once (the allow-twin of 1 — without it, `throw 403` passes)", async () => {
-    await withCountedOps(["service_archive"], async (invocations) => {
-      const csrf = csrfOf(await page(paths.services));
-      const accepted = await post(paths.serviceArchive("news"), {}, { csrf });
+    await withCountedOps(["app_archive"], async (invocations) => {
+      const csrf = csrfOf(await page(paths.apps));
+      const accepted = await post(paths.appArchive("news"), {}, { csrf });
       expect(accepted.status).toBe(303);
-      expect(accepted.headers.get("Location")).toContain(paths.services);
-      expect(times(invocations, "service_archive")).toBe(1);
+      expect(accepted.headers.get("Location")).toContain(paths.apps);
+      expect(times(invocations, "app_archive")).toBe(1);
       // The op received the slug the target named — the query string IS the argument.
-      expect(invocations.get("service_archive")?.[0]).toMatchObject({ slug: "news" });
+      expect(invocations.get("app_archive")?.[0]).toMatchObject({ slug: "news" });
     });
   });
 
   it("3. §13 · a token minted under a different cookie session is 403, handler not invoked", async () => {
-    await withCountedOps(["service_archive"], async (invocations) => {
-      const foreignToken = csrfOf(await page(paths.services, world.other.cookie));
-      const refused = await post(paths.serviceArchive("news"), {}, { csrf: foreignToken });
+    await withCountedOps(["app_archive"], async (invocations) => {
+      const foreignToken = csrfOf(await page(paths.apps, world.other.cookie));
+      const refused = await post(paths.appArchive("news"), {}, { csrf: foreignToken });
       expect(refused.status).toBe(403);
-      expect(times(invocations, "service_archive")).toBe(0);
+      expect(times(invocations, "app_archive")).toBe(0);
       // The twin, so "403" is not simply what this endpoint always answers: the SAME
       // session's own token passes.
-      const own = csrfOf(await page(paths.services));
-      expect((await post(paths.serviceArchive("news"), {}, { csrf: own })).status).toBe(303);
-      expect(times(invocations, "service_archive")).toBe(1);
+      const own = csrfOf(await page(paths.apps));
+      expect((await post(paths.appArchive("news"), {}, { csrf: own })).status).toBe(303);
+      expect(times(invocations, "app_archive")).toBe(1);
     });
   });
 
@@ -705,13 +705,13 @@ describe("§13 · CSRF on every mutating POST", () => {
 });
 
 describe("§4/§13 · cookie sessions are the only page credential", () => {
-  it("6. §4 · a bearer-sourced (device-flow) session is refused on /account · a browser session renders it (the twin — the guard is about provenance, not about being logged out)", async () => {
+  it("6. §4 · a bearer-sourced (device-flow) session is refused on /settings · a browser session renders it (the twin — the guard is about provenance, not about being logged out)", async () => {
     const cookieName = world.session.cookie.split("=")[0];
-    const replayed = await get(paths.account, `${cookieName}=${world.deviceToken}`);
+    const replayed = await get(paths.settings, `${cookieName}=${world.deviceToken}`);
     expect(replayed.status).toBe(302);
     expect(replayed.headers.get("Location")).toMatch(/^\/login(\?|$)/);
     // The twin: the same page, the same guard, a browser session.
-    const rendered = await get(paths.account);
+    const rendered = await get(paths.settings);
     expect(rendered.status).toBe(200);
     expect(await rendered.text()).toContain(paths.auth.signOut);
   });
@@ -719,7 +719,7 @@ describe("§4/§13 · cookie sessions are the only page credential", () => {
   it("7. §7 · an Authorization: Bearer header with no cookie opens no page — bearer tokens are never consulted on page routes", async () => {
     for (const bearer of [world.session.token, world.ns.tokens.agent.token, world.deviceToken]) {
       const refused = await call(
-        new Request(`${ORIGIN}${paths.services}`, { headers: { Authorization: `Bearer ${bearer}` } }),
+        new Request(`${ORIGIN}${paths.apps}`, { headers: { Authorization: `Bearer ${bearer}` } }),
       );
       expect(refused.status).toBe(302);
       expect(refused.headers.get("Location")).toMatch(/^\/login(\?|$)/);
@@ -751,7 +751,7 @@ describe("§4/§13 · cookie sessions are the only page credential", () => {
 
 describe("§8/§13 · one paging contract, two presentations", () => {
   it("10. §8 · the page's \"N events match\" line is audit.query's `total`, not the rendered row count — they differ whenever a page is not the last one", async () => {
-    const filters = { event: "tools/call", service: "news" };
+    const filters = { event: "tools/call", app: "news" };
     const first = await page(auditPath({ ...filters, limit: 3, offset: 0 }));
     const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
     expect(matchedLine(first)).toBe(truth.total);
@@ -762,7 +762,7 @@ describe("§8/§13 · one paging contract, two presentations", () => {
   });
 
   it("11. §13 · desktop page numbers and mobile \"Load more\" walk the same offset/limit contract to the same final row set", async () => {
-    const filters = { event: "tools/call", service: "news", limit: 4 };
+    const filters = { event: "tools/call", app: "news", limit: 4 };
     // Desktop: follow the pager's own next-page links until it stops offering one.
     const desktop: string[] = [];
     let path = auditPath({ ...filters, offset: 0 });
@@ -789,7 +789,7 @@ describe("§8/§13 · one paging contract, two presentations", () => {
   });
 
   it("12. §13 · Export JSONL emits exactly `total` lines for the current filters", async () => {
-    const filters = { event: "tools/call", service: "news" };
+    const filters = { event: "tools/call", app: "news" };
     const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
     const lines = await exportLines({ ...filters, limit: 3, offset: 0 });
     // The page's limit/offset are the PAGE's, never the export's (§8).
@@ -837,8 +837,8 @@ describe("§8/§13 · one paging contract, two presentations", () => {
 });
 
 describe("§8 · parity direction B — forms and schemas are one source", () => {
-  it("16. §8 · every form rendered on /services and /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)", async () => {
-    for (const path of [paths.services, paths.approvals]) {
+  it("16. §8 · every form rendered on /apps and /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)", async () => {
+    for (const path of [paths.apps, paths.approvals]) {
       const forms = formsRenderedOn(await page(path));
       expect(forms.length, `${path} rendered no form`).toBeGreaterThan(0);
       for (const form of forms) {
@@ -850,7 +850,7 @@ describe("§8 · parity direction B — forms and schemas are one source", () =>
 
   it("17. §8 · each form's field set equals schemaKeysOf(ops[name]) — both sides derived, so a schema change with no form change fails here rather than at a user's keyboard", async () => {
     let checked = 0;
-    for (const path of [paths.services, paths.approvals]) {
+    for (const path of [paths.apps, paths.approvals]) {
       for (const form of formsRenderedOn(await page(path))) {
         if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
         expect(form.fields, `${path} → ${form.op}`).toEqual(schemaKeysOf(ops[form.op]));
@@ -860,16 +860,16 @@ describe("§8 · parity direction B — forms and schemas are one source", () =>
     expect(checked, "no ops-backed form was checked").toBeGreaterThan(0);
   });
 
-  it("18. §8 · /account renders no ops-backed form at all — the pinned parity exception: credentials ride better-auth's endpoints and are never reachable from a pmcp tool", async () => {
-    const forms = formsRenderedOn(await page(paths.account));
-    expect(forms.length, "/account rendered no form to check").toBeGreaterThan(0);
+  it("18. §8 · /settings renders no ops-backed form at all — the pinned parity exception: credentials ride better-auth's endpoints and are never reachable from a pmcp tool", async () => {
+    const forms = formsRenderedOn(await page(paths.settings));
+    expect(forms.length, "/settings rendered no form to check").toBeGreaterThan(0);
     for (const form of forms) {
-      expect(Object.prototype.hasOwnProperty.call(ops, form.op), `/account fronts "${form.op}"`).toBe(false);
+      expect(Object.prototype.hasOwnProperty.call(ops, form.op), `/settings fronts "${form.op}"`).toBe(false);
     }
     // Every one of them posts to better-auth's mount instead, which is the exception
     // stated as a positive rather than as an absence.
-    for (const form of formsRenderedOn(await page(paths.account))) {
-      expect(BETTER_AUTH_ACTIONS.has(form.op), `/account fronts "${form.op}"`).toBe(true);
+    for (const form of formsRenderedOn(await page(paths.settings))) {
+      expect(BETTER_AUTH_ACTIONS.has(form.op), `/settings fronts "${form.op}"`).toBe(true);
     }
   });
 
@@ -880,7 +880,7 @@ describe("§8 · parity direction B — forms and schemas are one source", () =>
     // is itself the parity invariant showing through (a page has no other source).
     const targets = new Map<string, string>();
     let csrf = "";
-    for (const path of [paths.services, paths.approvals]) {
+    for (const path of [paths.apps, paths.approvals]) {
       const html = await page(path);
       csrf = csrfOf(html);
       for (const form of formsRenderedOn(html)) {
@@ -905,7 +905,7 @@ describe("§8 · parity direction B — forms and schemas are one source", () =>
 
 describe("§7/§13 · the OAuth callback shell", () => {
   it("20. §7 · /oauth/upstream/callback without an owner session is refused before any upstream code runs and stores nothing · with the session and a live single-use state it completes (the twin; every other state failure is upstream-credentials.test.ts's table)", async () => {
-    const started = await beginConnect(world.oauth.service, { id: world.sessionId });
+    const started = await beginConnect(world.oauth.app, { id: world.sessionId });
     const redirected = await fetch(started.toString(), { redirect: "manual" });
     const callbackUrl = redirected.headers.get("Location");
     expect(callbackUrl, "the fake AS answered no redirect").not.toBeNull();
@@ -915,7 +915,7 @@ describe("§7/§13 · the OAuth callback shell", () => {
     expect(anonymous.status).toBe(302);
     expect(anonymous.headers.get("Location")).toMatch(/^\/login(\?|$)/);
     // Nothing ran and nothing was stored: the single-use state is still unconsumed and
-    // the service still holds no credential.
+    // the app still holds no credential.
     expect(await stateRows(state)).toBe(1);
     expect(await connectionOf("notion")).toBe("not_connected");
 
@@ -924,7 +924,7 @@ describe("§7/§13 · the OAuth callback shell", () => {
       new Request(callbackUrl ?? "", { headers: { Cookie: world.session.cookie } }),
     );
     expect(completed.status).toBe(302);
-    expect(completed.headers.get("Location")).toContain(paths.services);
+    expect(completed.headers.get("Location")).toContain(paths.apps);
     expect(await stateRows(state)).toBe(0);
     expect(await connectionOf("notion")).toBe("connected");
   });
@@ -945,7 +945,7 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     const answered = await formPost(action, {
       username: signer.owner.username,
       password: SEEDED_OWNER_PASSWORD,
-      // Deliberately NOT the default landing page: /services is also where a missing or
+      // Deliberately NOT the default landing page: /apps is also where a missing or
       // refused callbackURL falls back to, so asserting it would pass either way. This is
       // the deep link /login carries through the round trip (LoginProps.redirectTo).
       callbackURL: paths.audit,
@@ -955,7 +955,7 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     const cookie = sessionCookieOf(answered);
     expect(cookie, "the sign-in set no session cookie").not.toBeNull();
     // The cookie is a real session, not merely a header: it opens a page that requires one.
-    const opened = await get(paths.services, cookie ?? "");
+    const opened = await get(paths.apps, cookie ?? "");
     expect(opened.status).toBe(200);
     expect(await opened.text()).toContain(signer.owner.username);
   });
@@ -966,7 +966,7 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     const answered = await formPost(action, {
       username: signer.owner.username,
       password: wrong,
-      callbackURL: paths.services,
+      callbackURL: paths.apps,
     });
     expect(answered.status).toBe(303);
     const to = answered.headers.get("Location") ?? "";
@@ -987,7 +987,7 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
       ["backup-code", "verify-backup-code"],
     ] as const) {
       const action = actionFor(await anonymousPage(`${paths.login}?step=${step}`), op);
-      const answered = await formPost(action, { code: "000000", callbackURL: paths.services });
+      const answered = await formPost(action, { code: "000000", callbackURL: paths.apps });
       expect(answered.status, `POST ${action}`).toBe(303);
       // No challenge is pending, so this is the refusal leg: back to the same card, with a
       // message and without a session.
@@ -1024,14 +1024,14 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     }
   });
 
-  it("25. §4 · /account's Revoke walks end to end as a browser walks it — the confirm link, the rendered form, the form-encoded POST — and the session it named is gone from the listing afterwards while the current one stays", async () => {
+  it("25. §4 · /settings's Revoke walks end to end as a browser walks it — the confirm link, the rendered form, the form-encoded POST — and the session it named is gone from the listing afterwards while the current one stays", async () => {
     const doomed = await seedOwnerSession(world.ns.owner);
     // Resolved BEFORE the revoke: afterwards the cookie names no session, which is the
     // postcondition rather than a way to ask for the id.
     const doomedId = await sessionIdOf(doomed.cookie);
-    const listed = await page(paths.account);
+    const listed = await page(paths.settings);
     const confirm = revokeLinkFor(listed, doomedId);
-    expect(confirm, "/account rendered no revoke link for the second session").not.toBeNull();
+    expect(confirm, "/settings rendered no revoke link for the second session").not.toBeNull();
     const dialog = await page(confirm ?? "");
     const answered = await formPost(
       actionFor(dialog, "revoke-session"),
@@ -1042,35 +1042,35 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     // The redirect-back flash says which it was, so a refusal fails HERE with its reason
     // rather than three lines later as an unexplained listing.
     expect(answered.headers.get("Location")).toContain("done=");
-    const after = await page(paths.account);
+    const after = await page(paths.settings);
     expect(after).not.toContain(doomedId);
     // The twin: the revoke took one session, not the listing — the current one is still
     // here and still opens the page, while the revoked cookie is now nobody's.
     expect(after).toContain("current");
-    expect((await get(paths.account, doomed.cookie)).status).toBe(302);
+    expect((await get(paths.settings, doomed.cookie)).status).toBe(302);
   });
 
-  it("26. §4 · a browser session past better-auth's freshness window can post NONE of /account's credential targets — the recent-auth gate sits on the mutations, not only on the read (the actor is a day-old cookie carrying its own real CSRF token)", async () => {
+  it("26. §4 · a browser session past better-auth's freshness window can post NONE of /settings's credential targets — the recent-auth gate sits on the mutations, not only on the read (the actor is a day-old cookie carrying its own real CSRF token)", async () => {
     // A namespace of this case's own: two sign-ins for one owner, one of them aged, so
     // ageing one session cannot age the twin it is being compared against. It holds a
-    // service because /services is where both tokens below are read from, and a namespace
+    // app because /apps is where both tokens below are read from, and a namespace
     // with nothing in it renders no mutating form to read one off.
-    const owner = await seedNamespace(env.DB, { services: [{ slug: "news", kind: "tunnel" }] });
+    const owner = await seedNamespace(env.DB, { apps: [{ slug: "news", kind: "tunnel" }] });
     const stale = await seedOwnerSession(owner.owner);
     await ageSession(stale.token);
     const fresh = await seedOwnerSession(owner.owner);
-    // Each session's OWN token, taken off a page it can still render (/services carries no
+    // Each session's OWN token, taken off a page it can still render (/apps carries no
     // recency gate). Without it the refusal below could be the CSRF check answering, and
     // the case would pass against a hub that never looked at the session's age at all.
-    const staleCsrf = csrfOf(await page(paths.services, stale.cookie));
-    const freshCsrf = csrfOf(await page(paths.services, fresh.cookie));
+    const staleCsrf = csrfOf(await page(paths.apps, stale.cookie));
+    const freshCsrf = csrfOf(await page(paths.apps, fresh.cookie));
     // The read is already gated; it is here as the answer every mutation must match.
-    const read = await get(paths.account, stale.cookie);
+    const read = await get(paths.settings, stale.cookie);
     expect(read.status).toBe(302);
     expect(read.headers.get("Location")).toMatch(/^\/login(\?|$)/);
 
-    expect(ACCOUNT_CREDENTIAL_TARGETS.length, "no credential target to walk").toBeGreaterThan(0);
-    for (const target of ACCOUNT_CREDENTIAL_TARGETS) {
+    expect(SETTINGS_CREDENTIAL_TARGETS.length, "no credential target to walk").toBeGreaterThan(0);
+    for (const target of SETTINGS_CREDENTIAL_TARGETS) {
       // A wrong password throughout, so no target's success can move the next one's world —
       // and so both legs differ in exactly one thing: how old the session is.
       const body = { password: WRONG_PASSWORD };
@@ -1079,20 +1079,20 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
       expect(refused.headers.get("Location"), `POST ${target}`).toMatch(/^\/login(\?|$)/);
       // The twin: the same target, the same body, a session signed in moments ago. It
       // reaches better-auth and is refused there on the password's merits — a redirect
-      // back to /account, never a redirect to sign in again.
+      // back to /settings, never a redirect to sign in again.
       const answered = await formPost(target, { csrf: freshCsrf, ...body }, fresh.cookie);
       expect(answered.status, `POST ${target} on a fresh session`).toBe(303);
-      expect(answered.headers.get("Location"), `POST ${target}`).toContain(paths.account);
+      expect(answered.headers.get("Location"), `POST ${target}`).toContain(paths.settings);
     }
   });
 
-  it("27. §4/§13 · /account's Enable two-factor and Regenerate backup codes render the password control the credential seam reads — each form, filled and submitted exactly as the page drew it, is ACCEPTED by better-auth instead of refused for a field no browser could send", async () => {
+  it("27. §4/§13 · /settings's Enable two-factor and Regenerate backup codes render the password control the credential seam reads — each form, filled and submitted exactly as the page drew it, is ACCEPTED by better-auth instead of refused for a field no browser could send", async () => {
     const owner = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(owner.owner);
 
     // Not enrolled, so the two-factor card draws its enable form and nothing else.
-    const enable = formsPostingTo(await page(paths.account, session.cookie), paths.auth.totpEnable);
-    expect(enable.length, "/account rendered no Enable two-factor form").toBeGreaterThan(0);
+    const enable = formsPostingTo(await page(paths.settings, session.cookie), paths.auth.totpEnable);
+    expect(enable.length, "/settings rendered no Enable two-factor form").toBeGreaterThan(0);
     for (const form of enable) {
       const answered = await formPost(
         paths.auth.totpEnable,
@@ -1109,10 +1109,10 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     // state in which the page draws its backup-code control at all.
     await enrollTwoFactor(owner.owner.userId);
     const regenerate = formsPostingTo(
-      await page(paths.account, session.cookie),
+      await page(paths.settings, session.cookie),
       paths.auth.backupCodesGenerate,
     );
-    expect(regenerate.length, "/account rendered no Regenerate backup codes form").toBeGreaterThan(0);
+    expect(regenerate.length, "/settings rendered no Regenerate backup codes form").toBeGreaterThan(0);
     for (const form of regenerate) {
       const answered = await formPost(
         paths.auth.backupCodesGenerate,
@@ -1187,7 +1187,7 @@ describe("§15 · the two auth events the ledger records", () => {
     const answered = await formPost(actionFor(await anonymousPage(paths.login), "username"), {
       username: owner.owner.username,
       password: SEEDED_OWNER_PASSWORD,
-      callbackURL: paths.services,
+      callbackURL: paths.apps,
     });
     expect(answered.status, await answered.text()).toBe(303);
     const cookie = sessionCookieOf(answered);
@@ -1263,7 +1263,7 @@ describe("§19.5 · the consent screen", () => {
     expect(decoded).not.toContain("/evil");
   });
 
-  it("§19.5 · the consent page renders the client's name, the requested scopes, the namespace, and a service-account picker listing every account in the namespace", async () => {
+  it("§19.5 · the consent page renders the client's name, the requested scopes, the namespace, and an agent picker listing every agent in the namespace", async () => {
     const { clientId } = await registerOAuthClient({ client_name: "Acme Connector" });
     const { html } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
@@ -1301,17 +1301,17 @@ describe("§19.5 · the consent screen", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("§19.5 · a namespace with zero service accounts renders the picker's empty state naming /services and disables submit — consent is impossible until an account exists · the same page with one account submits (the twin)", async () => {
+  it("§19.5 · a namespace with zero agents renders the picker's empty state naming /apps and disables submit — consent is impossible until an agent exists · the same page with one agent submits (the twin)", async () => {
     const empty = await seedNamespace(env.DB, {});
     const emptySession = await seedOwnerSession(empty.owner);
     const emptyClient = await registerOAuthClient();
     const emptyHtml = (
       await reachConsent(emptyClient.clientId, emptySession.cookie, { resource: oauthResourceFor(empty.owner.username) })
     ).html;
-    expect(emptyHtml).toContain(paths.services);
+    expect(emptyHtml).toContain(paths.apps);
     expect(submitButtonHtml(emptyHtml, "accept")).toContain("disabled");
 
-    // The twin: the fixture namespace has an account, so the same button is submittable.
+    // The twin: the fixture namespace has an agent, so the same button is submittable.
     const fullClient = await registerOAuthClient();
     const fullHtml = (
       await reachConsent(fullClient.clientId, world.session.cookie, { resource: oauthResourceFor(world.ns.owner.username) })
@@ -1336,7 +1336,7 @@ describe("§19.5 · the consent screen", () => {
     });
     const refused = await post(
       paths.oauthConsent,
-      { oauth_query: oauthQuery, decision: "accept", service_account: "agent" },
+      { oauth_query: oauthQuery, decision: "accept", agent: "agent" },
       {},
     );
     expect(refused.status).toBe(403);
@@ -1345,7 +1345,7 @@ describe("§19.5 · the consent screen", () => {
     const csrf = csrfOf(html);
     const accepted = await post(
       paths.oauthConsent,
-      { oauth_query: oauthQuery, decision: "accept", service_account: "agent" },
+      { oauth_query: oauthQuery, decision: "accept", agent: "agent" },
       { csrf },
     );
     expect(accepted.status, await accepted.text()).toBe(303);
@@ -1362,7 +1362,7 @@ describe("§19.5 · the consent screen", () => {
     edited.set("client_id", `${clientId}-tampered`);
     const refused = await post(
       paths.oauthConsent,
-      { oauth_query: edited.toString(), decision: "accept", service_account: "agent" },
+      { oauth_query: edited.toString(), decision: "accept", agent: "agent" },
       { csrf },
     );
     expect(refused.status).toBeGreaterThanOrEqual(400);
@@ -1370,7 +1370,7 @@ describe("§19.5 · the consent screen", () => {
     expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
   });
 
-  it("§19.5 · accepting writes one oauth_binding row bound to the chosen account and an oauth.consented audit row", async () => {
+  it("§19.5 · accepting writes one oauth_binding row bound to the chosen agent and an oauth.consented audit row", async () => {
     const { clientId } = await registerOAuthClient();
     const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
@@ -1379,19 +1379,19 @@ describe("§19.5 · the consent screen", () => {
     const before = await query(env.DB, world.ns.owner.userId, { event: "oauth.consented" });
     const accepted = await post(
       paths.oauthConsent,
-      { oauth_query: oauthQuery, decision: "accept", service_account: "agent" },
+      { oauth_query: oauthQuery, decision: "accept", agent: "agent" },
       { csrf },
     );
     expect(accepted.status, await accepted.text()).toBe(303);
     const binding = await bindingFor(world.ns.owner.userId, clientId);
     expect(binding).not.toBeNull();
-    expect(binding?.serviceAccountId).toBe(world.ns.accounts.agent.id);
+    expect(binding?.agentId).toBe(world.ns.agents.agent.id);
     const after = await query(env.DB, world.ns.owner.userId, { event: "oauth.consented" });
     expect(after.total).toBe(before.total + 1);
   });
 
-  it("§19.5 · consenting again with a different account UPDATEs the same row and writes oauth.rebound — never a second row", async () => {
-    const ns = await seedNamespace(env.DB, { accounts: [{ slug: "one" }, { slug: "two" }] });
+  it("§19.5 · consenting again with a different agent UPDATEs the same row and writes oauth.rebound — never a second row", async () => {
+    const ns = await seedNamespace(env.DB, { agents: [{ slug: "one" }, { slug: "two" }] });
     const session = await seedOwnerSession(ns.owner);
     const { clientId } = await registerOAuthClient();
     const { html, oauthQuery } = await reachConsent(clientId, session.cookie, {
@@ -1400,23 +1400,23 @@ describe("§19.5 · the consent screen", () => {
     const csrf = csrfOf(html);
     const first = await post(
       paths.oauthConsent,
-      { oauth_query: oauthQuery, decision: "accept", service_account: "one" },
+      { oauth_query: oauthQuery, decision: "accept", agent: "one" },
       { csrf, cookie: session.cookie },
     );
     expect(first.status, await first.text()).toBe(303);
     const afterFirst = await bindingFor(ns.owner.userId, clientId);
-    expect(afterFirst?.serviceAccountId).toBe(ns.accounts.one.id);
+    expect(afterFirst?.agentId).toBe(ns.agents.one.id);
 
-    // The SAME signed query, posted again with a different chosen account — the provider's
+    // The SAME signed query, posted again with a different chosen agent — the provider's
     // own /oauth2/consent accepts a re-post of it (it only re-verifies the signature).
     const second = await post(
       paths.oauthConsent,
-      { oauth_query: oauthQuery, decision: "accept", service_account: "two" },
+      { oauth_query: oauthQuery, decision: "accept", agent: "two" },
       { csrf, cookie: session.cookie },
     );
     expect(second.status, await second.text()).toBe(303);
     const afterSecond = await bindingFor(ns.owner.userId, clientId);
-    expect(afterSecond?.serviceAccountId).toBe(ns.accounts.two.id);
+    expect(afterSecond?.agentId).toBe(ns.agents.two.id);
     expect(afterSecond?.id).toBe(afterFirst?.id);
     expect(await countBindings(ns.owner.userId, clientId)).toBe(1);
     const rebound = await query(env.DB, ns.owner.userId, { event: "oauth.rebound" });
@@ -1435,8 +1435,8 @@ describe("§19.5 · the consent screen", () => {
     expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
   });
 
-  it("§19.5 · a consent POST naming a service account in another namespace is refused", async () => {
-    await seedNamespace(env.DB, { accounts: [{ slug: "outsider" }] });
+  it("§19.5 · a consent POST naming an agent in another namespace is refused", async () => {
+    await seedNamespace(env.DB, { agents: [{ slug: "outsider" }] });
     const { clientId } = await registerOAuthClient();
     const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
@@ -1444,7 +1444,7 @@ describe("§19.5 · the consent screen", () => {
     const csrf = csrfOf(html);
     const refused = await post(
       paths.oauthConsent,
-      { oauth_query: oauthQuery, decision: "accept", service_account: "outsider" },
+      { oauth_query: oauthQuery, decision: "accept", agent: "outsider" },
       { csrf },
     );
     expect(refused.status).toBeGreaterThanOrEqual(400);
@@ -1452,7 +1452,7 @@ describe("§19.5 · the consent screen", () => {
     expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
   });
 
-  it("§13/§19 · /oauth/connections lists each binding's client, bound account, created and last-used · Revoke without a CSRF token is refused (the twin)", async () => {
+  it("§13/§19 · /oauth/connections lists each binding's client, bound agent, created and last-used · Revoke without a CSRF token is refused (the twin)", async () => {
     const { clientId } = await registerOAuthClient({ client_name: "Listed Client" });
     const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
@@ -1460,7 +1460,7 @@ describe("§19.5 · the consent screen", () => {
     const csrf = csrfOf(html);
     const accepted = await post(
       paths.oauthConsent,
-      { oauth_query: oauthQuery, decision: "accept", service_account: "agent" },
+      { oauth_query: oauthQuery, decision: "accept", agent: "agent" },
       { csrf },
     );
     expect(accepted.status, await accepted.text()).toBe(303);
@@ -1490,7 +1490,7 @@ describe("§19.5 · the consent screen", () => {
     const csrf = csrfOf(html);
     await post(
       paths.oauthConsent,
-      { oauth_query: oauthQuery, decision: "accept", service_account: "agent" },
+      { oauth_query: oauthQuery, decision: "accept", agent: "agent" },
       { csrf },
     );
     const binding = await bindingFor(world.ns.owner.userId, clientId);
@@ -1611,14 +1611,14 @@ async function reachConsent(
 async function bindingFor(
   ownerId: string,
   clientId: string,
-): Promise<{ id: string; serviceAccountId: string; revokedAt: number | null } | null> {
+): Promise<{ id: string; agentId: string; revokedAt: number | null } | null> {
   const row = await (env.DB as D1Like)
     .prepare(
-      `SELECT "id", "service_account_id", "revoked_at" FROM oauth_binding WHERE "owner_id" = ? AND "client_id" = ?`,
+      `SELECT "id", "agent_id", "revoked_at" FROM oauth_binding WHERE "owner_id" = ? AND "client_id" = ?`,
     )
     .bind(ownerId, clientId)
-    .first<{ id: string; service_account_id: string; revoked_at: number | null }>();
-  return row === null ? null : { id: row.id, serviceAccountId: row.service_account_id, revokedAt: row.revoked_at ?? null };
+    .first<{ id: string; agent_id: string; revoked_at: number | null }>();
+  return row === null ? null : { id: row.id, agentId: row.agent_id, revokedAt: row.revoked_at ?? null };
 }
 
 /** How many `oauth_binding` rows one (owner, client) pair has — "never a second row". */
@@ -1667,14 +1667,14 @@ const BETTER_AUTH_ACTIONS: ReadonlySet<string> = new Set(
 );
 
 /**
- * Every credential mutation /account fronts, DERIVED from `paths.auth` rather than listed:
- * a translation target under the /account prefix is one of §4's credential-management
+ * Every credential mutation /settings fronts, DERIVED from `paths.auth` rather than listed:
+ * a translation target under the /settings prefix is one of §4's credential-management
  * endpoints, and a sixth added there is walked by case 26 without this or the case being
  * edited. The /login targets are not here and must not be — they have no session to gate
  * with, which is the whole reason they stand outside `mutation`.
  */
-const ACCOUNT_CREDENTIAL_TARGETS: readonly string[] = Object.values<string>(paths.auth).filter(
-  (path) => path.startsWith(`${paths.account}/`),
+const SETTINGS_CREDENTIAL_TARGETS: readonly string[] = Object.values<string>(paths.auth).filter(
+  (path) => path.startsWith(`${paths.settings}/`),
 );
 
 /**
@@ -1701,12 +1701,12 @@ async function sessionPages(): Promise<Record<string, string>> {
   const { userCode } = await requestDeviceCodes();
   const rendered: Record<string, string> = {};
   for (const path of [
-    paths.services,
-    paths.serviceNew,
+    paths.apps,
+    paths.appNew,
     paths.approvals,
     paths.approval(world.approvalId),
     paths.audit,
-    paths.account,
+    paths.settings,
     `${paths.device}?user_code=${encodeURIComponent(userCode)}`,
   ]) {
     rendered[path] = await page(path);
@@ -1822,24 +1822,24 @@ async function stateRows(state: string): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** A service's upstream connection state, read the way /services reads it. */
+/** An app's upstream connection state, read the way /apps reads it. */
 async function connectionOf(slug: string): Promise<string> {
-  const listed = (await ops.service_list.handler(world.ns.owner.userId, {})) as {
-    services: { slug: string; connection?: string }[];
+  const listed = (await ops.app_list.handler(world.ns.owner.userId, {})) as {
+    apps: { slug: string; connection?: string }[];
   };
-  return listed.services.find((row) => row.slug === slug)?.connection ?? "not_connected";
+  return listed.apps.find((row) => row.slug === slug)?.connection ?? "not_connected";
 }
 
 /**
- * Everything a page mutation could have changed, as one comparable value: the services
+ * Everything a page mutation could have changed, as one comparable value: the apps
  * and their flags, the approvals and their statuses. Case 19 compares it across a POST
  * whose op did nothing — if the page layer wrote to D1 itself, this moves.
  */
 async function namespaceShape(): Promise<string> {
-  const services = await (env.DB as D1Like)
+  const apps = await (env.DB as D1Like)
     .prepare(
       `SELECT id, slug, archived_at, upstream_auth_json IS NOT NULL AS sealed
-         FROM service WHERE owner_id = ? ORDER BY slug`,
+         FROM app WHERE owner_id = ? ORDER BY slug`,
     )
     .bind(world.ns.owner.userId)
     .all<Record<string, unknown>>();
@@ -1847,5 +1847,5 @@ async function namespaceShape(): Promise<string> {
     .prepare(`SELECT id, status FROM approval WHERE owner_id = ? ORDER BY id`)
     .bind(world.ns.owner.userId)
     .all<Record<string, unknown>>();
-  return JSON.stringify({ services: services.results, approvals: approvals.results });
+  return JSON.stringify({ apps: apps.results, approvals: approvals.results });
 }

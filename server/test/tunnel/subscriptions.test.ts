@@ -30,11 +30,11 @@
  * beyond the routing every other row already observes from the wire.
  *
  * Project: `tunnel` — workerd, serial (`--max-workers=1 --no-isolate`): live sockets and a
- * DO. Every case mints its own namespace and service, so nothing here can be answered by
+ * DO. Every case mints its own namespace and app, so nothing here can be answered by
  * another case's socket.
  */
 
-// deps: harness/seed · harness/fake-service (connectFakeService, openSubscriber, tick, waitFor) · harness/tunnel-do (backendCtx, connectionStub) · cloudflare:test (env, runInDurableObject) · src/tunnel (tunnelBackend, subscribe, unsubscribe) · src/capabilities (RESOURCES_UPDATED, uriByteLength) · src/limits (LISTEN_SUBSCRIPTIONS_MAX, SUBSCRIBE_URI_MAX_BYTES) · src/registry (Registry)
+// deps: harness/seed · harness/fake-app (connectFakeApp, openSubscriber, tick, waitFor) · harness/tunnel-do (backendCtx, connectionStub) · cloudflare:test (env, runInDurableObject) · src/tunnel (tunnelBackend, subscribe, unsubscribe) · src/capabilities (RESOURCES_UPDATED, uriByteLength) · src/limits (LISTEN_SUBSCRIPTIONS_MAX, SUBSCRIBE_URI_MAX_BYTES) · src/registry (Registry)
 
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
@@ -42,16 +42,16 @@ import { RESOURCES_UPDATED, uriByteLength } from "../../src/capabilities";
 import type { Tool } from "../../src/gateway";
 import { LISTEN_SUBSCRIPTIONS_MAX, SUBSCRIBE_URI_MAX_BYTES } from "../../src/limits";
 import { Registry } from "../../src/registry";
-import type { Service } from "../../src/registry";
+import type { App } from "../../src/registry";
 import { subscribe, tunnelBackend, unsubscribe } from "../../src/tunnel";
-import type { ServiceConnection, SubscribeOutcome } from "../../src/tunnel";
-import { connectFakeService, openSubscriber, tick, waitFor } from "../harness/fake-service";
+import type { AppConnection, SubscribeOutcome } from "../../src/tunnel";
+import { connectFakeApp, openSubscriber, tick, waitFor } from "../harness/fake-app";
 import type {
   CatalogEntry,
-  FakeService,
-  FakeServiceOptions,
+  FakeApp,
+  FakeAppOptions,
   FakeSubscriber,
-} from "../harness/fake-service";
+} from "../harness/fake-app";
 import { seedNamespace, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 import { backendCtx, connectionStub } from "../harness/tunnel-do";
@@ -62,17 +62,17 @@ type Fixture = {
   origin: string;
   ownerId: string;
   slug: string;
-  serviceId: string;
+  appId: string;
   token: string;
 };
 
 const seeded: SeededNamespace[] = [];
-const opened: FakeService[] = [];
+const opened: FakeApp[] = [];
 const streams: FakeSubscriber[] = [];
 
 afterEach(async () => {
   for (const stream of streams.splice(0)) await stream.close();
-  for (const service of opened.splice(0)) await service.close();
+  for (const app of opened.splice(0)) await app.close();
   for (const namespace of seeded.splice(0)) await namespace.teardown();
 });
 
@@ -80,14 +80,14 @@ async function seedFixture(): Promise<Fixture> {
   const slug = uniqueSlug("bot");
   const namespace = await seedNamespace(env.DB, {
     username: uniqueSlug("subs"),
-    services: [{ slug, kind: "tunnel", tokens: [{ as: "token" }] }],
+    apps: [{ slug, kind: "tunnel", tokens: [{ as: "token" }] }],
   });
   seeded.push(namespace);
   return {
     origin: (env as unknown as { PUBLIC_ORIGIN: string }).PUBLIC_ORIGIN,
     ownerId: namespace.owner.userId,
     slug,
-    serviceId: namespace.services[slug].id,
+    appId: namespace.apps[slug].id,
     token: namespace.tokens.token.token,
   };
 }
@@ -96,43 +96,43 @@ async function seedFixture(): Promise<Fixture> {
  *  case here starts from, since subscribe is a resources-family method. */
 async function warmed(
   fixture: Fixture,
-  options: Partial<FakeServiceOptions> = {},
-): Promise<FakeService> {
-  const service = await connectFakeService({
+  options: Partial<FakeAppOptions> = {},
+): Promise<FakeApp> {
+  const app = await connectFakeApp({
     origin: fixture.origin,
     token: fixture.token,
     tools: [],
     resources: [RESOURCE],
     ...options,
   });
-  opened.push(service);
-  expect(await service.registered).toEqual({ ok: true });
+  opened.push(app);
+  expect(await app.registered).toEqual({ ok: true });
   // tools + resources + resource templates: three lists, the resources declaration warming
   // two keys (§20.5).
-  expect(await waitFor(() => listCount(service) >= 3), "the registration never warmed").toBe(true);
+  expect(await waitFor(() => listCount(app) >= 3), "the registration never warmed").toBe(true);
   await settle();
-  return service;
+  return app;
 }
 
 /** Every hub-originated list this socket has received — the four §20.5 methods share the
  *  `/list` tail, and nothing else the hub sends does. */
-function listCount(service: FakeService): number {
-  return service.frames.filter(
+function listCount(app: FakeApp): number {
+  return app.frames.filter(
     (frame) => typeof frame.method === "string" && frame.method.endsWith("/list"),
   ).length;
 }
 
-/** Every `resources/subscribe` / `resources/unsubscribe` frame the service received — what
- *  "still forwarded" and "no frame at the service" are both read off. */
-function forwarded(service: FakeService, method: string): Record<string, unknown>[] {
-  return service.frames.filter((frame) => frame.method === method);
+/** Every `resources/subscribe` / `resources/unsubscribe` frame the app received — what
+ *  "still forwarded" and "no frame at the app" are both read off. */
+function forwarded(app: FakeApp, method: string): Record<string, unknown>[] {
+  return app.frames.filter((frame) => frame.method === method);
 }
 
 async function subscriber(
   fixture: Fixture,
   options: { principal?: string; sessionId?: string } = {},
 ): Promise<FakeSubscriber> {
-  const stream = await openSubscriber(connectionStub(fixture.serviceId), {
+  const stream = await openSubscriber(connectionStub(fixture.appId), {
     principal: options.principal ?? PRINCIPAL,
     sessionId: options.sessionId,
   });
@@ -148,14 +148,14 @@ async function subscriber(
  *
  * The Worker's own spelling of this rule (the method table, the resource-pattern filter
  * that runs before any of it, the audit row) belongs to the worker project's suites. What
- * is asserted here is only what the DO decided and what actually reached the service.
+ * is asserted here is only what the DO decided and what actually reached the app.
  */
 async function subscribeAtTheDoor(
   fixture: Fixture,
   options: { sessionId: string; uri: string; principal?: string; meta?: Record<string, unknown> },
 ): Promise<{ outcome: SubscribeOutcome; refusal: number | null }> {
   const principal = options.principal ?? PRINCIPAL;
-  const outcome = await subscribe(fixture.serviceId, options.sessionId, principal, options.uri);
+  const outcome = await subscribe(fixture.appId, options.sessionId, principal, options.uri);
   if (outcome === "refused") return { outcome, refusal: REFUSAL_CODE };
   await forward(fixture, "resources/subscribe", options.uri, options.meta);
   return { outcome, refusal: null };
@@ -167,7 +167,7 @@ async function unsubscribeAtTheDoor(
   fixture: Fixture,
   options: { sessionId: string; uri: string; principal?: string },
 ): Promise<void> {
-  await unsubscribe(fixture.serviceId, options.sessionId, options.principal ?? PRINCIPAL, options.uri);
+  await unsubscribe(fixture.appId, options.sessionId, options.principal ?? PRINCIPAL, options.uri);
   await forward(fixture, "resources/unsubscribe", options.uri);
 }
 
@@ -180,7 +180,7 @@ async function forward(
   meta?: Record<string, unknown>,
 ): Promise<void> {
   await tunnelBackend.call(
-    await serviceRow(fixture),
+    await appRow(fixture),
     {
       jsonrpc: "2.0",
       id: CONSUMER_ID,
@@ -201,8 +201,8 @@ async function setsFor(
   sessionId: string,
 ): Promise<{ principal: string; uris: string[] }[]> {
   return runInDurableObject(
-    connectionStub(fixture.serviceId),
-    (_instance: ServiceConnection, state) =>
+    connectionStub(fixture.appId),
+    (_instance: AppConnection, state) =>
       state.getWebSockets(`sub:${sessionId}`).map((ws) => {
         const raw = ws.deserializeAttachment();
         if (raw === null || typeof raw !== "object") return { principal: "", uris: [] };
@@ -228,13 +228,13 @@ async function settle(): Promise<void> {
 /** Fire the coalescing alarm and let what it wrote arrive — every claim that a frame rang
  *  NOBODY ends here, since a suppressed ring and an absent one are otherwise the same. */
 async function drain(fixture: Fixture): Promise<void> {
-  await runDurableObjectAlarm(connectionStub(fixture.serviceId));
+  await runDurableObjectAlarm(connectionStub(fixture.appId));
   await settle();
 }
 
-async function serviceRow(fixture: Fixture): Promise<Service> {
-  const row = await new Registry(env.DB).getService(fixture.ownerId, fixture.slug);
-  if (row === null) throw new Error("the fixture's service vanished");
+async function appRow(fixture: Fixture): Promise<App> {
+  const row = await new Registry(env.DB).getApp(fixture.ownerId, fixture.slug);
+  if (row === null) throw new Error("the fixture's app vanished");
   return row;
 }
 
@@ -251,8 +251,8 @@ function uriOfBytes(bytes: number, seed = "a"): string {
  *  point of the row is that the number reaches a consumer at all (it is the sixth code). */
 const REFUSAL_CODE = -32602;
 
-const PRINCIPAL = "acct:reader";
-const OTHER_PRINCIPAL = "acct:intruder";
+const PRINCIPAL = "agt:reader";
+const OTHER_PRINCIPAL = "agt:intruder";
 
 const URI = "file:///notes.md";
 const OTHER_URI = "file:///other.md";
@@ -269,7 +269,7 @@ const CONSUMER_ID = 4242;
 describe("§21.4 the id selects, the principal authorizes", () => {
   it("§21.4 · resources/subscribe adds the URI to the socket whose tag matches the session AND whose stored principal equals the subscriber's · the same session id presented by a different principal mutates nothing, and that socket never receives the updated (the twin — the id selects, the principal authorizes)", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const stream = await subscriber(fixture);
 
     expect(await subscribeAtTheDoor(fixture, { sessionId: stream.sessionId, uri: URI })).toEqual({
@@ -289,31 +289,31 @@ describe("§21.4 the id selects, the principal authorizes", () => {
     expect(intruder.outcome).toBe("no_stream");
     expect(await setFor(fixture, stream.sessionId)).toEqual([URI]);
 
-    await service.notifyResourcesUpdated(OTHER_URI);
+    await app.notifyResourcesUpdated(OTHER_URI);
     await settle();
     expect(stream.count(RESOURCES_UPDATED)).toBe(0);
     // …while the URI this principal really did subscribe still reaches it.
-    await service.notifyResourcesUpdated(URI);
+    await app.notifyResourcesUpdated(URI);
     expect(await waitFor(() => stream.count(RESOURCES_UPDATED) > 0)).toBe(true);
   });
 
   it("§21.4 · a subscribe whose session-and-principal pair matches no live subscriber socket is still forwarded and stores nothing — a legal MCP request whose notifications are simply undeliverable", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const orphan = crypto.randomUUID();
 
     const answer = await subscribeAtTheDoor(fixture, { sessionId: orphan, uri: URI });
 
     expect(answer).toEqual({ outcome: "no_stream", refusal: null });
     expect(await setsFor(fixture, orphan)).toEqual([]);
-    // Forwarded all the same: the service is entitled to know, and the notifications it
+    // Forwarded all the same: the app is entitled to know, and the notifications it
     // sends back are simply undeliverable.
-    expect(forwarded(service, "resources/subscribe")).toHaveLength(1);
+    expect(forwarded(app, "resources/subscribe")).toHaveLength(1);
   });
 
   it("§21.4/§7 · the forwarded subscribe carries hub/principal, hub/roles and the mirrored clientCapabilities under the same strip-then-set — a consumer-forged hub/roles is stripped while progressToken survives", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const stream = await subscriber(fixture);
 
     await subscribeAtTheDoor(fixture, {
@@ -327,7 +327,7 @@ describe("§21.4 the id selects, the principal authorizes", () => {
       },
     });
 
-    expect(forwarded(service, "resources/subscribe")[0]).toMatchObject({
+    expect(forwarded(app, "resources/subscribe")[0]).toMatchObject({
       params: {
         uri: URI,
         _meta: {
@@ -348,9 +348,9 @@ describe("§21.4 the id selects, the principal authorizes", () => {
 // ── §21.4 the caps ────────────────────────────────────────────────────────────────────
 
 describe("§21.4 the subscription set is bounded", () => {
-  it("§21.4 · the LISTEN_SUBSCRIPTIONS_MAX+1-th subscribe is refused -32602 with the attachment unchanged and no frame at the service · the at-cap subscribe succeeds (the twin)", async () => {
+  it("§21.4 · the LISTEN_SUBSCRIPTIONS_MAX+1-th subscribe is refused -32602 with the attachment unchanged and no frame at the app · the at-cap subscribe succeeds (the twin)", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const stream = await subscriber(fixture);
 
     const atCap: string[] = [];
@@ -364,7 +364,7 @@ describe("§21.4 the subscription set is bounded", () => {
       });
     }
     expect(await setFor(fixture, stream.sessionId)).toEqual(atCap);
-    expect(forwarded(service, "resources/subscribe")).toHaveLength(LISTEN_SUBSCRIPTIONS_MAX);
+    expect(forwarded(app, "resources/subscribe")).toHaveLength(LISTEN_SUBSCRIPTIONS_MAX);
 
     const overCap = await subscribeAtTheDoor(fixture, {
       sessionId: stream.sessionId,
@@ -373,13 +373,13 @@ describe("§21.4 the subscription set is bounded", () => {
 
     expect(overCap).toEqual({ outcome: "refused", refusal: REFUSAL_CODE });
     expect(await setFor(fixture, stream.sessionId)).toEqual(atCap);
-    // Refused BEFORE anything is stored or forwarded: the service never heard of it.
-    expect(forwarded(service, "resources/subscribe")).toHaveLength(LISTEN_SUBSCRIPTIONS_MAX);
+    // Refused BEFORE anything is stored or forwarded: the app never heard of it.
+    expect(forwarded(app, "resources/subscribe")).toHaveLength(LISTEN_SUBSCRIPTIONS_MAX);
   });
 
   it("§21.4 · an over-SUBSCRIBE_URI_MAX_BYTES URI is refused -32602 by the same rule", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const stream = await subscriber(fixture);
 
     const overLong = uriOfBytes(SUBSCRIBE_URI_MAX_BYTES + 1);
@@ -387,7 +387,7 @@ describe("§21.4 the subscription set is bounded", () => {
 
     expect(refused).toEqual({ outcome: "refused", refusal: REFUSAL_CODE });
     expect(await setFor(fixture, stream.sessionId)).toEqual([]);
-    expect(forwarded(service, "resources/subscribe")).toHaveLength(0);
+    expect(forwarded(app, "resources/subscribe")).toHaveLength(0);
 
     // The allow-twin, one byte down: the boundary is the cap itself, not an approximation.
     const atCap = uriOfBytes(SUBSCRIBE_URI_MAX_BYTES);
@@ -420,7 +420,7 @@ describe("§21.4 the subscription set is bounded", () => {
 
   it("§21.4 · the subscription set is a SET — re-subscribing an existing URI neither counts toward the cap nor doubles the updated frames", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const stream = await subscriber(fixture);
 
     await subscribeAtTheDoor(fixture, { sessionId: stream.sessionId, uri: URI });
@@ -437,7 +437,7 @@ describe("§21.4 the subscription set is bounded", () => {
     }
     expect(await setFor(fixture, stream.sessionId)).toHaveLength(LISTEN_SUBSCRIPTIONS_MAX);
 
-    await service.notifyResourcesUpdated(URI);
+    await app.notifyResourcesUpdated(URI);
     expect(await waitFor(() => stream.count(RESOURCES_UPDATED) > 0)).toBe(true);
     await settle();
     expect(stream.count(RESOURCES_UPDATED)).toBe(1);
@@ -445,7 +445,7 @@ describe("§21.4 the subscription set is bounded", () => {
 
   it("§21.4 · resources/unsubscribe removes the URI and forwards · an updated for it afterwards rings nobody (the twin) · unsubscribing a URI never in the set is a forwarded no-op that disturbs nothing", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const stream = await subscriber(fixture);
 
     await subscribeAtTheDoor(fixture, { sessionId: stream.sessionId, uri: URI });
@@ -453,17 +453,17 @@ describe("§21.4 the subscription set is bounded", () => {
 
     await unsubscribeAtTheDoor(fixture, { sessionId: stream.sessionId, uri: URI });
     expect(await setFor(fixture, stream.sessionId)).toEqual([OTHER_URI]);
-    expect(forwarded(service, "resources/unsubscribe")).toHaveLength(1);
+    expect(forwarded(app, "resources/unsubscribe")).toHaveLength(1);
 
-    await service.notifyResourcesUpdated(URI);
+    await app.notifyResourcesUpdated(URI);
     await settle();
     expect(stream.count(RESOURCES_UPDATED)).toBe(0);
 
     // A URI that was never in the set: forwarded like any other, and it disturbs nothing.
     await unsubscribeAtTheDoor(fixture, { sessionId: stream.sessionId, uri: "file:///never.md" });
     expect(await setFor(fixture, stream.sessionId)).toEqual([OTHER_URI]);
-    expect(forwarded(service, "resources/unsubscribe")).toHaveLength(2);
-    await service.notifyResourcesUpdated(OTHER_URI);
+    expect(forwarded(app, "resources/unsubscribe")).toHaveLength(2);
+    await app.notifyResourcesUpdated(OTHER_URI);
     expect(await waitFor(() => stream.count(RESOURCES_UPDATED) > 0)).toBe(true);
   });
 });
@@ -473,21 +473,21 @@ describe("§21.4 the subscription set is bounded", () => {
 describe("§21.4 notifications/resources/updated is routed, never broadcast", () => {
   it("§21.4/§6 · notifications/resources/updated reaches ONLY the subscriber sockets whose set contains the frame's URI by exact string match — a sibling socket subscribed to a different URI gets nothing (the twin)", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const mine = await subscriber(fixture);
     const sibling = await subscriber(fixture);
 
     await subscribeAtTheDoor(fixture, { sessionId: mine.sessionId, uri: URI });
     await subscribeAtTheDoor(fixture, { sessionId: sibling.sessionId, uri: OTHER_URI });
 
-    await service.notifyResourcesUpdated(URI);
+    await app.notifyResourcesUpdated(URI);
     expect(await waitFor(() => mine.count(RESOURCES_UPDATED) > 0)).toBe(true);
     await settle();
     expect(mine.count(RESOURCES_UPDATED)).toBe(1);
     expect(sibling.count(RESOURCES_UPDATED)).toBe(0);
 
     // …and the other way round, so neither socket is merely the lucky first one.
-    await service.notifyResourcesUpdated(OTHER_URI);
+    await app.notifyResourcesUpdated(OTHER_URI);
     expect(await waitFor(() => sibling.count(RESOURCES_UPDATED) > 0)).toBe(true);
     await settle();
     expect(mine.count(RESOURCES_UPDATED)).toBe(1);
@@ -495,7 +495,7 @@ describe("§21.4 notifications/resources/updated is routed, never broadcast", ()
 
   it("§21.4 · a rogue updated for a URI nobody subscribed is inert, and exact match means exact — trailing slash, case, or an added query component match nothing, because the hub normalizes no URI here", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const stream = await subscriber(fixture);
 
     await subscribeAtTheDoor(fixture, { sessionId: stream.sessionId, uri: URI });
@@ -506,24 +506,24 @@ describe("§21.4 notifications/resources/updated is routed, never broadcast", ()
       URI.toUpperCase(),
       `${URI}?version=2`,
     ]) {
-      await service.notifyResourcesUpdated(rogue);
+      await app.notifyResourcesUpdated(rogue);
     }
     await settle();
     await drain(fixture);
     expect(stream.frames).toEqual([]);
 
     // The control: the exact string still routes, so the silence above is about matching.
-    await service.notifyResourcesUpdated(URI);
+    await app.notifyResourcesUpdated(URI);
     expect(await waitFor(() => stream.count(RESOURCES_UPDATED) > 0)).toBe(true);
   });
 
-  it("§21.4 · a matching updated is written to the socket exactly as the service sent it — uri intact", async () => {
+  it("§21.4 · a matching updated is written to the socket exactly as the app sent it — uri intact", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const stream = await subscriber(fixture);
 
     await subscribeAtTheDoor(fixture, { sessionId: stream.sessionId, uri: URI });
-    await service.notifyResourcesUpdated(URI);
+    await app.notifyResourcesUpdated(URI);
     expect(await waitFor(() => stream.frames.length > 0)).toBe(true);
 
     expect(stream.frames[0]).toEqual({
@@ -535,44 +535,44 @@ describe("§21.4 notifications/resources/updated is routed, never broadcast", ()
 
   it("§21.4/§20.5 · updated is routing-only — it invalidates no catalog and triggers no re-warm, unlike its three list_changed siblings", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const stream = await subscriber(fixture);
     await subscribeAtTheDoor(fixture, { sessionId: stream.sessionId, uri: URI });
-    const listed = listCount(service);
+    const listed = listCount(app);
 
-    // The service changes what it WOULD serve, then sends only the per-URI frame.
-    service.setCatalog("resources", []);
-    await service.notifyResourcesUpdated(URI);
+    // The app changes what it WOULD serve, then sends only the per-URI frame.
+    app.setCatalog("resources", []);
+    await app.notifyResourcesUpdated(URI);
     expect(await waitFor(() => stream.count(RESOURCES_UPDATED) > 0)).toBe(true);
     await settle();
     await drain(fixture);
 
     // No re-list was drawn…
-    expect(listCount(service)).toBe(listed);
+    expect(listCount(app)).toBe(listed);
     // …the cache still serves what the last warm stored…
-    expect(await connectionStub(fixture.serviceId).listCatalog("resources")).toEqual([RESOURCE]);
+    expect(await connectionStub(fixture.appId).listCatalog("resources")).toEqual([RESOURCE]);
     // …and no bell rang, because nothing the hub stores changed.
     expect(stream.count("notifications/resources/list_changed")).toBe(0);
 
     // The sibling frame, for contrast: THAT one re-lists and rings.
-    await service.notifyResourcesListChanged([]);
-    expect(await waitFor(() => listCount(service) > listed)).toBe(true);
+    await app.notifyResourcesListChanged([]);
+    expect(await waitFor(() => listCount(app) > listed)).toBe(true);
     expect(
       await waitFor(() => stream.count("notifications/resources/list_changed") > 0),
     ).toBe(true);
   });
 
-  it("§21.4/§6 · every other service-originated frame is still dropped, and a frame sent BY a subscriber socket is never read as service traffic — it can neither warm a catalog nor ring a bell", async () => {
+  it("§21.4/§6 · every other app-originated frame is still dropped, and a frame sent BY a subscriber socket is never read as app traffic — it can neither warm a catalog nor ring a bell", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture);
+    const app = await warmed(fixture);
     const stream = await subscriber(fixture);
     await subscribeAtTheDoor(fixture, { sessionId: stream.sessionId, uri: URI });
-    const listed = listCount(service);
+    const listed = listCount(app);
 
-    // From the SERVICE: a notification outside the read-set, and a request the hub never
+    // From the APP: a notification outside the read-set, and a request the hub never
     // answers on this socket.
-    await service.sendRaw({ jsonrpc: "2.0", method: "notifications/progress", params: { n: 1 } });
-    await service.sendRaw({ jsonrpc: "2.0", id: "svc-1", method: "sampling/createMessage" });
+    await app.sendRaw({ jsonrpc: "2.0", method: "notifications/progress", params: { n: 1 } });
+    await app.sendRaw({ jsonrpc: "2.0", id: "app-1", method: "sampling/createMessage" });
 
     // From the SUBSCRIBER: the two frames that would be loudest if the DO read them.
     await stream.sendRaw({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
@@ -584,31 +584,31 @@ describe("§21.4 notifications/resources/updated is routed, never broadcast", ()
     await settle();
     await drain(fixture);
 
-    expect(listCount(service)).toBe(listed);
+    expect(listCount(app)).toBe(listed);
     expect(stream.frames).toEqual([]);
     // Still healthy afterwards: the DO dropped those frames rather than the connection.
-    await service.notifyResourcesUpdated(URI);
+    await app.notifyResourcesUpdated(URI);
     expect(await waitFor(() => stream.count(RESOURCES_UPDATED) > 0)).toBe(true);
   });
 
-  it("§21.4/§6 · a subscriber socket's close does not drain the service socket's pending map — an in-flight tools/call survives a consumer's stream ending", async () => {
+  it("§21.4/§6 · a subscriber socket's close does not drain the app socket's pending map — an in-flight tools/call survives a consumer's stream ending", async () => {
     const fixture = await seedFixture();
-    const service = await warmed(fixture, { tools: [TOOL], behavior: { mode: "hang" } });
+    const app = await warmed(fixture, { tools: [TOOL], behavior: { mode: "hang" } });
     const stream = await subscriber(fixture);
 
     const call = tunnelBackend.call(
-      await serviceRow(fixture),
+      await appRow(fixture),
       { jsonrpc: "2.0", id: CONSUMER_ID, method: "tools/call", params: { name: TOOL.name } },
       backendCtx(),
     );
-    expect(await waitFor(() => service.callCount(TOOL.name) === 1)).toBe(true);
+    expect(await waitFor(() => app.callCount(TOOL.name) === 1)).toBe(true);
 
     // The consumer's stream ends mid-call — a close on a socket the pending map never
     // belonged to.
     await stream.close();
     await settle();
 
-    service.release(TOOL.name, { ok: true });
+    app.release(TOOL.name, { ok: true });
     await expect(call).resolves.toMatchObject({ result: { ok: true } });
   });
 });

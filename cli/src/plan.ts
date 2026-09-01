@@ -29,22 +29,22 @@ export type DesiredGrant = { role: string; mode: "allow" | "approval" };
  * (every key optional) and may sit beside a bare list in the same declaration. Kept as loose
  * as the wire itself at the TYPE level — an unknown family key or a stray `all` is a semantic
  * violation (`roleDeclarationProblems`), not a type error, matching the rest of this module:
- * parse throws on STRUCTURE, plan reports on MEANING. Both `DesiredService.roles` and
- * `CurrentService.roles` use this — a bare list normalizes to nothing here, because the
+ * parse throws on STRUCTURE, plan reports on MEANING. Both `DesiredApp.roles` and
+ * `CurrentApp.roles` use this — a bare list normalizes to nothing here, because the
  * canonical read shape a diff compares against is the SERVER's rendering (§20.3), and the
  * planner would disagree with its own wire if it normalized on the way in.
  */
 export type RoleDeclaration = Record<string, string[] | Record<string, string[]>>;
 
 /**
- * One service as the YAML declares it, fully normalized: every default already
+ * One app as the YAML declares it, fully normalized: every default already
  * applied, so two files that mean the same thing compare equal. Tunneled
- * services never carry `roles` — their roles arrive at connect time and are not
+ * apps never carry `roles` — their roles arrive at connect time and are not
  * desired state (§9); the proxy-only fields (`endpoint`, `auth`,
  * `forwardIdentity`, `roles`) are absent on tunnel kind. Upstream credentials
  * never appear here — the YAML declares only the `auth` mode.
  */
-export type DesiredService = {
+export type DesiredApp = {
   slug: string;
   kind: "tunnel" | "proxy";
   name: string;
@@ -72,11 +72,11 @@ export type DesiredService = {
 };
 
 /**
- * One service account as declared: grants keyed by service slug. Desired state
- * is total — a (account, service) pair absent from `grants` means "no grants",
+ * One agent as declared: grants keyed by app slug. Desired state
+ * is total — a (agent, app) pair absent from `grants` means "no grants",
  * and the planner will clear it (§9).
  */
-export type DesiredAccount = {
+export type DesiredAgent = {
   slug: string;
   name: string;
   description: string;
@@ -89,17 +89,17 @@ export type DesiredAccount = {
  * and never live in this file (§9).
  */
 export type DesiredConfig = {
-  services: DesiredService[];
-  serviceAccounts: DesiredAccount[];
+  apps: DesiredApp[];
+  agents: DesiredAgent[];
 };
 
 /**
- * The diff-relevant projection of one service_list row. Runtime facts (online/
+ * The diff-relevant projection of one app_list row. Runtime facts (online/
  * offline, OAuth connection state, last seen) are deliberately absent — they
  * are status, not desired state, and must never influence a plan. `builtin`
  * marks the virtual `pmcp` row, which the planner never plans against.
  */
-export type CurrentService = {
+export type CurrentApp = {
   slug: string;
   kind: "tunnel" | "proxy";
   name: string;
@@ -116,7 +116,7 @@ export type CurrentService = {
   forwardIdentity?: boolean;
   /**
    * proxy only: §20.2's owner-declared advertisement, as §8's 2026-08-27 amendment made
-   * `service_list`/`service_get` report it — ABSENT when the service never configured one,
+   * `app_list`/`app_get` report it — ABSENT when the app never configured one,
    * exactly like the file's own key, so the planner can tell "undeclared" from "declared as
    * the default" and `canonicalCapabilities` decides that they MEAN the same thing.
    */
@@ -124,11 +124,11 @@ export type CurrentService = {
 };
 
 /**
- * One account_list row with its grants inline — §8 pins that account_list
+ * One agent_list row with its grants inline — §8 pins that agent_list
  * returns them, so the full current-state read is exactly two calls and there
  * is no separate grant-read tool.
  */
-export type CurrentAccount = {
+export type CurrentAgent = {
   slug: string;
   name: string;
   description: string;
@@ -136,27 +136,27 @@ export type CurrentAccount = {
 };
 
 /**
- * Everything the planner is allowed to know about the server: one service_list
- * plus one account_list, nothing else (§8). Built by main.ts from those reads;
+ * Everything the planner is allowed to know about the server: one app_list
+ * plus one agent_list, nothing else (§8). Built by main.ts from those reads;
  * this module never performs them.
  */
 export type CurrentState = {
-  services: CurrentService[];
-  accounts: CurrentAccount[];
+  apps: CurrentApp[];
+  agents: CurrentAgent[];
 };
 
 /**
  * One executable unit of a plan: exactly one admin-tool call, ready to forward
  * verbatim — apply is a fold of adminCall over steps, with no interpretation
  * left to the executor. Archive transitions are their own steps
- * (service_archive / service_unarchive), mirroring §8's tool split.
- * `destructive` marks steps that irreversibly discard something — service and
- * account deletes (cascade grants, delete tokens) and a service_update carrying
+ * (app_archive / app_unarchive), mirroring §8's tool split.
+ * `destructive` marks steps that irreversibly discard something — app and
+ * agent deletes (cascade grants, delete tokens) and an app_update carrying
  * an `auth` mode flip (wipes stored upstream credentials, §8) — and is what
  * apply's confirmation flags. `summary` is the one human line diff prints.
  */
 export type PlanStep = {
-  /** unprefixed admin tool name: "service_create", "grant_set", … */
+  /** unprefixed admin tool name: "app_create", "grant_set", … */
   tool: string;
   /** the tool's tools/call params.arguments, exactly as sent */
   args: Record<string, unknown>;
@@ -191,27 +191,27 @@ export type Plan = {
 export function parseDesired(doc: unknown): DesiredConfig {
   // deps: none
   const root = asMap(doc, "(root)");
-  reject(root, ["services", "service_accounts"], "(root)");
-  const services = asMap(root.services, "services");
-  const accounts = asMap(root.service_accounts, "service_accounts");
+  reject(root, ["apps", "agents"], "(root)");
+  const apps = asMap(root.apps, "apps");
+  const agents = asMap(root.agents, "agents");
   return {
-    services: Object.keys(services).map((slug) => parseService(slug, services[slug])),
-    serviceAccounts: Object.keys(accounts).map((slug) => parseAccount(slug, accounts[slug])),
+    apps: Object.keys(apps).map((slug) => parseApp(slug, apps[slug])),
+    agents: Object.keys(agents).map((slug) => parseAgent(slug, agents[slug])),
   };
 }
 
-/** Every key the service grammar knows, split by the kind that may carry it (§9). */
-const COMMON_SERVICE_KEYS = ["kind", "name", "description", "archived", "redact", "redact_results", "log_bodies"];
+/** Every key the app grammar knows, split by the kind that may carry it (§9). */
+const COMMON_APP_KEYS = ["kind", "name", "description", "archived", "redact", "redact_results", "log_bodies"];
 const PROXY_ONLY_KEYS = ["endpoint", "auth", "forward_identity", "roles", "capabilities"];
 
-/** One `services:` entry, defaults applied. Structural problems throw with the path. */
-function parseService(slug: string, value: unknown): DesiredService {
-  const path = `services.${slug}`;
+/** One `apps:` entry, defaults applied. Structural problems throw with the path. */
+function parseApp(slug: string, value: unknown): DesiredApp {
+  const path = `apps.${slug}`;
   const fields = asMap(value, path);
   const kind = pick(fields.kind, ["tunnel", "proxy"], `${path}.kind`) ?? "tunnel";
-  // A proxy-only key on a tunneled service is a lie about the hub's role surface, not a
+  // A proxy-only key on a tunneled app is a lie about the hub's role surface, not a
   // harmless extra — so the misplacement throws exactly like an unknown key would.
-  reject(fields, kind === "proxy" ? [...COMMON_SERVICE_KEYS, ...PROXY_ONLY_KEYS] : COMMON_SERVICE_KEYS, path);
+  reject(fields, kind === "proxy" ? [...COMMON_APP_KEYS, ...PROXY_ONLY_KEYS] : COMMON_APP_KEYS, path);
   const common = {
     slug,
     kind,
@@ -224,9 +224,9 @@ function parseService(slug: string, value: unknown): DesiredService {
   };
   if (kind === "tunnel") return common;
   const endpoint = text(fields.endpoint, `${path}.endpoint`);
-  // A proxied service with no forwarding target claims a hub capability that does not
+  // A proxied app with no forwarding target claims a hub capability that does not
   // exist; the hub's own op requires it too.
-  if (endpoint === undefined) throw new TypeError(`${path}.endpoint is required for a proxied service`);
+  if (endpoint === undefined) throw new TypeError(`${path}.endpoint is required for a proxied app`);
   // §20.2: absent means tools only, decided by the hub — no default is invented here, or
   // every file written before this key existed would diff against the server.
   const capabilities =
@@ -242,7 +242,7 @@ function parseService(slug: string, value: unknown): DesiredService {
 }
 
 /**
- * The `roles:` field of a proxied service (§20.3): each role is a bare pattern list (tools,
+ * The `roles:` field of a proxied app (§20.3): each role is a bare pattern list (tools,
  * unchanged forever) or a per-family object — every key optional, and the two spellings may
  * sit side by side in one declaration. Parsed VERBATIM: nothing is normalized here, because
  * the canonical read shape a diff compares against is the server's rendering, and a planner
@@ -269,9 +269,9 @@ function roleDeclarationMap(value: unknown, path: string): RoleDeclaration {
   );
 }
 
-/** One `service_accounts:` entry, with every grant string split into role and mode. */
-function parseAccount(slug: string, value: unknown): DesiredAccount {
-  const path = `service_accounts.${slug}`;
+/** One `agents:` entry, with every grant string split into role and mode. */
+function parseAgent(slug: string, value: unknown): DesiredAgent {
+  const path = `agents.${slug}`;
   const fields = asMap(value, path);
   reject(fields, ["name", "description", "grants"], path);
   const grants = asMap(fields.grants, `${path}.grants`);
@@ -280,10 +280,10 @@ function parseAccount(slug: string, value: unknown): DesiredAccount {
     name: text(fields.name, `${path}.name`) ?? slug,
     description: text(fields.description, `${path}.description`) ?? "",
     grants: Object.fromEntries(
-      Object.keys(grants).map((service) => [
-        service,
-        strings(grants[service], `${path}.grants.${service}`).map((grant) =>
-          parseGrant(grant, `${path}.grants.${service}`),
+      Object.keys(grants).map((app) => [
+        app,
+        strings(grants[app], `${path}.grants.${app}`).map((grant) =>
+          parseGrant(grant, `${path}.grants.${app}`),
         ),
       ]),
     ),
@@ -353,18 +353,18 @@ function pathMap(value: unknown, path: string): Record<string, string[]> {
 
 /**
  * The diff: desired + current → Plan. Pure and total — semantic problems land
- * in the Plan, never as throws. Absence deletes (§9): services and accounts on
- * the server but missing from the file get delete steps, and a (account,
- * service) grant pair missing from the file plans a grant_set with an empty
- * role list. Warns: a grant naming a role a *tunneled* service hasn't declared
+ * in the Plan, never as throws. Absence deletes (§9): apps and agents on
+ * the server but missing from the file get delete steps, and a (agent,
+ * app) grant pair missing from the file plans a grant_set with an empty
+ * role list. Warns: a grant naming a role a *tunneled* app hasn't declared
  * yet (the file may legitimately be ahead of the first connection; the built-in
- * `all` is exempt). Hard errors: the same on a *proxied* service (its roles
+ * `all` is exempt). Hard errors: the same on a *proxied* app (its roles
  * live in this very file); a `redact` / `redact_results` key that does not compile as a
  * pattern, on either kind (a mask that matches no tool masks nothing, §7); the reserved
- * `pmcp` slug anywhere — as a service key
+ * `pmcp` slug anywhere — as an app key
  * or inside a grants block (`builtin` rows are likewise excluded from the
- * delete computation); the same role granted in both modes for one (account,
- * service); and a kind change on an existing slug (kind is immutable, §8 — the
+ * delete computation); the same role granted in both modes for one (agent,
+ * app); and a kind change on an existing slug (kind is immutable, §8 — the
  * planner never invents the delete-and-recreate the file didn't ask for).
  */
 export function planChanges(desired: DesiredConfig, current: CurrentState): Plan {
@@ -376,45 +376,45 @@ export function planChanges(desired: DesiredConfig, current: CurrentState): Plan
   const updates: PlanStep[] = [];
   const grants: PlanStep[] = [];
 
-  const onServer = new Map(current.services.filter((row) => !row.builtin).map((row) => [row.slug, row]));
-  const accountsOnServer = new Map(current.accounts.map((row) => [row.slug, row]));
+  const onServer = new Map(current.apps.filter((row) => !row.builtin).map((row) => [row.slug, row]));
+  const agentsOnServer = new Map(current.agents.map((row) => [row.slug, row]));
   /**
    * Every slug the file NAMES, valid or not — what the delete computation must not touch,
-   * and the difference between "the file deletes this service" and "the file names it and
+   * and the difference between "the file deletes this app" and "the file names it and
    * the planner refused it", which are opposite instructions to the operator reading a diff.
    */
   const named = new Set<string>();
   /** The subset the planner will actually emit steps for. */
-  const plannable = new Map<string, DesiredService>();
+  const plannable = new Map<string, DesiredApp>();
 
-  for (const service of desired.services) {
-    named.add(service.slug);
-    const problems = serviceProblems(service, onServer.get(service.slug));
+  for (const app of desired.apps) {
+    named.add(app.slug);
+    const problems = appProblems(app, onServer.get(app.slug));
     if (problems.length > 0) {
       errors.push(...problems);
       continue;
     }
-    plannable.set(service.slug, service);
+    plannable.set(app.slug, app);
   }
 
-  const wantedAccounts = new Map(desired.serviceAccounts.map((account) => [account.slug, account]));
+  const wantedAgents = new Map(desired.agents.map((agent) => [agent.slug, agent]));
 
   // ── phase 1: deletes, freeing slugs before anything claims them ─────────────────────
   for (const slug of sorted(onServer.keys())) {
     if (named.has(slug)) continue;
     deletes.push({
-      tool: "service_delete",
+      tool: "app_delete",
       args: { slug },
-      summary: `delete service ${slug} (grants cascade, tokens deleted)`,
+      summary: `delete app ${slug} (grants cascade, tokens deleted)`,
       destructive: true,
     });
   }
-  for (const slug of sorted(accountsOnServer.keys())) {
-    if (wantedAccounts.has(slug)) continue;
+  for (const slug of sorted(agentsOnServer.keys())) {
+    if (wantedAgents.has(slug)) continue;
     deletes.push({
-      tool: "account_delete",
+      tool: "agent_delete",
       args: { slug },
-      summary: `delete service account ${slug} (grants cascade, tokens deleted)`,
+      summary: `delete agent ${slug} (grants cascade, tokens deleted)`,
       destructive: true,
     });
   }
@@ -422,37 +422,37 @@ export function planChanges(desired: DesiredConfig, current: CurrentState): Plan
   // ── phase 2: creates ────────────────────────────────────────────────────────────────
   for (const slug of sorted(plannable.keys())) {
     if (onServer.has(slug)) continue;
-    const service = plannable.get(slug) as DesiredService;
+    const app = plannable.get(slug) as DesiredApp;
     creates.push({
-      tool: "service_create",
-      // `archived` is deliberately absent: service_create has no such property and
+      tool: "app_create",
+      // `archived` is deliberately absent: app_create has no such property and
       // rejects additionalProperties — parking is its own step below.
-      args: { slug, kind: service.kind, ...wireFields(service) },
-      summary: `create ${service.kind} service ${slug}`,
+      args: { slug, kind: app.kind, ...wireFields(app) },
+      summary: `create ${app.kind} app ${slug}`,
       destructive: false,
     });
   }
-  for (const slug of sorted(wantedAccounts.keys())) {
-    if (accountsOnServer.has(slug)) continue;
-    const account = wantedAccounts.get(slug) as DesiredAccount;
+  for (const slug of sorted(wantedAgents.keys())) {
+    if (agentsOnServer.has(slug)) continue;
+    const agent = wantedAgents.get(slug) as DesiredAgent;
     creates.push({
-      tool: "account_create",
-      args: { slug, name: account.name, description: account.description },
-      summary: `create service account ${slug}`,
+      tool: "agent_create",
+      args: { slug, name: agent.name, description: agent.description },
+      summary: `create agent ${slug}`,
       destructive: false,
     });
   }
 
   // ── phase 3: updates and archive transitions ────────────────────────────────────────
   for (const slug of sorted(plannable.keys())) {
-    const service = plannable.get(slug) as DesiredService;
+    const app = plannable.get(slug) as DesiredApp;
     const existing = onServer.get(slug);
     if (existing !== undefined) {
-      const changed = changedFields(service, existing);
+      const changed = changedFields(app, existing);
       if (Object.keys(changed).length > 0) {
         const flipped = changed.auth !== undefined;
         updates.push({
-          tool: "service_update",
+          tool: "app_update",
           args: { slug, ...changed },
           summary: `update ${slug}: ${Object.keys(changed).join(", ")}${
             flipped ? " — wipes the stored upstream credentials" : ""
@@ -462,43 +462,43 @@ export function planChanges(desired: DesiredConfig, current: CurrentState): Plan
       }
     }
     const wasArchived = existing?.archived ?? false;
-    if (service.archived === wasArchived) continue;
+    if (app.archived === wasArchived) continue;
     updates.push({
-      tool: service.archived ? "service_archive" : "service_unarchive",
+      tool: app.archived ? "app_archive" : "app_unarchive",
       args: { slug },
-      summary: `${service.archived ? "archive" : "unarchive"} ${slug}`,
+      summary: `${app.archived ? "archive" : "unarchive"} ${slug}`,
       destructive: false,
     });
   }
 
-  // ── phase 4: grant_set, every (account, service) pair the file states ────────────────
-  for (const slug of sorted(wantedAccounts.keys())) {
-    const account = wantedAccounts.get(slug) as DesiredAccount;
-    const held = accountsOnServer.get(slug)?.grants ?? {};
-    for (const service of sorted(Object.keys(account.grants))) {
-      const wanted = account.grants[service];
-      const problems = grantProblems(service, wanted, plannable.get(service), onServer.get(service), named.has(service));
+  // ── phase 4: grant_set, every (agent, app) pair the file states ────────────────
+  for (const slug of sorted(wantedAgents.keys())) {
+    const agent = wantedAgents.get(slug) as DesiredAgent;
+    const held = agentsOnServer.get(slug)?.grants ?? {};
+    for (const app of sorted(Object.keys(agent.grants))) {
+      const wanted = agent.grants[app];
+      const problems = grantProblems(app, wanted, plannable.get(app), onServer.get(app), named.has(app));
       errors.push(...problems.errors);
       warnings.push(...problems.warnings);
       if (problems.errors.length > 0) continue;
-      if (!plannable.has(service)) {
-        // Three states, not two: the file NAMES this service but the planner refused it —
+      if (!plannable.has(app)) {
+        // Three states, not two: the file NAMES this app but the planner refused it —
         // its own error is already above, and calling that a delete would send the operator
-        // to add back a service that is right there under a bad slug.
-        if (named.has(service)) continue;
-        // A pair naming a service this very plan deletes would be a step with nothing to
+        // to add back an app that is right there under a bad slug.
+        if (named.has(app)) continue;
+        // A pair naming an app this very plan deletes would be a step with nothing to
         // land on: the delete cascades the grants anyway, so it is dropped, loudly.
-        if (onServer.has(service)) warnings.push(`${slug} → ${service}: the file deletes this service; its grants cascade`);
+        if (onServer.has(app)) warnings.push(`${slug} → ${app}: the file deletes this app; its grants cascade`);
         continue;
       }
-      if (sameRoles(wanted, held[service] ?? [])) continue;
-      grants.push(grantStep(slug, service, wanted));
+      if (sameRoles(wanted, held[app] ?? [])) continue;
+      grants.push(grantStep(slug, app, wanted));
     }
     // Absence in the file is desired state: a pair the SERVER holds and the file omits is
     // replaced with the empty set, scoped to pairs that actually exist.
-    for (const service of sorted(Object.keys(held))) {
-      if (account.grants[service] !== undefined || !plannable.has(service)) continue;
-      grants.push(grantStep(slug, service, []));
+    for (const app of sorted(Object.keys(held))) {
+      if (agent.grants[app] !== undefined || !plannable.has(app)) continue;
+      grants.push(grantStep(slug, app, []));
     }
   }
 
@@ -506,30 +506,30 @@ export function planChanges(desired: DesiredConfig, current: CurrentState): Plan
 }
 
 /** One grant_set step, in the op's wire spelling: a flat list with `:approval` re-joined. */
-function grantStep(account: string, service: string, roles: readonly DesiredGrant[]): PlanStep {
+function grantStep(agent: string, app: string, roles: readonly DesiredGrant[]): PlanStep {
   const wire = roles.map((grant) => (grant.mode === "approval" ? `${grant.role}:approval` : grant.role));
   return {
     tool: "grant_set",
-    args: { account, service, roles: wire },
-    summary: `grant ${account} → ${service}: ${wire.length === 0 ? "(none)" : wire.join(", ")}`,
+    args: { agent, app, roles: wire },
+    summary: `grant ${agent} → ${app}: ${wire.length === 0 ? "(none)" : wire.join(", ")}`,
     destructive: false,
   };
 }
 
-/** Everything that makes one `services:` entry unplannable, all of it at once (§8, §9). */
-function serviceProblems(service: DesiredService, existing: CurrentService | undefined): string[] {
+/** Everything that makes one `apps:` entry unplannable, all of it at once (§8, §9). */
+function appProblems(app: DesiredApp, existing: CurrentApp | undefined): string[] {
   const problems: string[] = [];
-  const path = `services.${service.slug}`;
-  if (service.slug === RESERVED_SLUG) problems.push(`${path}: the \`${RESERVED_SLUG}\` slug is reserved`);
-  else if (!SLUG_PATTERN.test(service.slug)) {
+  const path = `apps.${app.slug}`;
+  if (app.slug === RESERVED_SLUG) problems.push(`${path}: the \`${RESERVED_SLUG}\` slug is reserved`);
+  else if (!SLUG_PATTERN.test(app.slug)) {
     problems.push(`${path}: a slug is [a-z0-9-] — an underscore makes \`<slug>_<tool>\` ambiguous`);
   }
-  if (existing !== undefined && existing.kind !== service.kind) {
-    problems.push(`${path}: kind is immutable (${existing.kind} on the server, ${service.kind} in the file)`);
+  if (existing !== undefined && existing.kind !== app.kind) {
+    problems.push(`${path}: kind is immutable (${existing.kind} on the server, ${app.kind} in the file)`);
   }
-  if (service.kind === "proxy") problems.push(...roleDeclarationProblems(path, service.roles ?? {}));
-  problems.push(...redactKeyProblems(`${path}.redact`, service.redact));
-  problems.push(...redactKeyProblems(`${path}.redact_results`, service.redactResults));
+  if (app.kind === "proxy") problems.push(...roleDeclarationProblems(path, app.roles ?? {}));
+  problems.push(...redactKeyProblems(`${path}.redact`, app.redact));
+  problems.push(...redactKeyProblems(`${path}.redact_results`, app.redactResults));
   return problems;
 }
 
@@ -539,7 +539,7 @@ function serviceProblems(service: DesiredService, existing: CurrentService | und
  * check, and for a sharper reason: a key that compiles nowhere matches no tool, so the file
  * reads as masking a password that the hub then persists in full into the approval record
  * and the audit bodies (§7, §15). Refusing here is what makes `pmcp apply` fail on the
- * operator's terminal instead of in an audit row. The message names the service and the
+ * operator's terminal instead of in an audit row. The message names the app and the
  * offending key and nothing else from the file — a diff is printed where others can read it.
  */
 function redactKeyProblems(path: string, map: Record<string, string[]>): string[] {
@@ -560,7 +560,7 @@ export const ROLE_FAMILIES = ["tools", "prompts", "resources"] as const;
 
 /**
  * `hub/register`'s validation, extended to §20.3's per-family shape and applied to a
- * proxied service's config-declared roles (§6, §8). It is deliberately a SECOND
+ * proxied app's config-declared roles (§6, §8). It is deliberately a SECOND
  * implementation of `server/src/registry.ts`'s validateRoles — §9 keeps the planner free of
  * any server import — so the caps below are exported and locked to `server/src/limits.ts`
  * in the parity suite; see them. A bare pattern list is judged as the tools family; a
@@ -605,29 +605,29 @@ function compiles(pattern: string): boolean {
 }
 
 /**
- * The severity of one (account, service) grant list — §9's warn/error split. `declaredIn`
- * is the service only if the planner accepted it; `namedInFile` is the third state that
- * keeps "the file names this service under an invalid slug" from being reported as "no
- * such service".
+ * The severity of one (agent, app) grant list — §9's warn/error split. `declaredIn`
+ * is the app only if the planner accepted it; `namedInFile` is the third state that
+ * keeps "the file names this app under an invalid slug" from being reported as "no
+ * such app".
  */
 function grantProblems(
-  service: string,
+  app: string,
   wanted: readonly DesiredGrant[],
-  declaredIn: DesiredService | undefined,
-  onServer: CurrentService | undefined,
+  declaredIn: DesiredApp | undefined,
+  onServer: CurrentApp | undefined,
   namedInFile: boolean,
 ): { errors: string[]; warnings: string[] } {
   const errors: string[] = [];
   const warnings: string[] = [];
-  if (service === RESERVED_SLUG) {
-    errors.push(`grants.${service}: the \`${RESERVED_SLUG}\` slug is reserved`);
+  if (app === RESERVED_SLUG) {
+    errors.push(`grants.${app}: the \`${RESERVED_SLUG}\` slug is reserved`);
     return { errors, warnings };
   }
-  // The file names it and the planner refused it: serviceProblems already reported why, and
+  // The file names it and the planner refused it: appProblems already reported why, and
   // a second finding about its grants would only compete with the real fix.
   if (declaredIn === undefined && namedInFile) return { errors, warnings };
   if (declaredIn === undefined && onServer === undefined) {
-    errors.push(`grants.${service}: no such service in the file or on the server`);
+    errors.push(`grants.${app}: no such app in the file or on the server`);
     return { errors, warnings };
   }
   const modes = new Map<string, Set<string>>();
@@ -635,37 +635,37 @@ function grantProblems(
     const seen = modes.get(grant.role) ?? new Set<string>();
     seen.add(grant.mode);
     modes.set(grant.role, seen);
-    if (seen.size > 1) errors.push(`grants.${service}: ${grant.role} is granted in both modes`);
+    if (seen.size > 1) errors.push(`grants.${app}: ${grant.role} is granted in both modes`);
   }
   const kind = declaredIn?.kind ?? onServer?.kind;
-  // A proxied service's roles live in this very file, so an undeclared one can never
-  // become declared later; a tunneled service's arrive at connect time, so the file is
+  // A proxied app's roles live in this very file, so an undeclared one can never
+  // become declared later; a tunneled app's arrive at connect time, so the file is
   // merely ahead of the first connection.
   const declared = kind === "proxy" ? Object.keys(declaredIn?.roles ?? {}) : Object.keys(onServer?.roles ?? {});
   for (const grant of wanted) {
     if (grant.role === BUILTIN_ROLE || declared.includes(grant.role)) continue;
-    const message = `grants.${service}: role "${grant.role}" is not declared`;
+    const message = `grants.${app}: role "${grant.role}" is not declared`;
     if (kind === "proxy") errors.push(message);
     else warnings.push(message);
   }
   return { errors, warnings };
 }
 
-/** The service fields as service_create takes them — snake_case, kind-appropriate. */
-function wireFields(service: DesiredService): Record<string, unknown> {
+/** The app fields as app_create takes them — snake_case, kind-appropriate. */
+function wireFields(app: DesiredApp): Record<string, unknown> {
   return {
-    name: service.name,
-    description: service.description,
-    redact: service.redact,
-    redact_results: service.redactResults,
-    log_bodies: service.logBodies,
-    ...(service.kind === "proxy"
+    name: app.name,
+    description: app.description,
+    redact: app.redact,
+    redact_results: app.redactResults,
+    log_bodies: app.logBodies,
+    ...(app.kind === "proxy"
       ? {
-          endpoint: service.endpoint,
-          auth: service.auth,
-          forward_identity: service.forwardIdentity,
-          roles: service.roles ?? {},
-          ...(service.capabilities === undefined ? {} : { capabilities: service.capabilities }),
+          endpoint: app.endpoint,
+          auth: app.auth,
+          forward_identity: app.forwardIdentity,
+          roles: app.roles ?? {},
+          ...(app.capabilities === undefined ? {} : { capabilities: app.capabilities }),
         }
       : {}),
   };
@@ -673,7 +673,7 @@ function wireFields(service: DesiredService): Record<string, unknown> {
 
 /**
  * The fields that differ, in the op's wire spelling. `archived` is never among them (it
- * has its own ops) and a tunneled service's `roles` are never compared — they arrive at
+ * has its own ops) and a tunneled app's `roles` are never compared — they arrive at
  * connect time and are not desired state (§9).
  *
  * `capabilities` is decided AFTER the loop rather than inside it, because both halves of
@@ -683,8 +683,8 @@ function wireFields(service: DesiredService): Record<string, unknown> {
  * total, so deleting the line from the file must plan the default back, and the loop only
  * ever visits keys the file actually produced.
  */
-function changedFields(service: DesiredService, existing: CurrentService): Record<string, unknown> {
-  const { capabilities: _capabilities, ...wire } = wireFields(service);
+function changedFields(app: DesiredApp, existing: CurrentApp): Record<string, unknown> {
+  const { capabilities: _capabilities, ...wire } = wireFields(app);
   const server: Record<string, unknown> = {
     name: existing.name,
     description: existing.description,
@@ -709,13 +709,13 @@ function changedFields(service: DesiredService, existing: CurrentService): Recor
     if (!same) changed[key] = value;
   }
   if (
-    service.kind === "proxy" &&
-    !deepEqual(canonicalCapabilities(service.capabilities), canonicalCapabilities(existing.capabilities))
+    app.kind === "proxy" &&
+    !deepEqual(canonicalCapabilities(app.capabilities), canonicalCapabilities(existing.capabilities))
   ) {
     // The file's own spelling when it wrote one; the default spelled OUT when it did not,
-    // because `service_update` has no "unset" and `["tools"]` is what absent means anyway —
+    // because `app_update` has no "unset" and `["tools"]` is what absent means anyway —
     // so the next run reads back a value that canonicalizes equal and plans nothing.
-    changed.capabilities = service.capabilities ?? [...DEFAULT_CAPABILITIES];
+    changed.capabilities = app.capabilities ?? [...DEFAULT_CAPABILITIES];
   }
   return changed;
 }
@@ -744,7 +744,7 @@ function familiesOf(declared: string[] | Record<string, string[]>): Record<strin
  * file writing `docs: {tools: [publish], prompts: []}` reads back as `['publish']`, and
  * `docs: {}` reads back as `[]`. Dropping empties makes `[]`, `{}`, `{tools: []}` and
  * `{tools: [], prompts: []}` ONE value on both sides, so the planner no longer has to know
- * which shape the server happened to render. Without it those files replan `service_update`
+ * which shape the server happened to render. Without it those files replan `app_update`
  * on every run — `pmcp diff` never comes back clean and `pmcp apply` never converges, which
  * is the exact outcome this function exists to prevent.
  */
@@ -763,7 +763,7 @@ function canonicalRoles(decl: RoleDeclaration): Record<string, Record<string, st
  * equivalence with two sites is an equivalence that will disagree with itself.
  *
  * Two halves, both load-bearing. ABSENT IS `["tools"]`: the hub advertises tools for a
- * proxied service that declared nothing, so a file omitting the key and a server storing the
+ * proxied app that declared nothing, so a file omitting the key and a server storing the
  * default are the same desired state and must plan nothing — otherwise every file written
  * before the key existed diffs against the server on the first run after it lands. And it is
  * a SET: the declaration names WHICH families the scoped handshake advertises, so order and
@@ -778,7 +778,7 @@ export function canonicalCapabilities(declared: string[] | undefined): string[] 
 }
 
 /** §20.2's default advertisement, and therefore what an absent `capabilities:` MEANS: a
- *  proxied service the hub was never told anything about serves tools. */
+ *  proxied app the hub was never told anything about serves tools. */
 const DEFAULT_CAPABILITIES = ["tools"];
 
 /** Two grant lists as the same set, order and spelling normalized. */

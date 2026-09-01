@@ -1,6 +1,6 @@
 /**
  * /device — the RFC 8628 device-flow phishing-defense page (§13). Chromeless,
- * like /login and /services/new: no shell, no nav, just a centered card, because
+ * like /login and /apps/new: no shell, no nav, just a centered card, because
  * it is reached from a raw CLI-printed URL or a deep link, not from inside the
  * signed-in app.
  *
@@ -115,7 +115,7 @@ const EnterCodeCard: FC<{ step: Extract<DeviceStep, { kind: "enter-code" }> }> =
       </button>
     </form>
     <div class="center" style="font-size:var(--text-sm)">
-      <a href={paths.services}>Cancel</a>
+      <a href={paths.apps}>Cancel</a>
     </div>
   </div>
 );
@@ -163,7 +163,7 @@ const ConfirmCard: FC<{ request: DeviceRequest; username: string; csrfToken: str
       <div>
         <div class="alert-title">Grants full admin access</div>
         <div class="alert-text">
-          Approving signs this device in as {username} with full control of your namespace — services, grants, and
+          Approving signs this device in as {username} with full control of your namespace — apps, grants, and
           tokens.
         </div>
       </div>

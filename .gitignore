@@ -13,3 +13,6 @@ __pycache__/
 # publish-time build outputs (prepublishOnly), never committed
 cli/dist/
 clients/js/dist/
+
+# live browser session cookies — never committed
+cookies.txt

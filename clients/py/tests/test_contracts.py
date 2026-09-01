@@ -176,7 +176,7 @@ def test_behavior_words_map_onto_row_columns_both_ways() -> None:
 async def test_register_frame_matches_the_fixture_shape(registry) -> None:
     """§6 · the hub/register frame the library emits equals the fixture's request
     shape: the method name and the params keys clientVersion, protocolVersion,
-    roles — and no service or slug field, ever."""
+    roles — and no app or slug field, ever."""
     hub = await start_fake_hub()
     transport = pmcp_client.HubTransport(hub.origin, TOKEN, {})
     registry.append((hub, transport))
@@ -294,13 +294,13 @@ def test_caller_reads_the_fixtures_forwarded_meta_keys() -> None:
     SDK session untouched. This is the one tunnel-frames key whose consumer is
     the client library, and renaming it hub-side must fail here — silently,
     caller() would start answering principal "" and empty roles, and every
-    service branching on a negative check (``if not caller.has_role("admin"):
-    allow``) would flip open. §7 invites services to trust these values, which is
+    app branching on a negative check (``if not caller.has_role("admin"):
+    allow``) would flip open. §7 invites apps to trust these values, which is
     what makes an unread fixture key a boundary and not cosmetics."""
     principal_key, roles_key, capabilities_key = _TUNNEL_FRAMES["forwardedCall"]["metaKeys"]
-    meta = {principal_key: "sa:claude", roles_key: ["reader"], capabilities_key: {"sampling": {}}}
+    meta = {principal_key: "agent:claude", roles_key: ["reader"], capabilities_key: {"sampling": {}}}
     identity = caller(meta)
-    assert identity.principal == "sa:claude"
+    assert identity.principal == "agent:claude"
     assert identity.roles == ("reader",)
     assert identity.has_role("reader") is True
 

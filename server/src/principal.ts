@@ -10,7 +10,7 @@
 // `hub/principal` _meta field, /api/whoami and the approval ledger all have to NAME a
 // caller, while only identity may PRODUCE one — and identity reaches better-auth and
 // `cloudflare:workers` at module scope. Splitting the name from the production is what lets
-// approvals write `sa:<slug>` into the ledger without pulling workerd into the pure core,
+// approvals write `agent:<slug>` into the ledger without pulling workerd into the pure core,
 // and it is what makes "one caller, one string, one query" a fact rather than a convention
 // between four spellings. identity re-exports both, so producing a principal stays its
 // monopoly and no caller has to learn that this file exists.
@@ -21,17 +21,17 @@
  * anywhere else.
  *
  * A `user` is the namespace owner acting as themself (web session or CLI device-flow
- * session): sees every service, never approval-gated. A `service_account` is a
+ * session): sees every app, never approval-gated. A `agent` is a
  * machine identity confined by its grants; `ownerId` names the namespace it lives in
- * and `slug` is its per-owner name. Service tokens (`pmcp_svc_`) never become a
- * Principal — they authenticate only the /connect upgrade, via resolveServiceToken.
+ * and `slug` is its per-owner name. App tokens (`pmcp_app_`) never become a
+ * Principal — they authenticate only the /connect upgrade, via resolveAppToken.
  */
 export type Principal =
   | { kind: "user"; userId: string; username: string }
-  | { kind: "service_account"; accountId: string; ownerId: string; slug: string };
+  | { kind: "agent"; agentId: string; ownerId: string; slug: string };
 
 /**
- * The one canonical principal string — `user:<username>` or `sa:<slug>` — used
+ * The one canonical principal string — `user:<username>` or `agent:<slug>` — used
  * identically by audit rows, the forwarded `hub/principal` _meta field, /api/whoami and
  * the approval ledger. Owning the format here keeps those surfaces from each knowing it:
  * they all write into the same `principal` column, so a second spelling would silently
@@ -39,25 +39,25 @@ export type Principal =
  */
 export function formatPrincipal(p: Principal): string {
   // deps: none
-  return p.kind === "user" ? `user:${p.username}` : `sa:${p.slug}`;
+  return p.kind === "user" ? `user:${p.username}` : `agent:${p.slug}`;
 }
 
 /**
  * The principal as an AUTHORIZATION key, deliberately not `formatPrincipal`'s string:
- * `user:<userId>` / `sa:<accountId>`, over the immutable row ids.
+ * `user:<userId>` / `agent:<agentId>`, over the immutable row ids.
  *
  * §21.4 authorizes a `resources/subscribe` by comparing the subscriber socket's stored
  * principal to the caller's, and a key used for that has to be stable and unique OVER
- * TIME. `sa:<slug>` is neither: a slug is unique only among LIVE accounts, so
- * delete-and-recreate reuses one, and an account recreated under an old slug would
- * authorize against the deleted account's live socket. It is also the format audit rows,
+ * TIME. `agent:<slug>` is neither: a slug is unique only among LIVE agents, so
+ * delete-and-recreate reuses one, and an agent recreated under an old slug would
+ * authorize against the deleted agent's live socket. It is also the format audit rows,
  * `hub/principal`, /api/whoami and the approval ledger all read — a display spelling is
  * no place to put an access check, and coupling the two would make renaming either one
  * silently change the other's meaning.
  */
 export function principalKey(p: Principal): string {
   // deps: none
-  return p.kind === "user" ? `user:${p.userId}` : `sa:${p.accountId}`;
+  return p.kind === "user" ? `user:${p.userId}` : `agent:${p.agentId}`;
 }
 
 /**
@@ -79,8 +79,8 @@ export const HUB_PRINCIPAL = "hub";
  * grammar instead of importing it stops matching the day a prefix is rotated or extended.
  */
 export const TOKEN_PREFIX = {
-  service_account: "pmcp_sa_",
-  service: "pmcp_svc_",
+  agent: "pmcp_agt_",
+  app: "pmcp_app_",
 } as const;
 
 /**

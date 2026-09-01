@@ -1,4 +1,4 @@
-"""pmcp-client — the service-author library (spec §6, §11). A plain MCP server
+"""pmcp-client — the app-author library (spec §6, §11). A plain MCP server
 object goes in; this module keeps it reachable through the hub's reverse tunnel.
 
 OWNS the client side of the reverse-connection protocol: deriving
@@ -18,10 +18,10 @@ case is one of three behaviors — ``stop_fatal``, ``stop_quiet``, ``reconnect``
 ``max_only``:
 
 - 401 at upgrade, or close code 4001 after establishment — the credential is
-  dead (revoked/expired token, wrong token kind, deleted service):
+  dead (revoked/expired token, wrong token kind, deleted app):
   ``stop_fatal``, raising :class:`CredentialsError`. Never retry a dead
   credential.
-- 403 at upgrade, or close code 4002 — the service is archived: ``reconnect``
+- 403 at upgrade, or close code 4002 — the app is archived: ``reconnect``
   on the ``max_only`` schedule, so unarchiving heals within a minute without
   touching the bot.
 - close code 4000 (after ``hub/replaced``) — a newer connection took the slot:
@@ -32,7 +32,7 @@ case is one of three behaviors — ``stop_fatal``, ``stop_quiet``, ``reconnect``
   identical input cannot start succeeding, so it is surfaced, not retried.
 - everything else — network drop, hub deploy, close 4003/4004 — ``reconnect``
   on the ``exponential`` schedule (jittered, 1 s → 60 s cap); a truly deleted
-  service becomes a 401 at the next upgrade, which is the fatal path above.
+  app becomes a 401 at the next upgrade, which is the fatal path above.
 
 Implementation notes not in the outline docstrings, kept here so they sit next
 to what they explain:
@@ -95,7 +95,7 @@ class McpServer(Protocol):
     Stated structurally on purpose. ``Any`` plus a runtime probe for ``run`` would
     let a wrong object through to a fallback that drains the read stream and
     discards every inbound MCP message for the life of the bot — the hub believes
-    the service is healthy while every forwarded call times out. Failing at the
+    the app is healthy while every forwarded call times out. Failing at the
     call site instead is the whole difference between a typo and an
     unknown-unknown. A hand-rolled session is served by using
     :class:`HubTransport` directly, which is what that class documents.
@@ -105,7 +105,7 @@ class McpServer(Protocol):
 
 
 # Role declaration sent in ``hub/register``: role name -> either a bare pattern
-# list — tools, forever, so every service written before §20 keeps registering
+# list — tools, forever, so every app written before §20 keeps registering
 # unchanged — or a per-family object (§20.3). Validation is the hub's job, not
 # this library's: names must match [a-z0-9_-]{1,64}, ``all`` is reserved, an
 # unknown family key is a violation, and pattern length (<=128) and per-family
@@ -212,7 +212,7 @@ def _rng() -> float:
 
 class CredentialsError(Exception):
     """The credential is dead: 401 at upgrade or close 4001 after establishment —
-    revoked/expired token, wrong token kind, or deleted service. Terminal; the
+    revoked/expired token, wrong token kind, or deleted app. Terminal; the
     library never retries a dead credential (module docstring)."""
 
 
@@ -253,29 +253,29 @@ async def serve(
     token: str | None = None,
     roles: Roles | None = None,
 ) -> None:
-    """Run ``mcp`` as a tunneled hub service: dial, register the role
+    """Run ``mcp`` as a tunneled hub app: dial, register the role
     declaration, and stay reachable until the hub says otherwise. Blocks the
-    calling thread for the life of the service — hours to months; treat it as
+    calling thread for the life of the app — hours to months; treat it as
     the bot's main loop (it runs its own event loop internally).
 
     ``url`` is the hub's https origin, e.g. ``"https://mcp.example.com"`` — a
     bare origin, no path (PMCP_URL, §10); default the ``PMCP_URL`` env var, and
     neither set is a ValueError before any I/O. The ``wss://<host>/connect``
-    address is derived internally, never passed in. ``token`` is the service
-    token (``pmcp_svc_…``); default the ``PMCP_SERVICE_TOKEN`` env var. The
-    service identity comes entirely from the token — there is deliberately no
-    service/slug parameter (§6: a token for one slug can never touch another).
-    ``roles`` omitted or ``{}`` declares none — the service is then reachable
+    address is derived internally, never passed in. ``token`` is the app
+    token (``pmcp_app_…``); default the ``PMCP_APP_TOKEN`` env var. The
+    app identity comes entirely from the token — there is deliberately no
+    app/slug parameter (§6: a token for one slug can never touch another).
+    ``roles`` omitted or ``{}`` declares none — the app is then reachable
     only by owner tokens or grants of the built-in ``all`` role.
 
     Terminal outcomes are the whole return contract: returns quietly when the
-    hub replaces this connection with a newer one for the same service (close
+    hub replaces this connection with a newer one for the same app (close
     4000 — this copy steps aside and never reconnects); raises
     :class:`CredentialsError` / :class:`RegistrationError`; every other failure
     reconnects forever per the module docstring and never returns.
     """
     resolved_url = _resolve(url, "PMCP_URL", "hub url")
-    resolved_token = _resolve(token, "PMCP_SERVICE_TOKEN", "service token")
+    resolved_token = _resolve(token, "PMCP_APP_TOKEN", "app token")
     async with HubTransport(
         resolved_url, resolved_token, roles, discover=lambda: _probe_capabilities(mcp)
     ) as (read_stream, write_stream):
@@ -305,7 +305,7 @@ def _ending_for_upgrade(status: int) -> _Ending:
     a fleet of bots."""
     if status == 401:
         # The message names the status, never the credential (§15).
-        return _Ending("stop_fatal", error=CredentialsError("the hub refused the service credential (401)"))
+        return _Ending("stop_fatal", error=CredentialsError("the hub refused the app credential (401)"))
     if status == 403:
         return _Ending("reconnect", schedule="max_only")
     return _Ending("reconnect", schedule="exponential")
@@ -326,7 +326,7 @@ def _probe_capabilities(mcp: McpServer) -> dict[str, Any] | None:
     """The author's declared capabilities, read the one way §11 sanctions: the
     SDK's own optional ``get_capabilities()`` (``mcp.server.Server``'s — the
     no-argument call is its own default), never guessed from what this library
-    can carry. Absent — every service already in the field — is ``None``, which
+    can carry. Absent — every app already in the field — is ``None``, which
     :meth:`HubTransport._answer_discover` turns into a ``-32601``: "capabilities
     unknown", the hub's documented fallback (§6), not a fabricated empty set
     (§20.5: an empty ANSWER is an undeclare and clears a catalog; a missing
@@ -361,7 +361,7 @@ class HubTransport:
     directly only to run the SDK session yourself (e.g. inside an existing
     anyio application).
 
-    One transport is one service lifetime, not one socket: reconnects and
+    One transport is one app lifetime, not one socket: reconnects and
     re-registration happen inside per the module-docstring contract, invisible
     to the SDK session — the yielded streams stay open across them and close
     only at a terminal state. ``hub/*`` control frames are consumed internally
@@ -383,13 +383,13 @@ class HubTransport:
     ) -> None:
         """``url`` is the hub's https origin — a bare origin, no path; anything
         else is a ValueError here, before any I/O. ``token`` is the
-        ``pmcp_svc_`` credential the whole connection authenticates as. No
+        ``pmcp_app_`` credential the whole connection authenticates as. No
         network happens until ``__aenter__``.
 
         ``discover`` answers the hub's registration-time ``server/discover``
         (§6/§11, §20) — internal wiring :func:`serve` supplies from the SDK
         server's own capabilities, not one of the three public options a
-        service author sets. Omitted (a hand-rolled session that does not pass
+        app author sets. Omitted (a hand-rolled session that does not pass
         one) means every ``server/discover`` gets the ``-32601`` fallback."""
         self._address = _connect_address(url)
         self._token = token
@@ -502,7 +502,7 @@ class HubTransport:
     # ── the connection lifetime ───────────────────────────────────────────────
 
     async def _run(self) -> None:
-        """One transport is one service lifetime: this loop outlives every
+        """One transport is one app lifetime: this loop outlives every
         socket it opens."""
         while True:
             ending = await self._connect_once()
@@ -599,7 +599,7 @@ class HubTransport:
     async def _answer_discover(self, ws: Any, msg_id: Any) -> None:
         """Answer ``server/discover`` directly on the wire — never delivered to
         the SDK session. ``None`` capabilities means "unknown", the fallback
-        that keeps every service predating this method warming tools only
+        that keeps every app predating this method warming tools only
         (§6); a real capability set is relayed exactly as the author's SDK
         reports it, in the same DiscoverResult shape the reverse direction
         (hub→consumer) uses."""
@@ -669,11 +669,11 @@ class HubTransport:
 @dataclass(frozen=True)
 class CallerIdentity:
     """The hub-asserted caller of the current tool call (§7, "Caller identity
-    forwarding"). ``principal`` is ``"user:<name>"`` or ``"sa:<slug>"``.
-    ``roles`` is the caller's granted role names on this service exactly as
+    forwarding"). ``principal`` is ``"user:<name>"`` or ``"agent:<slug>"``.
+    ``roles`` is the caller's granted role names on this app exactly as
     granted — the built-in wildcard arrives literally as ``"all"`` (owners get
     ``("all",)``), never expanded into declared names. Informational for the
-    service's own branching: the hub's grant check has already run, and these
+    app's own branching: the hub's grant check has already run, and these
     are not secrets. Constructed by :func:`caller`, never directly."""
 
     principal: str
@@ -689,7 +689,7 @@ class CallerIdentity:
 def caller(meta: dict[str, Any] | None) -> CallerIdentity:
     """Read the caller identity off a forwarded request's ``_meta``
     (``hub/principal``, ``hub/roles``). Trustworthy for fine-grained
-    service-side checks: the hub strips consumer-supplied ``hub/*`` keys before
+    app-side checks: the hub strips consumer-supplied ``hub/*`` keys before
     injecting its own, so a consumer cannot forge these (§7). On a request that
     never passed through the hub (e.g. local testing) the fields are simply
     absent: ``principal`` is ``""``, ``roles`` is empty, and ``has_role`` is

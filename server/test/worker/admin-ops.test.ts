@@ -29,8 +29,8 @@
 // (hygiene.test.ts). This file pins that a ledger row exists and says what it should —
 // not the hygiene law over every column.
 //
-// deps: harness/seed (namespace fixture: owner, one tunneled + one proxied service, one
-//   service account, one token per kind) · ../../src/admin (ops, adminBackend) ·
+// deps: harness/seed (namespace fixture: owner, one tunneled + one proxied app, one
+//   agent, one token per kind) · ../../src/admin (ops, adminBackend) ·
 //   ../../src/registry · ../../src/identity · ../../src/audit · ../../src/approvals (the
 //   gate the one `fixture:approval.pending` sample is opened through — the seed harness
 //   has no approval seam, by design) · applyD1Migrations (setup) · env.DB
@@ -45,7 +45,7 @@ import type { BackendCtx, Tool } from "../../src/gateway";
 import { upsertBinding } from "../../src/oauth";
 import { tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, writeOnlyPaths } from "../../src/registry";
-import type { Service } from "../../src/registry";
+import type { App } from "../../src/registry";
 import { seedNamespace } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 
@@ -64,8 +64,8 @@ export type OpName = keyof typeof ops;
  *
  * `sample` is what makes the refusal and its allow-twin one row rather than two (§9
  * rule 2): the sweep calls the op once with `sample` unchanged (must succeed) and once
- * with its slug field replaced by `pmcp` — which for a `"service"` slug must be the one
- * uniform reserved-slug refusal, and for an `"account"` slug must be anything but it
+ * with its slug field replaced by `pmcp` — which for a `"app"` slug must be the one
+ * uniform reserved-slug refusal, and for an `"agent"` slug must be anything but it
  * (see `slugArg`). No row lists a refusal without its twin, because the twin is
  * generated from the same cell.
  */
@@ -73,19 +73,19 @@ export type AdminOpRow = {
   /** The ops key. The table is total over `Object.keys(ops)` — see runAdminOpTable. */
   op: OpName;
   /**
-   * Which reserved-slug sweep applies: `"service"` ops take a service slug and must
-   * refuse `pmcp` with the one uniform error; `"account"` ops take an account slug (no
+   * Which reserved-slug sweep applies: `"app"` ops take an app slug and must
+   * refuse `pmcp` with the one uniform error; `"agent"` ops take an agent slug (no
    * reservation, but the column says so explicitly rather than by omission); `"none"`
    * ops take neither.
    *
-   * What the `"account"` sweep asserts, stated because it is NOT "must succeed": §8
-   * reserves `pmcp` for service slugs and says nothing about account slugs, so the
+   * What the `"agent"` sweep asserts, stated because it is NOT "must succeed": §8
+   * reserves `pmcp` for app slugs and says nothing about agent slugs, so the
    * property is that the op's answer is never the RESERVED-SLUG refusal — a create
-   * succeeds, and a delete of an account nobody has created fails as not-found, which is
+   * succeeds, and a delete of an agent nobody has created fails as not-found, which is
    * a different error for a different reason. Demanding success would make the sweep
    * unsatisfiable for the deleting ops, which is the opposite of what the column means.
    */
-  slugArg: "service" | "account" | "none";
+  slugArg: "app" | "agent" | "none";
   /** Decides the audit expectation: exactly one `admin.<op>` row, or none at all (§8). */
   writes: "mutating" | "read";
   /**
@@ -98,7 +98,7 @@ export type AdminOpRow = {
    * The row families this op removes in its ONE atomic D1 batch (§15). Empty for
    * non-deleting ops; the sweep asserts all-or-nothing over exactly these tables.
    */
-  cascade: readonly ("service" | "service_account" | "grant_" | "token")[];
+  cascade: readonly ("app" | "agent" | "grant_" | "token")[];
   /** Parity direction A: whether the op declares an outputSchema (§8 — token_issue alone). */
   declaresOutputSchema: boolean;
   /**
@@ -122,29 +122,29 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
   // fails the sweep here instead of quietly skipping the reservation (§8: "one error, every
   // op, never per-tool").
   //
-  // The fixture every `sample` is written against, named once: services `news` (tunneled,
-  // holding a `pmcp_svc_` token), `notion` (proxied, `auth: headers`) and `linear`
-  // (proxied, `auth: oauth`); one account `claude` holding a `pmcp_sa_` token and grants on
-  // `news`. Two proxied services is not padding — it is what these samples PROVE the
+  // The fixture every `sample` is written against, named once: apps `news` (tunneled,
+  // holding a `pmcp_app_` token), `notion` (proxied, `auth: headers`) and `linear`
+  // (proxied, `auth: oauth`); one agent `claude` holding a `pmcp_agt_` token and grants on
+  // `news`. Two proxied apps is not padding — it is what these samples PROVE the
   // fixture needs: §8 gives each auth mode exactly one credential path, so
-  // `service_set_upstream_auth` succeeds only on a `headers` service and
-  // `service_disconnect` only on an `oauth` one, and no single proxied row can be both.
+  // `app_set_upstream_auth` succeeds only on a `headers` app and
+  // `app_disconnect` only on an `oauth` one, and no single proxied row can be both.
   //
   // Two `sample` values are row IDs rather than slugs, which no static cell can hold: they
   // are written as `fixture:<handle>` and the runner resolves them against the seeded
-  // namespace before calling the op (`fixture:token.sa` is the account's minted token id,
+  // namespace before calling the op (`fixture:token.sa` is the agent's minted token id,
   // `fixture:approval.pending` a pending approval opened through the gate — the seed
   // harness has no approval seam, by design). Nothing else in the table is indirect.
   //
   // `cascade` lists `grant_` on BOTH deleting ops, though the locked case titles name it
-  // only on `account_delete`: grant rows ride the FK from either parent (§5), so the batch
+  // only on `agent_delete`: grant rows ride the FK from either parent (§5), so the batch
   // removes them either way and the sweep should say so. Asserting all-or-nothing over a
   // family the op does not touch would be the error; this is the opposite.
 
-  // §8: "`service_list` … includes it flagged `builtin: true`" — the one read that must
-  // answer for a service with no row. Reads write no `admin.*` row (§15 records mutations).
+  // §8: "`app_list` … includes it flagged `builtin: true`" — the one read that must
+  // answer for an app with no row. Reads write no `admin.*` row (§15 records mutations).
   {
-    op: "service_list",
+    op: "app_list",
     slugArg: "none",
     writes: "read",
     sideEvents: [],
@@ -152,12 +152,12 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
     declaresOutputSchema: false,
     sample: {},
   },
-  // §8: "`{ slug }` → one service, same row shape as service_list. The reserved `pmcp` slug
-  // is rejected like everywhere else (the builtin surfaces only through service_list —
+  // §8: "`{ slug }` → one app, same row shape as app_list. The reserved `pmcp` slug
+  // is rejected like everywhere else (the builtin surfaces only through app_list —
   // uniformity is worth more than the corner case)."
   {
-    op: "service_get",
-    slugArg: "service",
+    op: "app_get",
+    slugArg: "app",
     writes: "read",
     sideEvents: [],
     cascade: [],
@@ -168,8 +168,8 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
   // `[a-z0-9-]`, unique per owner, "never `pmcp`". The smallest succeeding input is the
   // slug and the kind — name, description, redact and log_bodies all default (§15: by kind).
   {
-    op: "service_create",
-    slugArg: "service",
+    op: "app_create",
+    slugArg: "app",
     writes: "mutating",
     sideEvents: [],
     cascade: [],
@@ -181,54 +181,54 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
   // performs the flip on purpose — the side event is a property of the op only when the op
   // actually changes the mode, so a sample that updated a description would state nothing.
   {
-    op: "service_update",
-    slugArg: "service",
+    op: "app_update",
+    slugArg: "app",
     writes: "mutating",
     sideEvents: ["upstream.auth_mode_changed"],
     cascade: [],
     declaresOutputSchema: false,
     sample: { slug: "notion", auth: "oauth" },
   },
-  // §15/§8: "ONE atomic D1 batch removes the service row (grants cascade by FK) and its
+  // §15/§8: "ONE atomic D1 batch removes the app row (grants cascade by FK) and its
   // token rows FIRST; only then is the tunnel DO told to sever". This file owns the D1 half
   // (both gone or neither); the 4001-before-the-wipe ordering is tunnel/lifecycle.test.ts's.
   {
-    op: "service_delete",
-    slugArg: "service",
+    op: "app_delete",
+    slugArg: "app",
     writes: "mutating",
     sideEvents: [],
-    cascade: ["service", "grant_", "token"],
+    cascade: ["app", "grant_", "token"],
     declaresOutputSchema: false,
     sample: { slug: "news" },
   },
   // §8: "proxied only: stores the headers (e.g. a bearer token) the hub sends upstream …
-  // rejected on `auth: oauth` services". The header VALUE is deliberately, visibly fake: no
+  // rejected on `auth: oauth` apps". The header VALUE is deliberately, visibly fake: no
   // credential-shaped string belongs in a row that gets printed in test output.
   {
-    op: "service_set_upstream_auth",
-    slugArg: "service",
+    op: "app_set_upstream_auth",
+    slugArg: "app",
     writes: "mutating",
     sideEvents: [],
     cascade: [],
     declaresOutputSchema: false,
     sample: { slug: "notion", headers: { "X-Api-Key": "FAKE0000-not-a-real-upstream-key" } },
   },
-  // §8: "`auth: oauth` proxied services only: wipes the stored token bundle (audit row
+  // §8: "`auth: oauth` proxied apps only: wipes the stored token bundle (audit row
   // `upstream.disconnected`)". The fixture's `linear` is oauth-mode and NOT connected — a
   // connected one is unreachable from the seed harness, which may only reach an envelope
   // through `upstream.setHeaders` or the real connect flow (upstream-credentials.test.ts's).
   // The sample therefore also asserts the postcondition reading: disconnecting an
-  // already-disconnected service succeeds, the way unarchiving an unarchived one does —
-  // and, like `service_unarchive` two rows down, still writes its ledger rows, because in
+  // already-disconnected app succeeds, the way unarchiving an unarchived one does —
+  // and, like `app_unarchive` two rows down, still writes its ledger rows, because in
   // this table an op that RAN records that it ran. upstream.disconnect's "Idempotent:
-  // disconnecting an already-empty service is a no-op" is about the wipe (there is nothing
+  // disconnecting an already-empty app is a no-op" is about the wipe (there is nothing
   // to wipe), not about the ledger: the same header's first sentence writes
   // `upstream.disconnected` unconditionally. If the owner means the lifecycle row to
   // follow the wipe rather than the call, that is a `spec:` change and it takes the locked
-  // todo "service_disconnect writes `upstream.disconnected` beside its own row" with it.
+  // todo "app_disconnect writes `upstream.disconnected` beside its own row" with it.
   {
-    op: "service_disconnect",
-    slugArg: "service",
+    op: "app_disconnect",
+    slugArg: "app",
     writes: "mutating",
     sideEvents: ["upstream.disconnected"],
     cascade: [],
@@ -238,31 +238,31 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
   // §6/§8: reversible parking — the flag lands in D1, then any live socket is severed
   // (4002, tunnel/lifecycle.test.ts's half). Roles, grants, tokens and catalog are retained.
   {
-    op: "service_archive",
-    slugArg: "service",
+    op: "app_archive",
+    slugArg: "app",
     writes: "mutating",
     sideEvents: [],
     cascade: [],
     declaresOutputSchema: false,
     sample: { slug: "news" },
   },
-  // §6: "`service_unarchive` restores everything." Registry pins unarchiving an unarchived
-  // row as a no-op, so the fixture needs no pre-archived service for this sample to succeed
+  // §6: "`app_unarchive` restores everything." Registry pins unarchiving an unarchived
+  // row as a no-op, so the fixture needs no pre-archived app for this sample to succeed
   // — the postcondition is "not archived", and it is already met.
   {
-    op: "service_unarchive",
-    slugArg: "service",
+    op: "app_unarchive",
+    slugArg: "app",
     writes: "mutating",
     sideEvents: [],
     cascade: [],
     declaresOutputSchema: false,
     sample: { slug: "news" },
   },
-  // §8: "`account_list` returns each account's grants inline … there is no separate
-  // grant-read tool" — one service_list plus one account_list is the CLI planner's whole
+  // §8: "`agent_list` returns each agent's grants inline … there is no separate
+  // grant-read tool" — one app_list plus one agent_list is the CLI planner's whole
   // desired-state read.
   {
-    op: "account_list",
+    op: "agent_list",
     slugArg: "none",
     writes: "read",
     sideEvents: [],
@@ -270,45 +270,45 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
     declaresOutputSchema: false,
     sample: {},
   },
-  // §8: "`{ slug, name?, description? }` — create a service account." `slugArg: "account"`
-  // says the reservation does NOT apply here: §8 reserves `pmcp` for SERVICE slugs, and an
-  // account slug lives in its own per-owner namespace. Stated by a column rather than by
+  // §8: "`{ slug, name?, description? }` — create an agent." `slugArg: "agent"`
+  // says the reservation does NOT apply here: §8 reserves `pmcp` for APP slugs, and an
+  // agent slug lives in its own per-owner namespace. Stated by a column rather than by
   // omission, so the sweep asserts the non-reservation instead of merely skipping it.
   {
-    op: "account_create",
-    slugArg: "account",
+    op: "agent_create",
+    slugArg: "agent",
     writes: "mutating",
     sideEvents: [],
     cascade: [],
     declaresOutputSchema: false,
     sample: { slug: "scratch-agent" },
   },
-  // §8/§15: "ONE atomic D1 batch removes the account row (grants cascade by FK) and the
-  // account's token rows, so a racing request can never authenticate against a
-  // half-deleted account." No sockets are involved — the batch is the whole cascade.
+  // §8/§15: "ONE atomic D1 batch removes the agent row (grants cascade by FK) and the
+  // agent's token rows, so a racing request can never authenticate against a
+  // half-deleted agent." No sockets are involved — the batch is the whole cascade.
   {
-    op: "account_delete",
-    slugArg: "account",
+    op: "agent_delete",
+    slugArg: "agent",
     writes: "mutating",
     sideEvents: [],
-    cascade: ["service_account", "grant_", "token"],
+    cascade: ["agent", "grant_", "token"],
     declaresOutputSchema: false,
     sample: { slug: "claude" },
   },
-  // §8: "replaces the full grant set for (account, service)" — and "`pmcp` is rejected —
-  // service accounts can never hold admin grants". `slugArg: "service"` points the
-  // reservation sweep at the `service` field, which is where the reserved slug could do
-  // damage; the `account` field beside it is an ordinary account slug. The granted role is
+  // §8: "replaces the full grant set for (agent, app)" — and "`pmcp` is rejected —
+  // agents can never hold admin grants". `slugArg: "app"` points the
+  // reservation sweep at the `app` field, which is where the reserved slug could do
+  // damage; the `agent` field beside it is an ordinary agent slug. The granted role is
   // the built-in `all` (§18 decision 10: grantable, never declarable), so the sample
-  // succeeds against a tunneled service whose roles arrive only at first registration.
+  // succeeds against a tunneled app whose roles arrive only at first registration.
   {
     op: "grant_set",
-    slugArg: "service",
+    slugArg: "app",
     writes: "mutating",
     sideEvents: [],
     cascade: [],
     declaresOutputSchema: false,
-    sample: { account: "claude", service: "news", roles: ["all"] },
+    sample: { agent: "claude", app: "news", roles: ["all"] },
   },
   // §8: "`{ status?, limit? }` → approval requests, newest first (pending and history
   // alike)". Read-only, so no `admin.*` row — the lazy `approval.expired` a past-expiry row
@@ -338,22 +338,22 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
   // §8: "The issued key is a `writeOnly`-marked field in this tool's *output* schema, so
   // §15's uniform body rule masks it wherever bodies are recorded — no pmcp-specific logging
   // rule exists or is needed." The one op in the table with an outputSchema, and the sample
-  // uses `kind: "service"` so its `slug` really is a SERVICE slug — a `service_account`
-  // sample would point the reservation sweep at an account slug and prove nothing (§8 lists
+  // uses `kind: "app"` so its `slug` really is an APP slug — an `agent`
+  // sample would point the reservation sweep at an agent slug and prove nothing (§8 lists
   // token_issue among the ops that reject `pmcp`). This op's slug is the only one in the
   // table whose MEANING depends on a sibling field, and `slugArg` is one value per row: the
   // sample resolves that by pinning the kind, and the question it therefore never asks —
-  // `token_issue({ kind: "service_account", slug: "pmcp" })` — is one §8 does not answer
-  // either (it reserves `pmcp` for service slugs and is silent on account slugs). A row
+  // `token_issue({ kind: "agent", slug: "pmcp" })` — is one §8 does not answer
+  // either (it reserves `pmcp` for app slugs and is silent on agent slugs). A row
   // here would be inventing the answer, not transcribing it.
   {
     op: "token_issue",
-    slugArg: "service",
+    slugArg: "app",
     writes: "mutating",
     sideEvents: [],
     cascade: [],
     declaresOutputSchema: true,
-    sample: { kind: "service", slug: "news" },
+    sample: { kind: "app", slug: "news" },
   },
   // §8: "listings include `last_used_at` … Never plaintext, never the hash."
   {
@@ -365,10 +365,10 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
     declaresOutputSchema: false,
     sample: {},
   },
-  // §8/§15: "revoking a `service` token also closes that service's live socket (code
+  // §8/§15: "revoking a `app` token also closes that app's live socket (code
   // `4001`) if the connection was opened with it" — the socket half is
   // tunnel/lifecycle.test.ts's; here the op takes a row id and writes its one audit row.
-  // The sample revokes the ACCOUNT's key, which has no socket to sever in this project.
+  // The sample revokes the AGENT's key, which has no socket to sever in this project.
   {
     op: "token_revoke",
     slugArg: "none",
@@ -379,7 +379,7 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
     sample: { id: "fixture:token.sa" },
   },
   // §19/§8: "the OAuth clients connected to this namespace … never a token, a client
-  // secret, or a JWT." A read like `service_list`/`account_list` — empty input succeeds.
+  // secret, or a JWT." A read like `app_list`/`agent_list` — empty input succeeds.
   {
     op: "connection_list",
     slugArg: "none",
@@ -432,10 +432,10 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
   describe("§8 — the reserved `pmcp` slug is a property of the table", () => {
     it("§8 · every slug-taking op refuses `pmcp` with the one uniform error, swept over Object.keys(ops)", async () => {
       const refusals: Refusal[] = [];
-      for (const row of rows.filter((r) => r.slugArg === "service")) {
+      for (const row of rows.filter((r) => r.slugArg === "app")) {
         refusals.push(await refusalOf(row, `${row.op}: the reserved slug must be refused`));
       }
-      expect(refusals.length, "no service-slug op in the table — the sweep would assert nothing").toBeGreaterThan(0);
+      expect(refusals.length, "no app-slug op in the table — the sweep would assert nothing").toBeGreaterThan(0);
       // ONE error, not one per op (§8): what makes the reservation a property of the TABLE
       // is that the refusals are indistinguishable from each other, which no single row can
       // assert about itself.
@@ -450,7 +450,7 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
 
     it("§8 · the same op accepts the fixture's real slug — the allow-twin the sweep generates per row", async () => {
       for (const row of rows) {
-        // Each twin gets its own namespace: `service_delete` and `service_archive` name the
+        // Each twin gets its own namespace: `app_delete` and `app_archive` name the
         // same fixture slug, so a shared one would make the second row assert the first's
         // aftermath instead of the fixture.
         const ns = await seedFixture();
@@ -466,20 +466,20 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
       expect(rows.length, "one row per op, no duplicates").toBe(new Set(rows.map((r) => r.op)).size);
     });
 
-    it("§8 · service_get('pmcp') refuses like every other slug-taking op — the builtin surfaces only through service_list", async () => {
+    it("§8 · app_get('pmcp') refuses like every other slug-taking op — the builtin surfaces only through app_list", async () => {
       const ns = await seedFixture();
-      const listed = await ops.service_list.handler(ns.owner.userId, {});
+      const listed = await ops.app_list.handler(ns.owner.userId, {});
       expect(
-        servicesOf(listed).map((s) => s.slug),
-        "service_list is the one read the builtin surfaces through",
+        appsOf(listed).map((s) => s.slug),
+        "app_list is the one read the builtin surfaces through",
       ).toContain(PMCP_SLUG);
-      const refusal = await refusalOf(rowFor(rows, "service_get"), "service_get('pmcp')");
+      const refusal = await refusalOf(rowFor(rows, "app_get"), "app_get('pmcp')");
       expect(refusal.message).toContain(PMCP_SLUG);
     });
 
-    it("§8 · grant_set refuses `pmcp` as its service — accounts can never hold admin grants", async () => {
+    it("§8 · grant_set refuses `pmcp` as its app — agents can never hold admin grants", async () => {
       const row = rowFor(rows, "grant_set");
-      expect(slugFieldOf(row.sample), "grant_set names its service in the `service` field").toBe("service");
+      expect(slugFieldOf(row.sample), "grant_set names its app in the `app` field").toBe("app");
       const refusal = await refusalOf(row, "grant_set on the reserved slug");
       expect(refusal.message).toContain(PMCP_SLUG);
     });
@@ -508,19 +508,19 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
     });
 
     it("§8 · an op refused for the reserved slug writes no `admin.<op>` row — no summary of a change that did not happen", async () => {
-      for (const row of rows.filter((r) => r.slugArg === "service" && r.writes === "mutating")) {
+      for (const row of rows.filter((r) => r.slugArg === "app" && r.writes === "mutating")) {
         const ns = await seedFixture();
         await expect(callOp(row, ns, PMCP_SLUG)).rejects.toBeDefined();
         expect(await adminRows(ns.owner.userId), `${row.op}: refused, so nothing to summarise`).toEqual([]);
       }
     });
 
-    it("§8 · service_update flipping `auth` writes `upstream.auth_mode_changed` beside its own row", async () => {
-      await expectSideEvents(rows, "service_update");
+    it("§8 · app_update flipping `auth` writes `upstream.auth_mode_changed` beside its own row", async () => {
+      await expectSideEvents(rows, "app_update");
     });
 
-    it("§8 · service_disconnect writes `upstream.disconnected` beside its own row", async () => {
-      await expectSideEvents(rows, "service_disconnect");
+    it("§8 · app_disconnect writes `upstream.disconnected` beside its own row", async () => {
+      await expectSideEvents(rows, "app_disconnect");
     });
 
     it("§8 · approval_decide's own row sits beside approvals' `approval.approved` — two writers, one call", async () => {
@@ -540,58 +540,58 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
         kind: row.sample.kind,
         slug: row.sample.slug,
       });
-      expect(issued.token, "the caller still holds the plaintext").toMatch(/^pmcp_svc_/);
+      expect(issued.token, "the caller still holds the plaintext").toMatch(/^pmcp_app_/);
       expect(JSON.stringify(written), "and the ledger never does").not.toContain(issued.token);
     });
   });
 
   describe("§15 — deleting cascades are one atomic D1 batch", () => {
-    it("§15 · service_delete removes the service row and its token rows together — both gone or neither", async () => {
-      await expectCascade(rows, "service_delete");
+    it("§15 · app_delete removes the app row and its token rows together — both gone or neither", async () => {
+      await expectCascade(rows, "app_delete");
     });
 
-    it("§15 · the namespace's other services, tokens, and grants are untouched by it (the allow-twin)", async () => {
-      const row = rowFor(rows, "service_delete");
+    it("§15 · the namespace's other apps, tokens, and grants are untouched by it (the allow-twin)", async () => {
+      const row = rowFor(rows, "app_delete");
       const ns = await seedFixture();
       const bystanders = {
-        notion: ns.services[NOTION].id,
-        linear: ns.services[LINEAR].id,
-        account: ns.accounts[CLAUDE].id,
+        notion: ns.apps[NOTION].id,
+        linear: ns.apps[LINEAR].id,
+        agent: ns.agents[CLAUDE].id,
       };
       const before = await bystanderCounts(bystanders);
       // Named explicitly, because "untouched" only means something if there was something to
-      // touch: the account keeps its key and its grant on a service the cascade never names.
-      expect(before.accountTokens).toBeGreaterThan(0);
-      expect(before.accountGrants).toBeGreaterThan(0);
+      // touch: the agent keeps its key and its grant on an app the cascade never names.
+      expect(before.agentTokens).toBeGreaterThan(0);
+      expect(before.agentGrants).toBeGreaterThan(0);
       await callOp(row, ns);
       expect(await bystanderCounts(bystanders), "the cascade is scoped to its own subject").toEqual(before);
     });
 
-    it("§15 · account_delete removes the account row, its grants (FK cascade), and its token rows together", async () => {
-      await expectCascade(rows, "account_delete");
+    it("§15 · agent_delete removes the agent row, its grants (FK cascade), and its token rows together", async () => {
+      await expectCascade(rows, "agent_delete");
     });
 
-    it("§15 · a service_delete refused at validation leaves every row in place — no partial batch", async () => {
-      const row = rowFor(rows, "service_delete");
+    it("§15 · a app_delete refused at validation leaves every row in place — no partial batch", async () => {
+      const row = rowFor(rows, "app_delete");
       const ns = await seedFixture();
-      const subject = ns.services[NEWS].id;
+      const subject = ns.apps[NEWS].id;
       const before = await cascadeCounts(row, subject);
       await expect(callOp(row, ns, PMCP_SLUG)).rejects.toBeDefined();
       expect(await cascadeCounts(row, subject), "a refused delete deletes nothing").toEqual(before);
     });
 
-    it("§15 · service_delete on a proxied service stops after the batch: no DO, no tokens", async () => {
-      const row = rowFor(rows, "service_delete");
+    it("§15 · app_delete on a proxied app stops after the batch: no DO, no tokens", async () => {
+      const row = rowFor(rows, "app_delete");
       const ns = await seedFixture();
-      const proxied = ns.services[NOTION].id;
+      const proxied = ns.apps[NOTION].id;
       expect(
         await countRows(`SELECT COUNT(*) AS n FROM token WHERE ref_id = ?`, proxied),
-        "a proxied service can hold no service token, so there is none to cascade",
+        "a proxied app can hold no app token, so there is none to cascade",
       ).toBe(0);
-      await ops.service_delete.handler(ns.owner.userId, { slug: NOTION });
-      expect(await countRows(`SELECT COUNT(*) AS n FROM service WHERE id = ?`, proxied)).toBe(0);
-      expect(await countRows(`SELECT COUNT(*) AS n FROM grant_ WHERE service_id = ?`, proxied)).toBe(0);
-      // The DO half as the ledger sees it: a proxied service has no connection to evict, so
+      await ops.app_delete.handler(ns.owner.userId, { slug: NOTION });
+      expect(await countRows(`SELECT COUNT(*) AS n FROM app WHERE id = ?`, proxied)).toBe(0);
+      expect(await countRows(`SELECT COUNT(*) AS n FROM grant_ WHERE app_id = ?`, proxied)).toBe(0);
+      // The DO half as the ledger sees it: a proxied app has no connection to evict, so
       // the op's own row carries no tunnel verdict at all — its tunneled twin's does.
       const [proxiedRow] = await adminRows(ns.owner.userId);
       expect(proxiedRow.detail, "a proxied delete addresses no DO").not.toHaveProperty("tunnel");
@@ -643,15 +643,15 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
     });
 
     it("§8 · adminBackend.sensitivePaths answers `{ args: [], results: [...] }` for known ops and null for an unknown name", async () => {
-      const service = pmcpService(OWNERLESS);
+      const app = pmcpApp(OWNERLESS);
       for (const row of rows) {
-        const paths = await adminBackend.sensitivePaths(service, row.op);
+        const paths = await adminBackend.sensitivePaths(app, row.op);
         expect(paths?.args, `${row.op}: no admin tool takes a sensitive argument`).toEqual([]);
         expect(paths?.results, `${row.op}: the only sensitive result is token_issue's key`).toEqual(
           row.declaresOutputSchema ? [TOKEN_FIELD] : [],
         );
       }
-      expect(await adminBackend.sensitivePaths(service, "no_such_op")).toBeNull();
+      expect(await adminBackend.sensitivePaths(app, "no_such_op")).toBeNull();
     });
   });
 }
@@ -665,7 +665,7 @@ const LINEAR = "linear";
 const CLAUDE = "claude";
 
 /** The two token handles; `fixture:token.sa` resolves to the second one's row id. */
-const SVC_TOKEN = "token.svc";
+const APP_TOKEN = "token.app";
 const SA_TOKEN = "token.sa";
 
 /** token_issue's one `writeOnly`-marked output field — the plaintext key (§8). */
@@ -681,21 +681,21 @@ const UPSTREAM_URL = "https://upstream.pmcp-test.invalid/admin-ops/never-dialed"
 /**
  * A namespace shaped exactly as the table's preamble names it. Built fresh per row: the
  * `worker` project isolates storage per FILE, not per case, so two rows sharing a fixture
- * would let `service_delete` decide what `service_archive` finds.
+ * would let `app_delete` decide what `app_archive` finds.
  */
 async function seedFixture(): Promise<SeededNamespace> {
   return seedNamespace(env.DB, {
-    services: [
-      { slug: NEWS, kind: "tunnel", tokens: [{ as: SVC_TOKEN }] },
+    apps: [
+      { slug: NEWS, kind: "tunnel", tokens: [{ as: APP_TOKEN }] },
       { slug: NOTION, kind: "proxy", upstreamUrl: UPSTREAM_URL, upstreamAuthMode: "headers" },
       { slug: LINEAR, kind: "proxy", upstreamUrl: UPSTREAM_URL, upstreamAuthMode: "oauth" },
     ],
-    accounts: [
+    agents: [
       {
         slug: CLAUDE,
         // The built-in `all` in both places, so the fixture accumulates no "role not
         // declared" warnings on its way to existing (§18 decision 10: grantable, never
-        // declarable) — and so the delete sweep has a grant on a BYSTANDER service too.
+        // declarable) — and so the delete sweep has a grant on a BYSTANDER app too.
         grants: {
           [NEWS]: [{ role: "all", mode: "allow" }],
           [NOTION]: [{ role: "all", mode: "allow" }],
@@ -718,11 +718,11 @@ async function callOp(row: AdminOpRow, ns: SeededNamespace, slugOverride?: strin
 }
 
 /**
- * The field a reserved-slug twin replaces. `grant_set` is the one op whose service slug is
- * not called `slug` — §8 points the reservation at the service, not the account beside it.
+ * The field a reserved-slug twin replaces. `grant_set` is the one op whose app slug is
+ * not called `slug` — §8 points the reservation at the app, not the agent beside it.
  */
 function slugFieldOf(sample: Record<string, unknown>): string {
-  return "service" in sample ? "service" : "slug";
+  return "app" in sample ? "app" : "slug";
 }
 
 /**
@@ -747,7 +747,7 @@ async function resolveSample(
 /**
  * A live `oauth_binding` row, opened through `oauth.upsertBinding` — the same seam
  * `/oauth/consent`'s POST writes through (§19.5) — bound to the fixture's own `claude`
- * account. `connection_revoke`'s sample calls this once per row it is asked to resolve
+ * agent. `connection_revoke`'s sample calls this once per row it is asked to resolve
  * (§9 rule 2's allow-twin and the reserved-slug sweep alike each seed their own fixture),
  * so every call opens its own binding rather than sharing one across namespaces.
  */
@@ -755,9 +755,9 @@ async function openOauthBinding(ns: SeededNamespace): Promise<string> {
   const bound = await upsertBinding({
     ownerId: ns.owner.userId,
     clientId: `fixture-oauth-client-${ns.owner.userId}`,
-    serviceAccountId: ns.accounts[CLAUDE].id,
+    agentId: ns.agents[CLAUDE].id,
   });
-  if (bound === null) throw new Error("openOauthBinding: the fixture account is not in its own namespace");
+  if (bound === null) throw new Error("openOauthBinding: the fixture agent is not in its own namespace");
   return bound.id;
 }
 
@@ -775,8 +775,8 @@ async function openPendingApproval(ns: SeededNamespace): Promise<string> {
     now: Date.now,
   });
   const opened = await gate.check(
-    { kind: "service_account", accountId: ns.accounts[CLAUDE].id, ownerId: ns.owner.userId, slug: CLAUDE },
-    serviceValue(ns, NEWS),
+    { kind: "agent", agentId: ns.agents[CLAUDE].id, ownerId: ns.owner.userId, slug: CLAUDE },
+    appValue(ns, NEWS),
     "get_news",
     {},
     [],
@@ -787,9 +787,9 @@ async function openPendingApproval(ns: SeededNamespace): Promise<string> {
   return opened.approvalId;
 }
 
-/** One seeded service as the cross-module `Service` value approvals takes. */
-function serviceValue(ns: SeededNamespace, slug: string): Service {
-  const seeded = ns.services[slug];
+/** One seeded app as the cross-module `App` value approvals takes. */
+function appValue(ns: SeededNamespace, slug: string): App {
+  const seeded = ns.apps[slug];
   return {
     id: seeded.id,
     ownerId: ns.owner.userId,
@@ -835,9 +835,9 @@ function rowFor(rows: readonly AdminOpRow[], op: string): AdminOpRow {
   return row;
 }
 
-/** `service_list`'s rows, whatever the handler wraps them in. */
-function servicesOf(listed: unknown): { slug: string }[] {
-  return (listed as { services: { slug: string }[] }).services;
+/** `app_list`'s rows, whatever the handler wraps them in. */
+function appsOf(listed: unknown): { slug: string }[] {
+  return (listed as { apps: { slug: string }[] }).apps;
 }
 
 /** Run one row's sample and assert its declared side events landed beside its own row. */
@@ -872,12 +872,12 @@ async function expectCascade(rows: readonly AdminOpRow[], op: string): Promise<v
 /** The id a deleting row's cascade is keyed on — its own sample's subject. */
 function subjectOf(row: AdminOpRow, ns: SeededNamespace): string {
   const slug = String(row.sample.slug);
-  return row.cascade.includes("service_account") ? ns.accounts[slug].id : ns.services[slug].id;
+  return row.cascade.includes("agent") ? ns.agents[slug].id : ns.apps[slug].id;
 }
 
 /** One count per family the row declares, keyed the way that family references its parent. */
 async function cascadeCounts(row: AdminOpRow, subject: string): Promise<Record<string, number>> {
-  const parent = row.cascade.includes("service_account") ? "service_account_id" : "service_id";
+  const parent = row.cascade.includes("agent") ? "agent_id" : "app_id";
   const counts: Record<string, number> = {};
   for (const family of row.cascade) {
     const sql =
@@ -892,22 +892,22 @@ async function cascadeCounts(row: AdminOpRow, subject: string): Promise<Record<s
 }
 
 /**
- * What a cascade must NOT reach: the namespace's OTHER services, the grants held on one of
- * them, and the account's own credential. Grants are counted on the bystander service
- * rather than on the account, because the account's grant on the deleted service is
+ * What a cascade must NOT reach: the namespace's OTHER apps, the grants held on one of
+ * them, and the agent's own credential. Grants are counted on the bystander app
+ * rather than on the agent, because the agent's grant on the deleted app is
  * supposed to go — it rides the FK from the parent the op really did remove (§5).
  */
-async function bystanderCounts(ids: { notion: string; linear: string; account: string }) {
+async function bystanderCounts(ids: { notion: string; linear: string; agent: string }) {
   return {
-    notion: await countRows(`SELECT COUNT(*) AS n FROM service WHERE id = ?`, ids.notion),
-    linear: await countRows(`SELECT COUNT(*) AS n FROM service WHERE id = ?`, ids.linear),
-    account: await countRows(`SELECT COUNT(*) AS n FROM service_account WHERE id = ?`, ids.account),
-    accountGrants: await countRows(
-      `SELECT COUNT(*) AS n FROM grant_ WHERE service_account_id = ? AND service_id = ?`,
-      ids.account,
+    notion: await countRows(`SELECT COUNT(*) AS n FROM app WHERE id = ?`, ids.notion),
+    linear: await countRows(`SELECT COUNT(*) AS n FROM app WHERE id = ?`, ids.linear),
+    agent: await countRows(`SELECT COUNT(*) AS n FROM agent WHERE id = ?`, ids.agent),
+    agentGrants: await countRows(
+      `SELECT COUNT(*) AS n FROM grant_ WHERE agent_id = ? AND app_id = ?`,
+      ids.agent,
       ids.notion,
     ),
-    accountTokens: await countRows(`SELECT COUNT(*) AS n FROM token WHERE ref_id = ?`, ids.account),
+    agentTokens: await countRows(`SELECT COUNT(*) AS n FROM token WHERE ref_id = ?`, ids.agent),
   };
 }
 
@@ -921,8 +921,8 @@ async function countRows(sql: string, ...binds: unknown[]): Promise<number> {
 /** An owner id no fixture uses: the parity sweeps read the ops table, never a namespace. */
 const OWNERLESS = "parity-reads-no-namespace";
 
-/** The virtual `pmcp` Service the gateway hands the backend — only `ownerId` is consulted. */
-function pmcpService(ownerId: string): Service {
+/** The virtual `pmcp` App the gateway hands the backend — only `ownerId` is consulted. */
+function pmcpApp(ownerId: string): App {
   return { id: PMCP_SLUG, ownerId, slug: PMCP_SLUG, kind: "tunnel", archived: false, logBodies: true };
 }
 
@@ -931,7 +931,7 @@ async function listAdminTools(): Promise<Tool[]> {
     principal: { kind: "user", userId: OWNERLESS, username: "parity" },
     roles: ["all"],
   };
-  return adminBackend.listTools(pmcpService(OWNERLESS), ctx);
+  return adminBackend.listTools(pmcpApp(OWNERLESS), ctx);
 }
 
 runAdminOpTable(ADMIN_OP_ROWS);
@@ -943,12 +943,12 @@ describe("§19/§8 · connections (fronting oauth.ts)", () => {
     const ns = await seedFixture();
     const bindingId = await openOauthBinding(ns);
     const listed = (await ops.connection_list.handler(ns.owner.userId, {})) as {
-      connections: { id: string; clientId: string; clientName: string | null; accountSlug: string }[];
+      connections: { id: string; clientId: string; clientName: string | null; agentSlug: string }[];
     };
     const row = listed.connections.find((connection) => connection.id === bindingId);
     expect(row, "the opened binding is not in its own namespace's listing").toBeDefined();
-    expect(row?.accountSlug).toBe(CLAUDE);
-    // Never a credential: no pmcp_(sa|svc)_ token, no JWT-shaped three-segment string, and
+    expect(row?.agentSlug).toBe(CLAUDE);
+    // Never a credential: no pmcp_(agt|app)_ token, no JWT-shaped three-segment string, and
     // no field named "secret" anywhere in the answer (§8: "a connection is a binding, and
     // a binding holds no credential").
     const serialized = JSON.stringify(listed);
@@ -989,7 +989,7 @@ describe("§19/§8 · connections (fronting oauth.ts)", () => {
 // nine parameters and audit.whereClause turns each into one AND-ed clause; a clause
 // dropped, or bound to the wrong column, is invisible to a sample that never passes one:
 // the op still answers `{ rows, total }` and the row set is merely WIDER than it should
-// be. Widening is the failure mode that matters — `pmcp audit --account claude` and the
+// be. Widening is the failure mode that matters — `pmcp audit --agent claude` and the
 // /audit page's principal link both promise "this actor alone", and a filter that
 // silently ignored its value would show one namespace's whole ledger under another
 // agent's name.
@@ -1000,7 +1000,7 @@ describe("§19/§8 · connections (fronting oauth.ts)", () => {
 // theirs because they bound, and a bound is only observable against a ledger that spans
 // more than one instant (each case asserts that precondition rather than assuming it).
 //
-// Not here: `service`/`event`/`tool`/`session`, which the /audit filter walk already
+// Not here: `app`/`event`/`tool`/`session`, which the /audit filter walk already
 // passes values for (web-pages.test.ts), and `limit`/`offset`, whose defaults §8 pins and
 // whose paging the same page's cases drive.
 
@@ -1013,12 +1013,12 @@ async function auditQuery(ns: SeededNamespace, filters: Record<string, unknown>)
 }
 
 /**
- * The two agent principals this block writes under. Spelled as §8's `sa:<slug>` form, the
- * same string `pmcp audit --account claude` resolves to, so a case that passed a bare slug
+ * The two agent principals this block writes under. Spelled as §8's `agent:<slug>` form, the
+ * same string `pmcp audit --agent claude` resolves to, so a case that passed a bare slug
  * would be testing a spelling no caller uses.
  */
-const AGENT = `sa:${CLAUDE}`;
-const OTHER_AGENT = "sa:scratch-agent";
+const AGENT = `agent:${CLAUDE}`;
+const OTHER_AGENT = "agent:scratch-agent";
 
 /**
  * The third principal in this namespace, and the one nothing here wrote: `admin
@@ -1045,7 +1045,7 @@ async function seedLedger(ns: SeededNamespace): Promise<void> {
       ownerId: ns.owner.userId,
       principal,
       event: "tools/call",
-      service: NEWS,
+      app: NEWS,
       tool: "get_news",
       outcome: "ok",
     });
@@ -1077,7 +1077,7 @@ describe("§8 — audit_query's `principal` selects one actor's rows", () => {
   it("§8 · a principal nobody acted under answers `{ rows: [], total: 0 }` — no matches is an empty page, never an error", async () => {
     const ns = await seedFixture();
     await seedLedger(ns);
-    expect(await auditQuery(ns, { principal: "sa:FAKE0000-never-acted" })).toEqual({ rows: [], total: 0 });
+    expect(await auditQuery(ns, { principal: "agent:FAKE0000-never-acted" })).toEqual({ rows: [], total: 0 });
   });
 });
 

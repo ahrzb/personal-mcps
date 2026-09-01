@@ -4,7 +4,7 @@
 // the top-level route table as data — from which RESERVED_ROUTES is derived so served
 // routes and reserved usernames can never drift (§2; the §16 router-walk test pins this
 // export, and identity receives the set as an argument rather than importing it back) —
-// the daily cron fan-out, and the ServiceConnection Durable Object re-export
+// the daily cron fan-out, and the AppConnection Durable Object re-export
 // wrangler requires from the entry module. It HIDES deployment topology: no sibling ever
 // names a binding, a secret, a cron schedule, or a URL prefix.
 
@@ -55,8 +55,8 @@ type DurableObjectNamespace = unknown;
 export type Env = {
   /** D1: the shared control plane (§5) — better-auth tables plus ours. */
   DB: D1Database;
-  /** ServiceConnection DO namespace, addressed by opaque `service.id` only (§3, §6). */
-  SERVICE_CONNECTION: DurableObjectNamespace;
+  /** AppConnection DO namespace, addressed by opaque `app.id` only (§3, §6). */
+  APP_CONNECTION: DurableObjectNamespace;
   /**
    * The canonical public https origin, e.g. "https://mcp.example.com" — scheme + host,
    * no trailing slash, no path. The single source for every absolute URL the hub emits:
@@ -115,10 +115,10 @@ export type Env = {
 export const ROUTES = [
   "login", // web: sign-in — password, TOTP challenge, passkey (§13)
   "device", // web: device-approval page for the CLI flow (§13)
-  "account", // web: credential management, cookie-session + recent-auth only (§4, §13)
+  "settings", // web: credential management, cookie-session + recent-auth only (§4, §13)
   "audit", // web: audit view + streaming JSONL export (§13)
   "approvals", // web: approval dashboard, /approvals/:id detail, push opt-in (§13)
-  "services", // web: service management, Connect/Reconnect/Disconnect (§13)
+  "apps", // web: app management, Connect/Reconnect/Disconnect (§13)
   "oauth", // upstream OAuth: /oauth/upstream/callback (§7)
   "api", // hub-owned JSON: GET /api/whoami (§8) and better-auth under /api/auth (§4)
   "connect", // tunnel WebSocket upgrade: wss://<origin>/connect (§6)
@@ -144,7 +144,7 @@ export const RESERVED_ROUTES: ReadonlySet<string> = new Set([...ROUTES, "mcp"]);
  * wrangler resolves Durable Object classes against the entry module, so the DO is
  * re-exported here; it lives in — and is addressed only through — ./tunnel.
  */
-export { ServiceConnection } from "./tunnel";
+export { AppConnection } from "./tunnel";
 
 /**
  * The worker entrypoint: HTTP/WebSocket in `fetch`, the daily cron in `scheduled`.
@@ -158,7 +158,7 @@ const handler = {
    * Routes by first path segment through ROUTES; anything else falls through to
    * /:user/mcp* — the username validated as `[a-z0-9-]` and not in RESERVED_ROUTES —
    * and otherwise 404. Auth is not decided here: each mounted group enforces its own
-   * regime (cookie sessions on web pages, Bearer-only on /:user/mcp*, service tokens
+   * regime (cookie sessions on web pages, Bearer-only on /:user/mcp*, app tokens
    * on /connect, BOOTSTRAP_SECRET on /internal).
    */
   async fetch(request: Request, env: Env, _ctx?: unknown): Promise<Response> {
@@ -191,7 +191,7 @@ const handler = {
  * bindings do not exist until a request arrives.
  *
  * The §15 contract, stated once, here: events leave through `audit.beforeSend`, which
- * strips `Authorization` and the `pmcp_(sa|svc)_` grammar at every depth — this module
+ * strips `Authorization` and the `pmcp_(agt|app)_` grammar at every depth — this module
  * holds the DSN, audit holds what may leave in an event. Bodies never ride an event at
  * all: the SDK captures request bodies by DEFAULT (`maxRequestBodySize: "medium"`), so
  * that default is turned off at its source rather than scrubbed downstream, and PII
@@ -328,7 +328,7 @@ function router(): Hono<{ Bindings: Env }> {
 
 function buildRouter(): Hono<{ Bindings: Env }> {
   const app = new Hono<{ Bindings: Env }>();
-  // ONE 404 for the whole worker: an unrouted path, a foreign namespace, a service the
+  // ONE 404 for the whole worker: an unrouted path, a foreign namespace, an app the
   // caller holds no grants on, and a disabled bootstrap route all answer with these
   // bytes. "Indistinguishable from route-not-found" is only true if it is the same
   // Response, so identity builds it and this is where the router agrees to use it.
@@ -337,10 +337,10 @@ function buildRouter(): Hono<{ Bindings: Env }> {
   // Bare `/` is the one URL a person types by hand; it names no segment, so without this it
   // falls through to the anonymous 404. A read-only peek at the cookie session (the same
   // seam every page gates on, which returns on a real owner session and throws the login
-  // bounce otherwise) sends a signed-in owner to their services and everyone else to sign
+  // bounce otherwise) sends a signed-in owner to their apps and everyone else to sign
   // in. Not a ROUTES segment — "" is no username — so the §16 walk is untouched.
   app.get("/", async (c) =>
-    c.redirect(await requireOwnerSession(c.req.raw).then(() => "/services", () => "/login"), 302),
+    c.redirect(await requireOwnerSession(c.req.raw).then(() => "/apps", () => "/login"), 302),
   );
 
   // Every segment the route table names, mounted from the table itself — and each mount
@@ -376,10 +376,10 @@ type Mount = (app: Hono<{ Bindings: Env }>, segment: ServedSegment) => void;
 const MOUNTS: Record<ServedSegment, Mount> = {
   login: browser,
   device: browser,
-  account: browser,
+  settings: browser,
   audit: browser,
   approvals: browser,
-  services: browser,
+  apps: browser,
   "manifest.webmanifest": browser,
   "sw.js": browser,
   "styles.css": browser,
@@ -467,7 +467,7 @@ function claim(
 
 /**
  * A path under a served segment. Deliberately NOT the hub's one anonymous 404: that answer
- * exists so namespaces, services and unrouted paths are indistinguishable from each other,
+ * exists so namespaces, apps and unrouted paths are indistinguishable from each other,
  * and a segment the public route table already names has nothing left to hide. Saying so is
  * also what lets §16's walk tell "this segment is served" from "this segment is reserved and
  * nothing answers it", which no shared 404 could.
@@ -496,7 +496,7 @@ function bootstrapApp(secret: string): Hono {
 /**
  * The door on `/<user>/mcp*` — §7 step 1's whole HTTP-level verdict, in the order the
  * spec states it: transport hygiene, then who is calling, then whether this namespace and
- * (scoped) this service exist FOR THEM. Everything here refuses with a status; the
+ * (scoped) this app exist FOR THEM. Everything here refuses with a status; the
  * pipeline past it speaks JSON-RPC and never sees a request that failed any of it.
  *
  * The refusals are deliberately few and shared: one 401 (identity's, with
@@ -542,7 +542,7 @@ async function mcpEntry(
   }
   const principal = await admitted(request, env, slug);
   if (principal === null) return anonymousNotFound();
-  // The tick re-reads the credential and (scoped) the service's visibility off the SAME
+  // The tick re-reads the credential and (scoped) the app's visibility off the SAME
   // request — bearer, namespace and slug are all still on it — so nothing about the
   // stream's own state can widen what the door already decided. Identity refuses by
   // THROWING a Response, and on a tick there is nobody to hand one to: every way step 1
@@ -575,20 +575,20 @@ function isJson(request: Request): boolean {
 }
 
 /**
- * §7 step 2's scoped-endpoint visibility, as a 404: a service account gets the same
+ * §7 step 2's scoped-endpoint visibility, as a 404: an agent gets the same
  * answer for a slug that does not exist and for one it holds no grants on, so a
- * zero-grant account cannot enumerate the namespace — and the reserved `pmcp` builtin is
+ * zero-grant agent cannot enumerate the namespace — and the reserved `pmcp` builtin is
  * one more slug it holds no grants on (§8: admin tokens only), never a 401 that would
- * invite it to authenticate differently. Owners see every service in their own namespace.
+ * invite it to authenticate differently. Owners see every app in their own namespace.
  */
 async function visibleOnScoped(env: Env, principal: Principal, slug: string): Promise<boolean> {
   if (slug === PMCP_SLUG) return principal.kind === "user";
   const registry = new Registry(env.DB);
   const ownerId = principal.kind === "user" ? principal.userId : principal.ownerId;
-  const service = await registry.getService(ownerId, slug);
-  if (service === null) return false;
+  const app = await registry.getApp(ownerId, slug);
+  if (app === null) return false;
   if (principal.kind === "user") return true;
-  // registry's own signal: an empty roleNames on an account means no grants at all here,
+  // registry's own signal: an empty roleNames on an agent means no grants at all here,
   // as opposed to grants whose roles have gone undeclared (a normal, listable state).
-  return (await registry.resolveAccess(principal, service)).roleNames.length > 0;
+  return (await registry.resolveAccess(principal, app)).roleNames.length > 0;
 }

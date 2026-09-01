@@ -10,8 +10,8 @@
 //   GET /preview/<page>/<fixture>  — that page rendered with that fixture's exact props.
 //
 // Each page component already renders its complete document — the chromeless pages
-// (login, device, service-new, approval-detail) draw their own <html>, the shelled
-// pages (account, services, approvals, audit) wrap themselves in ./layout's Layout
+// (login, device, app-new, approval-detail) draw their own <html>, the shelled
+// pages (agent, apps, approvals, audit) wrap themselves in ./layout's Layout
 // internally — so rendering here is just the component's own JSX stringified. Nothing
 // here re-wraps a page in a second layout.
 
@@ -20,9 +20,9 @@ import type { FC } from "hono/jsx";
 import { fixtures } from "./fixtures";
 import { Login } from "../src/pages/login";
 import { Device } from "../src/pages/device";
-import { AccountPage } from "../src/pages/account";
-import { ServicesPage } from "../src/pages/services";
-import { ServiceNewPage } from "../src/pages/service-new";
+import { SettingsPage } from "../src/pages/settings";
+import { AppsPage } from "../src/pages/apps";
+import { AppNewPage } from "../src/pages/app-new";
 import { ApprovalsPage } from "../src/pages/approvals";
 import { ApprovalDetail } from "../src/pages/approval-detail";
 import { AuditPage } from "../src/pages/audit";
@@ -31,9 +31,9 @@ import { AuditPage } from "../src/pages/audit";
 const PAGES: Record<PageName, FC<any>> = {
   login: Login,
   device: Device,
-  account: AccountPage,
-  services: ServicesPage,
-  "service-new": ServiceNewPage,
+  agent: SettingsPage,
+  apps: AppsPage,
+  "app-new": AppNewPage,
   approvals: ApprovalsPage,
   "approval-detail": ApprovalDetail,
   audit: AuditPage,

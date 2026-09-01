@@ -15,9 +15,9 @@
  * "hibernate" })`: the eviction genuinely discards in-memory instance state while the
  * socket keeps round-tripping, AND the attachment reads back intact on the far side.
  * UNVERIFIED UPSTREAM, and the hub's entire connection identity rides on it — §6 puts
- * serviceId, ownerId, slug, tokenId and `registered` in the attachment, and every wake
+ * appId, ownerId, slug, tokenId and `registered` in the attachment, and every wake
  * (alarm, forward, sever, status) reads them from there rather than from a field.
- * **If A2 is false, ServiceConnection needs a durable-storage fallback for its
+ * **If A2 is false, AppConnection needs a durable-storage fallback for its
  * attachment before another line is written in this directory**: protocol,
  * lifecycle, pipeline-tunnel and approval-e2e all assume identity-through-hibernation,
  * and hibernation.test.ts has no subject at all without it.
@@ -26,7 +26,7 @@
  * Durable Objects are the two things per-file storage isolation cannot cover (strategy
  * §2), so this project trades isolation for them. That trade is load-bearing here:
  * nothing resets between cases, so DO identity is the only isolation available and
- * every case mints its OWN service id — a shared id would let one case's hibernated
+ * every case mints its OWN app id — a shared id would let one case's hibernated
  * socket answer another's, and the resulting flake would look like a hibernation bug.
  *
  * Time: never slept. The 10 s registration deadline is reached by firing the pending
@@ -37,12 +37,12 @@
  * here is a stop-the-line result rather than a red test to work around.
  */
 
-// deps: cloudflare:test (env.SERVICE_CONNECTION, runInDurableObject, evictDurableObject, runDurableObjectAlarm) · src/tunnel (ServiceConnection) · src/limits (REGISTRATION_DEADLINE_MS)
+// deps: cloudflare:test (env.APP_CONNECTION, runInDurableObject, evictDurableObject, runDurableObjectAlarm) · src/tunnel (AppConnection) · src/limits (REGISTRATION_DEADLINE_MS)
 
 import { env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { REGISTRATION_DEADLINE_MS } from "../../src/limits";
-import type { ServiceConnection } from "../../src/tunnel";
+import type { AppConnection } from "../../src/tunnel";
 
 /**
  * The tunnel project's shadow of the `cloudflare:test` helpers this directory drives a
@@ -50,7 +50,7 @@ import type { ServiceConnection } from "../../src/tunnel";
  * applyD1Migrations, the scheduled controller) and this augments it, in the file whose
  * subject IS the platform. Stubs are `unknown` here rather than the plugin's
  * `DurableObjectStub<O>`: this repo declares no `@cloudflare/workers-types`, so
- * {@link ServiceConnectionStub} below is the one place a stub gets a name.
+ * {@link AppConnectionStub} below is the one place a stub gets a name.
  *
  * `abortAllDurableObjects` is declared here and driven elsewhere (pipeline-tunnel's
  * DO-failure case): unlike eviction it does NOT drain in-flight requests, which is the
@@ -72,19 +72,19 @@ declare module "cloudflare:test" {
 }
 
 /**
- * The DO handle every case here drives — `DurableObjectStub<ServiceConnection>` at
+ * The DO handle every case here drives — `DurableObjectStub<AppConnection>` at
  * implementation, which is what cloudflare:test's `runInDurableObject`,
  * `evictDurableObject` and `runDurableObjectAlarm` each take. The stub's methods ARE the
  * class's, called over RPC, so the class itself is the honest name for it: this repo has
  * no `DurableObjectStub` type to import, and workers-env.d.ts's
  * `DurableObjectNamespaceLike<Stub>` hands back exactly what `get` was parameterized with.
  */
-export type ServiceConnectionStub = ServiceConnection;
+export type AppConnectionStub = AppConnection;
 
-/** A stub for a service id nothing else in this run uses — the only isolation a project
+/** A stub for an app id nothing else in this run uses — the only isolation a project
  *  that shares storage across files has (see the header). */
-function freshStub(): ServiceConnectionStub {
-  const namespace = env.SERVICE_CONNECTION as DurableObjectNamespaceLike<ServiceConnectionStub>;
+function freshStub(): AppConnectionStub {
+  const namespace = env.APP_CONNECTION as DurableObjectNamespaceLike<AppConnectionStub>;
   return namespace.get(namespace.idFromName(`smoke-${crypto.randomUUID()}`));
 }
 
@@ -96,7 +96,7 @@ function freshStub(): ServiceConnectionStub {
  * to `acceptWebSocket` ("Cannot perform I/O on behalf of a different Durable Object"), and
  * `runInDurableObject`'s return value is devalue-serialized, so a socket cannot come back
  * out of a callback either. A DO-owned socket exists only if the DO mints it in `fetch`
- * and returns it in the 101 — which is why this helper goes through ServiceConnection.fetch
+ * and returns it in the 101 — which is why this helper goes through AppConnection.fetch
  * rather than around it.
  *
  * The four identity headers are the WORKER's side of an internal seam (the DO trusts them,
@@ -105,12 +105,12 @@ function freshStub(): ServiceConnectionStub {
  * that wants a socket has to present one. Obviously fake values, spelled here: nothing in
  * this file reads them back, and a rename in tunnel.ts surfaces as this helper's own 426.
  */
-async function acceptSocket(stub: ServiceConnectionStub): Promise<WebSocket> {
+async function acceptSocket(stub: AppConnectionStub): Promise<WebSocket> {
   const response = await stub.fetch(
     new Request("https://connection.invalid/", {
       headers: {
         Upgrade: "websocket",
-        "x-pmcp-service-id": "smoke-service",
+        "x-pmcp-app-id": "smoke-app",
         "x-pmcp-owner-id": "smoke-owner",
         "x-pmcp-slug": "smoke",
         "x-pmcp-token-id": "smoke-token",
@@ -141,36 +141,36 @@ function inbox(ws: WebSocket): () => Promise<string> {
 }
 
 /** The attachment the DO put on a socket, read from inside its own context. */
-function attachmentOf(stub: ServiceConnectionStub): Promise<unknown> {
-  return runInDurableObject(stub, (_instance: ServiceConnection, state) =>
+function attachmentOf(stub: AppConnectionStub): Promise<unknown> {
+  return runInDurableObject(stub, (_instance: AppConnection, state) =>
     state.getWebSockets()[0].deserializeAttachment(),
   );
 }
 
 describe("A1 — a SQLite-backed Durable Object under workerd", () => {
-  it("1. platform A1 · a fresh ServiceConnection stub answers an RPC method call", async () => {
+  it("1. platform A1 · a fresh AppConnection stub answers an RPC method call", async () => {
     expect(await freshStub().status()).toBe("offline");
   });
 
   it("2. platform A1 · a row written to DO SQLite reads back on a second, separate call into the same instance", async () => {
     const stub = freshStub();
-    await runInDurableObject(stub, (_instance: ServiceConnection, state) => {
+    await runInDurableObject(stub, (_instance: AppConnection, state) => {
       state.storage.sql.exec(`CREATE TABLE probe (k TEXT PRIMARY KEY, v TEXT)`);
       state.storage.sql.exec(`INSERT INTO probe VALUES ('a', 'written')`);
     });
-    const rows = await runInDurableObject(stub, (_instance: ServiceConnection, state) =>
+    const rows = await runInDurableObject(stub, (_instance: AppConnection, state) =>
       state.storage.sql.exec<{ v: string }>(`SELECT v FROM probe WHERE k = 'a'`).toArray(),
     );
     expect(rows).toEqual([{ v: "written" }]);
   });
 
-  it("3. platform A1 · DO SQLite is per-instance: a stub for a second service id sees none of the first's rows (the isolation this whole directory leans on)", async () => {
+  it("3. platform A1 · DO SQLite is per-instance: a stub for a second app id sees none of the first's rows (the isolation this whole directory leans on)", async () => {
     const first = freshStub();
-    await runInDurableObject(first, (_instance: ServiceConnection, state) => {
+    await runInDurableObject(first, (_instance: AppConnection, state) => {
       state.storage.sql.exec(`CREATE TABLE probe (k TEXT PRIMARY KEY)`);
       state.storage.sql.exec(`INSERT INTO probe VALUES ('a')`);
     });
-    const tables = await runInDurableObject(freshStub(), (_instance: ServiceConnection, state) =>
+    const tables = await runInDurableObject(freshStub(), (_instance: AppConnection, state) =>
       state.storage.sql
         .exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE name = 'probe'`)
         .toArray(),
@@ -187,7 +187,7 @@ describe("A2 — evictDurableObject with hibernating sockets", () => {
     await evictDurableObject(stub, { webSockets: "hibernate" });
 
     // hub → client: the woken instance still holds the socket and can write to it.
-    await runInDurableObject(stub, (_instance: ServiceConnection, state) =>
+    await runInDurableObject(stub, (_instance: AppConnection, state) =>
       state.getWebSockets()[0].send("hub-ping"),
     );
     expect(await next()).toBe("hub-ping");
@@ -199,13 +199,13 @@ describe("A2 — evictDurableObject with hibernating sockets", () => {
 
   it("5. platform A2 · eviction really discards in-memory state: an instance field set before the boundary is gone after it (the negative twin of case 4, and the premise under §6's in-memory pending map)", async () => {
     const stub = freshStub();
-    await runInDurableObject(stub, (instance: ServiceConnection) => {
+    await runInDurableObject(stub, (instance: AppConnection) => {
       (instance as unknown as Record<string, unknown>).smokeProbe = "before";
     });
     await evictDurableObject(stub, { webSockets: "hibernate" });
     const after = await runInDurableObject(
       stub,
-      (instance: ServiceConnection) => (instance as unknown as Record<string, unknown>).smokeProbe,
+      (instance: AppConnection) => (instance as unknown as Record<string, unknown>).smokeProbe,
     );
     expect(after).toBeUndefined();
   });
@@ -224,11 +224,11 @@ describe("A2 — evictDurableObject with hibernating sockets", () => {
 
   it("7. platform A2 · DO SQLite survives eviction untouched — the cached catalog's durability premise, stated beside its in-memory twin in case 5", async () => {
     const stub = freshStub();
-    await runInDurableObject(stub, (_instance: ServiceConnection, state) =>
+    await runInDurableObject(stub, (_instance: AppConnection, state) =>
       state.storage.put("smoke-catalog", [{ name: "search" }]),
     );
     await evictDurableObject(stub, { webSockets: "hibernate" });
-    const read = await runInDurableObject(stub, (_instance: ServiceConnection, state) =>
+    const read = await runInDurableObject(stub, (_instance: AppConnection, state) =>
       state.storage.get("smoke-catalog"),
     );
     expect(read).toEqual([{ name: "search" }]);
@@ -236,11 +236,11 @@ describe("A2 — evictDurableObject with hibernating sockets", () => {
 
   it("8. platform A2 · a storage alarm set before eviction is still pending after it", async () => {
     const stub = freshStub();
-    await runInDurableObject(stub, (_instance: ServiceConnection, state) =>
+    await runInDurableObject(stub, (_instance: AppConnection, state) =>
       state.storage.setAlarm(Date.now() + REGISTRATION_DEADLINE_MS),
     );
     await evictDurableObject(stub, { webSockets: "hibernate" });
-    const pending = await runInDurableObject(stub, (_instance: ServiceConnection, state) =>
+    const pending = await runInDurableObject(stub, (_instance: AppConnection, state) =>
       state.storage.getAlarm(),
     );
     expect(pending).not.toBeNull();
@@ -253,7 +253,7 @@ describe("A2 — evictDurableObject with hibernating sockets", () => {
 describe("project sanity — the serial tunnel project", () => {
   it("9. platform · runDurableObjectAlarm fires a pending alarm immediately, so limits.REGISTRATION_DEADLINE_MS is a constant this suite reads, never a duration it waits out", async () => {
     const stub = freshStub();
-    await runInDurableObject(stub, (_instance: ServiceConnection, state) =>
+    await runInDurableObject(stub, (_instance: AppConnection, state) =>
       state.storage.setAlarm(Date.now() + REGISTRATION_DEADLINE_MS),
     );
     const startedAt = Date.now();
@@ -267,10 +267,10 @@ describe("project sanity — the serial tunnel project", () => {
   it("10. platform · two DO ids created inside one file stay independent under --no-isolate: state written through one stub is invisible through the other", async () => {
     const first = freshStub();
     const second = freshStub();
-    await runInDurableObject(first, (_instance: ServiceConnection, state) =>
+    await runInDurableObject(first, (_instance: AppConnection, state) =>
       state.storage.put("smoke-key", "first"),
     );
-    const read = await runInDurableObject(second, (_instance: ServiceConnection, state) =>
+    const read = await runInDurableObject(second, (_instance: AppConnection, state) =>
       state.storage.get("smoke-key"),
     );
     expect(read).toBeUndefined();

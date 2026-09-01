@@ -50,8 +50,8 @@ function fixture(name: string): Record<string, any> {
 const closeCodes = fixture("close-codes.json");
 const tunnelFrames = fixture("tunnel-frames.json");
 
-/** An obviously fake service credential; nothing here authenticates against anything. */
-const TOKEN = "pmcp_svc_FAKE0000000000000000000000000000";
+/** An obviously fake app credential; nothing here authenticates against anything. */
+const TOKEN = "pmcp_app_FAKE0000000000000000000000000000";
 
 const opened: { hub?: FakeHub; transport?: HubTransport }[] = [];
 
@@ -130,7 +130,7 @@ describe("close codes → client behavior · §4, §6", () => {
 });
 
 describe("tunnel frames · §4, §6", () => {
-  it("§6 · the hub/register frame the library emits deep-equals the fixture's request shape: the method name and the params keys clientVersion, protocolVersion, roles — and no service or slug field, ever, because identity comes exclusively from the token", async () => {
+  it("§6 · the hub/register frame the library emits deep-equals the fixture's request shape: the method name and the params keys clientVersion, protocolVersion, roles — and no app or slug field, ever, because identity comes exclusively from the token", async () => {
     const hub = await startFakeHub();
     const transport = new HubTransport({ url: hub.origin, token: TOKEN, roles: {} });
     opened.push({ hub, transport });
@@ -219,11 +219,11 @@ describe("tunnel frames · §4, §6", () => {
     expect(received).toEqual([stranger]);
   });
 
-  it("§7 · the forwarded-call `_meta` keys caller() reads are the fixture's forwardedCall.metaKeys, read from the fixture and never hand-spelled: hub/principal and hub/roles land on principal and roles, and the third pinned key (io.modelcontextprotocol/clientCapabilities) reaches the SDK session untouched. Renaming a key hub-side must fail HERE — silently, caller() would start answering principal \"\" and empty roles, and every service branching on a negative check (`if (!caller.hasRole(\"admin\")) allow`) would flip open", async () => {
+  it("§7 · the forwarded-call `_meta` keys caller() reads are the fixture's forwardedCall.metaKeys, read from the fixture and never hand-spelled: hub/principal and hub/roles land on principal and roles, and the third pinned key (io.modelcontextprotocol/clientCapabilities) reaches the SDK session untouched. Renaming a key hub-side must fail HERE — silently, caller() would start answering principal \"\" and empty roles, and every app branching on a negative check (`if (!caller.hasRole(\"admin\")) allow`) would flip open", async () => {
     const [principalKey, rolesKey, capabilitiesKey] = tunnelFrames.forwardedCall.metaKeys as string[];
-    const meta = { [principalKey]: "sa:claude", [rolesKey]: ["reader"], [capabilitiesKey]: { sampling: {} } };
+    const meta = { [principalKey]: "agent:claude", [rolesKey]: ["reader"], [capabilitiesKey]: { sampling: {} } };
     const identity = caller(meta);
-    expect(identity.principal).toBe("sa:claude");
+    expect(identity.principal).toBe("agent:claude");
     expect(identity.roles).toEqual(["reader"]);
     expect(identity.hasRole("reader")).toBe(true);
 

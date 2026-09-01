@@ -1,0 +1,99 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
+    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
+    a:hover { color: #52525b; }
+  </style>
+</helmet>
+<div style="width: 1240px; min-height: 560px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
+
+  <div style="height: 56px; box-sizing: border-box; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; padding: 0 32px;">
+    <div style="display: flex; align-items: center; gap: 24px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>
+        <div style="font-size: 15px; font-weight: 600;">personal-mcps</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 4px;">
+        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Apps</div>
+        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Agents</div>
+        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Audit</div>
+        <div style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Approvals<span style="display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #dc2626; color: #ffffff; font-size: 11px; font-weight: 600;">2</span></div>
+        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Settings</div>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <div style="font-size: 14px; color: #71717a;">ahrzb</div>
+      <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Sign out</div>
+    </div>
+  </div>
+
+  <div style="width: 1140px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 20px;">
+
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <div style="font-size: 24px; font-weight: 600;">Connected clients</div>
+      <div style="font-size: 14px; color: #71717a;">OAuth clients bound to this namespace, and the agent each acts as.</div>
+    </div>
+
+    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
+
+      <div style="display: grid; grid-template-columns: 340px 140px 120px 130px 150px 1fr; gap: 0; padding: 10px 20px; border-bottom: 1px solid #e4e4e7;">
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Client</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Acts as</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Created</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Last used</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Status</div>
+        <div style="font-size: 13px; font-weight: 500; color: #71717a;"></div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 340px 140px 120px 130px 150px 1fr; gap: 0; padding: 12px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <div style="font-size: 14px; font-weight: 500;">Claude</div>
+          <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">https://claude.ai</div>
+        </div>
+        <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</span></div>
+        <div style="font-size: 13px; color: #71717a;">Aug 24</div>
+        <div style="font-size: 13px; color: #71717a;">2 min ago</div>
+        <div><span style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #15803d;"></span>active</span></div>
+        <div style="display: flex; justify-content: flex-end;">
+          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Revoke</div>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 340px 140px 120px 130px 150px 1fr; gap: 0; padding: 12px 20px; align-items: center; background: #fafafa;">
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="font-size: 14px; font-weight: 500; color: #71717a;">Acme Agent</div>
+            <span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">unverified</span>
+          </div>
+          <div style="font-size: 12px; color: #a1a1aa; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">https://agent.acme.dev</div>
+        </div>
+        <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f4f4f5; color: #a1a1aa; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">cron</span></div>
+        <div style="font-size: 13px; color: #a1a1aa;">Aug 12</div>
+        <div style="font-size: 13px; color: #a1a1aa;">Aug 28</div>
+        <div><span style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f4f4f5; color: #71717a;">revoked</span></div>
+        <div style="display: flex; justify-content: flex-end;"></div>
+      </div>
+
+    </div>
+
+    <div style="font-size: 12px; color: #71717a;">Revoking stops the client's tokens from working; the agent and its grants stay.</div>
+
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1240,"height":560}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

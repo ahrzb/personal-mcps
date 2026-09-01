@@ -11,7 +11,7 @@
 // POST.
 //
 // Project: `worker` — real D1, no sockets. That is a fixture choice with teeth: every
-// service here is PROXIED or unresolvable, and §21.2 has the hub dial neither, so a stream
+// app here is PROXIED or unresolvable, and §21.2 has the hub dial neither, so a stream
 // in this file opens without a single WebSocket. A row that needed one would belong to the
 // tunnel project by construction, which is exactly where the delivery rows live.
 //
@@ -34,7 +34,7 @@ import type { SeededNamespace } from "../harness/seed";
 /** The hub's own origin, as the worker under test knows it. */
 const ORIGIN = (env as unknown as Env).PUBLIC_ORIGIN;
 
-const SERVICE = "notion";
+const APP = "notion";
 const AGENT = "agent";
 const ROLE = "reader";
 const TOKEN = "key";
@@ -133,26 +133,26 @@ afterEach(async () => {
 });
 
 /**
- * A namespace holding one PROXIED service — never dialed by a stream (§21.2), so this whole
- * file needs no socket — plus one service account. `grants` and `roles` are the two knobs
+ * A namespace holding one PROXIED app — never dialed by a stream (§21.2), so this whole
+ * file needs no socket — plus one agent. `grants` and `roles` are the two knobs
  * the admission rows turn.
  */
 async function seedWorld(
   spec: { roles?: Record<string, string[]>; granted?: boolean } = {},
 ): Promise<SeededNamespace> {
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       {
-        slug: SERVICE,
+        slug: APP,
         kind: "proxy",
         upstreamUrl: upstreamUrlFor({ id: uniqueSlug("up"), mode: { kind: "ok" }, tools: [] }),
         roles: spec.roles ?? { [ROLE]: ["*"] },
       },
     ],
-    accounts: [
+    agents: [
       {
         slug: AGENT,
-        grants: spec.granted === false ? {} : { [SERVICE]: [{ role: ROLE, mode: "allow" }] },
+        grants: spec.granted === false ? {} : { [APP]: [{ role: ROLE, mode: "allow" }] },
         tokens: [{ as: TOKEN }],
       },
     ],
@@ -218,7 +218,7 @@ describe("§21.1 · the listen envelope", () => {
   it("§21.1 · subscriptions/listen answers 200 text/event-stream on BOTH endpoint shapes — one chunk read off the body, then cancelled, never awaited whole", async () => {
     const ns = await seedWorld();
 
-    for (const slug of [null, SERVICE]) {
+    for (const slug of [null, APP]) {
       const stream = await listen(ns, ns.tokens[TOKEN].token, slug);
       const shape = slug === null ? "aggregated" : "scoped";
       expect(stream.status, shape).toBe(200);
@@ -298,10 +298,10 @@ describe("§21.1/§7 · who may open one", () => {
     expect(guessed.status).toBe(401);
   }, CASE_BUDGET_MS);
 
-  it("§21.1/§7 · a service account with no grant on the addressed service gets 404 from a scoped listen — never a stream, never -32002, the anti-enumeration matrix untouched · the admitted caller whose patterns match nothing gets the silent stream (the twin)", async () => {
+  it("§21.1/§7 · an agent with no grant on the addressed app gets 404 from a scoped listen — never a stream, never -32002, the anti-enumeration matrix untouched · the admitted caller whose patterns match nothing gets the silent stream (the twin)", async () => {
     const ungranted = await seedWorld({ granted: false });
 
-    const refused = await listen(ungranted, ungranted.tokens[TOKEN].token, SERVICE);
+    const refused = await listen(ungranted, ungranted.tokens[TOKEN].token, APP);
     expect(refused.status).toBe(404);
     expect(refused.contentType, "a stream was opened for a caller the door refuses").not.toContain(
       "text/event-stream",
@@ -317,16 +317,16 @@ describe("§21.1/§7 · who may open one", () => {
     // The twin: a caller the door ADMITS whose role matches nothing gets a stream that
     // simply never rings — listing-class, exactly as an empty tools/list is.
     const matchless = await seedWorld({ roles: { [ROLE]: ["matches-nothing"] } });
-    const silent = await listen(matchless, matchless.tokens[TOKEN].token, SERVICE);
+    const silent = await listen(matchless, matchless.tokens[TOKEN].token, APP);
     expect(silent.status).toBe(200);
     expect(silent.contentType).toContain("text/event-stream");
     expect(await silent.blocksAtLeast(1, CASE_BUDGET_MS)).toBeGreaterThan(0);
     expect(silent.notifications).toEqual([]);
   }, CASE_BUDGET_MS);
 
-  it("§21.1 · an owner's aggregated stream with zero granted tunneled services opens and keepalives — a stream over nothing is a legal answer", async () => {
+  it("§21.1 · an owner's aggregated stream with zero granted tunneled apps opens and keepalives — a stream over nothing is a legal answer", async () => {
     await withShrunkKeepalive(async () => {
-      // One proxied service and nothing else: §21.2 dials neither a proxied service nor the
+      // One proxied app and nothing else: §21.2 dials neither a proxied app nor the
       // builtin, so this namespace holds nothing for a stream to subscribe at all.
       const ns = await seedWorld();
       const owner = await seedOwnerSession(ns.owner);

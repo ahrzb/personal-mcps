@@ -9,7 +9,7 @@
 // capture; the ONE redaction map per call; and the ONE mapping from HubError to JSON-RPC
 // wire errors. It HIDES the wire entirely: sibling modules throw the HubError vocabulary
 // errors.ts owns and never see a JSON-RPC error code, and backends never see an
-// unfiltered tool name, an archived service, or an unapproved gated call.
+// unfiltered tool name, an archived app, or an unapproved gated call.
 //
 // It also owns §21's ONE carve-out from statelessness: `subscriptions/listen`'s held
 // `text/event-stream`, the session id the hub mints for it, its re-authorization tick and
@@ -40,7 +40,7 @@ import {
   AGGREGATED_CAPABILITIES,
   bellFrame,
   capabilityShape,
-  DEFAULT_SERVICE_CAPABILITIES,
+  DEFAULT_APP_CAPABILITIES,
   familyBell,
 } from "./capabilities";
 import type { CapabilityKind, EndpointShape } from "./capabilities";
@@ -49,7 +49,7 @@ import { formatPrincipal, principalKey, tokenPattern } from "./principal";
 import type { Principal } from "./principal";
 import { pushSender } from "./push";
 import { applyRedaction, PMCP_SLUG, REDACTED, Registry } from "./registry";
-import type { ListKind, RoleFamily, Service } from "./registry";
+import type { ListKind, RoleFamily, App } from "./registry";
 import {
   capabilities as tunnelCapabilities,
   openSubscriber,
@@ -99,10 +99,10 @@ export type JsonRpcResponse = {
 };
 
 /**
- * An MCP tool descriptor as listed to consumers. `inputSchema` is the service's JSON
+ * An MCP tool descriptor as listed to consumers. `inputSchema` is the app's JSON
  * Schema passed through untouched — `writeOnly` markers survive so redaction (§7) can
  * derive from them, and on an input the keyword is standard usage. `outputSchema`
- * (present when the service declares one) is different: the hub co-opts `writeOnly`
+ * (present when the app declares one) is different: the hub co-opts `writeOnly`
  * there as its internal result-secret marker, so the listing paths below strip it
  * from every outputSchema before a consumer sees it (§7) — backends return the
  * catalog verbatim and never strip. On the aggregated endpoint `name` carries the
@@ -118,7 +118,7 @@ export type Tool = {
 /**
  * §20.2's other three list items — verbatim from the backend, matched (never renamed) on
  * the key registry.ToolFilter reads: a prompt by `name`, a resource by `uri`, a template
- * by its raw `uriTemplate`. Deliberately minimal: the hub relays whatever else a service
+ * by its raw `uriTemplate`. Deliberately minimal: the hub relays whatever else an app
  * attaches (a resource's `mimeType`, a prompt's `arguments`) untouched, so these types name
  * only the field the door itself reads or rewrites (the aggregated `<slug>_` prefix lands
  * on `name` alone).
@@ -129,7 +129,7 @@ export type ResourceTemplate = { uriTemplate: string; name?: string };
 
 /**
  * Per-request caller context handed to every backend: the resolved principal, the
- * caller's granted role names on this service exactly as granted (`"all"` stays
+ * caller's granted role names on this app exactly as granted (`"all"` stays
  * literal, never expanded; owners get `["all"]`), and untrusted display-only client
  * metadata (128-char-truncated, §7). Informational downstream — every authorization
  * decision has already run in the pipeline before a backend sees this.
@@ -141,21 +141,21 @@ export type BackendCtx = {
 };
 
 /**
- * The seam behind which the three dispatch targets — tunnel (ServiceConnection DO),
+ * The seam behind which the three dispatch targets — tunnel (AppConnection DO),
  * upstream (proxied endpoint), admin (the builtin `pmcp` ops table) — are
  * interchangeable. Backends receive only already-authorized traffic and report every
  * failure as HubError; they never touch the wire mapping.
  */
-export interface ServiceBackend {
+export interface AppBackend {
   /**
-   * The service's full tool catalog as this backend knows it (tunnel: the DO's cached
+   * The app's full tool catalog as this backend knows it (tunnel: the DO's cached
    * list, populated even while offline; upstream: fetched live; admin: the ops table).
    * Unfiltered — the gateway applies the caller's grant patterns and any prefixing.
    * Throws HubError -32000 when the catalog is unreachable (proxied upstream down or
    * needs-reconnect); the aggregated fan-out catches that per slug, the scoped list
    * surfaces it.
    */
-  listTools(service: Service, ctx: BackendCtx): Promise<Tool[]>;
+  listTools(app: App, ctx: BackendCtx): Promise<Tool[]>;
   /**
    * §20.2's other three catalogs, on the same contract as `listTools` above: unfiltered,
    * relayed VERBATIM (the hub reads no field beyond the one its family is matched on —
@@ -165,16 +165,16 @@ export interface ServiceBackend {
    * lists (§20.6). They live here, beside `listTools`, because this is the seam's one
    * question — what the DOOR may ask a backend — and every backend answers all four.
    */
-  listPrompts(service: Service, ctx: BackendCtx): Promise<Prompt[]>;
-  listResources(service: Service, ctx: BackendCtx): Promise<Resource[]>;
-  listResourceTemplates(service: Service, ctx: BackendCtx): Promise<ResourceTemplate[]>;
+  listPrompts(app: App, ctx: BackendCtx): Promise<Prompt[]>;
+  listResources(app: App, ctx: BackendCtx): Promise<Resource[]>;
+  listResourceTemplates(app: App, ctx: BackendCtx): Promise<ResourceTemplate[]>;
   /**
-   * Forwards one fully authorized tools/call and relays the service's response
+   * Forwards one fully authorized tools/call and relays the app's response
    * verbatim. `msg` arrives post-hygiene (prepareForward already ran). Transport and
    * HTTP-level failures become HubError -32000 with a generic message — an upstream's
    * status line, headers, and body are never echoed to the consumer (§7).
    */
-  call(service: Service, msg: JsonRpcRequest, ctx: BackendCtx): Promise<JsonRpcResponse>;
+  call(app: App, msg: JsonRpcRequest, ctx: BackendCtx): Promise<JsonRpcResponse>;
   /**
    * The SCHEMA-declared sensitive paths for one tool, per direction (§7): `args`
    * from `writeOnly` in the cached inputSchema, `results` from `writeOnly` in the
@@ -190,7 +190,7 @@ export interface ServiceBackend {
    * nothing downstream runs, and no body is ever recorded for such a tool (§15).
    */
   sensitivePaths(
-    service: Service,
+    app: App,
     tool: string,
   ): Promise<{ args: string[]; results: string[] } | null>;
 }
@@ -223,7 +223,7 @@ function approvalRequired(check: Extract<CheckResult, { outcome: "required" }>):
  *
  * The door is index.mcpEntry's, not this function's, and `principal` is the proof: by the
  * time a request arrives here Content-Type, the Origin rule, the caller's resolution and
- * (scoped) the service's visibility to that caller have all been decided ONCE, at the
+ * (scoped) the app's visibility to that caller have all been decided ONCE, at the
  * composition root. What is left is JSON-RPC — this function answers `server/discover` and
  * the `initialize` handshake itself, routes tools/list and tools/call into the pipeline
  * below, refuses every other method with -32601, absorbs every notification with a 202
@@ -235,7 +235,7 @@ function approvalRequired(check: Extract<CheckResult, { outcome: "required" }>):
  * envelope — a `text/event-stream` this invocation then holds — so it is answered here,
  * ahead of `route`, rather than by a case that cannot express its return type. Everything
  * else about it is ordinary: the same door admitted it, and a refusal on the way to
- * opening it (a scoped archived service, -32002) leaves through the same mapping below.
+ * opening it (a scoped archived app, -32002) leaves through the same mapping below.
  * `reauthorize` is the door's own verdict, handed in because the held stream must re-run
  * §7 step 1 on every keepalive (§21.2) and a second implementation of step 1 is the one
  * thing §21 forbids.
@@ -302,7 +302,7 @@ async function route(
       const name = typeof msg.params?.name === "string" ? msg.params.name : "";
       if (slug !== undefined) return callTool(env, ownerId, slug, name, msg, ctx);
       const split = splitAggregatedName(name);
-      // A name with no `_` at all names no service — the same -32001 as not-permitted,
+      // A name with no `_` at all names no app — the same -32001 as not-permitted,
       // never a distinct "malformed name" signal (§7).
       if (split === null) throw notPermitted();
       return callTool(env, ownerId, split.slug, split.tool, msg, ctx);
@@ -315,7 +315,7 @@ async function route(
       return getPrompt(env, ownerId, split.slug, split.tool, msg, ctx);
     }
     // §20.2/§18 decision 26: resources and completions are scoped-only — the aggregated
-    // shape does not resolve a slug for them at all, refusing before any service exists.
+    // shape does not resolve a slug for them at all, refusing before any app exists.
     case "resources/read": {
       if (slug === undefined) throw methodNotFound();
       const uri = typeof msg.params?.uri === "string" ? msg.params.uri : "";
@@ -326,7 +326,7 @@ async function route(
       return completeRef(env, ownerId, slug, msg, ctx);
     }
     // §21.4's two per-URI methods, scoped-only for §18 decision 26's reason and
-    // tunneled-only for §21.2's: a proxied service has no channel to ring from and the
+    // tunneled-only for §21.2's: a proxied app has no channel to ring from and the
     // builtin never changes, so neither ADVERTISES subscribe and neither has anywhere to
     // forward — refused inside, by kind, on the same -32601 this shape check gives.
     case "resources/subscribe":
@@ -349,7 +349,7 @@ function methodNotFound(): HubError {
 }
 
 /**
- * What a method the hub forwards over a service socket carries beyond its own params (§6,
+ * What a method the hub forwards over an app socket carries beyond its own params (§6,
  * §7's identity clause, §21.4). `forwardedCall` names the six a CONSUMER drives: each
  * arrives post-hygiene with `hub/principal`, `hub/roles` and the mirrored
  * `clientCapabilities` in its `_meta`, under one strip-then-set. `protocol` names the five
@@ -360,9 +360,9 @@ function methodNotFound(): HubError {
 export type ForwardedCarrier = "forwardedCall" | "protocol";
 
 /**
- * §6's hub→service forwarded methods, WHOLE — the eleven the hub ever sends over a service
+ * §6's hub→app forwarded methods, WHOLE — the eleven the hub ever sends over an app
  * socket, and which of the two `_meta` regimes each rides under. Published vocabulary, like
- * tunnel's HUB_METHODS and SERVICE_NOTIFICATIONS: `contracts/tunnel-frames.json` is emitted
+ * tunnel's HUB_METHODS and APP_NOTIFICATIONS: `contracts/tunnel-frames.json` is emitted
  * from this record, so a twelfth forwarded method cannot reach a client library's wire
  * without reaching the fixture. It sits beside the dispatch switch above — that switch is
  * where the six consumer-driven ones enter, and where the two §21.4 added were added — and
@@ -385,7 +385,7 @@ export const FORWARDED_METHODS: Readonly<Record<string, ForwardedCarrier>> = {
 /**
  * §20.2's four listings as data: which catalog each method serves, and whether the
  * AGGREGATED shape answers it at all. Resources and templates are scoped-only (§18
- * decision 26: a URI cannot take a `<slug>_` prefix and still be the URI the service
+ * decision 26: a URI cannot take a `<slug>_` prefix and still be the URI the app
  * knows), so their refusal is an entry in this table rather than an accident of what
  * nobody implemented. A fifth family is one row here and one row in tunnel's catalog
  * tables.
@@ -400,8 +400,8 @@ const LIST_METHODS = {
 /**
  * One listing answer, on whichever shape asked for it (§7, widened by §20.2 to every
  * family). Scoped: the family's catalog, filtered by the caller's grants. Aggregated: the
- * fan-out, with the services it could not reach named in the result's `_meta` — and a
- * family the aggregated shape does not serve refused -32601 before any service exists.
+ * fan-out, with the apps it could not reach named in the result's `_meta` — and a
+ * family the aggregated shape does not serve refused -32601 before any app exists.
  */
 async function listResult(
   env: Env,
@@ -464,34 +464,34 @@ async function initializeResult(env: Env, ownerId: string, slug: string | undefi
  * absent): the fixed two-family constant, whatever the namespace holds, now with
  * `listChanged: true` on both, because the transport that honors it flipped in the same
  * deploy (§21.5's lockstep rule). Scoped: derived from what the hub already STORES for that
- * service — the capability set §6's registration-time `server/discover` learned (tunneled),
+ * app — the capability set §6's registration-time `server/discover` learned (tunneled),
  * or the owner-declared `capabilities` config (proxied, absent means tools only) — NEVER a
- * live upstream call, which is what lets a hung service answer the handshake at full speed.
+ * live upstream call, which is what lets a hung app answer the handshake at full speed.
  *
- * The KIND is the second input, and the one §21.5 added: a proxied service has no DO to
+ * The KIND is the second input, and the one §21.5 added: a proxied app has no DO to
  * ring from and the builtin's tools never change, so both declare every push flag false
- * whatever their stored set says, while a tunneled service declares `listChanged` on each
+ * whatever their stored set says, while a tunneled app declares `listChanged` on each
  * family it stores and `subscribe` on its resources. The three are named, never inferred
  * from "is not proxied" (capabilities.CapabilityKind), which is what keeps the builtin off
- * the tunneled branch. A service the caller cannot even resolve answers the NEVER-CONNECTED
- * tunneled shape — the handshake must not become a service-existence oracle (§20.2's
+ * the tunneled branch. An app the caller cannot even resolve answers the NEVER-CONNECTED
+ * tunneled shape — the handshake must not become an app-existence oracle (§20.2's
  * anti-enumeration posture, and §21.5's own sentence about it).
  */
 async function capabilitiesFor(env: Env, ownerId: string, slug: string | undefined): Promise<Record<string, unknown>> {
-  // deps: registry.getService · tunnel.capabilities · capabilities.capabilityShape
+  // deps: registry.getApp · tunnel.capabilities · capabilities.capabilityShape
   if (slug === undefined) return AGGREGATED_CAPABILITIES;
-  if (slug === PMCP_SLUG) return capabilityShape(DEFAULT_SERVICE_CAPABILITIES, "builtin");
-  const service = await new Registry(env.DB).getService(ownerId, slug);
-  if (service === null) return capabilityShape(DEFAULT_SERVICE_CAPABILITIES, "tunnel");
+  if (slug === PMCP_SLUG) return capabilityShape(DEFAULT_APP_CAPABILITIES, "builtin");
+  const app = await new Registry(env.DB).getApp(ownerId, slug);
+  if (app === null) return capabilityShape(DEFAULT_APP_CAPABILITIES, "tunnel");
   const declared =
-    service.kind === "tunnel" ? await tunnelCapabilities(service.id) : service.capabilities ?? DEFAULT_SERVICE_CAPABILITIES;
-  return capabilityShape(declared, CAPABILITY_KINDS[service.kind]);
+    app.kind === "tunnel" ? await tunnelCapabilities(app.id) : app.capabilities ?? DEFAULT_APP_CAPABILITIES;
+  return capabilityShape(declared, CAPABILITY_KINDS[app.kind]);
 }
 
-/** A stored service's kind as §21.5's capability axis spells it — the builtin is decided by
+/** A stored app's kind as §21.5's capability axis spells it — the builtin is decided by
  *  slug above, so this table covers the two kinds a D1 row can hold. */
 const CAPABILITY_KINDS = { tunnel: "tunnel", proxy: "proxy" } as const satisfies Record<
-  Service["kind"],
+  App["kind"],
   CapabilityKind
 >;
 
@@ -511,7 +511,7 @@ const PROTOCOL_VERSION = "2026-07-28";
 /**
  * §7's cache hints on a listing result — extended by §20.5 to every family's list, on the
  * same reasoning: `cacheScope` is always `private` because a listing is filtered by the
- * caller's grants, so a shared cache would serve one account's view to another. No § pins
+ * caller's grants, so a shared cache would serve one agent's view to another. No § pins
  * the window, only that there is one, so it lives here rather than in limits.ts (audit's
  * CLIENT_FIELD_MAX_LENGTH keeps its number for the same reason).
  */
@@ -541,7 +541,7 @@ async function readMessage(request: Request): Promise<JsonRpcRequest | null> {
 /**
  * Splits an aggregated tool name at its first `_` (§7: slugs contain no underscore, so
  * the split is unambiguous). Returns null for a name with no `_` at all; the pipeline
- * maps both that and a slug matching no visible service to -32001 — indistinguishable
+ * maps both that and a slug matching no visible app to -32001 — indistinguishable
  * from not-permitted, so nothing about the namespace leaks.
  */
 function splitAggregatedName(name: string): { slug: string; tool: string } | null {
@@ -552,14 +552,14 @@ function splitAggregatedName(name: string): { slug: string; tool: string } | nul
 }
 
 /**
- * The virtual Service row for the builtin `pmcp` admin service (§8): reserved slug, no
+ * The virtual App row for the builtin `pmcp` admin app (§8): reserved slug, no
  * D1 row ever exists for it, never archived, logBodies fixed ON (§15 — the builtin's
  * schemas are the hub's own, so the tunneled default applies and token_issue's key is
  * masked by the uniform rule). Exists so the admin backend rides the
  * same pipeline as everything else; its `kind` field is set only to satisfy the type —
  * backend selection happens on the slug before kind is ever read.
  */
-function virtualPmcpService(ownerId: string): Service {
+function virtualPmcpApp(ownerId: string): App {
   // deps: none
   return {
     // No row exists, so no row id does either: the slug IS the id, and every registry
@@ -569,43 +569,43 @@ function virtualPmcpService(ownerId: string): Service {
     slug: PMCP_SLUG,
     kind: "tunnel",
     archived: false,
-    // The same constant admin's builtin service_list row reads, so the two descriptions
-    // of one virtual service cannot drift (§15).
+    // The same constant admin's builtin app_list row reads, so the two descriptions
+    // of one virtual app cannot drift (§15).
     logBodies: BUILTIN_LOG_BODIES,
   };
 }
 
 /**
- * Picks the backend for a resolved service: slug `pmcp` → the admin builtin, otherwise
- * `service.kind` selects tunnel or upstream. The only place backend identity exists.
+ * Picks the backend for a resolved app: slug `pmcp` → the admin builtin, otherwise
+ * `app.kind` selects tunnel or upstream. The only place backend identity exists.
  */
-function selectBackend(service: Service): ServiceBackend {
+function selectBackend(app: App): AppBackend {
   // deps: admin.adminBackend · tunnel.tunnelBackend · upstream.upstreamBackend
-  if (service.slug === PMCP_SLUG) return adminBackend;
-  return service.kind === "tunnel" ? tunnelBackend : upstreamBackend;
+  if (app.slug === PMCP_SLUG) return adminBackend;
+  return app.kind === "tunnel" ? tunnelBackend : upstreamBackend;
 }
 
 /**
  * Pre-claim availability probe for the approval path (§7, approval step 1): answers
- * "would dispatch reach the service right now?" with no side effects — tunnel: the DO
+ * "would dispatch reach the app right now?" with no side effects — tunnel: the DO
  * holds a live registered socket; upstream: not flagged needs-reconnect; admin: always
- * true. Runs between approvals.check and approvals.claim so an offline service never
+ * true. Runs between approvals.check and approvals.claim so an offline app never
  * consumes an approval. Best-effort: a probe that passes can still lose the race, and
  * a post-claim dispatch failure leaves the claim consumed by design.
  */
-async function probeAvailability(service: Service): Promise<HubError | null> {
+async function probeAvailability(app: App): Promise<HubError | null> {
   // deps: tunnel.status · upstream.availability
-  if (service.slug === PMCP_SLUG) return null;
-  if (service.kind === "tunnel") {
-    return (await tunnelStatus(service.id)) === "online" ? null : unavailable();
+  if (app.slug === PMCP_SLUG) return null;
+  if (app.kind === "tunnel") {
+    return (await tunnelStatus(app.id)) === "online" ? null : unavailable();
   }
-  // The REFUSAL, not a boolean: §7 spells "known unavailable" for a proxied service as
+  // The REFUSAL, not a boolean: §7 spells "known unavailable" for a proxied app as
   // `not_connected` OR `needs_reconnect`, and only the module that owns the credential can
   // say which — `needs_reconnect` carries its failure class into the audit row's `detail`
   // so an owner reads "the credential died" rather than a bare -32000, while
   // `not_connected` is no upstream failure at all and refuses class-free. Both are the
   // same bytes on the wire: the class never leaves the ledger (§7).
-  return availability(service);
+  return availability(app);
 }
 
 /**
@@ -613,7 +613,7 @@ async function probeAvailability(service: Service): Promise<HubError | null> {
  * session-id `_meta` key (a small in-code allowlist, Claude Code's key first), each
  * value truncated to 128 chars. Strictly untrusted display-and-audit data — never
  * parsed, never an authorization input. Unrecognized vendor `_meta` is not captured
- * here but still passes through to services untouched.
+ * here but still passes through to apps untouched.
  */
 function captureClientMeta(msg: JsonRpcRequest): BackendCtx["clientMeta"] {
   // deps: none
@@ -657,9 +657,9 @@ function metaOf(msg: JsonRpcRequest): Record<string, unknown> {
 /**
  * `_meta` hygiene on every forwarded tools/call (§7): deletes every consumer-supplied
  * `hub/*` key, then sets `hub/principal` and `hub/roles` — overwrite, never merge, so
- * any `hub/*` value a service sees was written by the hub — and mirrors the consumer's
+ * any `hub/*` value an app sees was written by the hub — and mirrors the consumer's
  * `io.modelcontextprotocol/clientCapabilities` (`{}` when the consumer declared none,
- * so services refrain from elicitation/sampling for legacy callers). Everything else —
+ * so apps refrain from elicitation/sampling for legacy callers). Everything else —
  * progressToken, vendor keys, MRTR inputResponses/requestState — passes untouched.
  * Pure: returns a new message, never mutates the input.
  */
@@ -688,7 +688,7 @@ const HUB_META_PREFIX = "hub/";
  */
 const LIST_CATALOG: Record<
   ListKind,
-  (backend: ServiceBackend, service: Service, ctx: BackendCtx) => Promise<ListedItem[]>
+  (backend: AppBackend, app: App, ctx: BackendCtx) => Promise<ListedItem[]>
 > = {
   tools: (b, s, c) => b.listTools(s, c),
   prompts: (b, s, c) => b.listPrompts(s, c),
@@ -711,23 +711,23 @@ async function listScoped(
   ctx: BackendCtx,
   kind: ListKind,
 ): Promise<ListedItem[]> {
-  // deps: registry.getService · registry.resolveAccess · selectBackend · virtualPmcpService
+  // deps: registry.getApp · registry.resolveAccess · selectBackend · virtualPmcpApp
   const registry = new Registry(env.DB);
-  const service = slug === PMCP_SLUG ? virtualPmcpService(ownerId) : await registry.getService(ownerId, slug);
+  const app = slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, slug);
   // The door already answered 404 for a slug this caller cannot see, so a miss here is
   // the same not-permitted answer every other unresolvable name gets.
-  if (service === null) throw notPermitted();
-  const filter = await registry.resolveAccess(ctx.principal, service);
-  if (service.archived) throw archived();
-  const catalog = await LIST_CATALOG[kind](selectBackend(service), service, { ...ctx, roles: filter.roleNames });
+  if (app === null) throw notPermitted();
+  const filter = await registry.resolveAccess(ctx.principal, app);
+  if (app.archived) throw archived();
+  const catalog = await LIST_CATALOG[kind](selectBackend(app), app, { ...ctx, roles: filter.roleNames });
   return filter.filterList(catalog, kind).map(served);
 }
 
 /**
  * Aggregated fan-out (§7, widened by §20.2 to `prompts/list` — same cache, same live
- * fetch, same filter, same `<slug>_` prefix, same fan-out, same `_meta`): every service
- * the caller can see (owner: all non-archived, including `pmcp`; service account:
- * services holding ≥1 grant, never `pmcp`), queried in parallel under a 10 s per-upstream
+ * fetch, same filter, same `<slug>_` prefix, same fan-out, same `_meta`): every app
+ * the caller can see (owner: all non-archived, including `pmcp`; agent:
+ * apps holding ≥1 grant, never `pmcp`), queried in parallel under a 10 s per-upstream
  * deadline, names prefixed `<slug>_`. A failing or hanging upstream contributes zero
  * items and its slug is returned in `unavailable` — surfaced to the consumer as
  * `_meta["pmcp/unavailable"]` and logged as an ops event, never an audit row — while the
@@ -737,10 +737,10 @@ async function listScoped(
  * The composed name is also the one name the HUB mints, so this is where it is checked:
  * a `<slug>_<item>` outside CONSUMER_TOOL_NAME is dropped from the listing and named once
  * on the ops log as `pmcp/unlistable` (a name is catalog metadata, not a secret, §15). The
- * cost stays proportional — an out-of-charset item costs only itself, never its service's
+ * cost stays proportional — an out-of-charset item costs only itself, never its app's
  * other nine, and never the aggregate. Two ceilings, deliberate: the SCOPED listing serves
  * the upstream's own names unvalidated, because nothing is composed there and the name is
- * the service's to answer for; and `tools/call`/`prompts/get` are untouched, so an
+ * the app's to answer for; and `tools/call`/`prompts/get` are untouched, so an
  * unlisted name that still resolves upstream keeps working — real consumers refuse the
  * listing ENTRY, not the call, and the contract governs what the listing serves.
  */
@@ -750,27 +750,27 @@ async function listAggregated(
   ctx: BackendCtx,
   kind: ListKind,
 ): Promise<{ items: ListedItem[]; unavailable: string[] }> {
-  // deps: registry.listServicesFor · registry.resolveAccess · selectBackend · virtualPmcpService
+  // deps: registry.listAppsFor · registry.resolveAccess · selectBackend · virtualPmcpApp
   const registry = new Registry(env.DB);
-  const visible: Service[] = (await registry.listServicesFor(ctx.principal)).filter((s) => !s.archived);
-  // The builtin participates like any other service for its owner; a service account can
+  const visible: App[] = (await registry.listAppsFor(ctx.principal)).filter((s) => !s.archived);
+  // The builtin participates like any other app for its owner; an agent can
   // hold no grants on it (§8), so it is never added for one.
-  if (ctx.principal.kind === "user") visible.push(virtualPmcpService(ownerId));
+  if (ctx.principal.kind === "user") visible.push(virtualPmcpApp(ownerId));
 
   const listed: ListedFamily[] = await Promise.all(
-    visible.map(async (service): Promise<ListedFamily> => {
-      const filter = await registry.resolveAccess(ctx.principal, service);
+    visible.map(async (app): Promise<ListedFamily> => {
+      const filter = await registry.resolveAccess(ctx.principal, app);
       try {
         const catalog = await withDeadline(
-          LIST_CATALOG[kind](selectBackend(service), service, { ...ctx, roles: filter.roleNames }),
+          LIST_CATALOG[kind](selectBackend(app), app, { ...ctx, roles: filter.roleNames }),
           AGGREGATED_LIST_DEADLINE_MS,
         );
         return {
-          slug: service.slug,
+          slug: app.slug,
           items: filter.filterList(catalog, kind).flatMap((item) => {
             // filterList already dropped anything without the key its family is matched
             // on, so an aggregated item always has the `name` this composes.
-            const name = `${service.slug}_${item.name}`;
+            const name = `${app.slug}_${item.name}`;
             if (CONSUMER_TOOL_NAME.test(name)) return [{ ...item, name }];
             console.warn(`pmcp/unlistable: ${name}`);
             return [];
@@ -784,12 +784,12 @@ async function listAggregated(
         // never send anybody to a perfectly healthy upstream.
         //
         // Both still contribute zero items, because §7 pins that the aggregate itself
-        // always succeeds: one service's failure — ours or theirs — may not cost the
+        // always succeeds: one app's failure — ours or theirs — may not cost the
         // consumer the other nine, which is exactly what rethrowing here would do.
         if (!(err instanceof HubError)) {
-          console.error(`pmcp/fan-out: hub defect listing "${service.slug}"`, err);
+          console.error(`pmcp/fan-out: hub defect listing "${app.slug}"`, err);
         }
-        return { slug: service.slug, unavailable: true };
+        return { slug: app.slug, unavailable: true };
       }
     }),
   );
@@ -810,7 +810,7 @@ async function listAggregated(
  */
 const CONSUMER_TOOL_NAME = /^[a-zA-Z0-9_-]{1,128}$/;
 
-/** One service's contribution to the fan-out: what it served, or that it could not. The
+/** One app's contribution to the fan-out: what it served, or that it could not. The
  *  union is the partition — no caller re-derives which is which from a container shape. */
 type ListedFamily = { slug: string; items: ListedItem[] } | { slug: string; unavailable: true };
 
@@ -857,7 +857,7 @@ function withoutWriteOnly(node: unknown): unknown {
 /**
  * The one tools/call pipeline, identical for both endpoint shapes — `slug` and `tool`
  * arrive already split and unprefixed, so approvals bind to the same row either way.
- * Runs the pinned order: filter (-32001 — an ungranted account learns nothing more),
+ * Runs the pinned order: filter (-32001 — an ungranted agent learns nothing more),
  * archived (-32002), availability (-32000 — §7 lists it last but the availability-first
  * decision puts it ahead of the approval gate, and one test serves both), the call's
  * redaction map (-32001 when no sound one exists, §7), then the approval gate —
@@ -869,7 +869,7 @@ function withoutWriteOnly(node: unknown): unknown {
  *
  * Exactly one audit row leaves this function, written after the try/catch: audit.record
  * is AWAITED with hub-measured duration — a failed audit write fails the call. When
- * the service's log_bodies is on AND the call was dispatched (§15 — refusal rows
+ * the app's log_bodies is on AND the call was dispatched (§15 — refusal rows
  * never carry bodies), the entry carries the bodies: args
  * masked under the redaction map's args union (backend schema paths + config redact), the
  * result's structuredContent under its results union (backend + config
@@ -878,7 +878,7 @@ function withoutWriteOnly(node: unknown): unknown {
  * failures leave as HubError; only the caller of this seam maps them to the wire.
  */
 async function callTool(env: Env, ownerId: string, slug: string, tool: string, msg: JsonRpcRequest, ctx: BackendCtx): Promise<JsonRpcResponse> {
-  // deps: registry.getService · registry.resolveAccess · registry.redactPathsFor · registry.applyRedaction · approvals.check · approvals.claim · approvals.settle · audit.record · selectBackend · virtualPmcpService · probeAvailability · prepareForward
+  // deps: registry.getApp · registry.resolveAccess · registry.redactPathsFor · registry.applyRedaction · approvals.check · approvals.claim · approvals.settle · audit.record · selectBackend · virtualPmcpApp · probeAvailability · prepareForward
   const startedAt = Date.now();
   const registry = new Registry(env.DB);
   // The row this call will leave, filled in by whichever branch below reaches an answer.
@@ -894,63 +894,63 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
   let recordedSlug = slug;
   let detail: Record<string, unknown> | undefined;
   try {
-    const service =
-      slug === PMCP_SLUG ? virtualPmcpService(ownerId) : await registry.getService(ownerId, slug);
-    // An aggregated prefix matching no visible service: -32001, indistinguishable from
+    const app =
+      slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, slug);
+    // An aggregated prefix matching no visible app: -32001, indistinguishable from
     // not-permitted, so tool names cannot enumerate a namespace (§7 step 3).
-    if (service === null) throw notPermitted();
-    recordedSlug = service.slug;
+    if (app === null) throw notPermitted();
+    recordedSlug = app.slug;
 
-    // 1 — filter. First, always: an ungranted account may not learn that a service is
+    // 1 — filter. First, always: an ungranted agent may not learn that an app is
     // archived, unreachable, or even real.
-    const filter = await registry.resolveAccess(ctx.principal, service);
+    const filter = await registry.resolveAccess(ctx.principal, app);
     const mode = filter.check(tool);
     if (mode === "deny") throw notPermitted();
 
     // 2 — archived.
-    if (service.archived) throw archived();
+    if (app.archived) throw archived();
 
-    const backend = selectBackend(service);
-    const serviceCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
+    const backend = selectBackend(app);
+    const appCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
 
     // 3 — availability, tested ONCE. §7 lists it last, after the approval gate, but the
-    // 2026-08-25 availability-first decision puts it first INSIDE that gate: a service the
+    // 2026-08-25 availability-first decision puts it first INSIDE that gate: an app the
     // hub already knows cannot execute fails -32000 before any approval row is read,
     // created or consumed. Two sentences, one verdict, one place — a gated call and an
     // ungated one reach it at the same point, which is also what keeps the map below (a
     // backend round trip and a D1 read) off the path of a call that was never going to run.
-    const unavailableAs = await probeAvailability(service);
+    const unavailableAs = await probeAvailability(app);
     if (unavailableAs !== null) throw unavailableAs;
 
     // Derived ONCE for the whole call, so the approval row and the audit row of the same
     // call can never be masked under different maps (§15). Null means no sound map exists
     // for this tool and nothing downstream may run — -32001, the same code as
     // not-permitted, so the refusal cannot be used to map grant patterns (§7).
-    const redaction = await redactionMapFor(registry, backend, service, tool);
+    const redaction = await redactionMapFor(registry, backend, app, tool);
     if (redaction === null) throw notPermitted();
 
     // 4 — the approval gate (owners are never routed into it; the filter answered
     // `allow` for them via the built-in `all`).
     const claim = mode === "approval"
-      ? await passGate(env, service, tool, msg, redaction.args, ctx.principal)
+      ? await passGate(env, app, tool, msg, redaction.args, ctx.principal)
       : undefined;
 
     // The forwarded message carries the UNPREFIXED name; the aggregated prefix is the
-    // hub's addressing, never the service's business.
-    const forwarded = prepareForward({ ...msg, params: { ...msg.params, name: tool } }, serviceCtx);
-    const relayed = await backend.call(service, forwarded, serviceCtx);
+    // hub's addressing, never the app's business.
+    const forwarded = prepareForward({ ...msg, params: { ...msg.params, name: tool } }, appCtx);
+    const relayed = await backend.call(app, forwarded, appCtx);
     // An MRTR input_required leg restores the pass; anything else leaves it spent.
     if (claim) await approvalsFor().settle(claim, relayed);
-    // The hub's own outcome vocabulary (§15): a service that answered with a JSON-RPC
+    // The hub's own outcome vocabulary (§15): an app that answered with a JSON-RPC
     // error was still reached, and `error` — not one of the hub's refusal codes — is
     // what that is.
     outcome = relayed.error === undefined ? "ok" : "error";
-    if (service.logBodies) bodies = callBodies(redaction, msg, relayed);
+    if (app.logBodies) bodies = callBodies(redaction, msg, relayed);
     // Re-addressed to the consumer's own id; everything else is relayed verbatim.
     answer = { ...relayed, id: msg.id ?? null };
   } catch (err) {
     // §15: every tools/call leaves a row, denials included (they are just fast) — and a
-    // refusal row NEVER carries bodies, whatever the service's log_bodies says.
+    // refusal row NEVER carries bodies, whatever the app's log_bodies says.
     refusal = err;
     outcome = err instanceof HubError ? String(err.code) : "error";
     bodies = {};
@@ -979,16 +979,16 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
 
 /**
  * §7's approval gate: check → claim, and nothing before them. Its two preconditions are
- * the caller's, tested once each in callTool above — the service is available (§7's
+ * the caller's, tested once each in callTool above — the app is available (§7's
  * availability-first clause: no pending row, no push, no existing pass touched for a
- * service the hub already knows cannot execute) and the call's redaction map is derived,
+ * app the hub already knows cannot execute) and the call's redaction map is derived,
  * so the approval row and the audit row of the same call cannot be masked differently
  * (§15). A lost claim is no approval at all: re-entering check is what opens the fresh
  * pending row §7 step 1 hands back as -32003.
  */
 async function passGate(
   env: Env,
-  service: Service,
+  app: App,
   tool: string,
   msg: JsonRpcRequest,
   redactPaths: string[],
@@ -997,13 +997,13 @@ async function passGate(
   const gate = approvalsFor();
   const args = argumentsOf(msg);
 
-  let verdict = await gate.check(principal, service, tool, args, redactPaths);
+  let verdict = await gate.check(principal, app, tool, args, redactPaths);
   while (verdict.outcome === "ok") {
     const claim = await gate.claim(verdict.approvalId);
     if (claim !== "lost") return claim;
     // A concurrent identical call consumed the pass: treat it as no approval and fall
     // through to step 2, which is exactly what a fresh check does.
-    verdict = await gate.check(principal, service, tool, args, redactPaths);
+    verdict = await gate.check(principal, app, tool, args, redactPaths);
   }
   throw approvalRequired(verdict);
 }
@@ -1012,7 +1012,7 @@ async function passGate(
  * §7's per-direction redaction map for ONE call, derived exactly once and handed to every
  * site that masks anything: the approval row's arguments and the audit row's bodies alike.
  * Each direction is the union of the backend's SCHEMA-declared paths (`writeOnly`) with
- * the service's configured ones (`redact` / `redact_results`).
+ * the app's configured ones (`redact` / `redact_results`).
  *
  * Null has ONE meaning here — no sound map can exist for this tool (unknown to the
  * backend, or its cached schema tripped registry.validateSchemaIndirection) — and one
@@ -1022,16 +1022,16 @@ async function passGate(
  */
 async function redactionMapFor(
   registry: Registry,
-  backend: ServiceBackend,
-  service: Service,
+  backend: AppBackend,
+  app: App,
   tool: string,
 ): Promise<{ args: string[]; results: string[] } | null> {
-  // deps: ServiceBackend.sensitivePaths · registry.redactPathsFor
-  const schemaPaths = await backend.sensitivePaths(service, tool);
+  // deps: AppBackend.sensitivePaths · registry.redactPathsFor
+  const schemaPaths = await backend.sensitivePaths(app, tool);
   if (schemaPaths === null) return null;
   return {
-    args: union(schemaPaths.args, await registry.redactPathsFor(service, tool, "args")),
-    results: union(schemaPaths.results, await registry.redactPathsFor(service, tool, "results")),
+    args: union(schemaPaths.args, await registry.redactPathsFor(app, tool, "args")),
+    results: union(schemaPaths.results, await registry.redactPathsFor(app, tool, "results")),
   };
 }
 
@@ -1050,7 +1050,7 @@ function union(a: string[], b: string[]): string[] {
 type CallBodies = { args?: Record<string, unknown>; result?: Record<string, unknown> };
 
 /**
- * The audit bodies of a DISPATCHED call whose service opts into them (§15): arguments
+ * The audit bodies of a DISPATCHED call whose app opts into them (§15): arguments
  * masked under the args union, `structuredContent` under the results union, and every
  * unstructured content block replaced by a blob stub — bytes never stored. `redaction` is
  * the call's ONE map (redactionMapFor), which is why a tool with no derivable map cannot
@@ -1126,7 +1126,7 @@ async function recordDispatch(
     ownerId: entry.ownerId,
     principal: formatPrincipal(entry.ctx.principal),
     event: entry.event,
-    service: entry.slug,
+    app: entry.slug,
     tool: entry.tool,
     outcome: entry.outcome,
     durationMs: entry.durationMs,
@@ -1150,7 +1150,7 @@ async function recordDispatch(
 /**
  * §20.2's `prompts/get` pipeline, identical on both endpoint shapes once `slug`/`name`
  * arrive already split and unprefixed. Bodies (§20.3/§20.4): arguments are recorded ONLY
- * when the service's `redact` map names this prompt — with no entry, prompts carry no
+ * when the app's `redact` map names this prompt — with no entry, prompts carry no
  * writeOnly channel to earn §15's tunneled default, so nothing is recorded regardless of
  * `log_bodies` or the backend's kind; the result's message content blocks are always
  * stubbed, never text, whenever `log_bodies` is on and the call dispatched. An
@@ -1164,7 +1164,7 @@ async function getPrompt(
   msg: JsonRpcRequest,
   ctx: BackendCtx,
 ): Promise<JsonRpcResponse> {
-  // deps: registry.getService · registry.resolveAccess · registry.redactPathsFor · selectBackend · virtualPmcpService · probeAvailability · prepareForward · audit.record
+  // deps: registry.getApp · registry.resolveAccess · registry.redactPathsFor · selectBackend · virtualPmcpApp · probeAvailability · prepareForward · audit.record
   const startedAt = Date.now();
   const registry = new Registry(env.DB);
   let outcome = "error";
@@ -1173,24 +1173,24 @@ async function getPrompt(
   let refusal: unknown;
   let recordedSlug = slug;
   try {
-    const service = slug === PMCP_SLUG ? virtualPmcpService(ownerId) : await registry.getService(ownerId, slug);
-    if (service === null) throw notPermitted();
-    recordedSlug = service.slug;
+    const app = slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, slug);
+    if (app === null) throw notPermitted();
+    recordedSlug = app.slug;
 
     // 1 — filter, matched by NAME against the caller's prompt patterns (§20.2).
-    const filter = await registry.resolveAccess(ctx.principal, service);
+    const filter = await registry.resolveAccess(ctx.principal, app);
     if (filter.check(name, "prompts") === "deny") throw notPermitted();
     // 2 — archived.
-    if (service.archived) throw archived();
+    if (app.archived) throw archived();
     // 3 — availability. No approval gate follows it (§18 decision 27).
-    const unavailableAs = await probeAvailability(service);
+    const unavailableAs = await probeAvailability(app);
     if (unavailableAs !== null) throw unavailableAs;
 
-    const serviceCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
-    const forwarded = prepareForward({ ...msg, params: { ...msg.params, name } }, serviceCtx);
-    const relayed = await selectBackend(service).call(service, forwarded, serviceCtx);
+    const appCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
+    const forwarded = prepareForward({ ...msg, params: { ...msg.params, name } }, appCtx);
+    const relayed = await selectBackend(app).call(app, forwarded, appCtx);
     outcome = relayed.error === undefined ? "ok" : "error";
-    if (service.logBodies) bodies = await promptBodies(registry, service, name, msg, relayed);
+    if (app.logBodies) bodies = await promptBodies(registry, app, name, msg, relayed);
     answer = { ...relayed, id: msg.id ?? null };
   } catch (err) {
     refusal = err;
@@ -1222,13 +1222,13 @@ async function getPrompt(
  */
 async function promptBodies(
   registry: Registry,
-  service: Service,
+  app: App,
   name: string,
   msg: JsonRpcRequest,
   relayed: JsonRpcResponse,
 ): Promise<CallBodies> {
   const bodies: CallBodies = {};
-  const paths = await registry.redactPathsFor(service, name, "args");
+  const paths = await registry.redactPathsFor(app, name, "args");
   if (paths.length > 0) bodies.args = applyRedaction(argumentsOf(msg) ?? {}, paths);
   const messages = (relayed.result as { messages?: unknown } | undefined)?.messages;
   bodies.result = Array.isArray(messages) ? { messages: messages.map(stubMessage) } : {};
@@ -1259,7 +1259,7 @@ async function readResource(
   msg: JsonRpcRequest,
   ctx: BackendCtx,
 ): Promise<JsonRpcResponse> {
-  // deps: registry.getService · registry.resolveAccess · selectBackend · virtualPmcpService · probeAvailability · prepareForward · audit.record
+  // deps: registry.getApp · registry.resolveAccess · selectBackend · virtualPmcpApp · probeAvailability · prepareForward · audit.record
   const startedAt = Date.now();
   const registry = new Registry(env.DB);
   let outcome = "error";
@@ -1268,22 +1268,22 @@ async function readResource(
   let refusal: unknown;
   let recordedSlug = slug;
   try {
-    const service = slug === PMCP_SLUG ? virtualPmcpService(ownerId) : await registry.getService(ownerId, slug);
-    if (service === null) throw notPermitted();
-    recordedSlug = service.slug;
+    const app = slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, slug);
+    if (app === null) throw notPermitted();
+    recordedSlug = app.slug;
 
-    const filter = await registry.resolveAccess(ctx.principal, service);
+    const filter = await registry.resolveAccess(ctx.principal, app);
     if (filter.check(uri, "resources") === "deny") throw notPermitted();
-    if (service.archived) throw archived();
-    const unavailableAs = await probeAvailability(service);
+    if (app.archived) throw archived();
+    const unavailableAs = await probeAvailability(app);
     if (unavailableAs !== null) throw unavailableAs;
 
-    const serviceCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
-    const forwarded = prepareForward({ ...msg, params: { ...msg.params, uri } }, serviceCtx);
-    const relayed = await selectBackend(service).call(service, forwarded, serviceCtx);
+    const appCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
+    const forwarded = prepareForward({ ...msg, params: { ...msg.params, uri } }, appCtx);
+    const relayed = await selectBackend(app).call(app, forwarded, appCtx);
     outcome = relayed.error === undefined ? "ok" : "error";
     const result = relayed.result as Record<string, unknown> | undefined;
-    if (service.logBodies && result !== undefined) bodies.result = resourceReadBody(result);
+    if (app.logBodies && result !== undefined) bodies.result = resourceReadBody(result);
     answer = {
       ...relayed,
       id: msg.id ?? null,
@@ -1338,7 +1338,7 @@ function decorateReadResult(result: Record<string, unknown>): Record<string, unk
  * rules, in order, because a later one must never re-expose what an earlier one removed:
  * the query component is DROPPED (not pattern-scrubbed) and replaced by `REDACTED_QUERY`,
  * because a query string is a routine carrier of somebody else's bearer token and §15's
- * own grammar cannot see it; §15's `pmcp_(sa|svc)_` grammar is then applied to whatever is
+ * own grammar cannot see it; §15's `pmcp_(agt|app)_` grammar is then applied to whatever is
  * left (the query rule cannot reach a token-shaped segment sitting in the PATH); and the
  * result is capped at AUDIT_URI_CAP_BYTES, like every other caller-supplied string the hub
  * persists.
@@ -1367,7 +1367,7 @@ function capUtf8Bytes(value: string, capBytes: number): string {
 // ══ §20.2 — completion/complete: filtered by its `ref`, and never audited ═════════════
 //
 // A relay, not a pass-through (§20.2): the `ref` is checked against the caller's patterns
-// BEFORE anything reaches the service, because unfiltered this method is a read straight
+// BEFORE anything reaches the app, because unfiltered this method is a read straight
 // past the role's patterns. Listing-class for audit (§20.4) — no row, refusals included —
 // because the refusal is what makes the method safe, and a row per keystroke would be
 // polling noise from a method a client calls on every one.
@@ -1384,24 +1384,24 @@ async function completeRef(
   msg: JsonRpcRequest,
   ctx: BackendCtx,
 ): Promise<JsonRpcResponse> {
-  // deps: registry.getService · registry.resolveAccess · selectBackend · virtualPmcpService · probeAvailability · prepareForward
+  // deps: registry.getApp · registry.resolveAccess · selectBackend · virtualPmcpApp · probeAvailability · prepareForward
   const registry = new Registry(env.DB);
-  const service = slug === PMCP_SLUG ? virtualPmcpService(ownerId) : await registry.getService(ownerId, slug);
-  if (service === null) throw notPermitted();
+  const app = slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, slug);
+  if (app === null) throw notPermitted();
   const target = refTarget(msg);
   // A `ref` naming neither a prompt nor a resource template matches no pattern in any
   // family — the same -32001 an unmatched one gets, never a distinct "malformed ref" code.
   if (target === null) throw notPermitted();
 
-  const filter = await registry.resolveAccess(ctx.principal, service);
+  const filter = await registry.resolveAccess(ctx.principal, app);
   if (filter.check(target.subject, target.family) === "deny") throw notPermitted();
-  if (service.archived) throw archived();
-  const unavailableAs = await probeAvailability(service);
+  if (app.archived) throw archived();
+  const unavailableAs = await probeAvailability(app);
   if (unavailableAs !== null) throw unavailableAs;
 
-  const serviceCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
-  const forwarded = prepareForward(msg, serviceCtx);
-  const relayed = await selectBackend(service).call(service, forwarded, serviceCtx);
+  const appCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
+  const forwarded = prepareForward(msg, appCtx);
+  const relayed = await selectBackend(app).call(app, forwarded, appCtx);
   return { ...relayed, id: msg.id ?? null };
 }
 
@@ -1425,7 +1425,7 @@ function refTarget(msg: JsonRpcRequest): { subject: string; family: RoleFamily }
 //
 // What makes this the SAME door and not a second one: the open resolves nothing itself —
 // it is handed the principal index.mcpEntry already resolved — reads the grant set through
-// the very calls the aggregated fan-out makes (`listServicesFor` / `getService`), and its
+// the very calls the aggregated fan-out makes (`listAppsFor` / `getApp`), and its
 // re-authorization tick re-runs §7 step 1 by CALLING the door's verdict (`Reauthorize`,
 // constructed once in index.ts) rather than re-deciding it here. The only things this
 // section decides for itself are what a stream writes and when it stops.
@@ -1448,7 +1448,7 @@ const MCP_SESSION_HEADER = "Mcp-Session-Id";
 
 /**
  * §21.2's re-authorization leg, as the DOOR hands it in: re-run §7 step 1's whole verdict —
- * resolve the bearer, judge the namespace, and (scoped) this service's visibility to that
+ * resolve the bearer, judge the namespace, and (scoped) this app's visibility to that
  * caller — and answer the principal it now admits, or null when it admits nobody. A held
  * stream is one request, and "revocation is immediate" is a per-request property (§15), so
  * the tick has to ask the door again; it must not ask a second implementation of it.
@@ -1457,12 +1457,12 @@ export type Reauthorize = () => Promise<Principal | null>;
 
 /**
  * §21.1's held answer, opened: mint the session id, open one subscriber socket into each
- * granted tunneled service's DO, write the first keepalive so the client can see the stream
+ * granted tunneled app's DO, write the first keepalive so the client can see the stream
  * is live, and hand the response back while this invocation keeps writing to it.
  *
- * The refusals are the listings', never the calls': a scoped ARCHIVED service refuses
+ * The refusals are the listings', never the calls': a scoped ARCHIVED app refuses
  * -32002 before a byte is written, availability is never asked (a stream against an offline
- * service is the point — the bell rings when it comes back changed), and a caller whose
+ * app is the point — the bell rings when it comes back changed), and a caller whose
  * grants match nothing gets a stream that simply never rings.
  */
 async function listenStream(
@@ -1472,12 +1472,12 @@ async function listenStream(
   slug: string | undefined,
   reauthorize: Reauthorize,
 ): Promise<Response> {
-  // deps: registry.getService · registry.listServicesFor · tunnel.openSubscriber · tunnel.capabilities
+  // deps: registry.getApp · registry.listAppsFor · tunnel.openSubscriber · tunnel.capabilities
   // The refusal comes first, whole: a -32002 must leave no half-opened stream behind it.
-  const services = await subscribable(new Registry(env.DB), ownerId, ctx.principal, slug);
+  const apps = await subscribable(new Registry(env.DB), ownerId, ctx.principal, slug);
   const stream = new ListenStream(slug === undefined ? "aggregated" : "scoped");
   try {
-    await stream.begin(services, principalKey(ctx.principal));
+    await stream.begin(apps, principalKey(ctx.principal));
   } catch (err) {
     // A DO that cannot be reached is the same failure class here as on any other method, so
     // it answers -32000 like every other one (never a generic internal error) — and the
@@ -1498,12 +1498,12 @@ async function listenStream(
 }
 
 /**
- * The services one stream subscribes (§21.2) — the SAME reads every other shape performs,
- * and on the scoped shape the same access verdict every other scoped method gets: a service
+ * The apps one stream subscribes (§21.2) — the SAME reads every other shape performs,
+ * and on the scoped shape the same access verdict every other scoped method gets: an app
  * this caller cannot see was already 404'd at the door, an ARCHIVED one refuses -32002
  * before the stream opens, and availability is never asked.
  *
- * TUNNELED services only. A proxied service has no DO to ring from (a Worker cannot hold an
+ * TUNNELED apps only. A proxied app has no DO to ring from (a Worker cannot hold an
  * outbound stream to an upstream past its own invocation) and the builtin's tools never
  * change, so neither is dialed at all — which is also why neither advertises push (§21.5).
  * Deterministic SLUG order, capped at LISTEN_FANOUT_MAX: the platform bounds an
@@ -1520,27 +1520,27 @@ async function subscribable(
   ownerId: string,
   principal: Principal,
   slug: string | undefined,
-): Promise<Service[]> {
-  // deps: registry.getService · registry.listServicesFor
+): Promise<App[]> {
+  // deps: registry.getApp · registry.listAppsFor
   if (slug !== undefined) {
     // The builtin is addressable by its owner and rings nothing: a legal, permanently quiet
     // stream, answered before any registry read (no D1 row for `pmcp` exists to read).
     if (slug === PMCP_SLUG) return [];
-    const service = await registry.getService(ownerId, slug);
-    if (service === null) throw notPermitted();
-    if (service.archived) throw archived();
-    return service.kind === "tunnel" ? [service] : [];
+    const app = await registry.getApp(ownerId, slug);
+    if (app === null) throw notPermitted();
+    if (app.archived) throw archived();
+    return app.kind === "tunnel" ? [app] : [];
   }
-  const visible = await registry.listServicesFor(principal);
+  const visible = await registry.listAppsFor(principal);
   return visible
-    .filter((service) => !service.archived && service.kind === "tunnel")
+    .filter((app) => !app.archived && app.kind === "tunnel")
     .sort((left, right) => (left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0))
     .slice(0, LISTEN_FANOUT_MAX);
 }
 
 /**
  * One held listen stream: the SSE writer this invocation owns, the subscriber sockets it
- * opened (keyed by service id — its own fan-out), and whether it has ended. Every §21.2
+ * opened (keyed by app id — its own fan-out), and whether it has ended. Every §21.2
  * delivery rule lives in these methods and nowhere else:
  *
  * - a frame a socket delivers is written PAYLOAD-VERBATIM and admission-filtered by the
@@ -1548,7 +1548,7 @@ async function subscribable(
  *   shapes, so this is the only party that can drop the resources bell an aggregated stream
  *   does not serve;
  * - a socket close the Worker did not initiate ends the WHOLE stream — fail loud, not deaf,
- *   because a stream that silently stopped hearing one service is the one failure a doorbell
+ *   because a stream that silently stopped hearing one app is the one failure a doorbell
  *   design cannot afford. A close this stream DID initiate is told from it by the socket
  *   having already left the map, which is why `drop` deletes before it closes;
  * - a KEEPALIVE the body has not accepted by the time the next one is due means nobody is
@@ -1594,7 +1594,7 @@ class ListenStream {
   }
 
   /**
-   * The open: one socket per service, then the first keepalive — a client learns its stream
+   * The open: one socket per app, then the first keepalive — a client learns its stream
    * is live from a byte, not from a header. Nothing is RUNG here: an open is not a change.
    *
    * That first write is deliberately not awaited. A transform stream applies backpressure
@@ -1603,12 +1603,12 @@ class ListenStream {
    * `write` swallows its own failure into `end()`, so the unawaited promise can reject only
    * into a stream that has already ended.
    */
-  async begin(services: readonly Service[], principal: string): Promise<void> {
+  async begin(apps: readonly App[], principal: string): Promise<void> {
     // Concurrently, like the aggregated fan-out's listing (`listAggregated`): these are up
     // to LISTEN_FANOUT_MAX round trips on the latency-critical path of a held response, and
     // the subscribed SET is already fixed by `subscribable`'s slug order, so nothing here
     // depends on the order the sockets come up in.
-    await Promise.all(services.map((service) => this.subscribe(service, principal)));
+    await Promise.all(apps.map((app) => this.subscribe(app, principal)));
     void this.write(KEEPALIVE, true);
   }
 
@@ -1655,20 +1655,20 @@ class ListenStream {
 
   /**
    * One re-authorization (§21.2). The door's verdict first: a revoked or expired bearer, a
-   * deleted account, another user's namespace, or (scoped) a service the caller can no
+   * deleted agent, another user's namespace, or (scoped) an app the caller can no
    * longer see CLOSES the stream — the tick answers exactly as a fresh open would, which is
    * what makes "a fresh open would now 404" and "the stream closed" the same sentence.
    *
-   * Then the grant set, re-read: a service that left it has its socket dropped and its
+   * Then the grant set, re-read: an app that left it has its socket dropped and its
    * subscriptions die with the socket, so no `resources/updated` outlives the grant that
-   * authorized it; a service that joined it is subscribed and rung — the Worker is the party
+   * authorized it; an app that joined it is subscribed and rung — the Worker is the party
    * that knows the set changed, and it rings exactly the family bells its endpoint shape
-   * serves that the service's STORED capability set contains (a tools-only service granted
+   * serves that the app's STORED capability set contains (a tools-only app granted
    * mid-stream rings the tools bell alone, because no other family of the caller's view
    * changed). On the aggregated shape the stream narrows and stays open; on the scoped shape
-   * losing the service is losing the stream, which the door's verdict above already said.
+   * losing the app is losing the stream, which the door's verdict above already said.
    *
-   * Any failure reaching a DO ends the stream rather than leaving it deaf to one service —
+   * Any failure reaching a DO ends the stream rather than leaving it deaf to one app —
    * §21.2's rule for every subscriber-socket failure the Worker did not initiate.
    */
   private async retick(
@@ -1684,16 +1684,16 @@ class ListenStream {
         return false;
       }
       const next = await subscribable(new Registry(env.DB), ownerId, principal, slug);
-      for (const serviceId of [...this.sockets.keys()]) {
-        if (!next.some((service) => service.id === serviceId)) this.drop(serviceId);
+      for (const appId of [...this.sockets.keys()]) {
+        if (!next.some((app) => app.id === appId)) this.drop(appId);
       }
-      for (const service of next) {
-        if (this.sockets.has(service.id)) continue;
-        await this.subscribe(service, principalKey(principal));
-        await this.ring(service);
+      for (const app of next) {
+        if (this.sockets.has(app.id)) continue;
+        await this.subscribe(app, principalKey(principal));
+        await this.ring(app);
       }
     } catch (err) {
-      // A scoped -32002 (archived mid-stream), a vanished service, a credential the door
+      // A scoped -32002 (archived mid-stream), a vanished app, a credential the door
       // refuses by throwing, or a DO that could not be reached: every one of them is a
       // stream that can no longer answer for itself, and §21.2 closes rather than deafens.
       //
@@ -1711,10 +1711,10 @@ class ListenStream {
     return !this.ended;
   }
 
-  /** One subscriber socket into one service's DO, wired to this stream (§21.2). */
-  private async subscribe(service: Service, principal: string): Promise<void> {
-    const socket = await openSubscriber(service.id, this.sessionId, principal);
-    this.sockets.set(service.id, socket);
+  /** One subscriber socket into one app's DO, wired to this stream (§21.2). */
+  private async subscribe(app: App, principal: string): Promise<void> {
+    const socket = await openSubscriber(app.id, this.sessionId, principal);
+    this.sockets.set(app.id, socket);
     socket.addEventListener("message", (event) => {
       const text = typeof event.data === "string" ? event.data : "";
       let frame: unknown;
@@ -1730,17 +1730,17 @@ class ListenStream {
       // The map is the authority on which socket this stream is still listening to: `drop`
       // deletes before it closes, so a frame that arrives after a narrowing — in flight, or
       // sent by a DO that has not processed the close yet — is not one this stream forwards.
-      if (this.sockets.get(service.id) !== socket) return;
+      if (this.sockets.get(app.id) !== socket) return;
       void this.write(`data: ${text}\n\n`, false);
     });
     socket.addEventListener("close", () => {
       // Still in the map ⇒ nobody here closed it: the DO, a deploy, or a restart did, and
       // §21.2 ends the whole stream so the client's ordinary reopen rebuilds the fan-out.
-      if (this.sockets.get(service.id) === socket) void this.end();
+      if (this.sockets.get(app.id) === socket) void this.end();
     });
   }
 
-  /** The bells a newly subscribed service owes this shape, derived from the SAME kind-aware
+  /** The bells a newly subscribed app owes this shape, derived from the SAME kind-aware
    *  shape the handshake answered (`capabilityShape`) rather than from the stored set again:
    *  a family whose shape carries no `listChanged` promises no bell, so it may not ring one.
    *  Then intersected with what the endpoint shape serves, and deduplicated — both resource
@@ -1748,8 +1748,8 @@ class ListenStream {
    *
    *  Not awaited, for the reason `write` gives: a cancelled body never settles a write, and
    *  awaiting one here would wedge the tick that called it, holding every socket open. */
-  private async ring(service: Service): Promise<void> {
-    const shape = capabilityShape(await tunnelCapabilities(service.id), "tunnel");
+  private async ring(app: App): Promise<void> {
+    const shape = capabilityShape(await tunnelCapabilities(app.id), "tunnel");
     const bells = new Set<string>();
     for (const [family, flags] of Object.entries(shape)) {
       if (flags.listChanged !== true) continue;
@@ -1761,10 +1761,10 @@ class ListenStream {
 
   /** A socket this stream is done with: out of the map FIRST, so its close event reads as
    *  hub-initiated and does not end the stream (§21.2 — a narrowing is not a failure). */
-  private drop(serviceId: string): void {
-    const socket = this.sockets.get(serviceId);
+  private drop(appId: string): void {
+    const socket = this.sockets.get(appId);
     if (socket === undefined) return;
-    this.sockets.delete(serviceId);
+    this.sockets.delete(appId);
     try {
       socket.close(1000, "grant revoked");
     } catch {
@@ -1777,7 +1777,7 @@ class ListenStream {
   private async end(): Promise<void> {
     if (this.ended) return;
     this.ended = true;
-    for (const serviceId of [...this.sockets.keys()]) this.drop(serviceId);
+    for (const appId of [...this.sockets.keys()]) this.drop(appId);
     await this.writer.close().catch(() => undefined);
   }
 
@@ -1790,7 +1790,7 @@ class ListenStream {
    *
    * `counted` is what the stall detector observes, and only the keepalive sets it: it is the
    * one block written on a fixed cadence, so "the previous one has not landed and the next
-   * is already due" is a statement about the CONSUMER. A doorbell is written when a service
+   * is already due" is a statement about the CONSUMER. A doorbell is written when an app
    * happens to change something, which is no schedule at all.
    */
   private async write(text: string, counted: boolean): Promise<boolean> {
@@ -1813,14 +1813,14 @@ const KEEPALIVE = ": keepalive\n\n";
 
 /**
  * §21.4's two per-URI methods, in one pipeline because they differ in one line. Scoped and
- * TUNNELED-only: the builtin and a proxied service answer -32601 (the capability is never
+ * TUNNELED-only: the builtin and a proxied app answer -32601 (the capability is never
  * advertised for them and there is nowhere to forward), which is decided before the audited
  * body below, exactly as the aggregated shape's refusal is decided in `route`.
  *
  * Then §7's order, with §21.4's own step in it: the URI is matched against the caller's
  * resource patterns FIRST (-32001 — an unfiltered subscribe is a standing read past the
  * role's patterns, and the filter running first is also why an ungranted URI on an archived
- * service is -32001 and not -32002), then archived (-32002), then availability (-32000),
+ * app is -32001 and not -32002), then archived (-32002), then availability (-32000),
  * then the DO's own verdict: a subscribe past either cap is refused -32602 having stored and
  * forwarded NOTHING. Passing, the frame is forwarded with its params unrewritten and the
  * same `_meta` every family carries — hub/principal, hub/roles and the mirrored
@@ -1829,7 +1829,7 @@ const KEEPALIVE = ": keepalive\n\n";
  * Exactly one audit row, written after the try/catch like every other dispatching method:
  * §21.6 records these two like a READ, so the row's `tool` column is the URI under §20.4's
  * hygiene, no body is ever carried (there is none to carry), and — like a read's — the
- * -32001 an unresolvable service earns is IN the ledger. The -32601 above it is not: a
+ * -32001 an unresolvable app earns is IN the ledger. The -32601 above it is not: a
  * method that is not served for this kind of target had no dispatch to record, which is
  * exactly how `route` treats its own.
  */
@@ -1842,11 +1842,11 @@ async function subscription(
   msg: JsonRpcRequest,
   ctx: BackendCtx,
 ): Promise<JsonRpcResponse> {
-  // deps: registry.getService · registry.resolveAccess · probeAvailability · tunnel.subscribe · tunnel.unsubscribe · prepareForward · audit.record
+  // deps: registry.getApp · registry.resolveAccess · probeAvailability · tunnel.subscribe · tunnel.unsubscribe · prepareForward · audit.record
   const registry = new Registry(env.DB);
   if (slug === PMCP_SLUG) throw methodNotFound();
-  const service = await registry.getService(ownerId, slug);
-  if (service !== null && service.kind !== "tunnel") throw methodNotFound();
+  const app = await registry.getApp(ownerId, slug);
+  if (app !== null && app.kind !== "tunnel") throw methodNotFound();
 
   const startedAt = Date.now();
   const uri = msg.params?.uri;
@@ -1859,29 +1859,29 @@ async function subscription(
   try {
     // A request with no `uri`, or one that is not a string, names no resource: -32602, the
     // same code the caps refuse with, because the alternative is a subscription stored
-    // against `""` — a URI that passed no meaningful filter and that no service can emit.
+    // against `""` — a URI that passed no meaningful filter and that no app can emit.
     if (typeof uri !== "string") throw invalidParams();
-    if (service === null) throw notPermitted();
-    const filter = await registry.resolveAccess(ctx.principal, service);
+    if (app === null) throw notPermitted();
+    const filter = await registry.resolveAccess(ctx.principal, app);
     if (filter.check(uri, "resources") === "deny") throw notPermitted();
-    if (service.archived) throw archived();
-    const unavailableAs = await probeAvailability(service);
+    if (app.archived) throw archived();
+    const unavailableAs = await probeAvailability(app);
     if (unavailableAs !== null) throw unavailableAs;
 
     // The socket's stored principal is an authorization key, never the audit spelling
     // (principal.principalKey says why the two must not be the same string).
     const principal = principalKey(ctx.principal);
     if (method === "resources/subscribe") {
-      if ((await tunnelSubscribe(service.id, session, principal, uri)) === "refused") {
+      if ((await tunnelSubscribe(app.id, session, principal, uri)) === "refused") {
         throw invalidParams();
       }
     } else {
-      await tunnelUnsubscribe(service.id, session, principal, uri);
+      await tunnelUnsubscribe(app.id, session, principal, uri);
     }
 
-    const serviceCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
-    const forwarded = prepareForward({ ...msg, params: { ...msg.params, uri } }, serviceCtx);
-    const relayed = await selectBackend(service).call(service, forwarded, serviceCtx);
+    const appCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
+    const forwarded = prepareForward({ ...msg, params: { ...msg.params, uri } }, appCtx);
+    const relayed = await selectBackend(app).call(app, forwarded, appCtx);
     outcome = relayed.error === undefined ? "ok" : "error";
     answer = { ...relayed, id: msg.id ?? null };
   } catch (err) {
@@ -1892,7 +1892,7 @@ async function subscription(
     ownerId,
     ctx,
     event: method,
-    slug: service?.slug ?? slug,
+    slug: app?.slug ?? slug,
     tool: auditableUri(typeof uri === "string" ? uri : ""),
     outcome,
     durationMs: Date.now() - startedAt,

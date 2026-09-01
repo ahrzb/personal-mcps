@@ -54,21 +54,21 @@ function schemaWithSecrets(): Record<string, unknown> {
 
 describe("caller() · §7 \"Caller identity forwarding\"", () => {
   it("§7 · hub/principal and hub/roles are read off _meta into principal and roles, with roles kept exactly as granted (never expanded)", () => {
-    const identity = caller({ "hub/principal": "sa:claude", "hub/roles": ["all"] });
-    expect(identity.principal).toBe("sa:claude");
-    // `all` arrives literally; it is never expanded into the service's declared names.
+    const identity = caller({ "hub/principal": "agent:claude", "hub/roles": ["all"] });
+    expect(identity.principal).toBe("agent:claude");
+    // `all` arrives literally; it is never expanded into the app's declared names.
     expect(identity.roles).toEqual(["all"]);
   });
 
   it("§7 · hasRole(x) is true when roles contains x, false for a role not granted — the twin pair in one case", () => {
-    const identity = caller({ "hub/principal": "sa:cron", "hub/roles": ["reader"] });
+    const identity = caller({ "hub/principal": "agent:cron", "hub/roles": ["reader"] });
     expect(identity.hasRole("reader")).toBe(true);
     expect(identity.hasRole("editor")).toBe(false);
   });
 
-  it("§7 · hasRole(anything) is true when roles contains \"all\", so an owner ([\"all\"]) and an all-granted account behave identically in service code", () => {
+  it("§7 · hasRole(anything) is true when roles contains \"all\", so an owner ([\"all\"]) and an all-granted agent behave identically in app code", () => {
     const owner = caller({ "hub/principal": "user:ada", "hub/roles": ["all"] });
-    const granted = caller({ "hub/principal": "sa:claude", "hub/roles": ["all"] });
+    const granted = caller({ "hub/principal": "agent:claude", "hub/roles": ["all"] });
     for (const identity of [owner, granted]) {
       expect(identity.hasRole("editor")).toBe(true);
       expect(identity.hasRole("anything-at-all")).toBe(true);

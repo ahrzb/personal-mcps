@@ -15,7 +15,7 @@ declare module "cloudflare:test" {
   /** Bindings from wrangler.jsonc plus vitest.config.mts's `miniflare.bindings`. */
   export const env: {
     DB: unknown;
-    SERVICE_CONNECTION: unknown;
+    APP_CONNECTION: unknown;
     TEST_MIGRATIONS: D1Migration[];
   };
   export function applyD1Migrations(db: unknown, migrations: D1Migration[]): Promise<void>;

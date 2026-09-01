@@ -1,10 +1,10 @@
-// fake-service.ts — a real tunneled service, in-test: it dials `wss://<origin>/connect`
+// fake-app.ts — a real tunneled app, in-test: it dials `wss://<origin>/connect`
 // over a genuine WebSocket, sends a genuine `hub/register`, and answers genuine JSON-RPC.
 // It is the other end of §6's wire, not a stand-in for it.
 //
 // WHAT THIS PINS: the exactly-once oracle. `invocations` records every `tools/call` frame
 // AT ARRIVAL — before any behavior branch, before any reply — so "the approval dispatched
-// exactly once" is a count the service observed, never an inference from the hub's own
+// exactly once" is a count the app observed, never an inference from the hub's own
 // bookkeeping (strategy §16/§9: the hub must not be its own witness for at-most-once).
 // Everything else this harness offers exists to make that count meaningful under stress:
 // answer, hang, drop, and MRTR legs are the four ways a call can end, and each must leave
@@ -22,13 +22,13 @@
 // same vocabulary as exports, and protocol.test.ts asserts the two agree — a fake that
 // imported the constants would make that lock vacuous by construction.
 //
-// WHAT §20 ADDED, and why it is here rather than in a second fake: this service now serves
+// WHAT §20 ADDED, and why it is here rather than in a second fake: this app now serves
 // four catalogs, not one, and answers the registration-time `server/discover` a real client
 // library answers ITSELF (§11) — three behaviors deep, because §6's whole compatibility
 // story is what the hub does when that answer does not come.
 //
 // WHAT §21 ADDED: the fourth frame of the DO's read-set — `notifications/resources/updated`
-// — and the two forwarded methods a service answers natively (`resources/subscribe` /
+// — and the two forwarded methods an app answers natively (`resources/subscribe` /
 // `resources/unsubscribe`, §11: the author's SDK answers them, so a client library that
 // secretly kept a subscription set would fail these rows). And the OTHER CLASS of socket:
 // FakeSubscriber is the consumer end of a §21.2 subscriber socket, opened through the DO's
@@ -41,9 +41,9 @@
 // PROJECT: `tunnel` only, and that is load-bearing — live sockets and DOs are exactly what
 // per-file storage isolation cannot hold, so this project runs serial (`--max-workers=1
 // --no-isolate`). Consequences fixtures must respect: sockets from a previous file may
-// still be open, so every fake service closes in a teardown; and the DO is addressed by
-// the opaque `service.id`, so two fixtures sharing a slug across files still reach
-// different DOs only if they seeded different services (see seed.uniqueSlug).
+// still be open, so every fake app closes in a teardown; and the DO is addressed by
+// the opaque `app.id`, so two fixtures sharing a slug across files still reach
+// different DOs only if they seeded different apps (see seed.uniqueSlug).
 //
 // deps: WebSocket (workerd global) · cloudflare:workers exports.default.fetch (the running
 // router, which is how a socket reaches /connect at all) · seed.SeededToken · gateway
@@ -54,13 +54,13 @@ import type { JsonRpcRequest, JsonRpcResponse, Tool } from "../../src/gateway";
 import type { RoleDeclaration } from "../../src/registry";
 
 /**
- * What the service does with the NEXT matching `tools/call`. Chosen per tool and
+ * What the app does with the NEXT matching `tools/call`. Chosen per tool and
  * changeable mid-test (setBehavior), because the interesting orderings — approve, go
  * offline, retry — are behavior changes between two identical calls.
  *
  * - `answer` — reply with `result`, the ordinary path and every refusal row's allow-twin.
- * - `error` — reply with a JSON-RPC error the service itself produced; the hub relays it
- *   verbatim (§7) and an approval stays consumed (§7 step 1's "service error" branch).
+ * - `error` — reply with a JSON-RPC error the app itself produced; the hub relays it
+ *   verbatim (§7) and an approval stays consumed (§7 step 1's "app error" branch).
  * - `input_required` — reply with an MRTR input-required leg, the ONE result that
  *   restores a claimed approval; the follow-up leg is an ordinary call carrying
  *   `inputResponses`/`requestState`, recorded like any other.
@@ -77,7 +77,7 @@ export type ToolBehavior =
   | { mode: "drop" };
 
 /**
- * What the service does with the NEXT list of ANY family — the catalog warm's other half,
+ * What the app does with the NEXT list of ANY family — the catalog warm's other half,
  * and the only way a fixture reaches the states §6 lifecycle 2 is about. `answer` is the
  * default every other fixture assumes; `error` and `hang` are the two ways a warm draws no
  * catalog at all (an error reply the hub cannot read as a list, and a list that never
@@ -113,14 +113,14 @@ export const LIST_METHOD: Readonly<Record<CatalogFamily, string>> = {
 };
 
 /**
- * What the service does with the hub's registration-time `server/discover` (§6, amended
+ * What the app does with the hub's registration-time `server/discover` (§6, amended
  * 2026-08-26). Three modes because §6 gives the fallback three inputs and ONE meaning:
  * `error` covers the `-32601` a library that predates the method answers with — and, with
  * any other code, "any other error" — while `hang` is the correlation timeout. All three
  * are "capabilities unknown", and the hub then warms tools only.
  *
  * `answer` is the default, and the answer's `capabilities` are the fixture's declared
- * families (FakeServiceOptions.capabilities) rendered as a real 2026-07-28 DiscoverResult.
+ * families (FakeAppOptions.capabilities) rendered as a real 2026-07-28 DiscoverResult.
  */
 export type DiscoverBehavior =
   | { mode: "answer" }
@@ -129,7 +129,7 @@ export type DiscoverBehavior =
 
 /**
  * One entry of a prompt, resource or resource-template catalog, structurally: the fake
- * service puts on the wire exactly the object a fixture handed it. Deliberately NOT the
+ * app puts on the wire exactly the object a fixture handed it. Deliberately NOT the
  * hub's own `Prompt`/`Resource` types — this harness answers bytes, and a fixture whose
  * catalog entry is deliberately malformed (a resource whose `name` matches where its `uri`
  * does not, §20.2) must still be sendable.
@@ -139,7 +139,7 @@ export type CatalogEntry = Record<string, unknown>;
 /**
  * One observed inbound frame, captured verbatim before interpretation — the oracle's row.
  * `meta` is the forwarded request's `_meta` exactly as it arrived, which is what proves
- * §7's strip-then-set hygiene at the only place it can be proven: the service's side.
+ * §7's strip-then-set hygiene at the only place it can be proven: the app's side.
  * `wireId` is the DO's own UUID for the correlation; a fixture asserts the CONSUMER's
  * JSON-RPC id never appears here (ids never cross, §16).
  */
@@ -153,12 +153,12 @@ export type Invocation = {
 };
 
 /**
- * How a fixture asks for a service on the wire. `token` is the plaintext `pmcp_svc_`
- * string seed.ts minted — the service's identity comes from it and from nothing else
- * (§6: the register payload carries no service field), so there is deliberately no slug
+ * How a fixture asks for an app on the wire. `token` is the plaintext `pmcp_app_`
+ * string seed.ts minted — the app's identity comes from it and from nothing else
+ * (§6: the register payload carries no app field), so there is deliberately no slug
  * option here either.
  */
-export type FakeServiceOptions = {
+export type FakeAppOptions = {
   /** The hub's https origin; `wss://<host>/connect` is derived, never passed. */
   origin: string;
   token: string;
@@ -167,8 +167,8 @@ export type FakeServiceOptions = {
   /** The catalog answered to `tools/list` — schemas included, since redaction walks them (§7). */
   tools?: Tool[];
   /** The catalog answered to `prompts/list` (§20.5). Its PRESENCE is also what makes the
-   *  default `server/discover` answer declare the prompts family — a service that serves
-   *  prompts is a service that says so. */
+   *  default `server/discover` answer declare the prompts family — an app that serves
+   *  prompts is an app that says so. */
   prompts?: CatalogEntry[];
   /** The catalog answered to `resources/list`; present ⇒ the default discover answer
    *  declares `resources`, which is the one family whose declaration warms two keys. */
@@ -178,7 +178,7 @@ export type FakeServiceOptions = {
   resourceTemplates?: CatalogEntry[];
   /**
    * The families the `server/discover` answer DECLARES, overriding what the catalogs above
-   * imply — the seam for the two cases the implication cannot reach: a service that
+   * imply — the seam for the two cases the implication cannot reach: an app that
    * declares a family it then fails to list (§20.5's failed warm), and one that stops
    * declaring a family it declared before (the undeclare that CLEARS). Values are §20.2's
    * capability vocabulary: `tools`, `prompts`, `resources`, `completions`.
@@ -224,16 +224,16 @@ export class UpgradeRefused extends Error {
 }
 
 /**
- * A live fake service. One instance is one SOCKET, not one service lifetime — unlike the
+ * A live fake app. One instance is one SOCKET, not one app lifetime — unlike the
  * client libraries this harness never reconnects, because the hub's replacement and
  * sever semantics are exactly what the tests are watching. Two instances against the same
  * token is how newest-wins is provoked.
  */
-export class FakeService {
+export class FakeApp {
   /**
    * Every `tools/call` frame this socket received, in arrival order — the exactly-once
    * oracle. Appended before the behavior branch runs, so a hung or dropped call counts
-   * exactly like an answered one: "the service saw it" and "the consumer got a result"
+   * exactly like an answered one: "the app saw it" and "the consumer got a result"
    * are different questions, and only this array answers the first.
    */
   readonly invocations: readonly Invocation[] = [];
@@ -256,7 +256,7 @@ export class FakeService {
    * frames that arrive rather than frames that are understood: that an idle registered
    * socket receives no `hub/*` frame at all, that no hub-originated control frame carries a
    * method outside the published vocabulary, and that the catalog warm names an unsound
-   * tool to the service. None of those can be observed through a typed accessor without
+   * tool to the app. None of those can be observed through a typed accessor without
    * that accessor deciding the answer.
    */
   readonly frames: readonly Record<string, unknown>[] = [];
@@ -279,7 +279,7 @@ export class FakeService {
   readonly closed!: Promise<{ code: number; reason: string }>;
 
   private readonly socket: WebSocket;
-  private readonly options: FakeServiceOptions;
+  private readonly options: FakeAppOptions;
   private tools: Tool[];
   private readonly behaviors = new Map<string, ToolBehavior>();
   /** The three §20.5 catalogs that are not tools — tools keeps its own typed field because
@@ -304,7 +304,7 @@ export class FakeService {
   private settleClosed: ((end: { code: number; reason: string }) => void) | undefined;
   private ended = false;
 
-  constructor(socket: WebSocket, options: FakeServiceOptions) {
+  constructor(socket: WebSocket, options: FakeAppOptions) {
     this.socket = socket;
     this.options = options;
     this.tools = options.tools ?? [];
@@ -364,7 +364,7 @@ export class FakeService {
 
   /**
    * Change what the next list does — every family, or just `family`. The lever for the
-   * failed-warm pair: a service that registers while it cannot list yet, and then can —
+   * failed-warm pair: an app that registers while it cannot list yet, and then can —
    * with no reconnect in between, so what heals the catalog is the hub's own re-list rather
    * than a fresh registration.
    *
@@ -381,7 +381,7 @@ export class FakeService {
   /**
    * Change what the next `server/discover` does. Only a RECONNECT re-asks it (§6 issues it
    * once, at registration), so this exists for a fixture that dials a second socket against
-   * the same service and wants that registration to take the fallback.
+   * the same app and wants that registration to take the fallback.
    */
   setDiscoverBehavior(behavior: DiscoverBehavior): void {
     // deps: none
@@ -405,7 +405,7 @@ export class FakeService {
 
   /**
    * Send `notifications/tools/list_changed` with a new catalog — §6's cache-invalidation
-   * path, and the only way a fixture changes a tunneled service's tools without
+   * path, and the only way a fixture changes a tunneled app's tools without
    * reconnecting (which would also stamp last-connected and re-run drift detection).
    */
   async notifyToolsListChanged(tools: Tool[]): Promise<void> {
@@ -436,10 +436,10 @@ export class FakeService {
     await this.sendRaw({ jsonrpc: "2.0", method: "notifications/resources/list_changed" });
   }
 
-  /** Install a catalog WITHOUT announcing it — the lever for the changes a service makes
+  /** Install a catalog WITHOUT announcing it — the lever for the changes an app makes
    *  before the one frame that speaks for them goes out (§20.5's two resource keys), and
    *  for the re-warm that draws exactly what the hub already has (§21.3's equal-catalog
-   *  twin, which must ring nothing however loudly the service said something changed). */
+   *  twin, which must ring nothing however loudly the app said something changed). */
   setCatalog(family: CatalogFamily, entries: CatalogEntry[]): void {
     // deps: none
     this.catalogs.set(family, entries);
@@ -485,7 +485,7 @@ export class FakeService {
     this.end(1000, "fixture teardown");
   }
 
-  /** The register frame, sent by connectFakeService — spelled here so the whole wire
+  /** The register frame, sent by connectFakeApp — spelled here so the whole wire
    *  shape §6 pins lives in one place. */
   async sendRegister(extra?: Record<string, unknown>): Promise<void> {
     this.registerId = crypto.randomUUID();
@@ -494,7 +494,7 @@ export class FakeService {
       id: this.registerId,
       method: "hub/register",
       params: {
-        clientVersion: "fake-service/0",
+        clientVersion: "fake-app/0",
         protocolVersion: "2026-07-28",
         roles: this.options.roles ?? {},
         ...extra,
@@ -519,7 +519,7 @@ export class FakeService {
     if (family !== undefined) return this.serveList(family, frame);
     if (method === "tools/call") return this.serveCall(frame);
     if (method === "resources/subscribe" || method === "resources/unsubscribe") {
-      // §21.4/§11: the author's SDK answers these itself, so the service answers with the
+      // §21.4/§11: the author's SDK answers these itself, so the app answers with the
       // empty result MCP defines and keeps no set of its own. Already recorded in `frames`.
       return this.reply({ jsonrpc: "2.0", id: String(frame.id), result: {} });
     }
@@ -528,7 +528,7 @@ export class FakeService {
 
   /**
    * §6's one registration-time control question in the MCP namespace: which families does
-   * this service serve? A real client library answers it ITSELF, from what the author's SDK
+   * this app serve? A real client library answers it ITSELF, from what the author's SDK
    * registered (§11) — which is why this fake answers from its own catalogs rather than
    * bridging anywhere, and why a fixture can make it answer `-32601` to stand in for every
    * library in the field that predates the method.
@@ -536,7 +536,7 @@ export class FakeService {
    * The answer is a genuine 2026-07-28 `DiscoverResult`: `supportedVersions`, a
    * `capabilities` object keyed by family, `resultType`. `listChanged` and `subscribe` are
    * claimed TRUE deliberately — §20.2 forces both false in what the hub re-advertises
-   * "whatever the service claims", and a fixture that claimed false could not tell a hub
+   * "whatever the app claims", and a fixture that claimed false could not tell a hub
    * that forces them from one that merely copies them.
    */
   private serveDiscover(frame: Record<string, unknown>): void {
@@ -650,7 +650,7 @@ export class FakeSubscriber {
   /** The principal the Worker resolved, stored in the DO's attachment — a subscribe by any
    *  other principal must not mutate this socket, however right its session id is (§21.4). */
   readonly principal: string;
-  /** Resolves with the close code when the socket ends — §21.2's "service delete closes
+  /** Resolves with the close code when the socket ends — §21.2's "app delete closes
    *  subscriber sockets too" and its twins are read here. */
   readonly closed: Promise<{ code: number; reason: string }>;
 
@@ -664,7 +664,7 @@ export class FakeSubscriber {
     this.sessionId = sessionId;
     this.principal = principal;
     // The executor form, not Promise.withResolvers: this repo's lib target is ES2022 and
-    // workerd's own runtime is what the suite runs on — the same shape FakeService uses.
+    // workerd's own runtime is what the suite runs on — the same shape FakeApp uses.
     let settle: (end: { code: number; reason: string }) => void = () => undefined;
     this.closed = new Promise((resolve) => {
       settle = resolve;
@@ -735,7 +735,7 @@ export class FakeSubscriber {
 }
 
 /**
- * Open one subscriber socket into a service's DO, through the DO's own fetch door — the
+ * Open one subscriber socket into an app's DO, through the DO's own fetch door — the
  * SAME door the Worker uses, reached with the DO stub the fixture already has (the stub is
  * a parameter rather than an import so this file stays free of `cloudflare:test`, whose
  * absence is what lets it be a plain WebSocket client).
@@ -747,7 +747,7 @@ export async function openSubscriber(
   connection: { fetch(req: Request): Promise<Response> },
   options: { principal: string; sessionId?: string },
 ): Promise<FakeSubscriber> {
-  // deps: ServiceConnection.fetch (the DO's second upgrade door) · WebSocket
+  // deps: AppConnection.fetch (the DO's second upgrade door) · WebSocket
   const sessionId = options.sessionId ?? crypto.randomUUID();
   const response = await connection.fetch(
     new Request("https://pmcp.invalid/subscribe", {
@@ -772,11 +772,11 @@ function familyOfMethod(method: unknown): CatalogFamily | undefined {
 
 /**
  * The families a fixture's catalogs imply, when it did not spell `capabilities` itself:
- * tools always (every service has a tool list, empty or not, and §6's fallback warms
+ * tools always (every app has a tool list, empty or not, and §6's fallback warms
  * exactly that), plus prompts and resources when a catalog for them was supplied. The
  * `resources` declaration covers BOTH resource keys (§20.5), so either catalog declares it.
  */
-function declaredFamilies(options: FakeServiceOptions): readonly string[] {
+function declaredFamilies(options: FakeAppOptions): readonly string[] {
   const families = ["tools"];
   if (options.prompts !== undefined) families.push("prompts");
   if (options.resources !== undefined || options.resourceTemplates !== undefined) {
@@ -799,7 +799,7 @@ function capabilitiesOf(families: readonly string[]): Record<string, Record<stri
 
 /**
  * Dial the hub and, unless `skipRegister` says otherwise, complete `hub/register` before
- * resolving — so a fixture's first line establishes "this service is online" as a fact
+ * resolving — so a fixture's first line establishes "this app is online" as a fact
  * rather than a hope. Rejects when the upgrade itself fails, carrying the HTTP status
  * verbatim: 401 and 403 are the pinned §6 contract (fatal credential vs archived), and a
  * fixture asserting 403-means-exactly-archived needs the raw number, not an exception
@@ -810,24 +810,24 @@ function capabilitiesOf(families: readonly string[]): Record<string, Record<stri
  * the UPGRADE throws — a socket that was never opened is a fixture bug, a socket that was
  * opened and then refused is the subject of half this directory.
  */
-export async function connectFakeService(options: FakeServiceOptions): Promise<FakeService> {
+export async function connectFakeApp(options: FakeAppOptions): Promise<FakeApp> {
   // deps: WebSocket · JSON.stringify/parse (one message per text frame, §6)
   const response = await upgrade(options.origin, options.token);
   const socket = response.webSocket;
   if (response.status !== 101 || socket === null) throw new UpgradeRefused(response.status);
-  const service = new FakeService(socket, options);
-  if (options.skipRegister === true) return service;
-  await service.sendRegister();
-  await service.registered.catch(() => undefined);
-  return service;
+  const app = new FakeApp(socket, options);
+  if (options.skipRegister === true) return app;
+  await app.sendRegister();
+  await app.registered.catch(() => undefined);
+  return app;
 }
 
 /**
  * The upgrade WITHOUT a socket: performs the `/connect` request and returns the response
  * status, for the rows that are about refusal rather than about a connection — 401 for
- * every credential failure (missing, wrong kind, revoked, expired, service row gone,
+ * every credential failure (missing, wrong kind, revoked, expired, app row gone,
  * proxy kind) and 403 for exactly one thing, archived. Its allow-twin is
- * connectFakeService itself: the same credential, one state different, reaching 101.
+ * connectFakeApp itself: the same credential, one state different, reaching 101.
  */
 export async function attemptUpgrade(options: {
   origin: string;
@@ -844,7 +844,7 @@ export async function attemptUpgrade(options: {
 /**
  * The one dial. Goes through the RUNNING ROUTER (`exports.default.fetch`) rather than
  * calling tunnel.handleConnect: /connect being mounted, and mounted for the right method,
- * is part of what a fixture claims when it says a service connected.
+ * is part of what a fixture claims when it says an app connected.
  */
 function upgrade(origin: string, token: string | undefined): Promise<Response> {
   const headers: Record<string, string> = { Upgrade: "websocket" };

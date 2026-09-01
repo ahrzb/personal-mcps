@@ -26,7 +26,7 @@
 // hashing happens POST-redaction (worker/approvals.test.ts, proven observably); and
 // MRTR `inputResponses`/`requestState` never entering any persisted body
 // (worker/approvals.test.ts); and what a REFUSED schema then COSTS a tool — the per-tool
-// violations echoed to the service at catalog warm while registration still succeeds
+// violations echoed to the app at catalog warm while registration still succeeds
 // (tunnel/protocol.test.ts), and the cached schema-unsound consequence — no recorded
 // bodies (worker/hygiene.test.ts), sensitivePaths null and -32001 on a gated call (the
 // pipeline's own tables: worker/order.table.test.ts, tunnel/approval-e2e.test.ts). This file

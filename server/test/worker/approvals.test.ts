@@ -5,7 +5,7 @@
 //
 // What it pins, and why each is here rather than inferred:
 //  · The three-phase split itself. check → (the gateway's availability probe) → claim
-//    exists so an approved retry that meets an offline service costs the owner nothing.
+//    exists so an approved retry that meets an offline app costs the owner nothing.
 //    The only way to state that is to observe check leaving the row untouched — a
 //    SELECT-then-dispatch implementation passes every single-caller test and fails this
 //    one, which is why the CAS and dedup cases are OWNER-AUTHORED before implementation
@@ -21,13 +21,13 @@
 //  · Push crypto DECRYPTED in-test. A fake push endpoint that merely counts requests
 //    would bless an unencrypted or misdirected payload, so the fake verifies the VAPID
 //    ES256 JWT against the configured public key and decrypts the RFC 8291 body — real
-//    WebCrypto on both sides, never faked (§9) — to assert the payload names service,
+//    WebCrypto on both sides, never faked (§9) — to assert the payload names app,
 //    tool and approval id and carries no arguments at all, redacted or otherwise.
 //
-// Boundaries: the availability-first refusal (a known-offline service failing -32000
+// Boundaries: the availability-first refusal (a known-offline app failing -32000
 // before any row is read or created) is the GATEWAY's, pinned in order.table.test.ts and
 // tunnel/approval-e2e.test.ts — this module never probes availability, and no case here
-// should pretend it does. The exactly-once oracle over a real tunnel (the fake service's
+// should pretend it does. The exactly-once oracle over a real tunnel (the fake app's
 // invocation counter) is tunnel/approval-e2e.test.ts's; what lives here is the row-level
 // CAS beneath it.
 //
@@ -42,7 +42,7 @@
 // real and nothing else moved — every other case still runs against the seam
 // (`ApprovalsConfig.push`: one encrypted POST, one status back), whose fake is here rather
 // than at an outboundService endpoint. The split is deliberate: which subscriptions a push
-// reaches, that the PAYLOAD names service, tool and approval id and carries no arguments,
+// reaches, that the PAYLOAD names app, tool and approval id and carries no arguments,
 // that a 404/410 prunes and nothing else does, and that a failing push never fails the
 // request are all decisions of `approvals`, and are pinned at the seam; only the one case
 // whose subject is the BYTES runs the real transport into a push service the suite plays
@@ -56,7 +56,7 @@
 //
 // deps: test/harness/push-service (the push service the one decrypt case runs against) ·
 // server/src/push (pushSender — the real transport, wired only by that case) ·
-// test/harness/seed (namespace, TWO services and TWO accounts — the second of each
+// test/harness/seed (namespace, TWO apps and TWO agents — the second of each
 // is what the `stored_under_other_*` rows move a stored row onto, and nothing else in this
 // file needs them) · server/src/approvals (Approvals) · server/src/registry (REDACTED,
 // Registry — the redaction paths under test) · server/src/audit (record: the REAL recorder
@@ -79,7 +79,7 @@ import type { Principal } from "../../src/identity";
 import { APPROVAL_WINDOW_MS, RETENTION_DAYS } from "../../src/limits";
 import { pushSender } from "../../src/push";
 import { REDACTED, Registry } from "../../src/registry";
-import type { Service } from "../../src/registry";
+import type { App } from "../../src/registry";
 import {
   decryptPushBody,
   generateVapidPair,
@@ -103,13 +103,13 @@ import type { SeededNamespace } from "../harness/seed";
  * owner's ledger.
  *
  * `binding` names how the call relates to the stored row's DEDUP KEY — all four of
- * §7's columns, (account, service, tool, `args_hash`), not the arguments alone. Three
+ * §7's columns, (agent, app, tool, `args_hash`), not the arguments alone. Three
  * members vary the args in the vocabulary §7 distinguishes (identical, differing in a
  * visible argument, differing only in a redacted one — the last proving that hashing
  * happens after masking); the other two leave the args identical and move the row to a
- * SECOND seeded account or a second service, which is the only way to state that the
+ * SECOND seeded agent or a second app, which is the only way to state that the
  * lookup is keyed by all four columns. Without them a `check()` whose SELECT omits
- * `service_account_id` hands account B the pass its owner granted to account A and
+ * `agent_id` hands agent B the pass its owner granted to agent A and
  * answers every other row of this table correctly.
  */
 export type ApprovalCheckRow = {
@@ -126,10 +126,10 @@ export type ApprovalCheckRow = {
     | "same"
     | "differs_in_visible_arg"
     | "differs_in_redacted_arg"
-    /** identical args and tool, but the stored row belongs to a SECOND seeded account */
-    | "stored_under_other_account"
-    /** identical args and tool, but the stored row belongs to a second service */
-    | "stored_under_other_service";
+    /** identical args and tool, but the stored row belongs to a SECOND seeded agent */
+    | "stored_under_other_agent"
+    /** identical args and tool, but the stored row belongs to a second app */
+    | "stored_under_other_app";
   outcome: CheckResult["outcome"];
   /** does check() insert a NEW pending row, or ride the stored one (§7 step 2)? */
   inserts: boolean;
@@ -163,13 +163,13 @@ export type ApprovalSettleRow = {
 export const approvalCheckRows: readonly ApprovalCheckRow[] = [
   // How to read this table. Every row seeds ONE stored state, calls check() once, and reads
   // all five outputs. `binding` says how the call relates to the stored row's four-column
-  // dedup key: the three arg-varying members keep the (account, service, tool) triple fixed
+  // dedup key: the three arg-varying members keep the (agent, app, tool) triple fixed
   // — so the redaction rows are rows of this table rather than a separate suite, §7's
   // trade-off ("redacted fields are excluded from the args binding, so a retry differing
   // only in a sensitive field still matches") being a statement about which ROW a call
   // lands on, which is exactly what check() answers — while the two `stored_under_other_*`
-  // members hold the args identical and move the stored row off the caller's account or
-  // service, which is where the lookup's key is stated rather than assumed.
+  // members hold the args identical and move the stored row off the caller's agent or
+  // app, which is where the lookup's key is stated rather than assumed.
   //
   // The stored vocabulary in one sentence: `expired` is a row whose COLUMN says expired,
   // while `pending_past_expiry` / `approved_past_expiry` are rows whose column still says
@@ -198,8 +198,8 @@ export const approvalCheckRows: readonly ApprovalCheckRow[] = [
     audits: ["approval.requested"],
     pushes: 1,
   },
-  // §7 step 2: "if an unexpired `pending` row already exists for the same (account,
-  // service, tool, `args_hash`), no new row is inserted and no new `approval.requested`
+  // §7 step 2: "if an unexpired `pending` row already exists for the same (agent,
+  // app, tool, `args_hash`), no new row is inserted and no new `approval.requested`
   // audit row is written — the reply is `-32003` carrying that row's existing
   // `approvalId`/`expiresAt`, so retries see a stable id and link." Four separate claims,
   // four columns, one row — and the title strategy §8 prints as its example.
@@ -351,48 +351,48 @@ export const approvalCheckRows: readonly ApprovalCheckRow[] = [
     audits: ["approval.requested"],
     pushes: 1,
   },
-  // §7 step 2's key is four columns — "(account, service, tool, `args_hash`)" — and the
+  // §7 step 2's key is four columns — "(agent, app, tool, `args_hash`)" — and the
   // three rows below are the two columns the args-varying rows above hold constant. Without
   // them a lookup that matches on (tool, args_hash) alone answers every other row of this
-  // table correctly while letting account B ride the pass the owner granted to account A;
+  // table correctly while letting agent B ride the pass the owner granted to agent A;
   // the partial unique index cannot catch it either, because a SELECT missing a key column
   // finds the wrong row before any insert is attempted. `tool` is the third column and is
   // covered by the index property at migrations.test.ts; these are the other two.
   //
-  // The pending case first: another account's PENDING row is not this account's row to
+  // The pending case first: another agent's PENDING row is not this agent's row to
   // dedup onto, so the call inserts its own — the mutation this kills is the "find any
   // matching pending row" shortcut the dedup rows above train an implementation toward.
   {
-    title: "§7 step 2 · a pending row belonging to ANOTHER account is not this call's row: its own pending row, id, audit row and push",
+    title: "§7 step 2 · a pending row belonging to ANOTHER agent is not this call's row: its own pending row, id, audit row and push",
     stored: "pending",
-    binding: "stored_under_other_account",
+    binding: "stored_under_other_agent",
     outcome: "required",
     inserts: true,
     idSource: "fresh_row",
     audits: ["approval.requested"],
     pushes: 1,
   },
-  // The one that is a privilege escalation rather than a duplicate row: another account's
+  // The one that is a privilege escalation rather than a duplicate row: another agent's
   // APPROVED pass must never answer `ok` here. §7 step 1's lookup is the same four columns,
-  // and an account that could spend a pass the owner granted to a different account has
+  // and an agent that could spend a pass the owner granted to a different agent has
   // walked straight past the grant model.
   {
-    title: "§7 step 1 · an approved pass belonging to ANOTHER account never answers ok — the lookup is keyed by the account, not by tool and args",
+    title: "§7 step 1 · an approved pass belonging to ANOTHER agent never answers ok — the lookup is keyed by the agent, not by tool and args",
     stored: "approved",
-    binding: "stored_under_other_account",
+    binding: "stored_under_other_agent",
     outcome: "required",
     inserts: true,
     idSource: "fresh_row",
     audits: ["approval.requested"],
     pushes: 1,
   },
-  // The service column, same shape: one approval authorizes one tool on ONE service. Two
-  // services declaring the same tool name is ordinary (`search` is everywhere), which is
-  // exactly why a lookup that drops `service_id` looks right until it is not.
+  // The app column, same shape: one approval authorizes one tool on ONE app. Two
+  // apps declaring the same tool name is ordinary (`search` is everywhere), which is
+  // exactly why a lookup that drops `app_id` looks right until it is not.
   {
-    title: "§7 · an approved pass on a DIFFERENT service never answers ok for the same tool name — one approval binds one service",
+    title: "§7 · an approved pass on a DIFFERENT app never answers ok for the same tool name — one approval binds one app",
     stored: "approved",
-    binding: "stored_under_other_service",
+    binding: "stored_under_other_app",
     outcome: "required",
     inserts: true,
     idSource: "fresh_row",
@@ -406,7 +406,7 @@ export const approvalSettleRows: readonly ApprovalSettleRow[] = [
   // Three rows because settle has three inputs and exactly one of them restores. §7:
   // "a leg whose relayed result is MRTR `input_required` … flips it back to `approved` with
   // the same CAS discipline, so the exchange can continue on the original approval", against
-  // §18 decision 15: an approval is "consumed on `resultType: "complete"` (or service
+  // §18 decision 15: an approval is "consumed on `resultType: "complete"` (or app
   // error), not at first dispatch". `raw` names response SHAPES; their fixture spelling is
   // contracts.test.ts's, so a wire-format change edits one fixture, not this table.
 
@@ -424,7 +424,7 @@ export const approvalSettleRows: readonly ApprovalSettleRow[] = [
     raw: "result_input_required",
     after: "approved",
   },
-  // §18 decision 15: "(or service error)". A service error ends the exchange like a complete
+  // §18 decision 15: "(or app error)". An app error ends the exchange like a complete
   // result; only `input_required` restores, so an upstream that fails mid-elicitation costs
   // the caller a fresh -32003 rather than silently reopening the pass.
   {
@@ -475,7 +475,7 @@ const RAW_RESPONSES: Record<ApprovalSettleRow["raw"], JsonRpcResponse> = {
       requestState: "FAKE0000-request-state",
     },
   },
-  error_response: { jsonrpc: "2.0", id: 1, error: { code: -32000, message: "service unavailable" } },
+  error_response: { jsonrpc: "2.0", id: 1, error: { code: -32000, message: "app unavailable" } },
 };
 
 /** One push the fake transport was handed — endpoint and the payload bytes, verbatim. */
@@ -494,7 +494,7 @@ type Fixture = {
   now: number;
   sent: SentPush[];
   pushAnswers: Map<string, number | "reject">;
-  service(slug: string): Service;
+  app(slug: string): App;
   principal(slug: string): Principal;
 };
 
@@ -507,18 +507,18 @@ type FixtureWiring = { push?: ApprovalsConfig["push"] };
 
 async function fixture(wiring?: FixtureWiring): Promise<Fixture> {
   const ns = await seedNamespace(env.DB, {
-    services: [
+    apps: [
       { slug: "news", kind: "tunnel" },
       { slug: "docs", kind: "tunnel" },
     ],
-    accounts: [{ slug: "bot" }, { slug: "other" }],
+    agents: [{ slug: "bot" }, { slug: "other" }],
   });
   const registry = new Registry(env.DB);
-  const services: Record<string, Service> = {};
+  const apps: Record<string, App> = {};
   for (const slug of ["news", "docs"]) {
-    const detail = await registry.getService(ns.owner.userId, slug);
-    if (!detail) throw new Error(`fixture: service "${slug}" is missing`);
-    services[slug] = detail;
+    const detail = await registry.getApp(ns.owner.userId, slug);
+    if (!detail) throw new Error(`fixture: app "${slug}" is missing`);
+    apps[slug] = detail;
   }
 
   const clock = { now: T0 };
@@ -554,10 +554,10 @@ async function fixture(wiring?: FixtureWiring): Promise<Fixture> {
     },
     sent,
     pushAnswers,
-    service: (slug) => services[slug],
+    app: (slug) => apps[slug],
     principal: (slug) => ({
-      kind: "service_account",
-      accountId: ns.accounts[slug].id,
+      kind: "agent",
+      agentId: ns.agents[slug].id,
       ownerId: ns.owner.userId,
       slug,
     }),
@@ -568,11 +568,11 @@ async function fixture(wiring?: FixtureWiring): Promise<Fixture> {
 function check(
   fx: Fixture,
   args: Record<string, unknown> | undefined,
-  where?: { account?: string; service?: string; paths?: string[] },
+  where?: { agent?: string; app?: string; paths?: string[] },
 ): Promise<CheckResult> {
   return fx.approvals.check(
-    fx.principal(where?.account ?? "bot"),
-    fx.service(where?.service ?? "news"),
+    fx.principal(where?.agent ?? "bot"),
+    fx.app(where?.app ?? "news"),
     TOOL,
     args,
     where?.paths ?? REDACT_PATHS,
@@ -648,7 +648,7 @@ async function pushEndpoints(userId: string): Promise<string[]> {
 async function seedStored(
   fx: Fixture,
   stored: ApprovalCheckRow["stored"],
-  where: { account: string; service: string },
+  where: { agent: string; app: string },
 ): Promise<string | null> {
   if (stored === "none") return null;
   const opened = await check(fx, BASE_ARGS, where);
@@ -716,8 +716,8 @@ export function runApprovalCheckTable(rows: readonly ApprovalCheckRow[]): void {
       // The two `stored_under_other_*` members move the STORED row; the call below is
       // always the same (bot, news) one, which is what states the key's other two columns.
       const where = {
-        account: row.binding === "stored_under_other_account" ? "other" : "bot",
-        service: row.binding === "stored_under_other_service" ? "docs" : "news",
+        agent: row.binding === "stored_under_other_agent" ? "other" : "bot",
+        app: row.binding === "stored_under_other_app" ? "docs" : "news",
       };
       const storedId = await seedStored(fx, row.stored, where);
       const storedBefore = storedId === null ? null : await storedStatus(storedId);
@@ -804,7 +804,7 @@ describe("§7 step 1–2 · check decides without consuming", () => {
     expect(first).toEqual({ outcome: "ok", approvalId: opened.approvalId });
     expect(await storedStatus(opened.approvalId)).toBe("approved");
 
-    // The retry once the service is back: same pass, same id, nothing spent in between.
+    // The retry once the app is back: same pass, same id, nothing spent in between.
     const second = await check(fx, BASE_ARGS);
     expect(second).toEqual({ outcome: "ok", approvalId: opened.approvalId });
     expect(await approvalEvents(fx.ownerId)).toEqual(eventsBefore);
@@ -1034,15 +1034,15 @@ describe("§7 · decide, list, and lazy expiry", () => {
     const fx = await fixture();
     const older = await check(fx, BASE_ARGS);
     fx.now += APPROVAL_WINDOW_MS + 1; // the older row is now past expiry
-    const newer = await check(fx, VISIBLE_VARIANT, { account: "other" });
+    const newer = await check(fx, VISIBLE_VARIANT, { agent: "other" });
 
     const rows = await fx.approvals.list(fx.ownerId);
 
     expect(rows.map((row) => row.id)).toEqual([newer.approvalId, older.approvalId]);
     expect(rows.map((row) => row.status)).toEqual(["pending", "expired"]);
     // Slugs, not row ids — and the arguments post-redaction, the only form ever stored.
-    expect(rows[0]).toMatchObject({ accountSlug: "other", serviceSlug: "news", tool: TOOL });
-    expect(rows[1]).toMatchObject({ accountSlug: "bot", serviceSlug: "news" });
+    expect(rows[0]).toMatchObject({ agentSlug: "other", appSlug: "news", tool: TOOL });
+    expect(rows[1]).toMatchObject({ agentSlug: "bot", appSlug: "news" });
     expect(rows.map((row) => row.args)).toEqual([
       { query: "traffic", secret: REDACTED },
       { query: "weather", secret: REDACTED },
@@ -1102,7 +1102,7 @@ describe("§13/§15 · notifying the owner", () => {
   // fake, because it is the only one whose subject is the bytes. Everything else here stays
   // at the seam: what a 404 prunes and which subscriptions a push reaches are decisions of
   // approvals, not of the encoding.
-  it("§13 · the push payload decrypts in-test: the VAPID ES256 JWT verifies against the configured key and subject, and the RFC 8291 body decrypts to service, tool and approval id — and carries no arguments, redacted or otherwise", async () => {
+  it("§13 · the push payload decrypts in-test: the VAPID ES256 JWT verifies against the configured key and subject, and the RFC 8291 body decrypts to app, tool and approval id — and carries no arguments, redacted or otherwise", async () => {
     const vapid = { ...(await generateVapidPair()), subject: VAPID_SUBJECT };
     const pushed = pushService();
     const fx = await fixture({ push: pushSender(vapid, pushed.fetch) });
@@ -1117,7 +1117,7 @@ describe("§13/§15 · notifying the owner", () => {
     expect(posted.endpoint).toBe(endpoint("phone"));
 
     // The hub's identity to the push service: ES256 over the endpoint's ORIGIN (a token
-    // minted for one service is not reusable at another) claiming the configured subject.
+    // minted for one app is not reusable at another) claiming the configured subject.
     const claims = await verifyVapidJwt(posted.headers.Authorization, vapid.publicKey);
     expect(claims.aud).toBe(new URL(endpoint("phone")).origin);
     expect(claims.sub).toBe(VAPID_SUBJECT);
@@ -1130,15 +1130,15 @@ describe("§13/§15 · notifying the owner", () => {
     const stranger = await generateVapidPair();
     await expect(verifyVapidJwt(posted.headers.Authorization, stranger.publicKey)).rejects.toThrow();
 
-    // Nothing readable rests on the third-party service: the id is not in the bytes.
+    // Nothing readable rests on the third-party push service: the id is not in the bytes.
     expect(new TextDecoder().decode(posted.body)).not.toContain(opened.approvalId);
 
-    // And with the subscription's own keys it opens — to service, tool and id, exactly as
+    // And with the subscription's own keys it opens — to app, tool and id, exactly as
     // the seam-level case above pins it, and to nothing else (§15).
     const plaintext = await decryptPushBody(posted, browser);
     expect(JSON.parse(plaintext)).toEqual({
       approvalId: opened.approvalId,
-      service: "news",
+      app: "news",
       tool: TOOL,
       url: `${PUBLIC_ORIGIN}/approvals/${opened.approvalId}`,
     });
@@ -1165,12 +1165,12 @@ describe("§13/§15 · notifying the owner", () => {
     );
     // Only the two "this endpoint is gone" answers unsubscribe the owner.
     expect(await pushEndpoints(fx.ownerId)).toEqual([endpoint("broken"), endpoint("flaky-500")].sort());
-    // §15: the payload names the service, the tool and the id — and no argument, masked or
+    // §15: the payload names the app, the tool and the id — and no argument, masked or
     // otherwise, because it rests on a third-party push service.
     const payload = JSON.parse(fx.sent[0].payload) as Record<string, unknown>;
     expect(payload).toEqual({
       approvalId: opened.approvalId,
-      service: "news",
+      app: "news",
       tool: TOOL,
       url: `${PUBLIC_ORIGIN}/approvals/${opened.approvalId}`,
     });

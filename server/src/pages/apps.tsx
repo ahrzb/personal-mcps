@@ -1,11 +1,11 @@
 /**
- * /services — active and archived MCP services, per-kind status, and the
- * Connect/Reconnect/Disconnect/Archive/Delete actions of §13's service
+ * /apps — active and archived MCP apps, per-kind status, and the
+ * Connect/Reconnect/Disconnect/Archive/Delete actions of §13's app
  * management surface.
  *
  * Pure: (props) => JSX. Every URL comes from `paths`; every relative-time
  * string is computed from `now`, never from a clock of its own. Desktop
- * (Services.dc.html) and mobile (MobileServices.dc.html) are this one
+ * (Apps.dc.html) and mobile (MobileApps.dc.html) are this one
  * template — the `.wide-only`/`.narrow-only` utility classes in styles.css
  * pick which markup shows at which breakpoint, exactly as the class
  * inventory documents them.
@@ -14,7 +14,7 @@
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
 import { paths } from "./model";
-import type { Notice, ServiceRow, ServicesConfirm, ServicesProps } from "./model";
+import type { Notice, AppRow, AppsConfirm, AppsProps } from "./model";
 
 /* ------------------------------------------------------------------ *
  * Time and copy helpers — pure functions of `now` and the row, never a
@@ -26,7 +26,7 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "now" / "12m ago" / "3h ago" / "Aug 20" — the Services table's "Last seen" column. */
+/** "now" / "12m ago" / "3h ago" / "Aug 20" — the Apps table's "Last seen" column. */
 function formatLastSeen(lastConnectedAt: number | null, nowIso: string): string {
   if (lastConnectedAt === null) return "—";
   const diff = Date.parse(nowIso) - lastConnectedAt;
@@ -43,14 +43,14 @@ function rolesText(roleNames: string[]): string {
 }
 
 /** The mobile card's one meta line: "slug · roles · seen …", "seen" omitted when never connected. */
-function metaLine(row: ServiceRow, nowIso: string): string {
+function metaLine(row: AppRow, nowIso: string): string {
   const parts = [row.slug, rolesText(row.roleNames)];
   if (row.lastConnectedAt !== null) parts.push(`seen ${formatLastSeen(row.lastConnectedAt, nowIso)}`);
   return parts.join(" · ");
 }
 
-/** Dialogs.dc.html's "Delete service" copy — grammatical whether or not there are tokens to name. */
-function deleteConfirmText(row: ServiceRow): string {
+/** Dialogs.dc.html's "Delete app" copy — grammatical whether or not there are tokens to name. */
+function deleteConfirmText(row: AppRow): string {
   if (row.tokenCount > 0) {
     const plural = row.tokenCount === 1 ? "" : "s";
     const verb = row.tokenCount === 1 ? "is" : "are";
@@ -61,12 +61,12 @@ function deleteConfirmText(row: ServiceRow): string {
 
 /* ------------------------------------------------------------------ *
  * Row-level presentation — one row shape, kind and archived state decide
- * both the status badge and which actions apply (model.ts's ServiceRow doc
+ * both the status badge and which actions apply (model.ts's AppRow doc
  * comment spells the four cases this switches on).
  * ------------------------------------------------------------------ */
 
 /** null when the row has nothing to connect (tunnel, or a headers-auth proxy). */
-function statusBadge(row: ServiceRow) {
+function statusBadge(row: AppRow) {
   if (row.archived) return <span class="badge badge--warning">archived</span>;
   if (row.kind === "tunnel") {
     return row.connection === "online" ? (
@@ -94,17 +94,17 @@ function statusBadge(row: ServiceRow) {
 }
 
 /** null for a tunnel row or a headers-auth proxy — nothing to Connect/Reconnect/Disconnect. */
-function connectAction(row: ServiceRow): { label: string; href: string } | null {
+function connectAction(row: AppRow): { label: string; href: string } | null {
   if (row.kind !== "proxy" || row.upstreamAuthMode !== "oauth") return null;
-  if (row.upstream === "connected") return { label: "Disconnect", href: paths.serviceDisconnect(row.slug) };
-  if (row.upstream === "needs_reconnect") return { label: "Reconnect", href: paths.serviceConnect(row.slug) };
-  return { label: "Connect", href: paths.serviceConnect(row.slug) };
+  if (row.upstream === "connected") return { label: "Disconnect", href: paths.appDisconnect(row.slug) };
+  if (row.upstream === "needs_reconnect") return { label: "Reconnect", href: paths.appConnect(row.slug) };
+  return { label: "Connect", href: paths.appConnect(row.slug) };
 }
 
 const TableHead: FC = () => (
   <thead>
     <tr>
-      <th>Service</th>
+      <th>App</th>
       <th class="wide-only">Kind</th>
       <th class="wide-only">Status</th>
       <th class="wide-only">Roles</th>
@@ -114,7 +114,7 @@ const TableHead: FC = () => (
   </thead>
 );
 
-const ServiceTableRow: FC<{ row: ServiceRow; csrfToken: string; now: string }> = ({ row, csrfToken, now }) => {
+const AppTableRow: FC<{ row: AppRow; csrfToken: string; now: string }> = ({ row, csrfToken, now }) => {
   const badge = statusBadge(row);
   const connect = row.archived ? null : connectAction(row);
   return (
@@ -144,7 +144,7 @@ const ServiceTableRow: FC<{ row: ServiceRow; csrfToken: string; now: string }> =
             artboards' button row exactly. */}
         <form
           method="post"
-          action={row.archived ? paths.serviceUnarchive(row.slug) : paths.serviceArchive(row.slug)}
+          action={row.archived ? paths.appUnarchive(row.slug) : paths.appArchive(row.slug)}
           class="contents"
         >
           <input type="hidden" name="csrf" value={csrfToken} />
@@ -158,7 +158,7 @@ const ServiceTableRow: FC<{ row: ServiceRow; csrfToken: string; now: string }> =
           </button>
         </form>
         {/* Delete never mutates directly — it opens the same page with the confirm dialog. */}
-        <a class="btn btn--danger-outline btn--sm" href={paths.servicesConfirmDelete(row.slug)}>
+        <a class="btn btn--danger-outline btn--sm" href={paths.appsConfirmDelete(row.slug)}>
           Delete
         </a>
       </td>
@@ -235,18 +235,18 @@ const NoticeBanner: FC<{ notice: Notice }> = ({ notice }) => {
   );
 };
 
-const EmptyServices: FC = () => (
+const EmptyApps: FC = () => (
   <div class="empty">
-    <div class="empty-title">No services yet</div>
-    <div class="empty-text">Tunneled bots dial in with a service token; proxied endpoints are forwarded by the hub.</div>
-    <a class="btn btn--primary" href={paths.serviceNew}>
+    <div class="empty-title">No apps yet</div>
+    <div class="empty-text">Tunneled bots dial in with an app token; proxied endpoints are forwarded by the hub.</div>
+    <a class="btn btn--primary" href={paths.appNew}>
       <PlusIcon />
-      <span>Add service</span>
+      <span>Add app</span>
     </a>
   </div>
 );
 
-const DeleteConfirmDialog: FC<{ confirm: ServicesConfirm; csrfToken: string }> = ({ confirm, csrfToken }) => (
+const DeleteConfirmDialog: FC<{ confirm: AppsConfirm; csrfToken: string }> = ({ confirm, csrfToken }) => (
   <>
     <dialog id="confirm-delete" open aria-labelledby="confirm-delete-title">
       <div class="dialog-body">
@@ -257,10 +257,10 @@ const DeleteConfirmDialog: FC<{ confirm: ServicesConfirm; csrfToken: string }> =
           <div class="dialog-text">{deleteConfirmText(confirm.row)}</div>
         </div>
         <div class="actions">
-          <a class="btn btn--ghost" href={paths.services}>
+          <a class="btn btn--ghost" href={paths.apps}>
             Cancel
           </a>
-          <form method="post" action={paths.serviceDelete(confirm.row.slug)}>
+          <form method="post" action={paths.appDelete(confirm.row.slug)}>
             <input type="hidden" name="csrf" value={csrfToken} />
             <button type="submit" class="btn btn--danger">
               Delete
@@ -286,7 +286,7 @@ const DeleteConfirmDialog: FC<{ confirm: ServicesConfirm; csrfToken: string }> =
  * The page
  * ------------------------------------------------------------------ */
 
-export const ServicesPage: FC<ServicesProps> = ({
+export const AppsPage: FC<AppsProps> = ({
   now,
   username,
   pendingApprovals,
@@ -299,19 +299,19 @@ export const ServicesPage: FC<ServicesProps> = ({
   const nothingAtAll = active.length === 0 && archived.length === 0;
 
   return (
-    <Layout title="Services" active="services" username={username} pendingApprovals={pendingApprovals}>
+    <Layout title="Apps" active="apps" username={username} pendingApprovals={pendingApprovals}>
       <div class="page">
         {notice && <NoticeBanner notice={notice} />}
 
         <div class="page-head">
           <div>
-            <h1 class="page-title">Services</h1>
-            <p class="page-subtitle wide-only">MCP services in your namespace — tunneled bots and proxied endpoints.</p>
+            <h1 class="page-title">Apps</h1>
+            <p class="page-subtitle wide-only">MCP apps in your namespace — tunneled bots and proxied endpoints.</p>
             <p class="page-subtitle narrow-only">Tunneled bots and proxied endpoints.</p>
           </div>
-          <a class="btn btn--primary" href={paths.serviceNew}>
+          <a class="btn btn--primary" href={paths.appNew}>
             <PlusIcon />
-            <span>Add service</span>
+            <span>Add app</span>
           </a>
         </div>
 
@@ -321,13 +321,13 @@ export const ServicesPage: FC<ServicesProps> = ({
               <TableHead />
               <tbody>
                 {active.map((row) => (
-                  <ServiceTableRow row={row} csrfToken={csrfToken} now={now} />
+                  <AppTableRow row={row} csrfToken={csrfToken} now={now} />
                 ))}
               </tbody>
             </table>
           </div>
         ) : archived.length === 0 ? (
-          <EmptyServices />
+          <EmptyApps />
         ) : null}
 
         {archived.length > 0 && (
@@ -338,7 +338,7 @@ export const ServicesPage: FC<ServicesProps> = ({
                 <TableHead />
                 <tbody>
                   {archived.map((row) => (
-                    <ServiceTableRow row={row} csrfToken={csrfToken} now={now} />
+                    <AppTableRow row={row} csrfToken={csrfToken} now={now} />
                   ))}
                 </tbody>
               </table>
@@ -349,15 +349,15 @@ export const ServicesPage: FC<ServicesProps> = ({
         {!nothingAtAll && (
           <>
             <p class="note wide-only">
-              Deleting a service revokes its tokens and removes its grants. Archived services keep everything and refuse
+              Deleting an app revokes its tokens and removes its grants. Archived apps keep everything and refuse
               connections.
             </p>
-            <p class="note narrow-only center">Deleting revokes tokens and removes grants. Archived services keep everything.</p>
+            <p class="note narrow-only center">Deleting revokes tokens and removes grants. Archived apps keep everything.</p>
           </>
         )}
       </div>
 
-      {confirm && confirm.kind === "delete-service" && <DeleteConfirmDialog confirm={confirm} csrfToken={csrfToken} />}
+      {confirm && confirm.kind === "delete-app" && <DeleteConfirmDialog confirm={confirm} csrfToken={csrfToken} />}
     </Layout>
   );
 };

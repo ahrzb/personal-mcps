@@ -3,7 +3,7 @@
   "name": "personal-mcps",
 
   // The composition root (§17). It owns the Env shape below and re-exports the
-  // ServiceConnection DO class, which wrangler resolves against this entry module.
+  // AppConnection DO class, which wrangler resolves against this entry module.
   "main": "server/src/index.ts",
 
   "compatibility_date": "2026-08-20",
@@ -36,13 +36,21 @@
     }
   ],
 
-  // One DO instance per tunneled service, addressed by opaque `service.id` (§3, §6).
+  // One DO instance per tunneled app, addressed by opaque `app.id` (§3, §6).
   "durable_objects": {
-    "bindings": [{ "name": "SERVICE_CONNECTION", "class_name": "ServiceConnection" }]
+    "bindings": [{ "name": "APP_CONNECTION", "class_name": "AppConnection" }]
   },
-  // `new_sqlite_classes`, not `new_classes`: ServiceConnection is SQLite-backed.
-  // Storage backend is fixed at class creation and cannot be changed afterwards.
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ServiceConnection"] }],
+  // `new_sqlite_classes`, not `new_classes`: the class is SQLite-backed. Storage backend
+  // is fixed at class creation and cannot be changed afterwards.
+  //
+  // v1 keeps the name the class was CREATED under: migration tags are history, and
+  // rewriting v1 would tell the platform a different class had always been there,
+  // orphaning every live object's storage. The 2026-09-01 lingo rename
+  // (service → app) is v2's `renamed_classes` instead, which carries the state over.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ServiceConnection"] },
+    { "tag": "v2", "renamed_classes": [{ "from": "ServiceConnection", "to": "AppConnection" }] }
+  ],
 
   // Daily sweep (§15, §7): expire past-deadline approvals, prune audit/approval rows
   // past the retention window, drop stale upstream-OAuth `state` rows. Each run writes

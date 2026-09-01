@@ -1,7 +1,7 @@
 ## 4. Tech stack (verified against current docs, 2026-08)
 
 - **Runtime**: Cloudflare Workers, Hono for routing. D1 for the control plane,
-  SQLite-backed Durable Objects (`new_sqlite_classes`) for per-service connection state.
+  SQLite-backed Durable Objects (`new_sqlite_classes`) for per-app connection state.
 - **MCP**: target spec revision **2026-07-28** (stateless, POST-only, no sessions
   *(amended 2026-09-01, §21: one exception each — `subscriptions/listen`'s response is a
   held `text/event-stream` served by a hub-owned route beside `createMcpHandler`, and
@@ -11,7 +11,7 @@
   factory building a **low-level `Server`** (`setRequestHandler('tools/list' | 'tools/call', …)`)
   — the SDK-endorsed gateway pattern. Its `legacy: 'stateless'` lane serves 2025-era
   clients for free. Do **not** use Cloudflare's `McpAgent` (deprecated, frozen on SDK v1).
-  For proxied services the Worker dials upstream with `Client` from
+  For proxied apps the Worker dials upstream with `Client` from
   `@modelcontextprotocol/client` (Streamable HTTP transport; it handles legacy-upstream
   handshakes itself).
 - **Auth**: better-auth **≥ 1.7** with D1 as `database` (instantiated per request — D1
@@ -37,16 +37,16 @@
     JWT. §19.7 pins what keeps that endpoint out of reach and §19.6 pins why the door
     would refuse its output anyway. §19 pins the options; the verify side is a real open
     question rather than the free lunch this bullet first claimed (§19.1).
-- **Service-account and service tokens**: our own `token` table (§5), not a better-auth
-  plugin. 256-bit random secrets with `pmcp_sa_` / `pmcp_svc_` prefixes, SHA-256 hashed at
+- **Agent and app tokens**: our own `token` table (§5), not a better-auth
+  plugin. 256-bit random secrets with `pmcp_agt_` / `pmcp_app_` prefixes, SHA-256 hashed at
   rest, plaintext shown once. Unsalted SHA-256 is deliberate and correct for 256-bit
   random secrets (GitHub PATs and Vault tokens do the same): preimage attacks are
   infeasible, salting adds nothing, and slow KDFs are for low-entropy human secrets —
   do not "fix" this into bcrypt. (`@better-auth/api-key` was considered and rejected:
-  its keys can only reference users/organizations, not our service rows, and its
+  its keys can only reference users/organizations, not our app rows, and its
   session-minting behavior is an escalation footgun. A small hashed-token table is
   simpler and safer; better-auth handles humans only.)
-- **Session-scope guards**: credential-management endpoints (`/account` — TOTP and
+- **Session-scope guards**: credential-management endpoints (`/settings` — TOTP and
   passkey enrollment/removal, session revocation; there is no self-serve password
   change, the users script (§12) is the only password path) require a
   cookie-authenticated web session with recent

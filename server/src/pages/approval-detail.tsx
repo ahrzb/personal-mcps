@@ -2,7 +2,7 @@
  * approval-detail.tsx — /approvals/<id>, the page a -32003 error hands an agent's
  * user (§7 of the design spec; ApprovalDetail.dc.html / MobileApprovalDetail.dc.html).
  *
- * Chromeless like /login, /device, and /services/new (ApprovalDetailProps extends
+ * Chromeless like /login, /device, and /apps/new (ApprovalDetailProps extends
  * only PageProps, never ShellProps): it is opened from a push notification or an
  * error string, often on a phone, with one job — decide, or read, a single
  * approval. It therefore renders its own document rather than the signed-in
@@ -174,17 +174,17 @@ export const ApprovalDetail: FC<ApprovalDetailProps> = ({ now, csrfToken, approv
                   <h1 class="card-title">Approve this request?</h1>
                   <span class={`badge ${badge.class}`}>{badge.label}</span>
                 </div>
-                <p class="card-desc">A service account wants to run an approval-gated tool.</p>
+                <p class="card-desc">An agent wants to run an approval-gated tool.</p>
               </div>
 
               <div class="kv">
                 <div class="kv-row">
                   <span class="kv-key">Principal</span>
-                  <span class="mono">sa:{approval.accountSlug}</span>
+                  <span class="mono">agent:{approval.agentSlug}</span>
                 </div>
                 <div class="kv-row">
-                  <span class="kv-key">Service</span>
-                  <span>{approval.serviceSlug}</span>
+                  <span class="kv-key">App</span>
+                  <span>{approval.appSlug}</span>
                 </div>
                 <div class="kv-row">
                   <span class="kv-key">Tool</span>

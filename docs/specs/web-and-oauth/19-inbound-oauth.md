@@ -4,7 +4,7 @@
 carry the owner-level calls. Implemented as its own workflow, ahead of §20.*
 
 The gap this closes: a spec-conformant remote MCP client — claude.ai's custom
-connectors first — cannot be handed a `pmcp_sa_` key through a header field. It expects
+connectors first — cannot be handed a `pmcp_agt_` key through a header field. It expects
 to discover an authorization server from the MCP endpoint, run authorization-code +
 PKCE in the owner's browser, and present the resulting access token. Today
 `/<user>/mcp` answers 401 with a bare `WWW-Authenticate: Bearer`, nothing serves
@@ -13,9 +13,9 @@ PKCE in the owner's browser, and present the resulting access token. Today
 consent screen instead of a 404.
 
 **What it is not**: a second way to be the owner. §18 decision 23 is the whole security
-story — an OAuth connection binds to a **service account**, and from the moment the
-token reaches the door it is indistinguishable from that account's `pmcp_sa_` key:
-same grants, same approval gates, same `sa:<slug>` audit principal, and the same
+story — an OAuth connection binds to an **agent**, and from the moment the
+token reaches the door it is indistinguishable from that agent's `pmcp_agt_` key:
+same grants, same approval gates, same `agent:<slug>` audit principal, and the same
 inability to hold a `pmcp` grant (§8), so no connected client can ever reach an admin
 tool. The access model of §2 is untouched. What is new is a credential shape.
 
@@ -66,7 +66,7 @@ right. What the tree actually exports, verified by running it:
 
 So the door verifies with `verifyJwsAccessToken` and a function `jwksFetch` source, checks
 the `mcp` scope itself, and then reads `oauth_binding` (§19.6 step 4) — **one** D1 read per
-call, the same one a `pmcp_sa_` key already pays, with verification adding none. The
+call, the same one a `pmcp_agt_` key already pays, with verification adding none. The
 earlier "a path that adds one D1 read is a bounded regression" hedge is void: there is no
 extra read on the verify side, and §19.6's revocation argument holds with the binding row
 as the sole per-request cost.
@@ -222,14 +222,14 @@ convention, and is the only one pinned in `migrations.test.ts`'s `SCHEMA_TABLES`
 with `user` and `session`, better-auth's camelCase tables stay outside it):
 
 ```sql
-CREATE TABLE oauth_binding (            -- §19: one OAuth client ↔ one service account
+CREATE TABLE oauth_binding (            -- §19: one OAuth client ↔ one agent
   id TEXT PRIMARY KEY,
   owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
   client_id TEXT NOT NULL,             -- oauthClient.clientId; no FK (better-auth owns
                                        -- that table, and §5 already takes this posture
                                        -- for token.ref_id)
-  service_account_id TEXT NOT NULL REFERENCES service_account(id) ON DELETE CASCADE,
-                                       -- deleting the account revokes the connection by
+  agent_id TEXT NOT NULL REFERENCES agent(id) ON DELETE CASCADE,
+                                       -- deleting the agent revokes the connection by
                                        -- construction: the door reads this row per call
   created_at INTEGER NOT NULL,
   last_used_at INTEGER,                -- coarse, same TOKEN_LAST_USED_STAMP_MS window as
@@ -237,7 +237,7 @@ CREATE TABLE oauth_binding (            -- §19: one OAuth client ↔ one servic
                                        -- signal, for the same reason
   revoked_at INTEGER,
   UNIQUE (owner_id, client_id)         -- one binding per client per namespace; re-consent
-                                       -- with a different account UPDATEs it (audit row
+                                       -- with a different agent UPDATEs it (audit row
                                        -- `oauth.rebound`) instead of accumulating rows
 );
 ```
@@ -283,21 +283,21 @@ The provider owns the state machine and ships no pages; the hub owns every pixel
      unverified"** marker beside the name. The hub vouches for nothing here, and the
      screen must not let a familiar-looking name read as a verified one;
    - the requested scopes, and the **namespace** the token will be audience-bound to;
-   - a **service-account picker**: a `<select>` over `account_list`, defaulted to nothing,
+   - an **agent picker**: a `<select>` over `agent_list`, defaulted to nothing,
      beside the plain sentence that the client will be able to do exactly what that
-     account can. This is the lazy binding decision made explicit — the account is chosen
+     agent can. This is the lazy binding decision made explicit — the agent is chosen
      at the moment the owner is already looking at the request, so no separate
      provisioning step exists.
 
-   **Empty state, pinned**: a namespace with zero service accounts is the first-run path,
+   **Empty state, pinned**: a namespace with zero agents is the first-run path,
    not an edge case — the owner this section exists for may never have created one. With
-   no accounts, the picker renders an empty state naming `/services` as the place to
+   no agents, the picker renders an empty state naming `/apps` as the place to
    create one, the submit control is **disabled**, and consent is simply impossible until
-   an account exists; Deny still works. There is deliberately no inline create and no
-   implicit "default" account: an authority-granting screen is the wrong place to mint the
+   an agent exists; Deny still works. There is deliberately no inline create and no
+   implicit "default" agent: an authority-granting screen is the wrong place to mint the
    thing that will hold the authority.
 4. The POST goes to `/oauth/consent` (the hub's own route, through §13's `mutation`
-   gate: session → form → CSRF → body — the same discipline as `/services`, not a
+   gate: session → form → CSRF → body — the same discipline as `/apps`, not a
    weaker one, because this POST both writes a binding and authorizes a client). The
    handler **verifies before it writes**: it first calls the provider's
    `/oauth2/consent` endpoint with `{ accept, oauth_query }` carrying the session —
@@ -331,7 +331,7 @@ need no `trustedOrigins` entry.
    door with the ordinary challenge. MCP clients are spec-required to send `resource`,
    and this is the failure mode to look for first when a client cannot connect.
 3. **At the door** (§7 step 1, `identity.resolveCredential`'s prefix dispatch — the same
-   function that resolves `pmcp_sa_` keys, gaining one leg, so `resolvePrincipal` and
+   function that resolves `pmcp_agt_` keys, gaining one leg, so `resolvePrincipal` and
    everything past it are unchanged). Four rules, each an authorization boundary rather
    than an implementation note:
 
@@ -343,7 +343,7 @@ need no `trustedOrigins` entry.
 
    **The leg is terminal.** A JWT-shaped bearer is answered by the OAuth leg **alone**.
    Every failure in it — malformed, bad signature, wrong issuer, wrong audience, expired,
-   missing `mcp` scope, wrong token type, no binding row, revoked binding, deleted account
+   missing `mcp` scope, wrong token type, no binding row, revoked binding, deleted agent
    — is a **401**, and none of them falls through to the better-auth session lookup. Same
    hard rule the `pmcp_` prefixes carry, sharper reason: better-auth resolves some of its
    own signed tokens to a *session*, and a session resolves to the **owner**, so a
@@ -365,29 +365,29 @@ need no `trustedOrigins` entry.
    URL, `https://<origin>/<user>/mcp` — one identifier per namespace, the same string as
    the `oauthResource` row and the PRM's `resource` (§19.3). The door accepts that audience
    on the aggregated shape **and** on `/<user>/mcp/<slug>` within the same namespace;
-   grants then filter per slug exactly as they do for a `pmcp_sa_` key, so the scoped
-   endpoint refuses what the account may not reach and **404s** what it holds no grant on
+   grants then filter per slug exactly as they do for a `pmcp_agt_` key, so the scoped
+   endpoint refuses what the agent may not reach and **404s** what it holds no grant on
    — `/<user>/mcp/pmcp` included, which refuses like it refuses a key (§8), not as a
    resolution failure. The alternative, an audience per addressed URL, was rejected because
    it makes an OAuth token strictly *weaker* than the key it is supposed to be
-   indistinguishable from, and turns §16's "indistinguishable from a `pmcp_sa_` key" into
+   indistinguishable from, and turns §16's "indistinguishable from a `pmcp_agt_` key" into
    a false sentence on every scoped URL. A token whose `aud` names a **different**
    namespace is not "a resolved principal on a foreign namespace" (§7's 404 rule) but no
    principal at all: the same 401 challenge as no token, learning nothing about whether
    that namespace exists.
 4. The verified `azp`/`client_id` plus the addressed owner resolve `oauth_binding`. No
-   row, or `revoked_at` set, or the account gone → the same 401 challenge, which is also
-   the actionable answer: the owner can re-consent. A live row yields a
-   `service_account` principal — the identical shape `pmcp_sa_` produces — and stamps
+   row, or `revoked_at` set, or the agent gone → the same 401 challenge, which is also
+   the actionable answer: the owner can re-consent. A live row yields an
+   `agent` principal — the identical shape `pmcp_agt_` produces — and stamps
    `last_used_at` under the same coarse window.
 5. Everything downstream is §7 unchanged: grants, `-32001`/`-32002`/`-32003`, approvals,
-   `hub/principal: "sa:<slug>"`, `hub/roles`, and audit rows under principal
-   `sa:<slug>`. Nothing in the pipeline branches on how the credential arrived.
+   `hub/principal: "agent:<slug>"`, `hub/roles`, and audit rows under principal
+   `agent:<slug>`. Nothing in the pipeline branches on how the credential arrived.
 
 Lifetimes: access tokens keep the provider's ordinary hour, refresh tokens 30 days with
 rotation. The usual objection to a JWT — that the fast path never re-checks revocation —
 does not apply here, because step 4 reads the binding row on every call. That read is
-the same one-per-request D1 cost a `pmcp_sa_` key already pays — and the *only* one, since
+the same one-per-request D1 cost a `pmcp_agt_` key already pays — and the *only* one, since
 `verifyJwsAccessToken` verifies locally against the JWKS with no adapter read (§19.1) — and
 it buys immediate
 revocation: **the connection is revoked when the binding says so**, mid-session, without
@@ -444,13 +444,13 @@ namespace, exactly what the `/oauth/connections` page fronts.
 | No token, malformed token, expired token | 401 + challenge naming the per-user `resource_metadata`. Same bytes whether `<user>` exists or not. |
 | Opaque token (client omitted `resource`) | Same 401 + challenge — the hub validates JWTs only, and says so here rather than pretending otherwise. |
 | Token whose `aud` names another namespace | Same 401 + challenge. Audience is a resolution failure, not a namespace judgment, so no 404 and no existence signal about the namespace it was minted for or the one it was presented to. |
-| Token whose `aud` names *this* namespace, addressed to `/<user>/mcp/<slug>` | **Accepted** — the audience is namespace-wide (§19.6 step 3). The slug is then judged by grants alone, exactly as for a `pmcp_sa_` key: `-32001` / `-32002` / 404 per §7, never an audience refusal. |
+| Token whose `aud` names *this* namespace, addressed to `/<user>/mcp/<slug>` | **Accepted** — the audience is namespace-wide (§19.6 step 3). The slug is then judged by grants alone, exactly as for a `pmcp_agt_` key: `-32001` / `-32002` / 404 per §7, never an audience refusal. |
 | Token whose `aud` is a *scoped* URL (`…/mcp/<slug>`) rather than the namespace's canonical aggregated URL | Same 401 + challenge, on both endpoint shapes. Namespace-wide means exactly one string; nothing issues that audience, so presenting it means the token came from somewhere else. |
 | A hub-signed JWT that is not an access token — e.g. one minted from a cookie session at `/api/auth/token` | Same 401 + challenge. Correct signature and issuer are not the acceptance test (§19.6 step 3). |
 | Any failure at all in the OAuth leg | 401. The leg is terminal — no failure falls through to a session lookup, so no failure can resolve as the owner (§19.6 step 3). |
 | Unknown client (no binding row) | Same 401 + challenge; re-consent is the fix, and only the owner's browser session can perform it. |
 | Binding revoked mid-session | The next call refuses with the same challenge; in-flight calls are not interrupted. The provider's consent row is gone too, so a refresh cannot resurrect it. |
-| Service account deleted | The FK cascade removes the binding: identical to revoked, with no cleanup step to forget. |
+| Agent deleted | The FK cascade removes the binding: identical to revoked, with no cleanup step to forget. |
 | Consent POST without a valid CSRF token, or with an edited `oauth_query` | Refused by §13's `mutation` gate and by the provider's signature check respectively — nothing is written and no code is issued. |
 
 ### 19.9 Explicitly out of scope
@@ -459,13 +459,13 @@ Recorded so a later reader knows these were seen, not missed. None blocks the cl
 or Claude Code flows:
 
 - **Advertising a scoped endpoint as its own OAuth resource** — no PRM is served at
-  `/.well-known/oauth-protected-resource/<user>/mcp/<slug>` and no per-service
+  `/.well-known/oauth-protected-resource/<user>/mcp/<slug>` and no per-app
   `oauthResource` row exists, so a client cannot *discover* a scoped mount or obtain a
   token audience-bound to one. It can still *use* one: the audience is namespace-wide
   (§19.6 step 3), so an issued token works on `/<user>/mcp/<slug>` under that namespace's
-  grants, which is what keeps §16's "indistinguishable from a `pmcp_sa_` key" true. What
+  grants, which is what keeps §16's "indistinguishable from a `pmcp_agt_` key" true. What
   is out of scope is only the discovery half — one more route and one more resource row
-  per service, the day a connector wants to mount a single service directly.
+  per app, the day a connector wants to mount a single app directly.
 - **CIMD** (`@better-auth/cimd`, MCP 2026-07-28 Client ID Metadata Documents) — its
   bundled fetch transport is Node-only and would need a Workers replacement with
   private-range validation. DCR covers both clients today.
@@ -475,7 +475,7 @@ or Claude Code flows:
   but the hub never calls it: it demands client credentials, so the hub would have to
   register itself as a client and POST to itself per request.
 - **Claude Code over OAuth** — best-effort. Its existing `Authorization: Bearer
-  pmcp_sa_…` header keeps working untouched and stays the supported CLI route; a
+  pmcp_agt_…` header keeps working untouched and stays the supported CLI route; a
   configured header wins over OAuth in Claude Code anyway. Two unverified behaviors sit
   behind this — whether its DCR body declares `application_type: "native"` alongside its
   `http://localhost:PORT/callback` redirect (the provider's `"web"` default would

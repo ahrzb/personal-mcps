@@ -22,7 +22,7 @@
 // NOT HERE: that the hash is taken POST-redaction (worker/approvals.test.ts proves it
 // observably — two calls differing only in a redacted field dedup to one row), that an
 // identical retry spends exactly one pass (tunnel/approval-e2e.test.ts, with the fake
-// service's invocation counter as the oracle), and MRTR's exclusion of
+// app's invocation counter as the oracle), and MRTR's exclusion of
 // `inputResponses`/`requestState` from the binding (worker/approvals.test.ts). This
 // file pins the string, not the use of the string.
 

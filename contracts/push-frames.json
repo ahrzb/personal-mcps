@@ -21,7 +21,7 @@
       }
     }
   },
-  "serviceOriginated": {
+  "appOriginated": {
     "invalidatesFamily": {
       "notifications/tools/list_changed": "tools",
       "notifications/prompts/list_changed": "prompts",

@@ -81,11 +81,11 @@ describe("columnize · TTY-only truncation", () => {
         ["online-notes", "online"],
         ["b", "offline"],
       ],
-      { headers: ["SERVICE", "STATUS"], tty: true, style: (cell, column) => (column === 1 ? `<${cell}>` : cell) },
+      { headers: ["APP", "STATUS"], tty: true, style: (cell, column) => (column === 1 ? `<${cell}>` : cell) },
     );
     const lines = out.split("\n");
     // The header is never styled — a caller that wants it dim paints the whole line.
-    expect(lines[0]).toBe("SERVICE       STATUS");
+    expect(lines[0]).toBe("APP           STATUS");
     // The slug is untouched, and the STATUS column still starts at the header's column.
     expect(lines[1]).toBe("online-notes  <online>");
     expect(lines[1].indexOf("<online>")).toBe(lines[0].indexOf("STATUS"));

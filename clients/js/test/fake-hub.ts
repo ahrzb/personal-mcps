@@ -105,7 +105,7 @@ export type Ending =
  *
  * `path` and `authorization` are captured verbatim because §6 pins both on the client
  * side: the address is DERIVED (`wss://<host>/connect`) rather than passed in, and the
- * service token rides `Authorization: Bearer` and nowhere else. `at` is the arrival time
+ * app token rides `Authorization: Bearer` and nowhere else. `at` is the arrival time
  * a fixture differences to observe a schedule; it is a real clock reading, so a table
  * asserts the ORDER and the shape of the gaps, never a millisecond literal (§7).
  */
@@ -153,7 +153,7 @@ export type FakeHubOptions = {
 const OBSERVATION_DEADLINE_MS = 5_000;
 
 /**
- * A live fake hub — one LISTENER, many connections. Unlike the fake service on the server
+ * A live fake hub — one LISTENER, many connections. Unlike the fake app on the server
  * side, this one deliberately survives the sockets it accepts: the entire subject of
  * transport.test.ts is what the client does after a connection ends, so the hub must
  * outlive the ending to witness the redial (or its absence).

@@ -70,6 +70,17 @@
   `Transport` implementation over `ws`. Both SDKs dropped built-in WebSocket transports in
   v2, so this bridge is ours; it is small and the spec explicitly sanctions custom
   transports.
+- **Dependency policy** *(made explicit + amended 2026-09-01)*: the Worker adds
+  nothing beyond the list above — better-auth and its pinned companions are the
+  only runtime dependencies at the trust boundary (supply-chain surface,
+  cold-start cost). The **CLI is carved out**: `cli/` may take runtime
+  dependencies of its own (§10 pins the current list: commander,
+  @clack/prompts, picocolors, wrap-ansi, smol-toml, yaml). They are declared in
+  the root `package.json` — the install the repo actually runs — and mirrored
+  into `cli/package.json` for the published bin, because `cli/build.mjs`
+  type-strips without bundling, so the published `dist/` imports them at
+  runtime. Clients (`clients/js`, `clients/py`) keep their own minimal,
+  separately-declared dependencies as before.
 - **Monorepo**: pnpm workspaces (`server`, `cli`, `clients/js`) + `uv` project
   (`clients/py`).
 

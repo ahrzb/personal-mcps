@@ -114,6 +114,13 @@ export type CurrentService = {
   endpoint?: string;
   auth?: "headers" | "oauth";
   forwardIdentity?: boolean;
+  /**
+   * proxy only: §20.2's owner-declared advertisement, as §8's 2026-08-27 amendment made
+   * `service_list`/`service_get` report it — ABSENT when the service never configured one,
+   * exactly like the file's own key, so the planner can tell "undeclared" from "declared as
+   * the default" and `canonicalCapabilities` decides that they MEAN the same thing.
+   */
+  capabilities?: string[];
 };
 
 /**
@@ -667,11 +674,14 @@ function wireFields(service: DesiredService): Record<string, unknown> {
 /**
  * The fields that differ, in the op's wire spelling. `archived` is never among them (it
  * has its own ops) and a tunneled service's `roles` are never compared — they arrive at
- * connect time and are not desired state (§9). `capabilities` rides service_create's wire
- * above but is EXCLUDED here: service_list/service_get do not report what a proxied
- * service's scoped handshake currently advertises (§20.2 is silent on reading it back), so
- * there is no current value to diff against — comparing it against an always-absent current
- * field would flag every `pmcp apply` as a capabilities change, forever.
+ * connect time and are not desired state (§9).
+ *
+ * `capabilities` is decided AFTER the loop rather than inside it, because both halves of
+ * its rule sit outside what the loop can express (§9, 2026-08-27). The comparison is a SET
+ * with absent ≡ `["tools"]`, so a reordered list is not a change — and, more importantly,
+ * an omitted key is not "leave it alone" but a desired value of its own: desired state is
+ * total, so deleting the line from the file must plan the default back, and the loop only
+ * ever visits keys the file actually produced.
  */
 function changedFields(service: DesiredService, existing: CurrentService): Record<string, unknown> {
   const { capabilities: _capabilities, ...wire } = wireFields(service);
@@ -697,6 +707,15 @@ function changedFields(service: DesiredService, existing: CurrentService): Recor
         ? deepEqual(canonicalRoles(value as RoleDeclaration), canonicalRoles((server.roles as RoleDeclaration) ?? {}))
         : deepEqual(value, server[key]);
     if (!same) changed[key] = value;
+  }
+  if (
+    service.kind === "proxy" &&
+    !deepEqual(canonicalCapabilities(service.capabilities), canonicalCapabilities(existing.capabilities))
+  ) {
+    // The file's own spelling when it wrote one; the default spelled OUT when it did not,
+    // because `service_update` has no "unset" and `["tools"]` is what absent means anyway —
+    // so the next run reads back a value that canonicalizes equal and plans nothing.
+    changed.capabilities = service.capabilities ?? [...DEFAULT_CAPABILITIES];
   }
   return changed;
 }
@@ -737,6 +756,30 @@ function canonicalRoles(decl: RoleDeclaration): Record<string, Record<string, st
     ]),
   );
 }
+
+/**
+ * §20.2's `capabilities`, canonicalized for COMPARISON — the planner's one spelling of §9's
+ * rule, beside `canonicalRoles` and for the same reason `familiesOf` is spelled once: an
+ * equivalence with two sites is an equivalence that will disagree with itself.
+ *
+ * Two halves, both load-bearing. ABSENT IS `["tools"]`: the hub advertises tools for a
+ * proxied service that declared nothing, so a file omitting the key and a server storing the
+ * default are the same desired state and must plan nothing — otherwise every file written
+ * before the key existed diffs against the server on the first run after it lands. And it is
+ * a SET: the declaration names WHICH families the scoped handshake advertises, so order and
+ * repetition carry no meaning and diffing on them would be diffing on typing.
+ *
+ * Exported because it is the readable statement of that rule, not because a second caller
+ * exists — `changedFields` is the only one, and a second would be the drift this prevents.
+ */
+export function canonicalCapabilities(declared: string[] | undefined): string[] {
+  // deps: none
+  return sorted(new Set(declared ?? DEFAULT_CAPABILITIES));
+}
+
+/** §20.2's default advertisement, and therefore what an absent `capabilities:` MEANS: a
+ *  proxied service the hub was never told anything about serves tools. */
+const DEFAULT_CAPABILITIES = ["tools"];
 
 /** Two grant lists as the same set, order and spelling normalized. */
 function sameRoles(a: readonly DesiredGrant[], b: readonly DesiredGrant[]): boolean {

@@ -493,6 +493,20 @@ const FIXTURE_ROLE_DECLARATION = {
 const SPELLED_TOOLS_ONLY_ROLE = "publisher";
 
 /**
+ * §20.2's owner-declared advertisement, spelled once for the three surfaces that read it:
+ * the `service-list.json` proxy row, the read-back case, and the handshake case. It is
+ * deliberately NOT the default — `tools` alone would make "the row carries what was stored"
+ * indistinguishable from "the row invents the default", which is the whole subject of §8's
+ * 2026-08-27 amendment — and it is deliberately not in declaration order either, so a reader
+ * that sorted or a planner that compared as a list is visible.
+ */
+const FIXTURE_CAPABILITIES = ["resources", "tools"];
+
+/** A second proxied service in the same namespace, created with no `capabilities` at all —
+ *  the absent-is-absent half of the read-back case, beside its declared twin. */
+const FIXTURE_UNDECLARED_PROXY = `${FIXTURE_PROXY}-undeclared`;
+
+/**
  * §20.3's family vocabulary, read off the fixture's OWN multi-family role — which names all
  * three deliberately (see above). Derived rather than transcribed because a literal here
  * would be a third copy beside registry's `ROLE_FAMILIES` and the planner's, and a
@@ -1047,6 +1061,14 @@ async function serviceListEmission(): Promise<unknown> {
       ],
     },
     async (ns) => {
+      // Declared rather than left default, because the row's SHAPE is what this family
+      // pins: an undeclared service carries no `capabilities` key at all (§8's 2026-08-27
+      // amendment, and the read-back case below), so a fixture built from one would pin the
+      // proxied row as the shape that happens to omit the field.
+      await ops.service_update.handler(ns.owner.userId, {
+        slug: FIXTURE_PROXY,
+        capabilities: FIXTURE_CAPABILITIES,
+      });
       const listed = (await ops.service_list.handler(ns.owner.userId, {})) as {
         services: Record<string, unknown>[];
       };
@@ -1772,6 +1794,104 @@ async function roundTripRoles(declaration: unknown): Promise<Record<string, unkn
   });
 }
 
+/**
+ * §20.2's proxied `capabilities`, where its two readers meet. Until §8's 2026-08-27
+ * amendment the key was create-only: registry stored it, the scoped handshake read it, and
+ * no read tool reported it — so `pmcp diff` had nothing to compare a file against and the
+ * planner excluded the field by construction. These two cases are that gap closed, from
+ * both ends: the row carries the STORED value (absent when nothing was ever configured, so
+ * the planner can tell "undeclared" from "declared as the default"), and one `service_update`
+ * moves both readers at once.
+ */
+describe("§4 · the capabilities wire — one stored declaration, two readers", () => {
+  it('§8/§20.2 · service_get returns a proxied service\'s stored capabilities list, and omits the field when none was ever configured — absent is absent, never ["tools"]', async () => {
+    await inNamespace({}, async (ns) => {
+      const create = (slug: string, capabilities?: string[]) =>
+        ops.service_create.handler(ns.owner.userId, {
+          slug,
+          kind: "proxy",
+          endpoint: upstreamUrlFor(healthyUpstream()),
+          ...(capabilities === undefined ? {} : { capabilities }),
+        });
+      await create(FIXTURE_PROXY, FIXTURE_CAPABILITIES);
+      await create(FIXTURE_UNDECLARED_PROXY);
+      // Verbatim, in the owner's own order: the row is the stored declaration, not a
+      // rendering of it, so a read that sorted or de-duplicated would be reporting its own
+      // opinion of the config back to the owner who wrote it.
+      expect((await serviceGetRow(ns, FIXTURE_PROXY)).capabilities).toEqual(FIXTURE_CAPABILITIES);
+      // The twin, and the half that is easy to get wrong: §20.2's default is what the
+      // HANDSHAKE answers for an undeclared service, never what the row claims was
+      // configured. A row that helpfully filled in `["tools"]` would make the planner plan a
+      // `service_update` against every file that omits the key — forever.
+      const undeclared = await serviceGetRow(ns, FIXTURE_UNDECLARED_PROXY);
+      expect(undeclared.capabilities).toBeUndefined();
+      expect(Object.keys(undeclared)).not.toContain("capabilities");
+    });
+  }, CASE_BUDGET_MS);
+
+  it("§8/§20.2 · service_update with capabilities changes what service_get returns and what the scoped handshake advertises — one stored value, two readers", async () => {
+    // Read before the namespace is seeded: wireRevision seeds one of its own under the same
+    // fixed username, and the two may not overlap.
+    const revision = await wireRevision();
+    await inNamespace(
+      {
+        services: [
+          {
+            slug: FIXTURE_PROXY,
+            kind: "proxy",
+            upstreamUrl: upstreamUrlFor(healthyUpstream()),
+            upstreamAuthMode: "headers",
+          },
+        ],
+      },
+      async (ns) => {
+        // The owner's own session: §7's scoped visibility gives an owner every service in
+        // the namespace, so the handshake under test is not also a grant test.
+        const session = await seedOwnerSession(ns.owner);
+        const advertised = async (): Promise<string[]> => {
+          const answer = await rpc(
+            ns.owner.username,
+            session.token,
+            FIXTURE_PROXY,
+            handshakeRequest(revision),
+          );
+          const body = answer.body as JsonRpcResponse;
+          if (body.error !== undefined) {
+            throw new Error(`the scoped handshake was refused: ${JSON.stringify(body.error)}`);
+          }
+          return Object.keys((body.result as { capabilities: Record<string, unknown> }).capabilities).sort();
+        };
+        // Undeclared: the row says nothing and the handshake says tools — the two answers
+        // §20.2 gives for "the hub was never told", captured before the change so the change
+        // is what the assertions below observe.
+        expect((await serviceGetRow(ns, FIXTURE_PROXY)).capabilities).toBeUndefined();
+        expect(await advertised()).toEqual(["tools"]);
+        await ops.service_update.handler(ns.owner.userId, {
+          slug: FIXTURE_PROXY,
+          capabilities: FIXTURE_CAPABILITIES,
+        });
+        // ONE write, both readers. A hub that stored the update but kept answering the
+        // handshake from a second copy — or a row that reported an update the handshake had
+        // never seen — passes neither half, which is what makes this one case rather than two.
+        expect((await serviceGetRow(ns, FIXTURE_PROXY)).capabilities).toEqual(FIXTURE_CAPABILITIES);
+        expect(await advertised()).toEqual([...FIXTURE_CAPABILITIES].sort());
+      },
+    );
+  }, CASE_BUDGET_MS);
+});
+
+/** One service as §8's read op reports it — the row both capabilities cases assert on, so
+ *  neither reaches past `service_get` for a value the amendment is about. */
+async function serviceGetRow(
+  ns: SeededNamespace,
+  slug: string,
+): Promise<Record<string, unknown>> {
+  const read = (await ops.service_get.handler(ns.owner.userId, { slug })) as {
+    service: Record<string, unknown>;
+  };
+  return read.service;
+}
+
 /** One close-code entry as the fixture carries it. */
 type CloseEntry = { kind: string; code: number; behavior: string; schedule?: string };
 
@@ -1933,6 +2053,7 @@ const CURRENT_SERVICE_KEYS = {
   endpoint: true,
   auth: true,
   forwardIdentity: true,
+  capabilities: true,
 } as const satisfies Record<keyof Required<CurrentService>, true>;
 
 describe("§4 · audit body stubs — the spelling §15 defers to this directory", () => {

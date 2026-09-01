@@ -458,8 +458,9 @@ async function tunnelStatus(serviceId: string): Promise<"online" | "offline"> {
 /**
  * §8's pinned cross-front row shape, as a type rather than three paragraphs of prose: the
  * fields every variant carries, then per kind — tunneled rows carry connection status and
- * last seen; proxied rows carry the endpoint, auth mode and forward_identity in their
- * place, plus the OAuth connection state where the mode is `oauth`; the virtual builtin
+ * last seen; proxied rows carry the endpoint, auth mode, forward_identity and the declared
+ * `capabilities` in their place, plus the OAuth connection state where the mode is
+ * `oauth`; the virtual builtin
  * carries neither, and says so with `builtin: true`. Credentials never appear in any
  * variant. The CLI diff/apply planner, both read ops and the /services page all read
  * exactly this, so a field added to one variant is a compile error until every producer
@@ -489,6 +490,15 @@ type ProxyRow = {
   endpoint: ServiceDetail["upstreamUrl"];
   auth: ServiceDetail["upstreamAuthMode"];
   forwardIdentity: boolean;
+  /**
+   * §20.2's owner-declared advertisement, made readable by §8's 2026-08-27 amendment —
+   * OPTIONAL, and that is the whole content of the amendment: the row reports what is
+   * STORED, so a service that never configured the key carries no key. Filling in the
+   * hub's `["tools"]` default here would be a second answer to "what did the owner
+   * declare", and `pmcp diff` — whose file may equally omit the key — would then plan an
+   * update against every pre-amendment service, forever.
+   */
+  capabilities?: NonNullable<ServiceDetail["capabilities"]>;
   connection?: UpstreamConnectionStatus;
 };
 
@@ -520,6 +530,9 @@ async function serviceRow(detail: ServiceDetail): Promise<ServiceRow> {
     endpoint: detail.upstreamUrl,
     auth: detail.upstreamAuthMode,
     forwardIdentity: detail.forwardIdentity,
+    // Registry's `null` is "undeclared", and it stays absent rather than becoming a
+    // default here (ProxyRow.capabilities says why).
+    ...(detail.capabilities === null ? {} : { capabilities: detail.capabilities }),
     ...(detail.upstreamAuthMode === "oauth" ? { connection: await connectionStatus(detail) } : {}),
   };
 }

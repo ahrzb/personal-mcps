@@ -91,6 +91,8 @@
     "planChanges · the steps a difference produces (§8, §9) §9 · proxy-only fields (endpoint, auth, forward_identity, roles) are diffed like any other field": "passed",
     "planChanges · the steps a difference produces (§8, §9) §9 · server-only service and server-only account → service_delete /account_delete, both flagged destructive (grants cascade, tokens deleted)": "passed",
     "planChanges · the steps a difference produces (§8, §9) §9/§15 · a change in redact, redact_results, or log_bodies alone plans a service_update — either kind": "passed",
+    "planChanges · the steps a difference produces (§8, §9) §9/§20.2 · a capabilities change on a proxied service plans a service_update naming the field": "passed",
+    "planChanges · the steps a difference produces (§8, §9) §9/§20.2 · capabilities compares as a set with absent ≡ [tools] — spelling the default, or reordering the list, plans nothing": "passed",
     "planChanges · the steps a difference produces (§8, §9) §9/§20.3 · a bare list in YAML plans identically to {tools: [...]} — no spurious diff on a file written before this change": "passed",
     "planChanges · the steps a difference produces (§8, §9) §9/§20.3 · the YAML planner accepts a per-family roles block for a proxied service and diffs it field-by-field": "passed"
   },
@@ -697,6 +699,8 @@
     "§4 · planner-facing rows §8 · account-list.json rows carry grants inline, so the planner's entire current-state read is these two families and nothing else": "passed",
     "§4 · planner-facing rows §8 · service-list.json row keys equal a live service_list row's, for tunnel, proxy, and the builtin pmcp entry (builtin: true, no D1 row behind it)": "passed",
     "§4 · planner-facing rows §9 · plan.CurrentService's keys equal service-list.json's minus exactly the runtime facts (status, oauth connection state, last seen) — a plan can never turn on status, and the two rows sit side by side so the omission is visible": "passed",
+    "§4 · the capabilities wire — one stored declaration, two readers §8/§20.2 · service_get returns a proxied service's stored capabilities list, and omits the field when none was ever configured — absent is absent, never [\"tools\"]": "passed",
+    "§4 · the capabilities wire — one stored declaration, two readers §8/§20.2 · service_update with capabilities changes what service_get returns and what the scoped handshake advertises — one stored value, two readers": "passed",
     "§4 · the fixtures against the emissions they pin §12 · contracts/bootstrap.json deep-equals the emission it pins": "passed",
     "§4 · the fixtures against the emissions they pin §15 · contracts/audit-body-stubs.json deep-equals the emission it pins": "passed",
     "§4 · the fixtures against the emissions they pin §6 · contracts/close-codes.json deep-equals the emission it pins": "passed",

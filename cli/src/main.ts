@@ -85,6 +85,8 @@ export type ServiceRow = {
   endpoint?: string;
   auth?: "headers" | "oauth";
   forwardIdentity?: boolean;
+  /** proxied rows only, and absent when the service never declared one (§8, §20.2) */
+  capabilities?: string[];
   /** proxied `auth: oauth` rows only — the upstream connection state */
   connection?: string;
 };
@@ -341,6 +343,10 @@ async function readCurrentState(ctx: CliContext): Promise<CurrentState> {
               endpoint: row.endpoint ?? "",
               auth: row.auth ?? "headers",
               forwardIdentity: row.forwardIdentity === true,
+              // Passed through UNDEFAULTED: absent on the row means the service declared
+              // nothing, which is a value the planner compares (§20.2's default is applied
+              // by plan.canonicalCapabilities, in one place, on both sides at once).
+              ...(row.capabilities === undefined ? {} : { capabilities: row.capabilities }),
             }
           : {}),
       }),

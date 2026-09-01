@@ -95,6 +95,38 @@ function state(services: CurrentService[] = [], accounts: CurrentAccount[] = [])
   return { services, accounts };
 }
 
+/**
+ * §20.2's owner-declared advertisement on each side of the diff, with ABSENT spelled as a
+ * missing key rather than as an empty list — which is the distinction the two capabilities
+ * cases are about: `undefined` means "never configured", and §9 makes that identical in
+ * MEANING to `[tools]` without making it identical in shape. One pair of builders so the two
+ * cases cannot drift into diffing different proxied services.
+ */
+function capabilityFile(capabilities?: string[]): DesiredConfig {
+  return parseDesired(
+    doc({
+      linear: {
+        kind: "proxy",
+        endpoint: "https://x/mcp",
+        ...(capabilities === undefined ? {} : { capabilities }),
+      },
+    }),
+  );
+}
+
+function capabilityServer(capabilities?: string[]): CurrentState {
+  return state([
+    currentService({
+      slug: "linear",
+      kind: "proxy",
+      endpoint: "https://x/mcp",
+      auth: "headers",
+      forwardIdentity: false,
+      ...(capabilities === undefined ? {} : { capabilities }),
+    }),
+  ]);
+}
+
 /** The steps of one tool, in plan order — the shape most cases assert against. */
 function stepsOf(plan: Plan, tool: string): Record<string, unknown>[] {
   return plan.steps.filter((step) => step.tool === tool).map((step) => step.args);
@@ -415,6 +447,51 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
     const moved = planChanges(file(elsewhere), server);
     expect(moved.errors).toEqual([]);
     expect(stepsOf(moved, "service_update")).toEqual([{ slug: "notion", roles: elsewhere }]);
+  });
+
+  it("§9/§20.2 · a capabilities change on a proxied service plans a service_update naming the field", () => {
+    // The widening: the file names a family the server was never told about. Carried whole
+    // in the op's wire spelling — `service_update` replaces the list, it does not merge one.
+    const widened = planChanges(capabilityFile(["tools", "resources"]), capabilityServer(["tools"]));
+    expect(widened.errors).toEqual([]);
+    expect(stepsOf(widened, "service_update")).toEqual([
+      { slug: "linear", capabilities: ["tools", "resources"] },
+    ]);
+    // …and the narrowing, because a field that can only grow is a field that never
+    // converges: an owner who deletes `resources` from the file must see it planned away.
+    expect(
+      stepsOf(planChanges(capabilityFile(["tools"]), capabilityServer(["tools", "prompts"])), "service_update"),
+    ).toEqual([{ slug: "linear", capabilities: ["tools"] }]);
+    // Declaring the key against a service that has none is a change too — absent ≡ [tools]
+    // (below), so naming a second family really is a widening of what the handshake says.
+    expect(
+      stepsOf(planChanges(capabilityFile(["tools", "prompts"]), capabilityServer()), "service_update"),
+    ).toEqual([{ slug: "linear", capabilities: ["tools", "prompts"] }]);
+    // Nothing else moves with it: `capabilities` is one field among the proxied ones, not a
+    // trigger that re-sends the whole row.
+    expect(Object.keys(stepsOf(widened, "service_update")[0]).sort()).toEqual(["capabilities", "slug"]);
+  });
+
+  it("§9/§20.2 · capabilities compares as a set with absent ≡ [tools] — spelling the default, or reordering the list, plans nothing", () => {
+    const clean = { steps: [], warnings: [], errors: [] };
+    // The two spellings of the default, in both directions. Either one planning an update
+    // would make `pmcp apply` never converge: the file says one thing, the server stores the
+    // other, and every run plans the same step again.
+    expect(planChanges(capabilityFile(), capabilityServer(["tools"]))).toEqual(clean);
+    expect(planChanges(capabilityFile(["tools"]), capabilityServer())).toEqual(clean);
+    expect(planChanges(capabilityFile(), capabilityServer())).toEqual(clean);
+    // A set, not a list: the declaration is an advertisement of WHICH families exist, so the
+    // order an owner happened to type them in carries no meaning to diff on.
+    expect(
+      planChanges(capabilityFile(["resources", "tools"]), capabilityServer(["tools", "resources"])),
+    ).toEqual(clean);
+    // The twin every silencing rule owes: a genuinely different SET is still a change, so
+    // the set comparison narrows the diff without blinding it.
+    const real = planChanges(capabilityFile(["tools", "prompts"]), capabilityServer(["tools", "resources"]));
+    expect(real.errors).toEqual([]);
+    expect(stepsOf(real, "service_update")).toEqual([
+      { slug: "linear", capabilities: ["tools", "prompts"] },
+    ]);
   });
 
   it("§8 · an `auth` mode flip plans a service_update flagged destructive — it wipes the stored upstream credentials; twin: any other update is not", () => {
@@ -899,6 +976,9 @@ export function desiredFromCurrent(current: CurrentState): DesiredConfig {
               auth: service.auth,
               forwardIdentity: service.forwardIdentity,
               roles: service.roles,
+              // Optional on BOTH sides (§20.2's absent-is-absent), so the projection carries
+              // the absence too rather than inventing the default the planner applies.
+              ...(service.capabilities === undefined ? {} : { capabilities: service.capabilities }),
             }
           : {}),
       })),

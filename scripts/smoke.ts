@@ -64,6 +64,30 @@ const OAUTH_ACCOUNT = "smoke-oauth-agent";
  *  §7 binds an approval to the canonical JSON of `arguments`, so the retry must be
  *  byte-identical to match the row. */
 const CALL_ARGS = { text: "smoke" } as const;
+/**
+ * The one tool this walk serves, spelled once. §21's listen leg re-registers the service
+ * with this same tool under a CHANGED description, so a shared spelling is what makes the
+ * description the single difference between the two registrations — and therefore what
+ * makes the doorbell it rings attributable to the change rather than to the reconnect.
+ */
+const ECHO_TOOL: SmokeTool = {
+  name: TOOL,
+  description: "Echoes its argument back, with the caller the hub asserted.",
+  inputSchema: {
+    type: "object",
+    properties: { text: { type: "string" } },
+    required: ["text"],
+    additionalProperties: false,
+  },
+  // The caller is the point: what comes back proves §7's identity forwarding survived the
+  // whole path, not just that the socket carried bytes.
+  run: (args, who) => ({ echo: args.text, principal: who.principal, roles: who.roles }),
+};
+/** The `Mcp-Session-Id` the listen leg SENDS, so the id the hub answers with can be checked
+ *  against it: §21.1 mints its own on every stream and echoes a client's never. */
+const CLIENT_SUPPLIED_SESSION = "smoke-supplied-session-never-echoed";
+/** §21.1's minted id is UUID-shaped — the hub's own randomUUID, not a value it was handed. */
+const UUID_SHAPED = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Where a better-auth redirect points, read from EITHER a real 302's `Location` OR the
@@ -234,19 +258,7 @@ async function main(): Promise<number> {
     });
 
     await step("client library connects and registers", async () => {
-      const service = serveOneTool(serviceToken, {
-        name: TOOL,
-        description: "Echoes its argument back, with the caller the hub asserted.",
-        inputSchema: {
-          type: "object",
-          properties: { text: { type: "string" } },
-          required: ["text"],
-          additionalProperties: false,
-        },
-        // The caller is the point: what comes back proves §7's identity forwarding
-        // survived the whole path, not just that the socket carried bytes.
-        run: (args, who) => ({ echo: args.text, principal: who.principal, roles: who.roles }),
-      });
+      const service = serveOneTool(serviceToken, ECHO_TOOL);
       tunnel = service;
       await deadline(service.registered, 20_000, "hub/register was never accepted");
       return `registered role ${ROLE} declaring tool ${TOOL} through @personal-mcps/client`;
@@ -288,6 +300,69 @@ async function main(): Promise<number> {
       expect(structured.echo === CALL_ARGS.text, `echo ${String(structured.echo)}`);
       expect(structured.principal === `sa:${ACCOUNT}`, `principal ${String(structured.principal)}`);
       return `echo "${String(structured.echo)}" from ${String(structured.principal)} roles ${JSON.stringify(structured.roles)}`;
+    });
+
+    await step("§21 · subscriptions/listen holds a stream and a catalog change rings its doorbell", async () => {
+      // One atomic leg, and the only one that asks whether PUSH survives a real deployment.
+      // The suites own every rule the stream obeys; what only a live origin can answer is
+      // whether the platform delivers a HELD `text/event-stream` at all — that no
+      // intermediary buffers the doorbell into silence, that a subscriber WebSocket opens
+      // from a Worker invocation into the service DO, and that the frame arrives while the
+      // response is still open rather than at its close.
+      const opened = await fetch(`${ORIGIN}/${USERNAME}/mcp`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${agentToken}`,
+          "Content-Type": "application/json",
+          // §21.1: the hub MINTS its own and never echoes this one. Sent precisely so the
+          // minted id below can be checked against it.
+          "Mcp-Session-Id": CLIENT_SUPPLIED_SESSION,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "subscriptions/listen" }),
+      });
+      expect(opened.status === 200, `subscriptions/listen → ${opened.status}`);
+      const contentType = opened.headers.get("Content-Type") ?? "";
+      expect(contentType.startsWith("text/event-stream"), `listen content-type ${contentType}`);
+      const sessionId = opened.headers.get("Mcp-Session-Id") ?? "";
+      expect(sessionId !== CLIENT_SUPPLIED_SESSION, "the hub echoed the client-supplied Mcp-Session-Id");
+      expect(UUID_SHAPED.test(sessionId), `minted Mcp-Session-Id ${sessionId}`);
+      if (opened.body === null) throw new Error("subscriptions/listen answered 200 with no body");
+      const stream = sseBlocks(opened.body);
+
+      try {
+        // A live stream says so with a byte, not a header (§21.1's open).
+        const first = await stream.next(30_000);
+        expect(first.startsWith(":"), `the opened stream's first block was ${JSON.stringify(first)}`);
+
+        // The provocation: the SAME service re-registers declaring the SAME tool under a
+        // changed description. The catalog therefore compares as changed (§21.3) while the
+        // tool NAME is untouched, so every later step still calls what it called before and
+        // the bell is attributable to the change rather than to the reconnect.
+        await tunnel?.close();
+        const rebuilt = serveOneTool(serviceToken, {
+          ...ECHO_TOOL,
+          description: `${ECHO_TOOL.description} Re-declared to ring §21.3's bell.`,
+        });
+        tunnel = rebuilt;
+        await deadline(rebuilt.registered, 20_000, "the re-registration was never accepted");
+
+        // The doorbell. Keepalives in front of it are noise; the DATA block is the claim.
+        const rung = await stream.next(60_000, (block) => block.startsWith("data:"));
+        const frame = asRecord(JSON.parse(rung.slice("data:".length).trim()), "doorbell frame");
+        expect(
+          frame.method === "notifications/tools/list_changed",
+          `doorbell method ${String(frame.method)}`,
+        );
+        // §21.3's bare notification: method and jsonrpc, and nothing a consumer could read
+        // a catalog out of.
+        expect(frame.params === undefined, `the doorbell carried params ${JSON.stringify(frame.params)}`);
+        expect(frame.id === undefined, "the doorbell carried an id — it is a notification");
+        return `stream ${sessionId} (mint, not the supplied ${CLIENT_SUPPLIED_SESSION}); keepalive then ${JSON.stringify(frame)} after the re-declare`;
+      } finally {
+        // Closing the consumer's end is what ends the held response and, with it, the
+        // stream's subscriptions (§21.1) — the walk leaves no invocation holding a body.
+        await stream.close();
+      }
     });
 
     await step("approval mode refuses the call (-32003)", async () => {
@@ -815,6 +890,48 @@ async function expectError(promise: Promise<unknown>): Promise<RpcError> {
     throw err;
   }
   throw new Error("the call was expected to be refused and was not");
+}
+
+// ── the held stream (§21) ─────────────────────────────────────────────────────────────
+
+/**
+ * SSE blocks off a body this walk does NOT consume whole — the one response here that is
+ * still being written while it is read. Blocks are separated by a blank line; a `:` line is
+ * §21.1's keepalive comment and a `data:` line is a frame. `next` discards the blocks before
+ * the one its predicate accepts, because a doorbell is what the leg is waiting for and the
+ * keepalives in front of it are exactly the noise the design promises.
+ */
+function sseBlocks(body: ReadableStream<Uint8Array>): {
+  next(budgetMs: number, want?: (block: string) => boolean): Promise<string>;
+  close(): Promise<void>;
+} {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  const parsed: string[] = [];
+  return {
+    async next(budgetMs, want = () => true) {
+      const stopAt = Date.now() + budgetMs;
+      for (;;) {
+        while (parsed.length > 0) {
+          const block = parsed.shift() as string;
+          if (want(block)) return block;
+        }
+        const remaining = stopAt - Date.now();
+        if (remaining <= 0) throw new Error(`the stream delivered no matching block within ${budgetMs} ms`);
+        const chunk = await deadline(reader.read(), remaining, "the stream delivered no matching block");
+        if (chunk.done) throw new Error("the stream ended before the block arrived");
+        buffered += decoder.decode(chunk.value, { stream: true });
+        const blocks = buffered.split("\n\n");
+        // The trailing element is whatever the terminator has not arrived for yet.
+        buffered = blocks.pop() ?? "";
+        for (const block of blocks) if (block.trim() !== "") parsed.push(block.trim());
+      }
+    },
+    // Cancelling the READER is what tells the hub nobody is reading: the held response ends
+    // on its next write, and the stream's subscriptions die with it (§21.1).
+    close: () => reader.cancel().catch(() => {}),
+  };
 }
 
 // ── small waits ───────────────────────────────────────────────────────────────────────

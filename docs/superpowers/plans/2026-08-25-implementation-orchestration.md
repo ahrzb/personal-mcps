@@ -1065,3 +1065,84 @@ check and (manual, once) a real push notification to a real browser.
   §1/§6/§7/§18/§20 out-pins reversed, decision 28 records the call and the probe
   economics). claude.ai deafness accepted knowingly: the transport is honored for
   clients that open it (Claude Code does), inert for those that don't.
+- 2026-09-01 — **D14 gated — push: the listen stream, subscriber sockets, doorbells
+  (§21).** Shape per the dispatch plan: four disjoint ownership groups in dependency
+  order (A pure core → B the DO → C the door → D contracts + client libraries), oracles
+  authored and adversarially verified BEFORE implementation, then verbatim check → PSD →
+  fix → gate. Contracts fixtures landed first in their own owner-authored commit
+  (`9e7a925`), red by design until the implementation commit — §21.5's lockstep rule
+  binds the deploy, not the commits. Review chain at the fix stage: 12 dispositions from
+  the verbatim lens (1 BLOCKER — a deleted JS prompts row, whose PYTHON twin turned out
+  to be passing VACUOUSLY inside an emptied task group), 15 from the PSD lens (11 fixed,
+  4 rebutted with reasons written down), 17 from the adversarial §21.4 read (the
+  "can an `updated` reach a socket that never passed the subscribe filter" question —
+  answered no; 4 real fixes, chief among them principal keying). Suites at the gate:
+  **1326/1326** across 44 files, zero todo — unit 125, tunnel 227, worker 697 (contracts
+  73 rows), clients-js 91, cli 186; `tsc --noEmit` 0; `uv run pytest` **71/71**.
+  Inventory 1149 → 1326: **+194 adds, every one `passed`; −17; 0 flips; 0
+  passed→anything regressions**. Of those, D14 owns +98 / −7 — the six rows constraint 10
+  pins for delete-and-replace (`order.table` :1993/:2002/:2020/:2045, `contracts`
+  :1252/:1286) plus the errors-totality row retitled five codes → six per constraint 9.
+  The other +96 / −10 are FOREIGN churn, not this dispatch's: the CLI DX redesign
+  (`6cc7c6f`) landed without regenerating the inventory, whose last write was D13.1's
+  gate, so this regeneration absorbs it. 96 of the plan's 97 locked titles matched
+  verbatim by machine; the 97th differs only by its leading parenthetical
+  `(amend the existing contracts-consumer probe, both languages)`, which is a
+  two-language DIRECTIVE rather than part of the title (fix-stage disposition 5, and the
+  row is new rather than an amendment because folding it into the `forwardedCall.metaKeys`
+  row would have destroyed that row's coverage). Contracts: `pnpm contracts:update`
+  regenerates **byte-identical** against the oracle commit — `git status contracts/`
+  empty, idempotent. Deploy **`c381dcf0`**, **SMOKE PASS 27/27 live** (26 → 27): the new
+  leg opens `subscriptions/listen` on the deployed hub, checks the minted UUID
+  `Mcp-Session-Id` against a client-supplied one it never echoes, re-registers the walk's
+  own tunneled service under a CHANGED tool description, and observes
+  `{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}` — bare, no params —
+  arrive on the held body before cancelling it.
+  **Out-of-process obligations, both discharged against the deployed hub.** FAN-OUT:
+  eight granted tunneled services, ONE aggregated stream, each service provoked alone
+  (bells carry no service id by design, so per-service observability is one provocation at
+  a time) — `fan-0 … fan-5` rang, `fan-6`/`fan-7` silent. **Six concurrent subscriber
+  sockets held by one invocation**, in deterministic slug order, the excess silent with no
+  time qualifier: the platform's documented ceiling measured rather than assumed, so
+  `LISTEN_FANOUT_MAX` STAYS 6 and no constant changed. KEEPALIVE SOAK: a stream held
+  **400 s** delivered **26 keepalive comments at a 15.1 s cadence** (gaps 14971–15200 ms
+  against `LISTEN_KEEPALIVE_MS` = 15 000) and survived — far past the ~100 s edge idle
+  window — measured twice, once at one subscriber socket and once at the full six, with
+  the same result. NEW CEILING FOUND, and recorded rather than smoothed over: the first
+  soak, run while the fan-out loop was still churning (8 close-and-re-register cycles and
+  6 doorbell deliveries inside the same held invocation), ENDED at ~127 s after 7
+  keepalives. The differential isolates the cause — six sockets ticking idle survive 400 s,
+  so it is neither wall clock, nor fan-out width, nor the tick — and `wrangler tail` on
+  this deployment shows the platform terminating over-budget invocations with
+  `outcome: "exceededCpu"` / `"Worker exceeded CPU time limit."` at `cpuTime` 21 ms
+  against a ~10 ms budget. A held listen stream's CPU is CUMULATIVE for its invocation:
+  idle holding is free (which is what decision 28's probe economics measured), DELIVERY is
+  what spends the budget, and a stream under sustained doorbell traffic is killed by the
+  platform and must be reopened by the consumer. Unreconciled detail: the `exceededCpu`
+  outcome was captured on an auth route, not attributed to the listen invocation itself —
+  the reproduction attempt was blocked because the same sustained load throttles this free
+  plan's CPU-heavy routes (`/internal/users` create/reset-password 503'd for ~10 minutes
+  after each measurement run, recovering on its own; smoke had passed the identical route
+  minutes earlier, so it is load, not a D14 regression).
+  **Debts and deviations.** The one-minute wire-capture of Claude Code's live re-list is
+  STILL not done — deliberately left to the standing probe script and the soak/e2e runbook,
+  exactly where the D14 probe row parked it; claude.ai's deafness stands knowingly accepted
+  per decision 28. Stage 1 left NO orchestration-plan content uncommitted (this row is the
+  file's only D14 change). Deviation from the gate script: the fix stage's §21.7 amendment
+  — the drift ceiling's second half, that pattern-level drift REVOKES nothing because the
+  re-authorization tick compares grant membership — was a live spec edit the implementation
+  commit was told not to sweep up, so it landed as its own `spec:` commit (`5ea0a0c`)
+  rather than being left dirty; the per-URI pruning that would close it is priced out (a
+  grant read per subscribed URI per service per keepalive). Carried forward from the fix
+  stage: the new durable key `alarm:deadline` is the SIXTH tier of `hibernation.test.ts`'s
+  survival table and has no row of its own yet (`push.test.ts:746` is the only observer of
+  its dispatch); `principalKey()` is load-bearing for subscriber authorization, so any
+  future hand-opened subscriber socket must use it rather than `sa:<slug>` — a mismatch
+  fails OPEN into `no_stream` instead of loudly, and it silently degraded the contracts
+  producer's own capture socket until caught; `write(text, counted)` must be called with
+  `false` for data blocks or a doorbell in flight reads as a stall and closes a healthy
+  stream; two cosmetic §21 nits (the 75%-of-16 KB "far inside" sentence) remain open; and
+  nobody in the chain has claimed authorship of `contracts.test.ts`'s +521/−50, though the
+  fixtures regenerate byte-identical so the emission side is sound. Scratch files
+  `.d14-clients.json` / `.d14-list.json` from earlier stages left untracked, as were
+  `cookies.txt`, `.mcp.json` and `mcps.yaml`.

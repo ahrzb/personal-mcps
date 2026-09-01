@@ -22,5 +22,9 @@
   "-32601": {
     "code": -32601,
     "dataKeys": null
+  },
+  "-32602": {
+    "code": -32602,
+    "dataKeys": null
   }
 }

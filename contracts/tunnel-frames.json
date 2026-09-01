@@ -56,5 +56,22 @@
       "hub/roles",
       "io.modelcontextprotocol/clientCapabilities"
     ]
+  },
+  "forwardedMethods": {
+    "consumerDriven": [
+      "completion/complete",
+      "prompts/get",
+      "resources/read",
+      "resources/subscribe",
+      "resources/unsubscribe",
+      "tools/call"
+    ],
+    "protocol": [
+      "prompts/list",
+      "resources/list",
+      "resources/templates/list",
+      "server/discover",
+      "tools/list"
+    ]
   }
 }

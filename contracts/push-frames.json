@@ -1,0 +1,34 @@
+{
+  "protocolVersion": "2026-07-28",
+  "frames": {
+    "notifications/tools/list_changed": {
+      "jsonrpc": "2.0",
+      "method": "notifications/tools/list_changed"
+    },
+    "notifications/prompts/list_changed": {
+      "jsonrpc": "2.0",
+      "method": "notifications/prompts/list_changed"
+    },
+    "notifications/resources/list_changed": {
+      "jsonrpc": "2.0",
+      "method": "notifications/resources/list_changed"
+    },
+    "notifications/resources/updated": {
+      "jsonrpc": "2.0",
+      "method": "notifications/resources/updated",
+      "params": {
+        "uri": "<string>"
+      }
+    }
+  },
+  "serviceOriginated": {
+    "invalidatesFamily": {
+      "notifications/tools/list_changed": "tools",
+      "notifications/prompts/list_changed": "prompts",
+      "notifications/resources/list_changed": "resources"
+    },
+    "routesByUri": [
+      "notifications/resources/updated"
+    ]
+  }
+}

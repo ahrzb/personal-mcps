@@ -15,10 +15,10 @@
     "protocolVersion": "2026-07-28",
     "capabilities": {
       "tools": {
-        "listChanged": false
+        "listChanged": true
       },
       "prompts": {
-        "listChanged": false
+        "listChanged": true
       }
     },
     "serverInfo": {
@@ -27,16 +27,39 @@
     }
   },
   "scopedCapabilities": {
-    "tools": {
-      "listChanged": false
+    "tunneled-registered": {
+      "tools": {
+        "listChanged": true
+      },
+      "prompts": {
+        "listChanged": true
+      },
+      "resources": {
+        "listChanged": true,
+        "subscribe": true
+      }
     },
-    "prompts": {
-      "listChanged": false
+    "tunneled-never-connected": {
+      "tools": {
+        "listChanged": true
+      }
     },
-    "resources": {
-      "subscribe": false,
-      "listChanged": false
+    "proxied": {
+      "tools": {
+        "listChanged": false
+      },
+      "prompts": {
+        "listChanged": false
+      },
+      "resources": {
+        "listChanged": false
+      },
+      "completions": {}
     },
-    "completions": {}
+    "builtin": {
+      "tools": {
+        "listChanged": false
+      }
+    }
   }
 }

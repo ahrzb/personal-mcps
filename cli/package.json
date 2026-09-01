@@ -1,5 +1,5 @@
 {
-  "name": "@ahrzb/pmcp",
+  "name": "@ahrzb/personal-mcp-cli",
   "version": "0.1.0",
   "description": "CLI for a personal-mcps hub — services, accounts, tokens, approvals, audit, YAML diff/apply.",
   "repository": {
@@ -9,7 +9,7 @@
   },
   "type": "module",
   "bin": {
-    "pmcp": "./dist/pmcp.mjs"
+    "pmcp": "dist/pmcp.mjs"
   },
   "files": [
     "dist"

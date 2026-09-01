@@ -1,5 +1,5 @@
 {
-  "name": "@ahrzb/pmcp-client",
+  "name": "@ahrzb/personal-mcp-client",
   "version": "0.1.0",
   "description": "Keep an MCP server reachable through a personal-mcps hub's reverse tunnel.",
   "repository": {

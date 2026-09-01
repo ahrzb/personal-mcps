@@ -28,3 +28,16 @@ jobs:
               (cd "$dir" && npm publish)
             fi
           done
+  publish-pypi:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+        working-directory: clients/py
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: clients/py/dist
+          skip-existing: true

@@ -1,4 +1,4 @@
-# pmcp-client — packaging for the Python service-author library (spec §6, §11) and
+# personal-mcp-client — packaging for the Python service-author library (spec §6, §11) and
 # for the pytest lane that pins it (strategy §2's `scripts` + clients project).
 #
 # This package is deliberately STANDALONE. It shares nothing with the TypeScript
@@ -13,11 +13,10 @@
 # test that depends on one.
 
 [project]
-name = "pmcp-client"
-version = "0.0.0"
+name = "personal-mcp-client"
+version = "0.1.0"
 description = "Keep an MCP server reachable through a personal-mcps hub's reverse tunnel."
-# No `readme` key: there is no clients/py/README.md yet, and naming a file that does
-# not exist turns a build into a confusing failure. It goes in with the first release.
+readme = "README.md"
 
 # 3.12 is the floor because the library's public surface uses PEP 695 type-parameter
 # syntax — `type Secret[T] = Annotated[T, ...]` in src/pmcp_client/__init__.py is a

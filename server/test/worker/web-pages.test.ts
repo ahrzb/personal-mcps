@@ -1206,6 +1206,46 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
   });
 });
 
+describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule for both consumers", () => {
+  // Rows first (§9 rule 1): the guard, the escape and the CSP header are not implemented
+  // yet, and these five titles are what "implemented" will mean. The landing has TWO
+  // consumers — the inline passkey script's LANDING literal and the hidden callbackURL the
+  // three cards post — so a row about the rule pins both, and only a row about one
+  // consumer's own spelling names one.
+
+  // plan row 1
+  it.todo(
+    `§15 · a hub-relative ?next=/apps%3C/script%3E%3Cimg src=x onerror=…%3E%E2%80%A8 reaches both embeds and is escaped in both — the inline script's LANDING carries no raw "<" and no raw U+2028 line separator, and the hidden callbackURL carries &lt;, so "</script><img" appears nowhere in the document — while ?next=/settings/tokens reaches the same two verbatim (the twin)`,
+  );
+
+  // plan row 2. The posted arm names TWO spellings deliberately: an absolute callbackURL
+  // already lands on /apps under today's `landingOf` (it fails `startsWith("/")`), so the
+  // backslash spelling is the leg that fails until `hubRelative` lands — without it no row
+  // here gates the posted consumer's half of the fix.
+  it.todo(
+    `§4 · ?next=https://evil.example, ?next=//evil.example, ?next=/%5Cevil.example (the backslash spelling a browser folds into //) and an empty ?next= each land on /apps in BOTH consumers — the script's LANDING and the hidden callbackURL — and a sign-in POST carrying an absolute callbackURL, or that same backslash spelling which today's two-branch test lets through, redirects to /apps too (the posted twin, one rule)`,
+  );
+
+  // plan row 3
+  it.todo(
+    `§13 · a TOTP challenge reached as /login?step=totp&next=/settings/tokens links "Use a backup code instead" to /login?method=backup-code&next=%2Fsettings%2Ftokens, and the backup-code card it opens carries callbackURL=/settings/tokens — with no next= the switch links carry none and the card lands on /apps (the twin)`,
+  );
+
+  // plan row 4
+  it.todo(
+    `§19.5 · a switch made from the signed-authorize arm keeps the /oauth2/authorize landing byte for byte, pinned at both ends: the TOTP card's backup-code link carries inside next= the very landing that card itself posts as callbackURL, and the card the link opens renders that same string as its own callbackURL, sig and client_id intact`,
+  );
+
+  // plan row 5, with the 404 on the NO-header side of the twin — a deviation from § Rows,
+  // which lists it among the carriers. § Settled puts the header on `render` (web.ts:1283,
+  // the tree's only text/html site); every 404 here is `noSuchPage()`, text/plain, built
+  // without `render`. On the twin's side the 404 earns its keep: it proves the header
+  // rides the page renderer rather than a blanket middleware.
+  it.todo(
+    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — while the hub's non-HTML answers, /styles.css and the surface's 404, carry none (the twin)`,
+  );
+});
+
 describe("§13 · the device decision, submitted the way the owner submits it", () => {
   // The debt `BROWSER_ONLY_TARGETS` owes for excluding "decide" from the parity walks (§9
   // rule 4a): this form fronts no op, so cases 16/17 cannot describe it and cases 28/29

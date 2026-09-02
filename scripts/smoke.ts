@@ -404,6 +404,56 @@ async function main(): Promise<number> {
       return `200 with ${APP} in the table; no cookie → ${anonymous.status} ${anonymous.headers.get("location") ?? ""}`;
     });
 
+    await step("§13 · the /settings panes render behind the prefix gate, and the old paths answer as pinned", async () => {
+      // D15's page legs. The suite owns the panes' content; the deployment can still get
+      // the ROUTING wrong (a pane 404ing, the 301 not shipping, the prefix gate reading a
+      // bearer), and only a walk over the real origin says so. The bearer leg carries the
+      // device-flow session as a header and nothing else — §13's gate never reads
+      // Authorization, so it must bounce to /login exactly as an anonymous request does.
+      const withCookie = { headers: { Cookie: sessionCookie }, redirect: "manual" as const };
+      const settings = await fetch(`${ORIGIN}/settings`, withCookie);
+      expect(settings.status === 200, `authenticated /settings → ${settings.status}`);
+      const rail = await settings.text();
+      for (const pane of ["/settings/two-factor", "/settings/passkeys", "/settings/sessions", "/settings/tokens", "/settings/clients"]) {
+        expect(rail.includes(`href="${pane}"`), `/settings rail links no ${pane}`);
+      }
+      const clients = await fetch(`${ORIGIN}/settings/clients`, withCookie);
+      expect(clients.status === 200, `authenticated /settings/clients → ${clients.status}`);
+      const alias = await fetch(`${ORIGIN}/settings/password`, withCookie);
+      expect(alias.status === 404, `/settings/password (no alias, §13) → ${alias.status}`);
+      const moved = await fetch(`${ORIGIN}/oauth/connections`, withCookie);
+      expect(
+        moved.status === 301 && moved.headers.get("location") === "/settings/clients",
+        `/oauth/connections → ${moved.status} ${moved.headers.get("location") ?? ""}`,
+      );
+      const bearerOnly = await fetch(`${ORIGIN}/settings/change-password`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/x-www-form-urlencoded" },
+        body: "csrf=none",
+        redirect: "manual",
+      });
+      expect(
+        bearerOnly.status === 302 && (bearerOnly.headers.get("location") ?? "").startsWith("/login"),
+        `bearer-only POST /settings/change-password → ${bearerOnly.status} ${bearerOnly.headers.get("location") ?? ""}`,
+      );
+      return `/settings 200 with the six-pane rail; /settings/clients 200; /settings/password 404; /oauth/connections 301 → /settings/clients; bearer-only change-password → 302 /login`;
+    });
+
+    await step(`§13 · /apps/${APP} renders the Tools pane from the app's registered catalog`, async () => {
+      // The tunnel leg above registered `echo` over the real client library; the detail
+      // page's Tools pane reads the DO's cached catalog through the door's own listing
+      // (§13, §20.6), so the tool's name on the page is the deployment's DO, D1 and page
+      // template agreeing about one fact.
+      const detail = await fetch(`${ORIGIN}/apps/${APP}`, { headers: { Cookie: sessionCookie } });
+      expect(detail.status === 200, `authenticated /apps/${APP} → ${detail.status}`);
+      const html = await detail.text();
+      expect(html.includes(TOOL), `/apps/${APP} lists no ${TOOL}`);
+      expect(html.includes(`${APP}_${TOOL}`), `/apps/${APP} carries no aggregated name ${APP}_${TOOL}`);
+      const alias = await fetch(`${ORIGIN}/apps/${APP}/tools`, { headers: { Cookie: sessionCookie }, redirect: "manual" });
+      expect(alias.status === 404, `/apps/${APP}/tools (no alias, §13) → ${alias.status}`);
+      return `200 listing ${TOOL} as ${APP}_${TOOL}; /apps/${APP}/tools → 404`;
+    });
+
     await step("audit_query sees the calls", async () => {
       const rows = asArray((await owner("audit_query", { app: APP })).rows);
       const calls = rows.filter((row) => asRecord(row, "audit row").event === "tools/call");
@@ -604,9 +654,13 @@ async function main(): Promise<number> {
         // Revoke — immediate at the door (§19.6): the connection's next call gets the SAME
         // 401 challenge as no token at all.
         const connections = asArray((await owner("connection_list")).connections);
-        const connection = connections.find(
-          (row) => asRecord(row, "connection row").agentSlug === OAUTH_AGENT,
-        );
+        // LIVE bindings only: `connection_list` keeps revoked rows (§13's Connected clients
+        // pane shows them), so an earlier run's revoked row would be picked here and its
+        // post-revoke 401 below would prove nothing.
+        const connection = connections.find((row) => {
+          const record = asRecord(row, "connection row");
+          return record.agentSlug === OAUTH_AGENT && record.revokedAt === null;
+        });
         if (connection === undefined) throw new Error(`connection_list carries no row for ${OAUTH_AGENT}`);
         await owner("connection_revoke", { id: String(asRecord(connection, "connection row").id) });
 

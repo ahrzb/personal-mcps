@@ -18,7 +18,11 @@
 // oversize audit bodies — and a long-content fixture wherever text can overflow.
 
 import type {
+  ConnectionRow,
+  ConsentProps,
   SettingsProps,
+  ShellProps,
+  TokenRow,
   ApprovalDetailProps,
   ApprovalRow,
   ApprovalsProps,
@@ -31,11 +35,24 @@ import type {
   Notice,
   PagePropsByName,
   PasskeyRow,
+  AppAgentRow,
+  AppDetailHeader,
+  AppDetailPane,
+  AppDetailProps,
+  AppFamilyView,
   AppNewProps,
+  AppPromptRow,
+  AppRailEntry,
+  AppResourceRow,
   AppRow,
   AppsProps,
+  AppTokenRow,
+  AppToolRow,
   SessionRow,
 } from "../src/pages/model";
+// The dimmed marker is a VALUE, not a spelling: model.ts owns the glyph so nothing can
+// decide what "advertises none" looks like twice (§13).
+import { DIMMED } from "../src/pages/model";
 
 /* ------------------------------------------------------------------ *
  * Shared scaffolding
@@ -200,7 +217,10 @@ const sessions: SessionRow[] = [
     id: "ses_9d21ba",
     client: "Chrome on Windows",
     source: "web",
-    createdAt: "2026-08-24T08:03:00.000Z",
+    // Minted 4 minutes before NOW: the Password pane sits behind §13's recent-auth gate
+    // and prints this difference, so a stale current session would make the one pane that
+    // demonstrates the freshness line demonstrate a stale one.
+    createdAt: "2026-08-24T14:43:00.000Z",
     lastActiveAt: NOW,
     current: true,
   },
@@ -243,65 +263,264 @@ const BACKUP_CODES = [
   "e9f0-a1b2",
 ];
 
-const agent = {
-  /** Fully secured: TOTP on, two passkeys, three live sessions. */
-  default: {
-    ...shell("settings"),
-    csrfToken: CSRF,
-    twoFactor: {
-      enabled: true,
-      backupCodesRemaining: 8,
-      generatedAt: "2026-03-02T11:20:00.000Z",
-    },
-    enrollment: null,
-    revealedBackupCodes: null,
-    passkeys,
-    sessions,
-    confirm: null,
+const tokens: TokenRow[] = [
+  {
+    id: "tok_4kJk9fQ",
+    prefix: "pmcp_agt_4kJk…9fQ",
+    kind: "agent",
+    boundTo: "claude",
+    createdAt: ms("2026-08-12T09:00:00.000Z"),
+    expiresAt: ms("2026-11-10T09:00:00.000Z"),
+    lastUsedAt: ms("2026-08-24T12:47:00.000Z"),
+    expired: false,
+  },
+  {
+    // SettingsTokens' second row: issued and never presented, so `last_used_at` is still
+    // null — the Last used column's other cell, which no other fixture draws.
+    id: "tok_7Qm2Lx8",
+    prefix: "pmcp_agt_7Qm2…Lx8",
+    kind: "agent",
+    boundTo: "cron",
+    createdAt: ms("2026-08-20T16:05:00.000Z"),
+    expiresAt: ms("2026-11-18T16:05:00.000Z"),
+    lastUsedAt: null,
+    expired: false,
+  },
+  {
+    id: "tok_9f3kXd2",
+    prefix: "pmcp_app_9f3k…Xd2",
+    kind: "app",
+    boundTo: "news",
+    createdAt: ms("2026-08-14T11:20:00.000Z"),
+    expiresAt: null,
+    lastUsedAt: ms("2026-08-24T14:46:00.000Z"),
+    expired: false,
+  },
+  {
+    id: "tok_2xPvQc7",
+    prefix: "pmcp_agt_2xPv…Qc7",
+    kind: "agent",
+    boundTo: "cron",
+    createdAt: ms("2026-05-03T08:00:00.000Z"),
+    expiresAt: ms("2026-06-28T08:00:00.000Z"),
+    lastUsedAt: ms("2026-06-28T07:00:00.000Z"),
+    expired: true,
+  },
+];
+
+const connections: ConnectionRow[] = [
+  {
+    id: "con_claude01",
+    clientId: "client_claude_ai",
+    clientName: "Claude",
+    agentSlug: "claude",
+    createdAt: ms("2026-08-24T10:00:00.000Z"),
+    lastUsedAt: ms("2026-08-24T14:45:00.000Z"),
+    revokedAt: null,
+    redirectOrigin: "https://claude.ai",
+    selfRegistered: false,
+  },
+  {
+    id: "con_acme001",
+    clientId: "client_acme_agent",
+    clientName: "Acme Agent",
+    agentSlug: "cron",
+    createdAt: ms("2026-08-12T06:30:00.000Z"),
+    lastUsedAt: ms("2026-08-28T06:30:00.000Z"),
+    revokedAt: ms("2026-08-28T07:00:00.000Z"),
+    redirectOrigin: "https://agent.acme.dev",
+    selfRegistered: true,
+  },
+];
+
+/**
+ * What every settings fixture repeats. The rail is drawn on every pane from every list,
+ * so a fixture that carried only its own pane's rows would render a rail full of zeroes —
+ * which is exactly the disagreement §13's shell rule forbids.
+ */
+const settingsBase: Omit<SettingsProps, keyof ShellProps | "section" | "pane"> = {
+  csrfToken: CSRF,
+  twoFactor: {
+    enabled: true,
+    backupCodesRemaining: 8,
+    generatedAt: "2026-03-02T11:20:00.000Z",
+  },
+  enrollment: null,
+  revealedBackupCodes: null,
+  passkeys,
+  sessions,
+  tokens,
+  tokenKind: null,
+  connections,
+  confirm: null,
+  passwordError: null,
+};
+
+const settings = {
+  /** Fully secured, landing on Password: TOTP on, two passkeys, three live sessions. */
+  default: { ...shell("settings"), ...settingsBase, pane: "password" },
+
+  /** SettingsStates' three Password refusals, one fixture each — §13 maps each onto its
+   *  own control, so a single "refused" state would draw none of them. Each carries the
+   *  ordinary redirect-back notice beside its field error, exactly as the route leaves it:
+   *  better-auth's own words at the top, §13's sentence beside the control. */
+  passwordWrongCurrent: {
+    ...shell("settings", 2, {
+      tone: "danger",
+      title: "Change password failed",
+      message: "Invalid password",
+    }),
+    ...settingsBase,
+    pane: "password",
+    passwordError: "currentPassword",
+  },
+  passwordTooShort: {
+    ...shell("settings", 2, {
+      tone: "danger",
+      title: "Change password failed",
+      message: "Password too short",
+    }),
+    ...settingsBase,
+    pane: "password",
+    passwordError: "newPassword",
+  },
+  passwordMismatch: {
+    ...shell("settings", 2, {
+      tone: "danger",
+      title: "Change password failed",
+      message: "The change was refused.",
+    }),
+    ...settingsBase,
+    pane: "password",
+    passwordError: "confirmPassword",
   },
 
-  /** SettingsStates "Two-factor — not enrolled" and "Passkeys — empty" together. */
+  /** §13's "anything else is the ordinary refusal notice" — the refusal that names no
+   *  control, which is the only Password refusal drawn as a banner. */
+  passwordRefused: {
+    ...shell("settings", 2, {
+      tone: "danger",
+      title: "Change password failed",
+      message: "Password too long",
+    }),
+    ...settingsBase,
+    pane: "password",
+  },
+
+  /** The two success states, which differ in exactly the sentence the checkbox buys. */
+  passwordUpdated: {
+    ...shell("settings", 2, {
+      tone: "success",
+      title: "Password updated.",
+      message: "App and agent tokens keep working: they do not derive from the password.",
+    }),
+    ...settingsBase,
+    pane: "password",
+  },
+  passwordUpdatedSignedOut: {
+    ...shell("settings", 2, {
+      tone: "success",
+      title: "Password updated.",
+      message:
+        "2 other session(s) were signed out — this one stays. App and agent tokens keep working: they do not derive from the password.",
+    }),
+    ...settingsBase,
+    pane: "password",
+    // The truth §13 pins beside that copy: afterwards there is one session, minted by the
+    // change itself, and no other row to revoke.
+    sessions: [sessions[0]!],
+  },
+
+  /** One fixture per pane, so the preview index walks all six of §13's routes. */
+  twoFactor: { ...shell("settings"), ...settingsBase, pane: "two-factor" },
+  passkeys: { ...shell("settings"), ...settingsBase, pane: "passkeys" },
+  sessions: { ...shell("settings"), ...settingsBase, pane: "sessions" },
+  tokens: { ...shell("settings"), ...settingsBase, pane: "tokens" },
+  clients: { ...shell("settings"), ...settingsBase, pane: "clients" },
+
+  /** SettingsStates "Two-factor — not enrolled": the rail dot unlit beside it. */
   bare: {
     ...shell("settings", 0),
-    csrfToken: CSRF,
+    ...settingsBase,
+    pane: "two-factor",
     twoFactor: { enabled: false },
-    enrollment: null,
-    revealedBackupCodes: null,
     passkeys: [],
     sessions: [sessions[0]!],
-    confirm: null,
+  },
+
+  /** SettingsPanes "Passkeys — empty". */
+  passkeysEmpty: {
+    ...shell("settings", 0),
+    ...settingsBase,
+    pane: "passkeys",
+    passkeys: [],
+  },
+
+  /** A registered passkey that has never signed anybody in — §5's `last_used_at` still
+   *  null, which is every passkey's state until its first assertion stamps it. */
+  passkeysNeverUsed: {
+    ...shell("settings"),
+    ...settingsBase,
+    pane: "passkeys",
+    passkeys: passkeys.map((pk) => ({ ...pk, lastUsedAt: null })),
+  },
+
+  /** Both Access panes with nothing in them. */
+  tokensEmpty: { ...shell("settings", 0), ...settingsBase, pane: "tokens", tokens: [] },
+  clientsEmpty: { ...shell("settings", 0), ...settingsBase, pane: "clients", connections: [] },
+
+  /** SettingsTokens under each half of §13's **All · Agents · Apps** filter — the table
+   *  narrows, the rail's count does not (it is the whole listed set either way). */
+  tokensAgents: { ...shell("settings"), ...settingsBase, pane: "tokens", tokenKind: "agent" },
+  tokensApps: { ...shell("settings"), ...settingsBase, pane: "tokens", tokenKind: "app" },
+
+  /** The filter narrowed to a kind this namespace holds none of: the empty state a live
+   *  pane can reach without the namespace being empty. */
+  tokensFilteredEmpty: {
+    ...shell("settings"),
+    ...settingsBase,
+    pane: "tokens",
+    tokenKind: "app",
+    tokens: tokens.filter((token) => token.kind === "agent"),
+  },
+
+  /** SettingsPanes "Connected clients" with a live row only — the revoked, unverified
+   *  second row of `connections` is what the default `clients` fixture draws beside it. */
+  clientsActiveOnly: {
+    ...shell("settings"),
+    ...settingsBase,
+    pane: "clients",
+    connections: [connections[0]!],
   },
 
   /** SettingsStates "TOTP setup": mid-enrollment, nothing stored yet. */
   totpEnrolling: {
     ...shell("settings", 0),
-    csrfToken: CSRF,
+    ...settingsBase,
+    pane: "two-factor",
     twoFactor: { enabled: false },
     enrollment: {
       qrDataUri: QR_PLACEHOLDER,
       secret: "JBSW Y3DP EHPK 3PXP",
       error: null,
     },
-    revealedBackupCodes: null,
     passkeys: [],
     sessions: [sessions[0]!],
-    confirm: null,
   },
 
   /** The enrollment code did not verify — the setup card re-renders with the error. */
   totpEnrollError: {
     ...shell("settings", 0),
-    csrfToken: CSRF,
+    ...settingsBase,
+    pane: "two-factor",
     twoFactor: { enabled: false },
     enrollment: {
       qrDataUri: QR_PLACEHOLDER,
       secret: "JBSW Y3DP EHPK 3PXP",
       error: "That code didn't match. Check your device's clock and try again.",
     },
-    revealedBackupCodes: null,
     passkeys: [],
     sessions: [sessions[0]!],
-    confirm: null,
   },
 
   /** SettingsStates "Backup codes": the one render that ever shows them. */
@@ -310,65 +529,52 @@ const agent = {
       tone: "success",
       message: "Two-factor authentication is on.",
     }),
-    csrfToken: CSRF,
-    twoFactor: {
-      enabled: true,
-      backupCodesRemaining: 8,
-      generatedAt: NOW,
-    },
-    enrollment: null,
+    ...settingsBase,
+    pane: "two-factor",
+    twoFactor: { enabled: true, backupCodesRemaining: 8, generatedAt: NOW },
     revealedBackupCodes: BACKUP_CODES,
     passkeys: [],
     sessions: [sessions[0]!],
-    confirm: null,
   },
 
   /** Dialogs "Disable two-factor" — password-confirmed, destructive. */
   confirmDisableTwoFactor: {
     ...shell("settings"),
-    csrfToken: CSRF,
-    twoFactor: {
-      enabled: true,
-      backupCodesRemaining: 8,
-      generatedAt: "2026-03-02T11:20:00.000Z",
-    },
-    enrollment: null,
-    revealedBackupCodes: null,
-    passkeys,
-    sessions,
+    ...settingsBase,
+    pane: "two-factor",
     confirm: { kind: "disable-two-factor" },
   },
 
   /** Dialogs "Remove passkey". */
   confirmRemovePasskey: {
     ...shell("settings"),
-    csrfToken: CSRF,
-    twoFactor: {
-      enabled: true,
-      backupCodesRemaining: 8,
-      generatedAt: "2026-03-02T11:20:00.000Z",
-    },
-    enrollment: null,
-    revealedBackupCodes: null,
-    passkeys,
-    sessions,
+    ...settingsBase,
+    pane: "passkeys",
     confirm: { kind: "remove-passkey", id: "pk_7f2a91", name: "MacBook Touch ID" },
   },
 
   /** Dialogs, same pattern: revoking the CLI's device-flow session. */
   confirmRevokeSession: {
     ...shell("settings"),
-    csrfToken: CSRF,
-    twoFactor: {
-      enabled: true,
-      backupCodesRemaining: 8,
-      generatedAt: "2026-03-02T11:20:00.000Z",
-    },
-    enrollment: null,
-    revealedBackupCodes: null,
-    passkeys,
-    sessions,
+    ...settingsBase,
+    pane: "sessions",
     confirm: { kind: "revoke-session", id: "ses_4a77c0", client: "pmcp CLI" },
+  },
+
+  /** The one confirmation that names no row (§13's Revoke all others). */
+  confirmRevokeOtherSessions: {
+    ...shell("settings"),
+    ...settingsBase,
+    pane: "sessions",
+    confirm: { kind: "revoke-other-sessions" },
+  },
+
+  /** Dialogs, on the Connected clients pane. */
+  confirmRevokeConnection: {
+    ...shell("settings"),
+    ...settingsBase,
+    pane: "clients",
+    confirm: { kind: "revoke-connection", id: "con_claude01", client: "Claude" },
   },
 
   /** A failed better-auth mutation redirected back with its reason. */
@@ -378,30 +584,25 @@ const agent = {
       title: "Could not disable two-factor",
       message: "That password was not accepted. Nothing was changed.",
     }),
-    csrfToken: CSRF,
+    ...settingsBase,
+    pane: "two-factor",
     twoFactor: {
       enabled: true,
       backupCodesRemaining: 7,
       generatedAt: "2026-03-02T11:20:00.000Z",
     },
-    enrollment: null,
-    revealedBackupCodes: null,
-    passkeys,
-    sessions,
-    confirm: null,
   },
 
   /** Edge: authenticator names and user agents nobody sized a column for. */
   longNames: {
     ...shell("settings"),
-    csrfToken: CSRF,
+    ...settingsBase,
+    pane: "passkeys",
     twoFactor: {
       enabled: true,
       backupCodesRemaining: 1,
       generatedAt: "2026-03-02T11:20:00.000Z",
     },
-    enrollment: null,
-    revealedBackupCodes: null,
     passkeys: [
       {
         id: "pk_长_0001",
@@ -423,7 +624,6 @@ const agent = {
         current: false,
       },
     ],
-    confirm: null,
   },
 } satisfies Record<string, SettingsProps>;
 
@@ -625,6 +825,457 @@ const apps = {
     confirm: null,
   },
 } satisfies Record<string, AppsProps>;
+
+/* ------------------------------------------------------------------ *
+ * /apps/<slug>
+ * ------------------------------------------------------------------ */
+
+/** The tunneled app's own catalog, as the AppDetail board draws it: four collapsed rows
+ *  and one expanded, so every branch of the Tools row is on screen at once. */
+const mcpToolsCatalog: AppToolRow[] = [
+  {
+    name: "paper_fetch",
+    aggregated: "mcp-tools_paper_fetch",
+    summary: "Fetch the paper identified by a DOI and return its text as Markdown.",
+    description:
+      "Fetch the paper identified by a DOI and return its text as Markdown.\ndoi must be the exact DOI string, not a URL or a padded value.",
+    args: [
+      { name: "doi", type: "string", required: true, hasDefault: false },
+      { name: "force_refresh", type: "boolean", required: false, hasDefault: true, default: false },
+    ],
+    reach: [{ agent: "claude", mode: "allow", roles: ["all"] }],
+    approvalAgents: [],
+    redactedArgs: [],
+    redactedResults: [],
+    schemaUnsound: false,
+  },
+  {
+    name: "jobfeed_crawl",
+    aggregated: "mcp-tools_jobfeed_crawl",
+    summary: "Trigger a crawl of the configured job boards.",
+    description: "Trigger a crawl of the configured job boards.",
+    args: [{ name: "board", type: "string", required: false, hasDefault: false }],
+    reach: [
+      { agent: "claude", mode: "approval", roles: ["crawler"] },
+      { agent: "pi", mode: "allow", roles: ["crawler", "both"] },
+    ],
+    approvalAgents: ["claude"],
+    redactedArgs: [],
+    redactedResults: [],
+    schemaUnsound: false,
+  },
+  {
+    name: "secret_push",
+    aggregated: "mcp-tools_secret_push",
+    summary: "Push a secret to the configured store.",
+    description: "Push a secret to the configured store.",
+    args: [
+      { name: "credentials", type: "object", required: true, hasDefault: false },
+      { name: "payload", type: "object", required: true, hasDefault: false },
+    ],
+    reach: [],
+    approvalAgents: [],
+    redactedArgs: ["credentials.token", "payload.key"],
+    redactedResults: ["out.token"],
+    schemaUnsound: false,
+  },
+  {
+    name: "bad_schema",
+    aggregated: "mcp-tools_bad_schema",
+    summary: "A tool whose schema the hub will not resolve.",
+    description: "A tool whose schema the hub will not resolve.",
+    args: [],
+    reach: [],
+    approvalAgents: [],
+    redactedArgs: [],
+    redactedResults: [],
+    schemaUnsound: true,
+  },
+];
+
+const tunnelHeader: AppDetailHeader = {
+  name: "mcp-tools",
+  slug: "mcp-tools",
+  kind: "tunnel",
+  archived: false,
+  status: "online",
+  lastSeen: ms(NOW),
+  endpoint: null,
+  authMode: null,
+  forwardIdentity: null,
+  connect: null,
+  disconnect: null,
+};
+
+/** AppDetailStates "PROXIED · OAUTH": connected, so Reconnect sits beside Disconnect. */
+const proxiedHeader: AppDetailHeader = {
+  name: "Linear",
+  slug: "linear",
+  kind: "proxy",
+  archived: false,
+  status: "connected",
+  lastSeen: null,
+  endpoint: "https://mcp.linear.app/mcp",
+  authMode: "oauth",
+  forwardIdentity: true,
+  connect: { label: "Reconnect", href: "/apps/connect?slug=linear" },
+  disconnect: "/apps/app_disconnect?slug=linear",
+};
+
+/** The proxied app's other half: headers-mode, so there is no OAuth dance to be connected
+ *  by and no status word the header could say — and no Connect control either. */
+const notionHeader: AppDetailHeader = {
+  ...proxiedHeader,
+  name: "Notion",
+  slug: "notion",
+  authMode: "headers",
+  status: null,
+  connect: null,
+  disconnect: null,
+};
+
+/** The four §20 families one render carries: what the panes list, and what the rail counts. */
+type AppCatalog = Pick<AppDetailProps, "tools" | "prompts" | "resources" | "templates">;
+
+/**
+ * §13's three-answer family marker, over the view(s) the pane draws: a count, `—` where
+ * the app advertises none, and BLANK where a listing could not be read at all — an unread
+ * count is not an empty set. model.ts's `familyMarker` is the shipped one; this is the
+ * same rule over fixture data, because the preview must demonstrate what the page does.
+ */
+const familyMarker = (...views: AppFamilyView<unknown>[]): string => {
+  if (views.some((view) => view.state === "unread")) return "";
+  if (views.every((view) => view.state === "undeclared")) return DIMMED;
+  return String(views.reduce((n, view) => n + (view.state === "listed" ? view.rows.length : 0), 0));
+};
+
+/**
+ * The rail, DERIVED from the very props the panes beside it render — §13's shell rule
+ * ("markers read from the same calls that render the panes, never a second query that
+ * could disagree with them") holds for the preview only if the fixture derives them too.
+ * A hand-typed count here would draw the one state the rule forbids, on the reference
+ * a reviewer reads to judge every other page.
+ */
+function appRail(props: Omit<AppDetailProps, "rail">): AppRailEntry[] {
+  const roleNames = Object.keys(props.roles);
+  const marker: Record<AppDetailPane, string> = {
+    tools: familyMarker(props.tools),
+    prompts: familyMarker(props.prompts),
+    // One marker, one pane, two lists: the Resources pane draws both tabs (§13).
+    resources: familyMarker(props.resources, props.templates),
+    roles: roleNames.length === 0 ? "none" : String(roleNames.length),
+    overview: "",
+    access: String(props.agents.length),
+    // §2's reason, not a missing feature: nothing dials in to a proxied app, so it holds
+    // no key and its entry dims like a family it does not advertise.
+    token: props.header.kind === "proxy" ? DIMMED : String(props.tokens.length),
+    danger: "",
+  };
+  const table: { pane: AppDetailPane; label: string; group: AppRailEntry["group"] }[] = [
+    { pane: "tools", label: "Tools", group: "App" },
+    { pane: "prompts", label: "Prompts", group: "App" },
+    { pane: "resources", label: "Resources", group: "App" },
+    { pane: "roles", label: "Roles", group: "App" },
+    { pane: "overview", label: "Overview", group: "App" },
+    { pane: "access", label: "Agents", group: "Access" },
+    { pane: "token", label: "Token", group: "Access" },
+    { pane: "danger", label: "Danger zone", group: null },
+  ];
+  const slug = props.header.slug;
+  return table.map((entry) => ({
+    ...entry,
+    href: entry.pane === "tools" ? `/apps/${slug}` : `/apps/${slug}/${entry.pane}`,
+    marker: marker[entry.pane],
+  }));
+}
+
+/** Everything a pane render shares, so each fixture below says only what makes it that
+ *  state — the paned page's own version of the `shell` helper above. `over` carries the
+ *  three lists the rail counts, so a fixture that changes one changes its marker with it;
+ *  anything the rail does not read (the Resources tab, a dialog, a reveal) is spread over
+ *  the result at the call site. */
+const appDetail = (
+  header: AppDetailHeader,
+  pane: AppDetailPane,
+  catalog: AppCatalog,
+  over: Partial<Pick<AppDetailProps, "roles" | "agents" | "tokens">> = {},
+): AppDetailProps => {
+  const props: Omit<AppDetailProps, "rail"> = {
+    ...shell("apps"),
+    csrfToken: CSRF,
+    pane,
+    header,
+    tab: "resources",
+    // §20.3's canonical read shape, in both of its directions: `reader` carries three
+    // families and prints the object, `crawler` is tools-only and prints a bare list.
+    roles:
+      header.kind === "tunnel"
+        ? {}
+        : {
+            reader: { tools: ["issue_.*"], prompts: ["digest_.*"], resources: ["news://feed/*"] },
+            crawler: ["jobfeed_.*"],
+          },
+    overview: {
+      createdAt: ms("2026-08-12T09:00:00.000Z"),
+      logBodies: header.kind === "tunnel",
+      logBodiesIsDefault: true,
+      redactedArgs: [],
+      redactedResults: [],
+    },
+    // The board's two Agents rows, and the tunneled app's one live key. A proxied app
+    // holds no key at all (§2).
+    agents: appAgents,
+    tokens: header.kind === "tunnel" ? [liveAppToken] : [],
+    confirm: null,
+    reveal: null,
+    ...catalog,
+    ...over,
+  };
+  return { ...props, rail: appRail(props) };
+};
+
+/** AppDetailPanes "Agents": the built-in `all` beside a declared role, so both chip
+ *  spellings — and the `built-in` marking — are drawn at once. */
+const appAgents: AppAgentRow[] = [
+  {
+    slug: "claude",
+    description: "the main agent",
+    chips: [{ role: "all", mode: "allow", builtin: true }],
+  },
+  {
+    slug: "pi",
+    description: "the home Raspberry Pi",
+    chips: [{ role: "reader", mode: "approval", builtin: false }],
+  },
+];
+
+const liveAppToken: AppTokenRow = {
+  id: "tok_9f3k",
+  prefix: "pmcp_app_9f3k",
+  createdAt: ms("2026-08-12T09:00:00.000Z"),
+  lastUsedAt: ms(NOW),
+};
+
+const UNDECLARED = { state: "undeclared" } as const;
+const UNREAD = { state: "unread" } as const;
+
+/** The tools-only catalog: the tunneled app's own, and what every fixture below whose
+ *  subject is elsewhere (grants, keys, the danger zone) carries unchanged — the rail
+ *  beside those panes is still counted from it. */
+const TUNNEL_CATALOG = {
+  tools: { state: "listed", rows: mcpToolsCatalog },
+  prompts: UNDECLARED,
+  resources: UNDECLARED,
+  templates: UNDECLARED,
+} as const;
+
+/** Nothing could be listed at all — the state whose every App-group marker is blank. */
+const UNREAD_CATALOG = {
+  tools: UNREAD,
+  prompts: UNREAD,
+  resources: UNREAD,
+  templates: UNREAD,
+} as const;
+
+const linearPrompts: AppPromptRow[] = [
+  {
+    name: "digest_daily",
+    aggregated: "linear_digest_daily",
+    description: "Summarize today's issues.",
+    args: [{ name: "day", description: "Which day.", required: true }],
+    reach: [{ agent: "claude", mode: "allow", roles: ["reader"] }],
+    redacted: ["audience"],
+  },
+  {
+    name: "weekly_note",
+    aggregated: "linear_weekly_note",
+    description: "Draft the weekly note.",
+    args: [],
+    reach: [],
+    redacted: [],
+  },
+];
+
+const linearResources: AppResourceRow[] = [
+  {
+    uri: "news://feed/latest",
+    name: "Latest headlines",
+    mimeType: "text/plain",
+    reach: [{ agent: "claude", mode: "allow", roles: ["reader"] }],
+  },
+  { uri: "news://sources", name: "Configured sources", mimeType: "application/json", reach: [] },
+];
+
+const linearTemplates: AppResourceRow[] = [
+  {
+    uri: "news://feed/{id}",
+    name: "One story by id",
+    mimeType: "text/plain",
+    reach: [{ agent: "claude", mode: "allow", roles: ["reader"] }],
+  },
+];
+
+/** TUNNEL_CATALOG's counterpart for the proxied app: all four families listed, which is
+ *  what every `linear` fixture below carries — the rail's App-group markers are the
+ *  lengths of these very lists, so a fixture that spelled them per pane could disagree
+ *  with itself between panes. */
+const PROXY_CATALOG = {
+  tools: { state: "listed", rows: mcpToolsCatalog },
+  prompts: { state: "listed", rows: linearPrompts },
+  resources: { state: "listed", rows: linearResources },
+  templates: { state: "listed", rows: linearTemplates },
+} as const;
+
+const appDetailFixtures = {
+  /** AppDetail.dc.html: a tunneled app online, Tools listed, prompts and resources dimmed. */
+  default: appDetail(tunnelHeader, "tools", TUNNEL_CATALOG),
+
+  /** The same app offline and never re-listed — the header's other tunneled state, with
+   *  the DO's cached catalog still listed under its own count (§13). */
+  offline: appDetail(
+    { ...tunnelHeader, status: "offline", lastSeen: ms("2026-08-24T13:20:00.000Z") },
+    "tools",
+    TUNNEL_CATALOG,
+  ),
+
+  /** Provisioned and never connected: no catalog, no last seen, §20.5's empty state. */
+  neverConnected: appDetail(
+    { ...tunnelHeader, name: "Weather bot", slug: "weather", status: "offline", lastSeen: null },
+    "tools",
+    { ...TUNNEL_CATALOG, tools: { state: "listed", rows: [] } },
+  ),
+
+  /** AppDetailStates "ARCHIVED": refuses connections, keeps its retained catalog. */
+  archived: appDetail(
+    { ...tunnelHeader, archived: true, status: "archived" },
+    "tools",
+    TUNNEL_CATALOG,
+  ),
+
+  /** AppDetailStates "PROXIED · OAUTH": the upstream card, connected. */
+  proxied: appDetail(proxiedHeader, "tools", PROXY_CATALOG),
+
+  /** AppDetailStates "NEEDS RECONNECT": the listing failed, so every App-group marker is
+   *  BLANK — never `—`, which would say the app advertises none, and never 0. */
+  needsReconnect: appDetail(
+    { ...proxiedHeader, name: "GitHub", slug: "github", status: "needs reconnect", connect: { label: "Reconnect", href: "/apps/connect?slug=github" } },
+    "tools",
+    UNREAD_CATALOG,
+  ),
+
+  /** The other half of §13's "unreachable or needs-reconnect": a headers-mode app the hub
+   *  could not reach at all. Same blank markers, and a state SAID rather than an empty
+   *  card — but no Reconnect, because no credential exists to have failed. */
+  unreachable: appDetail(notionHeader, "tools", UNREAD_CATALOG),
+
+  /** A proxied app whose owner declared tools only (§20.2's "absent ≡ [tools]") — the
+   *  tools-only catalog carried by the other kind, so a dimmed entry is drawn on both. */
+  dimmedProxy: appDetail(notionHeader, "prompts", TUNNEL_CATALOG),
+
+  /** AppDetailPanes "Prompts" and "Resources", at their own URLs. */
+  prompts: appDetail(proxiedHeader, "prompts", PROXY_CATALOG),
+
+  /** The dimmed entry's own pane for a TUNNELED app — the other half of `dimmedProxy`,
+   *  and the only state that draws §13's two §20.5 sentences (the kind that says "declare
+   *  it with your SDK", where the proxied one says "add it to `capabilities`"). */
+  promptsUndeclared: appDetail(tunnelHeader, "prompts", TUNNEL_CATALOG),
+
+  resources: appDetail(proxiedHeader, "resources", PROXY_CATALOG),
+
+  templates: {
+    ...appDetail(proxiedHeader, "resources", PROXY_CATALOG),
+    tab: "templates",
+  },
+
+  /** AppDetailPanes "Roles", proxied: the config sentence, and the canonical read shape
+   *  in both of its directions (one per-family object, one bare list). */
+  roles: appDetail(proxiedHeader, "roles", PROXY_CATALOG),
+
+  /** The tunneled half of the same pane: §2's trust-boundary line, which a proxied app
+   *  never draws because nobody declared its roles about itself. */
+  rolesTunneled: appDetail(tunnelHeader, "roles", TUNNEL_CATALOG, {
+    roles: { reader: ["get_.*"] },
+  }),
+
+  /** The board's own Roles drawing: an app that declared none, and the built-in `all`
+   *  fallback that stands in for them. */
+  rolesEmpty: appDetail(tunnelHeader, "roles", TUNNEL_CATALOG),
+
+  /** AppDetailPanes "Overview", tunneled: body logging at its kind's §15 default and no
+   *  redaction configured, which is the state the board draws. */
+  overview: appDetail(tunnelHeader, "overview", TUNNEL_CATALOG),
+
+  /** The proxied Overview: three more rows (endpoint, auth, forward identity), the other
+   *  kind's default, and configured redaction paths in place of `none`. */
+  overviewProxied: {
+    ...appDetail(proxiedHeader, "overview", PROXY_CATALOG),
+    overview: {
+      createdAt: ms("2026-08-12T09:00:00.000Z"),
+      logBodies: true,
+      // The owner turned it ON against the proxied default, so no default is named.
+      logBodiesIsDefault: false,
+      redactedArgs: ["payload.key", "audience"],
+      redactedResults: ["out.token"],
+    },
+  },
+
+  /** §15's third body-logging arm: a proxied app left at its own default, where the value
+   *  names that default. `overview` above draws the tunneled default and `overviewProxied`
+   *  the explicitly-set value, which names no default because naming one would be false. */
+  overviewProxiedDefault: appDetail(proxiedHeader, "overview", PROXY_CATALOG),
+
+  /** AppDetailPanes "Agents": both chip spellings, and no Edit grants control anywhere —
+   *  the board draws one three times and §13 removes it until the editor lands. */
+  agents: appDetail(tunnelHeader, "access", TUNNEL_CATALOG),
+
+  /** The same pane with nothing granted yet: the marker reads 0 and the footer still says
+   *  where grants are edited, because that is true of `grant_set` regardless. */
+  agentsEmpty: appDetail(tunnelHeader, "access", TUNNEL_CATALOG, { agents: [] }),
+
+  /** AppDetailPanes "Token": one live key, Revoke behind its dialog, Issue beside it. */
+  token: appDetail(tunnelHeader, "token", TUNNEL_CATALOG),
+
+  /** The state only the Issue POST can produce: the plaintext, in the one response that
+   *  will ever carry it (§4/§15). */
+  tokenRevealed: {
+    ...appDetail(tunnelHeader, "token", TUNNEL_CATALOG, {
+      tokens: [liveAppToken, { id: "tok_2b8x", prefix: "pmcp_app_2b8x", createdAt: ms(NOW), lastUsedAt: null }],
+    }),
+    reveal: "pmcp_app_2b8xQv7Ld0Rk4Ht1Zc6Ns9Wj3Fy",
+  },
+
+  /** The proxied half: the dimmed entry's own pane, which explains §2 and draws no
+   *  control at all — `token_issue` refuses `kind: "app"` on this app for that reason. */
+  tokenProxied: appDetail(proxiedHeader, "token", PROXY_CATALOG),
+
+  /** AppDetailPanes "Danger zone": Archive and Delete, each a link to its own dialog. */
+  danger: appDetail(tunnelHeader, "danger", TUNNEL_CATALOG),
+
+  /** The archived app's danger zone: the banner above it, and Unarchive in Archive's
+   *  place — the one control here that destroys nothing and needs no dialog. */
+  dangerArchived: appDetail(
+    { ...tunnelHeader, archived: true, status: "archived" },
+    "danger",
+    TUNNEL_CATALOG,
+  ),
+
+  /** Dialogs.dc.html, this page's three: the Token pane's Revoke, and the danger zone's
+   *  Archive and Delete, each rendered open on the pane that owns it. */
+  confirmRevokeToken: {
+    ...appDetail(tunnelHeader, "token", TUNNEL_CATALOG),
+    confirm: { kind: "revoke-token", id: liveAppToken.id, prefix: liveAppToken.prefix },
+  },
+
+  confirmArchive: {
+    ...appDetail(tunnelHeader, "danger", TUNNEL_CATALOG),
+    confirm: { kind: "archive" },
+  },
+
+  confirmDelete: {
+    ...appDetail(tunnelHeader, "danger", TUNNEL_CATALOG),
+    confirm: { kind: "delete" },
+  },
+} satisfies Record<string, AppDetailProps>;
 
 /* ------------------------------------------------------------------ *
  * /apps/new
@@ -1420,6 +2071,76 @@ const audit = {
 } satisfies Record<string, AuditProps>;
 
 /* ------------------------------------------------------------------ *
+ * /oauth/consent (§19.5)
+ * ------------------------------------------------------------------ */
+
+/** The signed query the provider redirected the browser here with, echoed back
+ *  byte-for-byte by the form — obviously fake, and never rebuilt from the fields below. */
+const OAUTH_QUERY =
+  "client_id=cli_FAKE0000a3f1&response_type=code&redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fcallback" +
+  "&scope=mcp&resource=https%3A%2F%2Fmcp.example%2Fahrzb%2Fmcp&state=st_FAKE0000b7&code_challenge_method=S256";
+
+const oauthConsent = {
+  /** OauthConsent.dc.html: a known client, one scope, the full agent picker. */
+  default: {
+    now: NOW,
+    csrfToken: CSRF,
+    oauthQuery: OAUTH_QUERY,
+    clientName: "Claude",
+    clientSelfRegistered: false,
+    redirectOrigin: "https://claude.ai",
+    scopes: ["mcp"],
+    namespace: "ahrzb",
+    agents: [
+      { slug: "claude", name: "claude" },
+      { slug: "pi", name: "pi" },
+    ],
+  },
+
+  /** OauthConsentStates "SELF-REGISTERED CLIENT": §19.3's DCR marker beside a name
+   *  nobody vouched for, and the refresh scope asked for alongside `mcp`. */
+  selfRegistered: {
+    now: NOW,
+    csrfToken: CSRF,
+    oauthQuery: OAUTH_QUERY,
+    clientName: "Acme Agent",
+    clientSelfRegistered: true,
+    redirectOrigin: "https://agent.acme.dev",
+    scopes: ["mcp", "offline_access"],
+    namespace: "ahrzb",
+    agents: [{ slug: "claude", name: "claude" }],
+  },
+
+  /** OauthConsentStates "NO AGENTS": the first-run path — consent is impossible until an
+   *  agent exists, so Authorize is disabled and only Deny works (§19.5). */
+  noAgents: {
+    now: NOW,
+    csrfToken: CSRF,
+    oauthQuery: OAUTH_QUERY,
+    clientName: "Claude",
+    clientSelfRegistered: false,
+    redirectOrigin: "https://claude.ai",
+    scopes: ["mcp"],
+    namespace: "ahrzb",
+    agents: [],
+  },
+
+  /** The client that registered without a name: every string on the card is the client's
+   *  own, so the one it never sent is the page's fallback rather than an empty line. */
+  anonymousClient: {
+    now: NOW,
+    csrfToken: CSRF,
+    oauthQuery: OAUTH_QUERY,
+    clientName: null,
+    clientSelfRegistered: true,
+    redirectOrigin: "https://agent.acme.dev",
+    scopes: ["mcp"],
+    namespace: "ahrzb",
+    agents: [{ slug: "claude", name: "claude" }],
+  },
+} satisfies Record<string, ConsentProps>;
+
+/* ------------------------------------------------------------------ *
  * The registry
  * ------------------------------------------------------------------ */
 
@@ -1431,21 +2152,25 @@ const audit = {
 export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsByName[K]> } = {
   login,
   device,
-  agent,
+  settings,
   apps,
+  "app-detail": appDetailFixtures,
   "app-new": appNew,
   approvals,
   "approval-detail": approvalDetail,
   audit,
+  "oauth-consent": oauthConsent,
 };
 
 export {
   login,
   device,
-  agent,
+  settings,
   apps,
+  appDetailFixtures,
   appNew,
   approvals,
   approvalDetail,
   audit,
+  oauthConsent,
 };

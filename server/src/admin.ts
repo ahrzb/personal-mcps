@@ -16,6 +16,7 @@
 // it composes validation, cascade ordering, and audit.
 
 import { env } from "cloudflare:workers";
+import { RESERVED_APP_SLUGS } from "./app-routes";
 import type { Approvals } from "./approvals";
 import { query, record } from "./audit";
 import { approvalsFromEnv } from "./wiring";
@@ -362,6 +363,23 @@ function assertSlugNotReserved(slug: string): void {
   }
 }
 
+/**
+ * The SECOND reservation (§8/§13), and `app_create`'s alone: the charset-legal segments the
+ * router mounts directly under `/apps/`, which an app of that name would have no page at.
+ * Derived from the route table (app-routes.ts), never a list here — and NOT `pmcp`'s
+ * sentence, whose reason ("reserved for the builtin") is false of a page segment. One
+ * sentence with the slug substituted, so a segment added later needs no message of its own.
+ *
+ * Only create refuses these: no existing app can hold such a slug, so the ops that take one
+ * would be refusing a row that cannot exist.
+ */
+function assertSlugNotARoute(slug: string): void {
+  // deps: app-routes.RESERVED_APP_SLUGS · errors.HubError
+  if (RESERVED_APP_SLUGS.has(slug)) {
+    throw invalid(`the slug "${slug}" is reserved: /apps/${slug} is a page`);
+  }
+}
+
 // ── what every op needs before it can act ─────────────────────────────────────────────
 
 /**
@@ -369,8 +387,12 @@ function assertSlugNotReserved(slug: string): void {
  * proven to act in this namespace (AdminOp.handler), and `pmcp` access is admin tokens
  * only (§8) — so the actor behind every row below is this user, and the one thing that
  * has to be looked up is what to call them.
+ *
+ * Exported because "what is this owner's username" has ONE answer and one home: gateway's
+ * `ownerCatalog` builds the same principal for the same reason, and a second copy of the
+ * `user` read is a second place for the not-found arm to disagree.
  */
-async function owner(ownerId: string): Promise<Extract<Principal, { kind: "user" }>> {
+export async function owner(ownerId: string): Promise<Extract<Principal, { kind: "user" }>> {
   const row = await db()
     .prepare(`SELECT "username" FROM "user" WHERE "id" = ?`)
     .bind(ownerId)
@@ -749,6 +771,7 @@ export const ops: Record<string, AdminOp> = {
       const slug = parsed.slug as string;
       const kind = parsed.kind as "tunnel" | "proxy";
       assertSlugNotReserved(slug);
+      assertSlugNotARoute(slug);
       const created = await domain(
         registry().createApp({
           ownerId,
@@ -1214,10 +1237,13 @@ export const ops: Record<string, AdminOp> = {
 
   /**
    * §19/§8: the OAuth clients connected to this namespace — client name and id, the
-   * agent each is bound to, created/last-used. Never a token, a client secret,
-   * or a JWT: a connection is a binding, and a binding holds no credential (oauth.ts's
-   * `Connection` shape). Read-only, fronting oauth.listConnections exactly as every other
-   * read here fronts its own module.
+   * agent each is bound to, created/last-used, the two identity strings §19.5's consent
+   * screen shows about the client (its registered redirect ORIGIN, and whether it
+   * self-registered), and the revoked stamp: a revoked binding is REPORTED, not dropped,
+   * because §13's Connected clients pane keeps its row and has no second read path.
+   * Never a token, a client secret, or a JWT: a connection is a binding, and a binding
+   * holds no credential (oauth.ts's `Connection` shape). Read-only, fronting
+   * oauth.listConnections exactly as every other read here fronts its own module.
    */
   connection_list: defineOp({
     schema: { description: "List the OAuth clients connected to this namespace.", fields: {} },

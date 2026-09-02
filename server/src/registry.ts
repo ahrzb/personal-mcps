@@ -745,6 +745,23 @@ export function validateSchemaIndirection(schema: unknown): string[] {
 export const REDACTED = "‹redacted›";
 
 /**
+ * The path union one config map declares for one tool: every path under every matching
+ * key, deduped (§7). The PURE half of `redactPathsFor` — exported because a caller that
+ * already holds the map (a page rendering `app_get`'s row over a whole catalog) must not
+ * pay one `app` read per tool to be told what it is already holding.
+ */
+export function redactPathsIn(config: Record<string, string[]>, tool: string): string[] {
+  // deps: matchesPattern
+  const paths = new Set<string>();
+  for (const [key, declared] of Object.entries(config)) {
+    // §20.3: the redaction maps stay family-blind — one key space, matched under the
+    // tool-name grammar, which is also the grammar a prompt name lives in.
+    if (matchesPattern(key, tool, "tools")) for (const path of declared) paths.add(path);
+  }
+  return [...paths];
+}
+
+/**
  * The one masking transformation: a copy of `args` with the value at every
  * matching dot-path replaced by REDACTED — the input is never mutated, so
  * callers hold redacted data as a new value rather than trusting a flag. A path
@@ -1237,19 +1254,10 @@ export class Registry {
     tool: string,
     direction: "args" | "results",
   ): Promise<string[]> {
-    // deps: matchesPattern · D1 `app`
+    // deps: redactPathsIn · D1 `app`
     const row = await this.row(app.id);
     if (!row) return []; // the virtual `pmcp` builtin declares no redaction config
-    const config: Record<string, string[]> = JSON.parse(
-      direction === "args" ? row.redact_json : row.redact_results_json,
-    );
-    const paths = new Set<string>();
-    for (const [key, declared] of Object.entries(config)) {
-      // §20.3: the redaction maps stay family-blind — one key space, matched under the
-      // tool-name grammar, which is also the grammar a prompt name lives in.
-      if (matchesPattern(key, tool, "tools")) for (const path of declared) paths.add(path);
-    }
-    return [...paths];
+    return redactPathsIn(JSON.parse(direction === "args" ? row.redact_json : row.redact_results_json), tool);
   }
 
   /**

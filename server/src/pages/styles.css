@@ -28,6 +28,7 @@
   --danger-fg: #b91c1c;
   --danger-bg: #fef2f2;
   --danger-border: #fecaca;
+  --dim-fg: #d4d4d8;        /* a dimmed rail entry's marker (AppDetail.dc.html) */
   --sunken: #fafafa;        /* auth page ground, expanded audit row */
   --fg-subtle: #52525b;     /* link hover, code text, chart peak */
   --row-border: #f4f4f5;    /* between table rows (lighter than --border) */
@@ -78,8 +79,11 @@
 
   /* page widths */
   --page-wide: 1140px;    /* apps, audit */
-  --page-narrow: 760px;   /* approvals, settings */
+  --page-paned: 1180px;   /* settings, app detail — the rail's 200px, then the pane */
+  --page-narrow: 760px;   /* approvals */
   --card-auth: 400px;     /* login, device, two-factor, add-app */
+  --rail-w: 200px;        /* the pane rail (Settings.dc.html, AppDetail.dc.html) */
+  --pane-w: 640px;        /* the Password pane, the one pane the boards cap */
 }
 
 /* ------------------------------------------------------------------ base ---- */
@@ -250,6 +254,14 @@ p {
   max-width: var(--page-narrow);
 }
 
+/* The two paned pages run 40px wider than the list pages, because the rail costs 200px
+   and the pane keeps its own width (Settings.dc.html / AppDetail.dc.html: 1180 against
+   Apps.dc.html's 1140). The boards draw no side padding at that width; ours keeps the
+   page's own, so the cap carries it. */
+.page--paned {
+  max-width: calc(var(--page-paned) + 2 * var(--space-9));
+}
+
 .page-head {
   display: flex;
   justify-content: space-between;
@@ -263,10 +275,190 @@ p {
   line-height: 1.2;
 }
 
+/* A page title with its badges beside it rather than stacked under it — the app detail
+   header (AppDetail.dc.html), where the kind and status belong to the name. */
+.title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+}
+
 .page-subtitle {
   margin-top: var(--space-2);
   font-size: var(--text-base);
   color: var(--muted-fg);
+}
+
+/* ------------------------------------------------- panes behind a rail ---- */
+
+/* §13's shell for the two paned pages (Settings.dc.html, AppDetail.dc.html): a fixed
+   rail of pane links beside the pane being rendered. Both navigations are in every
+   response at every width — only which one is displayed changes. */
+
+.paned {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-11);
+}
+
+.pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+/* Only the Password pane is capped. Every other board draws its pane at the full width
+   left over from the rail (SettingsTokens, OauthConnections, AppDetail) — a seven-column
+   token table has nowhere to go at 640px — while Settings.dc.html holds the password FORM
+   at 640, because a text field as wide as a table is a worse field. */
+.pane--narrow {
+  max-width: var(--pane-w);
+}
+
+.rail {
+  width: var(--rail-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-9);
+}
+
+/* Two spacings, not one: the boards sit rail entries 2px apart and hold the heading 8px
+   above its list (Settings.dc.html, AppDetail.dc.html, which nest the entries in their own
+   2px column). The heading carries the remaining 6px itself, so the entries stay one flow
+   and the shell needs no wrapper element to say it. */
+.rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* The ungrouped tail (the app page's Danger zone) has no heading to separate it, so it
+   takes a rule instead — AppDetail.dc.html. Neutral, never red: §13's whole point. */
+.rail-group--tail {
+  padding-top: var(--space-8);
+  border-top: 1px solid var(--row-border);
+}
+
+.rail-heading {
+  /* the other 6px of the heading's 8px gap to its list — .rail-group's own gap is the 2px
+     the entries sit apart */
+  margin-bottom: var(--space-3);
+  padding: 0 var(--space-5);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ring);
+}
+
+.rail-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  height: var(--control-h-sm);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius);
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--muted-fg);
+  text-decoration: none;
+}
+
+.rail-link:hover {
+  color: var(--fg);
+  background: var(--muted);
+}
+
+.rail-link[aria-current="page"] {
+  background: var(--muted);
+  color: var(--fg);
+}
+
+/* §13's dimmed entry — the label recedes with its marker, and it is still a link. */
+.rail-link--dim {
+  color: var(--ring);
+}
+
+.rail-marker {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-sm);
+  color: var(--ring);
+}
+
+/* on the entry you are already on, the count reads at the label's own weight */
+.rail-link[aria-current="page"] .rail-marker {
+  color: var(--muted-fg);
+}
+
+.rail-link--dim .rail-marker {
+  color: var(--dim-fg);
+}
+
+.rail-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--border);
+}
+
+.rail-dot--on {
+  background: var(--success);
+}
+
+/* The pill row is the rail below the breakpoint (§13's Mobile rule): same routes, same
+   order, label only. Rendered always, displayed only there. */
+.pill-row {
+  display: none;
+  gap: var(--space-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.pill-row::-webkit-scrollbar {
+  display: none;
+}
+
+.pill {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: var(--control-h-sm);
+  padding: 0 var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--muted-fg);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pill[aria-current="page"] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-fg);
+}
+
+/* Present to a screen reader, absent to the eye — how a marker that is a colour (the
+   Two-factor dot) still says what it means. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .section {
@@ -420,12 +612,19 @@ p {
 .actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-6);
 }
 
 .actions--start {
   justify-content: flex-start;
+}
+
+/* for a row whose items are not all one control tall — a stacked field-plus-button form
+   beside a bare button, where centring would pair the button with the wrong thing */
+.actions--bottom {
+  align-items: flex-end;
 }
 
 /* ----------------------------------------------------------------- forms ---- */
@@ -540,6 +739,14 @@ select {
   height: 16px;
   accent-color: var(--primary);
   margin: 0;
+}
+
+/* A hint that belongs to the checkbox above it, not to the form: pulled tight under it
+   and indented past the box, so it reads as that control's own small print
+   (Settings.dc.html / MobileSettings.dc.html). The indent is the box plus its gap. */
+.checkbox-hint {
+  margin-top: calc(-1 * var(--space-6));
+  padding-left: calc(16px + var(--space-5));
 }
 
 /* radio card — tunneled/proxied, headers/oauth */
@@ -812,6 +1019,13 @@ select {
   font-weight: 600;
 }
 
+/* how many rows the card lists, beside its title — the boards' lighter weight, so the
+   number reads as a fact about the heading rather than as part of it */
+.card-count {
+  font-weight: 400;
+  color: var(--muted-fg);
+}
+
 .card-desc {
   margin-top: var(--space-2);
   font-size: var(--text-sm);
@@ -918,6 +1132,15 @@ select {
 
 .table tbody tr:last-child > td {
   border-bottom: 0;
+}
+
+/* A row that is still listed but no longer live — the expired token on
+   SettingsTokens.dc.html. The whole row recedes to `--ring` (the board's #a1a1aa),
+   including the cells and links that set a colour of their own, so what still reads at
+   full contrast is the badge that says why. */
+.table tbody tr.row--dim > td,
+.table tbody tr.row--dim > td a {
+  color: var(--ring);
 }
 
 /* mono cells: time, principal, tool, duration */
@@ -1271,6 +1494,28 @@ select {
   margin-top: var(--space-8);
 }
 
+/* The same empty state INSIDE a card — a family pane that lists nothing (AppDetailPanes).
+   The card is already the box, so this one drops the border, the ground and the padding
+   that made it one, and spaces its lines rather than hanging them off the title. */
+.empty--inline {
+  border: 0;
+  box-shadow: none;
+  padding: var(--space-6) 0;
+  gap: var(--space-4);
+}
+
+.empty--inline .empty-text {
+  margin-top: 0;
+  max-width: 460px;
+}
+
+/* the second line of a two-line empty state — what to DO about it, one step quieter than
+   the sentence that said what happened */
+.empty-text--aside {
+  font-size: var(--text-xs);
+  color: var(--ring);
+}
+
 /* --------------------------------------------------------------- dialogs ---- */
 
 dialog {
@@ -1447,6 +1692,73 @@ dialog .actions {
   text-align: center;
 }
 
+/* ------------------------------------------------------------- app detail ---- */
+
+/* One Tools row (AppDetail.dc.html): the disclosure the audit page already uses, with
+   the row's own metrics — a full-bleed rule inside a padded card, and no open-state tint,
+   because here the tint belongs to the expanded block rather than to the whole row. */
+.tool > summary {
+  padding: var(--space-5) 0;
+  border-bottom: 1px solid var(--row-border);
+  font-size: var(--text-sm);
+}
+
+.disclosure.tool[open] {
+  background: none;
+}
+
+.tool-name {
+  flex: 0 0 200px;
+  font-weight: 500;
+}
+
+/* The first line of the description, and only the first: the whole thing is one click
+   away in the block below, which is already in this same response. */
+.tool-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted-fg);
+}
+
+.tool-args {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--ring);
+}
+
+.tool-detail {
+  gap: var(--space-7);
+  margin: 0 0 var(--space-8) var(--space-10);
+  padding: var(--space-8);
+  background: var(--sunken);
+  border: 1px solid var(--row-border);
+  border-radius: var(--radius);
+}
+
+.tool-description {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--fg-subtle);
+}
+
+/* §13's "what only the hub knows": four short lines that read as one band under the
+   Arguments table, wrapping rather than truncating — every one of them is a fact about
+   who can call this tool. */
+.tool-hub {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--space-9);
+  row-gap: var(--space-3);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--muted-fg);
+}
+
 /* --------------------------------------------------- responsive switches ---- */
 
 /* Wide-only content collapses at the breakpoint; narrow-only content appears.
@@ -1514,6 +1826,25 @@ dialog .actions {
   .page {
     padding: var(--space-9);
     gap: var(--space-8);
+  }
+
+  /* §13's Mobile rule: no room for a rail, so the panes become the pill row instead —
+     the two swap, and neither is injected or dropped server-side. */
+  .rail {
+    display: none;
+  }
+
+  .pill-row {
+    display: flex;
+  }
+
+  /* The pill keeps its 32px height here — MobileSettings.dc.html draws it that way, and
+     a pill row is a scroller, so the surrounding gap is the tap slack the boards give it
+     rather than the 44px every other control at this width grows to. */
+
+  /* the Password pane's 640px cap is a desktop measure — at 375px the viewport is it */
+  .pane--narrow {
+    max-width: none;
   }
 
   .page-title {

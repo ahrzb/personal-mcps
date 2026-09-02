@@ -63,11 +63,19 @@ function db(): D1Like {
 export const USERNAME_CHARSET = /^[a-z0-9-]+$/;
 
 /**
+ * §4/§13's password floor, against better-auth's own default of 8. ONE constant for the
+ * whole hub: it is what `emailAndPassword.minPasswordLength` is set to below, so it is what
+ * refuses a short password, and the Password pane renders its hint from this same export —
+ * a second literal anywhere is the drift §4 forbids. `maxPasswordLength` stays better-auth's
+ * default; nothing here has a reason to lower a ceiling.
+ */
+export const PASSWORD_MIN_LENGTH = 12;
+
+/**
  * The ONE better-auth instantiation (§4), built once per isolate (auth() below says why).
  * The plugin list is the spec's, passkey included: `@better-auth/passkey` is a separate
- * package 1.7 does not bundle, pinned in lockstep with core. The `last_used_at` stamp §5
- * extends passkey sign-ins with is not written yet — it lands with §13's Passkeys pane,
- * whose "last used" line is the one thing that reads it.
+ * package 1.7 does not bundle, pinned in lockstep with core. §5's `last_used_at` stamp on
+ * a verified assertion is `stampPasskeyUse`, called from the mount's own handler below.
  *
  * `database: env.DB` IS the whole D1 wiring: `@better-auth/kysely-adapter` ships its own
  * D1 dialect and selects it by duck-typing the binding, so no dialect is constructed here
@@ -105,7 +113,7 @@ function buildAuth() {
     // script"). Without disableSignUp, better-auth's /sign-up/email is live on
     // the same public /api/auth mount and self-provisions a full namespace to
     // any unauthenticated caller — the whole gate, bypassed.
-    emailAndPassword: { enabled: true, disableSignUp: true },
+    emailAndPassword: { enabled: true, disableSignUp: true, minPasswordLength: PASSWORD_MIN_LENGTH },
     plugins: [
       // §2's charset, handed to the plugin that would otherwise apply its own (which
       // rejects the hyphen every generated username may carry). One rule for what a
@@ -523,6 +531,46 @@ async function stampLastUsed(row: Pick<TokenRow, "id" | "last_used_at">, at: num
 }
 
 /**
+ * §5's `passkey.last_used_at` — the hub's ONE extension to better-auth's tables
+ * (migration 0002), stamped after an assertion verifies. Keyed by the CREDENTIAL id the
+ * assertion itself names rather than by the user: an owner with two passkeys is entitled
+ * to see which of them signed them in. Unstamped by design when the id matches no row —
+ * an assertion that verified names a row that exists, and a stamp is not worth a throw.
+ *
+ * `now` is injected because the value written is the whole observable: a caller that
+ * cannot say when cannot check what was written.
+ */
+export async function stampPasskeyUse(
+  credentialId: string,
+  now: () => number = Date.now,
+): Promise<void> {
+  // deps: D1 `passkey`
+  await db()
+    .prepare(`UPDATE "passkey" SET "last_used_at" = ? WHERE "credentialID" = ?`)
+    .bind(now(), credentialId)
+    .run();
+}
+
+/**
+ * The same column, read for one owner's passkeys and keyed by the row id the plugin's
+ * listing shows. It is read HERE rather than off that listing because the column is ours
+ * and the plugin's schema does not declare it — better-auth's `mergeSchema` renames
+ * declared fields and cannot add one, so its adapter returns the columns it knows and no
+ * others. Absent means never used; the page renders that as its own words.
+ */
+export async function passkeyLastUsed(userId: string): Promise<Record<string, number>> {
+  // deps: D1 `passkey`
+  const { results } = await db()
+    .prepare(
+      `SELECT "id", "last_used_at" FROM "passkey"
+        WHERE "userId" = ? AND "last_used_at" IS NOT NULL`,
+    )
+    .bind(userId)
+    .all<{ id: string; last_used_at: number }>();
+  return Object.fromEntries(results.map((row) => [row.id, row.last_used_at]));
+}
+
+/**
  * The ownership test both listTokens and revokeToken key on: `token.ref_id` has no
  * foreign key (§5), so a token belongs to a namespace only through the app or
  * agent row its kind names. A token whose referent is gone belongs to nobody
@@ -797,9 +845,8 @@ export function deleteTokensForStatement(refId: string): D1Stmt {
  * management, and the bearer plugin the CLI rides — returned as one route group (a
  * Hono sub-app at implementation; typed unknown so no framework type leaks). This is
  * the only place better-auth is instantiated (once per isolate, auth() above). Logins —
- * password and passkey alike — and device approvals write audit rows; the last_used_at
- * stamp §5 gives passkey sign-ins is not written yet (buildAuth's docstring says where it
- * lands). Mounted by the composition root under the
+ * password and passkey alike — and device approvals write audit rows, and a verified
+ * assertion also stamps §5's `last_used_at`. Mounted by the composition root under the
  * reserved auth paths; the credential family here is deliberately never exposed as
  * pmcp tools, and a request carrying an `Authorization` header reaches only the two
  * endpoints it has business at (BEARER_ADMITTED below — §4's session-scope guard, standing
@@ -816,11 +863,31 @@ export function authRoutes(): unknown {
     if (c.req.raw.headers.get("Authorization") !== null && !admitsBearer(c.req.url)) {
       return credentialFamilyForbidden();
     }
+    // §5's last_used_at stamp, for the credential the ASSERTION named. That id is in the
+    // request body better-auth is about to consume, so it is read off a clone before the
+    // handler runs and written only once the handler says the assertion verified.
+    const asserted = await assertedCredentialId(c.req.raw);
     const response = await auth().handler(c.req.raw);
     await recordAuthEvent(c.req.raw, response);
+    if (asserted !== null && response.ok) await stampPasskeyUse(asserted);
     return response;
   });
   return app;
+}
+
+/**
+ * The credential id a passkey ASSERTION names, or null when this request is not one. The
+ * plugin looks the row up by exactly this field (`credentialID` = `response.id`), so the
+ * stamp and the verification are keyed on one value rather than on two spellings of it.
+ */
+async function assertedCredentialId(req: Request): Promise<string | null> {
+  if (req.method !== "POST") return null;
+  if (!new URL(req.url).pathname.endsWith("/passkey/verify-authentication")) return null;
+  const body = (await req
+    .clone()
+    .json()
+    .catch(() => null)) as { response?: { id?: unknown } } | null;
+  return typeof body?.response?.id === "string" ? body.response.id : null;
 }
 
 /**

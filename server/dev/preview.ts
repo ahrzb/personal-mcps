@@ -14,10 +14,10 @@
 //   GET /preview/<page>/<fixture>  — that page rendered with that fixture's exact props.
 //
 // Each page component already renders its complete document — the chromeless pages
-// (login, device, app-new, approval-detail) draw their own <html>, the shelled
-// pages (agent, apps, approvals, audit) wrap themselves in ./layout's Layout
-// internally — so rendering here is just the component's own JSX stringified. Nothing
-// here re-wraps a page in a second layout.
+// (login, device, app-new, approval-detail, oauth-consent) draw their own <html>, the
+// shelled pages (settings, apps, app-detail, approvals, audit) wrap themselves in
+// ./layout's Layout internally — so rendering here is just the component's own JSX
+// stringified. Nothing here re-wraps a page in a second layout.
 
 import type { PageName, PagePropsByName } from "../src/pages/model";
 import type { FC } from "hono/jsx";
@@ -26,21 +26,25 @@ import { Login } from "../src/pages/login";
 import { Device } from "../src/pages/device";
 import { SettingsPage } from "../src/pages/settings";
 import { AppsPage } from "../src/pages/apps";
+import { AppDetailPage } from "../src/pages/app-detail";
 import { AppNewPage } from "../src/pages/app-new";
 import { ApprovalsPage } from "../src/pages/approvals";
 import { ApprovalDetail } from "../src/pages/approval-detail";
 import { AuditPage } from "../src/pages/audit";
+import { ConsentPage } from "../src/pages/consent";
 
 /** page key (fixtures.ts / model.ts's PageName) → the component that renders it. */
 const PAGES: Record<PageName, FC<any>> = {
   login: Login,
   device: Device,
-  agent: SettingsPage,
+  settings: SettingsPage,
   apps: AppsPage,
+  "app-detail": AppDetailPage,
   "app-new": AppNewPage,
   approvals: ApprovalsPage,
   "approval-detail": ApprovalDetail,
   audit: AuditPage,
+  "oauth-consent": ConsentPage,
 };
 
 /** Structural, not `hono/jsx`'s own `JSX.Element` — the type hono/jsx exports under

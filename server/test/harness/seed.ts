@@ -164,6 +164,12 @@ export type AppSpec = {
   description?: string;
   /** proxy kind only — tunnel roles arrive at registration (FINDINGS 1). */
   roles?: RoleDeclaration;
+  /**
+   * §20.2's owner-declared capability set — proxy kind only, rejected on tunnel like
+   * `roles`, because a tunnel's set comes from its own registration-time discovery. Absent
+   * leaves createApp's default in place, which is the state the dimming rules read.
+   */
+  capabilities?: string[];
   redact?: Record<string, string[]>;
   redactResults?: Record<string, string[]>;
   /** absent leaves createApp's by-kind default in place (§15) — the point of several rows. */
@@ -345,6 +351,7 @@ export async function seedApp(
     upstreamAuthMode: spec.upstreamAuthMode,
     forwardIdentity: spec.forwardIdentity,
     roles: spec.roles,
+    capabilities: spec.capabilities,
     redact: spec.redact,
     redactResults: spec.redactResults,
     logBodies: spec.logBodies,

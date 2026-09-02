@@ -52,15 +52,23 @@
 
 import { env } from "cloudflare:workers";
 import { ops } from "../admin";
+import type { AppPane } from "../app-routes";
 import type { AppRow as OpsAppRow } from "../admin";
 import { config as auditConfig } from "../audit";
-import { AUTH_BASE_PATH, callAuth } from "../identity";
+import { DEFAULT_APP_CAPABILITIES } from "../capabilities";
+import { argumentRows, reachabilityFor } from "../catalog-view";
+import type { ArgumentRow, Reach, Reachability } from "../catalog-view";
+import { ownerCatalog } from "../gateway";
+import type { ListedItem } from "../gateway";
+import { AUTH_BASE_PATH, callAuth, passkeyLastUsed, PASSWORD_MIN_LENGTH } from "../identity";
 import type { TokenInfo } from "../identity";
 import { DEVICE_CODE_TTL_MS } from "../limits";
-import type { AppDetail, AppKind } from "../registry";
+import { redactPathsIn, Registry, validateSchemaIndirection, writeOnlyPaths } from "../registry";
+import type { App, AppCapability, AppDetail, AppKind, ListKind, RoleDeclaration } from "../registry";
 import type { ApprovalListFilters, ApprovalRow, ApprovalStatus } from "../approvals";
 import type { AuditRow, BodyStub, AuditQuery } from "../audit";
 import type { UpstreamConnectionStatus } from "../upstream";
+import { capabilities as tunnelCapabilities } from "../tunnel";
 import type { status as tunnelStatus } from "../tunnel";
 
 /* ------------------------------------------------------------------ *
@@ -76,6 +84,13 @@ import type { status as tunnelStatus } from "../tunnel";
 export type PageProps = {
   now: string;
 };
+
+/**
+ * §13's Password pane renders the length hint from this and nothing else — re-exported
+ * through the props layer so the template needs no import of its own into identity, and
+ * so the number better-auth enforces and the number the page shows are one value (§4).
+ */
+export { PASSWORD_MIN_LENGTH };
 
 /**
  * The four nav destinations of the signed-in shell (Main.dc.html's header), in
@@ -171,12 +186,35 @@ export const paths = {
   login: "/login",
   /** RFC 8628 device approval; deep-linked from the CLI as `?user_code=…`. */
   device: "/device",
-  /** Credential management — cookie session with recent auth only (§4). */
+  /**
+   * Credential management — cookie session with recent auth only (§4). §13's "A pane is a
+   * route": this is the LANDING pane (Password) and the five below are the others, one URL
+   * each and no alias for the landing one (`/settings/password` is a 404). Plain strings
+   * rather than a nested object or a builder, because every walk over the hub's URL space
+   * reads `Object.values(paths)` filtered to strings.
+   */
   settings: "/settings",
+  settingsTwoFactor: "/settings/two-factor",
+  settingsPasskeys: "/settings/passkeys",
+  settingsSessions: "/settings/sessions",
+  settingsTokens: "/settings/tokens",
+  settingsClients: "/settings/clients",
   /** App management: active, archived, and the add-app entry point. */
   apps: "/apps",
   /** The add-app form (§13's "add-app flow"). */
   appNew: "/apps/new",
+  /**
+   * One app's detail page — the LANDING pane, which is Tools (§13's "Panes behind a
+   * rail"). There is deliberately no `appTools` member: `/apps/<slug>/tools` is a 404,
+   * so a `paths` entry for it would be a spelling of a page that does not exist.
+   */
+  appDetail(slug: string): string {
+    return `/apps/${encodeURIComponent(slug)}`;
+  },
+  /** Any of the seven non-landing panes (app-routes.APP_PANES, §13's table order). */
+  appPane(slug: string, pane: AppPane): string {
+    return `${paths.appDetail(slug)}/${pane}`;
+  },
   /** Pending requests plus decision history. */
   approvals: "/approvals",
   /** Read-only view over audit.query with its exact filters. */
@@ -262,9 +300,31 @@ export const paths = {
   appDisconnect(slug: string): string {
     return `/apps/app_disconnect${query({ slug })}`;
   },
-  /** connection_revoke (§8/§19.6) — the /oauth/connections Revoke button. */
+  /** The Tokens pane under §13's **All · Agents · Apps** filter. `undefined` is All and
+   *  spells `paths.settingsTokens` exactly, so the active pill and the rail entry point at
+   *  one URL rather than at two spellings of it. */
+  settingsTokensWith(kind?: TokenRow["kind"]): string {
+    return `${paths.settingsTokens}${query({ kind })}`;
+  },
+  /** token_revoke (§8) — the Tokens pane's Revoke/Remove control, under its own pane's
+   *  prefix so §13's "mutations belong to a pane" holds for the redirect back. */
+  tokenRevoke(id: string): string {
+    return `${paths.settingsTokens}/token_revoke${query({ id })}`;
+  },
+  /** connection_revoke (§8/§19.6) — the Connected clients pane's Revoke. It moved here
+   *  with its pane: nothing posts under `/oauth/connections` any more. */
   connectionRevoke(id: string): string {
-    return `/oauth/connections/connection_revoke${query({ id })}`;
+    return `${paths.settingsClients}/connection_revoke${query({ id })}`;
+  },
+  /**
+   * A mutation posted from an `/apps/<slug>` pane: the final segment names the op and
+   * every non-control argument rides the query string under the op's own field name —
+   * the same convention every other ops-backed target here follows. The redirect-back
+   * lands on the pane that rendered the form (§13's "mutations belong to a pane"), which
+   * is why the OP's target does not carry the pane: the pane is the form's, not the op's.
+   */
+  appOp(slug: string, op: string, args: Record<string, string> = {}): string {
+    return `${paths.appDetail(slug)}/${op}${query(args)}`;
   },
 
   /* --- confirm dialogs as addressable state --- */
@@ -278,8 +338,33 @@ export const paths = {
   appsConfirmDelete(slug: string): string {
     return `/apps${query({ confirm: "delete", slug })}`;
   },
-  settingsConfirm(kind: SettingsConfirm["kind"], id?: string): string {
-    return `/settings${query({ confirm: kind, id })}`;
+  /**
+   * One /settings pane's own URL — the rail's `href` as a function, so everything that
+   * holds a PANE (a dialog's owner, a redirect-back) reaches its URL without a second
+   * spelling of which path a pane is. The `??` arm is unreachable: SETTINGS_PANES covers
+   * `SettingsPane`, and the landing pane's URL is `paths.settings` anyway.
+   */
+  settingsPane(pane: SettingsPane): string {
+    return SETTINGS_PANES.find((entry) => entry.pane === pane)?.href ?? paths.settings;
+  },
+  /**
+   * The same, on /settings — and `pane` is first because a dialog rides the URL of the
+   * pane that OWNS the control, never the page root (§13's "mutations belong to a pane").
+   * The argument is the PANE, not its href (as on `/apps/<slug>`): the dialog's Cancel,
+   * its redirect-back and the rail's active entry then name one URL because they name
+   * one pane, and comparing a dialog's owner to the rendering pane is `===`.
+   */
+  settingsConfirm(pane: SettingsPane, kind: SettingsConfirm["kind"], id?: string): string {
+    return `${paths.settingsPane(pane)}${query({ confirm: kind, id })}`;
+  },
+  /**
+   * The same, on `/apps/<slug>`: the dialog rides the URL of the pane that OWNS the
+   * control, never the page root (§13). Every confirm §13 gives this page belongs to a
+   * non-landing pane (Token's Revoke, the Danger zone's two), which is why the pane
+   * argument is an `AppPane` and the landing has no spelling here.
+   */
+  appConfirm(slug: string, pane: AppPane, kind: AppConfirm["kind"], id?: string): string {
+    return `${paths.appPane(slug, pane)}${query({ confirm: kind, id })}`;
   },
 
   /* --- the consumer endpoint a page only ever displays --- */
@@ -318,9 +403,10 @@ export const paths = {
    * place is the same origin rule better-auth itself applied while the form still posted
    * there (web.ts's `crossOrigin`), so nothing was traded away.
    *
-   * Two stay on better-auth's mount: `signInPasskey` and `passkeyRegister` are WebAuthn
-   * ceremonies, never a form post in the first place, so there is no form body to
-   * translate at all (see login.tsx's deliberately inert passkey button).
+   * FOUR stay on better-auth's mount: the two WebAuthn ceremonies' options-and-verify
+   * pairs. A ceremony is not a form post in the first place — it is two JSON round trips
+   * with `navigator.credentials` between them — so there is no form body to translate and
+   * nothing a hub route would add (§13: "the one credential POST that is not a form").
    */
   auth: {
     /** Where the composition root mounts better-auth — the prefix the two untranslated
@@ -329,7 +415,6 @@ export const paths = {
      *  decision (identity.AUTH_BASE_PATH). */
     base: AUTH_BASE_PATH,
     signIn: "/login/sign-in/username",
-    signInPasskey: "/api/auth/sign-in/passkey",
     signOut: "/login/sign-out",
     /** /login's challenge card posts here, and so would /settings's enrollment card —
      *  which cannot render today (see settingsProps's note on `enrollment`). */
@@ -338,9 +423,24 @@ export const paths = {
     totpEnable: "/settings/two-factor/enable",
     totpDisable: "/settings/two-factor/disable",
     backupCodesGenerate: "/settings/two-factor/generate-backup-codes",
+    /** The registration ceremony /settings/passkeys' **Add passkey** performs: options
+     *  out, the authenticator's attestation back in. Named as a PAIR because the page's
+     *  script calls both and a page that named only the first would ask an authenticator
+     *  for a credential nothing then stores. */
     passkeyRegister: "/api/auth/passkey/generate-register-options",
+    passkeyVerifyRegistration: "/api/auth/passkey/verify-registration",
+    /** The authentication ceremony /login's passkey button performs — the same pair, and
+     *  the endpoint whose success is a sign-in (identity stamps §5's last_used_at on it). */
+    passkeyAuthenticateOptions: "/api/auth/passkey/generate-authenticate-options",
+    passkeyVerifyAuthentication: "/api/auth/passkey/verify-authentication",
     passkeyDelete: "/settings/passkey/delete-passkey",
     sessionRevoke: "/settings/revoke-session",
+    /** The Sessions pane's **Revoke all others** (§13) — better-auth's own
+     *  `/revoke-other-sessions`, which keeps the current session and takes no password. */
+    revokeOtherSessions: "/settings/revoke-other-sessions",
+    /** The Password pane's **Update password** (§13/§4's amendment): core better-auth's
+     *  `/change-password`, gated like every other credential POST. */
+    changePassword: "/settings/change-password",
   },
 } as const;
 
@@ -491,12 +591,105 @@ export type SessionRow = {
 export type SettingsConfirm =
   | { kind: "disable-two-factor" }
   | { kind: "remove-passkey"; id: string; name: string }
-  | { kind: "revoke-session"; id: string; client: string };
+  | { kind: "revoke-session"; id: string; client: string }
+  /** **Revoke all others** names no row — it is about every session except this one. */
+  | { kind: "revoke-other-sessions" }
+  | { kind: "revoke-connection"; id: string; client: string };
 
 /**
- * /settings — the pinned parity exception (§8): credential management rides
- * better-auth's endpoints and has no pmcp tool, and §4's guards reject
- * bearer-sourced sessions here entirely.
+ * §13's "Refusals, mapped to fields": which of the Password pane's three controls the
+ * last refusal was about. The FIELD travels — never the sentence — because the sentence
+ * is the pane's own copy: web.ts maps better-auth's error CODE onto one of these names,
+ * settings.tsx says the words, and neither drifts into the other's business.
+ */
+export const PASSWORD_FIELDS = ["currentPassword", "newPassword", "confirmPassword"] as const;
+export type PasswordField = (typeof PASSWORD_FIELDS)[number];
+
+/**
+ * The redirect-back flash's own query keys — the protocol web.ts WRITES after every
+ * mutation and the pages READ on the next render. Both halves spell them from here, so
+ * the two cannot drift apart silently: a renamed key that only one side knew about is a
+ * control that quietly stops highlighting rather than a compile error.
+ */
+export const NOTICE_KEYS = {
+  done: "done",
+  failed: "failed",
+  reason: "reason",
+  /** The Password pane's extra: which control a mapped refusal was about (§13). */
+  field: "field",
+  /** The Password pane's extra: how many sessions a successful change ended (§13). */
+  signedOut: "signedOut",
+} as const;
+
+/**
+ * Which of §13's six panes is being rendered. A pane is a route, so this is also which
+ * URL was asked for and which rail entry is `aria-current="page"` — one value, read
+ * from the path by web.ts and never from a query parameter.
+ */
+export type SettingsPane =
+  | "password"
+  | "two-factor"
+  | "passkeys"
+  | "sessions"
+  | "tokens"
+  | "clients";
+
+/** The six panes in rail order, and the URL each answers at — §13's own table, which is
+ *  also the mobile pill row's order. `label` is the rail's; `short` is the pill's, and
+ *  differs for exactly one pane (§13: "Mobile pills shorten only the last label"). */
+export const SETTINGS_PANES: readonly {
+  pane: SettingsPane;
+  href: string;
+  label: string;
+  short: string;
+  group: "Sign-in" | "Access";
+}[] = [
+  { pane: "password", href: paths.settings, label: "Password", short: "Password", group: "Sign-in" },
+  { pane: "two-factor", href: paths.settingsTwoFactor, label: "Two-factor", short: "Two-factor", group: "Sign-in" },
+  { pane: "passkeys", href: paths.settingsPasskeys, label: "Passkeys", short: "Passkeys", group: "Sign-in" },
+  { pane: "sessions", href: paths.settingsSessions, label: "Sessions", short: "Sessions", group: "Access" },
+  { pane: "tokens", href: paths.settingsTokens, label: "Tokens", short: "Tokens", group: "Access" },
+  { pane: "clients", href: paths.settingsClients, label: "Connected clients", short: "Clients", group: "Access" },
+];
+
+/**
+ * Which pane OWNS each destructive confirmation — where its link is drawn, where its
+ * dialog opens, and where its POST redirects back to (§13's "Confirm-dialog state rides
+ * the owning pane's URL"). One table, so a dialog cannot be opened on a pane that draws
+ * no control for it: the same query on another pane's URL is no dialog at all.
+ */
+export const SETTINGS_CONFIRM_PANE: Record<SettingsConfirm["kind"], SettingsPane> = {
+  "disable-two-factor": "two-factor",
+  "remove-passkey": "passkeys",
+  "revoke-session": "sessions",
+  "revoke-other-sessions": "sessions",
+  "revoke-connection": "clients",
+};
+
+/** One row of the Tokens pane — `token_list`'s own shape (§8, unchanged), narrowed to
+ *  what §13's columns draw. `expired` is derived from `expiresAt` against the render
+ *  instant here rather than in the template, because it also chooses the control's word
+ *  (live → Revoke, expired → Remove) and both must read one answer. */
+export type TokenRow = {
+  id: string;
+  prefix: string;
+  kind: "agent" | "app";
+  boundTo: string;
+  createdAt: number;
+  expiresAt: number | null;
+  lastUsedAt: number | null;
+  expired: boolean;
+};
+
+/**
+ * /settings — the pinned parity exception (§8) for its Sign-in panes and Sessions:
+ * credential management rides better-auth's endpoints and has no pmcp tool, and §4's
+ * guards reject bearer-sourced sessions on every route under the prefix.
+ *
+ * ONE shape for all six panes, and that is the point of §13's shell rule: the rail's
+ * markers are the LENGTHS of the very lists the panes render, so they are read off these
+ * fields rather than counted a second way. `pane` says which one is drawn; everything
+ * else is present on every render because the rail is.
  *
  * `enrollment` and `revealedBackupCodes` are transient overlays on top of
  * `twoFactor`, not alternatives to it: enrollment can only be non-null while
@@ -505,13 +698,25 @@ export type SettingsConfirm =
  */
 export type SettingsProps = ShellProps & {
   section: "settings";
+  pane: SettingsPane;
   csrfToken: string;
   twoFactor: TwoFactorSummary;
   enrollment: TotpEnrollment | null;
   revealedBackupCodes: string[] | null;
   passkeys: PasskeyRow[];
   sessions: SessionRow[];
+  tokens: TokenRow[];
+  /**
+   * §13's **All · Agents · Apps** filter (`?kind=agent|app`), or null for All. The
+   * narrowing is the PAGE's — `token_list` takes no filter and stays unchanged (§8) — and
+   * it narrows the TABLE only: `tokens` above is the whole listed set, so the rail's
+   * marker cannot move when a pill is clicked.
+   */
+  tokenKind: TokenRow["kind"] | null;
+  connections: ConnectionRow[];
   confirm: SettingsConfirm | null;
+  /** The control §13 maps the last change-password refusal onto, or null (`PasswordField`). */
+  passwordError: PasswordField | null;
 };
 
 /* ------------------------------------------------------------------ *
@@ -577,6 +782,200 @@ export type AppsProps = ShellProps & {
   active: AppRow[];
   archived: AppRow[];
   confirm: AppsConfirm | null;
+};
+
+/* ------------------------------------------------------------------ *
+ * /apps/<slug>
+ * ------------------------------------------------------------------ */
+
+/** §13's eight panes: the seven routed ones plus the landing, which is Tools. */
+export type AppDetailPane = "tools" | AppPane;
+
+/** The destructive confirmations `/apps/<slug>` raises, each riding the URL of the pane
+ *  that draws its control (§13's "confirm-dialog state rides the owning pane's URL"). */
+export type AppConfirm =
+  | { kind: "revoke-token"; id: string; prefix: string }
+  | { kind: "archive" }
+  | { kind: "delete" };
+
+/** Which pane owns each of them, so the link that opens a dialog, the Cancel that closes
+ *  it and the redirect a submitted dialog lands on are one URL (§13). */
+export const APP_CONFIRM_PANE: Record<AppConfirm["kind"], AppPane> = {
+  "revoke-token": "token",
+  archive: "danger",
+  delete: "danger",
+};
+
+/**
+ * One rail entry as §13's pane table spells it. `marker` is the at-a-glance value in
+ * FOUR distinguishable states, because §13 gives them four meanings: a count, the literal
+ * `none`, the dimmed `—` of a family the app advertises none of, and the empty string —
+ * which is BOTH "this pane's table cell says none" and "the listing could not be read",
+ * since an unread count is not an empty set and must not render as one.
+ */
+export type AppRailEntry = {
+  pane: AppDetailPane;
+  label: string;
+  href: string;
+  marker: string;
+  /** The heading this entry sits under; null is the ungrouped Danger zone (§13). */
+  group: "App" | "Access" | null;
+};
+
+/**
+ * The page header (§13): identity, then whichever status the app's kind actually has —
+ * a tunneled app's online/offline and last seen, a proxied app's endpoint, auth mode and
+ * forward identity, and for `auth: oauth` the connection controls `/apps` also draws.
+ */
+export type AppDetailHeader = {
+  name: string;
+  slug: string;
+  kind: AppKind;
+  archived: boolean;
+  /** The status word beside the kind badge — null where there is nothing to connect
+   *  (a headers-mode proxy), which is exactly when `/apps` draws no badge either. */
+  status: string | null;
+  /** Tunneled only (§8's `lastSeen`); null on a proxied app and on one never connected. */
+  lastSeen: number | null;
+  endpoint: string | null;
+  authMode: UpstreamAuthMode | null;
+  /** Proxied only — null on a tunneled app, which forwards nothing upstream. */
+  forwardIdentity: boolean | null;
+  /** Connect or Reconnect, labelled by the upstream state; null unless auth is oauth. */
+  connect: { label: string; href: string } | null;
+  /** Disconnect's target — null unless there is a stored credential to wipe. */
+  disconnect: string | null;
+};
+
+/**
+ * What a §20 family pane has to draw, as the three answers §13 distinguishes. The states
+ * are separate because their MARKERS are: `listed` counts, `undeclared` is the dimmed `—`
+ * whose pane says why (§20.2 for proxied, §20.5 for tunneled), and `unread` is blank —
+ * a proxied listing that failed, which §13 forbids rendering as an empty set.
+ */
+export type AppFamilyView<Row> =
+  | { state: "listed"; rows: Row[] }
+  | { state: "undeclared" }
+  | { state: "unread" };
+
+/**
+ * One Tools row plus §13's "what only the hub knows" block, computed once per render: the
+ * aggregated name (§7), who reaches it and how (the door's own matcher, through
+ * catalog-view), and the redaction the call would apply. `schemaUnsound` is §7/§18
+ * decision 16 — a tool whose schema tripped the indirection line has no derivable
+ * redaction map at all, which is a different statement from "nothing is redacted".
+ */
+export type AppToolRow = {
+  name: string;
+  /** `<slug>_<tool>` — the name an agent calls it by on the aggregated endpoint. */
+  aggregated: string;
+  /** The whole description; `summary` is its first line, which is what the row shows. */
+  description: string;
+  summary: string;
+  args: ArgumentRow[];
+  reach: Reach[];
+  /** The agents §13's approval line names: those reaching ONLY in approval mode. */
+  approvalAgents: string[];
+  redactedArgs: string[];
+  redactedResults: string[];
+  schemaUnsound: boolean;
+};
+
+/** One declared prompt argument as `prompts/list` reports it — §13's "name, description,
+ *  required". There is no schema behind it: §20.3 says prompts have none, which is also
+ *  why this pane draws no Arguments table and no `writeOnly` redaction half exists. */
+export type PromptArgumentRow = { name: string; description: string; required: boolean };
+
+/**
+ * One Prompts row plus §13's hub block — the Tools block minus the schema table and minus
+ * a posture, prompts being never approval-gated (§18 decision 27). `redacted` is the
+ * `redact` entries matching the prompt's NAME: §20.3 keeps those maps family-blind, so it
+ * is the same map and the same matcher a tool name goes through.
+ */
+export type AppPromptRow = {
+  name: string;
+  /** `<slug>_<prompt>` — §20.6's aggregated name, which prompts share with tools alone. */
+  aggregated: string;
+  description: string;
+  args: PromptArgumentRow[];
+  reach: Reach[];
+  redacted: string[];
+};
+
+/** One Resources or Templates row — §13's `URI` / `Name` / `Type` columns, a template's
+ *  URI being its raw `uriTemplate`, and the reachability the door answered for that very
+ *  string: grants match resources by URI, never by name (§20.3). */
+export type AppResourceRow = { uri: string; name: string; mimeType: string; reach: Reach[] };
+
+/**
+ * §13's Overview pane — `app_get`'s row as a definition list. Only `logBodiesIsDefault` is
+ * derived: §15 gives the setting a per-kind default (tunneled on, proxied off) and §13
+ * asks the pane to say WHICH default it sits at, while the row reports the resolved
+ * boolean alone. The redaction fields are the configured paths flattened — §13 says "the
+ * config paths, or `none`", and which pattern earned a path is the Tools pane's business.
+ */
+/** One `role · mode` chip of §13's Agents pane. `builtin` is the `all` marking: `all` is
+ *  the reserved built-in nobody declares (§2/§20.3), so holding it is the whole test. */
+export type AppGrantChip = { role: string; mode: "allow" | "approval"; builtin: boolean };
+
+/**
+ * One Agents row (§13): the agent's own slug and description as TEXT — `/agents/<slug>` is
+ * deferred, so a link there would be a link to a 404 — and one chip per grant it holds on
+ * this app, in `agent_list`'s own order. The pane is read-only until the grant editor
+ * lands, which is why no row carries a control.
+ */
+export type AppAgentRow = { slug: string; description: string; chips: AppGrantChip[] };
+
+/**
+ * One Token-pane row: a LIVE app token bound to this app, as `token_list` reports it
+ * (§8, unchanged). Revoked and expired keys are absent — the pane is what is still
+ * dialling in, and the rail marker is this list's length.
+ */
+export type AppTokenRow = { id: string; prefix: string; createdAt: number; lastUsedAt: number | null };
+
+export type AppOverview = {
+  createdAt: number | null;
+  logBodies: boolean;
+  logBodiesIsDefault: boolean;
+  redactedArgs: string[];
+  redactedResults: string[];
+};
+
+/**
+ * `/apps/<slug>` and its seven panes as one props value. Every family view is present on
+ * every render, because the rail is: §13 requires each marker to be "read from the same
+ * calls that render the panes", so the loader makes those calls once and both the rail
+ * and the active pane are drawn from the same answers.
+ */
+export type AppDetailProps = ShellProps & {
+  section: "apps";
+  csrfToken: string;
+  pane: AppDetailPane;
+  header: AppDetailHeader;
+  rail: AppRailEntry[];
+  tools: AppFamilyView<AppToolRow>;
+  prompts: AppFamilyView<AppPromptRow>;
+  resources: AppFamilyView<AppResourceRow>;
+  templates: AppFamilyView<AppResourceRow>;
+  /** Which of the Resources pane's two tabs this URL selected (§13). */
+  tab: "resources" | "templates";
+  /** The DECLARED roles in §20.3's CANONICAL read shape — a bare pattern list for a
+   *  tools-only role, the per-family object otherwise — as the Roles pane renders them
+   *  and its rail marker counts them. `app_get` already canonicalizes; the page relays. */
+  roles: RoleDeclaration;
+  overview: AppOverview;
+  /** The agents holding ≥ 1 grant on this app, from `agent_list`'s inline grants (§8). */
+  agents: AppAgentRow[];
+  /** This app's live app tokens — always empty for a proxied app, which holds none (§2). */
+  tokens: AppTokenRow[];
+  /** The destructive dialog the URL asked for, or null (§13's `?confirm=` state). */
+  confirm: AppConfirm | null;
+  /**
+   * A key just minted by **Issue new token**, shown in THIS response and never again
+   * (§4/§15) — which is why the Issue target answers 200 in place of the generic redirect:
+   * a plaintext key must never ride a URL.
+   */
+  reveal: string | null;
 };
 
 /* ------------------------------------------------------------------ *
@@ -860,7 +1259,7 @@ export type ConsentProps = PageProps & {
 };
 
 /* ------------------------------------------------------------------ *
- * /oauth/connections (§19.6/§8/§13)
+ * The Connected clients pane's rows (§19.6/§8/§13)
  * ------------------------------------------------------------------ */
 
 /** One row of the connections list — `connection_list`'s own shape (oauth.ts's
@@ -873,15 +1272,13 @@ export type ConnectionRow = {
   agentSlug: string;
   createdAt: number;
   lastUsedAt: number | null;
-};
-
-/**
- * /oauth/connections — chromeless like /oauth/consent: a settings page reached from a
- * link, not part of the four-section shell (§13 names no nav slot for it).
- */
-export type ConnectionsProps = PageProps & {
-  csrfToken: string;
-  connections: ConnectionRow[];
+  /** Set once revoked (§19.6). The op speaks timestamps; §13's `Status` column is this
+   *  field's two shapes, and a revoked row stays listed with no control. */
+  revokedAt: number | null;
+  /** The ORIGIN of the client's registered redirect URI — never the whole URI (§13). */
+  redirectOrigin: string;
+  /** §19.3's DCR marker, drawn as the `unverified` badge beside the name. */
+  selfRegistered: boolean;
 };
 
 /* ------------------------------------------------------------------ *
@@ -896,15 +1293,19 @@ export type ConnectionsProps = PageProps & {
 export type PagePropsByName = {
   login: LoginProps;
   device: DeviceProps;
-  agent: SettingsProps;
+  settings: SettingsProps;
   apps: AppsProps;
+  "app-detail": AppDetailProps;
   "app-new": AppNewProps;
   approvals: ApprovalsProps;
   "approval-detail": ApprovalDetailProps;
   audit: AuditProps;
+  /** Chromeless and reached only from the provider's redirect — but a §13 page with two
+   *  boards all the same, so it is enumerated here like every other (`/oauth/consent`). */
+  "oauth-consent": ConsentProps;
 };
 
-/** The eight page keys of §13, as a type. */
+/** Every page key of §13, as a type. */
 export type PageName = keyof PagePropsByName;
 
 /* ------------------------------------------------------------------ *
@@ -1050,6 +1451,385 @@ function liveTokenCounts(tokens: TokenInfo[], now: number): Map<string, number> 
     counts.set(token.refSlug, (counts.get(token.refSlug) ?? 0) + 1);
   }
   return counts;
+}
+
+/* ------------------------------ /apps/<slug> ------------------------------ */
+
+/**
+ * §13's pane table, in its own order — which is the rail's order, the pill row's order,
+ * and the order every walk over the eight panes reads. Tools carries no route segment
+ * because it is the LANDING pane: `/apps/<slug>` renders it and `/apps/<slug>/tools` is a
+ * 404, so a segment here would be a spelling of a page that does not exist.
+ */
+const APP_PANE_TABLE: readonly { pane: AppDetailPane; label: string; group: AppRailEntry["group"] }[] = [
+  { pane: "tools", label: "Tools", group: "App" },
+  { pane: "prompts", label: "Prompts", group: "App" },
+  { pane: "resources", label: "Resources", group: "App" },
+  { pane: "roles", label: "Roles", group: "App" },
+  { pane: "overview", label: "Overview", group: "App" },
+  { pane: "access", label: "Agents", group: "Access" },
+  { pane: "token", label: "Token", group: "Access" },
+  { pane: "danger", label: "Danger zone", group: null },
+];
+
+/** §13's dimmed marker — an em dash, and the ONE thing that means "advertises none".
+ *  Exported so the rail can DRAW that entry dimmed (AppDetail.dc.html greys the label as
+ *  well as the marker) without a second spelling of the glyph deciding what it means. */
+export const DIMMED = "—";
+
+/** `agent_list`'s row, narrowed to what this page reads: the slug and description the
+ *  Agents pane draws, and the inline grants (§8) keyed by app slug in §9's own spelling. */
+type ListedAgent = { slug: string; description: string; grants: Record<string, string[]> };
+
+/** §2's reserved role: granted like any other, declared by nobody, and the one §13 asks
+ *  the Agents pane to mark `built-in`. Spelled here because registry rejects it as a
+ *  declared name rather than exporting it. */
+const BUILTIN_ROLE = "all";
+
+/** One catalog entry as a Tools row reads it — `ListedItem` plus the two descriptors the
+ *  hub stores untouched and relays (§20.2), which the door itself never looks at. */
+type CatalogTool = ListedItem & { description?: string; inputSchema?: unknown };
+
+/** The same for a prompt: `arguments` is the app's own declaration, relayed untouched, so
+ *  it is read defensively rather than trusted to be the shape the SDK documents. */
+type CatalogPrompt = ListedItem & {
+  description?: string;
+  arguments?: { name?: unknown; description?: unknown; required?: unknown }[];
+};
+
+/**
+ * `/apps/<slug>` and each of its seven panes (§13). `null` is the 404 every unreachable
+ * slug shares — the builtin `pmcp`, a slug naming nothing, and another namespace's app,
+ * which are indistinguishable because a page reads only the session owner's namespace.
+ *
+ * ONE read pass fills both the rail and the pane being drawn, which is §13's shell rule
+ * as code: a marker is "read from the same calls that render the panes", so every §20
+ * family is listed on every render whichever pane the URL names, and each marker is the
+ * length of the very list its pane draws. Catalogs come through gateway's `ownerCatalog`
+ * and nowhere else — the scoped endpoint's own listing under the owner principal, left
+ * unfiltered by §7 step 2 by construction (§20.6: this page fronts the MCP method exactly
+ * as `pmcp tools` does, which is why §8's parity list is untouched).
+ */
+export async function appDetailProps(
+  ctx: PageContext,
+  slug: string,
+  pane: AppDetailPane,
+): Promise<AppDetailProps | null> {
+  // deps: registry.getApp · tunnel.capabilities · gateway.ownerCatalog · catalog-view
+  //
+  // The one read here that is not an ops handler, for web.ts's own reason
+  // (`connectRedirect`): an app's opaque id is addressing and no read op reports one
+  // (§3), and the id is what the tunnel's declared capability set and §7's redaction
+  // functions are keyed on. It doubles as this page's 404, since `getApp` answers null
+  // for the builtin, the unknown and the foreign slug alike.
+  const registry = new Registry(env.DB);
+  const app = await registry.getApp(ctx.ownerId, slug);
+  if (app === null) return null;
+
+  const [detail, listed, credentials] = await Promise.all([
+    read<{ app: OpsAppRow }>(ctx, "app_get", { slug }),
+    read<{ agents: ListedAgent[] }>(ctx, "agent_list"),
+    read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
+  ]);
+  const row = detail.app;
+
+  // §20.2/§20.5's advertised set, per kind — the same resolution gateway's
+  // `capabilitiesFor` makes for the scoped handshake, because the dimming rule and the
+  // handshake are two readings of one stored fact: a tunneled app's set is what its last
+  // registration declared (tools for one that never connected), a proxied app's is the
+  // owner's config with "absent ≡ [tools]" applied.
+  const advertised: readonly AppCapability[] =
+    app.kind === "tunnel"
+      ? await tunnelCapabilities(app.id)
+      : (row.kind === "proxy" ? row.capabilities : undefined) ?? DEFAULT_APP_CAPABILITIES;
+
+  const familyOf = async (kind: ListKind, family: AppCapability): Promise<AppFamilyView<ListedItem>> => {
+    if (!advertised.includes(family)) return { state: "undeclared" };
+    const answered = await ownerCatalog(env, ctx.ownerId, slug, kind);
+    return answered.ok ? { state: "listed", rows: answered.items } : { state: "unread" };
+  };
+
+  const [catalog, promptItems, resourceItems, templateItems] = await Promise.all([
+    familyOf("tools", "tools"),
+    familyOf("prompts", "prompts"),
+    familyOf("resources", "resources"),
+    familyOf("resourceTemplates", "resources"),
+  ]);
+
+  // The grants held ON THIS APP, agent slug → §9's own spelling — the shape
+  // catalog-view's reachability takes, and the very rows the Agents pane draws. Read
+  // before anything else is built, because every family's hub block is computed from it
+  // and the Agents marker is this list's length.
+  const grants: Record<string, string[]> = {};
+  const agents: AppAgentRow[] = [];
+  for (const agent of listed.agents) {
+    const held = agent.grants[slug] ?? [];
+    if (held.length === 0) continue;
+    grants[agent.slug] = held;
+    agents.push({
+      slug: agent.slug,
+      description: agent.description ?? "",
+      chips: held.map(grantChip),
+    });
+  }
+
+  // §13's live keys, in the one place the marker and the pane both read: the marker is
+  // this list's length, so a pane and its rail cannot disagree about what "live" means.
+  const tokens = app.kind === "proxy" ? [] : liveAppTokens(credentials.tokens, slug, Date.parse(ctx.now));
+
+  // The doors, built once for the whole page: they are the APP's (its declaration and its
+  // grants), and every row of every family asks the same ones (catalog-view says why).
+  const reach = reachabilityFor(row.roles, grants);
+
+  const [tools, prompts, resources, templates] = await Promise.all([
+    mapped(catalog, (item) => toolRow(row, app, reach, item as CatalogTool)),
+    mapped(promptItems, (item) => promptRow(row, app, reach, item as CatalogPrompt)),
+    // A template's subject is its RAW `uriTemplate`, which `resourceRow` already puts in
+    // `uri` — so both tabs reach the matcher through one function (§20.3).
+    mapped(resourceItems, (item) => resourceRow(item, reach)),
+    mapped(templateItems, (item) => resourceRow(item, reach)),
+  ]);
+
+  const roleNames = Object.keys(row.roles);
+  const marker: Record<AppDetailPane, string> = {
+    tools: familyMarker(tools),
+    prompts: familyMarker(prompts),
+    // §13's Resources marker is the two tabs summed, which is also the two lists the pane
+    // draws between them — one marker, one pane, two counts.
+    resources: familyMarker(resources, templates),
+    roles: roleNames.length === 0 ? "none" : String(roleNames.length),
+    overview: "",
+    access: String(agents.length),
+    // §2's reason, not a missing feature: nothing dials in to a proxied app, so it has no
+    // token to hold and its entry dims like a family it does not advertise.
+    token: app.kind === "proxy" ? DIMMED : String(tokens.length),
+    danger: "",
+  };
+
+  return {
+    ...(await shell(ctx, "apps")),
+    csrfToken: ctx.csrfToken,
+    pane,
+    header: appHeader(row, app.kind, slug),
+    rail: APP_PANE_TABLE.map((entry) => ({
+      ...entry,
+      href: entry.pane === "tools" ? paths.appDetail(slug) : paths.appPane(slug, entry.pane),
+      marker: marker[entry.pane],
+    })),
+    tools,
+    prompts,
+    resources,
+    templates,
+    tab: ctx.query.get("tab") === "templates" ? "templates" : "resources",
+    roles: row.roles,
+    overview: {
+      createdAt: row.kind === "builtin" ? null : row.createdAt,
+      logBodies: row.logBodies,
+      // §15's per-kind default, restated as the ONE comparison that tells "the owner set
+      // this" from "nobody has": the row reports the resolved boolean and no column says
+      // whether it was written, so the default itself is the discriminator.
+      logBodiesIsDefault: row.logBodies === (app.kind === "tunnel"),
+      redactedArgs: [...new Set(Object.values(row.redact).flat())],
+      redactedResults: [...new Set(Object.values(row.redactResults).flat())],
+    },
+    agents,
+    tokens,
+    confirm: appConfirm(ctx.query, pane, tokens),
+    // Only the Issue route sets this, in the response that mints the key; a render
+    // reached any other way has nothing to reveal (§4: shown once, here).
+    reveal: null,
+  };
+}
+
+/** One grant string as §13's chip (§9's own syntax; an unparseable suffix is shown as it
+ *  was stored rather than silently read as an allow grant — catalog-view's read path
+ *  reaches nothing for it either). */
+function grantChip(spelled: string): AppGrantChip {
+  const at = spelled.indexOf(":");
+  const role = at < 0 ? spelled : spelled.slice(0, at);
+  return {
+    role,
+    mode: at >= 0 && spelled.slice(at + 1) === "approval" ? "approval" : "allow",
+    builtin: role === BUILTIN_ROLE,
+  };
+}
+
+/** This app's live keys — `token_list`'s rows minus the revoked and the expired, which is
+ *  what §13's "every live app token" means and what its marker counts. */
+function liveAppTokens(tokens: TokenInfo[], slug: string, now: number): AppTokenRow[] {
+  return tokens
+    .filter(
+      (token) =>
+        token.kind === "app" &&
+        token.refSlug === slug &&
+        token.revokedAt === null &&
+        (token.expiresAt === null || token.expiresAt > now),
+    )
+    .map((token) => ({
+      id: token.id,
+      prefix: token.prefix,
+      createdAt: token.createdAt,
+      lastUsedAt: token.lastUsedAt,
+    }));
+}
+
+/**
+ * §13's `?confirm=` state for this page. A dialog belongs to the pane that draws its
+ * control, so the same query carried to another pane's URL opens nothing — and a
+ * `revoke-token` naming no listed key opens nothing either, for the reason /settings's
+ * dialogs do not: a dialog is about a row, and a guessed id names none.
+ */
+function appConfirm(query: URLSearchParams, pane: AppDetailPane, tokens: AppTokenRow[]): AppConfirm | null {
+  const kind = query.get("confirm") ?? "";
+  if (!Object.prototype.hasOwnProperty.call(APP_CONFIRM_PANE, kind)) return null;
+  if (APP_CONFIRM_PANE[kind as AppConfirm["kind"]] !== pane) return null;
+  if (kind !== "revoke-token") return { kind: kind as "archive" | "delete" };
+  const id = query.get("id") ?? "";
+  const row = tokens.find((token) => token.id === id);
+  return row === undefined ? null : { kind: "revoke-token", id, prefix: row.prefix };
+}
+
+/** One family view's rows through `row`, leaving the two non-list answers alone — the
+ *  only place `undeclared` and `unread` are carried across a mapping, so neither can be
+ *  turned into an empty list by a `.map` on the way to a pane. */
+async function mapped<Row>(
+  view: AppFamilyView<ListedItem>,
+  row: (item: ListedItem) => Row | Promise<Row>,
+): Promise<AppFamilyView<Row>> {
+  return view.state === "listed" ? { state: "listed", rows: await Promise.all(view.rows.map(row)) } : view;
+}
+
+/**
+ * §13's rail marker for one §20 family, over the view(s) its pane draws. Three answers
+ * that must stay three: a count, the dimmed `—` where the app advertises none, and the
+ * empty string where a listing could not be read at all — "an unread count is not an
+ * empty set", so unread is neither `—` nor `0`, and one unread half makes the whole
+ * marker blank rather than reporting the half that answered.
+ */
+function familyMarker(...views: AppFamilyView<unknown>[]): string {
+  if (views.some((view) => view.state === "unread")) return "";
+  if (views.every((view) => view.state === "undeclared")) return DIMMED;
+  return String(views.reduce((total, view) => total + (view.state === "listed" ? view.rows.length : 0), 0));
+}
+
+/**
+ * §13's header: identity, then whichever status the kind has. The status WORD is the one
+ * §8's row already reports — a tunnel's `status`, a proxied oauth app's `connection` —
+ * said in words rather than in the op's snake case, so the page names no state of its own.
+ */
+function appHeader(row: OpsAppRow, kind: AppKind, slug: string): AppDetailHeader {
+  const oauth = row.kind === "proxy" && row.auth === "oauth";
+  return {
+    name: row.name,
+    slug,
+    kind,
+    archived: row.archived,
+    status: row.archived
+      ? "archived"
+      : row.kind === "tunnel"
+        ? row.status
+        : oauth
+          ? (row.connection ?? "not_connected").replace(/_/g, " ")
+          : null,
+    lastSeen: row.kind === "tunnel" ? row.lastSeen : null,
+    endpoint: row.kind === "proxy" ? row.endpoint : null,
+    authMode: row.kind === "proxy" ? row.auth : null,
+    forwardIdentity: row.kind === "proxy" ? row.forwardIdentity : null,
+    // Connect and Reconnect are one target with two labels (`paths.appConnect` says why);
+    // Disconnect wipes a stored bundle, so it is drawn only where one can exist.
+    connect: oauth
+      ? {
+          label: row.kind === "proxy" && row.connection !== "not_connected" ? "Reconnect" : "Connect",
+          href: paths.appConnect(slug),
+        }
+      : null,
+    // §13 gives an `auth: oauth` app all three controls, so Disconnect is drawn whenever
+    // there is a credential the app could be holding — the header is the app's own page,
+    // not /apps's one-action-per-row table, and `app_disconnect` is idempotent (§8).
+    disconnect: oauth ? paths.appDisconnect(slug) : null,
+  };
+}
+
+/** The two §7 config maps `app_get`'s row already carries. Taken as a VALUE rather than
+ *  re-read per row: `registry.redactPathsFor` runs an `app` SELECT per call, so a page
+ *  looping over a catalog would pay `2×tools + prompts` reads for the maps in its hand. */
+type RedactConfig = Pick<OpsAppRow, "redact" | "redactResults">;
+
+/**
+ * One Tools row with §13's "what only the hub knows" block attached. Every verdict in it
+ * is the door's own: the mode comes from `registry.buildToolFilter` through catalog-view
+ * (never a page matcher, which would be a page that lies about access), and the redaction
+ * paths are `writeOnlyPaths` unioned with the config map exactly as the gateway unions
+ * them before anything is stored or shown (§7).
+ */
+function toolRow(
+  redact: RedactConfig,
+  app: App,
+  reachable: Reachability,
+  tool: CatalogTool,
+): AppToolRow {
+  const name = tool.name ?? "";
+  const description = typeof tool.description === "string" ? tool.description : "";
+  const reach = reachable.reach(name, "tools");
+  const args = redactPathsIn(redact.redact, name);
+  const results = redactPathsIn(redact.redactResults, name);
+  return {
+    name,
+    aggregated: `${app.slug}_${name}`,
+    description,
+    summary: description.split("\n")[0],
+    args: argumentRows(tool.inputSchema),
+    reach,
+    // §2's allow-wins is already inside the door's verdict, so an agent holding both an
+    // allow role and an approval role on this tool arrives here as `allow` and is named
+    // by the reachability line alone.
+    approvalAgents: reach.filter((entry) => entry.mode === "approval").map((entry) => entry.agent),
+    redactedArgs: [...new Set([...writeOnlyPaths(tool.inputSchema), ...args])],
+    redactedResults: results,
+    schemaUnsound: validateSchemaIndirection(tool.inputSchema).length > 0,
+  };
+}
+
+/**
+ * One `prompts/list` entry with §13's hub block attached (§20.2/§20.3). The reachability
+ * runs over the role's PROMPT patterns — the same door, a different keyspace, which is
+ * what makes a tools-only role reach no prompt — and the redaction is `redact` matched
+ * against the prompt's name, the maps being family-blind. There is no results half: §20.4
+ * puts prompt results outside the question entirely.
+ */
+function promptRow(
+  redact: RedactConfig,
+  app: App,
+  reachable: Reachability,
+  item: CatalogPrompt,
+): AppPromptRow {
+  const name = item.name ?? "";
+  return {
+    name,
+    aggregated: `${app.slug}_${name}`,
+    description: typeof item.description === "string" ? item.description : "",
+    args: (Array.isArray(item.arguments) ? item.arguments : []).map((argument) => ({
+      name: typeof argument?.name === "string" ? argument.name : "",
+      description: typeof argument?.description === "string" ? argument.description : "",
+      required: argument?.required === true,
+    })),
+    reach: reachable.reach(name, "prompts"),
+    redacted: redactPathsIn(redact.redact, name),
+  };
+}
+
+/** One resource or template row — §13's three columns plus who reaches it. A template's
+ *  `URI` is its RAW `uriTemplate`, which is both what the column shows and the string the
+ *  matcher is given: grants match resources by URI, never by name (§20.3). */
+function resourceRow(item: ListedItem, reachable: Reachability): AppResourceRow {
+  const described = item as ListedItem & { mimeType?: unknown };
+  const uri = item.uri ?? item.uriTemplate ?? "";
+  return {
+    uri,
+    name: item.name ?? "",
+    mimeType: typeof described.mimeType === "string" ? described.mimeType : "",
+    reach: reachable.reach(uri, "resources"),
+  };
 }
 
 /* ------------------------------- /apps/new -------------------------------- */
@@ -1335,8 +2115,8 @@ function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram
  * what it is rather than invented: every session reads as `source: "web"` because
  * nothing better-auth stores distinguishes a device-flow session from a browser one
  * — the distinction identity enforces is the cookie's signature, not a column.
- * (Passkeys ARE sourced, from the plugin's own listing; their `lastUsedAt` is null
- * until §5's stamp is written — identity's buildAuth says where that lands.)
+ * (Passkeys ARE sourced, from the plugin's own listing; their `lastUsedAt` is §5's own
+ * column, read here through `identity.passkeyLastUsed` — absent means never used.)
  *
  * The other IS invented, and this comment exists so no reader concludes otherwise:
  * `backupCodesRemaining`/`generatedAt` have no endpoint behind them (`/get-session`
@@ -1349,19 +2129,34 @@ function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram
  * change to a page template and is REPORTED rather than made here. Both are
  * findings for the owner, not placeholders to be quietly kept.
  */
-export async function settingsProps(ctx: PageContext, req: Request): Promise<SettingsProps> {
-  const [me, sessions, passkeys] = await Promise.all([
+export async function settingsProps(
+  ctx: PageContext,
+  req: Request,
+  pane: SettingsPane,
+): Promise<SettingsProps> {
+  // §13's shell rule, as code: ONE read per render feeding both the rail and the pane, so
+  // a marker cannot be a second query that disagrees with the list beside it. Every pane
+  // pays for all five, which is the price of a rail that is always right.
+  const [me, sessions, passkeys, lastUsed, tokens, connections] = await Promise.all([
     callAuth<{ user?: { twoFactorEnabled?: boolean } }>(req, "/get-session"),
     callAuth<BetterAuthSession[]>(req, "/list-sessions"),
     callAuth<BetterAuthPasskey[]>(req, "/passkey/list-user-passkeys"),
+    // §5's own column, which the plugin's listing cannot carry (identity says why).
+    passkeyLastUsed(ctx.ownerId),
+    read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
+    read<{ connections: ConnectionRow[] }>(ctx, "connection_list"),
   ]);
   // better-auth's listings, defended: the shapes are better-auth's own to change, and
   // /settings showing an empty list is a better answer than a 500 (callAuth's contract
   // reads a bodiless success as `{}`, which is not a listing).
   const rows = (Array.isArray(sessions) ? sessions : []).map((row) => sessionRow(row, ctx.sessionId));
-  const keys = (Array.isArray(passkeys) ? passkeys : []).map((pk) => passkeyRow(pk, ctx.now));
+  const keys = (Array.isArray(passkeys) ? passkeys : []).map((pk) =>
+    passkeyRow(pk, ctx.now, lastUsed[pk.id]),
+  );
+  const bound = tokenRows(tokens.tokens, Date.parse(ctx.now));
   return {
     ...(await shell(ctx, "settings")),
+    pane,
     csrfToken: ctx.csrfToken,
     twoFactor: me?.user?.twoFactorEnabled
       ? { enabled: true, backupCodesRemaining: 0, generatedAt: ctx.now }
@@ -1370,17 +2165,62 @@ export async function settingsProps(ctx: PageContext, req: Request): Promise<Set
     revealedBackupCodes: null,
     passkeys: keys,
     sessions: rows,
-    confirm: settingsConfirm(ctx.query, rows, keys),
+    tokens: bound,
+    tokenKind: tokenKindOf(ctx.query),
+    connections: connections.connections,
+    confirm: settingsConfirm(ctx.query, pane, rows, keys, connections.connections),
+    passwordError: passwordErrorOf(ctx.query, pane),
   };
+}
+
+/** The field a refused **Update password** left on the URL, read back on the pane that
+ *  drew the form — the same "a mutation belongs to a pane" rule the dialogs follow. */
+function passwordErrorOf(query: URLSearchParams, pane: SettingsPane): PasswordField | null {
+  if (pane !== "password" || query.get(NOTICE_KEYS.failed) === null) return null;
+  const field = query.get(NOTICE_KEYS.field);
+  return PASSWORD_FIELDS.find((name) => name === field) ?? null;
+}
+
+/**
+ * The Tokens pane's rows: `token_list`'s answer minus the revoked ones — §13's "revoked
+ * rows are not listed (nothing left to act on)", which is the PAGE's filter and not the
+ * op's. Expired keys stay: they still hold a row to Remove.
+ */
+function tokenRows(tokens: TokenInfo[], now: number): TokenRow[] {
+  return tokens
+    .filter((token) => token.revokedAt === null)
+    .map((token) => ({
+      id: token.id,
+      prefix: token.prefix,
+      kind: token.kind,
+      boundTo: token.refSlug,
+      createdAt: token.createdAt,
+      expiresAt: token.expiresAt,
+      lastUsedAt: token.lastUsedAt,
+      expired: token.expiresAt !== null && token.expiresAt <= now,
+    }));
+}
+
+/** §13's `?kind=agent|app`, or null for **All** — anything else is All too, because a
+ *  filter naming no kind is not a filter (and never an empty listing). */
+function tokenKindOf(query: URLSearchParams): TokenRow["kind"] | null {
+  const kind = query.get("kind");
+  return kind === "agent" || kind === "app" ? kind : null;
 }
 
 /** The passkey fields /settings draws, as the plugin's own listing spells them. */
 type BetterAuthPasskey = { id: string; name?: string | null; createdAt?: string | null };
 
 /** `name` is what the authenticator reported, which may be nothing; `createdAt` is set by
- *  every registration the plugin performs, so a null one is a hand-inserted row. */
-function passkeyRow(pk: BetterAuthPasskey, now: string): PasskeyRow {
-  return { id: pk.id, name: pk.name || "Passkey", addedAt: pk.createdAt ?? now, lastUsedAt: null };
+ *  every registration the plugin performs, so a null one is a hand-inserted row.
+ *  `lastUsed` is §5's epoch-ms column, absent until an assertion has verified. */
+function passkeyRow(pk: BetterAuthPasskey, now: string, lastUsed?: number): PasskeyRow {
+  return {
+    id: pk.id,
+    name: pk.name || "Passkey",
+    addedAt: pk.createdAt ?? now,
+    lastUsedAt: lastUsed === undefined ? null : new Date(lastUsed).toISOString(),
+  };
 }
 
 /**
@@ -1392,20 +2232,40 @@ function passkeyRow(pk: BetterAuthPasskey, now: string): PasskeyRow {
  */
 function settingsConfirm(
   query: URLSearchParams,
+  pane: SettingsPane,
   sessions: SessionRow[],
   passkeys: PasskeyRow[],
+  connections: ConnectionRow[],
 ): SettingsConfirm | null {
+  const kind = query.get("confirm") ?? "";
+  // A dialog belongs to the pane that draws its control: the same query carried to another
+  // pane's URL opens nothing, which is what makes "?confirm= rides the owning pane" a
+  // property of the page rather than of the links it happens to render.
+  if (!Object.prototype.hasOwnProperty.call(SETTINGS_CONFIRM_PANE, kind)) return null;
+  if (SETTINGS_CONFIRM_PANE[kind as SettingsConfirm["kind"]] !== pane) return null;
   const id = query.get("id") ?? "";
-  switch (query.get("confirm")) {
+  switch (kind) {
     case "disable-two-factor":
       return { kind: "disable-two-factor" };
     case "revoke-session": {
       const row = sessions.find((session) => session.id === id && !session.current);
       return row === undefined ? null : { kind: "revoke-session", id, client: row.client };
     }
+    // The one confirmation that names no row, so there is nothing to look up and nothing
+    // a guessed id could miss: it is about every session except the one asking.
+    case "revoke-other-sessions":
+      return { kind: "revoke-other-sessions" };
     case "remove-passkey": {
       const row = passkeys.find((pk) => pk.id === id);
       return row === undefined ? null : { kind: "remove-passkey", id, name: row.name };
+    }
+    case "revoke-connection": {
+      // A revoked binding stays listed with no control (§13), so it draws no dialog
+      // either — the query naming one is the same as a query naming nothing.
+      const row = connections.find((c) => c.id === id && c.revokedAt === null);
+      return row === undefined
+        ? null
+        : { kind: "revoke-connection", id, client: row.clientName ?? row.clientId };
     }
     default:
       return null;
@@ -1620,16 +2480,6 @@ function namespaceOfResource(resource: string): string {
   } catch {
     return "";
   }
-}
-
-/* ------------------------------------- /oauth/connections (§19.6/§8) ------------------------------------- */
-
-/** /oauth/connections — `connection_list` unchanged (§8's parity invariant): the page shows
- *  nothing the CLI or an agent holding an admin token could not also read. */
-export async function connectionsProps(ctx: PageContext): Promise<ConnectionsProps> {
-  // deps: admin.ops (connection_list)
-  const listed = await read<{ connections: ConnectionRow[] }>(ctx, "connection_list");
-  return { now: ctx.now, csrfToken: ctx.csrfToken, connections: listed.connections };
 }
 
 /* ---------------------------------- shared ------------------------------------ */

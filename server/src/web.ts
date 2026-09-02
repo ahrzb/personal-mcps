@@ -36,6 +36,8 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { ops } from "./admin";
 import type { AdminOp } from "./admin";
+import { APP_PANES } from "./app-routes";
+import type { AppPane } from "./app-routes";
 import type { PushSubscriptionJson } from "./approvals";
 import { exportJsonl, record } from "./audit";
 import { HubError } from "./errors";
@@ -50,10 +52,10 @@ import { SettingsPage } from "./pages/settings";
 import { ApprovalDetail } from "./pages/approval-detail";
 import { ApprovalsPage } from "./pages/approvals";
 import { AuditPage } from "./pages/audit";
-import { ConnectionsPage } from "./pages/connections";
 import { ConsentPage } from "./pages/consent";
 import { Device } from "./pages/device";
 import { Login } from "./pages/login";
+import { AppDetailPage } from "./pages/app-detail";
 import { AppNewPage } from "./pages/app-new";
 import { AppsPage } from "./pages/apps";
 import {
@@ -63,19 +65,39 @@ import {
   auditFilters,
   auditProps,
   auditQueryOf,
-  connectionsProps,
   consentProps,
   deviceProps,
   loginProps,
+  NOTICE_KEYS,
   paths,
+  SETTINGS_PANES,
+  appDetailProps,
   appNewForm,
   appNewProps,
   appsProps,
 } from "./pages/model";
-import type { Notice, PageContext, AppNewErrors } from "./pages/model";
+import type {
+  AppDetailPane,
+  Notice,
+  PageContext,
+  AppNewErrors,
+  PasswordField,
+} from "./pages/model";
 // The one stylesheet, as bytes a worker can serve (see the *.css declaration in
 // workers-env.d.ts for why an import is how it gets here).
 import styles from "./pages/styles.css";
+
+/**
+ * The one thing a request carries from a gate to the handler under it: the session the
+ * gate ALREADY resolved (`sessionOf` reads it back). Declared on hono's own variable map
+ * rather than as an app-wide type parameter so that no handler, no `mutation` and no
+ * `dispatch` signature below grows a generic to say it.
+ */
+declare module "hono" {
+  interface ContextVariableMap {
+    ownerSession?: OwnerSession;
+  }
+}
 
 /**
  * hono's `Hono` app, opaque to the composition root: it mounts this at every segment
@@ -116,9 +138,9 @@ type PageRouter = unknown;
  *   authenticated, uncovered authorization request here with a signed query the page
  *   echoes back verbatim; the POST verifies with the provider's own /oauth2/consent
  *   BEFORE writing oauth_binding, so a refused request writes nothing.
- * - /oauth/connections — the bindings the consent screen produced, fronting
- *   connection_list/connection_revoke; Revoke rides the same generic dispatch as
- *   /apps' own mutations.
+ * - /oauth/connections — a 301 to /settings/clients, where §13 re-homed the bindings the
+ *   consent screen produced. connection_list/connection_revoke are fronted by that pane;
+ *   Revoke rides the same generic dispatch as /apps' own mutations, under /settings/clients.
  * - /manifest.webmanifest, /sw.js, /styles.css — the PWA shell: installability, push,
  *   and the one stylesheet. The service worker handles push + notificationclick
  *   (opening /approvals/<id>) and never intercepts navigation (the no-SPA pin, §13).
@@ -219,44 +241,70 @@ export function pageRoutes(): PageRouter {
 
   /* --------------------------------- /settings --------------------------------- */
 
-  // §4/§13's recent-auth surface, whose other half is every credential POST below: a
-  // session minted by the device flow never qualifies, and a browser session older than
-  // better-auth's freshness window is sent through a fresh sign-in. Both refusals are
-  // identity's, thrown as a redirect.
-  app.get(paths.settings, async (c) => {
-    const session = await requireOwnerSession(c.req.raw, { recent: true });
-    const ctx = await context(c.req.raw, session);
-    return render(SettingsPage(await settingsProps(ctx, c.req.raw)));
-  });
+  // §13's "A page's gate is every pane's gate", as ONE PREFIX RULE rather than a check per
+  // route: every pane, every credential POST and both ops-backed dispatchers below are
+  // behind this middleware, so a route added under /settings cannot be added ungated.
+  // §4's recent-auth surface is what it proves: a session minted by the device flow never
+  // qualifies, and a browser session older than better-auth's freshness window is sent
+  // through a fresh sign-in. Both refusals are identity's, thrown as a redirect. It reads
+  // a COOKIE and never `Authorization` — that is requireOwnerSession's own contract, and
+  // it is why a bearer on a page route is not a credential but simply nothing.
+  // The resolved session is STASHED rather than discarded: `sessionOf` hands it to the
+  // pane handlers and to `mutation`, so the gate's decision — a better-auth session read
+  // plus §4's freshness read — is made once per request instead of being made here and
+  // then made again by everything this wraps.
+  const settingsGate = async (c: Context, next: () => Promise<void>) => {
+    c.set("ownerSession", await requireOwnerSession(c.req.raw, { recent: true }));
+    await next();
+  };
+  app.use(paths.settings, settingsGate);
+  app.use(`${paths.settings}/*`, settingsGate);
+
+  // §13's six panes, one URL each. The landing pane is Password and has no alias — the
+  // `/settings/password` a reader might guess is answered by this app's own 404, because
+  // no route claims it. Each handler differs from the next in one word, so the pane is a
+  // parameter of the loader rather than of a page (pages/model's `settingsProps`).
+  for (const { pane, href } of SETTINGS_PANES) {
+    app.get(href, async (c) => {
+      const ctx = await context(c.req.raw, await sessionOf(c));
+      return render(SettingsPage(await settingsProps(ctx, c.req.raw, pane)));
+    });
+  }
 
   // /settings's credential forms, translated the same way /login's are and gated the way
   // /settings itself is: each is a `credential`, so session, RECENT AUTHENTICATION (§4) and
   // CSRF are all proven before any of this runs. The pinned parity exception is untouched —
   // none of them names an op, and none of them reaches D1 except through better-auth (§8).
+  // Each names the PANE that drew its form, because that is where its notice has to land
+  // (§13: "mutations belong to a pane") — the page root is one pane's answer, not every
+  // pane's.
   app.post(
     paths.auth.totpEnable,
-    credential("/two-factor/enable", "two_factor_enable", (form) => ({
+    credential(paths.settingsTwoFactor, "/two-factor/enable", "two_factor_enable", (form) => ({
       password: field(form, "password") ?? "",
     })),
   );
 
   app.post(
     paths.auth.totpDisable,
-    credential("/two-factor/disable", "two_factor_disable", (form) => ({
+    credential(paths.settingsTwoFactor, "/two-factor/disable", "two_factor_disable", (form) => ({
       password: field(form, "password") ?? "",
     })),
   );
 
   app.post(
     paths.auth.backupCodesGenerate,
-    credential("/two-factor/generate-backup-codes", "backup_codes_generate", (form) => ({
-      password: field(form, "password") ?? "",
-    })),
+    credential(
+      paths.settingsTwoFactor,
+      "/two-factor/generate-backup-codes",
+      "backup_codes_generate",
+      (form) => ({ password: field(form, "password") ?? "" }),
+    ),
   );
 
   app.post(
     paths.auth.passkeyDelete,
-    credential("/passkey/delete-passkey", "passkey_remove", (form) => ({
+    credential(paths.settingsPasskeys, "/passkey/delete-passkey", "passkey_remove", (form) => ({
       id: field(form, "id") ?? "",
     })),
   );
@@ -267,10 +315,83 @@ export function pageRoutes(): PageRouter {
   // session shape can keep leaving `token` out of the props entirely (§15).
   app.post(
     paths.auth.sessionRevoke,
-    credential("/revoke-session", "session_revoke", async (form, req) => ({
+    credential(paths.settingsSessions, "/revoke-session", "session_revoke", async (form, req) => ({
       token: (await sessionTokenFor(req, field(form, "id") ?? "")) ?? "",
     })),
   );
+
+  // §13's **Revoke all others** — better-auth's own endpoint, which keeps the session
+  // that asked and deletes every other. The opposite contract from the Password pane's
+  // checkbox, and deliberately not unified with it.
+  app.post(
+    paths.auth.revokeOtherSessions,
+    credential(paths.settingsSessions, "/revoke-other-sessions", "revoke_other_sessions", () => ({})),
+  );
+
+  // §13's **Update password** — a `credential` in every respect its five siblings are
+  // (recent auth, CSRF, better-auth's own Set-Cookie carried on to the browser exactly as
+  // a sign-in carries it), and spelled out here rather than through `credential` because
+  // three of §13's sentences about it are about the ANSWER rather than the call: the hub
+  // pre-checks new ≠ confirm (better-auth's body has no confirm field, so nobody else
+  // can), better-auth's error CODE picks the control the refusal is drawn beside, and `N`
+  // is counted before the call — after a successful revoke there is no listing left to
+  // count and no cookie left to ask with.
+  app.post(
+    paths.auth.changePassword,
+    mutation(
+      async (c, _session, form) => {
+        const newPassword = field(form, "newPassword") ?? "";
+        // The ONE check the hub makes itself, and it is made BEFORE the call: a
+        // mistyped confirmation must not reach better-auth, which would happily accept
+        // the password the owner did not mean to set (§13).
+        if (newPassword !== (field(form, "confirmPassword") ?? "")) {
+          // No `reason`: the hub's own refusal has no upstream sentence, and §13 draws
+          // this one beside the control the `field` names (noticeUrl says the rest).
+          return redirectWith(
+            noticeUrl(paths.settingsPane("password"), CHANGE_PASSWORD, { reason: "" }, { field: "confirmPassword" }),
+            null,
+          );
+        }
+        // A browser sends an unticked box as nothing at all, which is what makes its
+        // presence the checkbox's own state and not a second control (§13's default-on).
+        const revokeOtherSessions = field(form, "revokeOtherSessions") !== null;
+        const others = revokeOtherSessions ? await otherSessionCount(c.req.raw) : null;
+        const answered = await callAuthResponse(c.req.raw, "/change-password", {
+          currentPassword: field(form, "currentPassword") ?? "",
+          newPassword,
+          revokeOtherSessions,
+        });
+        if (answered === null || !answered.ok) {
+          const refusal = await refusalOf(answered);
+          const named = PASSWORD_REFUSAL_FIELD[refusal.code];
+          return redirectWith(
+            // Every refusal still carries the ordinary notice — that is the shell's
+            // contract for a redirect-back and §13's "anything else" arm. What a MAPPED
+            // code adds is the control: the notice keeps better-auth's own words and the
+            // §13 sentence is drawn beside the field, so neither is spelled twice.
+            noticeUrl(paths.settingsPane("password"), CHANGE_PASSWORD, { reason: refusal.message }, {
+              ...(named === undefined ? {} : { field: named }),
+            }),
+            null,
+          );
+        }
+        return redirectWith(
+          noticeUrl(paths.settingsPane("password"), CHANGE_PASSWORD, { value: null }, {
+            ...(others === null ? {} : { signedOut: String(others) }),
+          }),
+          answered,
+        );
+      },
+      { recent: true },
+    ),
+  );
+
+  // The two ops-backed panes' dispatchers (§13's Tokens and Connected clients), each
+  // under its own pane's prefix so the redirect-back lands where the form was drawn.
+  // They ride the SAME generic dispatch /apps' mutations do — the final segment names the
+  // op — and the prefix gate above holds them to /settings's stricter regime.
+  app.post(`${paths.settingsTokens}/:op`, dispatch(paths.settingsTokens));
+  app.post(`${paths.settingsClients}/:op`, dispatch(paths.settingsClients));
 
   /* ---------------------------------- /audit ---------------------------------- */
 
@@ -337,6 +458,31 @@ export function pageRoutes(): PageRouter {
     );
   });
 
+  // §13's eight panes behind one rail, as two routes: the page root renders the LANDING
+  // pane (Tools) and each of the seven others answers at its own URL. Registered after
+  // the static segments above, which is what keeps `/apps/new` a page rather than a slug
+  // — the same precedence app-routes' RESERVED_APP_SLUGS makes `app_create` refuse. The
+  // pane list is that module's, so a pane added there is mounted here with no second edit,
+  // and `tools` is deliberately not in it: `/apps/<slug>/tools` falls to the 404 below,
+  // because the landing pane has no alias (§13, "one URL per pane").
+  //
+  // The gate is `requireOwnerSession` with no options — §13's "`/apps/<slug>/*` is the
+  // ordinary owner session", deliberately NOT /settings's recent-auth prefix rule.
+  app.get("/apps/:slug", async (c) => appDetailPane(c, "tools"));
+  app.get("/apps/:slug/:pane", async (c) => {
+    const pane = c.req.param("pane") ?? "";
+    if (!(APP_PANES as readonly string[]).includes(pane)) return noSuchPage();
+    return appDetailPane(c, pane as AppPane);
+  });
+
+  /** One pane of one app, or the 404 an unknown, reserved or foreign slug shares. */
+  async function appDetailPane(c: Context, pane: AppDetailPane): Promise<Response> {
+    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
+    const props = await appDetailProps(ctx, c.req.param("slug") ?? "", pane);
+    if (props === null) return noSuchPage();
+    return render(AppDetailPage(props));
+  }
+
   // The one mutation that does not redirect back, because its answer cannot survive a
   // redirect: a tunneled create is followed by the token_issue that gives the bot its
   // credential, and §4 shows that plaintext exactly once — in this response, never in a
@@ -400,6 +546,43 @@ export function pageRoutes(): PageRouter {
 
   app.post("/apps/:op", dispatch(paths.apps));
 
+  // §13's Token pane gets ONE route of its own, for the same reason `paths.appCreate` has
+  // one: the reveal cannot survive a redirect and `dispatch` unconditionally redirects, so
+  // the answer is a 200 rendering the pane with the plaintext in place (§15 — a key never
+  // rides a URL). It still keeps the final-segment convention, so parity direction B
+  // describes it like every other target. Mounted ahead of the generic pane dispatcher.
+  app.post(
+    `/apps/:slug/${TOKEN_ISSUE}`,
+    mutation(async (c, session, form) => {
+      const slug = c.req.param("slug") ?? "";
+      const minted = await attempt(() =>
+        ops[TOKEN_ISSUE].handler(session.user.userId, {
+          ...queryFields(c.req.raw),
+          ...formFields(form),
+        }),
+      );
+      // A refusal has no plaintext to protect, so it goes back the way every other pane
+      // mutation's does — to the pane that drew the form, carrying its own reason.
+      const back = paths.appPane(slug, "token");
+      if ("reason" in minted) return c.redirect(noticeUrl(back, TOKEN_ISSUE, minted), 303);
+      const ctx = await context(c.req.raw, session);
+      const props = await appDetailProps(ctx, slug, "token");
+      if (props === null) return noSuchPage();
+      return render(AppDetailPage({ ...props, reveal: tokenOf(minted.value) }));
+    }),
+  );
+
+  // Every other mutation an `/apps/<slug>` pane renders, through the same generic dispatch
+  // /apps' own mutations ride — and back to the pane that drew the form. Delete is the one
+  // that cannot go back: the page it came from is the 404 §13 pins, so it lands on the list.
+  app.post(
+    "/apps/:slug/:op",
+    dispatch((c) => {
+      const pane = APP_OP_PANE[c.req.param("op") ?? ""];
+      return pane === undefined ? paths.apps : paths.appPane(c.req.param("slug") ?? "", pane);
+    }),
+  );
+
   /* -------------------------------- /oauth/consent ------------------------------ */
   //
   // §19.5's whole security boundary: the provider redirects an authenticated, uncovered
@@ -451,14 +634,13 @@ export function pageRoutes(): PageRouter {
 
   /* ------------------------------- /oauth/connections --------------------------- */
 
-  app.get(paths.oauthConnections, async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    return render(ConnectionsPage(await connectionsProps(ctx)));
-  });
-
-  // Revoke, fronting connection_revoke exactly like /apps fronts its own ops (§8's
-  // parity direction B): the final path segment names the op, `id` rides the query string.
-  app.post("/oauth/connections/:op", dispatch(paths.oauthConnections));
+  // The list moved into Settings and the old URL is now a PERMANENT redirect to the pane
+  // that holds it (§13/§19): 301 rather than 302, because the move is not temporary and a
+  // bookmark should stop coming back here. No POST dispatcher of its own any more either —
+  // Revoke moved with the pane, and `paths.connectionRevoke` posts under
+  // `/settings/clients/`. Deliberately ungated: it renders nothing, so there is nothing to
+  // gate, and the pane it points at is behind /settings's own prefix rule.
+  app.get(paths.oauthConnections, (c) => c.redirect(paths.settingsClients, 301));
 
   /* -------------------------------- the shell --------------------------------- */
 
@@ -545,14 +727,28 @@ function mutation(
   handle: (c: Context, session: OwnerSession, form: FormData) => Promise<Response>,
   gate?: { recent: boolean },
 ): (c: Context) => Promise<Response> {
-  // deps: identity.requireOwnerSession · checkCsrf
+  // deps: sessionOf · checkCsrf
   return async (c) => {
-    const session = await requireOwnerSession(c.req.raw, gate);
+    const session = await sessionOf(c, gate);
     const form = await c.req.formData();
     const refused = await checkCsrf(session.sessionId, form);
     if (refused !== null) return refused;
     return handle(c, session, form);
   };
+}
+
+/**
+ * The session a handler runs under: the `/settings` prefix gate's, when that gate ran, and
+ * otherwise this route's own. The gate is the only thing that ever stashes one, so "already
+ * resolved" means exactly "under /settings" — and the fallback is what every route outside
+ * that prefix takes, which is why this is not a cache with a lifetime but a read of what
+ * the request already decided. A stashed session is always the STRICTER one (the gate asks
+ * for §4's recent authentication unconditionally), so reusing it can never admit a session
+ * a route's own `gate` would have refused.
+ */
+async function sessionOf(c: Context, gate?: { recent: boolean }): Promise<OwnerSession> {
+  // deps: identity.requireOwnerSession
+  return c.get("ownerSession") ?? requireOwnerSession(c.req.raw, gate);
 }
 
 /**
@@ -638,6 +834,7 @@ async function signInTranslation(
  * makes "all of them" true of the family rather than of the five that exist today.
  */
 function credential(
+  pane: string,
   endpoint: string,
   op: string,
   body: (form: FormData, req: Request) => Record<string, unknown> | Promise<Record<string, unknown>>,
@@ -647,7 +844,13 @@ function credential(
     const answered = await callAuthResponse(c.req.raw, endpoint, await body(form, c.req.raw));
     const succeeded = answered !== null && answered.ok;
     return redirectWith(
-      noticeUrl(paths.settings, op, succeeded ? { value: null } : { reason: await refusalOf(answered) }),
+      // `pane` and not `paths.settings`: §13 lands a notice on the pane that RENDERED the
+      // form, and five of these six forms are drawn somewhere other than the page root.
+      noticeUrl(
+        pane,
+        op,
+        succeeded ? { value: null } : { reason: (await refusalOf(answered)).message },
+      ),
       succeeded ? answered : null,
     );
   }, { recent: true });
@@ -702,12 +905,62 @@ function crossOrigin(req: Request): boolean {
   return origin !== null && origin !== env.PUBLIC_ORIGIN;
 }
 
-/** The one line a refused credential change shows: better-auth's own `message` and nothing
- *  else out of the body. A message names a field ("[body.password] Invalid input"), never a
- *  submitted value — and the rest of the body is not a notice's business (§15). */
-async function refusalOf(response: Response | null): Promise<string> {
-  const body = (await response?.json().catch(() => null)) as { message?: unknown } | null;
-  return typeof body?.message === "string" ? body.message : "The change was refused.";
+/**
+ * What a refused credential call is worth showing, and nothing else out of the body: the
+ * one line — better-auth's own `message`, which names a field ("[body.password] Invalid
+ * input") and never a submitted value (§15) — and its error `code`, which is the stable
+ * name §13's Password pane maps onto a control. The rest of the body is no notice's
+ * business, and the body is read exactly once because a Response can only answer once.
+ */
+async function refusalOf(response: Response | null): Promise<{ code: string; message: string }> {
+  const body = (await response?.json().catch(() => null)) as
+    | { code?: unknown; message?: unknown }
+    | null;
+  return {
+    code: typeof body?.code === "string" ? body.code : "",
+    message: typeof body?.message === "string" ? body.message : "The change was refused.",
+  };
+}
+
+/** The op key **Update password** reports its outcome under, spelled once because the
+ *  route writes it and `noticeOf` reads it back. */
+const CHANGE_PASSWORD = "change_password";
+
+/** The op **Issue new token** fronts, spelled once because its route mounts the name, keys
+ *  the ops table with it and names it back in a refusal's notice. */
+const TOKEN_ISSUE = "token_issue";
+
+/**
+ * Which `/apps/<slug>` pane owns each mutation its panes render, so the redirect-back lands
+ * where the form was (§13). An op with no entry here has no pane to go back to — which is
+ * exactly `app_delete`, whose page is the 404 §13 pins the moment it succeeds.
+ */
+const APP_OP_PANE: Record<string, AppPane> = {
+  token_revoke: "token",
+  app_archive: "danger",
+  app_unarchive: "danger",
+};
+
+/**
+ * §13's two mapped refusal codes, as the control each is drawn beside. A code that is not
+ * here is not a hole: §13 sends "anything else" to the ordinary refusal notice, and a
+ * table that guessed at better-auth's other codes would be inventing copy for them.
+ */
+const PASSWORD_REFUSAL_FIELD: Record<string, PasswordField> = {
+  INVALID_PASSWORD: "currentPassword",
+  PASSWORD_TOO_SHORT: "newPassword",
+};
+
+/**
+ * §13's `N`: every session of this owner except the one posting, counted from
+ * better-auth's own listing BEFORE the change. It cannot be counted after — a successful
+ * `revokeOtherSessions` deletes every session including this one, so the cookie that
+ * would ask is dead by then — and better-auth returns no count of its own.
+ */
+async function otherSessionCount(req: Request): Promise<number> {
+  // deps: identity.callAuth
+  const listed = await callAuth<unknown[]>(req, "/list-sessions");
+  return Array.isArray(listed) ? Math.max(0, listed.length - 1) : 0;
 }
 
 /**
@@ -740,15 +993,19 @@ const WRONG_CODE = "That code did not work. Try again.";
  * knows no tool names at all — which is what makes "a page can do nothing a tool cannot"
  * structural rather than promised. It is a `mutation` like every other, so the gate order
  * is not restated here either.
+ *
+ * `back` is a FUNCTION where the pane that owns a form is known only per request — one
+ * app's danger zone and another's are different URLs (§13's "mutations belong to a pane"),
+ * and the slug is in the path.
  */
-function dispatch(back: string) {
+function dispatch(back: string | ((c: Context) => string)) {
   return mutation(async (c, session, form) => {
     const name = c.req.param("op") ?? "";
     const op = opNamed(name);
     if (op === undefined) return new Response("No such action\n", { status: 404, headers: TEXT });
     const input = { ...queryFields(c.req.raw), ...formFields(form) };
     const outcome = await attempt(() => op.handler(session.user.userId, input));
-    return c.redirect(noticeUrl(back, name, outcome), 303);
+    return c.redirect(noticeUrl(typeof back === "string" ? back : back(c), name, outcome), 303);
   });
 }
 
@@ -778,23 +1035,65 @@ async function attempt(
  * Where a finished mutation lands: the page it came from, carrying the outcome as one
  * line of props (the redirect-back flash). The op NAME and the refusal's own message
  * ride the query string — both are the owner's own words about their own namespace, and
- * neither is a credential (§15: admin's refusals name fields, never values).
+ * neither is a credential (§15: admin's refusals name fields, never values). THE one
+ * builder: every key it writes is spelled in `NOTICE_KEYS`, which the pages read the
+ * same flash back through, so neither side can rename a key the other still expects.
  */
-function noticeUrl(back: string, op: string, outcome: { value: unknown } | { reason: string }): string {
-  if ("value" in outcome) return `${back}?done=${encodeURIComponent(op)}`;
-  return `${back}?failed=${encodeURIComponent(op)}&reason=${encodeURIComponent(outcome.reason)}`;
+function noticeUrl(
+  back: string,
+  op: string,
+  outcome: { value: unknown } | { reason: string },
+  /** The Password pane's two extra fields (§13); nothing else adds any. */
+  extras: Partial<Record<"field" | "signedOut", string>> = {},
+): string {
+  const fields = new URLSearchParams(
+    "value" in outcome ? { [NOTICE_KEYS.done]: op } : { [NOTICE_KEYS.failed]: op },
+  );
+  // A refusal the HUB made itself carries no upstream sentence (the Password pane's
+  // confirm-mismatch check is the only one); `noticeOf` says the words for an absent
+  // reason, so an empty one is left off rather than written as an empty message.
+  if ("reason" in outcome && outcome.reason !== "") fields.set(NOTICE_KEYS.reason, outcome.reason);
+  for (const [key, value] of Object.entries(extras)) {
+    if (value !== undefined) fields.set(NOTICE_KEYS[key as "field" | "signedOut"], value);
+  }
+  return `${back}?${fields}`;
 }
 
 /** The flash the redirect above left, read back on the next render. */
 function noticeOf(query: URLSearchParams): Notice | null {
-  const done = query.get("done");
-  if (done !== null) return { tone: "success", message: `${humanize(done)} done.` };
-  const failed = query.get("failed");
+  const done = query.get(NOTICE_KEYS.done);
+  if (done !== null) {
+    return done === CHANGE_PASSWORD
+      ? passwordDone(query)
+      : { tone: "success", message: `${humanize(done)} done.` };
+  }
+  const failed = query.get(NOTICE_KEYS.failed);
   if (failed === null) return null;
   return {
     tone: "danger",
     title: `${humanize(failed)} failed`,
-    message: query.get("reason") ?? "The change was refused.",
+    message: query.get(NOTICE_KEYS.reason) ?? "The change was refused.",
+  };
+}
+
+/**
+ * §13's Password-pane success copy — the one outcome this hub spells out rather than
+ * naming its op, because three separate things are worth saying: what changed, what it
+ * cost in sessions (only when the box was ticked), and what it did NOT touch. The last
+ * sentence is true by construction, not by policy: app and agent keys are random secrets
+ * in the hub's own table and nothing hashes the password into them (§4/§5).
+ */
+function passwordDone(query: URLSearchParams): Notice {
+  const signedOut = query.get(NOTICE_KEYS.signedOut);
+  return {
+    tone: "success",
+    title: "Password updated.",
+    message: [
+      signedOut === null ? null : `${signedOut} other session(s) were signed out — this one stays.`,
+      "App and agent tokens keep working: they do not derive from the password.",
+    ]
+      .filter((line): line is string => line !== null)
+      .join(" "),
   };
 }
 

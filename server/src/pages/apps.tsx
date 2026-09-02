@@ -13,6 +13,7 @@
 
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
+import { formatLastSeen } from "./format";
 import { paths } from "./model";
 import type { Notice, AppRow, AppsConfirm, AppsProps } from "./model";
 
@@ -21,21 +22,9 @@ import type { Notice, AppRow, AppsConfirm, AppsProps } from "./model";
  * clock or a string built by concatenation of a `paths` URL.
  * ------------------------------------------------------------------ */
 
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** "now" / "12m ago" / "3h ago" / "Aug 20" — the Apps table's "Last seen" column. */
-function formatLastSeen(lastConnectedAt: number | null, nowIso: string): string {
-  if (lastConnectedAt === null) return "—";
-  const diff = Date.parse(nowIso) - lastConnectedAt;
-  if (diff < MINUTE) return "now";
-  if (diff < HOUR) return `${Math.floor(diff / MINUTE)}m ago`;
-  if (diff < DAY) return `${Math.floor(diff / HOUR)}h ago`;
-  const d = new Date(lastConnectedAt);
-  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
-}
+/* `formatLastSeen` — this table's "Last seen" column and, on /apps/<slug>, the same fact
+ * about the same app — comes from `format.ts`: two spellings of one stamp would read as
+ * two different facts. */
 
 /** The DECLARED roles, or "all" for the empty list (§'s built-in role, never stored). */
 function rolesText(roleNames: string[]): string {
@@ -120,7 +109,11 @@ const AppTableRow: FC<{ row: AppRow; csrfToken: string; now: string }> = ({ row,
   return (
     <tr>
       <td>
-        <div class="cell-name">{row.name}</div>
+        {/* Every row links to its detail page, archived rows included — §13's amendment
+            of 2026-09-02; the row's own actions stay beside the link. */}
+        <div class="cell-name">
+          <a href={paths.appDetail(row.slug)}>{row.name}</a>
+        </div>
         <div class="cell-slug wide-only">{row.slug}</div>
         <div class="narrow-only">
           <div class="badge-row">

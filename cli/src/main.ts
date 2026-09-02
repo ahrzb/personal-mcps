@@ -1627,12 +1627,15 @@ export type ConnectionCommand = { sub: "list" } | { sub: "revoke"; id: string };
  * `pmcp connections | connection revoke <id>` — sugar over connection_list /
  * connection_revoke (§8/§19, §10): the OAuth clients (claude.ai and friends) connected to
  * this namespace via §19's inbound authorization server — a DISTINCT thing from `connect`'s
- * outbound upstream-OAuth URL above. `list` prints each live binding: the client's name (its
- * id, when it registered without one, §19.3), the agent it is bound to, and its
- * created/last-used timestamps — never a token, a client secret, or a JWT, because a
- * connection is a binding and a binding holds no credential (§8). `revoke` is immediate at
- * the door (§19.6): the connection's next call gets the 401 challenge, and the client's
- * consent is gone too, so a refresh cannot resurrect it silently.
+ * outbound upstream-OAuth URL above. `list` prints each binding the namespace holds — live
+ * and revoked alike, since §13's Connected clients pane keeps a revoked row and
+ * `connection_list` therefore no longer filters them out: the client's name (its id, when it
+ * registered without one, §19.3), the agent it is bound to, its created/last-used timestamps,
+ * and the `active` | `revoked` STATUS the pane derives from the same `revokedAt` stamp (the op
+ * speaks timestamps, both readers spell the state) — never a token, a client secret, or a JWT,
+ * because a connection is a binding and a binding holds no credential (§8). `revoke` is
+ * immediate at the door (§19.6): the connection's next call gets the 401 challenge, and the
+ * client's consent is gone too, so a refresh cannot resurrect it silently.
  */
 export async function connection(ctx: CliContext, cmd: ConnectionCommand): Promise<number> {
   // deps: mcpCall
@@ -1655,8 +1658,9 @@ export async function connection(ctx: CliContext, cmd: ConnectionCommand): Promi
       String(row.agentSlug ?? ""),
       row.createdAt === null || row.createdAt === undefined ? "" : formatDateTime(Number(row.createdAt)),
       row.lastUsedAt === null || row.lastUsedAt === undefined ? "never" : formatDateTime(Number(row.lastUsedAt)),
+      row.revokedAt === null || row.revokedAt === undefined ? "active" : "revoked",
     ]),
-    { headers: ["CONNECTION", "CLIENT", "AGENT", "CREATED", "LAST USED"], tty: decorated() },
+    { headers: ["CONNECTION", "CLIENT", "AGENT", "CREATED", "LAST USED", "STATUS"], tty: decorated() },
   ).split("\n");
   write(`${c.dim(table[0])}\n`);
   for (const line of table.slice(1)) write(`${line}\n`);

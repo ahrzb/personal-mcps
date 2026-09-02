@@ -100,13 +100,13 @@ const CredentialsCard: FC<{ step: Extract<LoginStep, { kind: "credentials" }>; r
     <div class="divider">
       <span>or</span>
     </div>
-    {/* Passkey sign-in is a WebAuthn ceremony (navigator.credentials.get against
-        paths.auth.signInPasskey) — inert here on purpose: wiring it is client script,
-        not a template concern, and belongs with whatever owns clients/. */}
-    <button type="button" class="btn btn--outline btn--block">
+    {/* A WebAuthn assertion, not a form post — so this is a button the script below
+        drives, and its two endpoints ride better-auth's own mount (paths.auth). */}
+    <button type="button" class="btn btn--outline btn--block" data-passkey-signin>
       <PasskeyIcon />
       <span>Sign in with a passkey</span>
     </button>
+    <script dangerouslySetInnerHTML={{ __html: passkeySignInScript(landingUrl(redirectTo)) }} />
   </div>
 );
 
@@ -216,6 +216,91 @@ const OTP_SCRIPT = `(function(){
     });
   });
 })();`;
+
+/**
+ * §13's passkey button, made live. A sign-in by passkey is an assertion ceremony rather
+ * than a POST — better-auth's options endpoint, `navigator.credentials.get`, and its
+ * verify endpoint, which answers with the session cookie — so there is no form body for a
+ * hub route to translate and both endpoints are better-auth's own (`paths.auth`).
+ *
+ * base64url both ways: `challenge` and every `allowCredentials[].id` arrive encoded and
+ * the assertion goes back encoded. The same codec lives in settings.tsx's registration
+ * ceremony; the duplication is deliberate — these are inline scripts in two documents,
+ * one of them this chromeless page, and sharing them would need a bundle step the hub
+ * does not have.
+ *
+ * `landing` is where a verified assertion goes, which is the same deep link the password
+ * form carries through the round trip.
+ */
+function passkeySignInScript(landing: string): string {
+  return `(function () {
+  var buttons = document.querySelectorAll('[data-passkey-signin]');
+  if (!buttons.length || !window.PublicKeyCredential) return;
+  var OPTIONS = ${JSON.stringify(paths.auth.passkeyAuthenticateOptions)};
+  var VERIFY = ${JSON.stringify(paths.auth.passkeyVerifyAuthentication)};
+  var LANDING = ${JSON.stringify(landing)};
+  function decode(value) {
+    var raw = atob(String(value).replace(/-/g, '+').replace(/_/g, '/'));
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function encode(buffer) {
+    var view = new Uint8Array(buffer);
+    var text = '';
+    for (var i = 0; i < view.length; i++) text += String.fromCharCode(view[i]);
+    return btoa(text).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+  }
+  function signIn() {
+    fetch(OPTIONS, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (answer) {
+        if (!answer.ok) throw new Error('options ' + answer.status);
+        return answer.json();
+      })
+      .then(function (options) {
+        options.challenge = decode(options.challenge);
+        (options.allowCredentials || []).forEach(function (row) { row.id = decode(row.id); });
+        return navigator.credentials.get({ publicKey: options });
+      })
+      .then(function (assertion) {
+        return fetch(VERIFY, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            response: {
+              id: assertion.id,
+              rawId: encode(assertion.rawId),
+              type: assertion.type,
+              authenticatorAttachment: assertion.authenticatorAttachment,
+              clientExtensionResults: assertion.getClientExtensionResults(),
+              response: {
+                clientDataJSON: encode(assertion.response.clientDataJSON),
+                authenticatorData: encode(assertion.response.authenticatorData),
+                signature: encode(assertion.response.signature),
+                userHandle: assertion.response.userHandle
+                  ? encode(assertion.response.userHandle)
+                  : undefined
+              }
+            }
+          })
+        });
+      })
+      .then(function (answer) {
+        if (!answer.ok) throw new Error('verify ' + answer.status);
+        location.assign(LANDING);
+      })
+      .catch(function (failure) {
+        // A cancelled prompt and a refused assertion look alike from here: the page stays
+        // where it is and the password form is still the way in. Logged, not swallowed.
+        console.error('Passkey sign-in did not complete', failure);
+      });
+  }
+  Array.prototype.forEach.call(buttons, function (button) {
+    button.addEventListener('click', signIn);
+  });
+})();`;
+}
 
 const STYLESHEET = "/styles.css";
 

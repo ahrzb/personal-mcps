@@ -325,9 +325,10 @@ export async function upsertBinding(
 
 // ─────────────────────────────── §19.6/§13 connections: read and revoke ───────────────────
 
-/** One live connection as the /oauth/connections page and `connection_list` show it — the
- *  client it binds, the agent it is bound to, and its timestamps. Never a token, a client
- *  secret, or a JWT (§8): a connection is a binding, and a binding holds no credential. */
+/** One connection as the Connected clients pane and `connection_list` show it — the client
+ *  it binds, the agent it is bound to, the two identity strings §19.5's consent screen shows
+ *  the owner about that client, and its timestamps. Never a token, a client secret, or a JWT
+ *  (§8): a connection is a binding, and a binding holds no credential. */
 export type Connection = {
   id: string;
   clientId: string;
@@ -335,25 +336,40 @@ export type Connection = {
   agentSlug: string;
   createdAt: number;
   lastUsedAt: number | null;
+  /** Tombstoned when set — the op speaks timestamps, the pane derives `active` | `revoked`. */
+  revokedAt: number | null;
+  /** The ORIGIN of the client's first registered redirect URI (§19.5's own identity line),
+   *  `""` when the provider holds no client row for this id. Never the whole URI. */
+  redirectOrigin: string;
+  /** §19.3's DCR marker: nobody was signed in to vouch for this client at registration. */
+  selfRegistered: boolean;
 };
 
 /**
- * Every live binding in the namespace, newest first (§13/§8). Revoked bindings are omitted —
- * a revocation tombstones the row for immediacy at the door, and there is nothing left to act
- * on here. The client's display name is the provider's, `null` when it registered without one
- * (a DCR client may); the caller shows the id in that case. No secret is selected, by
- * construction: the columns are the binding's, and the binding has none.
+ * Every binding in the namespace, newest first (§13/§8) — REVOKED ONES INCLUDED, with their
+ * `revoked_at` stamp: §13's Connected clients pane keeps a revoked row (re-consent revives
+ * it, `upsertBinding` clears the tombstone) and the pane has no second read path, so a row
+ * this op dropped would be a row the listing could not keep. The door reads its own
+ * `revoked_at` per call, so nothing here affects immediacy at the door (§19.6).
+ *
+ * The client's display name is the provider's, `null` when it registered without one (a DCR
+ * client may); the caller shows the id in that case. The redirect ORIGIN and the
+ * self-registered bit are the provider's own columns read through the same LEFT JOIN — the
+ * consent screen computes the first from the AUTHORIZE query, which a connection row has
+ * none of, so it reads the client's STORED registration instead. No secret is selected, by
+ * construction: the columns are the binding's and the client's public identity.
  */
 export async function listConnections(ownerId: string): Promise<Connection[]> {
   // deps: D1 `oauth_binding` · D1 `agent` · D1 `oauthClient`
   const { results } = await db()
     .prepare(
-      `SELECT b."id", b."client_id", b."created_at", b."last_used_at",
-              a."slug" AS agent_slug, c."name" AS client_name
+      `SELECT b."id", b."client_id", b."created_at", b."last_used_at", b."revoked_at",
+              a."slug" AS agent_slug,
+              c."name" AS client_name, c."userId" AS client_user_id, c."redirectUris" AS redirect_uris
          FROM oauth_binding b
          JOIN agent a ON a."id" = b."agent_id"
     LEFT JOIN "oauthClient" c ON c."clientId" = b."client_id"
-        WHERE b."owner_id" = ? AND b."revoked_at" IS NULL
+        WHERE b."owner_id" = ?
         ORDER BY b."created_at" DESC`,
     )
     .bind(ownerId)
@@ -362,8 +378,11 @@ export async function listConnections(ownerId: string): Promise<Connection[]> {
       client_id: string;
       created_at: number;
       last_used_at: number | null;
+      revoked_at: number | null;
       agent_slug: string;
       client_name: string | null;
+      client_user_id: string | null;
+      redirect_uris: string | null;
     }>();
   return results.map((row) => ({
     id: row.id,
@@ -372,7 +391,40 @@ export async function listConnections(ownerId: string): Promise<Connection[]> {
     agentSlug: row.agent_slug,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at ?? null,
+    revokedAt: row.revoked_at ?? null,
+    redirectOrigin: originOf(firstRedirectUri(row.redirect_uris)),
+    // The same one-bit test §19.5 shows on the consent screen: no owning user on the
+    // client's row means it registered itself through the anonymous DCR endpoint. A missing
+    // client row (an id the provider never issued) reads the same way — nothing vouched.
+    selfRegistered: row.client_user_id === null || row.client_user_id === "",
   }));
+}
+
+/**
+ * The FIRST of a client's registered redirect URIs — §19.5 shows one origin, and a client
+ * may register several. The provider's `redirectUris` is a `string[]` column, which its
+ * adapter stores as a JSON array (verified against @better-auth/oauth-provider@1.7.1).
+ * Unreadable or absent → `""`, which renders as no origin: this is a page read, and a
+ * column nobody can parse must not throw inside one.
+ */
+function firstRedirectUri(stored: string | null): string {
+  if (stored === null || stored === "") return "";
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    return Array.isArray(parsed) && typeof parsed[0] === "string" ? parsed[0] : "";
+  } catch {
+    return "";
+  }
+}
+
+/** A URL's origin, or the string itself when it does not parse — display-only, and the
+ *  provider refuses a malformed redirect URI at registration long before this is read. */
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
 }
 
 /** What a revoke touched — enough for the caller's audit row, no more. */

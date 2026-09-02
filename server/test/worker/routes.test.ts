@@ -30,10 +30,12 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import worker, { RESERVED_ROUTES, ROUTES } from "../../src/index";
 import type { Env } from "../../src/index";
+import { RESERVED_APP_SLUGS } from "../../src/app-routes";
 import { USERNAME_CHARSET } from "../../src/identity";
 import { paths } from "../../src/pages/model";
+import { SLUG_CHARSET } from "../../src/registry";
 import { CLIENT_METADATA_PATH, OAUTH_CALLBACK_PATH } from "../../src/upstream";
-import { seedNamespace, resetNamespace, uniqueSlug } from "../harness/seed";
+import { seedNamespace, resetNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 
 /**
@@ -510,7 +512,92 @@ describe("§19.2 · the .well-known discovery segment", () => {
 });
 
 // D15 (2026-09-02) — rows landed as it.todo from docs/superpowers/plans/2026-09-02-d15-panes.md;
-// each row's mechanics are on its `asserts:` line there. Numbered on landing.
+// each row's mechanics are on its `asserts:` line there.
+
+/**
+ * Every `/apps/<something>` a URL builder in `paths` can produce, reduced to that
+ * `<something>` — the candidate set, harvested the way `candidateSegments()` harvests
+ * top-level ones, so a target added to `paths` is walked with no edit here.
+ *
+ * Function-valued members are CALLED with the same probe slug in every argument slot (a few
+ * take an options object, which spreads harmlessly into a query string), and a result whose
+ * second segment IS the probe is dropped: that is the `:slug` hole itself, not a static
+ * segment.
+ */
+function appSegmentCandidates(probe: string): Set<string> {
+  const found = new Set<string>();
+  for (const value of Object.values(paths)) {
+    let built: unknown = value;
+    if (typeof value === "function") {
+      try {
+        built = (value as (...args: unknown[]) => unknown)(...Array.from({ length: value.length }, () => probe));
+      } catch {
+        continue; // a builder this probe cannot satisfy names no segment
+      }
+    }
+    if (typeof built !== "string") continue;
+    const [, first, second] = new URL(built, ORIGIN).pathname.split("/");
+    if (first !== "apps" || second === undefined || second === "" || second === probe) continue;
+    found.add(second);
+  }
+  return found;
+}
+
 describe(`§2/§13 · the app-slug reservation is derived from the router`, () => {
-  it.todo(`§2/§13 · the app-slug reservation is derived, not listed: the charset-legal static segments the walk finds directly under /apps/ equal RESERVED_APP_SLUGS, and the op-named targets fall outside SLUG_CHARSET rather than out of a list · two generated slugs of the same charset classify as the slug route (the twin)`);
+  it("§2/§13 · the app-slug reservation is derived, not listed: the charset-legal static segments the walk finds directly under /apps/ equal RESERVED_APP_SLUGS, and the op-named targets fall outside SLUG_CHARSET rather than out of a list · two generated slugs of the same charset classify as the slug route (the twin)", async () => {
+    const probe = uniqueSlug("probe");
+    const controls = [uniqueSlug("ctrl"), uniqueSlug("ctrltwo")];
+    // A THIRD never-seeded slug, kept out of `candidates`: measuring the controls against one
+    // of themselves would compare a response to itself, and the twin below would assert
+    // nothing but response determinism.
+    const yardstick = uniqueSlug("yard");
+    const harvested = appSegmentCandidates(probe);
+    // CHARSET, asserted rather than assumed: the op-named targets are dropped BY
+    // SLUG_CHARSET — §13's "they carry `_` and fall outside the slug charset already" — and
+    // the dropped set is non-empty, or the clause does nothing.
+    const dropped = [...harvested].filter((segment) => !SLUG_CHARSET.test(segment));
+    expect(dropped.length, "no candidate was dropped by the charset — the clause is vacuous").toBeGreaterThan(0);
+    for (const segment of dropped) expect(segment).toContain("_");
+    const candidates = [...new Set([...harvested, ...RESERVED_APP_SLUGS, ...controls])].filter((segment) =>
+      SLUG_CHARSET.test(segment),
+    );
+
+    // The router classifies, not a list: a session and its own CSRF token, because the POST
+    // probe below goes through `mutation` and a CSRF refusal would answer for every segment
+    // alike.
+    const owner = await seedNamespace(env.DB, { apps: [{ slug: "feed", kind: "tunnel" }] });
+    const { cookie } = await seedOwnerSession(owner.owner);
+    const apps = await call(new Request(`${ORIGIN}${paths.apps}`, { headers: { Cookie: cookie } }));
+    const csrf = /name="csrf"\s+value="([^"]+)"/.exec(await apps.text())?.[1];
+    expect(csrf, "/apps rendered no CSRF field").toBeDefined();
+
+    /** How `/apps/<segment>` answers, on both methods, against this session. */
+    const answersFor = async (segment: string): Promise<[string, string]> => [
+      await bytesOf(await call(new Request(`${ORIGIN}/apps/${segment}`, { headers: { Cookie: cookie } }))),
+      await bytesOf(
+        await call(
+          new Request(`${ORIGIN}/apps/${segment}`, {
+            method: "POST",
+            headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ csrf: String(csrf) }).toString(),
+          }),
+        ),
+      ),
+    ];
+    // The yardstick answers: a charset-legal slug naming no app, so every comparison below is
+    // against exactly what the `:slug` route answers.
+    const [yardGet, yardPost] = await answersFor(yardstick);
+    const isStatic = async (segment: string): Promise<boolean> => {
+      const [asGet, asPost] = await answersFor(segment);
+      return asGet !== yardGet || asPost !== yardPost;
+    };
+
+    const classified = new Set<string>();
+    for (const segment of candidates) if (await isStatic(segment)) classified.add(segment);
+    // EQUALITY in both directions — nothing transcribed on either side.
+    expect([...classified].sort()).toEqual([...RESERVED_APP_SLUGS].sort());
+    // THE TWIN: both generated slugs are read as slugs — each measured against the third,
+    // distinct one — so "static" is a real distinction and not the answer every name gets.
+    for (const control of controls) expect(await isStatic(control), `/apps/${control}`).toBe(false);
+  });
 });

@@ -31,7 +31,10 @@
 // and written here. The seam is unchanged — the SDK still appears in no sibling module —
 // and swapping createMcpHandler in later is an edit to `mcpMessage`/`route` alone.
 
-import { adminBackend, BUILTIN_LOG_BODIES } from "./admin";
+// `owner` is admin's, aliased on the way in: the id→username read has one home (admin
+// already returns exactly the user principal this module builds), and the local name says
+// which of the two "owner" questions this is.
+import { adminBackend, BUILTIN_LOG_BODIES, owner as namespaceOwner } from "./admin";
 import type { ApprovalClaim, Approvals, CheckResult } from "./approvals";
 import { record, REDACTED_QUERY } from "./audit";
 import type { BodyStub } from "./audit";
@@ -200,7 +203,7 @@ export interface AppBackend {
  * serves, seen through the only fields this module touches: the key the filter matches it
  * on, and the outputSchema `served` strips (tools alone carry one).
  */
-type ListedItem = {
+export type ListedItem = {
   name?: string;
   uri?: string;
   uriTemplate?: string;
@@ -710,6 +713,10 @@ async function listScoped(
   slug: string,
   ctx: BackendCtx,
   kind: ListKind,
+  /** The owner's own retained-catalog read (§13's archived page) — the ONE caller that may
+   *  see an archived app's catalog, because it is not a consumer call. Every wire path
+   *  leaves this false and keeps the -32002. */
+  retained = false,
 ): Promise<ListedItem[]> {
   // deps: registry.getApp · registry.resolveAccess · selectBackend · virtualPmcpApp
   const registry = new Registry(env.DB);
@@ -718,9 +725,46 @@ async function listScoped(
   // the same not-permitted answer every other unresolvable name gets.
   if (app === null) throw notPermitted();
   const filter = await registry.resolveAccess(ctx.principal, app);
-  if (app.archived) throw archived();
+  if (app.archived && !retained) throw archived();
   const catalog = await LIST_CATALOG[kind](selectBackend(app), app, { ...ctx, roles: filter.roleNames });
   return filter.filterList(catalog, kind).map(served);
+}
+
+/**
+ * The owner's own view of one app's catalog — `/apps/<slug>`'s ONE read path for tools,
+ * prompts, resources and templates (§13), and deliberately `listScoped` under the OWNER
+ * principal rather than a second read: an owner resolves to the everything-filter, so
+ * "unfiltered by §7 step 2" holds by construction and cannot drift from what the door
+ * would answer. Never audited, like every other listing (§15).
+ *
+ * Two things a page needs that the wire cannot say. First, "unreadable" as distinct from
+ * "empty": a needs-reconnect credential (-32000 from the refresh) and an upstream that
+ * never answered at all (`dial`'s own catch, which never reaches JSON-RPC) BOTH leave
+ * through the failure arm, so the page renders a blank marker — an unread count is not an
+ * empty set. Second, an ARCHIVED app's retained catalog, which §13 keeps on the archived
+ * page while the wire refuses it -32002 before reading anything.
+ */
+export async function ownerCatalog(
+  env: Env,
+  ownerId: string,
+  slug: string,
+  kind: ListKind,
+): Promise<{ ok: true; items: ListedItem[] } | { ok: false; failure: HubError }> {
+  // deps: admin.owner · listScoped
+  try {
+    // Inside the try because the username is READ, never synthesized — a forwarded
+    // identity header must never carry an internal id (§7) — so a namespace with no user
+    // row leaves as an unreadable catalog like any other, not as a crashed page render.
+    const ctx: BackendCtx = { principal: await namespaceOwner(ownerId), roles: [] };
+    return { ok: true, items: await listScoped(env, ownerId, slug, ctx, kind, true) };
+  } catch (err) {
+    // identity's convention: a thrown Response is never ours to swallow.
+    if (err instanceof Response) throw err;
+    // Everything else is "this catalog could not be read" — the two upstream failure
+    // mechanisms above arrive as HubErrors; anything else is reported as the same -32000
+    // rather than crashing a page render.
+    return { ok: false, failure: err instanceof HubError ? err : unavailable() };
+  }
 }
 
 /**

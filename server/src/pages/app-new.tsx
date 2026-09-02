@@ -19,6 +19,7 @@
 
 import type { FC } from "hono/jsx";
 import { html } from "hono/html";
+import { TokenReveal } from "./layout";
 import { paths, type AppNewErrors, type AppNewForm, type AppNewProps, type AppNewStep } from "./model";
 
 /** Not owned by `paths` (display-only asset routes) — same pattern as layout.tsx. */
@@ -214,31 +215,9 @@ const CreatedCard: FC<{ step: Extract<AppNewStep, { kind: "created" }> }> = ({ s
       </div>
     </div>
 
-    {step.token ? (
-      <>
-        <div class="token-reveal">
-          <div class="token-value" id="token-value">
-            {step.token}
-          </div>
-          <button type="button" class="btn btn--outline" id="copy-token">
-            Copy
-          </button>
-        </div>
-        <div class="alert alert--warning">This token is shown only once. Store it in your bot's secret store.</div>
-        {html`
-          <script>
-            (function () {
-              var btn = document.getElementById("copy-token");
-              var value = document.getElementById("token-value");
-              if (!btn || !value) return;
-              btn.addEventListener("click", function () {
-                navigator.clipboard.writeText(value.textContent || "");
-              });
-            })();
-          </script>
-        `}
-      </>
-    ) : null}
+    {/* The same reveal /apps/<slug>'s Token pane draws for a rotation (§13) — one
+        definition, so the two renders of one warning cannot drift apart. */}
+    {step.token ? <TokenReveal token={step.token} /> : null}
 
     <div class="actions">
       <a class="btn btn--primary" href={paths.apps}>

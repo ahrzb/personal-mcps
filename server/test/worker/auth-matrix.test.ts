@@ -1421,14 +1421,14 @@ describe("§4 — the credential family is out of a bearer's reach on better-aut
    * (`/update-user`, `/delete-user`) are guarded and deliberately not driven: red would
    * have run them against the fixture.
    *
-   * The last two are the account-LINKING core, and they are here because a guard written
-   * as a list of family names cannot see them: better-auth serves `/list-accounts` and
-   * `/unlink-account` on this mount from its core, under no plugin this hub configured, so
-   * a guard that enumerates has to have been told about them. §4's harm sentence is these
-   * two exactly — the login methods behind the agent are what "enroll new credentials
-   * and become persistent account takeover" means. `/unlink-account` is driven with a body
-   * better-auth rejects on purpose: under red the guard is not there, and a valid body
-   * would have taken the fixture owner's password login away with it.
+   * `/list-accounts` and `/unlink-account` are the account-LINKING core, and they are here
+   * because a guard written as a list of family names cannot see them: better-auth serves
+   * them on this mount from its core, under no plugin this hub configured, so a guard that
+   * enumerates has to have been told about them. §4's harm sentence is those two exactly —
+   * the login methods behind the agent are what "enroll new credentials and become
+   * persistent account takeover" means. `/unlink-account` is driven with a body better-auth
+   * rejects on purpose: under red the guard is not there, and a valid body would have taken
+   * the fixture owner's password login away with it.
    */
   const CREDENTIAL_CALLS: readonly {
     method: "GET" | "POST";
@@ -1440,6 +1440,18 @@ describe("§4 — the credential family is out of a bearer's reach on better-aut
     { method: "GET", endpoint: "/list-sessions" },
     { method: "GET", endpoint: "/list-accounts" },
     { method: "POST", endpoint: "/unlink-account", body: { providerId: "credential" } },
+    // §13's newest family member, refused BY CONSTRUCTION rather than by being told:
+    // `change-password` is simply outside BEARER_ADMITTED. Its `newPassword` clears the
+    // length check and its `currentPassword` is wrong, so under red better-auth refuses on
+    // the password's merits and the shared fixture's credential survives.
+    {
+      method: "POST",
+      endpoint: "/change-password",
+      body: {
+        currentPassword: "FAKE0000-not-a-password",
+        newPassword: "FAKE0000-not-a-password-either",
+      },
+    },
   ];
 
   for (const { method, endpoint, body } of CREDENTIAL_CALLS) {
@@ -1538,10 +1550,6 @@ describe("§4 — the credential family is out of a bearer's reach on better-aut
     expect(after.status).toBe(401);
   });
 
-  // D15 (2026-09-02) — rows landed as it.todo: lands as one CREDENTIAL_CALLS entry
-  // ({ method: "POST", endpoint: "/change-password", body: { currentPassword, newPassword } }) — the
-  // loop above generates exactly this title from AUTH_BASE_PATH, so the inventory key moves todo → passed.
-  it.todo(`§4 · a device-flow bearer is refused at /api/auth/change-password — the mount is gated, not merely the wrappers`);
 });
 
 /**

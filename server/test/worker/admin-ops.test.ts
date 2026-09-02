@@ -38,15 +38,16 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { adminBackend, ops } from "../../src/admin";
+import { RESERVED_APP_SLUGS } from "../../src/app-routes";
 import { Approvals } from "../../src/approvals";
 import { query, record } from "../../src/audit";
 import type { AuditEntry, AuditRow } from "../../src/audit";
 import type { BackendCtx, Tool } from "../../src/gateway";
 import { upsertBinding } from "../../src/oauth";
 import { tokenPattern } from "../../src/principal";
-import { PMCP_SLUG, writeOnlyPaths } from "../../src/registry";
+import { PMCP_SLUG, SLUG_CHARSET, writeOnlyPaths } from "../../src/registry";
 import type { App } from "../../src/registry";
-import { seedNamespace } from "../harness/seed";
+import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 
 /**
@@ -751,10 +752,14 @@ async function resolveSample(
  * (§9 rule 2's allow-twin and the reserved-slug sweep alike each seed their own fixture),
  * so every call opens its own binding rather than sharing one across namespaces.
  */
-async function openOauthBinding(ns: SeededNamespace): Promise<string> {
+async function openOauthBinding(ns: SeededNamespace, clientId?: string): Promise<string> {
   const bound = await upsertBinding({
     ownerId: ns.owner.userId,
-    clientId: `fixture-oauth-client-${ns.owner.userId}`,
+    // A synthesized id by default — the rows that read the `oauthClient` LEFT JOIN's own
+    // columns (a client's name, its registered redirect URI, whether it self-registered)
+    // pass a REAL registered client id instead, since a synthesized one has no client row
+    // and the join hands those back empty.
+    clientId: clientId ?? `fixture-oauth-client-${ns.owner.userId}`,
     agentId: ns.agents[CLAUDE].id,
   });
   if (bound === null) throw new Error("openOauthBinding: the fixture agent is not in its own namespace");
@@ -1143,10 +1148,192 @@ function span(page: AuditPage): { oldest: number; newest: number } {
 }
 
 // D15 (2026-09-02) — rows landed as it.todo from docs/superpowers/plans/2026-09-02-d15-panes.md;
-// each row's mechanics are on its `asserts:` line there. Numbered on landing.
+// each row's mechanics are on its `asserts:` line there.
+
+/** What one refused call left behind, reduced to what must be uniform across a sweep.
+ *  Local because `refusalOf` above takes an `AdminOpRow` and always substitutes `pmcp`.
+ *  Takes the caller's namespace rather than seeding its own: the sweep counts audit rows
+ *  for ONE owner, and `audit.query` is owner-scoped, so a per-call namespace would make
+ *  "nothing summarised" true by construction. Every call here is a refusal, so sharing
+ *  one namespace across the sweep leaves nothing behind to collide. */
+async function refusalOfSlug(
+  ns: SeededNamespace,
+  slug: string,
+): Promise<{ name: string; code: unknown; message: string }> {
+  try {
+    await ops.app_create.handler(ns.owner.userId, { slug, kind: "tunnel" });
+  } catch (thrown) {
+    const error = thrown as { code?: unknown; message?: string };
+    return { name: (error as Error).constructor.name, code: error.code, message: String(error.message) };
+  }
+  throw new Error(`app_create accepted the reserved slug "${slug}"`);
+}
+
+/**
+ * Register one OAuth client through the provider's OWN endpoint (§19.3), the only way a
+ * real `oauthClient` row exists — never planted by hand. With a session cookie the provider
+ * stamps the registering user on the row (a pre-registered client); without one it is
+ * anonymous DCR. The composition root is imported DYNAMICALLY, the dodge
+ * `seed.seedOwnerSession` uses, so this file's top-level deps do not grow.
+ */
+async function registerClient(fields: Record<string, unknown>, cookie?: string): Promise<string> {
+  const { default: worker } = await import("../../src/index");
+  const origin = (env as unknown as { PUBLIC_ORIGIN: string }).PUBLIC_ORIGIN;
+  const response = await worker.fetch(
+    new Request(`${origin}/api/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin, ...(cookie === undefined ? {} : { Cookie: cookie }) },
+      body: JSON.stringify({
+        token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        ...fields,
+      }),
+    }),
+    env as never,
+  );
+  if (response.status !== 201) {
+    throw new Error(`registerClient: ${response.status} ${await response.text()}`);
+  }
+  return ((await response.json()) as { client_id: string }).client_id;
+}
+
+/** `connection_list`'s answer, in the shape §8's amended row carries. */
+type ListedConnection = {
+  id: string;
+  clientId: string;
+  clientName: string | null;
+  agentSlug: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+  redirectOrigin: string;
+  selfRegistered: boolean;
+};
+
+async function connectionsOf(ownerId: string): Promise<ListedConnection[]> {
+  const listed = (await ops.connection_list.handler(ownerId, {})) as { connections: ListedConnection[] };
+  return listed.connections;
+}
+
 describe(`§8/§13 · the ops behind the Access panes, and the reserved app slugs`, () => {
-  it.todo(`§8 · app_create refuses every RESERVED_APP_SLUGS member the way it refuses pmcp — the same refusal class and code, one sentence across the reserved set modulo the slug, each naming the slug it refused — and writes no admin.app_create row for any of them · a non-reserved slug of the same charset creates (the twin)`);
-  it.todo(`§8 · connection_list's rows carry the two identity strings §19.5's consent screen shows — the origin of the client's registered redirect URI, and whether it self-registered · a client registered under the owner's session reports selfRegistered false (the twin) — and still no token, client secret or JWT`);
-  it.todo(`§8/§13 · connection_list reports a revoked binding with its revokedAt set instead of dropping it · the live binding beside it reports null (the twin) — the Connected clients pane has no second read path, so a row the op omits is a row §13's listing cannot keep`);
-  it.todo(`§8/§13 · token_list, token_revoke, connection_list and connection_revoke still answer a CLI credential on the pmcp surface after their panes move behind /settings — the gate is a prefix rule, not the tools being hidden from the CLI (the counter-twin of the /settings gate rows)`);
+  it(`§8 · app_create refuses every RESERVED_APP_SLUGS member the way it refuses pmcp — the same refusal class and code, one sentence across the reserved set modulo the slug, each naming the slug it refused — and writes no admin.app_create row for any of them · a non-reserved slug of the same charset creates (the twin)`, async () => {
+    // An empty export would make every sweep below pass by asserting nothing, and `pmcp` is
+    // the OTHER reservation — the ops table's own sweep covers it across every slug-taking op.
+    expect(RESERVED_APP_SLUGS.size).toBeGreaterThan(0);
+    expect(RESERVED_APP_SLUGS.has(PMCP_SLUG)).toBe(false);
+
+    const ns = await seedFixture();
+    const before = (await query(env.DB, ns.owner.userId, { event: "admin.app_create" })).total;
+    const builtin = await refusalOfSlug(ns, PMCP_SLUG);
+    const refusals = new Map<string, { name: string; code: unknown; message: string }>();
+    for (const slug of RESERVED_APP_SLUGS) refusals.set(slug, await refusalOfSlug(ns, slug));
+
+    // What "the same way" means: the same error CLASS and `code`, each message naming the
+    // slug it refused, and — distinguishable from an op that simply cannot find things —
+    // never the sentence an unknown slug earns.
+    const missing = await ops.app_get
+      .handler(ns.owner.userId, { slug: uniqueSlug("ghost") })
+      .then(() => null)
+      .catch((thrown: Error) => thrown.message);
+    for (const [slug, refusal] of refusals) {
+      expect(refusal.name, slug).toBe(builtin.name);
+      expect(refusal.code, slug).toBe(builtin.code);
+      expect(refusal.message, slug).toContain(slug);
+      expect(refusal.message, slug).not.toEqual(missing);
+    }
+    // ONE SENTENCE across the reserved set, modulo the slug — a per-segment bespoke message
+    // fails here. `pmcp`'s own sentence is deliberately NOT in this set: §8's reason for
+    // these is "because `/apps/<slug>` is a page", which is not the builtin's reason.
+    const shapes = new Set([...refusals].map(([slug, refusal]) => refusal.message.split(slug).join("<slug>")));
+    expect(shapes.size, [...shapes].join(" | ")).toBe(1);
+    // NOTHING SUMMARISED: a refused create is not a create (§8).
+    expect((await query(env.DB, ns.owner.userId, { event: "admin.app_create" })).total).toBe(before);
+
+    // THE TWIN, from the same charset: reservation is by name, not by shape.
+    const allowed = uniqueSlug("app");
+    expect(SLUG_CHARSET.test(allowed)).toBe(true);
+    await expect(ops.app_create.handler(ns.owner.userId, { slug: allowed, kind: "tunnel" })).resolves.toBeDefined();
+    await expect(ops.app_get.handler(ns.owner.userId, { slug: allowed })).resolves.toBeDefined();
+  });
+
+  it(`§8 · connection_list's rows carry the two identity strings §19.5's consent screen shows — the origin of the client's registered redirect URI, and whether it self-registered · a client registered under the owner's session reports selfRegistered false (the twin) — and still no token, client secret or JWT`, async () => {
+    const ns = await seedFixture();
+    const { cookie } = await seedOwnerSession(ns.owner);
+    // Each host has at most TWO dot-separated labels: three would satisfy this file's own
+    // three-segment JWT-shape sweep below and turn a hygiene guard into a false red.
+    const dcrUri = "https://c1.example/callback";
+    const ownUri = "https://c2.example/callback";
+    const dcrClient = await registerClient({ client_name: "Self-registered", redirect_uris: [dcrUri] });
+    const ownClient = await registerClient({ client_name: "Pre-registered", redirect_uris: [ownUri] }, cookie);
+    const dcrBinding = await openOauthBinding(ns, dcrClient);
+    const ownBinding = await openOauthBinding(ns, ownClient);
+
+    const rows = await connectionsOf(ns.owner.userId);
+    const dcr = rows.find((row) => row.id === dcrBinding);
+    const own = rows.find((row) => row.id === ownBinding);
+    expect(dcr, "the DCR client's binding is missing from its own namespace's listing").toBeDefined();
+    expect(own, "the pre-registered client's binding is missing").toBeDefined();
+    // §19.3's one-bit test, now on the op: nobody was signed in to vouch for the DCR client.
+    expect(dcr?.selfRegistered).toBe(true);
+    expect(own?.selfRegistered).toBe(false);
+    // The ORIGIN of the client's own registered redirect URI — a strict prefix of it, so
+    // only the inequality carries the claim that the full URI is not what is shown.
+    expect(dcr?.redirectOrigin).toBe(new URL(dcrUri).origin);
+    expect(own?.redirectOrigin).toBe(new URL(ownUri).origin);
+    expect(dcr?.redirectOrigin).not.toBe(dcrUri);
+    expect(own?.redirectOrigin).not.toBe(ownUri);
+    // The amendment ADDS; it does not replace.
+    for (const row of [dcr, own]) {
+      for (const field of ["id", "clientId", "clientName", "agentSlug", "createdAt", "lastUsedAt"] as const) {
+        expect(row, field).toHaveProperty(field);
+      }
+    }
+    expect(dcr?.clientName).toBe("Self-registered");
+    // Still no credential anywhere in the answer (§8).
+    const serialized = JSON.stringify(rows);
+    expect(serialized).not.toMatch(tokenPattern(16));
+    expect(serialized).not.toMatch(/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+    expect(serialized.toLowerCase()).not.toContain("secret");
+  });
+
+  it(`§8/§13 · connection_list reports a revoked binding with its revokedAt set instead of dropping it · the live binding beside it reports null (the twin) — the Connected clients pane has no second read path, so a row the op omits is a row §13's listing cannot keep`, async () => {
+    const ns = await seedFixture();
+    const revokedId = await openOauthBinding(ns, `fixture-revoked-${ns.owner.userId}`);
+    const liveId = await openOauthBinding(ns, `fixture-live-${ns.owner.userId}`);
+    await ops.connection_revoke.handler(ns.owner.userId, { id: revokedId });
+
+    const rows = await connectionsOf(ns.owner.userId);
+    // "Still listed" as a listing that never filtered, not one that grew back: exactly the
+    // two this namespace opened.
+    expect(rows.map((row) => row.id).sort()).toEqual([revokedId, liveId].sort());
+    const revoked = rows.find((row) => row.id === revokedId);
+    const live = rows.find((row) => row.id === liveId);
+    expect(typeof revoked?.revokedAt).toBe("number");
+    // The twin, and the reason an op that stamped everything cannot satisfy this.
+    expect(live?.revokedAt).toBeNull();
+  });
+
+  it(`§8/§13 · token_list, token_revoke, connection_list and connection_revoke still answer a CLI credential on the pmcp surface after their panes move behind /settings — the gate is a prefix rule, not the tools being hidden from the CLI (the counter-twin of the /settings gate rows)`, async () => {
+    const ns = await seedFixture();
+    const bindingId = await openOauthBinding(ns);
+    const ownerId = ns.owner.userId;
+
+    // The failure this row forecloses first: the four ops still EXIST but stop being listed
+    // to the CLI once their panes move behind /settings. Handler calls alone are blind to it.
+    expect((await listAdminTools()).map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["token_list", "token_revoke", "connection_list", "connection_revoke"]),
+    );
+    // Each op called the way the `pmcp` surface calls it — the owner principal a CLI
+    // device-flow session resolves to, through the same handler path every other row uses.
+    const listed = (await ops.token_list.handler(ownerId, {})) as { tokens: { id: string }[] };
+    expect(listed.tokens.map((token) => token.id)).toContain(ns.tokens[APP_TOKEN].id);
+    expect((await connectionsOf(ownerId)).map((row) => row.id)).toContain(bindingId);
+    // …and the two mutating ones really mutate, so "answers" is not "answers with nothing".
+    await expect(ops.token_revoke.handler(ownerId, { id: ns.tokens[APP_TOKEN].id })).resolves.toBeDefined();
+    await expect(ops.connection_revoke.handler(ownerId, { id: bindingId })).resolves.toBeDefined();
+    const after = (await ops.token_list.handler(ownerId, {})) as { tokens: { id: string; revokedAt: number | null }[] };
+    expect(after.tokens.find((token) => token.id === ns.tokens[APP_TOKEN].id)?.revokedAt).toEqual(expect.any(Number));
+    expect((await connectionsOf(ownerId)).find((row) => row.id === bindingId)?.revokedAt).toEqual(expect.any(Number));
+  });
 });

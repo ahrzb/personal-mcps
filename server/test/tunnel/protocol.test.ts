@@ -398,7 +398,11 @@ export async function runRegistrationCase(
   } else {
     expect((await app.closed).code).toBe(row.close);
   }
-  expect(await waitFor(() => app.lists.length > 0)).toBe(row.catalogWarmed);
+  // 15 turns for the "never warmed" rows: every one of them closed the socket above, so a
+  // quarter second is all any still-in-flight tools/list could need — 250 would be idle waiting.
+  expect(await waitFor(() => app.lists.length > 0, row.catalogWarmed ? 250 : 15)).toBe(
+    row.catalogWarmed,
+  );
   expect(await status(fixture.app.id)).toBe(row.online ? "online" : "offline");
 
   const answers = replies(app);

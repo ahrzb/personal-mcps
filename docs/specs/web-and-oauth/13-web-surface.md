@@ -119,7 +119,10 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     exists). Footer, verbatim: "Revoking an app token closes that app's live connection.
     Keys are shown only once, at issue time."
   - **Connected clients** — §19.6's connections list, re-homed here from
-    `/oauth/connections` (`connection_list` / `connection_revoke` unchanged, §8):
+    `/oauth/connections` (`connection_list` / `connection_revoke` are still its only read
+    and write — "unchanged" means the tool names and the parity, not the row shape: §8's
+    2026-09-02 amendment adds `redirectOrigin` and `selfRegistered` and keeps revoked
+    rows, with `revokedAt`, so the pane's `revoked` status has no second read path):
     `Client` (name — or id when it registered without one — with the origin of its
     registered redirect URI beneath, and the "unverified" marker beside a self-registered
     client: the same two identity strings §19.5's consent screen shows, for the same

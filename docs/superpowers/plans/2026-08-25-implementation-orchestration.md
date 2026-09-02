@@ -131,6 +131,8 @@ the failure is a spec question, not an execution one.
 | D11 | Remediation: D10 sweep's 9 findings + 12 coverage gaps | workflow ×2 + inline | **gated ✓** (`35a5268`+`3a3a67a`, deploy `d0879ada`, SMOKE PASS 25/25 live) |
 | D12 | Inbound OAuth — the hub as an authorization server (§19) | probe + workflow (7 agents) + inline gate | **gated ✓** (`be94c17` fixture, `f4ffd75` impl, `b52e563`+`3a9526c` fixes, deploy `c31c4be0`, SMOKE PASS 26/26 live) |
 | D13 | MCP data model beyond tools (§20): prompts, resources, templates, completions | workflow (41 agents, DAG) + inline gate | **gated ✓** (`e6d86c1` fixtures, `902c9a0` impl, deploy `3f653efe`, SMOKE PASS 26/26 live) |
+| D14 | Push — the listen stream, subscriber sockets, doorbells (§21) | workflow (DAG, 4 groups) + inline gate | **gated ✓** (`9e7a925` fixtures, `0624531` impl, `b2075f8` ledger, deploy `c381dcf0`, SMOKE PASS 27/27 live) |
+| D15 | Panes behind a rail — `/settings` split + Password pane, `/apps/<slug>`, Connected clients re-homed (§13, decision 30) | oracle workflow (25 agents) + implementation workflow (43 agents, two concurrent tracks) + inline gate | **gated ✓** (`005843d` prep, `628a5ee` rows, impl + gate commits, deploy `16bdc8e5`, SMOKE PASS 29/29 live) |
 
 Order is dependency-driven: nothing waits on anything it doesn't consume. D2–D3
 could overlap in principle (disjoint suites) but share `server/src/registry.ts`, so
@@ -1146,3 +1148,66 @@ check and (manual, once) a real push notification to a real browser.
   fixtures regenerate byte-identical so the emission side is sound. Scratch files
   `.d14-clients.json` / `.d14-list.json` from earlier stages left untracked, as were
   `cookies.txt`, `.mcp.json` and `mcps.yaml`.
+- 2026-09-02 — **D15 gated — panes behind a rail: `/settings` split + Password pane,
+  `/apps/<slug>`, Connected clients re-homed (§13 as rewritten 2026-09-02, decision 30).**
+  Shape: spec rewrite + boards + the passkey plugin wired first, in their own commit
+  (`005843d`); oracle rows authored by a 24-agent workflow (six areas × two verifier
+  lenses — spec fidelity, assertability — reconciled, completeness critic, one gap round)
+  and landed as **109 `it.todo` rows in their own commit (`628a5ee`)** after one
+  owner-side correction: the reconciler had invented a 403-on-`Authorization` rule under
+  `/settings/`, withdrawn because the gate never reads the header (the 403 is the auth
+  mount's `BEARER_ADMITTED` guard, already an auth-matrix row); the plan's smoke leg,
+  where the over-claim originated, was corrected with it. Workflow lesson recorded: the
+  append-round reconciler first blew the 64k output cap re-emitting the whole list, and
+  the resume then re-ran all twelve verifiers rather than the one failed stage — the
+  cache keys off call order, which a concurrent `pipeline()` does not preserve — so it
+  was stopped and the missing reconcile run delta-only as a single agent from the
+  journal's data. Implementation: one 43-agent workflow in a single working tree — a
+  seams stage (`catalog-view.ts`, `app-routes.ts` + the derived `RESERVED_APP_SLUGS`
+  refusal, `gateway.ownerCatalog` with a retained-catalog arm for archived apps and a
+  transport-reject arm beside the `-32000` one, `connection_list`'s `redirectOrigin` /
+  `selfRegistered` + revoked rows kept with `revokedAt`, `PASSWORD_MIN_LENGTH`), then two
+  CONCURRENT three-stage page tracks (settings: shell + sign-in panes → Tokens/Clients →
+  Password + passkey ceremonies; app-detail: header/Tools → Prompts/Resources/Roles/
+  Overview → Agents/Token/Danger + refusals) under a shared-file discipline (small Edit
+  hunks, re-read before edit, never Write an existing file), polish, the full suite green
+  on its FIRST run (1431/1431), a twelve-lens review panel (nine rows-fidelity lenses,
+  one per pane group; other-files + inventory; PSD; spec drift incl. the judged
+  marker-provenance read; design parity + states preview) returning **80 findings, 16
+  must**, twenty fixers (one must REFUSED with evidence: the header Connect/Disconnect
+  redirect target is the plan's open question 37(b), and the proposed fix broke two
+  owner-reviewed rows), final run **1432/1432 across 45 files, zero todo**; `tsc` 0.
+  Inventory 1327 → 1432 at the key level: **109 `todo → passed`, −5** (web-pages 18,
+  25, 25a, 26 and the `/oauth/connections` row at :1481 — constraint 31's list exactly;
+  27 and :1511 re-pointed with their titles kept), **+1 `passed`** — a review-driven row
+  the owner has not reviewed (the Tokens rail marker narrows with `?kind=`, pinned after
+  a reviewer caught the marker counting the unfiltered list over a filtered table), 0
+  flips. Ownership audit clean: every touched file is in a plan group, plus three the
+  reviewers legitimately reached (the plan's own `asserts:` lines, `design/README.md`,
+  a new `pages/format.ts` unifying the two time spellings); `pages/connections.tsx`
+  deleted, its content the clients pane's. States preview (plan constraint 13) walked in
+  the Browser pane: **106 page × fixture entries** render (settings 34, app-detail 27),
+  the fixtures' rails now DERIVED from the same marker table the page uses after a
+  reviewer found five hand-typed markers contradicting their panes. Deploy
+  **`16bdc8e5`**, **SMOKE PASS 29/29 live** (27 → 29): `/settings` 200 with the six-pane
+  rail, `/settings/clients` 200, `/settings/password` 404, `/oauth/connections` 301 →
+  `/settings/clients`, bearer-only `POST /settings/change-password` → 302 `/login`;
+  `/apps/smoke-app` 200 listing `echo` as `smoke-app_echo` from the DO's registered
+  catalog, `/apps/smoke-app/tools` 404. §13's Connected-clients line amended in the gate
+  commit to say what "`connection_list` unchanged" means (names and parity, not the row
+  shape). **Out-of-process, NOT discharged — the owner's manual leg:** add a passkey in a
+  real browser, sign out, sign in with it and see "last used" move; change the password
+  with the box ticked and watch `pmcp whoami` answer 401 while the browser stays signed
+  in. **Open owner questions, recorded in the plan (constraints 32 and 37) rather than
+  pinned:** `N args` vs `1 arg`; whether a never-connected tunneled app dims Tools; the
+  literal `<hub>` vs the origin in §20's scoped-endpoint sentence; whether a failed
+  proxied listing blanks the Roles marker; what an UNREACHABLE headers-mode upstream's
+  Tools pane says (the refresh-failed copy is false for it); where the header's
+  Connect/Disconnect land; §20.6 vs §13 on a Resources approval line (the one
+  spec-vs-spec conflict). Landed as an accessibility floor, flagged not assumed: the
+  Two-factor rail marker carries a text-accessible state. Debt: the Sessions pane cannot
+  label a CLI session ("pmcp CLI · device flow") until a hub-owned `source` field rides
+  the session row; `familyMarker` is spelled once in `model.ts` and once in
+  `fixtures.ts`; `pmcp connections` now prints a STATUS column derived from `revokedAt`
+  (the §10 column question, answered minimally). Cost: oracles ≈5.2M subagent tokens
+  (25 agents incl. the re-run reconcile), implementation ≈7.6M (43 agents, 4.1 h wall).

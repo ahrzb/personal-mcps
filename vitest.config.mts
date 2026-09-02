@@ -64,6 +64,38 @@ const workerPool = {
   miniflare: { ...workersPool.miniflare, outboundService: outboundRouter },
 } as const;
 
+/**
+ * Pre-bundling, spread into both workerd projects (their pools differ, this does not).
+ * Without it each file re-loads the whole worker through the host one module at a time —
+ * 1,542 URLs and 13.2 s of cold setup, measured; with it, 417 URLs and 6.8 s. It changes
+ * only how a test LOADS its dependencies, never what runs.
+ *
+ * The seven DIRECT deps and no transitive one: pnpm's strict layout puts kysely, zod, jose
+ * and the rest where the optimizer's resolver cannot see them, and pre-bundling
+ * `@sentry/cloudflare`'s dependents drags in `node:async_hooks`. The two externals are the
+ * schemes workerd supplies at runtime, which the bundler must leave alone for the same
+ * reason.
+ */
+const preBundledDeps = {
+  deps: {
+    optimizer: {
+      ssr: {
+        enabled: true,
+        include: [
+          "better-auth",
+          "@better-auth/oauth-provider",
+          "@better-auth/passkey",
+          "@better-auth/infra",
+          "@sentry/cloudflare",
+          "hono",
+          "webpush-webcrypto",
+        ],
+        rolldownOptions: { external: [/^node:/, /^cloudflare:/] },
+      },
+    },
+  },
+};
+
 export default defineConfig({
   test: {
     projects: [
@@ -80,6 +112,7 @@ export default defineConfig({
           name: "worker",
           include: ["server/test/worker/**/*.test.ts"],
           setupFiles: ["./server/test/setup/d1.ts"],
+          ...preBundledDeps,
         },
       },
       {
@@ -98,6 +131,7 @@ export default defineConfig({
           // Its own group, so vitest runs it as a phase of its own after the parallel
           // projects — a project whose maxWorkers differs may not share a group order.
           sequence: { groupOrder: 1 },
+          ...preBundledDeps,
         },
       },
       {

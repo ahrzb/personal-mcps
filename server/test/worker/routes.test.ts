@@ -508,3 +508,9 @@ describe("§19.2 · the .well-known discovery segment", () => {
     expect(token.headers.has("access-control-allow-origin")).toBe(false);
   });
 });
+
+// D15 (2026-09-02) — rows landed as it.todo from docs/superpowers/plans/2026-09-02-d15-panes.md;
+// each row's mechanics are on its `asserts:` line there. Numbered on landing.
+describe(`§2/§13 · the app-slug reservation is derived from the router`, () => {
+  it.todo(`§2/§13 · the app-slug reservation is derived, not listed: the charset-legal static segments the walk finds directly under /apps/ equal RESERVED_APP_SLUGS, and the op-named targets fall outside SLUG_CHARSET rather than out of a list · two generated slugs of the same charset classify as the slug route (the twin)`);
+});

@@ -1537,6 +1537,11 @@ describe("§4 — the credential family is out of a bearer's reach on better-aut
     );
     expect(after.status).toBe(401);
   });
+
+  // D15 (2026-09-02) — rows landed as it.todo: lands as one CREDENTIAL_CALLS entry
+  // ({ method: "POST", endpoint: "/change-password", body: { currentPassword, newPassword } }) — the
+  // loop above generates exactly this title from AUTH_BASE_PATH, so the inventory key moves todo → passed.
+  it.todo(`§4 · a device-flow bearer is refused at /api/auth/change-password — the mount is gated, not merely the wrappers`);
 });
 
 /**

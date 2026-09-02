@@ -1050,6 +1050,32 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     expect((await get(paths.settings, doomed.cookie)).status).toBe(302);
   });
 
+  it("25a. §13 · /settings lists the owner's passkeys from the plugin's own listing, and Remove walks end to end as a browser walks it — the confirm link, the dialog naming the passkey, the form-encoded POST — and the row is gone afterwards, while a guessed id draws no dialog", async () => {
+    const id = uniqueSlug("pk");
+    // A registration's row, minus the ceremony: no test can perform WebAuthn, so the row
+    // is written the way the plugin would write it (its columns, ISO dates) and everything
+    // asserted after goes through the page's own links, forms and the real route.
+    await (env.DB as D1Like)
+      .prepare(
+        `INSERT INTO "passkey" ("id", "name", "publicKey", "userId", "credentialID", "counter", "deviceType", "backedUp", "createdAt")
+         VALUES (?, ?, 'pk', ?, ?, 0, 'singleDevice', 0, ?)`,
+      )
+      .bind(id, "MacBook Touch ID", world.ns.owner.userId, uniqueSlug("cred"), new Date().toISOString())
+      .run();
+    const confirm = paths.settingsConfirm("remove-passkey", id);
+    const listed = await page(paths.settings);
+    expect(listed).toContain("MacBook Touch ID");
+    expect(listed).toContain(confirm.replace(/&/g, "&amp;"));
+    // The twin: a confirm naming no row on the page is no dialog at all.
+    expect(await page(paths.settingsConfirm("remove-passkey", uniqueSlug("nope")))).not.toContain("Remove passkey");
+    const dialog = await page(confirm);
+    expect(dialog).toContain("Remove passkey");
+    const answered = await formPost(actionFor(dialog, "delete-passkey"), submissionOf(dialog), world.session.cookie);
+    expect(answered.status).toBe(303);
+    expect(answered.headers.get("Location")).toContain("done=");
+    expect(await page(paths.settings)).not.toContain("MacBook Touch ID");
+  });
+
   it("26. §4 · a browser session past better-auth's freshness window can post NONE of /settings's credential targets — the recent-auth gate sits on the mutations, not only on the read (the actor is a day-old cookie carrying its own real CSRF token)", async () => {
     // A namespace of this case's own: two sign-ins for one owner, one of them aged, so
     // ageing one session cannot age the twin it is being compared against. It holds a
@@ -1535,6 +1561,136 @@ const PKCE_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
  * and writes its `userId` when one rides along — the DCR-marker twin (case 5) is built from
  * this one difference, read back by consentProps' `isDcrClient`.
  */
+// D15 (2026-09-02) — rows landed as it.todo from docs/superpowers/plans/2026-09-02-d15-panes.md;
+// each row's mechanics are on its `asserts:` line there. Numbered on landing.
+
+describe(`§13 · the /settings shell — six panes behind one rail`, () => {
+  it.todo(`§13 · each of the six settings panes answers at its own URL and /settings renders the Password pane · /settings/password is a 404, not an alias and not a redirect (the twin: the five other pane URLs all answer 200)`);
+  it.todo(`§13 · every pane renders the same rail — six entries under Sign-in and Access, in the sign-in-then-holdings order, each linking to its own pane URL — the Password entry carries no marker where the five others do, and the entry for the pane being rendered is the only rail entry carrying aria-current="page"`);
+  it.todo(`§13 · every rail count is the number of rows its own pane lists — passkeys, sessions, tokens and connected clients seeded to four different lengths, so no single number satisfies the rail`);
+  it.todo(`§13 · the Two-factor rail marker is a status, not a count: it reads one way with TOTP enabled and another without it, and never a number · the Passkeys entry beside it is a number in both states (the twin)`);
+  it.todo(`§4/§13 · the /settings gate is a prefix rule: a stale cookie and a bearer-sourced session are refused on all six panes, the two ops-backed ones included · the same six panes render on a session signed in moments ago (the twin)`);
+  it.todo(`§4/§13 · every POST target under /settings/ refuses a day-old cookie carrying its own real CSRF token and never reaches its op — the credential targets and the two ops-backed panes' alike · the same posts from a fresh session are accepted (the twin)`);
+  it.todo(`§13 · a mutation posted from a pane redirects back to that pane's own URL carrying its notice, and the pane at that Location renders it — done= from the ops-backed targets, failed= from a refused credential — never to the page root unless the root is the pane that rendered the form`);
+  it.todo(`§13 · a confirm dialog rides the URL of the pane that owns it: every ?confirm= link a pane renders resolves to that same pane's path and draws its dialog there · the identical query on another pane's URL draws none (the twin)`);
+  it.todo(`§13 · the six pane routes are the six strings §13 spells — /settings, /settings/two-factor, /settings/passkeys, /settings/sessions, /settings/tokens, /settings/clients — asserted against the literals once, since every other row reads them through paths`);
+  it.todo(`§13 · no rendered page links /oauth/consent — it is chromeless and has no nav slot, by design · the same pages link all six settings panes (the twin)`);
+  it.todo(`§13 · the mobile pill row lists the same six pane URLs in the same order as the rail, markerless, and shortens only the last label, to Clients — structure only, nothing visual`);
+  it.todo(`§4/§13 · an Authorization header with no cookie is bounced to /login at a /settings POST — a credential target and an ops-backed one alike — and reaches neither better-auth nor the op · the identical submissions under the owner's cookie are accepted (the twin)`);
+  it.todo(`§13 · nothing is added TO the consent screen either: /oauth/consent renders neither paned page's rail and neither pill row — chromeless, no nav slot · the same helpers find the six entries on a settings pane (the twin)`);
+});
+
+describe(`§4/§13 · the Password pane`, () => {
+  it.todo(`§13 · /settings lands on the Password pane: current password, new password, confirm new password, Sign out my other sessions checked by default, Update password — and the footer that sends a forgotten password to the server script, verbatim`);
+  it.todo(`§13/§4 · the length hint renders from the one configured minimum: a new password one character short is refused with the pane carrying no second number, sets no cookie and leaves the password already on file signing in · one of exactly PASSWORD_MIN_LENGTH characters is accepted (the twin)`);
+  it.todo(`§13 · a wrong current password is refused with "That password is not right.", changes nothing and touches no session — the password already on file still signs in and a bystander session still opens a page · the right one changes it (the twin)`);
+  it.todo(`§13 · new ≠ confirm is the one check the hub makes itself, made before better-auth is called: "The two entries do not match." comes back although the current password was right, the session id is unchanged and the password already on file still signs in · the same form with the two entries equal changes it (the twin)`);
+  it.todo(`§13 · a refusal better-auth answers with a code the pane maps to no field changes nothing and renders neither mapped refusal sentence · a mapped code does render its own (the twin)`);
+  it.todo(`§13 · the pane reports the gate's own clock: a session created a known number of minutes ago renders "Confirmed your identity N minutes ago." with that number, and a session of a different age renders a different one`);
+  it.todo(`§13 · Update password with Sign out my other sessions left ticked walks end to end: "Password updated.", "2 other session(s) were signed out — this one stays.", better-auth's Set-Cookie carries a session id that is not the one that posted, the old cookie and the other browser session are sent to /login, the CLI's bearer is dead, and the Sessions pane afterwards offers no per-session Revoke and counts one`);
+  it.todo(`§4/§13 · a password change derives nothing and revokes nothing in the token table: the app token and the agent token issued before it still authenticate afterwards — "App and agent tokens keep working: they do not derive from the password." made true rather than said`);
+  it.todo(`§13 · unticking Sign out my other sessions is the whole difference: the change succeeds, this session's id is unchanged, the other sessions still open pages, and the success copy carries no sessions sentence (the twin of the flag)`);
+  it.todo(`§13 · POST /settings/change-password without the CSRF field the pane rendered is 403 and the password is untouched — the old one still signs in · the same submission carrying it changes the password (the twin)`);
+  it.todo(`§4/§13 · POST /settings/change-password with no credential at all — no cookie, no bearer — is bounced to /login and the password is untouched · the same submission under the owner's own fresh cookie reaches better-auth (the twin)`);
+  it.todo(`§4 · better-auth's own /change-password mount enforces no freshness, so the hub's recent-auth gate is the only one the change has: a day-old cookie posting JSON straight at /api/auth/change-password is judged on the password it named, while the same cookie at /settings/change-password never reaches it`);
+  it.todo(`§4 · the day-old cookie that can post none of /settings's credential targets cannot post Update password either — the action read off the rendered pane, walked stale and fresh · a session signed in moments ago reaches better-auth with the same body (the twin)`);
+});
+
+describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
+  it.todo(`§13 · /settings/passkeys lists one row per passkey under the name the authenticator reported, and the rail's Passkeys marker is the number of rows the pane listed · with none, the pane renders "No passkeys yet. Add one to sign in without a password." and the marker reads 0 (the twin)`);
+  it.todo(`§13 · each passkey row carries its own added stamp: two passkeys with the same name and different createdAt render two different rows`);
+  it.todo(`§5/§13 · identity.stampPasskeyUse writes §5's last_used_at for the credential id it names — and only that one — and the pane's row reads "last used …" only after it: before the stamp the pane says it of no passkey (the twin)`);
+  it.todo(`§13 · /settings/passkeys' Remove walks end to end as a browser walks it — the confirm link riding the pane's own URL, the dialog's form, the form-encoded POST, the redirect back to /settings/passkeys — and the row and its rail count are gone afterwards, while a guessed id draws no dialog at all (the twin)`);
+  it.todo(`§13/§9 · Add passkey is the one credential control that is not a form: /settings/passkeys names better-auth's own generate-register-options and verify-registration endpoints inside a script calling navigator.credentials.create, in no action= and no href= · every form the same page renders posts to a hub route under /settings (the twin)`);
+  it.todo(`§13 · /login's passkey button is live the same way — the page names generate-authenticate-options and verify-authentication in a script calling navigator.credentials.get, while its own username form still posts form-encoded to the hub's translation route (the twin)`);
+  it.todo(`§13 · /settings/sessions lists every session under Client / Created / Last active, and the rail's Sessions marker is the number of rows the pane listed`);
+  it.todo(`§13 · the session rendering /settings/sessions is badged current and offers no Revoke — no link on its row, and its own ?confirm=revoke-session draws no dialog · every other session's row carries both (the twin)`);
+  it.todo(`§4/§13 · /settings/sessions' Revoke walks end to end as a browser walks it — the confirm link on the pane's own URL, the rendered form, the form-encoded POST, the redirect back to /settings/sessions — and the session it named is gone from the listing and from the rail count afterwards while the current one still opens the page`);
+  it.todo(`§13 · Revoke all others walks end to end through better-auth's /revoke-other-sessions: every other session is gone and its cookie opens nothing, while the CURRENT session's id is unchanged, its cookie unreplaced and still opening the pane — the opposite contract from the Password pane's flag, which replaces it`);
+  it.todo(`§13 · a CLI session is listed on /settings/sessions and revocable from it: after a device flow the pane's marker goes up by one and carries one more revoke link, and revoking that row kills the CLI's bearer while the browser session still opens the pane (the twin)`);
+  it.todo(`§13 · /settings/two-factor is the Two-factor pane's one URL: it renders the card, its forms post to the same paths.auth targets as before, and its Disable confirm rides /settings/two-factor`);
+  it.todo(`§9/§13 · every control the /settings panes render is claimed: the Sign-in panes and Sessions render only better-auth credential targets and no ops-backed form (§13's pinned exception, per pane), the two Access panes front ops keys, every ?confirm= link rides the pane that drew it, and Add passkey is the single enumerated exclusion`);
+});
+
+describe(`§13 · the Tokens pane`, () => {
+  it.todo(`§13 · /settings/tokens lists every key in the namespace, agent and app alike — the set of ids its Revoke/Remove controls name is exactly token_list's unrevoked set, each listed key showing its display prefix, its kind and the slug it is bound to`);
+  it.todo(`§13 · a bound-to app slug links to /apps/<slug> · the agent slug beside it is plain text and no anchor on the pane names an /agents/ path (the twin — the agents pages are deferred)`);
+  it.todo(`§13 · the All · Agents · Apps filter narrows: ?kind=agent lists the namespace's agent keys and no app key, ?kind=app the reverse, and the unfiltered pane lists both (the twin) — each pill followed from the href the pane rendered`);
+  it.todo(`§13 · Revoke on a live row walks end to end as a browser walks it — the form the pane rendered, posted form-encoded to /settings/tokens/token_revoke — and the key is gone from the pane afterwards while token_list still reports its row revoked`);
+  it.todo(`§13 · an expired key's control reads Remove where a live key's reads Revoke, and both post the same token_revoke target under the pane's own prefix (the twin) — the expired row leaves the listing the same way`);
+  it.todo(`§13 · the Tokens pane renders no token_issue control — "Issue new keys from an app or agent page." and its two-sentence footer render verbatim instead · the same pane does render token_revoke forms, so this is an absent control and not an absent pane (the twin)`);
+  it.todo(`§13 · the two Access panes draw the column names §13 spells — Token / Kind / Bound to / Created / Expires / Last used under an All · Agents · Apps filter, and Client / Acts as / Created / Last used / Status — the same class of durable string the Sessions pane's three already pin`);
+});
+
+describe(`§13/§19 · the Connected clients pane`, () => {
+  it.todo(`§13/§19 · GET /oauth/connections answers 301 to /settings/clients, and the pane it points at lists the binding — the redirect's code and target are pinned, not merely "a redirect"`);
+  it.todo(`§13/§19 · the connections POST moved with its pane: nothing routes /oauth/connections/connection_revoke any more — it reaches connection_revoke zero times, and no rendered page posts under the old path · the same revoke at /settings/clients/connection_revoke reaches it exactly once and lands back on the pane (the twin)`);
+  it.todo(`§13/§19.5 · a connected client's row shows the name it registered with, the ORIGIN of its registered redirect URI beneath it — never the full URI — and the bound agent's slug as plain text under Acts as · a client that registered without a name shows its client id in the name's place (the twin)`);
+  it.todo(`§13/§19.5 · a self-registered (DCR) client's row carries the "unverified" marker · a client registered under the owner's own session does not (the twin) — the consent screen's second identity string, repeated on the pane`);
+  it.todo(`§13 · the Connected clients footer renders verbatim, as one block — a client registers itself at the consent screen, and revoking touches neither the agent it acted as nor that agent's grants`);
+  it.todo(`§13/§19.6 · Revoke walks end to end from an active row as a browser walks it — the confirm link on /settings/clients, the dialog whose own form names that row, the form-encoded POST to /settings/clients/connection_revoke, the 303 back to the pane — and the row STAYS listed afterwards as revoked with no control of any shape · it rendered one while it was active (the twin)`);
+  it.todo(`§13 · a POST to either ops-backed Settings pane carrying no CSRF field is 403 and nothing is revoked · the same target carrying the token that pane rendered succeeds (the twin) — one gate over the /settings prefix, proven on both dispatches`);
+  it.todo(`§19.4/§13 · consenting again after a revoke revives the same row — /settings/clients holds exactly one row for that client, active and revocable again, and oauth_binding still holds exactly one row for the pair`);
+  it.todo(`§8 · the Tokens and Connected clients panes DO front ops, and each form's field set equals schemaKeysOf(ops[name]) — the two Access panes join parity direction B rather than the parity exception (the twin of the four panes that front none)`);
+  it.todo(`§13 · the two Access markers part company on a revoked row by design: the Tokens marker counts the rows its pane lists — the live key and the expired one, never the revoked one — while the Connected clients marker counts ITS pane's rows with a revoked client among them · revoking through each pane's own control then moves the Tokens marker by one and the clients marker by none (the twin)`);
+});
+
+describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
+  it.todo(`§13 · /apps/<slug>/tools is a 404 — the landing pane has no alias · /apps/<slug> renders Tools and each of the seven other panes answers 200 at its own URL, carrying aria-current="page" on its own rail entry and on no other (the twin)`);
+  it.todo(`§13 · the app rail carries exactly the eight entries of §13's pane table, App and Access as headings with the Danger zone ungrouped after them, and Overview and Danger zone carry no marker where the six others do (the twin)`);
+  it.todo(`§13 · the header names the app, its slug and its kind badge — a tunneled app's status and last seen, a proxied app's endpoint, auth mode and forward identity read back from app_get's own row — and renders Connect/Reconnect and Disconnect only where auth is oauth · a headers-mode app renders neither target (the twin)`);
+  it.todo(`§13 · every App-group rail marker is the number of rows its own pane lists — Tools, Prompts, and Resources as resources plus templates — and the Resources pane's two tabs carry those two counts at ?tab=resources and ?tab=templates`);
+  it.todo(`§20.2/§13 · a tunneled app that declares prompts at registration carries a prompts count and lists them, while the app beside it that declared none dims to — (the twin), and the same live registration renders the header's online status and a last seen the never-connected app has not got`);
+  it.todo(`§20.2/§13 · a family the app advertises none of dims its rail entry to — and its pane renders the empty state that says why, verbatim, per kind, with the family name substituted · the families it does advertise carry counts and list rows (the twin)`);
+  it.todo(`§13 · a proxied app whose live listing fails renders BLANK App-group markers, never — and never 0, and its Tools pane renders "Token refresh failed — calls return errors until you reconnect." beside Reconnect instead of an empty list · a reachable app's markers are numbers and its Tools pane lists rows (the twin)`);
+  it.todo(`§13 · a Tools row is the tool's name, the first line of its description and no args / N args, and its expanded block — the full description plus the Arguments table read off inputSchema — arrives in that same response, server-rendered, never a second request, beneath the pane's verbatim footer`);
+  it.todo(`§13/§7 · the Tools pane is the owner's own unfiltered read: a tool no granted pattern reaches is listed all the same, beside the ones that are (§7 step 2 — owner → all tools)`);
+  it.todo(`§13/§20.3 · "Called by agents as <slug>_<tool>" and the reachability line the door's own matcher computes: a literal role and a pattern role each name their agents and the role in the sentence §13 pins, an agent holding no grant on this app is named by neither, and a tool no granted pattern matches renders "Reachable by no agent yet" (the twin)`);
+  it.todo(`§13/§2 · the approval posture is "No approval required" where every reaching agent reaches in allow mode and "Approval required for <agent>" where one reaches only in approval mode — an agent holding an allow role and an approval role that both match the same tool is named by neither line's approval half (allow wins)`);
+  it.todo(`§13/§7 · the redaction line reads "No redacted fields" where nothing matches · it lists the writeOnly argument paths beside the redact and redact_results entries that match where something does, and a tool whose schema carries indirection the hub will not resolve reads "schema-unsound — approval-gated calls refuse, bodies are not recorded" (the twin)`);
+  it.todo(`§13 · /apps/<slug> gets the pill row too — the shell rule applies although only MobileSettings was drawn: on every one of the eight panes the pill navigation lists the same eight pane URLs in the same rail order, markerless`);
+  it.todo(`§13 · a tunneled app's Tools pane is the DO's cached catalog: the tools it advertised on its last connect are listed under a numeric Tools marker while its socket is open, and are still listed, unchanged and still counted, after the socket closes and the header reads offline`);
+  it.todo(`§20.5/§13 · a tunneled app that declared no tools dims Tools to — and its LANDING pane renders the tunneled empty state with tools substituted, verbatim · the prompts the same app did declare carry a count and list a row (the twin)`);
+  it.todo(`§20.6 · the Tools pane is the scoped endpoint's own listing and not a second read: tools/list posted to /<user>/mcp/<slug> with the owner's own bearer answers exactly the names the pane rendered and exactly the number its rail marker shows — for a tunneled app and for a proxied one`);
+  it.todo(`§13 · a proxied app whose upstream cannot be reached at all renders the unread state rather than an empty one: its App-group markers are blank — never — and never 0 — and its Tools pane lists no tool and says nothing about the app advertising none · the reachable proxied app beside it lists rows under numeric markers (the twin)`);
+});
+
+describe(`§13/§20 · /apps/<slug> — Prompts, Resources, Roles and Overview`, () => {
+  it.todo(`§13/§20.3 · the Prompts pane gives each prompt its name, description and declared arguments, the <slug>_<prompt> name, reachability over the role's PROMPT patterns alone — a tools-only role reaches no prompt — the fixed "Never approval-gated", and the redact entries matching the prompt's name`);
+  it.todo(`§20.2/§13 · the Resources pane's rows are URI / Name / Type with templates listed by their raw uriTemplate, reachability is matched against the URI and against that raw template and NEVER against the name, no redaction line is rendered, and the pane carries §20's two rules`);
+  it.todo(`§13/§20.1 · completion/complete gets no pane: the rail names no completions entry and /apps/<slug>/completions is a 404 · the seven pane URLs the table does name each answer 200 (the twin)`);
+  it.todo(`§13/§20.3 · the Roles pane renders the declared roles in §20.3's canonical read shape under its kind's own sentence — tunneled adds the trust-boundary line, proxied says roles are config — and an app that declared none renders "No roles declared" beside the built-in-all fallback with none on its rail entry (the twin)`);
+  it.todo(`§13/§8 · the Overview pane is app_get's row as a definition list — slug, created, kind, and a proxied app's endpoint, auth mode and forward identity — with body logging reading "On — tunneled default" / "Off — proxied default" at each kind's default, neither string where the owner set it explicitly, and none where no redaction is configured`);
+  it.todo(`§13 · the five App-group panes edit nothing: Tools, Prompts, Resources, Roles and Overview render no mutating form of any kind · the same page's header and Danger zone do (the twin)`);
+  it.todo(`§13 · the Resources pane draws the three column names §13 spells — URI / Name / Type — on both of its tabs, beside the rows they head`);
+  it.todo(`§20.6/§20.2 · the aggregated name is tools and prompts only: neither Resources tab renders a <slug>_ name anywhere · the Prompts pane next door renders one and the Tools pane another (the twin)`);
+  it.todo(`§20.6 · the Prompts and Resources panes are the scoped endpoint's own listings too — prompts/list, resources/list and resources/templates/list under the owner's own bearer answer exactly the names each pane rendered, exactly the count each tab shows, and the Resources rail marker is those two counts summed`);
+});
+
+describe(`§13 · /apps/<slug> — Agents, Token and the Danger zone`, () => {
+  it.todo(`§13 · /apps/<slug>/access lists exactly the agents holding ≥1 grant on this app, read from agent_list's inline grants, and the rail's Agents marker is the number of rows it drew · an agent granted only on another app is absent here and present on that app's own pane (the twin)`);
+  it.todo(`§13 · an Agents row is the agent's slug and description as text — no link to the deferred /agents/<slug> — one role · mode chip per grant with the built-in all marked built-in, and the pane renders no Edit grants control beside the rows it does render (deferred, §13), under its verbatim footer`);
+  it.todo(`§13 · /apps/<slug>/token lists a tunneled app's live tokens by display prefix and the rail marker is that live count · the same app's revoked and expired tokens are absent from the pane though token_list still reports all three (the twin), and no plaintext appears anywhere on it`);
+  it.todo(`§13 · Revoke on /apps/<slug>/token walks end to end as a browser walks it — the confirm link, the dialog carrying "Revoking closes the app's live connection.", the posted form, the redirect back to the token pane — and the key stops authenticating a tunnel while the app's other live key still does (the twin)`);
+  it.todo(`§13 · Issue new token fronts token_issue { kind: "app" } from the token pane's own target — not the generic 303 dispatch — and renders the once-only reveal in place with "The previous token keeps working until you revoke it.", after which both keys authenticate a tunnel and the pane's marker reads 2 (§5: more than one live app token is legal)`);
+  it.todo(`§13 · a proxied app's Token rail entry is the dimmed —, its pane says "Proxied apps hold no tokens — the hub dials the upstream; nothing dials in (§2)." and it renders no issue control — which token_issue agrees with by refusing kind: "app" on that app · a tunneled app's pane renders one (the twin)`);
+  it.todo(`§13 · Archive on /apps/<slug>/danger walks end to end behind its dialog — "It refuses connections and leaves the list — tokens, grants and history are kept." — and afterwards the page still renders under the verbatim archived banner with its tokens and grants still listed and its header status reading archived, until Unarchive (posted as the browser posts it) takes the banner away again · the same page carried no banner before (the twin), and the Danger rail entry is an ordinary link carrying no marker`);
+  it.todo(`§13 · Delete on /apps/<slug>/danger walks end to end behind its dialog — "Revokes its tokens, closes the live connection and removes every grant. This cannot be undone." — and afterwards the app's page is byte-identical to an unknown slug's 404 · a sibling app's page still renders (the twin)`);
+  it.todo(`§13 · every /apps row links to its detail page, the archived section included, while the builtin pmcp row links to none — and the list's own Archive / Unarchive / Delete / Connect actions are still rendered beside the link (the twin)`);
+  it.todo(`§8 · every mutating form the /apps/<slug> panes render fronts a real admin.ops key and submits within that op's schema — every required field, and no field the schema does not declare — so the page that issues and revokes app tokens joins parity direction B instead of standing outside it`);
+  it.todo(`§13 · the Agents pane draws the two column names §13 spells — Agent and Granted roles — over the rows they head · the same render carries the slugs, descriptions and role · mode chips those columns describe (the twin)`);
+  it.todo(`§8/§13 · Issue new token reaches the op although its route answers 200 instead of the generic redirect: the post writes exactly one admin.token_issue audit row naming the app and the id token_list then reports, and that row carries neither the revealed key nor any token material`);
+  it.todo(`§9/§13 · every ?confirm= link the eight /apps/<slug> panes render rides the pane that drew it and draws its dialog there · the same query moved onto another pane's URL, and an id naming no row, each draw none (the twin)`);
+  it.todo(`§13 · an archived app's page keeps its catalog: after Archive is posted from the danger pane the banner page still lists the tools the app advertised and its Tools marker is still that number · the same page listed them under the same marker before the archive (the twin)`);
+});
+
+describe(`§13 · /apps/<slug> — refusals and reserved segments`, () => {
+  it.todo(`§13 · /apps/pmcp, an unknown slug and another namespace's real slug are one 404, byte-identical — reserved, nonexistent and foreign are indistinguishable, and app_get refuses pmcp the same way · the owner's own app renders at the same shape (the twin)`);
+  it.todo(`§13 · /apps/new still renders the add-app form and POST /apps/connect still starts the upstream redirect — a static segment mounted under /apps/ wins over the slug route, which answers the 404 for every other name (the twin)`);
+  it.todo(`§13 · every /apps/<slug> pane is behind the ordinary owner session: an anonymous GET of the detail page and of each of the seven pane URLs bounces to /login, and so does a bearer with no cookie · the same URLs under the owner's cookie render (the twin)`);
+  it.todo(`§13 · /apps/<slug> is the ordinary owner session and nothing stricter: the day-old cookie the six /settings panes bounce to /login renders the app page, all seven of its panes, and posts the danger pane's own Archive form (the other half of §13's gate sentence)`);
+});
+
 async function registerOAuthClient(
   fields: Record<string, unknown> = {},
   cookie?: string,

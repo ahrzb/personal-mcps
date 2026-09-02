@@ -1141,3 +1141,12 @@ function span(page: AuditPage): { oldest: number; newest: number } {
   expect(newest, "the seeded ledger spans a single instant — a bound would narrow nothing").toBeGreaterThan(oldest);
   return { oldest, newest };
 }
+
+// D15 (2026-09-02) — rows landed as it.todo from docs/superpowers/plans/2026-09-02-d15-panes.md;
+// each row's mechanics are on its `asserts:` line there. Numbered on landing.
+describe(`§8/§13 · the ops behind the Access panes, and the reserved app slugs`, () => {
+  it.todo(`§8 · app_create refuses every RESERVED_APP_SLUGS member the way it refuses pmcp — the same refusal class and code, one sentence across the reserved set modulo the slug, each naming the slug it refused — and writes no admin.app_create row for any of them · a non-reserved slug of the same charset creates (the twin)`);
+  it.todo(`§8 · connection_list's rows carry the two identity strings §19.5's consent screen shows — the origin of the client's registered redirect URI, and whether it self-registered · a client registered under the owner's session reports selfRegistered false (the twin) — and still no token, client secret or JWT`);
+  it.todo(`§8/§13 · connection_list reports a revoked binding with its revokedAt set instead of dropping it · the live binding beside it reports null (the twin) — the Connected clients pane has no second read path, so a row the op omits is a row §13's listing cannot keep`);
+  it.todo(`§8/§13 · token_list, token_revoke, connection_list and connection_revoke still answer a CLI credential on the pmcp surface after their panes move behind /settings — the gate is a prefix rule, not the tools being hidden from the CLI (the counter-twin of the /settings gate rows)`);
+});

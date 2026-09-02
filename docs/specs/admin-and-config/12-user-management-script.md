@@ -23,6 +23,14 @@ the config file's default — filling those two variables from the profile's `ur
 `bootstrap_secret` wherever the environment hasn't already set them; an explicit
 environment variable always wins *(amended 2026-08-26)*.
 
+`reset-password` is the path for a **forgotten** password, and the only one *(pinned
+2026-09-02, decision 30)*: no email is on file, so there is no reset link to send, and
+this script is what stands in for one. A password the owner still **knows** is changed
+self-serve on `/settings` (§13's Password pane, gated per §4), which requires the current
+one and which this script never performs — the two paths are deliberately distinct, and a
+change to either must leave the other's sentence true. Neither touches app or agent
+tokens (§4).
+
 This seeds the first user and is the only user management surface for now. 2FA/passkey
 enrollment happens through better-auth's endpoints after first login (minimal pages, §13).
 

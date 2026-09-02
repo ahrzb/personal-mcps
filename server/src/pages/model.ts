@@ -1331,14 +1331,14 @@ function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram
  * reads it the way the browser does, through identity's own mounted endpoints,
  * rather than reaching into tables that module owns.
  *
- * THREE things are not sourceable through those endpoints today. Two are reported
- * as what they are rather than invented: `passkeys` is empty because the passkey
- * plugin is not installed at all (identity's auth() says so), and every session
- * reads as `source: "web"` because nothing better-auth stores distinguishes a
- * device-flow session from a browser one — the distinction identity enforces is
- * the cookie's signature, not a column.
+ * TWO things are not sourceable through those endpoints today. One is reported as
+ * what it is rather than invented: every session reads as `source: "web"` because
+ * nothing better-auth stores distinguishes a device-flow session from a browser one
+ * — the distinction identity enforces is the cookie's signature, not a column.
+ * (Passkeys ARE sourced, from the plugin's own listing; their `lastUsedAt` is null
+ * until §5's stamp is written — identity's buildAuth says where that lands.)
  *
- * The third IS invented, and this comment exists so no reader concludes otherwise:
+ * The other IS invented, and this comment exists so no reader concludes otherwise:
  * `backupCodesRemaining`/`generatedAt` have no endpoint behind them (`/get-session`
  * reports `twoFactorEnabled` and nothing else; the codes live encrypted in a table
  * §4 gives identity sole custody of), so an owner with 2FA on is told "0 backup
@@ -1346,18 +1346,20 @@ function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram
  * The honest shape is a nullable pair rendered as "—", exactly like the two above —
  * but `TwoFactorSummary`'s enabled arm is a template contract (settings.tsx passes
  * `generatedAt` straight into a `(iso: string)` formatter), so widening it is a
- * change to a page template and is REPORTED rather than made here. All three are
+ * change to a page template and is REPORTED rather than made here. Both are
  * findings for the owner, not placeholders to be quietly kept.
  */
 export async function settingsProps(ctx: PageContext, req: Request): Promise<SettingsProps> {
-  const [me, sessions] = await Promise.all([
+  const [me, sessions, passkeys] = await Promise.all([
     callAuth<{ user?: { twoFactorEnabled?: boolean } }>(req, "/get-session"),
     callAuth<BetterAuthSession[]>(req, "/list-sessions"),
+    callAuth<BetterAuthPasskey[]>(req, "/passkey/list-user-passkeys"),
   ]);
-  // better-auth's listing, defended: the shape is better-auth's own to change, and
+  // better-auth's listings, defended: the shapes are better-auth's own to change, and
   // /settings showing an empty list is a better answer than a 500 (callAuth's contract
   // reads a bodiless success as `{}`, which is not a listing).
   const rows = (Array.isArray(sessions) ? sessions : []).map((row) => sessionRow(row, ctx.sessionId));
+  const keys = (Array.isArray(passkeys) ? passkeys : []).map((pk) => passkeyRow(pk, ctx.now));
   return {
     ...(await shell(ctx, "settings")),
     csrfToken: ctx.csrfToken,
@@ -1366,10 +1368,19 @@ export async function settingsProps(ctx: PageContext, req: Request): Promise<Set
       : { enabled: false },
     enrollment: null,
     revealedBackupCodes: null,
-    passkeys: [],
+    passkeys: keys,
     sessions: rows,
-    confirm: settingsConfirm(ctx.query, rows),
+    confirm: settingsConfirm(ctx.query, rows, keys),
   };
+}
+
+/** The passkey fields /settings draws, as the plugin's own listing spells them. */
+type BetterAuthPasskey = { id: string; name?: string | null; createdAt?: string | null };
+
+/** `name` is what the authenticator reported, which may be nothing; `createdAt` is set by
+ *  every registration the plugin performs, so a null one is a hand-inserted row. */
+function passkeyRow(pk: BetterAuthPasskey, now: string): PasskeyRow {
+  return { id: pk.id, name: pk.name || "Passkey", addedAt: pk.createdAt ?? now, lastUsedAt: null };
 }
 
 /**
@@ -1378,12 +1389,12 @@ export async function settingsProps(ctx: PageContext, req: Request): Promise<Set
  * (`paths.settingsConfirm`). Server-rendered state, so the confirm step works with
  * scripting off; a `confirm` that names no row on the page is no dialog at all rather
  * than a dialog about nothing, which is also what keeps a guessed id from drawing one.
- *
- * `remove-passkey` can never match: the passkey plugin is not installed, so `passkeys`
- * is always empty (see this function's caller). It is spelled anyway, because the
- * missing arm would otherwise read as an oversight rather than as that ceiling.
  */
-function settingsConfirm(query: URLSearchParams, sessions: SessionRow[]): SettingsConfirm | null {
+function settingsConfirm(
+  query: URLSearchParams,
+  sessions: SessionRow[],
+  passkeys: PasskeyRow[],
+): SettingsConfirm | null {
   const id = query.get("id") ?? "";
   switch (query.get("confirm")) {
     case "disable-two-factor":
@@ -1391,6 +1402,10 @@ function settingsConfirm(query: URLSearchParams, sessions: SessionRow[]): Settin
     case "revoke-session": {
       const row = sessions.find((session) => session.id === id && !session.current);
       return row === undefined ? null : { kind: "revoke-session", id, client: row.client };
+    }
+    case "remove-passkey": {
+      const row = passkeys.find((pk) => pk.id === id);
+      return row === undefined ? null : { kind: "remove-passkey", id, name: row.name };
     }
     default:
       return null;

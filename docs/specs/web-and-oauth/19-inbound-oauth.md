@@ -85,7 +85,7 @@ cannot drift). The segment claims its subtree like every other mount:
 | `/api/auth/jwks` | (plugin) | The JWKS the door verifies against (§19.1). Public by construction — it is public keys. |
 | `/api/auth/token` | (plugin) | **Named here because it is easy to miss, and this table would otherwise read as complete.** `jwt()` mounts it as a side effect, and it converts a live *cookie session* into a hub-signed JWT. It is no part of §19's flow and nothing here ever calls it. Two independent things keep it harmless: §19.7's allowlist means no bearer can reach it, and §19.6 step 3 means the door refuses any hub-signed JWT that is not an access token for the addressed namespace — so even a cookie-holding browser that mints one gains nothing at `/<user>/mcp`. |
 | `/oauth/consent` | GET, POST | §19.5's screen, under the **existing** `oauth` segment. |
-| `/oauth/connections` | GET, POST | The connections list and its Revoke, same segment. |
+| `/oauth/connections` | GET | *(re-homed 2026-09-02, decision 30)* A `301` to `/settings/clients` — the **Connected clients** pane of Settings (§13), where the list and its Revoke now live; the POST moved with the pane. Until then the list was reachable only by typing the URL: nothing linked to it. |
 
 Pinned properties of the two documents:
 
@@ -245,7 +245,10 @@ CREATE TABLE oauth_binding (            -- §19: one OAuth client ↔ one agent
 ### 19.5 The consent screen
 
 The provider owns the state machine and ships no pages; the hub owns every pixel.
-`loginPage: "/login"` and `consentPage: "/oauth/consent"` are required options.
+`loginPage: "/login"` and `consentPage: "/oauth/consent"` are required options. *(Pinned
+2026-09-02, §13:)* the consent screen is chromeless and has **no nav slot, by design** — a
+step inside the authorize redirect, reached only by being sent here, never a page anyone
+navigates to; the list it produces is what gets the Settings slot, not the screen.
 
 1. `/api/auth/oauth2/authorize` with no session → 302 to `/login?<signed query>`. §13's
    login page carries that query through and, on success, redirects back to `authorize`
@@ -395,6 +398,11 @@ waiting for `exp`. Revoking additionally deletes the provider's `oauthConsent` r
 the client's next attempt walks the consent screen again rather than refreshing
 silently.
 
+*(Amended 2026-09-02, decision 30:)* the list and its Revoke are the **Connected clients**
+pane of `/settings` — `/settings/clients`, with `/oauth/connections` redirecting there
+(§13). The deferred agent page will carry a read-only row of the clients bound to that
+agent, linking to the pane rather than duplicating its Revoke: one place revokes.
+
 ### 19.7 Interaction with D11's credential-family gate
 
 D11 landed a gate over `Authorization`-bearing requests to the `/api/auth` mount, so a
@@ -435,7 +443,8 @@ Three consequences, stated rather than assumed:
 The corollary is §18 decision 25 and §8's exception list: none of these endpoints, and
 not `/oauth/consent`, ever appears on an MCP surface. The only MCP-reachable part of
 §19 is `connection_list` / `connection_revoke` — grants-shaped ops on the caller's own
-namespace, exactly what the `/oauth/connections` page fronts.
+namespace, exactly what the Connected clients pane (`/settings/clients`, formerly
+`/oauth/connections`, §13) fronts.
 
 ### 19.8 Failure modes
 

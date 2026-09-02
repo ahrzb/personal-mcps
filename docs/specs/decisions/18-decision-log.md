@@ -195,4 +195,53 @@
     existing `pmcp_svc_` / `pmcp_sa_` tokens simply stop validating and are re-issued
     after deploy — a pre-1.0 hub with one operator buys nothing from a compatibility
     shim, and a shim is exactly the thing that would keep the old vocabulary alive.
+30. **Settings and the app page are panes behind a rail; a password is self-serve to
+    *change* and script-only to *reset*; the connections list lives in Settings**
+    (2026-09-02, owner-reviewed design; §13, §4, §12, §8, §19, §20.6). Three calls in one
+    redesign. **(a) Panes.** `/settings` had grown past one scroll, so it is six panes
+    behind a left rail — Sign-in (Password, Two-factor, Passkeys) and Access (Sessions,
+    Tokens, Connected clients) — one route per pane (`/settings/<pane>`, Password landing
+    at the root, no alias), every rail entry carrying an at-a-glance marker (a count, or
+    the Two-factor status dot), and a horizontally scrolling pill row where 390 px has no
+    room for a rail. `/apps/<slug>`, a page §13 never had, gets the same rail: App (Tools,
+    Prompts, Resources, Roles, Overview), Access (Agents, Token), Danger zone last as a
+    neutral entry; Tools lands so the app's real tool list is the first thing seen, a §20
+    family the app does not advertise dims its entry to `—`, and a tool row expands to its
+    input schema plus what only the hub knows — the `<slug>_<tool>` name, which agents
+    reach it through which role, approval and redaction posture — computed by the door's
+    own matcher, never a second one. **(b) Password.** The Password pane **reverses §4's
+    "no self-serve password change" — for the change half only.** An owner who knows the
+    password changes it on `/settings`, behind the recent-authentication gate, current
+    password required, "sign out my other sessions" on by default: core better-auth's
+    `/change-password`, verified against 1.7.1, which on that flag deletes every session
+    (the CLI's and the current one) and re-mints the browser's in the same response — so
+    the gate is the hub's (the endpoint checks no freshness of its own in 1.7.1) and the
+    cookie must be forwarded. An owner who has *forgotten* it is still reset only by
+    `pnpm users reset-password` (§12), because no email is on file (decision 5) and
+    therefore no reset link can exist; the pane says so in its own footer. Change and
+    reset are kept distinct in every spec sentence so the script's path and the pane's
+    cannot drift into one another, and tokens are untouched by either: nothing derives
+    from the password. `minPasswordLength` becomes 12. **(c) Connected clients.**
+    `/oauth/connections` was unreachable — its route and POST dispatcher existed and no
+    page linked to them — and becomes the third Access pane at `/settings/clients`, with a
+    `301` from the old URL: Sessions, Tokens and Connected clients are one family,
+    everything holding a live way in, each with a Revoke, differing only in who holds it
+    (`user:<name>` with owner authority; the owner's own apps and agents; outside software
+    acting *as an agent*, confined by `oauth_binding.agent_id`). Keeping the `/oauth/` URL
+    and only shelling it into the rail was acceptable and lost to one-prefix uniformity —
+    rail state and §4's gate as a single rule — and to the redirect costing one route.
+    `/oauth/consent` keeps no nav slot on purpose (a step inside the authorize redirect,
+    never navigated to) and §13 now says so in as many words. **Scope, pinned.** Only the
+    reviewed pages are specced: the `/agents` list and detail, the grant editor, the audit
+    expanded-row states and the proxied add-app states stay unreviewed and deferred; where
+    the new pages point at them (the app page's Edit grants, agent slugs as links, the
+    agent page's read-only clients row) §13 says "deferred" instead of inventing them,
+    `agents` does not join §2's reserved segments, and the mobile top nav's missing
+    `Agents` entry is recorded as the follow-up it is. One reservation rides along: `new`
+    and `connect` — the static segments under `/apps/` — can no longer be app slugs,
+    derived from the route table exactly as §2 derives usernames. **Spec ahead of code**:
+    nothing in this entry is implemented; it is its own workflow after §21 (D14). Two
+    design-side follow-ups are recorded, not solved: the full-shell `SettingsTokens` and
+    `OauthConnections` boards duplicate pane content the `…Panes` boards now carry, and
+    `/apps/<slug>` has no mobile board.
 

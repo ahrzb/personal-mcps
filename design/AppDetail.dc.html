@@ -14,7 +14,7 @@
     a:hover { color: #52525b; }
   </style>
 </helmet>
-<div style="width: 1240px; min-height: 1860px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
+<div style="width: 1240px; min-height: 840px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
 
   <div style="height: 56px; box-sizing: border-box; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; padding: 0 32px;">
     <div style="display: flex; align-items: center; gap: 24px;">
@@ -36,7 +36,7 @@
     </div>
   </div>
 
-  <div style="width: 1140px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 20px;">
+  <div style="width: 1180px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 24px;">
 
     <div style="display: flex; flex-direction: column; gap: 8px;">
       <div style="font-size: 13px; color: #71717a;"><a href="#">Apps</a> <span style="color: #a1a1aa;">/</span> <span style="color: #09090b;">mcp-tools</span></div>
@@ -50,158 +50,141 @@
       </div>
     </div>
 
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 12px;">
-      <div style="font-size: 16px; font-weight: 600;">Overview</div>
-      <div style="display: flex; flex-direction: column;">
-        <div style="display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="width: 180px; flex-shrink: 0; font-size: 13px; color: #71717a;">Slug</div>
-          <div style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">mcp-tools</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="width: 180px; flex-shrink: 0; font-size: 13px; color: #71717a;">Created</div>
-          <div style="font-size: 14px;">Aug 12</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="width: 180px; flex-shrink: 0; font-size: 13px; color: #71717a;">Body logging</div>
-          <div style="font-size: 14px;">On <span style="color: #71717a;">— tunneled default</span></div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="width: 180px; flex-shrink: 0; font-size: 13px; color: #71717a;">Redacted arguments</div>
-          <div style="font-size: 13px; color: #a1a1aa;">none</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 16px; padding: 10px 0;">
-          <div style="width: 180px; flex-shrink: 0; font-size: 13px; color: #71717a;">Redacted results</div>
-          <div style="font-size: 13px; color: #a1a1aa;">none</div>
-        </div>
-      </div>
-    </div>
+    <div style="display: flex; align-items: flex-start; gap: 32px;">
 
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 12px;">
-      <div style="display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 16px; font-weight: 600;">Roles</div>
-        <div style="font-size: 13px; color: #71717a;">Declared by the app at connect time.</div>
-      </div>
-      <div style="display: flex; flex-direction: column;">
-        <div style="display: flex; flex-direction: column; gap: 4px; padding: 12px 0;">
-          <div style="font-size: 13px; font-weight: 500;">No roles declared</div>
-          <div style="font-size: 13px; color: #71717a;">Grants fall back to the built-in <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">all</span> role — every tool, present and future.</div>
+      <div style="width: 200px; flex-shrink: 0; display: flex; flex-direction: column; gap: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa; padding: 0 10px;">App</div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; background: #f4f4f5; color: #09090b;">
+              <span>Tools</span>
+              <span style="font-size: 13px; color: #71717a;">5</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #a1a1aa;">
+              <span>Prompts</span>
+              <span style="font-size: 13px; color: #d4d4d8;">—</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #a1a1aa;">
+              <span>Resources</span>
+              <span style="font-size: 13px; color: #d4d4d8;">—</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
+              <span>Roles</span>
+              <span style="font-size: 13px; color: #a1a1aa;">none</span>
+            </div>
+            <div style="display: flex; align-items: center; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Overview</div>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa; padding: 0 10px;">Access</div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
+              <span>Agents</span>
+              <span style="font-size: 13px; color: #a1a1aa;">2</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
+              <span>Token</span>
+              <span style="font-size: 13px; color: #a1a1aa;">1</span>
+            </div>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 2px; padding-top: 16px; border-top: 1px solid #f4f4f5;">
+          <div style="display: flex; align-items: center; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Danger zone</div>
         </div>
       </div>
-      <div style="font-size: 12px; color: #71717a;">Roles are self-declared by the tunneled app — granting a role trusts the app's declaration.</div>
-    </div>
 
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 12px;">
-      <div style="display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 16px; font-weight: 600;">Tools <span style="font-weight: 400; color: #71717a;">5</span></div>
-        <div style="font-size: 13px; color: #71717a;">Advertised by the app on its last connect.</div>
-      </div>
-      <div style="display: flex; flex-direction: column;">
-        <div style="display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="width: 220px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">duocards_query</div>
-          <div style="font-size: 13px; color: #71717a;">Query the Duocards vocabulary database.</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="width: 220px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">duocards_schema</div>
-          <div style="font-size: 13px; color: #71717a;">Describe that database's schema.</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="width: 220px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">jobfeed_crawl</div>
-          <div style="font-size: 13px; color: #71717a;">Crawl the configured job sources for new postings.</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="width: 220px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">jobfeed_feed</div>
-          <div style="font-size: 13px; color: #71717a;">Read the collected postings back as a feed.</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 16px; padding: 10px 0;">
-          <div style="width: 220px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">paper_fetch</div>
-          <div style="font-size: 13px; color: #71717a;">Fetch a paper by identifier and return its text.</div>
-        </div>
-      </div>
-      <div style="font-size: 12px; color: #71717a;">Agents see these slug-prefixed — <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">paper_fetch</span> is called as <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">mcp-tools_paper_fetch</span>.</div>
-    </div>
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px;">
 
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
-      <div style="display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 16px; font-weight: 600;">App token</div>
-        <div style="font-size: 13px; color: #71717a;">The bot presents this token to dial in. App tokens do not expire.</div>
-      </div>
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid #f4f4f5; border-bottom: 1px solid #f4f4f5;">
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <div style="height: 28px; box-sizing: border-box; padding: 0 10px; background: #f4f4f5; border-radius: 8px; font-size: 13px; color: #09090b; display: flex; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pmcp_app_9f3k…Xd2</div>
-          <div style="font-size: 13px; color: #71717a;">Issued Aug 12 · Last used now</div>
-        </div>
-        <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Revoke</div>
-      </div>
-      <div style="display: flex;">
-        <div style="display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
-          <span>Issue new token</span>
-        </div>
-      </div>
-      <div style="font-size: 12px; color: #71717a;">Revoking closes the app's live connection.</div>
-    </div>
+        <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <div style="font-size: 16px; font-weight: 600;">Tools <span style="font-weight: 400; color: #71717a;">5</span></div>
+              <div style="font-size: 13px; color: #71717a;">Advertised by the app on its last connect.</div>
+            </div>
+            <div style="font-size: 13px; color: #71717a; flex-shrink: 0;">Re-listed on every reconnect</div>
+          </div>
+          <div style="display: flex; flex-direction: column;">
 
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden; display: flex; flex-direction: column;">
-      <div style="padding: 24px 24px 16px 24px; display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 16px; font-weight: 600;">Access</div>
-        <div style="font-size: 13px; color: #71717a;">Which agents can call this app, and how each granted role runs.</div>
-      </div>
-      <div style="display: grid; grid-template-columns: 240px 1fr 160px; gap: 0; padding: 10px 24px; border-bottom: 1px solid #e4e4e7;">
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Agent</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Granted roles</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;"></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 240px 1fr 160px; gap: 0; padding: 12px 24px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</div>
-          <div style="font-size: 12px; color: #71717a;">the main agent</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 6px;">
-          <span style="display: inline-flex; align-items: baseline; gap: 5px; height: 22px; padding: 0 8px; border-radius: 6px; background: #f4f4f5;"><span style="font-size: 12px; font-weight: 500; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">all</span><span style="font-size: 11px; color: #a1a1aa;">· allow</span></span>
-          <span style="font-size: 12px; color: #a1a1aa;">built-in</span>
-        </div>
-        <div style="display: flex; justify-content: flex-end;">
-          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Edit grants</div>
-        </div>
-      </div>
-      <div style="display: grid; grid-template-columns: 240px 1fr 160px; gap: 0; padding: 12px 24px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pi</div>
-          <div style="font-size: 12px; color: #71717a;">the home Raspberry Pi</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 6px;">
-          <span style="display: inline-flex; align-items: baseline; gap: 5px; height: 22px; padding: 0 8px; border-radius: 6px; background: #f4f4f5;"><span style="font-size: 12px; font-weight: 500; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">all</span><span style="font-size: 11px; color: #a1a1aa;">· allow</span></span>
-          <span style="font-size: 12px; color: #a1a1aa;">built-in</span>
-        </div>
-        <div style="display: flex; justify-content: flex-end;">
-          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Edit grants</div>
-        </div>
-      </div>
-      <div style="padding: 14px 24px 20px 24px; font-size: 12px; color: #71717a;">Grants are edited per agent × app pair — saving replaces that pair's whole set.</div>
-    </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="m9 18 6-6-6-6"></path></svg>
+              <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">duocards_query</div>
+              <div style="font-size: 13px; color: #71717a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Run an arbitrary GraphQL query or mutation against the DuoCards API as the logged-in user.</div>
+              <div style="font-size: 12px; color: #a1a1aa; flex-shrink: 0;">2 args</div>
+            </div>
 
-    <div style="background: #ffffff; border: 1px solid #fecaca; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
-      <div style="font-size: 16px; font-weight: 600;">Danger zone</div>
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 24px; padding-bottom: 16px; border-bottom: 1px solid #f4f4f5;">
-        <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500;">Archive this app</div>
-          <div style="font-size: 13px; color: #71717a;">It refuses connections and leaves the list — tokens, grants and history are kept.</div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="m9 18 6-6-6-6"></path></svg>
+              <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">duocards_schema</div>
+              <div style="font-size: 13px; color: #71717a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">The full DuoCards GraphQL schema as SDL — read this before writing a query.</div>
+              <div style="font-size: 12px; color: #a1a1aa; flex-shrink: 0;">no args</div>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="m9 18 6-6-6-6"></path></svg>
+              <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">jobfeed_crawl</div>
+              <div style="font-size: 13px; color: #71717a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Trigger a crawl of the configured job boards.</div>
+              <div style="font-size: 12px; color: #a1a1aa; flex-shrink: 0;">1 arg</div>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="m9 18 6-6-6-6"></path></svg>
+              <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">jobfeed_feed</div>
+              <div style="font-size: 13px; color: #71717a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Query crawled job postings, newest first.</div>
+              <div style="font-size: 12px; color: #a1a1aa; flex-shrink: 0;">5 args</div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; border-bottom: 1px solid #f4f4f5;">
+              <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="m6 9 6 6 6-6"></path></svg>
+                <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">paper_fetch</div>
+                <div style="font-size: 13px; color: #71717a; flex: 1; min-width: 0;">Fetch the paper identified by a DOI and return its text as Markdown.</div>
+                <div style="font-size: 12px; color: #a1a1aa; flex-shrink: 0;">2 args</div>
+              </div>
+
+              <div style="margin: 0 0 16px 26px; background: #fafafa; border: 1px solid #f4f4f5; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+
+                <div style="font-size: 13px; color: #52525b; line-height: 1.6;">Fetch the paper identified by <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">doi</span> and return its text as Markdown. <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">doi</span> must be the exact DOI string, not a URL or padded value — <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">10.48550/arXiv.1706.03762</span> (arXiv) or <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">10.1038/s41586-021-03819-2</span> (Nature). Returns <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">{markdown, metadata: {doi, title, cached}}</span> — the body separate from the metadata.</div>
+
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                  <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa;">Arguments</div>
+                  <div style="display: grid; grid-template-columns: 180px 110px 1fr; gap: 0; padding: 6px 0; border-bottom: 1px solid #e4e4e7;">
+                    <div style="font-size: 12px; font-weight: 500; color: #71717a;">Name</div>
+                    <div style="font-size: 12px; font-weight: 500; color: #71717a;">Type</div>
+                    <div style="font-size: 12px; font-weight: 500; color: #71717a;">Required</div>
+                  </div>
+                  <div style="display: grid; grid-template-columns: 180px 110px 1fr; gap: 0; padding: 7px 0; border-bottom: 1px solid #f4f4f5; align-items: center;">
+                    <div style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">doi</div>
+                    <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">string</div>
+                    <div><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">required</span></div>
+                  </div>
+                  <div style="display: grid; grid-template-columns: 180px 110px 1fr; gap: 0; padding: 7px 0; align-items: center;">
+                    <div style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">force_refresh</div>
+                    <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">boolean</div>
+                    <div style="font-size: 12px; color: #a1a1aa;">optional · defaults to <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">false</span></div>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-wrap: wrap; column-gap: 20px; row-gap: 6px; padding-top: 12px; border-top: 1px solid #e4e4e7;">
+                  <div style="font-size: 12px; color: #71717a;">Called by agents as <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #09090b;">mcp-tools_paper_fetch</span></div>
+                  <div style="font-size: 12px; color: #71717a;">Reachable by <a href="#" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</a>, <a href="#" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pi</a> · via <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">all</span></div>
+                  <div style="font-size: 12px; color: #71717a;">No approval required</div>
+                  <div style="font-size: 12px; color: #71717a;">No redacted fields</div>
+                </div>
+
+              </div>
+            </div>
+
+          </div>
+          <div style="font-size: 12px; color: #71717a;">Schemas come from the app's last <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">tools/list</span> — the hub stores them, it does not author them.</div>
         </div>
-        <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05); flex-shrink: 0;">Archive</div>
-      </div>
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 24px;">
-        <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500;">Delete this app</div>
-          <div style="font-size: 13px; color: #71717a;">Revokes its tokens, closes the live connection and removes every grant. This cannot be undone.</div>
-        </div>
-        <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca; flex-shrink: 0;">Delete</div>
+
       </div>
     </div>
 
   </div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":1240,"height":1860}}'>
+<script data-dc-script data-props='{"$preview":{"width":1240,"height":840}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

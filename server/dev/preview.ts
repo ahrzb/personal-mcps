@@ -1,10 +1,14 @@
-// preview.ts — DEV-ONLY, THROWAWAY. Exists solely so `wrangler dev -c
-// wrangler.preview.jsonc` can render every page × fixture combination while the UI
-// template layer (server/src/pages) is being built against fixtures.ts. It is not
-// part of the shipped worker (server/src/index.ts), is not mounted by wrangler.jsonc,
-// is never deployed, and can be deleted the moment the real page routes in web.ts
-// render for real. No auth, no bindings, no router dependency — a plain fetch handler
-// is all two GET routes need.
+// preview.ts — DEV-ONLY, KEPT. `wrangler dev -c wrangler.preview.jsonc` (launch name
+// `preview`) renders every page × fixture combination: the living demo of each screen
+// and component STATE — empty, populated, each refusal, each success notice, each confirm
+// dialog, archived, unreachable, dimmed — read beside the design boards as the reference
+// for what a state looks like (owner decision 2026-09-02; it began as scaffolding for
+// building the template layer against fixtures.ts and is now permanent). A page or pane
+// added without a fixture is a type error (model.ts's PagePropsByName), so the index can
+// never silently lag the pages. It is not part of the shipped worker
+// (server/src/index.ts), is not mounted by wrangler.jsonc, and is never deployed. No
+// auth, no bindings, no router dependency — a plain fetch handler is all two GET routes
+// need.
 //
 //   GET /                          — an index linking every page × fixture pair.
 //   GET /preview/<page>/<fixture>  — that page rendered with that fixture's exact props.

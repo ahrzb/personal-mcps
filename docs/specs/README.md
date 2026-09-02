@@ -8,8 +8,9 @@ reference still resolves — look the number up in the tables below.
 
 ## Design spec
 
-Split from `docs/superpowers/specs/2026-08-24-personal-mcp-hub-design.md`.
-Concatenating these files in § order reproduces that document exactly.
+Split 2026-08-26 from a single-file spec (its last text is in git at `3003a1f^`, under
+`docs/superpowers/specs/`); the monolith is gone and these files are the only current
+text — §21, decisions 29–30 and the 2026-09-02 web-surface rewrite exist nowhere else.
 
 | § | Section | What it pins |
 |---|---|---|
@@ -26,20 +27,21 @@ Concatenating these files in § order reproduces that document exactly.
 | 10 | [CLI](admin-and-config/10-cli.md) | The `pmcp` command surface (rewritten 2026-09-01: path-style refs for `describe`/`get`, `--json` everywhere, the frozen error-code contract, minimal interactivity), the rule that every non-auth/non-profile subcommand is sugar over the same MCP tools, and `~/.config/pmcp/config.toml` with named profiles and their selection precedence. |
 | 11 | [Client libraries](admin-and-config/11-client-libraries.md) | What the Python and JS libraries own: dial, register, answer `server/discover`, bridge WS frames to the author's SDK, reconnect — plus the two in-handler affordances (caller identity, `Secret`/`sensitive()` marking). |
 | 12 | [User management script](admin-and-config/12-user-management-script.md) | The bootstrap path: `scripts/users.ts` against `POST /internal/users`, guarded by a `BOOTSTRAP_SECRET` whose absence makes the route 404, and the profile/env resolution the script uses. |
-| 13 | [Web surface](web-and-oauth/13-web-surface.md) | The server-rendered pages and what each is for (`/login`, `/device`, `/settings`, `/audit`, `/approvals`, `/apps`, the two `/oauth/*` pages), the PWA manifest + service worker, and approval Web Push. |
+| 13 | [Web surface](web-and-oauth/13-web-surface.md) | The server-rendered pages and what each is for (`/login`, `/device`, `/settings` and its six panes behind a rail — the Password pane included — `/audit`, `/approvals`, `/apps`, `/apps/<slug>` and its panes, the chromeless `/oauth/consent`), the pane-and-rail shell rules, the PWA manifest + service worker, and approval Web Push. |
 | 14 | [Alternatives considered](decisions/14-alternatives-considered.md) | The designs that were rejected and why — per-app tunnels, `McpAgent`, a full OAuth provider (later taken as §19), D1 for per-app state, upstream OAuth (later taken in §7). |
 | 15 | [Error handling and operational behavior](ops/15-error-handling.md) | The operational contract: the 30 s request budget, at-most-once calls across deploys, unavailability and revocation behavior, the WAF rate-limiting rule, log hygiene, what the audit trail records and what it never does, audit bodies with their stubs and cap, and retention. |
 | 16 | [Testing](ops/16-testing.md) | The test obligations the design itself pins — the core tunnel integration test, the pattern-matching regressions, the approval-flow cases, upstream and inbound OAuth, the router walk, and the per-family §20 cases. |
 | 17 | [Repo layout](overview/17-repo-layout.md) | The monorepo tree: what lives in `server/`, `cli/`, `clients/`, `examples/`, `scripts/`. |
-| 18 | [Decisions made by default](decisions/18-decision-log.md) | The numbered decision log (1–29), each with its rationale and, where it changed, the revision that superseded it — the place a reader checks before re-litigating a choice. |
+| 18 | [Decisions made by default](decisions/18-decision-log.md) | The numbered decision log (1–30), each with its rationale and, where it changed, the revision that superseded it — the place a reader checks before re-litigating a choice. |
 | 19 | [Inbound OAuth](web-and-oauth/19-inbound-oauth.md) | The hub as an authorization server: the vehicle and its verify side, the discovery documents and routes, the pinned provider options, the `oauth_binding` table, the consent screen, the token end to end (including the byte-level JWT predicate and the terminal, fail-closed door leg), the interaction with the `/api/auth` allowlist, the failure matrix, and what is explicitly out of scope. |
 | 20 | [The MCP data model beyond tools](gateway/20-mcp-data-model-beyond-tools.md) | Prompts, resources, resource templates and completions through the same pipeline: what is in and what is deferred with its reason, per-family routing and capability advertisement, roles over three keyspaces, per-family audit and URI hygiene, caching, and the CLI/library surfaces. |
 | 21 | [Push: the listen stream](gateway/21-push.md) | Server→consumer notifications un-deferred (decision 28): the Worker-held `text/event-stream`, subscriber sockets into app DOs, doorbell-not-data, `resources/subscribe`/`updated`, capability flags flipping in lockstep with the transport, and the recorded ceilings. |
 
 ## Testing strategy
 
-Split from `docs/superpowers/specs/2026-08-25-testing-strategy.md`. Cited as
-"strategy §N". Concatenating these files in § order reproduces that document exactly.
+Split 2026-08-26 from a single-file strategy (last text at `3003a1f^`, same directory).
+Cited as "strategy §N"; amended since (decision 29's rename), so these files are the only
+current text.
 
 | § | Section | What it pins |
 |---|---|---|

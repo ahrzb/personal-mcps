@@ -320,6 +320,20 @@ this is the residue when an author does not.
   (`resources/list` / `resources/templates/list`), `pmcp read <app> <uri>`
   (`resources/read`). All four are gateway sugar of the kind `tools`/`call` already are —
   they front an MCP method, not an admin op, so §8's parity list is untouched.
+- **Web** (§13, *added 2026-09-02, decision 30 — spec ahead of code*): `/apps/<slug>`
+  carries one pane per family — Tools, Prompts, Resources (with a Templates tab) — each
+  the owner's own view of the scoped endpoint's listing (unfiltered, §7 step 2; a tunneled
+  app's cached catalog, a proxied app's live fetch), the same read `pmcp describe
+  app/<slug>` renders, so §8's parity list is as untouched by the panes as by the
+  commands. Beside each entry the pane adds what only the hub knows: the aggregated name
+  (`<slug>_<name>` — tools and prompts only), which agents reach it through which role,
+  computed by the door's own matcher over §20.3's per-family patterns and never a second
+  one, the approval posture (never, for prompts and resources — §18 decision 27), and the
+  `redact` entries that match. A family the app does not advertise dims its rail entry to
+  `—`, and its pane says why. The Resources pane states the two rules a reader would
+  otherwise learn from a `-32601`: resources are served on the scoped endpoint only, and
+  grants match them by URI — templates by their raw `uriTemplate`. `completion/complete`
+  gets no pane for the reason it gets no command.
 - **Client libraries** (§11): no new API beyond the widened `roles` shape. The bridge is
   transparent, so an app that declares prompts or resources with its own SDK serves
   them through the hub with no library change; the libraries pass the declaration through

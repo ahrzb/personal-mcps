@@ -14,7 +14,7 @@
     a:hover { color: #52525b; }
   </style>
 </helmet>
-<div style="width: 1080px; min-height: 1050px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
+<div style="width: 1240px; min-height: 740px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
 
   <div style="height: 56px; box-sizing: border-box; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; padding: 0 32px;">
     <div style="display: flex; align-items: center; gap: 24px;">
@@ -24,6 +24,7 @@
       </div>
       <div style="display: flex; align-items: center; gap: 4px;">
         <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Apps</div>
+        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Agents</div>
         <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Audit</div>
         <div style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Approvals<span style="display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #dc2626; color: #ffffff; font-size: 11px; font-weight: 600;">2</span></div>
         <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: #f4f4f5; color: #09090b;">Settings</div>
@@ -35,105 +36,96 @@
     </div>
   </div>
 
-  <div style="width: 760px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 24px;">
+  <div style="width: 1180px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 24px;">
 
     <div style="display: flex; flex-direction: column; gap: 4px;">
       <div style="font-size: 24px; font-weight: 600;">Settings</div>
-      <div style="font-size: 14px; color: #71717a;">Security settings for ahrzb.</div>
+      <div style="font-size: 14px; color: #71717a;">Sign-in and access for ahrzb.</div>
     </div>
 
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
-      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
-        <div style="display: flex; flex-direction: column; gap: 4px;">
-          <div style="font-size: 16px; font-weight: 600;">Two-factor authentication</div>
-          <div style="font-size: 13px; color: #71717a;">TOTP via an authenticator app.</div>
-        </div>
-        <div style="display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #15803d;"></span>enabled</div>
-      </div>
-      <div style="font-size: 13px; color: #71717a;">8 backup codes remaining · generated Mar 2, 2026</div>
-      <div style="display: flex; gap: 12px;">
-        <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Regenerate backup codes</div>
-        <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Disable two-factor</div>
-      </div>
-    </div>
+    <div style="display: flex; align-items: flex-start; gap: 32px;">
 
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
-      <div style="display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 16px; font-weight: 600;">Passkeys</div>
-        <div style="font-size: 13px; color: #71717a;">Sign in with a security key or platform authenticator.</div>
-      </div>
-      <div style="display: flex; flex-direction: column;">
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="3.5"></circle><path d="m21 2-9.6 9.6"></path><path d="m15.5 7.5 3 3L22 7l-3-3"></path></svg>
-            <div style="display: flex; flex-direction: column; gap: 2px;">
-              <div style="font-size: 14px; font-weight: 500;">MacBook Touch ID</div>
-              <div style="font-size: 12px; color: #71717a;">Added Mar 12, 2026 · last used yesterday</div>
+      <div style="width: 200px; flex-shrink: 0; display: flex; flex-direction: column; gap: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa; padding: 0 10px;">Sign-in</div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; align-items: center; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; background: #f4f4f5; color: #09090b;">Password</div>
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
+              <span>Two-factor</span>
+              <span style="width: 6px; height: 6px; border-radius: 50%; background: #15803d;"></span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
+              <span>Passkeys</span>
+              <span style="font-size: 13px; color: #a1a1aa;">2</span>
             </div>
           </div>
-          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: transparent; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Remove</div>
         </div>
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 0;">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="3.5"></circle><path d="m21 2-9.6 9.6"></path><path d="m15.5 7.5 3 3L22 7l-3-3"></path></svg>
-            <div style="display: flex; flex-direction: column; gap: 2px;">
-              <div style="font-size: 14px; font-weight: 500;">YubiKey 5C</div>
-              <div style="font-size: 12px; color: #71717a;">Added Jan 8, 2026 · last used Aug 2, 2026</div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa; padding: 0 10px;">Access</div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
+              <span>Sessions</span>
+              <span style="font-size: 13px; color: #a1a1aa;">3</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
+              <span>Tokens</span>
+              <span style="font-size: 13px; color: #a1a1aa;">4</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
+              <span>Connected clients</span>
+              <span style="font-size: 13px; color: #a1a1aa;">2</span>
             </div>
           </div>
-          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: transparent; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Remove</div>
         </div>
       </div>
-      <div style="display: flex;">
-        <div style="display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
-          <span>Add passkey</span>
-        </div>
-      </div>
-    </div>
 
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden; display: flex; flex-direction: column;">
-      <div style="padding: 24px 24px 16px 24px; display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 16px; font-weight: 600;">Active sessions</div>
-        <div style="font-size: 13px; color: #71717a;">Web and CLI sessions currently signed in.</div>
-      </div>
-      <div style="display: grid; grid-template-columns: 3fr 2fr 2fr 1fr; gap: 0; padding: 10px 24px; border-bottom: 1px solid #e4e4e7;">
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Client</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Created</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Last active</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;"></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 3fr 2fr 2fr 1fr; gap: 0; padding: 12px 24px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <div style="font-size: 14px;">Chrome on Windows</div>
-          <div style="display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">current</div>
+      <div style="width: 640px; display: flex; flex-direction: column; gap: 16px;">
+
+        <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <div style="font-size: 16px; font-weight: 600;">Password</div>
+            <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Used with your username at sign-in. App and agent tokens are unaffected.</div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 16px;">
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="font-size: 14px; font-weight: 500;">Current password</div>
+              <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; letter-spacing: 3px;">••••••••••••</div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="font-size: 14px; font-weight: 500;">New password</div>
+              <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; letter-spacing: 3px;">••••••••••••••••</div>
+              <div style="font-size: 12px; color: #71717a;">At least 12 characters.</div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="font-size: 14px; font-weight: 500;">Confirm new password</div>
+              <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #a1a1aa; border-radius: 8px; box-shadow: 0 0 0 3px rgba(161,161,170,0.35); font-size: 14px; color: #09090b; background: #ffffff; display: flex; align-items: center; letter-spacing: 3px;">••••••••</div>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 16px; height: 16px; box-sizing: border-box; border-radius: 4px; background: #18181b; border: 1px solid #18181b; display: flex; align-items: center; justify-content: center;">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+            </div>
+            <div style="font-size: 14px;">Sign out my other sessions</div>
+          </div>
+          <div style="font-size: 12px; color: #71717a; margin-top: -12px; padding-left: 26px;">CLI sessions included — each machine runs <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pmcp login</span> again. This browser stays signed in.</div>
+
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Update password</div>
+            <div style="font-size: 13px; color: #71717a;">Confirmed your identity 4 minutes ago.</div>
+          </div>
         </div>
-        <div style="font-size: 13px; color: #71717a;">Aug 24, 2026</div>
-        <div style="font-size: 13px; color: #71717a;">Now</div>
-        <div></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 3fr 2fr 2fr 1fr; gap: 0; padding: 12px 24px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-size: 14px;">pmcp CLI · device flow</div>
-        <div style="font-size: 13px; color: #71717a;">Aug 20, 2026</div>
-        <div style="font-size: 13px; color: #71717a;">2 hours ago</div>
-        <div style="display: flex; justify-content: flex-end;">
-          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: transparent; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Revoke</div>
-        </div>
-      </div>
-      <div style="display: grid; grid-template-columns: 3fr 2fr 2fr 1fr; gap: 0; padding: 12px 24px; align-items: center;">
-        <div style="font-size: 14px;">Safari on iPhone</div>
-        <div style="font-size: 13px; color: #71717a;">Aug 11, 2026</div>
-        <div style="font-size: 13px; color: #71717a;">3 days ago</div>
-        <div style="display: flex; justify-content: flex-end;">
-          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: transparent; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Revoke</div>
-        </div>
+
+        <div style="font-size: 12px; color: #71717a; line-height: 1.6;">No email is on file, so there is no reset link: a forgotten password is recovered on the server with <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pnpm users reset-password ahrzb</span> (§12). Changing it here needs the current one.</div>
+
       </div>
     </div>
 
   </div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":1080,"height":1050}}'>
+<script data-dc-script data-props='{"$preview":{"width":1240,"height":740}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

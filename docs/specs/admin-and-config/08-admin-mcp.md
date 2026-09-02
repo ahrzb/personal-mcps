@@ -77,8 +77,11 @@ Tools (names final, shapes reviewed at implementation time):
   opened with it.
 - `connection_list` / `connection_revoke` *(added 2026-08-26, §19)* — the OAuth clients
   connected to this namespace: client name and id, the agent each is bound to,
-  created/last-used, revoked state. `connection_revoke` takes `{ id }` and is what the
-  `/oauth/connections` Revoke button fronts (§13). These exist because §19's connections
+  created/last-used, revoked state *(amended 2026-09-02, decision 30: plus the origin of
+  the client's registered redirect URI and whether it self-registered — the two identity
+  strings §19.5's consent screen shows, so §13's pane can repeat them)*. `connection_revoke`
+  takes `{ id }` and is what the Connected clients pane's Revoke button fronts (§13;
+  `/settings/clients`, formerly `/oauth/connections`). These exist because §19's connections
   are grants-shaped, not credential-shaped: the parity invariant below applies to them
   in full, and the consent SCREEN — not the binding it writes — is the browser-only part.
 
@@ -92,7 +95,11 @@ Tools (names final, shapes reviewed at implementation time):
   like everything else, `pmcp audit` is sugar over this tool.
 
 Every tool that takes an app slug rejects `pmcp` with the same error (`grant_set`,
-`app_*`, `token_issue` alike) — the reservation is uniform, not per-tool. Every
+`app_*`, `token_issue` alike) — the reservation is uniform, not per-tool. *(Amended
+2026-09-02, decision 30:)* `app_create` additionally refuses the static segments the router
+mounts directly under `/apps/` — `new` and `connect` today — because `/apps/<slug>` is a
+page (§13); the set is derived from the route table like §2's reserved usernames, never
+hand-kept. Every
 mutating `pmcp` tool writes an `admin.<tool>` audit row with a summary of the change
 (never secrets — `token_issue` logs that a token was issued and for whom, not the key).
 

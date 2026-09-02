@@ -1,8 +1,8 @@
 // identity.ts — who is calling, and custody of every credential.
 //
 // This module owns both ways a request proves itself: better-auth sessions for humans
-// (the instantiation, the plugin list — username, twoFactor, passkey,
-// deviceAuthorization, bearer; passkey arrives with its separate package, see auth() —
+// (the instantiation, the plugin list — username, twoFactor, passkey (its own package,
+// see auth()), deviceAuthorization, bearer, jwt, oauthProvider —
 // and every table better-auth manages are hidden here;
 // no other module touches better-auth — a page that needs an answer from it asks through
 // `callAuth`, or through `callAuthResponse` when the answer is in the headers rather than the
@@ -33,6 +33,7 @@ import { twoFactor } from "better-auth/plugins/two-factor";
 import { username as usernamePlugin } from "better-auth/plugins/username";
 import { dash } from "@better-auth/infra";
 import { oauthProvider } from "@better-auth/oauth-provider";
+import { passkey } from "@better-auth/passkey";
 import { Hono } from "hono";
 import { deleteUser, provisionUser } from "./admin";
 import { record } from "./audit";
@@ -62,11 +63,11 @@ function db(): D1Like {
 export const USERNAME_CHARSET = /^[a-z0-9-]+$/;
 
 /**
- * The ONE better-auth instantiation (§4), built per call because a D1 binding is
- * request-scoped and an instance closing over a stale one is a dead instance. The plugin
- * list is the spec's, minus passkey: `@better-auth/passkey` is a separate package that
- * 1.7 does not bundle and this repo does not install, so the passkey ceremonies — and the
- * `last_used_at` stamp §5 extends them with — arrive with that dependency, not before.
+ * The ONE better-auth instantiation (§4), built once per isolate (auth() below says why).
+ * The plugin list is the spec's, passkey included: `@better-auth/passkey` is a separate
+ * package 1.7 does not bundle, pinned in lockstep with core. The `last_used_at` stamp §5
+ * extends passkey sign-ins with is not written yet — it lands with §13's Passkeys pane,
+ * whose "last used" line is the one thing that reads it.
  *
  * `database: env.DB` IS the whole D1 wiring: `@better-auth/kysely-adapter` ships its own
  * D1 dialect and selects it by duck-typing the binding, so no dialect is constructed here
@@ -112,6 +113,13 @@ function buildAuth() {
       // accepts it.
       usernamePlugin({ usernameValidator: (name) => USERNAME_CHARSET.test(name) }),
       twoFactor(),
+      // §4's optional WebAuthn, from its own package pinned in lockstep with core
+      // (`@better-auth/passkey@1.7.1`). `origin` is pinned because the plugin's default is
+      // the request's own Origin header, and the ceremony verifies the browser's signed
+      // origin against exactly this value — it should be the hub's, not the caller's. rpID
+      // stays the plugin's default, baseURL's hostname; rpName is what the authenticator
+      // prompt shows the owner, and better-auth's default there is better-auth's own name.
+      passkey({ rpName: "personal-mcps", origin: env.PUBLIC_ORIGIN }),
       // §13: ~10 minutes, down from better-auth's 30-minute default.
       deviceAuthorization({ expiresIn: `${DEVICE_CODE_TTL_MS / 1000}s` }),
       bearer(),
@@ -788,9 +796,10 @@ export function deleteTokensForStatement(refId: string): D1Stmt {
  * ceremonies, RFC 8628 device flow (codes shortened to ~10 minutes), session
  * management, and the bearer plugin the CLI rides — returned as one route group (a
  * Hono sub-app at implementation; typed unknown so no framework type leaks). This is
- * the only place better-auth is instantiated (per-request, D1 being request-scoped).
- * Successful passkey sign-ins stamp our last_used_at extension column; logins and
- * device approvals write audit rows. Mounted by the composition root under the
+ * the only place better-auth is instantiated (once per isolate, auth() above). Logins —
+ * password and passkey alike — and device approvals write audit rows; the last_used_at
+ * stamp §5 gives passkey sign-ins is not written yet (buildAuth's docstring says where it
+ * lands). Mounted by the composition root under the
  * reserved auth paths; the credential family here is deliberately never exposed as
  * pmcp tools, and a request carrying an `Authorization` header reaches only the two
  * endpoints it has business at (BEARER_ADMITTED below — §4's session-scope guard, standing
@@ -890,6 +899,8 @@ function credentialFamilyForbidden(): Response {
 const AUDITED_AUTH_ENDPOINTS: Record<string, string> = {
   "/sign-in/username": "auth.login",
   "/sign-in/email": "auth.login",
+  // A passkey assertion that verifies IS a sign-in; its response names the user the same way.
+  "/passkey/verify-authentication": "auth.login",
   "/device/approve": "auth.device_approved",
 };
 
@@ -1225,9 +1236,11 @@ async function resetPassword(name: string): Promise<BootstrapLeg> {
 class BootstrapRefusal extends Error {}
 
 /**
- * The ONE place a password is written (§4/§12: there is no self-serve password change
- * anywhere, so this has exactly two callers, both inside the bootstrap route, and is
- * never reachable from any MCP surface). Creates the credential account on first use and
+ * The ONE place the hub itself writes a password: exactly two callers, both inside the
+ * bootstrap route (§12), never reachable from any MCP surface. The self-serve change §4
+ * took on 2026-09-02 (decision 30, §13's Password pane) is better-auth's own
+ * `POST /change-password` on the mount — it verifies the current password and writes the
+ * new hash itself, so it never passes through here. Creates the credential account on first use and
  * replaces the hash afterwards; `provisionUser` writes the `user` row alone, so a
  * freshly provisioned namespace passes through the create leg here exactly once.
  *

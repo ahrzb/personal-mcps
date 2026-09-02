@@ -47,14 +47,40 @@
   session-minting behavior is an escalation footgun. A small hashed-token table is
   simpler and safer; better-auth handles humans only.)
 - **Session-scope guards**: credential-management endpoints (`/settings` — TOTP and
-  passkey enrollment/removal, session revocation; there is no self-serve password
-  change, the users script (§12) is the only password path) require a
+  passkey enrollment/removal, session revocation, and *(amended 2026-09-02, decision
+  30)* **changing** the password) require a
   cookie-authenticated web session with recent
   authentication — bearer-sourced (CLI) sessions are rejected there, so a stolen CLI
-  token cannot enroll new credentials and become persistent account takeover. Session
+  token cannot enroll new credentials and become persistent account takeover. "Recent"
+  is better-auth's own `session.freshAge` (default 24 h), read from its config so the hub
+  never keeps a second window. Session
   lifetime config is shared between web and CLI sessions (better-auth default 7 d
   sliding) — a conscious coupling; don't tune it up for CLI convenience without
   accepting the browser exposure.
+- **Password change vs. password reset** *(added 2026-09-02, decision 30 — until then
+  the bullet above read "there is no self-serve password change, the users script (§12)
+  is the only password path": **reversed for the change half, kept for the reset
+  half**)*. An owner who **knows** the current password changes it self-serve on
+  `/settings` (§13's Password pane): core better-auth's `POST /change-password` —
+  `{ currentPassword, newPassword, revokeOtherSessions? }`, verified in
+  `better-auth@1.7.1`, no plugin — which requires the current password and which the hub
+  gates as above. That gate is the only freshness check the change has: in 1.7.1 the
+  endpoint sits behind `sensitiveSessionMiddleware`, which proves an authoritative
+  session and nothing about its age (`freshSessionMiddleware` is the one that reads
+  `freshAge`, and `/change-password` does not use it). An owner who has **forgotten** it
+  is reset only by `pnpm users reset-password <username>` (§12) — structural, not an
+  oversight: the `username()` plugin's synthesized email is delivered to nowhere, so no
+  reset link can be sent, and no self-serve reset can exist without first putting a real
+  address on file, a decision this spec has not taken (§18 decision 5). Pinned alongside:
+  `emailAndPassword.minPasswordLength` is **12** (better-auth's default is 8; the pane's
+  "At least 12 characters." renders from the configured number, never a second literal;
+  the `maxPasswordLength` default of 128 stands — §12's generated passwords are random
+  and unaffected); `revokeOtherSessions: true` deletes **every** session of the user —
+  CLI device-flow sessions and the current browser session included — then mints a fresh
+  session and sets its cookie on the response, so the hub's translation route must
+  forward that `Set-Cookie` and the CLI signs in again; and app and agent tokens are
+  untouched by a change, because nothing derives them from the password (the `token`
+  table above holds random secrets).
 - **Schema migrations**: generated SQL checked in as `wrangler d1 migrations` files
   (better-auth CLI generate + our own tables); applied with `wrangler d1 migrations apply`.
   The better-auth CLI cannot run against the production config — D1 bindings exist only

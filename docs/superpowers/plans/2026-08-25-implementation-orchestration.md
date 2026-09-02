@@ -133,6 +133,7 @@ the failure is a spec question, not an execution one.
 | D13 | MCP data model beyond tools (§20): prompts, resources, templates, completions | workflow (41 agents, DAG) + inline gate | **gated ✓** (`e6d86c1` fixtures, `902c9a0` impl, deploy `3f653efe`, SMOKE PASS 26/26 live) |
 | D14 | Push — the listen stream, subscriber sockets, doorbells (§21) | workflow (DAG, 4 groups) + inline gate | **gated ✓** (`9e7a925` fixtures, `0624531` impl, `b2075f8` ledger, deploy `c381dcf0`, SMOKE PASS 27/27 live) |
 | D15 | Panes behind a rail — `/settings` split + Password pane, `/apps/<slug>`, Connected clients re-homed (§13, decision 30) | oracle workflow (25 agents) + implementation workflow (43 agents, two concurrent tracks) + inline gate | **gated ✓** (`005843d` prep, `628a5ee` rows, impl + gate commits, deploy `16bdc8e5`, SMOKE PASS 29/29 live) |
+| D16 | Test speed — the profiler's four causes, in order (roadmap step 1; no rows, no production change) | sequential workflow (a cause agent per commit, reviewer, fixer; Opus) + inline gate | **gated ✓** (`fb84d66` cause 1, `8200625` cause 2, `43b0e06` cause 3, cause 4 nulled; wall 385.26 → 213.07 s, owner-accepted over the ≤ 210 s target; no deploy — standing `16bdc8e5`) |
 
 Order is dependency-driven: nothing waits on anything it doesn't consume. D2–D3
 could overlap in principle (disjoint suites) but share `server/src/registry.ts`, so
@@ -1211,3 +1212,67 @@ check and (manual, once) a real push notification to a real browser.
   `fixtures.ts`; `pmcp connections` now prints a STATUS column derived from `revokedAt`
   (the §10 column question, answered minimally). Cost: oracles ≈5.2M subagent tokens
   (25 agents incl. the re-run reconcile), implementation ≈7.6M (43 agents, 4.1 h wall).
+- 2026-09-02 — **D16 gated — test speed: 385.26 s → 213.07 s in three commits, no
+  production change (roadmap step 1; plan `2026-09-02-d16-test-speed.md`).** Shape: one
+  sequential workflow — a cause agent per commit, each measuring the full suite with the
+  machine to itself; a reviewer over the DoD; a fixer — all Opus, no oracle rows: the oracle
+  was the byte-identical inventory plus the wall. Commits, file-scoped: **`fb84d66` cause
+  1** — `harness/timers.ts` (`shrinkTimers` / `withShrunkTimers`: `globalThis.setTimeout`
+  and `AbortSignal.timeout` mapped on an EXACT ms match and restored together, fakes
+  nothing on §9's list) with `upstream-proxy.test.ts` under a file-level `beforeAll`, and
+  `listen.test.ts` / `tunnel/stream.test.ts` migrated off their local copies; the plan's
+  300 / 150 ms went RED under a full parallel run (three rows blew a 900 ms budget, one of
+  them dialling nothing; the two-knob fan-out declared healthy upstreams unavailable
+  because each dial to the fake upstream crosses into the Node host), so the shipped map
+  is `CALL_TIMEOUT_MS → 1_800`, `AGGREGATED_LIST_DEADLINE_MS → 600` (the 1:3 ratio
+  `limits.ts` has) and `CASE_BUDGET_MS = SEEDING_HEADROOM_MS (10_000) + (1_800 + 600) × 2`.
+  **`8200625` cause 2** — `protocol.test.ts:401` takes the file's 15-tick budget on the
+  `catalogWarmed: false` rows (every one carries close 4003/4004, so no open-socket row can
+  be masked). **`43b0e06` cause 3** — `deps.optimizer.ssr` pre-bundling the seven direct
+  deps in BOTH workerd projects, `node:` / `cloudflare:` external, `esbuildOptions`
+  deliberately absent (a deprecated alias on vite 8 / rolldown); same-day control:
+  `routes.test.ts` setup 12.56 → 6.72 s; cold-cache cost NONE measurable (6.72 s cold vs
+  6.76 s warm; no CI runs tests). **Cause 4 — NULL:** every describe the read-only
+  criterion selects already shares its world (`withAppDetailWorld`, the file-level
+  `world`), all ten session-minting describes hold a mutating case, and a seed's marginal
+  cost measured 76–160 ms (not the profile's 184 ms) — deleting all 77 sites would leave
+  the file at ≈ 59–65 s, above the 55 s threshold; `web-pages.test.ts` untouched. Descent,
+  vitest's `Duration` on this Windows machine (two idle `wrangler dev` workerd children
+  resident throughout, as in run D): **385.26 → 261.32 → 232.45 → 216.77 s**; the final
+  tree sampled five times 211.19 / 216.77 / 216.19 / 212.96 / 213.07 — median **213.07
+  s**, spread 2.6 %. Attribution: cause 1 −124 s, cause 2 −29 s, cause 3 −16 s. The ≤ 210
+  s target was missed by less than the measurement's own noise and all four per-file
+  thresholds were missed (upstream-proxy tests 28.2 s, ~18 s of it per-row seeding;
+  protocol 16.6 s; web-pages 69.9 s; the first worker test at +28.4 s against ≤ 25 s) —
+  the Exit clause fired and **the owner accepted 213 s on 2026-09-02**. Where the wall
+  goes now: startup + unit/cli/clients 28.4 s, worker phase 79.6 s (pole:
+  `web-pages.test.ts`, 70 s while everything else is done by 57 s), tunnel phase 104.5 s
+  serial by design — 49 % of the wall and untouched by any cause; the next cause is the
+  tunnel phase (phases concurrent, tunnel files parallel, event-driven waits), the
+  sub-60 s path, a D17 if the owner wants it. Gate: 45 / 1432 / 0 at every commit;
+  inventory byte-identical; `tsc` 0; production diff against `b7c0a3d` empty; the
+  never-faked list untouched (the DoD's "no new harness file" read as "no new fake" — a
+  timer map fakes no sibling module, D1, DO, WebCrypto or SDK). Review: 8 findings, 2
+  must — (1) an **open flake**, `tunnel/stream.test.ts:631` (`§21.2/§21.3 · an aggregated
+  stream forwards tools and prompts bells and NEVER the resources bell…`): failed 3 of 8
+  full runs on pre-cause-3 trees, a lost bell burning the whole ~4.7 s budget against
+  ~0.7 s when green (binary, not a squeeze), then 11 green / 0 red on the final tree
+  across five `--project tunnel` runs and the full runs; the root-cause hypothesis was NOT
+  acted on because it changes a row's preconditions (testing §9 rule 3 — the owner's,
+  roadmap step 3a): the row rings after `settle()`'s fixed 5 ticks (`:621-623`) instead of
+  the `untilSockets(appId, n)` precondition its siblings use (`:552`, `:594`, `:771`);
+  (2) the Exit clause, above. PSD: the pre-named repetition fixed (one helper), but its
+  grep was incomplete — `data-model.test.ts:277-288` and `pipeline-tunnel.test.ts:571-582`
+  still carry local `withShrunkCallTimeout` copies keyed `ms >= CALL_TIMEOUT_MS` (step 13);
+  `timers.ts`'s header over-claims that every other timer keeps its duration — the map is
+  keyed by value and other named durations sit at mapped values (accepted, reworded in
+  step 13). No deploy; standing deploy `16bdc8e5`. **This commit also carries the
+  `design/concepts/` move** — the seven exploration boards (`Agents`, `AgentDetail`,
+  `GrantEditorStates`, `AuditDetailStates`, `AppNewProxiedStates`, `ReauthGate`,
+  `OauthConsentStates`) out of the main canvas into `design/concepts/` with their own
+  `canvas.json` and README, `design/README.md`'s pointer, the main canvas's page 2 renamed
+  "Adopted 2026-09-02 (re-layout pending)" — and the day's records: the roadmap
+  (`2026-09-02-roadmap-after-d15.md`), the orphan-states report, the profiler report and
+  its optimizer config, the D16 plan, the PSD retrospective
+  (`docs/superpowers/reports/2026-09-02-psd-retrospective.md`). Cost: 6 Opus agents,
+  ≈ 3.5 h wall, most of it the timing runs.

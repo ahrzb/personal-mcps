@@ -48,25 +48,14 @@ Each flow doc carries a **wireframe map** table pinning journey moments to
 artboard variants by their on-canvas labels (e.g. `AuthStates · DEVICE —
 EXPIRED CODE`, `AppNewStates · TOKEN REVEAL`).
 
-## Admin exploration (page 2 of the canvas — UNREVIEWED drafts, 2026-09-01)
+## Concepts (moved to `design/concepts/`, 2026-09-02)
 
-Desktop-only exploration boards for the admin-surface extension, minus the
-three §13 adopted on 2026-09-02 (they moved to the Artboards table above).
-§13 is amended only after the rest settle; until then nothing here is
-contract:
-
-| Board | Explores |
-|---|---|
-| `Agents`, `AgentDetail` | `/agents` list + detail: per-app grant cards, agent tokens |
-| `GrantEditorStates` | the (agent × app) editor — Save replaces the pair's whole set; undeclared-role warn (tunneled) vs error (proxied); the `all` role |
-| `AuditDetailStates` | in-page expanded audit row, lazily fetched: metadata chips, redacted bodies, typed stubs, bodies-off, non-call events |
-| `OauthConsent` + `OauthConsentStates` | the §19.5 consent screen (self-registered marker, zero-agents empty state) — a step inside the authorize redirect, never navigated to, so it stays chromeless and gets no nav slot |
-| `AppNewProxiedStates` | the proxied add-app branch: headers vs oauth, mid-connect, endpoint error |
-| `ReauthGate` | the recent-authentication challenge guarding `/settings` |
-
-Known follow-ups: mobile variants for all of the above; §19.5's empty-state
-copy points at `/apps` for creating an agent — the new IA puts that at
-`/agents`, an amendment to make when the exploration lands.
+The unreviewed exploration boards — `Agents`, `AgentDetail`, `GrantEditorStates`,
+`AuditDetailStates`, `AppNewProxiedStates`, `ReauthGate`, `OauthConsentStates` — live in
+`design/concepts/` with their own `canvas.json` and README. Nothing there is contract; a
+board returns here when the owner reviews it and §13 is amended. Canvas page 2 now holds
+only the boards §13 adopted on 2026-09-02 (`AppDetail*`, `SettingsTokens`,
+`OauthConnections`) and `OauthConsent`, which draws the live §19.5 page.
 
 ## Settings, split into panes (2026-09-02)
 

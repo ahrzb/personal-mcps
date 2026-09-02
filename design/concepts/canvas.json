@@ -1,0 +1,64 @@
+{
+  "artboards": [
+    {
+      "file": "GrantEditorStates.dc.html",
+      "x": 2972,
+      "y": 0,
+      "w": 520,
+      "h": 1800,
+      "title": "Grant editor · States"
+    },
+    {
+      "file": "AppNewProxiedStates.dc.html",
+      "x": 3572,
+      "y": 0,
+      "w": 480,
+      "h": 2267,
+      "title": "Add app · Proxied states"
+    },
+    {
+      "file": "Agents.dc.html",
+      "x": 0,
+      "y": 2420,
+      "w": 1240,
+      "h": 720,
+      "title": "Agents"
+    },
+    {
+      "file": "AgentDetail.dc.html",
+      "x": 1320,
+      "y": 2420,
+      "w": 1240,
+      "h": 1020,
+      "title": "Agent detail"
+    },
+    {
+      "file": "AuditDetailStates.dc.html",
+      "x": 2680,
+      "y": 2420,
+      "w": 560,
+      "h": 1063,
+      "title": "Audit detail · States"
+    },
+    {
+      "file": "OauthConsentStates.dc.html",
+      "x": 3240,
+      "y": 3620,
+      "w": 480,
+      "h": 900,
+      "title": "OAuth consent · States"
+    },
+    {
+      "file": "ReauthGate.dc.html",
+      "x": 3800,
+      "y": 3620,
+      "w": 440,
+      "h": 560,
+      "title": "Re-auth gate"
+    }
+  ],
+  "annotations": [],
+  "launch": {
+    "view": "canvas"
+  }
+}

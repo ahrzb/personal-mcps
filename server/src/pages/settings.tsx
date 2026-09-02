@@ -35,7 +35,7 @@ import type {
 import { PASSWORD_MIN_LENGTH, paths, SETTINGS_CONFIRM_PANE, SETTINGS_PANES } from "./model";
 import type { PaneEntry } from "./layout";
 import { ConfirmShell, Layout, PaneRail, PanePills, paneGroups } from "./layout";
-import { formatDate, formatStamp } from "./format";
+import { formatDate, formatStamp, sessionLabel } from "./format";
 
 /**
  * The accessible names of this page's two pane navigations (§13's shell rule). They are
@@ -109,7 +109,6 @@ const PlusIcon: FC = () => (
 /* ---------------------------------------------------------------- notice --- */
 
 const NOTICE_CLASS: Record<Notice["tone"], string> = {
-  info: "alert",
   success: "alert alert--success",
   warning: "alert alert--warning",
   danger: "alert alert--danger",
@@ -491,10 +490,6 @@ const TwoFactorCard: FC<{
           enabled
         </span>
       </div>
-      <p class="muted">
-        {twoFactor.backupCodesRemaining} backup code{twoFactor.backupCodesRemaining === 1 ? "" : "s"} remaining · generated{" "}
-        {formatDate(twoFactor.generatedAt)}
-      </p>
       {/* Two long labels ("Regenerate backup codes", "Disable two-factor") overflow the
           generic `.actions .btn{flex:1}` narrow rule (flex items don't shrink below their
           nowrap content width) — MobileSettings stacks them full-width instead, so wide and
@@ -619,13 +614,6 @@ const PasskeysCard: FC<{ passkeys: PasskeyRow[]; now: string }> = ({ passkeys, n
 );
 
 /* --------------------------------------------------------------- sessions --- */
-
-/** "pmcp CLI" -> "pmcp CLI · device flow" for CLI sessions (model.ts on `SessionRow`) —
- *  the one label suffix computed here rather than carried by the fixture, so the
- *  desktop row, the mobile card, and the revoke confirm dialog title all agree. */
-function sessionLabel(session: SessionRow): string {
-  return session.source === "cli" ? `${session.client} · device flow` : session.client;
-}
 
 /** §13's **Revoke all others**: the header control beside the sessions list, and the one
  *  destructive control on this page that names no row. */
@@ -923,11 +911,7 @@ const DIALOG_ID = "confirm-settings";
 
 /** Dialogs.dc.html's destructive confirmations, as server-rendered `<dialog open>` state.
  *  Every one of them rides — and cancels back to — the URL of the pane that drew it. */
-const ConfirmDialog: FC<{ confirm: SettingsConfirm; csrfToken: string; sessions: SessionRow[] }> = ({
-  confirm,
-  csrfToken,
-  sessions,
-}) => {
+const ConfirmDialog: FC<{ confirm: SettingsConfirm; csrfToken: string }> = ({ confirm, csrfToken }) => {
   // Cancel goes back to the pane that OWNS this dialog — the same table the link that
   // opened it was built from, so the two cannot name different URLs (§13).
   const pane = paths.settingsPane(SETTINGS_CONFIRM_PANE[confirm.kind]);
@@ -997,8 +981,7 @@ const ConfirmDialog: FC<{ confirm: SettingsConfirm; csrfToken: string; sessions:
       </form>
     );
   } else {
-    const matched = sessions.find((s) => s.id === confirm.id);
-    title = `Revoke “${matched ? sessionLabel(matched) : confirm.client}”?`;
+    title = `Revoke “${confirm.label}”?`;
     text = "This session is signed out immediately and can't be restored — whoever's using it will need to sign in again.";
     body = (
       <form method="post" action={paths.auth.sessionRevoke} class="actions">
@@ -1116,7 +1099,7 @@ export const SettingsPage: FC<SettingsProps> = (props) => {
       </main>
 
       {props.confirm ? (
-        <ConfirmDialog confirm={props.confirm} csrfToken={props.csrfToken} sessions={props.sessions} />
+        <ConfirmDialog confirm={props.confirm} csrfToken={props.csrfToken} />
       ) : null}
     </Layout>
   );

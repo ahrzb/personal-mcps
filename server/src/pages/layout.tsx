@@ -22,8 +22,9 @@ export type LayoutProps = {
   active: NavSection;
   /** Namespace owner's username, shown beside Sign out (hidden at narrow widths). */
   username: string;
-  /** Pending approval count — renders the red nav badge when above zero. */
-  pendingApprovals?: number;
+  /** Pending approval count — renders the red nav badge when above zero. Required, like
+   *  `active`: every caller reads it off ShellProps, where it is a required number. */
+  pendingApprovals: number;
   /** The page's own content. */
   children?: Child;
 };

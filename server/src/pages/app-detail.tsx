@@ -660,11 +660,8 @@ const OverviewPane: FC<AppDetailProps> = (props) => (
       </OverviewRow>
       {/* An absolute date WITH its year, unlike every other stamp on this page: "Last
           seen" is recent by nature so its year is implicit, while an app created in 2025
-          and one created this August are the same "Aug 20" to `formatLastSeen`. The dash
-          is the one /apps reads for an instant that does not exist. */}
-      <OverviewRow label="Created">
-        {props.overview.createdAt === null ? "—" : formatStamp(props.overview.createdAt)}
-      </OverviewRow>
+          and one created this August are the same "Aug 20" to `formatLastSeen`. */}
+      <OverviewRow label="Created">{formatStamp(props.overview.createdAt)}</OverviewRow>
       <OverviewRow label="Kind">
         <span class="mono">{props.header.kind}</span>
       </OverviewRow>

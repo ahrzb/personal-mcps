@@ -13,7 +13,7 @@
 
 import type { FC } from "hono/jsx";
 import { paths } from "./model";
-import type { AuditEventRow, AuditFilters, AuditLinkQuery, AuditProps, Notice } from "./model";
+import type { AuditEventRow, AuditFilters, AuditLinkQuery, AuditProps } from "./model";
 import { Layout } from "./layout";
 
 /* ------------------------------------------------------------------ *
@@ -48,15 +48,6 @@ function fmtDateRange(sinceMs: number, untilMs: number): string {
 function fmtDuration(ms: number): string {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
-
-/** "info" needs no modifier — the bare `.alert` IS the muted #f4f4f5 tone
- * model.ts describes for it — the other three tones each have their own. */
-const ALERT_CLASS: Record<Notice["tone"], string> = {
-  info: "alert",
-  success: "alert alert--success",
-  warning: "alert alert--warning",
-  danger: "alert alert--danger",
-};
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
 const fmtNumber = (n: number): string => NUMBER_FORMAT.format(n);
@@ -366,7 +357,7 @@ const EventRow: FC<{ row: AuditEventRow; filters: AuditFilters; expandedId: numb
  * ------------------------------------------------------------------ */
 
 export const AuditPage: FC<AuditProps> = (props) => {
-  const { now, username, pendingApprovals, notice, filters, options, rows, paging, stats, histogram, expandedId, retentionDays } =
+  const { now, username, pendingApprovals, filters, options, rows, paging, stats, histogram, expandedId, retentionDays } =
     props;
   const currentQuery = baseQuery(filters);
   const rangeStart = paging.total === 0 ? 0 : paging.offset + 1;
@@ -380,15 +371,6 @@ export const AuditPage: FC<AuditProps> = (props) => {
   return (
     <Layout title="Audit log · personal-mcps" active="audit" username={username} pendingApprovals={pendingApprovals}>
       <main class="page">
-        {notice && (
-          <div class={ALERT_CLASS[notice.tone]}>
-            <div>
-              {notice.title && <div class="alert-title">{notice.title}</div>}
-              <div class="alert-text">{notice.message}</div>
-            </div>
-          </div>
-        )}
-
         <div class="page-head">
           <div>
             <h1 class="page-title">Audit log</h1>

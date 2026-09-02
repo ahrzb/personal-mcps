@@ -340,11 +340,7 @@ const connections: ConnectionRow[] = [
  */
 const settingsBase: Omit<SettingsProps, keyof ShellProps | "section" | "pane"> = {
   csrfToken: CSRF,
-  twoFactor: {
-    enabled: true,
-    backupCodesRemaining: 8,
-    generatedAt: "2026-03-02T11:20:00.000Z",
-  },
+  twoFactor: { enabled: true },
   enrollment: null,
   revealedBackupCodes: null,
   passkeys,
@@ -531,7 +527,6 @@ const settings = {
     }),
     ...settingsBase,
     pane: "two-factor",
-    twoFactor: { enabled: true, backupCodesRemaining: 8, generatedAt: NOW },
     revealedBackupCodes: BACKUP_CODES,
     passkeys: [],
     sessions: [sessions[0]!],
@@ -558,7 +553,7 @@ const settings = {
     ...shell("settings"),
     ...settingsBase,
     pane: "sessions",
-    confirm: { kind: "revoke-session", id: "ses_4a77c0", client: "pmcp CLI" },
+    confirm: { kind: "revoke-session", id: "ses_4a77c0", label: "pmcp CLI · device flow" },
   },
 
   /** The one confirmation that names no row (§13's Revoke all others). */
@@ -586,11 +581,6 @@ const settings = {
     }),
     ...settingsBase,
     pane: "two-factor",
-    twoFactor: {
-      enabled: true,
-      backupCodesRemaining: 7,
-      generatedAt: "2026-03-02T11:20:00.000Z",
-    },
   },
 
   /** Edge: authenticator names and user agents nobody sized a column for. */
@@ -598,11 +588,6 @@ const settings = {
     ...shell("settings"),
     ...settingsBase,
     pane: "passkeys",
-    twoFactor: {
-      enabled: true,
-      backupCodesRemaining: 1,
-      generatedAt: "2026-03-02T11:20:00.000Z",
-    },
     passkeys: [
       {
         id: "pk_长_0001",
@@ -1431,7 +1416,7 @@ const appNew = {
  * /approvals and /approvals/<id>
  * ------------------------------------------------------------------ */
 
-const pendingSetScene: ApprovalRow = {
+const pendingSetScene = {
   id: "apr_8f2k",
   agentSlug: "claude",
   appSlug: "home",
@@ -1441,9 +1426,9 @@ const pendingSetScene: ApprovalRow = {
   createdAt: "2026-08-24T14:29:55.000Z",
   decidedAt: null,
   expiresAt: "2026-08-24T15:29:55.000Z",
-};
+} satisfies ApprovalRow;
 
-const pendingCreatePage: ApprovalRow = {
+const pendingCreatePage = {
   id: "apr_3d7m",
   agentSlug: "cron",
   appSlug: "notion",
@@ -1458,7 +1443,7 @@ const pendingCreatePage: ApprovalRow = {
   createdAt: "2026-08-24T14:12:31.000Z",
   decidedAt: null,
   expiresAt: "2026-08-24T15:12:31.000Z",
-};
+} satisfies ApprovalRow;
 
 const approvalHistory: ApprovalRow[] = [
   {
@@ -1881,6 +1866,7 @@ const audit = {
   /** The artboard: last 7 days, first page, one row's detail open. */
   default: {
     ...shell("audit"),
+    notice: null,
     filters: {
       range: "7d",
       since: AUDIT_SINCE,
@@ -1907,6 +1893,7 @@ const audit = {
   /** Deep in the result set: both pager arrows live, nothing expanded. */
   middlePage: {
     ...shell("audit"),
+    notice: null,
     filters: {
       range: "7d",
       since: AUDIT_SINCE,
@@ -1933,6 +1920,7 @@ const audit = {
   /** A session link followed (?session=…): one agent conversation, narrow window. */
   filteredBySession: {
     ...shell("audit"),
+    notice: null,
     filters: {
       session: "a3f9c2d1",
       range: "24h",
@@ -1967,6 +1955,7 @@ const audit = {
   /** EmptyStates "Audit — no results": filters narrower than the ledger. */
   empty: {
     ...shell("audit", 0),
+    notice: null,
     filters: {
       principal: "agent:cron",
       app: "linear",
@@ -2004,6 +1993,7 @@ const audit = {
    */
   bodyStubs: {
     ...shell("audit"),
+    notice: null,
     filters: {
       app: "news",
       range: "24h",

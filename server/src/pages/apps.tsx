@@ -171,7 +171,8 @@ const PlusIcon: FC = () => (
   </svg>
 );
 
-/** Tone-appropriate glyph; stroke="currentColor" so it always matches the alert's own text color. */
+/** Tone-appropriate glyph — danger, warning, then success; stroke="currentColor" so it
+ *  always matches the alert's own text color. */
 const NoticeIcon: FC<{ tone: Notice["tone"] }> = ({ tone }) => {
   if (tone === "danger") {
     return (
@@ -191,25 +192,15 @@ const NoticeIcon: FC<{ tone: Notice["tone"] }> = ({ tone }) => {
       </svg>
     );
   }
-  if (tone === "success") {
-    return (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="10"></circle>
-        <path d="m9 12 2 2 4-4"></path>
-      </svg>
-    );
-  }
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="10"></circle>
-      <path d="M12 16v-4"></path>
-      <path d="M12 8h.01"></path>
+      <path d="m9 12 2 2 4-4"></path>
     </svg>
   );
 };
 
 const TONE_CLASS: Record<Notice["tone"], string> = {
-  info: "alert",
   success: "alert alert--success",
   warning: "alert alert--warning",
   danger: "alert alert--danger",

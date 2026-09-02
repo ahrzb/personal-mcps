@@ -5,7 +5,7 @@
 // "Last seen" column and /apps/<slug>'s header state the same fact, so a second copy of
 // the stamp is a second chance for them to disagree about it.
 
-import type { Notice } from "./model";
+import type { Notice, SessionRow } from "./model";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -48,10 +48,8 @@ export function formatStamp(at: number): string {
   return formatDate(new Date(at).toISOString());
 }
 
-/** "info" needs no modifier — the bare `.alert` IS the muted tone model.ts describes for
- *  it — the other three tones each have their own. */
+/** One modifier per tone over the bare `.alert` base. */
 const ALERT_CLASS: Record<Notice["tone"], string> = {
-  info: "alert",
   success: "alert alert--success",
   warning: "alert alert--warning",
   danger: "alert alert--danger",
@@ -59,4 +57,11 @@ const ALERT_CLASS: Record<Notice["tone"], string> = {
 
 export function alertClass(tone: Notice["tone"]): string {
   return ALERT_CLASS[tone];
+}
+
+/** "pmcp CLI" -> "pmcp CLI · device flow" for CLI sessions (model.ts on `SessionRow`) —
+ *  one definition, two readers: settings.tsx's desktop row and mobile card draw it, and
+ *  model.ts carries it into the revoke confirm so the dialog title agrees with the row. */
+export function sessionLabel(session: SessionRow): string {
+  return session.source === "cli" ? `${session.client} · device flow` : session.client;
 }

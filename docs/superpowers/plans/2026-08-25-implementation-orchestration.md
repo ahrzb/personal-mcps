@@ -1276,3 +1276,36 @@ check and (manual, once) a real push notification to a real browser.
   its optimizer config, the D16 plan, the PSD retrospective
   (`docs/superpowers/reports/2026-09-02-psd-retrospective.md`). Cost: 6 Opus agents,
   ≈ 3.5 h wall, most of it the timing runs.
+- 2026-09-03 — **Roadmap step 2 landed (inline) — `chore: remove unreachable page
+  branches`.** One commit: ten files under `server/src/pages/` + `server/dev/fixtures.ts`,
+  126 insertions / 154 deletions; no route, op, loader query, migration or test touched.
+  Deleted, by selector: the `info` Notice tone (the union member, the four tone tables'
+  rows, both info glyph arms — no CSS existed only for it, the tone mapped to the bare
+  `.alert`); the Overview "Created —" arm (`AppOverview.createdAt` is `number`;
+  `appDetailProps` asserts the builtin never reaches the page); the unparseable-grant chip
+  path (`grantChip` reads §9's two spellings — the colon alone chooses the mode); the
+  revoke-session dialog's `confirm.client` fallback (the confirm carries
+  `label: sessionLabel(row)`; `sessionLabel` moved to `format.ts` — one definition, two
+  readers; `ConfirmDialog` lost its `sessions` prop); `/approvals`' `pending` badge arm on
+  history rows; `/approvals/<id>`'s "Decided —" arm (a page-side `DetailApproval` union —
+  rejected/used carry `decidedAt: string` — with one boundary check, `decided()`, that
+  throws on a decided row without an instant; `approvals.ts`'s wire type untouched);
+  `LayoutProps.pendingApprovals` required; `/audit`'s notice block, class table and prop
+  (`AuditProps.notice: null`, its five fixtures say so); the fabricated "N backup codes
+  remaining · generated <date>" line and both fields (`TwoFactorSummary`'s enabled arm is
+  `{ enabled: true }`; `settingsProps`' comment rewritten to what is still true — **G10
+  closed here**). One premise was FALSE and the deletion refused with evidence: G42's
+  "`noticeOf` always sets a title" — its success arm sets none (`web.ts:1067`), so
+  `apps.tsx:224`'s falsy arm is live for every success notice; settled at the type level
+  instead — `Notice` is a union where `danger` requires `title` and `success | warning`
+  keep it optional — no template changed, no rendered byte changed. Kept, owner-accepted:
+  the service worker's push fallback copy (G57) and `/device`'s relative-time arms (G55).
+  Gate: 45 / 1432 / 0, `Duration 236.02s`; inventory byte-identical (the generator's
+  first run flipped two tunnel rows to failed — the D16 open flake's bell row and
+  `subscriptions.test.ts`'s "a subscriber socket's close does not drain the app socket's
+  pending map" — a clean re-run reproduced the committed file; the second row joins the
+  3a flake question); `tsc` 0; web-pages row 27 green (the enabled arm the deleted line
+  sat on). Two `should`s applied before the commit: the revoke-session fixture's label
+  restored to what the page draws ("pmcp CLI · device flow"), styles.css's "fourth Notice
+  tone" comment. Carried to step 13: `.alert`'s base `background` / `color` pair is now
+  always overridden by a modifier. Deploy: rides step 4's. Cost: 2 Opus agents, 36 min.

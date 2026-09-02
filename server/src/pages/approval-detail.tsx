@@ -19,7 +19,7 @@
 import { html } from "hono/html";
 import type { FC } from "hono/jsx";
 import { paths } from "./model";
-import type { ApprovalDetailProps, ApprovalRow, ApprovalStatus } from "./model";
+import type { ApprovalDetailProps, ApprovalRow, ApprovalStatus, DetailApproval } from "./model";
 
 const STYLESHEET = "/styles.css";
 const MANIFEST = "/manifest.webmanifest";
@@ -91,7 +91,7 @@ const BADGE: Record<ApprovalStatus, { label: string; class: string }> = {
  * are a fixed record of what happened, so only the absolute time renders
  * (ApprovalStates.dc.html's EXPIRED card drops the relative prefix entirely).
  */
-function timeRows(approval: ApprovalRow, now: string): { label: string; value: string }[] {
+function timeRows(approval: DetailApproval, now: string): { label: string; value: string }[] {
   switch (approval.status) {
     case "pending":
     case "approved":
@@ -108,7 +108,7 @@ function timeRows(approval: ApprovalRow, now: string): { label: string; value: s
     case "used":
       return [
         { label: "Requested", value: absolute(approval.createdAt) },
-        { label: "Decided", value: approval.decidedAt ? absolute(approval.decidedAt) : "—" },
+        { label: "Decided", value: absolute(approval.decidedAt) },
       ];
   }
 }

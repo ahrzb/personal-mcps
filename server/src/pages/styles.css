@@ -1439,7 +1439,7 @@ select {
   color: var(--danger-fg);
 }
 
-/* the fourth Notice tone (model.ts) — no artboard draws it as a banner, so it
+/* the one Notice tone (model.ts) — no artboard draws it as a banner, so it
    follows --warning/--danger's own pattern: the matching success triad already
    defined for .badge--success, just boxed as an alert. */
 .alert--success {

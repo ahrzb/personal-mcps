@@ -60,23 +60,21 @@ function principalOf(row: ApprovalRow): string {
 type Tone = "warning" | "success" | "danger";
 
 /**
- * Outcome label + badge tone, lifted from the artboards rather than guessed: a
- * spent pass reads "executed" (not "used"), rejected is the only danger row, and
- * pending / approved-but-unspent / expired-unused all stay in the same amber
- * family (Approvals.dc.html's history rows render all three identically).
+ * Outcome label + badge tone for a HISTORY row, lifted from the artboards rather than
+ * guessed: a spent pass reads "executed" (not "used"), rejected is the only danger row,
+ * and approved-but-unspent / expired-unused stay in the same amber family
+ * (Approvals.dc.html's history rows render both identically). Pending rows are the
+ * cards above, never this table — model.ts's `history` is the listing minus them.
  */
 function outcome(status: ApprovalStatus): { label: string; tone: Tone } {
   if (status === "rejected") return { label: "rejected", tone: "danger" };
   if (status === "used") return { label: "executed", tone: "success" };
   if (status === "approved") return { label: "approved", tone: "warning" };
-  if (status === "pending") return { label: "pending", tone: "warning" };
   return { label: "expired", tone: "warning" };
 }
 
-/** "info" needs no modifier — the bare `.alert` IS the muted #f4f4f5 tone
- * model.ts describes for it — the other three tones each have their own. */
+/** One modifier per tone over the bare `.alert` base. */
 const ALERT_CLASS: Record<Notice["tone"], string> = {
-  info: "alert",
   success: "alert alert--success",
   warning: "alert alert--warning",
   danger: "alert alert--danger",
@@ -97,22 +95,13 @@ const BellIcon: FC = () => (
   </svg>
 );
 
-/** Warning/danger reuse Device.dc.html's alert-triangle; success/info get their own. */
+/** Warning/danger reuse Device.dc.html's alert-triangle; success gets its own. */
 const NoticeIcon: FC<{ tone: Notice["tone"] }> = ({ tone }) => {
   if (tone === "success") {
     return (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="10" />
         <path d="m9 12 2 2 4-4" />
-      </svg>
-    );
-  }
-  if (tone === "info") {
-    return (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="10" />
-        <path d="M12 16v-4" />
-        <path d="M12 8h.01" />
       </svg>
     );
   }

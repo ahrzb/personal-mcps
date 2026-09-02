@@ -70,6 +70,9 @@ import type { AuditRow, BodyStub, AuditQuery } from "../audit";
 import type { UpstreamConnectionStatus } from "../upstream";
 import { capabilities as tunnelCapabilities } from "../tunnel";
 import type { status as tunnelStatus } from "../tunnel";
+// The one page-layer import: `sessionLabel` is a page string, and the revoke dialog and
+// the row it names must read the same definition of it (format.ts says why).
+import { sessionLabel } from "./format";
 
 /* ------------------------------------------------------------------ *
  * Shared chrome
@@ -104,15 +107,21 @@ export type NavSection = "apps" | "audit" | "approvals" | "settings";
  * The redirect-back flash: every mutating page POST lands on an admin op and
  * then redirects to the page it came from (web.ts), so the outcome has to
  * survive as one line of props rather than as a rendered exception. `tone` maps
- * onto the design system's four alert palettes (Main.dc.html): info is the muted
- * #f4f4f5 note, success #f0fdf4, warning #fffbeb, danger #fef2f2.
+ * onto the design system's alert palettes (Main.dc.html): success #f0fdf4,
+ * warning #fffbeb, danger #fef2f2.
+ *
+ * A refusal always names the op it refused (web.ts's `noticeOf`), so the danger
+ * arm's `title` is required — a bold-line-less danger alert is not a state this
+ * hub can produce. A success is often one sentence, so there its title is optional.
  */
-export type Notice = {
-  tone: "info" | "success" | "warning" | "danger";
-  /** Optional bold first line; the alert renders message-only when absent. */
-  title?: string;
-  message: string;
-};
+export type Notice =
+  | {
+      tone: "success" | "warning";
+      /** Optional bold first line; the alert renders message-only when absent. */
+      title?: string;
+      message: string;
+    }
+  | { tone: "danger"; title: string; message: string };
 
 /**
  * What every page inside the signed-in shell needs from the shell itself.
@@ -534,13 +543,13 @@ export type DeviceProps = PageProps & {
  * ------------------------------------------------------------------ */
 
 /**
- * The steady state of the second factor. `backupCodesRemaining` counts codes not
- * yet spent; `generatedAt` (ISO-8601) is when the current set was minted — both
- * render as the one line under the enabled badge.
+ * The steady state of the second factor — the whole of what better-auth's
+ * `/get-session` reports about it (`twoFactorEnabled`), which is why the enabled
+ * arm carries nothing else: the backup codes live encrypted in a table §4 gives
+ * identity sole custody of, and no endpoint counts them (settingsProps says so
+ * again where it reads).
  */
-export type TwoFactorSummary =
-  | { enabled: false }
-  | { enabled: true; backupCodesRemaining: number; generatedAt: string };
+export type TwoFactorSummary = { enabled: false } | { enabled: true };
 
 /**
  * The in-progress TOTP enrollment (SettingsStates.dc.html "TOTP setup"): present
@@ -591,7 +600,9 @@ export type SessionRow = {
 export type SettingsConfirm =
   | { kind: "disable-two-factor" }
   | { kind: "remove-passkey"; id: string; name: string }
-  | { kind: "revoke-session"; id: string; client: string }
+  /** `label` is the row's own `sessionLabel`, carried so the dialog title and the
+   *  row it names cannot spell the session two different ways. */
+  | { kind: "revoke-session"; id: string; label: string }
   /** **Revoke all others** names no row — it is about every session except this one. */
   | { kind: "revoke-other-sessions" }
   | { kind: "revoke-connection"; id: string; client: string };
@@ -934,7 +945,9 @@ export type AppAgentRow = { slug: string; description: string; chips: AppGrantCh
 export type AppTokenRow = { id: string; prefix: string; createdAt: number; lastUsedAt: number | null };
 
 export type AppOverview = {
-  createdAt: number | null;
+  /** Always a real instant: this page 404s the builtin, which is the only app row
+   *  with no creation date (`appDetailProps` makes the narrowing true). */
+  createdAt: number;
   logBodies: boolean;
   logBodiesIsDefault: boolean;
   redactedArgs: string[];
@@ -1076,8 +1089,19 @@ export type ApprovalsProps = ShellProps & {
  */
 export type ApprovalDetailProps = PageProps & {
   csrfToken: string;
-  approval: ApprovalRow;
+  approval: DetailApproval;
 };
+
+/**
+ * The row as THIS page reads it. `ApprovalRow.decidedAt` is nullable because null is
+ * honest for a pending row (approvals.ts owns that wire shape) — but "rejected" and
+ * "used" are exactly the two statuses a decision writes, and both writers stamp
+ * `decided_at` in the same statement, so on those two the page reads a string and the
+ * "Decided —" arm has nothing to render. `approvalDetailProps` makes the narrowing true.
+ */
+export type DetailApproval =
+  | (ApprovalRow & { status: Exclude<ApprovalStatus, "rejected" | "used"> })
+  | (ApprovalRow & { status: "rejected" | "used"; decidedAt: string });
 
 /**
  * Re-exported so a template can spell the status vocabulary it switches on
@@ -1200,6 +1224,9 @@ export type AuditPaging = {
  */
 export type AuditProps = ShellProps & {
   section: "audit";
+  /** The one shelled page that never flashes: every control here is a GET, so nothing
+   *  redirects back to it with an outcome and the page draws no alert at all. */
+  notice: null;
   filters: AuditFilters;
   options: AuditFilterOptions;
   rows: AuditEventRow[];
@@ -1532,6 +1559,10 @@ export async function appDetailProps(
     read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
   ]);
   const row = detail.app;
+  // `getApp` already answered null for the builtin, so `app_get` cannot be reporting it
+  // here — asserting that is what lets Overview print a creation date with no "unknown"
+  // arm, since the builtin row is the only one carrying no `createdAt`.
+  if (row.kind === "builtin") throw new Error(`app_get reported the builtin row for ${slug}`);
 
   // §20.2/§20.5's advertised set, per kind — the same resolution gateway's
   // `capabilitiesFor` makes for the scoped handshake, because the dimming rule and the
@@ -1623,7 +1654,7 @@ export async function appDetailProps(
     tab: ctx.query.get("tab") === "templates" ? "templates" : "resources",
     roles: row.roles,
     overview: {
-      createdAt: row.kind === "builtin" ? null : row.createdAt,
+      createdAt: row.createdAt,
       logBodies: row.logBodies,
       // §15's per-kind default, restated as the ONE comparison that tells "the owner set
       // this" from "nobody has": the row reports the resolved boolean and no column says
@@ -1641,17 +1672,12 @@ export async function appDetailProps(
   };
 }
 
-/** One grant string as §13's chip (§9's own syntax; an unparseable suffix is shown as it
- *  was stored rather than silently read as an allow grant — catalog-view's read path
- *  reaches nothing for it either). */
+/** One grant string as §13's chip. §9 gives a grant exactly two spellings — `role` and
+ *  `role:approval` — and admin writes no third, so the colon alone chooses the mode. */
 function grantChip(spelled: string): AppGrantChip {
   const at = spelled.indexOf(":");
   const role = at < 0 ? spelled : spelled.slice(0, at);
-  return {
-    role,
-    mode: at >= 0 && spelled.slice(at + 1) === "approval" ? "approval" : "allow",
-    builtin: role === BUILTIN_ROLE,
-  };
+  return { role, mode: at < 0 ? "allow" : "approval", builtin: role === BUILTIN_ROLE };
 }
 
 /** This app's live keys — `token_list`'s rows minus the revoked and the expired, which is
@@ -1903,7 +1929,18 @@ export async function approvalDetailProps(
   });
   const approval = listed.approvals.find((row) => row.id === id);
   if (approval === undefined) return null;
-  return { now: ctx.now, csrfToken: ctx.csrfToken, approval };
+  return { now: ctx.now, csrfToken: ctx.csrfToken, approval: decided(approval) };
+}
+
+/** The one boundary check behind `DetailApproval`: a rejected or used row without a
+ *  decision instant is a broken ledger, not a page state, so it is named rather than
+ *  papered over with a dash the owner would have to interpret. */
+function decided(row: ApprovalRow): DetailApproval {
+  if (row.status !== "rejected" && row.status !== "used") return { ...row, status: row.status };
+  if (row.decidedAt === null) {
+    throw new Error(`approval ${row.id} is "${row.status}" with no decidedAt`);
+  }
+  return { ...row, status: row.status, decidedAt: row.decidedAt };
 }
 
 /** How deep the id lookup above reads. `approval_list` takes no id filter (§8),
@@ -1971,6 +2008,9 @@ export async function auditProps(ctx: PageContext): Promise<AuditProps> {
   ]);
   return {
     ...(await shell(ctx, "audit")),
+    // Read-only page, so the flash the shell carries for the others is dropped here
+    // rather than rendered: no route redirects back to /audit with an outcome.
+    notice: null,
     filters,
     options: filterOptions(everything.rows),
     rows: page.rows.map(eventRow),
@@ -2111,23 +2151,19 @@ function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram
  * reads it the way the browser does, through identity's own mounted endpoints,
  * rather than reaching into tables that module owns.
  *
- * TWO things are not sourceable through those endpoints today. One is reported as
- * what it is rather than invented: every session reads as `source: "web"` because
- * nothing better-auth stores distinguishes a device-flow session from a browser one
- * — the distinction identity enforces is the cookie's signature, not a column.
- * (Passkeys ARE sourced, from the plugin's own listing; their `lastUsedAt` is §5's own
- * column, read here through `identity.passkeyLastUsed` — absent means never used.)
+ * One thing is not sourceable through those endpoints today, and is reported as what
+ * it is rather than invented: every session reads as `source: "web"` because nothing
+ * better-auth stores distinguishes a device-flow session from a browser one — the
+ * distinction identity enforces is the cookie's signature, not a column. (Passkeys ARE
+ * sourced, from the plugin's own listing; their `lastUsedAt` is §5's own column, read
+ * here through `identity.passkeyLastUsed` — absent means never used.)
  *
- * The other IS invented, and this comment exists so no reader concludes otherwise:
- * `backupCodesRemaining`/`generatedAt` have no endpoint behind them (`/get-session`
- * reports `twoFactorEnabled` and nothing else; the codes live encrypted in a table
- * §4 gives identity sole custody of), so an owner with 2FA on is told "0 backup
- * codes remaining · generated <now>" on every render, which is false in both halves.
- * The honest shape is a nullable pair rendered as "—", exactly like the two above —
- * but `TwoFactorSummary`'s enabled arm is a template contract (settings.tsx passes
- * `generatedAt` straight into a `(iso: string)` formatter), so widening it is a
- * change to a page template and is REPORTED rather than made here. Both are
- * findings for the owner, not placeholders to be quietly kept.
+ * A second thing is not said at all, which is the same rule applied: `/get-session`
+ * reports `twoFactorEnabled` and nothing else, and the backup codes live encrypted in a
+ * table §4 gives identity sole custody of, so nothing here counts them or dates them.
+ * `TwoFactorSummary`'s enabled arm carries exactly what was read. If better-auth ever
+ * exposes a count, showing it is a build with a §13 sentence behind it, not a field to
+ * fill in here.
  */
 export async function settingsProps(
   ctx: PageContext,
@@ -2158,9 +2194,7 @@ export async function settingsProps(
     ...(await shell(ctx, "settings")),
     pane,
     csrfToken: ctx.csrfToken,
-    twoFactor: me?.user?.twoFactorEnabled
-      ? { enabled: true, backupCodesRemaining: 0, generatedAt: ctx.now }
-      : { enabled: false },
+    twoFactor: me?.user?.twoFactorEnabled ? { enabled: true } : { enabled: false },
     enrollment: null,
     revealedBackupCodes: null,
     passkeys: keys,
@@ -2249,7 +2283,7 @@ function settingsConfirm(
       return { kind: "disable-two-factor" };
     case "revoke-session": {
       const row = sessions.find((session) => session.id === id && !session.current);
-      return row === undefined ? null : { kind: "revoke-session", id, client: row.client };
+      return row === undefined ? null : { kind: "revoke-session", id, label: sessionLabel(row) };
     }
     // The one confirmation that names no row, so there is nothing to look up and nothing
     // a guessed id could miss: it is about every session except the one asking.

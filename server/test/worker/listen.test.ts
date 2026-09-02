@@ -20,7 +20,8 @@
 //
 // deps: harness/seed (seedNamespace, seedOwnerSession, uniqueSlug) · harness/fake-upstream
 //   (upstreamUrlFor) · ../../src/index (default.fetch) · ../../src/limits
-//   (LISTEN_KEEPALIVE_MS) · applyD1Migrations (setup) · env.DB
+//   (LISTEN_KEEPALIVE_MS) · harness/timers (withShrunkTimers) · applyD1Migrations (setup) ·
+//   env.DB
 
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
@@ -30,6 +31,7 @@ import { LISTEN_KEEPALIVE_MS } from "../../src/limits";
 import { upstreamUrlFor } from "../harness/fake-upstream";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
+import { withShrunkTimers } from "../harness/timers";
 
 /** The hub's own origin, as the worker under test knows it. */
 const ORIGIN = (env as unknown as Env).PUBLIC_ORIGIN;
@@ -187,25 +189,10 @@ async function listen(
   return stream;
 }
 
-/**
- * Run `body` with LISTEN_KEEPALIVE_MS shrunk to a test-run duration. The mapping is EXACT —
- * `ms === LISTEN_KEEPALIVE_MS` — so no other timer in the worker moves, and a row that
- * thinks it watched the keepalive cannot have watched something else that was merely longer.
- */
-async function withShrunkKeepalive<T>(body: () => Promise<T>): Promise<T> {
-  const real = globalThis.setTimeout;
-  globalThis.setTimeout = ((handler: TimerHandler, ms?: number, ...rest: unknown[]) =>
-    (real as (...args: unknown[]) => unknown)(
-      handler,
-      ms === LISTEN_KEEPALIVE_MS ? SHRUNK_KEEPALIVE_MS : ms,
-      ...rest,
-    )) as typeof globalThis.setTimeout;
-  try {
-    return await body();
-  } finally {
-    globalThis.setTimeout = real;
-  }
-}
+/** The one duration this file shrinks, handed to the shared shim (harness/timers): the
+ *  match is EXACT, so no other timer in the worker moves and a row that thinks it watched
+ *  the keepalive cannot have watched something else that was merely longer. */
+const SHRUNK_TIMERS = new Map([[LISTEN_KEEPALIVE_MS, SHRUNK_KEEPALIVE_MS]]);
 
 /** UUID as the hub mints it (crypto.randomUUID): version 4, variant 8/9/a/b. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -250,7 +237,7 @@ describe("§21.1 · the listen envelope", () => {
   }, CASE_BUDGET_MS);
 
   it("§21.1 · while nothing changes the stream carries one SSE COMMENT per shrunk LISTEN_KEEPALIVE_MS and no data frame — a client parsing keepalives as JSON-RPC breaks on the first idle stream, so the form is pinned", async () => {
-    await withShrunkKeepalive(async () => {
+    await withShrunkTimers(SHRUNK_TIMERS, async () => {
       const ns = await seedWorld();
       const stream = await listen(ns, ns.tokens[TOKEN].token, null);
 
@@ -325,7 +312,7 @@ describe("§21.1/§7 · who may open one", () => {
   }, CASE_BUDGET_MS);
 
   it("§21.1 · an owner's aggregated stream with zero granted tunneled apps opens and keepalives — a stream over nothing is a legal answer", async () => {
-    await withShrunkKeepalive(async () => {
+    await withShrunkTimers(SHRUNK_TIMERS, async () => {
       // One proxied app and nothing else: §21.2 dials neither a proxied app nor the
       // builtin, so this namespace holds nothing for a stream to subscribe at all.
       const ns = await seedWorld();

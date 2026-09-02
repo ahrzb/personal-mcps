@@ -42,11 +42,12 @@
 //   oauth-mode, plus a third healthy one for the fan-out) · harness/fake-upstream
 //   (miniflare.outboundService router: per-slug behavior, adversarial fake AS, dial
 //   counters) · ../../src/index (default.fetch) · ../../src/upstream · ../../src/gateway ·
-//   ../../src/limits (CALL_TIMEOUT_MS, AGGREGATED_LIST_DEADLINE_MS) ·
+//   ../../src/limits (CALL_TIMEOUT_MS, AGGREGATED_LIST_DEADLINE_MS) · harness/timers
+//   (the two deadlines mapped to test-run durations for the whole file) ·
 //   applyD1Migrations (setup) · env.DB
 
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 // A NOTE ON THE DEADLINES, because the obvious shortcut does not work here. Shrinking
 // limits.ts with `vi.mock` looks like the strategy's "shrink the constant, never wait it
@@ -55,8 +56,15 @@ import { describe, expect, it } from "vitest";
 // the hub goes on enforcing the real 30 s while the suite believes it enforces 2.5 s —
 // every hang case then fails as a runner timeout that looks like a hub bug. Measured, not
 // assumed: with the mock in place a `hang` row outlived a 13.2 s budget derived from the
-// shrunk values. So the constants here are the REAL ones, the hang rows genuinely cost
-// what they assert, and CASE_BUDGET_MS below is derived from the same names.
+// shrunk values.
+//
+// What DOES reach the hub is the one surface the test and the hub share inside this pool:
+// `globalThis`. The whole file runs with the two deadlines mapped there (harness/timers —
+// `setTimeout` for gateway's `withDeadline`, `AbortSignal.timeout` for upstream's dials),
+// so the hub enforces its real deadline code against a shorter duration and a `hang` row
+// costs 1.8 s instead of 30. The map is keyed by the constants BY NAME and every number
+// downstream — CASE_BUDGET_MS, the two-knob row's bounds — derives from what they map TO,
+// so a spec change to either deadline still moves this file and nothing else does.
 import { query } from "../../src/audit";
 import type { AuditRow } from "../../src/audit";
 import type { BackendCtx, JsonRpcResponse, Prompt, Resource, Tool } from "../../src/gateway";
@@ -89,6 +97,29 @@ import type {
 } from "../harness/fake-upstream";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
+import { shrinkTimers } from "../harness/timers";
+
+/** What the hub's two deadlines are mapped to for this run — test-run durations, not spec
+ *  numbers, which is why neither is a limits.ts constant. The ratio §11 pins survives (an
+ *  aggregated listing gives up well before a direct call's budget is spent, 1:3 as
+ *  limits.ts has it), and both are sized for the machine rather than for the arithmetic:
+ *  a dial to the fake upstream crosses into the Node host, which under a full parallel
+ *  run costs hundreds of milliseconds — measured, at 150 ms the fan-out declared its
+ *  HEALTHY upstreams unavailable. */
+const SHRUNK_CALL_TIMEOUT_MS = 1_800;
+const SHRUNK_LIST_DEADLINE_MS = 600;
+
+// File-scoped, not per row: every row here drives the same hub, so one mapping for the
+// file means no row can accidentally see the real 30 s. The hook's return value is the
+// restore, which vitest runs as the teardown.
+beforeAll(() =>
+  shrinkTimers(
+    new Map([
+      [CALL_TIMEOUT_MS, SHRUNK_CALL_TIMEOUT_MS],
+      [AGGREGATED_LIST_DEADLINE_MS, SHRUNK_LIST_DEADLINE_MS],
+    ]),
+  ),
+);
 
 /**
  * What the fake upstream does when dialed — the row's only input, and deliberately
@@ -708,13 +739,18 @@ export function runUpstreamFailureTable(rows: readonly UpstreamFailureRow[]): vo
 }
 
 /**
- * How long ONE row may take. A `hang` row costs whichever deadline it is about, and both
- * are larger than vitest's default budget — so the budget is derived from the constants
- * this file already reads BY NAME rather than written as a number: shrink them and this
- * shrinks with them. Generous rather than tight, because what a row asserts is the
- * deadline the HUB enforces, never the one the runner does.
+ * How long ONE row may take: what it WAITS plus what it costs to set up. The waiting half
+ * is derived from the shrunk values BY NAME — move the map and this moves with it — and a
+ * `hang` row is the only kind that spends it. The other half is the machine's, not the
+ * spec's: seeding a world and driving it took under 900 ms alone and over it in a full
+ * parallel run (measured — three rows timed out at 900 ms), so the headroom is stated
+ * separately rather than folded into a multiplier that would pretend to derive from a
+ * deadline. Generous rather than tight, because what a row asserts is the deadline the HUB
+ * enforces, never the one the runner does.
  */
-export const CASE_BUDGET_MS = (CALL_TIMEOUT_MS + AGGREGATED_LIST_DEADLINE_MS) * 2;
+const SEEDING_HEADROOM_MS = 10_000;
+export const CASE_BUDGET_MS =
+  SEEDING_HEADROOM_MS + (SHRUNK_CALL_TIMEOUT_MS + SHRUNK_LIST_DEADLINE_MS) * 2;
 
 // ── one row → one seeded world → one drive ────────────────────────────────────────────
 
@@ -1304,9 +1340,9 @@ describe("§7/§15 — what one -32000 may disclose", () => {
   }, CASE_BUDGET_MS);
 });
 
-// Every case here fans out over a HANGING upstream, so each costs at least
-// AGGREGATED_LIST_DEADLINE_MS — well past vitest's default budget. Stated once for the
-// block, derived from the constants rather than written as a number.
+// Every case here fans out over a HANGING upstream, so each costs at least the mapped
+// AGGREGATED_LIST_DEADLINE_MS on top of seeding five apps. Stated once for the block, and
+// derived from the map rather than written as a number.
 describe("§7 — aggregated fan-out vs the scoped surface", { timeout: CASE_BUDGET_MS }, () => {
   it("§7 · one failing plus one hanging upstream: the aggregate still succeeds", async () => {
     const fanOut = await buildFanOut();
@@ -1344,9 +1380,9 @@ describe("§7 — aggregated fan-out vs the scoped surface", { timeout: CASE_BUD
     // gave up instantly would beat the ceiling, and one that waited out the call budget
     // would still finish eventually. The two knobs are what this case exists for (§11).
     expect(elapsed, "the hung upstream cost at least its own deadline").toBeGreaterThanOrEqual(
-      AGGREGATED_LIST_DEADLINE_MS,
+      SHRUNK_LIST_DEADLINE_MS,
     );
-    expect(elapsed, "and never the call budget").toBeLessThan(CALL_TIMEOUT_MS);
+    expect(elapsed, "and never the call budget").toBeLessThan(SHRUNK_CALL_TIMEOUT_MS);
   });
 
   it("§7 · a tunneled app in the same fan-out answers from DO cache and is unaffected by either deadline", async () => {

@@ -302,9 +302,23 @@ describe("§2 · usernames may not collide with routes", () => {
   // route for good. The reservation has to be SERVED for the §2 walk (case 2) to see it,
   // so /agents answers its own not-built-yet text — never the anonymous 404 an unrouted
   // path gets, which is what case 2 would read as "reserved and nothing answers it".
-  it.todo(
-    "11. §2 · agents is reserved ahead of its pages: provisioning a user named agents is refused, and GET /agents answers 404 with its own not-built-yet text rather than the anonymous 404 an unrouted path gets — served, so case 2's walk sees the reservation · /agents/anything is the same answer, the whole subtree being claimed (the twin)",
-  );
+  it("11. §2 · agents is reserved ahead of its pages: provisioning a user named agents is refused, and GET /agents answers 404 with its own not-built-yet text rather than the anonymous 404 an unrouted path gets — served, so case 2's walk sees the reservation · /agents/anything is the same answer, the whole subtree being claimed (the twin)", async () => {
+    expect(RESERVED_ROUTES.has("agents")).toBe(true);
+    const refused = await bootstrap({ op: "create", username: "agents" });
+    expect(refused.status).toBe(409);
+
+    const page = await call(new Request(`${ORIGIN}/agents`));
+    expect(page.status).toBe(404);
+    const body = await page.text();
+    expect(body).toContain("not built yet");
+    expect(body).not.toBe(await (await call(new Request(`${ORIGIN}/${UNROUTED_PATH}`))).text());
+    expect(await probeSegment("agents")).toBe("served");
+
+    // The twin: the whole subtree, so a future /agents/<slug> is claimed today too.
+    const deep = await call(new Request(`${ORIGIN}/agents/anything`));
+    expect(deep.status).toBe(404);
+    expect(await deep.text()).toBe(body);
+  });
 });
 
 describe("§2/§7 · what the fallthrough serves", () => {

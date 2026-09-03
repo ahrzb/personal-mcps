@@ -1881,18 +1881,15 @@ describe("§19.5 · the consent screen", () => {
 
   // G8 (2026-09-03): the empty state sent the owner to /apps, which cannot create an agent.
   // §19.5 amended; this row replaces the one below it, which is retired with the fix.
-  it.todo(
-    `§19.5 · a namespace with zero agents renders the picker's empty state naming pmcp agent create — never /apps, which has no agent affordance — and disables submit; consent is impossible until an agent exists · the same page with one agent submits (the twin)`,
-  );
-
-  it("§19.5 · a namespace with zero agents renders the picker's empty state naming /apps and disables submit — consent is impossible until an agent exists · the same page with one agent submits (the twin)", async () => {
+  it(`§19.5 · a namespace with zero agents renders the picker's empty state naming pmcp agent create — never /apps, which has no agent affordance — and disables submit; consent is impossible until an agent exists · the same page with one agent submits (the twin)`, async () => {
     const empty = await seedNamespace(env.DB, {});
     const emptySession = await seedOwnerSession(empty.owner);
     const emptyClient = await registerOAuthClient();
     const emptyHtml = (
       await reachConsent(emptyClient.clientId, emptySession.cookie, { resource: oauthResourceFor(empty.owner.username) })
     ).html;
-    expect(emptyHtml).toContain(paths.apps);
+    expect(textOf(emptyHtml)).toContain("pmcp agent create");
+    expect(emptyHtml).not.toContain(`href="${paths.apps}"`);
     expect(submitButtonHtml(emptyHtml, "accept")).toContain("disabled");
 
     // The twin: the fixture namespace has an agent, so the same button is submittable.
@@ -2525,6 +2522,11 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
       // The single shortening, asserted as a DIFFERENCE so it cannot pass by accident.
       expect(rail[5].label).toBe("Connected clients");
       expect(pills[5].label).toBe("Clients");
+      // §13 (pinned 2026-09-03): the active pill carries aria-current="page" like the
+      // rail's active entry — exactly one pill per page, and it is this page's.
+      const block = /<nav class="pill-row"[^>]*>([\s\S]*?)<\/nav>/.exec(html)?.[1] ?? "";
+      const current = [...block.matchAll(/<a class="pill" href="([^"]*)" aria-current="page">/g)].map((m) => m[1]);
+      expect(current, `the current pill on ${pane}`).toEqual([pane]);
     }
   });
 
@@ -4115,7 +4117,9 @@ describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`
 
 /** §13's three Tokens-pane sentences, byte-for-byte. The footer is ONE string on purpose:
  *  its two sentences are quoted together and a split rendering is the drift these guard. */
-const NO_ISSUE_CONTROL = "Issue new keys from an app or agent page.";
+// §13's interim sentence (amended 2026-09-03, G12): until the agents page exists the intro
+// names the command that does — the earlier "from an app or agent page" named no route.
+const NO_ISSUE_CONTROL = "Issue new keys from an app page, or with pmcp token issue for an agent.";
 const TOKENS_FOOTER =
   "Revoking an app token closes that app's live connection. Keys are shown only once, at issue time.";
 const CLIENTS_FOOTER =
@@ -4137,9 +4141,13 @@ describe(`§13 · the Tokens pane`, () => {
   // G12 (2026-09-03): the intro named "an app or agent page" while no agent page exists.
   // §13 now spells the interim sentence; the row pins it and its twin pins that the
   // sentence still points at the one issuing page that does exist.
-  it.todo(
-    `§13 · until the agents pages land the Tokens intro reads "Issue new keys from an app page, or with pmcp token issue for an agent." verbatim, naming no agent page · the app page it names still carries the Issue control (the twin)`,
-  );
+  it(`§13 · until the agents pages land the Tokens intro reads "Issue new keys from an app page, or with pmcp token issue for an agent." verbatim, naming no agent page · the app page it names still carries the Issue control (the twin)`, async () => {
+    const text = textOf(await page(paths.settingsTokens));
+    expect(text).toContain("Issue new keys from an app page, or with pmcp token issue for an agent.");
+    expect(text).not.toContain("agent page");
+    // The twin: the one issuing page the sentence names exists and issues.
+    expect(textOf(await page(paths.appPane("news", "token")))).toContain("Issue new token");
+  });
 
   let keys: { ns: SeededNamespace; session: SeededSession };
 
@@ -4325,7 +4333,7 @@ describe(`§13 · the Tokens pane`, () => {
     expect(revokeTargets(after, "token_revoke").has(live?.id ?? "")).toBe(true);
   });
 
-  it(`§13 · the Tokens pane renders no token_issue control — "Issue new keys from an app or agent page." and its two-sentence footer render verbatim instead · the same pane does render token_revoke forms, so this is an absent control and not an absent pane (the twin)`, async () => {
+  it(`§13 · the Tokens pane renders no token_issue control — "Issue new keys from an app page, or with pmcp token issue for an agent." and its two-sentence footer render verbatim instead · the same pane does render token_revoke forms, so this is an absent control and not an absent pane (the twin)`, async () => {
     const html = await keysPage(paths.settingsTokens);
     // A control of ANY shape: §13's "No Issue control" is not only about forms.
     const fronted = formsRenderedOn(html).map((form) => form.op);

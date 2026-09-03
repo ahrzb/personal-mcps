@@ -294,8 +294,10 @@ navigates to; the list it produces is what gets the Settings slot, not the scree
 
    **Empty state, pinned**: a namespace with zero agents is the first-run path,
    not an edge case — the owner this section exists for may never have created one. With
-   no agents, the picker renders an empty state naming `/apps` as the place to
-   create one, the submit control is **disabled**, and consent is simply impossible until
+   no agents, the picker renders an empty state naming where to create one — the Agents
+   page once it lands (§13, deferred); until then "Create one with `pmcp agent create`
+   before connecting a client." *(amended 2026-09-03: the earlier text named `/apps`,
+   which has no agent affordance)* — the submit control is **disabled**, and consent is simply impossible until
    an agent exists; Deny still works. There is deliberately no inline create and no
    implicit "default" agent: an authority-granting screen is the wrong place to mint the
    thing that will hold the authority.

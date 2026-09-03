@@ -5,7 +5,9 @@
   Created by a repo script; password + optional TOTP second factor and/or passkey.
   Usernames are `[a-z0-9-]`, minus a reserved list, since they become top-level URL
   segments: every top-level route segment the Worker serves is reserved — currently
-  `login`, `device`, `settings`, `audit`, `approvals`, `apps`, `oauth`, `api`,
+  `login`, `device`, `settings`, `audit`, `approvals`, `apps`, `agents` *(amended
+  2026-09-03: reserved ahead of its pages, decision 30 reversed — `/agents` answers its
+  own not-built-yet text until they land)*, `oauth`, `api`,
   `connect`, `internal`, the five shell assets `manifest.webmanifest`, `sw.js`,
   `styles.css` *(amended 2026-08-26: the stylesheet became a served segment)*,
   `icon-192.png`, `icon-512.png` *(amended 2026-09-03: the two PWA icons the manifest

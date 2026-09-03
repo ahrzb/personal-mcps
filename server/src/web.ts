@@ -753,6 +753,17 @@ export function pageRoutes(): PageRouter {
   app.get(paths.icon192, () => new Response(ICON_192, { headers: PNG }));
   app.get(paths.icon512, () => new Response(ICON_512, { headers: PNG }));
 
+  // /agents is reserved ahead of its pages (§2, decision 30 reversed): the whole subtree
+  // answers this and not the anonymous 404, which is what lets the §2 walk see the
+  // reservation as served. Replaced by the real pages when §13's deferred section lands.
+  const notBuilt = (): Response =>
+    new Response("The agents pages are not built yet — agents are managed with pmcp agent … for now.\n", {
+      status: 404,
+      headers: TEXT,
+    });
+  app.get(paths.agents, notBuilt);
+  app.get(`${paths.agents}/*`, notBuilt);
+
   return app;
 }
 

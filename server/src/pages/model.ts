@@ -236,6 +236,10 @@ export const paths = {
   },
   /** Pending requests plus decision history. */
   approvals: "/approvals",
+  /** Reserved ahead of its pages (§13 deferred; decision 30 reversed 2026-09-03): web.ts
+   *  answers the whole subtree with its own not-built-yet 404 so the §2 walk sees the
+   *  reservation served. Nothing links here yet. */
+  agents: "/agents",
   /** Read-only view over audit.query with its exact filters. */
   audit: "/audit",
   /** §19.5's consent screen — an external client's authorization request, and the

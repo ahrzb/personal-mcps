@@ -236,7 +236,10 @@
     expanded-row states and the proxied add-app states stay unreviewed and deferred; where
     the new pages point at them (the app page's Edit grants, agent slugs as links, the
     agent page's read-only clients row) §13 says "deferred" instead of inventing them,
-    `agents` does not join §2's reserved segments, and the mobile top nav's missing
+    ~~`agents` does not join §2's reserved segments~~ *(reversed 2026-09-03: `agents` IS
+    reserved ahead of its page — a username `agents` registered first would shadow the
+    route for good and reserving early costs nothing; until the page lands `/agents`
+    answers its own not-built-yet text so the §2 walk sees it served)*, and the mobile top nav's missing
     `Agents` entry is recorded as the follow-up it is. One reservation rides along: `new`
     and `connect` — the static segments under `/apps/` — can no longer be app slugs,
     derived from the route table exactly as §2 derives usernames. **Spec ahead of code**:

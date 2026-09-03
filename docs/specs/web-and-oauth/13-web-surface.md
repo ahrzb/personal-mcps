@@ -120,8 +120,11 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     under an **All · Agents · Apps** filter (`?kind=agent|app`). Live rows get
     **Revoke**, expired rows **Remove** — both `token_revoke`; revoked rows are not listed
     (nothing left to act on). Bound-to app slugs link to `/apps/<slug>`; agent slugs are
-    text until the agents pages land (deferred). **No Issue control**: "Issue new keys
-    from an app or agent page." — issuing stays where the thing being issued for lives
+    text until the agents pages land (deferred). **No Issue control**: until the agents
+    page exists the intro reads "Issue new keys from an app page, or with `pmcp token
+    issue` for an agent." *(amended 2026-09-03: the earlier "from an app or agent page"
+    named a page with no route)*; once it lands, "Issue new keys from an app or agent
+    page." — issuing stays where the thing being issued for lives
     (`/apps/<slug>/token`; for agents, `pmcp token issue` until the deferred agents page
     exists). Footer, verbatim: "Revoking an app token closes that app's live connection.
     Keys are shown only once, at issue time."
@@ -239,7 +242,8 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     ("Token refresh failed — calls return errors until you reconnect." + Reconnect)
     rather than an empty one. The page fronts the MCP method exactly as `pmcp tools` /
     `pmcp describe app/<slug>/<tool>` do (§10, §20.6) — not an admin op, so §8's parity
-    list is untouched. A row is name, first line of description, `N args` / `no args`;
+    list is untouched. A row is name, first line of description, `N args` / `1 arg` /
+    `no args` *(2026-09-03: singular at one, as the board draws it)*;
     expanded in place it shows the full description, an **Arguments** table (name, type,
     `required` or `optional · defaults to <value>`, from the tool's `inputSchema` —
     top-level properties, `required`, `default`; nested schemas print their outer type
@@ -353,7 +357,8 @@ pages, and its rules are pinned once:
   active entry is `aria-current="page"`; dimmed entries stay links.
 - **Mobile** has no room for a rail: below the shell's existing breakpoint the same panes
   become a horizontally scrolling **pill row** under the page title — label only, no
-  markers, active pill highlighted, same routes. This is a shell rule, so it applies to
+  markers, active pill highlighted and `aria-current="page"` like the rail's active entry
+  *(pinned 2026-09-03)*, same routes. This is a shell rule, so it applies to
   `/apps/<slug>` although only `MobileSettings` was drawn (follow-up).
 - **Mutations belong to a pane**: a POST target keeps the existing final-segment
   convention (its last segment names the op or the better-auth endpoint it fronts), and

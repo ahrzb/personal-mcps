@@ -119,6 +119,7 @@ export const ROUTES = [
   "audit", // web: audit view + streaming JSONL export (§13)
   "approvals", // web: approval dashboard, /approvals/:id detail, push opt-in (§13)
   "apps", // web: app management, Connect/Reconnect/Disconnect (§13)
+  "agents", // web: reserved ahead of its pages (decision 30 reversed 2026-09-03) — answers not-built-yet until §13's agents pages land
   "oauth", // upstream OAuth: /oauth/upstream/callback (§7)
   "api", // hub-owned JSON: GET /api/whoami (§8) and better-auth under /api/auth (§4)
   "connect", // tunnel WebSocket upgrade: wss://<origin>/connect (§6)
@@ -371,7 +372,7 @@ type Mount = (app: Hono<{ Bindings: Env }>, segment: ServedSegment) => void;
 /**
  * Segment → mount, exhaustive over ROUTES by type: a segment added to the table above with
  * no mount here is a compile error, and a mount that claims nothing is caught at runtime by
- * the router walk. The browser surface is one app (web.pageRoutes) that eleven segments
+ * the router walk. The browser surface is one app (web.pageRoutes) that twelve segments
  * dispatch into whole; the five machine segments are mounted here because each is the
  * composition root's own wiring of a sibling module.
  */
@@ -382,6 +383,7 @@ const MOUNTS: Record<ServedSegment, Mount> = {
   audit: browser,
   approvals: browser,
   apps: browser,
+  agents: browser,
   "manifest.webmanifest": browser,
   "sw.js": browser,
   "styles.css": browser,

@@ -45,8 +45,10 @@ const WarningIcon: FC = () => (
 const NoAgents: FC = () => (
   <div class="empty">
     <div class="empty-title">No agents yet</div>
+    {/* §19.5 (amended 2026-09-03): the Agents page once it lands; until then the command
+        that exists — /apps has no agent affordance, so it is never named here. */}
     <div class="empty-text">
-      Create one at <a href={paths.apps}>{paths.apps}</a> before connecting a client — the agent it is
+      Create one with <span class="mono">pmcp agent create</span> before connecting a client — the agent it is
       given decides everything the client can do.
     </div>
   </div>

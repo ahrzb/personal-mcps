@@ -755,7 +755,11 @@ const TokensCard: FC<{ tokens: TokenRow[]; kind: TokenRow["kind"] | null; csrfTo
     <div class="card-head" style="padding: var(--space-10) var(--space-10) var(--space-8);">
       <div style="display: flex; flex-direction: column; gap: var(--space-1);">
         <div class="card-title">Tokens</div>
-        <div class="card-desc">Every key issued in this namespace. Issue new keys from an app or agent page.</div>
+        {/* §13's interim sentence (G12): there is no agent page until §13's deferred
+            section lands; "or with pmcp token issue" names the way that exists today. */}
+        <div class="card-desc">
+          Every key issued in this namespace. Issue new keys from an app page, or with pmcp token issue for an agent.
+        </div>
       </div>
       <TokenKindFilter kind={kind} />
     </div>

@@ -997,7 +997,36 @@ describe("§8/§13 · one paging contract, two presentations", () => {
     );
   });
 
-  it.todo("16. §13 · a row's chevron is a link to this same view with ?expand=<id> carrying the page's filters — exactly the rows with something to show draw one, so a bodiless auth row draws none — and the open row's own chevron links back without expand (G1)");
+  it("16. §13 · a row's chevron is a link to this same view with ?expand=<id> carrying the page's filters — exactly the rows with something to show draw one, so a bodiless auth row draws none — and the open row's own chevron links back without expand (G1)", async () => {
+    const filters = { limit: 50, offset: 0 };
+    const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
+    const showable = (row: AuditRow) => Boolean(row.client || row.detail || row.args || row.result);
+    // The twin needs a subject: the world's device approval is a fact about a credential
+    // and carries no bodies (§15), so it is a row with nothing to expand.
+    expect(truth.rows.filter((row) => !showable(row)).map((row) => row.event)).toContain("auth.device_approved");
+
+    // A row draws its chevron twice — the wide row and the compact cell, one per
+    // breakpoint (CSS hides the other) — so every count below is per width.
+    const closed = expandLinks(await page(auditPath(filters)));
+    expect(closed.every((link) => link.label === "Show detail")).toBe(true);
+    const ids = closed.map((link) => Number(link.query.get("expand")));
+    expect(new Set(ids)).toEqual(new Set(truth.rows.filter(showable).map((row) => row.id)));
+    expect(ids.length).toBe(new Set(ids).size * 2);
+    for (const link of closed) expect(link.query.get("limit"), "the page's filters ride along").toBe("50");
+
+    // Follow one: that row is open, its own chevron links back without expand (filters
+    // kept), and every other chevron still opens its own row.
+    const [first] = closed;
+    expect(first).toBeDefined();
+    const open = expandLinks(await page(first?.href ?? ""));
+    const back = open.filter((link) => link.label === "Hide detail");
+    expect(back.length).toBe(2);
+    for (const link of back) {
+      expect(link.query.get("expand")).toBeNull();
+      expect(link.query.get("limit")).toBe("50");
+    }
+    expect(open.filter((link) => link.label === "Show detail").length).toBe(closed.length - 2);
+  });
 });
 
 describe(`§13 · /audit's filter row — the window it names and the window it empties`, () => {
@@ -7631,6 +7660,15 @@ function nextPageLink(html: string): string | null {
 function loadMoreLink(html: string): string | null {
   const block = /<a class="btn btn--outline btn--block" href="([^"]+)">\s*Load more/.exec(html);
   return block === null ? null : decodeEntities(block[1]);
+}
+
+/** Every chevron link an /audit render draws — the label says which way it points. */
+function expandLinks(html: string): { label: string; href: string; query: URLSearchParams }[] {
+  const anchors = html.matchAll(/<a class="row-toggle" aria-label="((?:Show|Hide) detail)" aria-expanded="(?:true|false)" href="([^"]+)"/g);
+  return [...anchors].map((anchor) => {
+    const href = decodeEntities(anchor[2] ?? "");
+    return { label: anchor[1] ?? "", href, query: new URL(href, ORIGIN).searchParams };
+  });
 }
 
 /** The ?session=… link the expanded row detail renders. */

@@ -609,6 +609,19 @@ p {
   cursor: default;
 }
 
+/* The audit row's expand chevron: a link drawn as a bare icon, not a bordered button. */
+.row-toggle {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--muted-fg);
+}
+
+.row-toggle:hover {
+  color: var(--fg);
+  background: var(--muted);
+}
+
 .actions {
   display: flex;
   align-items: center;

@@ -173,7 +173,11 @@ function query(params: Record<string, string | number | undefined | null>): stri
 export type AuditLinkQuery = Pick<
   AuditQuery,
   "principal" | "app" | "event" | "tool" | "session" | "since" | "until" | "limit" | "offset"
->;
+> & {
+  /** The row the page opens (`?expand=<id>`) — a link concern, not a filter: the export
+   *  ignores it, and the only link that sets it is a row's own chevron (§13, G1). */
+  expand?: number;
+};
 
 /**
  * Every URL the browser surface serves or posts to, in one object — templates

@@ -176,8 +176,10 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   §5/§7) and the recorded call bodies when present (§15) — post-redaction args and
   result structuredContent, with stubs rendered as typed size placeholders (e.g.
   `‹blob image/png · 4.2 MB›`, never the bytes); the session id renders as a link to this same audit view filtered to that
-  session (`?session=…`, backed by `audit_query`'s `session` filter). No mutations, so
-  no CSRF surface.
+  session (`?session=…`, backed by `audit_query`'s `session` filter). A row with something
+  to show draws a chevron that is a link to this same view with `?expand=<id>` — the
+  current filters ride along, and the open row's chevron links back without it; a row
+  with nothing recorded draws none *(2026-09-03, G1)*. No mutations, so no CSRF surface.
 - `/approvals` — cookie-session-gated: pending requests up top (agent, app, tool,
   redacted arguments, requested time, approve/reject buttons — CSRF token on the POST),
   decision history below. A decision on a request that is no longer pending (decided

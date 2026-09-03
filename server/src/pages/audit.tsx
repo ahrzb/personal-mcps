@@ -255,6 +255,20 @@ function hasDetail(row: AuditEventRow): boolean {
   return Boolean(row.client || row.detail || row.args || row.result);
 }
 
+/** The chevron IS the expand control (G1, 2026-09-03): with no script on the page,
+ *  opening a row is a reload of this same view with `?expand=<id>` — the filters ride
+ *  along, and the open row's chevron links back without it. */
+const ExpandLink: FC<{ row: AuditEventRow; filters: AuditFilters; open: boolean }> = ({ row, filters, open }) => (
+  <a
+    class="row-toggle"
+    aria-label={open ? "Hide detail" : "Show detail"}
+    aria-expanded={open ? "true" : "false"}
+    href={auditLink(filters, { expand: open ? undefined : row.id })}
+  >
+    <Chevron open={open} />
+  </a>
+);
+
 function mobileMeta(row: AuditEventRow): string {
   const parts = [fmtDateTimeShort(row.ts), row.principal];
   if (row.app) parts.push(row.app);
@@ -310,7 +324,7 @@ const EventRow: FC<{ row: AuditEventRow; filters: AuditFilters; expandedId: numb
           {expandable ? (
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
               <OutcomeBadge outcome={row.outcome} />
-              <Chevron open={isOpen} />
+              <ExpandLink row={row} filters={filters} open={isOpen} />
             </div>
           ) : (
             <OutcomeBadge outcome={row.outcome} />
@@ -323,7 +337,7 @@ const EventRow: FC<{ row: AuditEventRow; filters: AuditFilters; expandedId: numb
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
             <OutcomeBadge outcome={row.outcome} />
-            {expandable && <Chevron open={isOpen} />}
+            {expandable && <ExpandLink row={row} filters={filters} open={isOpen} />}
           </div>
         </td>
       </tr>

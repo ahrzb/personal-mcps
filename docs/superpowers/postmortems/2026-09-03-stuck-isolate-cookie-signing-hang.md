@@ -49,7 +49,8 @@ stale-copy theory plausible.
   with a 10 s bound and requires a challenge, so the next stuck instance on that path fails
   the next deploy's smoke instead of waiting for a phone; every rendered page now answers
   `Cache-Control: no-store` (not the cause; the rule signed-in pages should have had, and it
-  removes the stale-copy false lead for good). Commit: pending.
+  removes the stale-copy false lead for good). Commit `619eef4`, deploy `ff254f61`, smoke
+  33/33 with the new leg at 66 ms.
 
 ## Countermeasure candidates
 - A scheduled external probe of the two cookie-signing endpoints (sign-in with a bogus user

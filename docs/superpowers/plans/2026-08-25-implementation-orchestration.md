@@ -1657,3 +1657,17 @@ check and (manual, once) a real push notification to a real browser.
   written. Gate: 45 / 1492 / 0, exactly two `todo → passed` plus the one re-key; `tsc` 0;
   preview walked (`audit/default` with the label, `audit/middlePage` fixed) before the
   gate. Cost: 1 agent (Sonnet 5, ~245k tokens).
+- 2026-09-03 — **Live incident: a stuck production instance hung every cookie-signing
+  request (~21:05–21:29 UTC); postmortem
+  `2026-09-03-stuck-isolate-cookie-signing-hang.md`.** Found by the owner on a phone
+  after a two-factor sign-in. The tail showed the phone's requests as `canceled` after
+  180–215 s; the passkey options endpoint hung 100% from here too while its neighbours
+  answered; the same commit answered locally in 240 ms. Cure: `pnpm ship` of the identical
+  HEAD (`3bda040b`) replaced the instances — 200 in ~100 ms at once. Follow-up `619eef4`,
+  deploy `ff254f61`, smoke **33/33**: a bounded smoke leg on the passkey options endpoint
+  (the manual passkey leg G21 had never been run on production — the one path with no
+  observer), `Cache-Control: no-store` on every rendered page (the CSP row retitled to
+  carry it — enumerated: one re-key; not the cause, the rule signed-in pages should have
+  had), the postmortem with candidates (a request-level timeout around `auth().handler` so
+  a wedged path 503s instead of hanging; a scheduled external probe). Diagnosis lesson,
+  recorded there: read the tail for `canceled` + large `wallTime` first. Cost: 0 agents.

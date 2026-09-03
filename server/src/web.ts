@@ -1099,6 +1099,9 @@ const TOKEN_ISSUE = "token_issue";
  */
 const APP_OP_PANE: Record<string, AppPane> = {
   token_revoke: "token",
+  // The header's Disconnect (37(b)): the header belongs to no pane, so its notice lands
+  // on the landing pane of the app it was pressed on.
+  app_disconnect: "overview",
   app_archive: "danger",
   app_unarchive: "danger",
 };
@@ -1201,7 +1204,7 @@ async function attempt(
  * builder: every key it writes is spelled in `NOTICE_KEYS`, which the pages read the
  * same flash back through, so neither side can rename a key the other still expects.
  */
-function noticeUrl(
+export function noticeUrl(
   back: string,
   op: string,
   outcome: { value: unknown } | { reason: string },
@@ -1325,7 +1328,9 @@ async function connectRedirect(
   }
   const started = await attempt(() => beginConnect(app, { id: session.sessionId }));
   if ("reason" in started) {
-    return c.redirect(noticeUrl(paths.apps, "connect", started), 303);
+    // §13 (37(b)): a refusal lands on the app's own page — Connect is pressed on it (or
+    // on /apps/new, whose app now exists), and the list is only for an app that does not.
+    return c.redirect(noticeUrl(paths.appPane(slug, "overview"), "connect", started), 303);
   }
   // No audit row of this module's own: the state row upstream just wrote IS the record
   // that a connect started, and `upstream.oauth_connected` records how it ended. A page

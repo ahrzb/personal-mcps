@@ -996,6 +996,7 @@ const appDetail = (
     pane,
     header,
     tab: "resources",
+    hubOrigin: "https://hub.example",
     // §20.3's canonical read shape, in both of its directions: `reader` carries three
     // families and prints the object, `crawler` is tools-only and prints a bare list.
     roles:
@@ -1129,10 +1130,17 @@ const appDetailFixtures = {
   ),
 
   /** Provisioned and never connected: no catalog, no last seen, §20.5's empty state. */
+  /** §13 (2026-09-03): never connected means no catalog at all — every family dims and the
+   *  pane says so, rather than an empty tools list that would claim a declaration. */
   neverConnected: appDetail(
     { ...tunnelHeader, name: "Weather bot", slug: "weather", status: "offline", lastSeen: null },
     "tools",
-    { ...TUNNEL_CATALOG, tools: { state: "listed", rows: [] } },
+    {
+      tools: { state: "unconnected" },
+      prompts: { state: "unconnected" },
+      resources: { state: "unconnected" },
+      templates: { state: "unconnected" },
+    },
   ),
 
   /** AppDetailStates "ARCHIVED": refuses connections, keeps its retained catalog. */

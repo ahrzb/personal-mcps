@@ -222,8 +222,11 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   - **Dimming.** An App-group entry for a §20 family renders dimmed with `—` in place of
     its count when the app advertises none of that family — for tunneled apps the
     capability set learned at registration (§20.5: tools is a family like any other, so
-    an app that declared no tools dims Tools too, and one that has never connected lists
-    none), for proxied apps the owner-declared `capabilities` list (§20.2; absent ≡
+    an app that declared no tools dims Tools too, and one that has never connected dims
+    all three — the hub has no catalog to count — each pane saying so: "This app has
+    never connected, so the hub has no catalog to list yet. Start it with its token and
+    the catalog appears after its first connect." *(2026-09-03: "lists none" read two
+    ways; pinned as dimming)*), for proxied apps the owner-declared `capabilities` list (§20.2; absent ≡
     `[tools]`). A dimmed entry is still a link: its pane renders the empty state that
     says why, pinned — tunneled: "This app declared no prompts capability on its last
     connect, so the hub advertises none and serves an empty list." + "Declare prompts with
@@ -233,13 +236,17 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     its family's name substituted). The Token entry dims for proxied apps for §2's reason:
     nothing dials in, so there is nothing to hold a token. Only `—` means "advertises
     none": when a proxied app's live listing fails (below), the App-group markers are
-    **blank** — an unread count is not an empty set.
+    **blank** — an unread count is not an empty set. Roles stays: it counts the owner's
+    own configuration, not the listing *(2026-09-03)*.
   - **Tools** — the app's catalog as the owner sees it: the scoped endpoint's
     `tools/list` unfiltered (§7 step 2: owner → all tools) — for a tunneled app the DO's
     cached catalog (header line: "Advertised by the app on its last connect. Re-listed on
     every reconnect"), for a proxied app the live fetch under §7's 10 s deadline, with an
     unreachable or needs-reconnect upstream rendering that state in place of the list
-    ("Token refresh failed — calls return errors until you reconnect." + Reconnect)
+    ("Token refresh failed — calls return errors until you reconnect." + Reconnect for an
+    `auth: oauth` app; for `auth: headers`, which has no token and no Reconnect,
+    "Couldn't reach `<endpoint>` — the live listing failed, so nothing is shown; calls
+    return errors until it answers again." naming the configured endpoint, *2026-09-03*)
     rather than an empty one. The page fronts the MCP method exactly as `pmcp tools` /
     `pmcp describe app/<slug>/<tool>` do (§10, §20.6) — not an admin op, so §8's parity
     list is untouched. A row is name, first line of description, `N args` / `1 arg` /
@@ -276,7 +283,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     or the raw template, and the redaction line is absent (URIs are not bodies; §20.4
     pins what the audit row keeps). The pane carries the two §20 rules a reader would
     otherwise learn from a `-32601`, verbatim: "Resources are served on the scoped
-    endpoint only — `https://<hub>/<user>/mcp/<slug>`. The aggregated endpoint answers
+    endpoint only — `https://<hub>/<user>/mcp/<slug>`" with the hub's own origin and the
+    owner's username in place of the placeholders, so the endpoint is copyable
+    *(2026-09-03: the literal `<hub>` was a board artefact)* — ". The aggregated endpoint answers
     `-32601`, because a URI cannot carry a slug prefix and stay the URI the app knows."
     and "Grants match resources by URI, never by name — a role's resource patterns are
     URI patterns, and templates are matched against their raw `uriTemplate`."
@@ -363,8 +372,12 @@ pages, and its rules are pinned once:
 - **Mutations belong to a pane**: a POST target keeps the existing final-segment
   convention (its last segment names the op or the better-auth endpoint it fronts), and
   the redirect-back with its notice lands on the pane that rendered the form, not the
-  page root. Confirm-dialog state (`?confirm=…`) rides the owning pane's URL for the same
-  reason.
+  page root. The app page's header is not a pane: its Connect / Reconnect / Disconnect
+  land on the app's own Overview pane (`/apps/<slug>/overview`, the pane that reports
+  the connection) with the notice there, and a finished Connect (the upstream callback)
+  lands the same way; `/apps`'s own row controls still
+  land on `/apps` *(2026-09-03, owner question 37(b))*. Confirm-dialog state
+  (`?confirm=…`) rides the owning pane's URL for the same reason.
 - **A page's gate is every pane's gate**: `/settings/*` is recent-auth and no-bearer
   (§4); `/apps/<slug>/*` is the ordinary owner session.
 - Known follow-up, recorded not solved: the mobile top nav holds four items (Apps,

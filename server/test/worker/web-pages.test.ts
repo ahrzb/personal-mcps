@@ -1248,7 +1248,10 @@ describe("§7/§13 · the OAuth callback shell", () => {
       new Request(callbackUrl ?? "", { headers: { Cookie: world.session.cookie } }),
     );
     expect(completed.status).toBe(302);
-    expect(completed.headers.get("Location")).toContain(paths.apps);
+    // §13 (37(b)): a finished Connect lands on the app's own page carrying the notice.
+    const landed = new URL(completed.headers.get("Location") ?? "", ORIGIN);
+    expect(landed.pathname).toBe(paths.appPane("notion", "overview"));
+    expect(landed.searchParams.get("done")).toBe("connect");
     expect(await stateRows(state)).toBe(0);
     expect(await connectionOf("notion")).toBe("connected");
   });
@@ -5101,12 +5104,53 @@ describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
   // Owner questions 37(b) and 37(a), decided 2026-09-03 (§13 amended): the header's
   // controls land on the app's own page, and a headers-mode app that cannot be reached
   // says so in its own words rather than borrowing the oauth arm's.
-  it.todo(
-    `§13 · the app header's Connect refusal and Disconnect land back on the app's own page with the notice — /apps/<slug>/app_disconnect, never /apps/app_disconnect — and a finished Connect lands there too carrying done=connect · /apps's own row controls still land on /apps (the twin)`,
-  );
-  it.todo(
-    `§13 · a headers-mode proxied app whose upstream is unreachable renders "Couldn't reach <endpoint> — the live listing failed, so nothing is shown; calls return errors until it answers again." naming its configured endpoint, with BLANK App-group markers and no Reconnect control · the oauth app whose refresh failed keeps "Token refresh failed — calls return errors until you reconnect." beside Reconnect (the twin)`,
-  );
+  it(`§13 · the app header's Connect refusal and Disconnect land back on the app's own page with the notice — /apps/<slug>/app_disconnect, never /apps/app_disconnect — and a finished Connect lands there too carrying done=connect · /apps's own row controls still land on /apps (the twin)`, async () => {
+    await breakBrokensCredential();
+    const html = await appPage(paths.appDetail(BROKEN));
+    // The header's Disconnect posts to the app page's own dispatch, never the list's.
+    expect(formsPostingTo(html, paths.appHeaderDisconnect(BROKEN)).length).toBeGreaterThan(0);
+    expect(formsPostingTo(html, paths.appDisconnect(BROKEN))).toEqual([]);
+    const csrf = csrfOf(html);
+
+    // A Connect refusal from the header lands on the app page: DOWN is headers-mode, so
+    // beginConnect refuses it, which is the cheapest refusal that reaches the redirect.
+    const refused = await formPost(paths.appConnect(DOWN), { csrf }, detail.session.cookie);
+    expect(refused.status).toBe(303);
+    const landing = new URL(refused.headers.get("Location") ?? "", ORIGIN);
+    expect(landing.pathname).toBe(paths.appPane(DOWN, "overview"));
+    expect(landing.searchParams.get("failed")).toBe("connect");
+
+    // Disconnect from the header: the notice lands on the app page, not on /apps.
+    const disconnected = await formPost(paths.appHeaderDisconnect(BROKEN), { csrf }, detail.session.cookie);
+    expect(disconnected.status).toBe(303);
+    const back = new URL(disconnected.headers.get("Location") ?? "", ORIGIN);
+    expect(back.pathname).toBe(paths.appPane(BROKEN, "overview"));
+    expect(back.searchParams.get("done")).toBe("app_disconnect");
+
+    // The twin: /apps's own row control still lands on /apps.
+    const fromList = await formPost(paths.appDisconnect(BROKEN), { csrf }, detail.session.cookie);
+    expect(fromList.status).toBe(303);
+    expect(new URL(fromList.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.apps);
+  });
+  it(`§13 · a headers-mode proxied app whose upstream is unreachable renders "Couldn't reach <endpoint> — the live listing failed, so nothing is shown; calls return errors until it answers again." naming its configured endpoint, with BLANK App-group markers and no Reconnect control · the oauth app whose refresh failed keeps "Token refresh failed — calls return errors until you reconnect." beside Reconnect (the twin)`, async () => {
+    const html = await appPage(paths.appDetail(DOWN));
+    const text = textOf(html);
+    expect(text).toContain(
+      `Couldn't reach ${upstreamUrlFor(downScenario)} — the live listing failed, so nothing is shown; calls return errors until it answers again.`,
+    );
+    for (const href of [paths.appDetail(DOWN), paths.appPane(DOWN, "prompts"), paths.appPane(DOWN, "resources")]) {
+      expect(markerOn(html, href), href).toBe("");
+    }
+    expect(formsPostingTo(html, paths.appConnect(DOWN))).toEqual([]);
+    expect(text).not.toContain(pinned(REFRESH_FAILED));
+
+    // The twin: the oauth arm keeps its own sentence and its Reconnect.
+    await breakBrokensCredential();
+    const oauth = await appPage(paths.appDetail(BROKEN));
+    expect(textOf(oauth)).toContain(pinned(REFRESH_FAILED));
+    expect(textOf(oauth)).not.toContain("Couldn't reach");
+    expect(formsPostingTo(oauth, paths.appConnect(BROKEN)).length).toBeGreaterThan(0);
+  });
 
   beforeAll(withAppDetailWorld);
 
@@ -5186,7 +5230,7 @@ describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
     // the app page cannot invent a third spelling of what /apps already posts to.
     const brokenHtml = await appPage(paths.appDetail(BROKEN));
     expect(formsPostingTo(brokenHtml, paths.appConnect(BROKEN)).length).toBeGreaterThan(0);
-    expect(formsPostingTo(brokenHtml, paths.appDisconnect(BROKEN)).length).toBeGreaterThan(0);
+    expect(formsPostingTo(brokenHtml, paths.appHeaderDisconnect(BROKEN)).length).toBeGreaterThan(0);
     // Read off the LIST's render and compared: /apps draws Connect as a submit button's
     // `formaction`, so the comparison is over every target either page posts to.
     expect(postTargets(await appPage(paths.apps))).toContain(paths.appConnect(BROKEN));
@@ -5197,7 +5241,7 @@ describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
 
     // The twin: nothing dials in to a headers-mode app, so it draws neither target.
     expect(formsPostingTo(catalogHtml, paths.appConnect(CATALOG))).toEqual([]);
-    expect(formsPostingTo(catalogHtml, paths.appDisconnect(CATALOG))).toEqual([]);
+    expect(formsPostingTo(catalogHtml, paths.appHeaderDisconnect(CATALOG))).toEqual([]);
   });
 
   it(`§13 · every App-group rail marker is the number of rows its own pane lists — Tools, Prompts, and Resources as resources plus templates — and the Resources pane's two tabs carry those two counts at ?tab=resources and ?tab=templates`, async () => {
@@ -5318,6 +5362,9 @@ describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
     expect(textOf(html)).toContain(pinned(REFRESH_FAILED));
     expect(formsPostingTo(html, paths.appConnect(BROKEN)).length).toBeGreaterThan(0);
     expect(mentions(textOf(html), `${BROKEN}_`)).toBe(0);
+    // §13 (32(d), 2026-09-03): Roles counts the owner's own configuration, not the
+    // listing, so it is the one App-group marker a failed listing does not blank.
+    expect(markerOn(html, paths.appPane(BROKEN, "roles"))).not.toBe("");
 
     const catalogHtml = await appPage(paths.appDetail(CATALOG));
     expect(markerOn(catalogHtml, paths.appDetail(CATALOG))).toBe(String(CATALOG_TOOLS.length));
@@ -5593,12 +5640,38 @@ describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
 describe(`§13/§20 · /apps/<slug> — Prompts, Resources, Roles and Overview`, () => {
   // Owner questions 32(b) and 32(c), decided 2026-09-03 (§13 amended): a never-connected
   // tunneled app has no catalog to count, and the scoped-endpoint sentence is copyable.
-  it.todo(
-    `§20.5/§13 · a tunneled app that has never connected dims Tools, Prompts and Resources alike — the hub has no catalog to count — and each pane reads "This app has never connected, so the hub has no catalog to list yet." verbatim · the tunneled app beside it that connected and declared prompts counts and lists them (the twin)`,
-  );
-  it.todo(
-    `§13/§20.2 · the Resources pane prints the scoped endpoint with the hub's own origin and the owner's username in place of <hub> and <user> — copyable, the placeholder nowhere on the page · the aggregated-endpoint sentence beside it is unchanged (the twin)`,
-  );
+  it(`§20.5/§13 · a tunneled app that has never connected dims Tools, Prompts and Resources alike — the hub has no catalog to count — and each pane reads "This app has never connected, so the hub has no catalog to list yet." verbatim · the tunneled app beside it that connected and declared prompts counts and lists them (the twin)`, async () => {
+    const NEVER = "This app has never connected, so the hub has no catalog to list yet.";
+    for (const pane of ["tools", "prompts", "resources"] as const) {
+      const html = await appPage(pane === "tools" ? paths.appDetail(FRESHAPP) : paths.appPane(FRESHAPP, pane));
+      for (const href of [paths.appDetail(FRESHAPP), paths.appPane(FRESHAPP, "prompts"), paths.appPane(FRESHAPP, "resources")]) {
+        expect(markerOn(html, href), `${pane} pane, marker ${href}`).toBe(DIMMED_MARKER);
+      }
+      expect(textOf(html), pane).toContain(NEVER);
+      expect(textOf(html), pane).not.toContain("declared no");
+    }
+    // The twin: an app that connected and declared prompts counts and lists them.
+    const slug = uniqueSlug("connected");
+    const served = [{ name: uniqueSlug("brief").replace(/-/g, "_"), description: "One." }];
+    const close = await dialTunnel(slug, { capabilities: ["tools", "prompts"], prompts: served });
+    try {
+      const connected = await appPage(paths.appPane(slug, "prompts"));
+      expect(markerOn(connected, paths.appPane(slug, "prompts"))).toBe(String(served.length));
+      expect(textOf(connected)).toContain(served[0].name);
+      expect(textOf(connected)).not.toContain(NEVER);
+    } finally {
+      await close();
+    }
+  });
+  it(`§13/§20.2 · the Resources pane prints the scoped endpoint with the hub's own origin and the owner's username in place of <hub> and <user> — copyable, the placeholder nowhere on the page · the aggregated-endpoint sentence beside it is unchanged (the twin)`, async () => {
+    const html = await appPage(paths.appPane(CATALOG, "resources"));
+    const text = textOf(html);
+    expect(text).toContain(`${ORIGIN}${paths.mcpScoped(detail.ns.owner.username, CATALOG)}`);
+    expect(html).not.toContain("&lt;hub&gt;");
+    expect(html).not.toContain("<hub>");
+    // The twin: the second sentence of the rule is untouched.
+    expect(text).toContain("The aggregated endpoint answers -32601");
+  });
 
   beforeAll(withAppDetailWorld);
 
@@ -5839,7 +5912,12 @@ describe(`§13/§20 · /apps/<slug> — Prompts, Resources, Roles and Overview`,
     for (const slug of [CATALOG, BROKEN]) {
       // The allowance is the PAGE'S OWN, per slug: merged across both apps it would let a
       // pane of one app post at the other app's Connect target.
-      const allowed = [paths.auth.signOut, paths.appConnect(slug), paths.appDisconnect(slug)];
+      const allowed = [
+        paths.auth.signOut,
+        paths.appConnect(slug),
+        paths.appDisconnect(slug),
+        paths.appHeaderDisconnect(slug),
+      ];
       for (const url of appGroup(slug)) {
         const html = await appPage(url);
         for (const action of formsOn(html)) {

@@ -328,7 +328,9 @@ this is the residue when an author does not.
   commands. Beside each entry the pane adds what only the hub knows: the aggregated name
   (`<slug>_<name>` — tools and prompts only), which agents reach it through which role,
   computed by the door's own matcher over §20.3's per-family patterns and never a second
-  one, the approval posture (never, for prompts and resources — §18 decision 27), and the
+  one, the approval posture (never, for prompts — §18 decision 27; the Resources pane
+  carries no approval line at all, since a URI is never gated and a line saying so on
+  every row is noise — §13's bullet wins, *2026-09-03, owner question 37(c)*), and the
   `redact` entries that match. A family the app does not advertise dims its rail entry to
   `—`, and its pane says why. The Resources pane states the two rules a reader would
   otherwise learn from a `-32601`: resources are served on the scoped endpoint only, and

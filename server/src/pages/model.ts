@@ -325,9 +325,16 @@ export const paths = {
   appConnect(slug: string): string {
     return `/apps/connect${query({ slug })}`;
   },
-  /** app_disconnect — wipes the stored bundle, keeps everything else (§8). */
+  /** app_disconnect — wipes the stored bundle, keeps everything else (§8) — as /apps's
+   *  own row control posts it, landing back on /apps. */
   appDisconnect(slug: string): string {
     return `/apps/app_disconnect${query({ slug })}`;
+  },
+  /** The same op from the app page's header, through that page's own dispatch so the
+   *  notice lands on the app (§13, 37(b)). The path names the landing; the query carries
+   *  the slug as the op's own input, exactly as the list's target does. */
+  appHeaderDisconnect(slug: string): string {
+    return `${paths.appDetail(slug)}/app_disconnect${query({ slug })}`;
   },
   /** The Tokens pane under §13's **All · Agents · Apps** filter. `undefined` is All and
    *  spells `paths.settingsTokens` exactly, so the active pill and the rail entry point at
@@ -987,7 +994,11 @@ export type AppDetailHeader = {
 export type AppFamilyView<Row> =
   | { state: "listed"; rows: Row[] }
   | { state: "undeclared" }
-  | { state: "unread" };
+  | { state: "unread" }
+  /** A tunneled app that has never connected: no catalog to count, so every family dims
+   *  and the pane says so (§13, pinned 2026-09-03) — not "declared none", which would
+   *  claim a declaration the hub never received. */
+  | { state: "unconnected" };
 
 /**
  * One Tools row plus §13's "what only the hub knows" block, computed once per render: the
@@ -1092,6 +1103,9 @@ export type AppDetailProps = ShellProps & {
   templates: AppFamilyView<AppResourceRow>;
   /** Which of the Resources pane's two tabs this URL selected (§13). */
   tab: "resources" | "templates";
+  /** §2's `PUBLIC_ORIGIN`, the one answer to "what is the hub's address" — the Resources
+   *  pane prints the scoped endpoint with it so the sentence is copyable (§13). */
+  hubOrigin: string;
   /** The DECLARED roles in §20.3's CANONICAL read shape — a bare pattern list for a
    *  tools-only role, the per-family object otherwise — as the Roles pane renders them
    *  and its rail marker counts them. `app_get` already canonicalizes; the page relays. */
@@ -1694,7 +1708,12 @@ export async function appDetailProps(
       ? await tunnelCapabilities(app.id)
       : (row.kind === "proxy" ? row.capabilities : undefined) ?? DEFAULT_APP_CAPABILITIES;
 
+  // §13 (2026-09-03): a tunneled app that has never connected has no catalog at all —
+  // `capabilities()` answers `tools` for it by policy, which would otherwise read as a
+  // declared-but-empty tools family. `lastSeen` is null exactly for never-connected.
+  const neverConnected = row.kind === "tunnel" && row.lastSeen === null;
   const familyOf = async (kind: ListKind, family: AppCapability): Promise<AppFamilyView<ListedItem>> => {
+    if (neverConnected) return { state: "unconnected" };
     if (!advertised.includes(family)) return { state: "undeclared" };
     const answered = await ownerCatalog(env, ctx.ownerId, slug, kind);
     return answered.ok ? { state: "listed", rows: answered.items } : { state: "unread" };
@@ -1772,6 +1791,7 @@ export async function appDetailProps(
     resources,
     templates,
     tab: ctx.query.get("tab") === "templates" ? "templates" : "resources",
+    hubOrigin: new URL(env.PUBLIC_ORIGIN).origin,
     roles: row.roles,
     overview: {
       createdAt: row.createdAt,
@@ -1854,7 +1874,7 @@ async function mapped<Row>(
  */
 function familyMarker(...views: AppFamilyView<unknown>[]): string {
   if (views.some((view) => view.state === "unread")) return "";
-  if (views.every((view) => view.state === "undeclared")) return DIMMED;
+  if (views.every((view) => view.state === "undeclared" || view.state === "unconnected")) return DIMMED;
   return String(views.reduce((total, view) => total + (view.state === "listed" ? view.rows.length : 0), 0));
 }
 
@@ -1891,8 +1911,9 @@ function appHeader(row: OpsAppRow, kind: AppKind, slug: string): AppDetailHeader
       : null,
     // §13 gives an `auth: oauth` app all three controls, so Disconnect is drawn whenever
     // there is a credential the app could be holding — the header is the app's own page,
-    // not /apps's one-action-per-row table, and `app_disconnect` is idempotent (§8).
-    disconnect: oauth ? paths.appDisconnect(slug) : null,
+    // not /apps's one-action-per-row table, and `app_disconnect` is idempotent (§8). Its
+    // target is the app page's own dispatch, so the notice lands here (37(b)).
+    disconnect: oauth ? paths.appHeaderDisconnect(slug) : null,
   };
 }
 

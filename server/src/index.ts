@@ -40,7 +40,8 @@ import {
   handleCallback,
   OAUTH_CALLBACK_PATH,
 } from "./upstream";
-import { pageRoutes } from "./web";
+import { noticeUrl, pageRoutes } from "./web";
+import { paths } from "./pages/model";
 import { approvalsFromEnv } from "./wiring";
 
 /** @cloudflare/workers-types D1Database — external types never imported in skeletons. */
@@ -405,7 +406,11 @@ const MOUNTS: Record<ServedSegment, Mount> = {
   // which is why no page shell wraps it.
   oauth: (app, segment) => {
     app.get(CLIENT_METADATA_PATH, (c) => clientMetadata(new URL(c.env.PUBLIC_ORIGIN)));
-    app.get(OAUTH_CALLBACK_PATH, (c) => handleCallback(c.req.raw));
+    // A finished Connect lands on the app's own page with the notice (§13, 37(b)) — the
+    // page's spelling is web's, so the landing is composed here rather than in upstream.
+    app.get(OAUTH_CALLBACK_PATH, (c) =>
+      handleCallback(c.req.raw, (slug) => noticeUrl(paths.appPane(slug, "overview"), "connect", { value: null })),
+    );
     // §19.5's pages (/oauth/consent, /oauth/connections) ride the page router like every
     // other page-serving segment; pageRoutes' own 404 is the tail for anything else here.
     claim(app, segment, (c) => (pages() as PageApp).fetch(c.req.raw, c.env));

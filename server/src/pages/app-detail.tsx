@@ -161,6 +161,17 @@ const UpstreamCard: FC<{ header: AppDetailHeader; csrfToken: string; rows: boole
  * both verbatim with the family's own name substituted, which is why the family is a
  * parameter here rather than three copies of each sentence.
  */
+/** A tunneled app that has never connected (§13, 2026-09-03): no catalog to list, for any
+ *  family — the sentence is the same on all three panes, and it is not "declared none". */
+const Unconnected: FC = () => (
+  <div class="empty empty--inline">
+    <div class="empty-text">This app has never connected, so the hub has no catalog to list yet.</div>
+    <div class="empty-text empty-text--aside">
+      Start it with its token and the catalog appears after its first connect.
+    </div>
+  </div>
+);
+
 const Undeclared: FC<{ family: string; kind: AppDetailHeader["kind"] }> = ({ family, kind }) => (
   <div class="empty empty--inline">
     {kind === "tunnel" ? (
@@ -201,7 +212,8 @@ const Unread: FC<{ header: AppDetailHeader; csrfToken: string }> = ({ header, cs
   header.connect === null ? (
     <div class="empty empty--inline">
       <div class="empty-text">
-        This app's upstream could not be reached — calls return errors until it answers again.
+        Couldn't reach <code class="code-inline">{header.endpoint}</code> — the live listing failed, so nothing is
+        shown; calls return errors until it answers again.
       </div>
     </div>
   ) : (
@@ -224,7 +236,9 @@ const FamilyEmpty: FC<{
   header: AppDetailHeader;
   csrfToken: string;
 }> = ({ view, family, header, csrfToken }) =>
-  view.state === "undeclared" ? (
+  view.state === "unconnected" ? (
+    <Unconnected />
+  ) : view.state === "undeclared" ? (
     <Undeclared family={family} kind={header.kind} />
   ) : (
     <Unread header={header} csrfToken={csrfToken} />
@@ -515,17 +529,16 @@ const ResourceTable: FC<{ rows: AppResourceRow[] }> = ({ rows }) => (
 
 /**
  * The two rules a reader would otherwise learn from a `-32601`, verbatim (§13/§20.2). The
- * host half renders as the literal `<hub>` the way `design/AppDetailPanes.dc.html` draws
- * it — the user and slug are this app's, the origin is whatever the reader typed to get
- * here, and inventing an absolute URL from a header would be a second answer to §2's
- * `PUBLIC_ORIGIN`.
+ * endpoint is printed whole and copyable — the hub's own origin (§2's `PUBLIC_ORIGIN`,
+ * carried in props by the model; never a request header) with this app's user and slug —
+ * rather than the literal `<hub>` the board draws (§13, 2026-09-03).
  */
-const ResourceRules: FC<{ username: string; slug: string }> = ({ username, slug }) => (
+const ResourceRules: FC<{ origin: string; username: string; slug: string }> = ({ origin, username, slug }) => (
   <>
     <p class="note">
       Resources are served on the <strong>scoped</strong> endpoint only —{" "}
       <code class="code-inline">
-        https://&lt;hub&gt;
+        {origin}
         {paths.mcpScoped(username, slug)}
       </code>
       . The aggregated endpoint answers <code class="code-inline">-32601</code>, because a URI cannot carry a
@@ -560,7 +573,7 @@ const ResourcesPane: FC<AppDetailProps> = (props) => {
       ) : (
         <FamilyEmpty view={shown} family="resources" header={props.header} csrfToken={props.csrfToken} />
       )}
-      <ResourceRules username={props.username} slug={props.header.slug} />
+      <ResourceRules origin={props.hubOrigin} username={props.username} slug={props.header.slug} />
     </div>
   );
 };

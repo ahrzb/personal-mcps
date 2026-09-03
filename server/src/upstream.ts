@@ -664,7 +664,12 @@ async function registerClient(endpoint: string | undefined, origin: URL): Promis
  * `upstream.oauth_connected`. Returns the page/redirect for the owner's browser; error
  * responses never echo AS details.
  */
-export async function handleCallback(req: Request): Promise<Response> {
+export async function handleCallback(
+  req: Request,
+  /** Where a finished Connect lands, by slug — the composition root's choice (§13 puts it
+   *  on the app's own page with a notice); this module builds URLs for nobody's pages. */
+  landing: (slug: string) => string,
+): Promise<Response> {
   // deps: identity.requireOwnerSession (OwnerSession.sessionId) · D1 `upstream_oauth_state` · fetch (token endpoint) · crypto.subtle (AES-GCM envelope) · D1 `app` · audit.record
   // §13: no session, no callback — decided before `state` is even looked up. A
   // bearer-sourced (CLI) session never resolves here, which is identity's own guard.
@@ -731,7 +736,7 @@ export async function handleCallback(req: Request): Promise<Response> {
     app: row.slug,
     outcome: "ok",
   });
-  return Response.redirect(`${new URL(env.PUBLIC_ORIGIN).origin}/apps`, 302);
+  return Response.redirect(new URL(landing(row.slug), env.PUBLIC_ORIGIN).toString(), 302);
 }
 
 /** One connect-flow state row, joined to the slug its audit row needs. */

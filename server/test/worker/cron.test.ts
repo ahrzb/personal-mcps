@@ -689,7 +689,11 @@ async function beginState(world: OAuthWorld): Promise<Started> {
 
 /** The owner's browser arriving back at the callback — 302 redeemed, 400 refused. */
 function redeem(started: Started): Promise<Response> {
-  return handleCallback(new Request(started.callbackUrl, { headers: { Cookie: started.cookie } }));
+  // The landing is the composition root's choice; this file only reads the status.
+  return handleCallback(
+    new Request(started.callbackUrl, { headers: { Cookie: started.cookie } }),
+    (slug) => `/apps/${slug}/overview`,
+  );
 }
 
 // ── reading the ledger back ───────────────────────────────────────────────────────────

@@ -16,6 +16,9 @@ string that starts with `/` and whose second character is neither `/` nor `\` is
 as is; anything else — absolute, scheme-relative, the backslash spelling browsers fold
 into `//`, empty, null — is `null`. (`/\evil.example` is the case `landingOf`'s
 `startsWith("//")` misses: the WHATWG parser treats `\` as `/` for special schemes.)
+**Amended 2026-09-03 (verify round 2):** the judgement runs after ASCII tab, LF and CR
+are removed — the parser strips those before parsing, so `/<TAB>/evil.example` is
+`//evil.example` to a browser and passed the unstripped rule; row 6 pins the strip.
 `loginProps` applies it: `redirectTo: oauthRedirectTarget(query, rawSearch) ??
 hubRelative(query.get("next"))` — the OAuth arm keeps precedence and is not passed
 through (it is relative by construction and its query is the signed bytes). `web.ts`'s
@@ -60,9 +63,9 @@ and by construction never absolute; no guard on it — `19-inbound-oauth.md:258`
 that the page reads no destination out of that query still holds and the existing row
 `web-pages.test.ts:1330` keeps pinning it.
 
-**One §13 sentence** rides the `fix:` commit, beside the Sign-in landing row of the
-landing table (`13-web-surface.md:29`): a `?next=` deep link is honoured only when it is
-hub-relative; anything else lands on `/apps`. The spec is non-sacred; the rows say the
+**One §13 sentence** rides the `fix:` commit, on the `/login` bullet of
+`13-web-surface.md` (this plan first cited `:29`, which is a `/settings` pane table): a
+`?next=` deep link is honoured only when it is hub-relative; anything else lands on `/apps`. The spec is non-sacred; the rows say the
 same thing precisely.
 
 ## Rows
@@ -81,6 +84,7 @@ without `render`. Each refusal beside its twin:
 3. `§13 · a TOTP challenge reached as /login?step=totp&next=/settings/tokens links "Use a backup code instead" to /login?method=backup-code&next=%2Fsettings%2Ftokens, and the backup-code card it opens carries callbackURL=/settings/tokens — with no next= the switch links carry none and the card lands on /apps (the twin)`
 4. `§19.5 · a switch made from the signed-authorize arm keeps the /oauth2/authorize landing byte for byte, pinned at both ends: the TOTP card's backup-code link carries inside next= the very landing that card itself posts as callbackURL, and the card the link opens renders that same string as its own callbackURL, sig and client_id intact`
 5. `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — while the hub's non-HTML answers, /styles.css and the surface's 404, carry none (the twin)`
+6. `§4 · ?next=/%09/evil.example, /%0A/evil.example, /%0D/evil.example and /%09%5Cevil.example each land on /apps in BOTH consumers, because the rule strips what a browser's URL parser strips before judging — while a hub-relative ?next=/settings/%09tokens reaches both with only the tab gone (/settings/tokens), and a sign-in POST whose callbackURL is /%09/evil.example redirects to /apps (the posted twin)` — added after verify round 2 found the unstripped tab (`it.todo` in `df16bec`, body in `ad4cc96`).
 
 Smoke, one leg in `scripts/smoke.ts` beside the §13 prefix-gate leg: `GET /login?next=/apps%3C/script%3E%3Cimg…` body contains no `</script><`, and `?next=https://evil.example` renders `callbackURL` = `/apps`.
 
@@ -97,7 +101,8 @@ Nothing else. No fixture changes: `/login`'s fixtures (`fixtures.ts:86-135`) car
 ## Shape
 
 Two workflows, the orchestrator between them: (1) a rows agent lands the five `it.todo`
-rows and regenerates the inventory → `test:` commit; (2) an implementer flips them,
+rows and regenerates the inventory → `test:` commit (the sixth followed verify round 2
+the same way, one agent, `it.todo` commit then body commit); (2) an implementer flips them,
 runs `tsc` and the web-pages file, adds the smoke leg and the §13 sentence → a verifier
 runs the inline gate (full suite; inventory diff exactly the five `todo → passed`; file
 confinement; the `JSON.stringify` grep; `landingOf` reads `hubRelative`; one `loginUrl`)

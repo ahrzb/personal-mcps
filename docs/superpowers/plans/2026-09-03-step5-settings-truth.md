@@ -418,6 +418,12 @@ beside its twin.
 8. `§13 · /settings/passkeys names a row the way the authenticator reported it: a passkey stored with a known AAGUID and no name lists as "Windows Hello", one with the all-zero AAGUID that privacy-preserving platforms report lists as "Passkey", the marker reads 2 and each row links its own Remove dialog · with none, the pane renders "No passkeys yet. Add one to sign in without a password." and the marker reads 0 (the twin)`
 9. `§4 · a day-old cookie is refused at BOTH passkey register endpoints with better-auth's SESSION_NOT_FRESH code — the GET options and the POST verify, the POST carrying an Origin so the refusal is the freshness gate and not the origin check, and a body that satisfies the endpoint's schema so it is not the validator either · from a session signed in moments ago the same two calls get past that gate, the GET answering 200 with a challenge and the POST failing the ceremony itself (the twin)`
 
+Placement, decided by the orchestrator 2026-09-03 before the rows landed: rows 1-6 in the
+new describe (they are the enrolment journey); rows 7 and 8 inside the existing panes
+describe (row 8 at the retired row's position, row 7 after it — a Sessions row does not
+belong under a describe titled "the enrolment journey", so the arithmetic above is
+seven-in-one no longer); row 9 last in the describe that holds the passkey register rows.
+
 Row 8 is a **retire-and-replace**. Retired key (`test-inventory.json:1443`,
 `server/test/worker/web-pages.test.ts:2890`), verbatim:
 

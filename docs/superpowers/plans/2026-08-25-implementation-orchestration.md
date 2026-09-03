@@ -1309,3 +1309,35 @@ check and (manual, once) a real push notification to a real browser.
   restored to what the page draws ("pmcp CLI · device flow"), styles.css's "fourth Notice
   tone" comment. Carried to step 13: `.alert`'s base `background` / `color` pair is now
   always overridden by a modifier. Deploy: rides step 4's. Cost: 2 Opus agents, 36 min.
+- 2026-09-03 — **Roadmap step 4 landed (inline, own deploy) — G15 and G7 closed.** Four
+  commits: `8160a30` (`test:` five rows as `it.todo` + the step plan
+  `2026-09-02-step4-login-landing.md`), `28384ba` (`fix:`), `df16bec` / `ad4cc96` (a sixth
+  row — `it.todo` first, then its body). One rule, `hubRelative` in `pages/model.ts`: a
+  landing is honoured only when it starts `/` and its second character is neither `/` nor
+  `\`, judged AFTER ASCII tab / LF / CR are removed — what a browser's URL parser strips
+  before parsing; `loginProps` applies it to `?next=` and `web.ts`'s `landingOf` to the
+  posted `callbackURL`, the OAuth arm keeping precedence and not passing through it.
+  `jsLiteral` in `login.tsx` escapes `<`, U+2028 and U+2029 on every embed in
+  `passkeySignInScript` (the two constants too); the grep found every other inline script
+  embedding a constant or a page-chosen element id, nothing request-derived, so it did not
+  move to `format.ts`. `loginUrl` moved to `model.ts`; `switchMethod(method, redirectTo)`
+  carries the landing, so a TOTP → backup-code switch keeps `?next=` and the signed
+  `/oauth2/authorize?…` landing byte for byte. `render` sets `Content-Security-Policy:
+  frame-ancestors 'self'; base-uri 'self'; object-src 'none'` on every HTML response —
+  `'self'`, not `'none'`, because a same-origin embed stays possible and refusing it buys
+  nothing; the nonce'd `script-src` is DEFERRED to step 13 (8 inline script sites, 43
+  inline `style=` attributes — a decision, not a gap). One §13 sentence on the `/login`
+  bullet (the plan cited `13-web-surface.md:29`, a `/settings` pane table — placement
+  corrected, sentence unchanged). Verify rounds, two musts: (1) the smoke leg asserted no
+  `</script><`, which every `/login` carries (the script is the last child of
+  `.auth-card`) — it now asserts the payload's own bytes; (2) `hubRelative` let
+  `/<TAB>/evil.example` through — the strip added, and the case became row 6 by the
+  rows-first rule. The plan's row 5 had the 404 on the wrong side (every 404 is
+  `noSuchPage()`, `text/plain`, built without `render`) — corrected before the rows landed.
+  Gate: inventory diff at `28384ba` exactly five `todo → passed`, at `ad4cc96` exactly one;
+  45 / 1438 / 0; `tsc` 0; web-pages 152/152. Deploy `eaefdb97`, `pnpm smoke` **30/30**
+  (29 + the `/login ?next=` leg: the escaped payload's own bytes absent,
+  `?next=https://evil.example` → `callbackURL` `/apps`). Carried to step 13 (PSD notes):
+  the test file's three local `callbackURL` extractors, the describe-level signer seed
+  duplicated from an earlier describe, and `server/dev/preview.ts`'s own `render` lacks
+  the CSP header. Cost: 5 Opus agents.

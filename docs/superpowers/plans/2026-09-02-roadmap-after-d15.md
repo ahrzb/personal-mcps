@@ -159,6 +159,14 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Step 4 — `/login` landing: G15 and G7 (inline fix, own deploy)
 
+> **Landed 2026-09-03, own deploy.** Four commits (`8160a30`, `28384ba`, `df16bec`,
+> `ad4cc96`); six rows, 45 / 1438 / 0, `tsc` 0; deploy `eaefdb97`, smoke 30/30. Settled:
+> one rule, `hubRelative` in `model.ts`, for both consumers — it strips tab / LF / CR
+> before judging (verify round 2's find, row 6); `jsLiteral` on every script embed;
+> `loginUrl` in `model.ts` so the switch links carry the landing; CSP `frame-ancestors
+> 'self'; base-uri 'self'; object-src 'none'` on `render`, the nonce'd `script-src`
+> deferred to step 13. Details: the ledger entry and `2026-09-02-step4-login-landing.md`.
+
 **Achieves.** Closes the register's only security defect. `login.tsx:241` embeds the landing into an inline `<script>` through `JSON.stringify` (rendered via `dangerouslySetInnerHTML` at `:109`), which escapes neither `<` nor `/`; `model.ts:2321` takes `?next=` unvalidated and `:2332-2335` appends the raw query verbatim; `login.tsx:291 location.assign(LANDING)` runs after a verified passkey assertion and bypasses `web.ts:872-880 landingOf`'s relative-only guard — reflected XSS plus an open redirect on the ungated auth origin, with no `Content-Security-Policy` anywhere in `server/`. Fix: run the landing through the guard that already exists (`landingOf`) inside `loginProps` before either consumer sees it; escape on embedding (`JSON.stringify(v).replace(/</g, "\\u003c")`); a CSP header as the second layer. G7 rides in the same three files: `login.tsx:51-53 switchMethod` rebuilds `/login?method=` alone, dropping the OAuth signed-authorize landing and any `?next=`, so the second-factor verify posts `callbackURL=/apps` — fix as `web.ts:818` already does, `loginUrl({ method, next: redirectTo })`.
 
 **Depends on.** Step 2 (sequential `server/src` edits). First among the fixes because nothing depends on it and it is the one security item.

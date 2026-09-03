@@ -999,11 +999,84 @@ describe("§8/§13 · one paging contract, two presentations", () => {
 });
 
 describe(`§13 · /audit's filter row — the window it names and the window it empties`, () => {
-  // Rows first (§9 rule 1): nothing here exists yet — the filter row has no way to apply
-  // with scripting off, its window is a readonly box over a hidden epoch pair, and an empty
-  // window still draws 24 flat bars. The local formSubmission(html) helper the first row
-  // replays the form through — method, action, the form's own fields and the pager's limit —
-  // is not written here either; it lands with the bodies.
+  // Rows first (§9 rule 1), bodies written against the page as it was: the filter row had
+  // no way to apply with scripting off, its window was a readonly box over a hidden epoch
+  // pair, and an empty window drew 24 flat bars. The helpers below ARE the scripting-off
+  // browser, which is why this describe reads the form's markup the rest of the file does
+  // not: a submit control hidden at the breakpoint is the defect §9 rule 4(b) names.
+
+  /** #audit-filters exactly as a browser submits it: method and action off the start tag,
+   *  params from the form's own named controls in document order (a select contributes its
+   *  selected option, else its first) plus the pager's `form="audit-filters"` limit, and
+   *  whether a submit control sits in the form OUTSIDE every wide-only subtree (non-greedy;
+   *  none nests a div today). */
+  function formSubmission(html: string): {
+    method: string;
+    action: string;
+    params: URLSearchParams;
+    submitOutsideWideOnly: boolean;
+  } {
+    const form = /<form id="audit-filters"([^>]*)>([\s\S]*?)<\/form>/.exec(html);
+    expect(form, "the page rendered no #audit-filters form").not.toBeNull();
+    const [, attrs, body] = form ?? ["", "", ""];
+    const params = new URLSearchParams();
+    const selectValue = (options: string): string => {
+      const all = [...options.matchAll(/<option\b([^>]*)>/g)].map((o) => o[1]);
+      const picked = all.find((o) => /\bselected\b/.test(o)) ?? all[0] ?? "";
+      return decodeEntities(attributeOf(picked, "value") ?? "");
+    };
+    for (const control of body.matchAll(/<input\b([^>]*)>|<select\b([^>]*)>([\s\S]*?)<\/select>/g)) {
+      const attributes = control[1] ?? control[2];
+      const name = attributeOf(attributes, "name");
+      if (name === null || /type="(submit|button)"/.test(attributes)) continue;
+      params.append(
+        name,
+        control[1] === undefined ? selectValue(control[3]) : decodeEntities(attributeOf(attributes, "value") ?? ""),
+      );
+    }
+    for (const outside of html.matchAll(/<select\b([^>]*form="audit-filters"[^>]*)>([\s\S]*?)<\/select>/g)) {
+      params.append(attributeOf(outside[1], "name") ?? "", selectValue(outside[2]));
+    }
+    const submit = /<button type="submit"/;
+    const withoutWideOnly = body.replace(/<div class="[^"]*\bwide-only\b[^"]*"[^>]*>[\s\S]*?<\/div>/g, "");
+    return {
+      method: (attributeOf(attrs, "method") ?? "").toLowerCase(),
+      action: decodeEntities(attributeOf(attrs, "action") ?? ""),
+      params,
+      submitOutsideWideOnly: submit.test(body) && submit.test(withoutWideOnly),
+    };
+  }
+
+  /** The four range segments: each key's href and whether it is the current one. */
+  function segments(html: string): Record<string, { href: string; current: boolean }> {
+    const block = /<div class="segmented">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+    const out: Record<string, { href: string; current: boolean }> = {};
+    for (const a of block.matchAll(/<a href="([^"]*)"([^>]*)>(\w+)<\/a>/g)) {
+      out[a[3]] = { href: decodeEntities(a[1]), current: /aria-current="page"/.test(a[2]) };
+    }
+    return out;
+  }
+
+  /** The two date inputs' `value` attributes, by name — absent when the input is not drawn. */
+  function dateInputs(html: string): Partial<Record<"since" | "until", string>> {
+    const out: Partial<Record<"since" | "until", string>> = {};
+    for (const input of html.matchAll(/<input type="date" name="(since|until)"([^>]*)>/g)) {
+      out[input[1] as "since" | "until"] = attributeOf(input[2], "value") ?? "";
+    }
+    return out;
+  }
+
+  /** The UTC day every seeded row is stamped on — asserted, so a midnight straddle fails
+   *  here by name rather than as a wrong count further down. */
+  async function seededDay(): Promise<{ day: string; total: number }> {
+    const truth = await query(env.DB, world.ns.owner.userId, {});
+    const stamps = truth.rows.map((row) => row.ts);
+    const day = new Date(Math.min(...stamps)).toISOString().slice(0, 10);
+    expect(new Date(Math.max(...stamps)).toISOString().slice(0, 10), "the seed straddles midnight").toBe(day);
+    return { day, total: truth.total };
+  }
+
+  const nextDay = (day: string): string => new Date(Date.parse(day) + 86_400_000).toISOString().slice(0, 10);
 
   // plan row 1. §9 rule 4(b)'s discharge for #audit-filters: the form is replayed exactly as
   // a browser submits it, so the submit control has to exist outside every wide-only subtree
@@ -1012,9 +1085,39 @@ describe(`§13 · /audit's filter row — the window it names and the window it 
   // twin that must come back with the default window intact. The wide-only read is that
   // discharge and not the header's "layout": a submit control hidden at the breakpoint is
   // the defect rule 4(b) names, so the header's one exception is not being spent twice.
-  it.todo(
-    `§13 · with scripting off the filter row still applies: #audit-filters renders a submit control that sits in no wide-only subtree, and its own method, action and fields replayed as a browser submits them (§9 rule 4(b), no onchange) return exactly the rows query(env.DB, …) holds for the tool the owner typed over the window that submission names, with since and until each submitted once (the hidden pair is gone, so the value the owner set is the value the loader reads) · the same form replayed untouched returns the default 24h window unchanged — the same seeded rows, the same tool box, 24h still current, carried by the form's own hidden range field — which is also exactly what a select's onchange submits (the twin)`,
-  );
+  it(`§13 · with scripting off the filter row still applies: #audit-filters renders a submit control that sits in no wide-only subtree, and its own method, action and fields replayed as a browser submits them (§9 rule 4(b), no onchange) return exactly the rows query(env.DB, …) holds for the tool the owner typed over the window that submission names, with since and until each submitted once (the hidden pair is gone, so the value the owner set is the value the loader reads) · the same form replayed untouched returns the default 24h window unchanged — the same seeded rows, the same tool box, 24h still current, carried by the form's own hidden range field — which is also exactly what a select's onchange submits (the twin)`, async () => {
+    const ownerId = world.ns.owner.userId;
+    const form = formSubmission(await page(paths.audit));
+    expect(form.submitOutsideWideOnly, "no submit control outside every wide-only subtree").toBe(true);
+    expect(form.method).toBe("get");
+    expect(form.action).toBe(paths.audit);
+    // The pair the owner can set, each carried ONCE: a second control of the same name
+    // would be the one URLSearchParams.get returns, and the owner's value would never take.
+    expect(form.params.getAll("since")).toHaveLength(1);
+    expect(form.params.getAll("until")).toHaveLength(1);
+
+    // The owner types a tool and presses Apply (or Return): the form, its fields, nothing else.
+    const typed = new URLSearchParams(form.params);
+    const tool = `${TOOL_PREFIX}3`;
+    typed.set("tool", tool);
+    const applied = await page(`${form.action}?${typed.toString()}`);
+    const truth = await query(env.DB, ownerId, { tool });
+    expect(truth.total).toBeGreaterThan(0);
+    expect(matchedLine(applied)).toBe(truth.total);
+    expect(renderedTools(applied)).toEqual(truth.rows.map((row) => row.tool));
+    expect(formSubmission(applied).params.get("tool")).toBe(tool);
+
+    // The twin: the same form replayed untouched — which is what a select's onchange sends
+    // minus nothing — is the default window again, not a custom one and not an empty one.
+    const replayed = await page(`${form.action}?${form.params.toString()}`);
+    const everything = await query(env.DB, ownerId, {});
+    expect(matchedLine(replayed)).toBe(everything.total);
+    expect(renderedTools(replayed)).toEqual(renderedTools(await page(paths.audit)));
+    const again = formSubmission(replayed);
+    expect(again.params.get("tool")).toBe("");
+    expect(again.params.get("range")).toBe("24h");
+    expect(segments(replayed)["24h"]?.current).toBe(true);
+  });
 
   // plan row 2. The two carriers of the window, pinned apart: a typed pair is whole days
   // echoed back as the two value attributes with no segment current, and a preset arrives as
@@ -1022,17 +1125,47 @@ describe(`§13 · /audit's filter row — the window it names and the window it 
   // seeded row is stamped ≈now, so the preset's previous window is the empty one. Carry row
   // 3's min(ts)/max(ts) guard into this body too — "<the seed's day>" is only one day while
   // every seeded row shares it.
-  it.todo(
-    `§13 · the range inputs are named since/until and take a day, not epoch ms: a submission carrying since=<the seed's day>&until=<the same day> renders that day's rows, echoes both days back as the two value attributes, and marks no segment aria-current="page" — a custom window has no current preset · the 24h segment's own epoch-ms link over the same seed marks 24h current, renders both date inputs empty beside a hidden range=24h, and reads "No comparison available", every row being stamped now and a preset's previous window lying one span further back (the preset twin)`,
-  );
+  it(`§13 · the range inputs are named since/until and take a day, not epoch ms: a submission carrying since=<the seed's day>&until=<the same day> renders that day's rows, echoes both days back as the two value attributes, and marks no segment aria-current="page" — a custom window has no current preset · the 24h segment's own epoch-ms link over the same seed marks 24h current, renders both date inputs empty beside a hidden range=24h, and reads "No comparison available", every row being stamped now and a preset's previous window lying one span further back (the preset twin)`, async () => {
+    const { day, total } = await seededDay();
+    const custom = await page(auditPath({ since: day, until: day }));
+    expect(matchedLine(custom)).toBe(total);
+    expect(dateInputs(custom)).toEqual({ since: day, until: day });
+    expect(Object.values(segments(custom)).some((s) => s.current), "a custom window marked a preset current").toBe(false);
+
+    // The preset twin, reached the way the page offers it: the segment's own link.
+    const link = segments(custom)["24h"]?.href;
+    expect(link, "the custom page drew no 24h segment").toBeDefined();
+    const preset = await page(link ?? "");
+    expect(segments(preset)["24h"]?.current).toBe(true);
+    expect(dateInputs(preset)).toEqual({ since: "", until: "" });
+    expect(/<input type="hidden" name="range" value="24h"/.test(preset)).toBe(true);
+    expect(matchedLine(preset)).toBe(total);
+    expect(textOf(preset)).toContain("No comparison available");
+  });
 
   // plan row 3. G50: the empty histogram is one early return, so it must co-occur with the
   // table's own empty line and never the reverse. The window is the UTC day AFTER the
   // ledger's, derived from the rows themselves so a midnight straddle fails by name; the
   // seeded day is the twin that draws bars, an axis and no comparison at all.
-  it.todo(
-    `§13 · a window with nothing in it draws the empty histogram, not 24 flat bars: over the UTC day AFTER the ledger's own — the case derives that day from the rows and asserts min(ts) and max(ts) share it, so a midnight straddle fails by name — /audit renders "No events in this window." with no day axis AND the table's "No events in this range", and, that day being the previous window, an events tile reading "-100% vs previous period" · the seeded day itself draws bars, a day axis and "No comparison available", its own previous window being empty (the twin)`,
-  );
+  it(`§13 · a window with nothing in it draws the empty histogram, not 24 flat bars: over the UTC day AFTER the ledger's own — the case derives that day from the rows and asserts min(ts) and max(ts) share it, so a midnight straddle fails by name — /audit renders "No events in this window." with no day axis AND the table's "No events in this range", and, that day being the previous window, an events tile reading "-100% vs previous period" · the seeded day itself draws bars, a day axis and "No comparison available", its own previous window being empty (the twin)`, async () => {
+    const { day } = await seededDay();
+    const after = nextDay(day);
+    const empty = await page(auditPath({ since: after, until: after }));
+    expect(matchedLine(empty)).toBe(0);
+    expect(empty).toContain("No events in this window.");
+    expect(empty).not.toContain('class="chart-axis"');
+    // A bar is `chart-bar` or `chart-bar chart-bar--peak`; their container is `chart-bars`.
+    expect(empty).not.toMatch(/class="chart-bar[" ]/);
+    expect(empty).toContain("No events in this range");
+    // The day before an empty day is the seeded one, so the comparison is a real -100%.
+    expect(textOf(empty)).toContain("-100% vs previous period");
+
+    // The twin: the seeded day draws, and its own previous day has nothing to compare to.
+    const drawn = await page(auditPath({ since: day, until: day }));
+    expect(drawn).toMatch(/class="chart-bar[" ]/);
+    expect(drawn).toContain('class="chart-axis"');
+    expect(textOf(drawn)).toContain("No comparison available");
+  });
 });
 
 describe("§8 · parity direction B — forms and schemas are one source", () => {

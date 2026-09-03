@@ -40,9 +40,11 @@ function fmtDateTimeShort(ms: number): string {
   return `${fmtMonthDay(ms)} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
 }
 
-function fmtDateRange(sinceMs: number, untilMs: number): string {
-  const year = new Date(untilMs).getUTCFullYear();
-  return `${fmtMonthDay(sinceMs)} – ${fmtMonthDay(untilMs)}, ${year}`;
+/** The histogram caption's unit — minutes under an hour, hours above, one decimal at most:
+ *  150 000 ms → "2.5-minute", 6 h → "6-hour". Nearly every custom span is fractional. */
+function fmtBucket(ms: number): string {
+  const trim = (n: number): string => String(Number(n.toFixed(1)));
+  return ms < 3_600_000 ? `${trim(ms / 60_000)}-minute` : `${trim(ms / 3_600_000)}-hour`;
 }
 
 function fmtDuration(ms: number): string {
@@ -160,15 +162,6 @@ const IconSearch: FC = () => (
   </svg>
 );
 
-const IconCalendar: FC = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <rect x="3" y="4" width="18" height="17" rx="2"></rect>
-    <path d="M16 2v4"></path>
-    <path d="M8 2v4"></path>
-    <path d="M3 10h18"></path>
-  </svg>
-);
-
 const IconDownload: FC = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -198,13 +191,6 @@ const IconChevronLeft: FC = () => (
 const IconChevronRight: FC = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="m9 18 6-6-6-6"></path>
-  </svg>
-);
-
-const IconSort: FC = () => (
-  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M12 5v14"></path>
-    <path d="m19 12-7 7-7-7"></path>
   </svg>
 );
 
@@ -366,7 +352,11 @@ export const AuditPage: FC<AuditProps> = (props) => {
   const hasNext = paging.offset + paging.limit < paging.total;
   const loadMoreLimit = Math.min(paging.total, paging.offset + paging.limit * 2);
   const peak = histogram.peak;
-  const bucketHours = histogram.bucketMs / (60 * 60 * 1000);
+  // The two carriers of the window: a typed pair of days when the window is custom, a
+  // hidden preset key otherwise — so a select's onchange, the pager and an untouched
+  // Apply hand the preset back anchored to now, exactly as its segment's link would.
+  const custom = filters.range === "custom";
+  const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
   return (
     <Layout title="Audit log · personal-mcps" active="audit" username={username} pendingApprovals={pendingApprovals}>
@@ -388,10 +378,9 @@ export const AuditPage: FC<AuditProps> = (props) => {
         </div>
 
         <form id="audit-filters" class="section" method="get" action={paths.audit}>
-          <input type="hidden" name="since" value={filters.since} />
-          <input type="hidden" name="until" value={filters.until} />
           {filters.session && <input type="hidden" name="session" value={filters.session} />}
           <input type="hidden" name="offset" value="0" />
+          {!custom && <input type="hidden" name="range" value={filters.range} />}
 
           {/* .filter-group ties these two rows together so the narrow breakpoint can
               flatten (`.filters{display:contents}`) and reorder them as one sequence —
@@ -400,9 +389,12 @@ export const AuditPage: FC<AuditProps> = (props) => {
           <div class="filter-group">
             <div class="filters">
               <RangeSegment filters={filters} now={now} />
-              <div class="input-group">
-                <IconCalendar />
-                <input type="text" readonly value={fmtDateRange(filters.since, filters.until)} />
+              {/* The window the owner can type: whole UTC days, the only two controls
+                  named since/until (a hidden pair of the same names would be the values
+                  the loader read). Empty on a preset — the segment is its indicator. */}
+              <div class="filter-pair">
+                <input type="date" name="since" aria-label="From" value={custom ? isoDay(filters.since) : ""} />
+                <input type="date" name="until" aria-label="To" value={custom ? isoDay(filters.until) : ""} />
               </div>
               <div class="spacer wide-only"></div>
               <div class="input-group filter-tool">
@@ -445,6 +437,13 @@ export const AuditPage: FC<AuditProps> = (props) => {
                   Clear filters
                 </a>
               </div>
+              {/* The one way to apply the typed fields with scripting off (§9 rule 4(b)),
+                  and what makes Return submit a form with three text fields. A direct
+                  child of this row, never inside the wide-only block: that block is
+                  display:none at the narrow breakpoint, where the control is needed most. */}
+              <button type="submit" class="btn btn--outline btn--sm">
+                Apply
+              </button>
             </div>
           </div>
 
@@ -498,7 +497,7 @@ export const AuditPage: FC<AuditProps> = (props) => {
           <div class="chart">
             <div class="chart-head">
               <span class="chart-title wide-only">Events over time</span>
-              <span class="muted wide-only">{bucketHours}-hour buckets</span>
+              <span class="muted wide-only">{fmtBucket(histogram.bucketMs)} buckets</span>
               <span class="chart-title narrow-only">Events per day</span>
             </div>
             <div class="chart-bars">
@@ -549,11 +548,7 @@ export const AuditPage: FC<AuditProps> = (props) => {
               </colgroup>
               <thead>
                 <tr>
-                  <th class="wide-only">
-                    <span style="display:flex;align-items:center;gap:4px">
-                      Time <IconSort />
-                    </span>
-                  </th>
+                  <th class="wide-only">Time</th>
                   <th class="wide-only">Principal</th>
                   <th class="wide-only">Event</th>
                   <th class="wide-only">App</th>

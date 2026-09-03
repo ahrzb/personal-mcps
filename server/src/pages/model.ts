@@ -2139,12 +2139,17 @@ export async function auditProps(ctx: PageContext): Promise<AuditProps> {
  */
 export function auditFilters(ctx: PageContext): AuditFilters {
   const now = Date.parse(ctx.now);
-  const since = positive(ctx.query.get("since"));
-  const until = positive(ctx.query.get("until"));
+  const since = windowEdge(ctx.query.get("since"), "start");
+  const until = windowEdge(ctx.query.get("until"), "end");
+  // A pair that is absent, empty, half-typed or inverted is not a window: the form's own
+  // hidden `range` (a preset key on a preset page, absent on a custom one) says which
+  // preset to anchor to now instead, so a select's onchange, the pager and an untouched
+  // Apply hand back the window the segment showed rather than a custom one.
+  const preset = presetOf(ctx.query.get("range"));
   const window =
-    since !== null && until !== null
+    since !== null && until !== null && until >= since
       ? { since, until, range: rangeOf(until - since) }
-      : { since: now - RANGE_SPAN_MS[AUDIT_DEFAULT_RANGE], until: now, range: AUDIT_DEFAULT_RANGE };
+      : { since: now - RANGE_SPAN_MS[preset], until: now, range: preset };
   return {
     ...window,
     ...text(ctx.query, "principal"),
@@ -2176,6 +2181,27 @@ function rangeOf(span: number): AuditRange {
     (key) => RANGE_SPAN_MS[key] === span,
   );
   return preset ?? "custom";
+}
+
+/**
+ * One edge of the window, in either spelling the page emits: epoch ms as every rendered
+ * link spells it (`positive`, unchanged, so §8's boundary parity is), or `YYYY-MM-DD` as
+ * the form's two date inputs do — UTC midnight by the input's own spec. An `until` day
+ * snaps to its LAST millisecond: `AuditQuery`'s bounds are inclusive, so a same-day pick
+ * would otherwise name one instant and read as broken. Anything else is not an edge.
+ */
+function windowEdge(raw: string | null, edge: "start" | "end"): number | null {
+  const ms = positive(raw);
+  if (ms !== null) return ms;
+  if (raw === null || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const day = Date.parse(raw);
+  return Number.isNaN(day) ? null : edge === "end" ? day + 86_399_999 : day;
+}
+
+/** The form's hidden `range` as a preset key, or the default for anything else — a
+ *  form-only spelling that never appears on a rendered link. */
+function presetOf(raw: string | null): Exclude<AuditRange, "custom"> {
+  return raw !== null && raw in RANGE_SPAN_MS ? (raw as Exclude<AuditRange, "custom">) : AUDIT_DEFAULT_RANGE;
 }
 
 /** One audit row as the page sees it: the namespace id dropped (every row here
@@ -2238,6 +2264,11 @@ function percentile(sorted: number[], fraction: number): number | null {
 function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram {
   const span = Math.max(filters.until - filters.since, 60_000);
   const bucketMs = Math.max(60_000, Math.ceil(span / AUDIT_BUCKETS));
+  // Nothing matched: no bars rather than 24 flat ones (G50). The bucket size stays
+  // derived because the caption describes the window, not the data. Page and scan share
+  // the window, so this always co-occurs with the table's own empty state — never the
+  // reverse, since an `offset` past `total` empties the table with the bars intact.
+  if (scan.length === 0) return { bucketMs, buckets: [], peak: 0 };
   const counts = new Array<number>(AUDIT_BUCKETS).fill(0);
   for (const row of scan) {
     const at = Math.floor((row.ts - filters.since) / bucketMs);

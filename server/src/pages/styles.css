@@ -2004,9 +2004,16 @@ dialog .actions {
     gap: var(--space-4);
   }
 
-  .filter-pair select {
+  .filter-pair select,
+  .filter-pair input {
     width: auto;
     flex: 1;
+  }
+
+  /* Apply sorts after the tool box it applies (`.filter-tool{order:1}`); flattened
+     rows put it at order 0, i.e. before the field the owner just typed in. */
+  .filters button[type="submit"] {
+    order: 2;
   }
 
   .confirm-actions {

@@ -56,6 +56,7 @@ import type {
 // fixtures call it rather than hand-rolling a QR, so the preview can never draw a secret,
 // a grouped display form and a QR that disagree with one another.
 import { DIMMED, enrollmentOf } from "../src/pages/model";
+import { HUB_PRINCIPAL } from "../src/principal";
 
 /* ------------------------------------------------------------------ *
  * Shared scaffolding
@@ -1684,18 +1685,20 @@ const approvalDetail = {
 const AUDIT_SINCE = ms("2026-08-18T00:00:00.000Z");
 const AUDIT_UNTIL = ms(NOW);
 
-/** 27 six-hour buckets across the visible week; the peak is the highlighted bar. */
-const auditHistogram: AuditHistogram = {
-  bucketMs: 6 * HOUR,
-  buckets: [
-    20, 55, 43, 27, 17, 57, 69, 35, 24, 64, 51, 40, 14, 45, 62, 32, 26, 119, 83, 47, 19, 69,
-    56, 31, 25, 79, 75,
-  ].map((count, i) => ({
-    start: new Date(AUDIT_SINCE + i * 6 * HOUR).toISOString(),
-    count,
-  })),
-  peak: 119,
-};
+/** The loader's own shape over a window — 24 buckets of `ceil(span / 24)`, the peak the
+ *  highlighted bar — so a fixture's histogram cannot disagree with the window its filters
+ *  declare (orphan note 85). Counts past 24 are dropped; missing ones read 0. */
+function histogramFor(since: number, until: number, counts: number[]): AuditHistogram {
+  const bucketMs = Math.ceil((until - since) / 24);
+  const buckets = Array.from({ length: 24 }, (_, i) => ({
+    start: new Date(since + i * bucketMs).toISOString(),
+    count: counts[i] ?? 0,
+  }));
+  return { bucketMs, buckets, peak: Math.max(0, ...buckets.map((b) => b.count)) };
+}
+
+/** The visible week's bars, the 18th bucket the peak. */
+const WEEK_COUNTS = [20, 55, 43, 27, 17, 57, 69, 35, 24, 64, 51, 40, 14, 45, 62, 32, 26, 119, 83, 47, 19, 69, 56, 31];
 
 const auditRows: AuditEventRow[] = [
   {
@@ -1843,7 +1846,7 @@ const auditRows: AuditEventRow[] = [
 ];
 
 const auditOptions = {
-  principals: ["agent:claude", "agent:cron", "app:news", "app:home", "user:ahrzb", "bootstrap"],
+  principals: ["agent:claude", "agent:cron", "app:news", "app:home", "user:ahrzb", HUB_PRINCIPAL],
   apps: ["news", "notion", "linear", "github", "slack", "home", "pmcp"],
   events: [
     "tools/call",
@@ -1867,13 +1870,14 @@ const auditOptions = {
 };
 
 const audit = {
-  /** The artboard: last 7 days, first page, one row's detail open. */
+  /** The artboard: a TRUE last 7 days (the span `rangeOf` calls "7d", so the segment is
+   *  current and the date inputs empty), first page, one row's detail open. */
   default: {
     ...shell("audit"),
     notice: null,
     filters: {
       range: "7d",
-      since: AUDIT_SINCE,
+      since: AUDIT_UNTIL - 7 * 24 * HOUR,
       until: AUDIT_UNTIL,
       limit: 50,
       offset: 0,
@@ -1889,17 +1893,19 @@ const audit = {
       medianDurationMs: 240,
       p95DurationMs: 1900,
     },
-    histogram: auditHistogram,
+    histogram: histogramFor(AUDIT_UNTIL - 7 * 24 * HOUR, AUDIT_UNTIL, WEEK_COUNTS),
     expandedId: 41284,
     retentionDays: 7,
   },
 
-  /** Deep in the result set: both pager arrows live, nothing expanded. */
+  /** Deep in the result set: both pager arrows live, nothing expanded — and the CUSTOM
+   *  window (6 d 14 h 47 m, no preset's span): four unselected segments, both date inputs
+   *  filled, the events tile reading "vs previous period". */
   middlePage: {
     ...shell("audit"),
     notice: null,
     filters: {
-      range: "7d",
+      range: "custom",
       since: AUDIT_SINCE,
       until: AUDIT_UNTIL,
       limit: 50,
@@ -1916,7 +1922,7 @@ const audit = {
       medianDurationMs: 240,
       p95DurationMs: 1900,
     },
-    histogram: auditHistogram,
+    histogram: histogramFor(AUDIT_SINCE, AUDIT_UNTIL, WEEK_COUNTS),
     expandedId: null,
     retentionDays: 7,
   },
@@ -1944,14 +1950,12 @@ const audit = {
       medianDurationMs: 340,
       p95DurationMs: 1204,
     },
-    histogram: {
-      bucketMs: 6 * HOUR,
-      buckets: [0, 0, 1, 6].map((count, i) => ({
-        start: new Date(ms("2026-08-23T12:00:00.000Z") + i * 6 * HOUR).toISOString(),
-        count,
-      })),
-      peak: 6,
-    },
+    // The seven session events, all in the last few hours of the 24h window.
+    histogram: histogramFor(
+      ms("2026-08-23T14:47:00.000Z"),
+      AUDIT_UNTIL,
+      Array.from({ length: 24 }, (_, i) => (i === 22 ? 2 : [13, 16, 18, 21, 23].includes(i) ? 1 : 0)),
+    ),
     expandedId: null,
     retentionDays: 7,
   },
@@ -1981,11 +1985,9 @@ const audit = {
       medianDurationMs: null,
       p95DurationMs: null,
     },
-    histogram: {
-      bucketMs: 6 * HOUR,
-      buckets: [],
-      peak: 0,
-    },
+    // What the loader computes for a 1h window with nothing in it: no bars, the bucket
+    // size still derived (the caption describes the window, not the data).
+    histogram: { bucketMs: 150_000, buckets: [], peak: 0 },
     expandedId: null,
     retentionDays: 7,
   },
@@ -2058,7 +2060,7 @@ const audit = {
       medianDurationMs: 340,
       p95DurationMs: 12470,
     },
-    histogram: auditHistogram,
+    histogram: histogramFor(ms("2026-08-23T14:47:00.000Z"), AUDIT_UNTIL, WEEK_COUNTS),
     expandedId: 41290,
     retentionDays: 7,
   },

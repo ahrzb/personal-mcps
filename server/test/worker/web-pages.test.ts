@@ -2144,6 +2144,34 @@ describe(`§13 · /agents and /agents/<slug> — the list, the page, and what po
   });
 });
 
+describe(`§13 · /agents/<slug>/grants/<app> — the (agent × app) grant editor`, () => {
+  // Rows first (§9 rule 1), from §13's sections added 2026-09-03 (roadmap step 9); the
+  // (agent × app) grant editor is its own later ship and has its own rows.
+  it.todo(
+    `§13 · the editor renders one row per role the app declares plus the built-in all last — each row the role's name, its patterns (all: built-in, "every tool, present and future — the app can widen what its roles match") and one three-way choice none / allow / approval preset from the agent's current grant on that app — under the title "Grants — <agent> on <app name>" and the subtitle "What this agent may call on this app." · an app that declares nothing reads "<app> hasn't declared any roles yet." above all alone (the twin)`,
+  );
+
+  it.todo(
+    `§13/§8 · Save composes the chosen roles — allow bare, approval as role:approval — into grant_set for the pair, replacing the pair's whole set: a role switched to none is gone afterwards and agent_list reads exactly the chosen set, and the save lands on /agents/<slug> with the notice · Cancel is a plain link back to /agents/<slug> that posts nothing (the twin)`,
+  );
+
+  it.todo(
+    `§13/§9 · a role the agent holds that a TUNNELED app has not declared is listed, marked undeclared, with "<app> hasn't declared <role>. Tunneled apps declare roles when they connect — this grant stays dormant until then." as a warning, and Save keeps it · the same on a PROXIED app is an error — "<app> is proxied — its roles are fixed in config, so an undeclared role is an error." — and grant_set refuses the save, which redraws the editor with the refusal rather than landing anywhere (the twin)`,
+  );
+
+  it.todo(
+    `§13 · the editor's form is the one page form whose fields are not the op's keys verbatim — one role.<name> choice per row, composed by the route — and it is the only such form: every other form on the agent pages names an op's own fields (the twin, the parity-B sweep extended to /agents)`,
+  );
+
+  it.todo(
+    `§13 · the agent page's Grants rows carry Edit → /agents/<slug>/grants/<app>, and "Grant access to another app…" offers exactly the namespace's active apps the agent holds nothing on, submitting to that pair's editor · an agent granted on every active app offers no app (the twin)`,
+  );
+
+  it.todo(
+    `§13 · the app page's Agents pane carries Edit grants → /agents/<agent>/grants/<slug> per row now that the editor exists, and its footer still reads "Grants are edited per agent × app pair — saving replaces that pair's whole set." (the twin — re-pointed 2026-09-03, step 9)`,
+  );
+});
+
 describe("§19.5 · the consent screen", () => {
   it("§19.5 · GET /oauth/consent without a cookie session bounces to /login carrying the signed oauth_query", async () => {
     // A shape a real signed query has (client_id + sig + exp) is enough to prove the

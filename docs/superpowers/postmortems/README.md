@@ -41,3 +41,4 @@ files stay machine-comparable:
 - [2026-08-26 — local device flow advertises prod URL](2026-08-26-local-device-flow-prod-url.md) — stale dev server ran with prod PUBLIC_ORIGIN; CLI faithfully printed what the hub returned
 - [2026-08-26 — CLI exits with libuv assertion on Windows](2026-08-26-cli-exit-libuv-assertion.md) — crash after successful login, on process teardown; Node bug, process.exitCode workaround
 - [2026-08-26 — public sign-up open on production](2026-08-26-public-signup-open.md) — anyone could self-provision an account via /api/auth/sign-up/email; found by the D10 sweep, fixed + deployed same hour
+- [2026-09-03 — Sessions pane names every browser session "Unknown client"](2026-09-03-sessions-unknown-client.md) — the login form's translation forwarded only the cookie, so better-auth stored an empty User-Agent; no test signed in through the form and read the pane

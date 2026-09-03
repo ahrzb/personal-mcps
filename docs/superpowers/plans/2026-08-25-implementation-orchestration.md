@@ -1341,3 +1341,21 @@ check and (manual, once) a real push notification to a real browser.
   the test file's three local `callbackURL` extractors, the describe-level signer seed
   duplicated from an earlier describe, and `server/dev/preview.ts`'s own `render` lacks
   the CSP header. Cost: 5 Opus agents.
+- 2026-09-03 — **G59 fixed inline, own deploy — /settings/sessions named every browser
+  session "Unknown client" (owner-found; postmortem `2026-09-03-sessions-unknown-client.md`).**
+  Two commits: `de74845` (one `it.todo` row) and `308fd34` (`fix:`). Cause:
+  `identity.callAuthResponse` rebuilds `/login`'s form post as better-auth's JSON call
+  with only the cookie and the hub's `Origin`, so better-auth stored `""` as every
+  browser session's `userAgent` (live D1: `""` on four rows, `"node"` on the CLI one);
+  `sessionRow`'s `|| "Unknown client"` was the empty string's fallback. Fix: the call
+  forwards `User-Agent` too (display data, nothing gates on it), and `sessionRow` reads
+  `clientOf(userAgent)` — "Chrome on Windows" / "Safari on iPhone" picked from two fixed
+  mark lists in `pages/model.ts`, the raw 80-char slice when neither list places the
+  string, "Unknown client" only when it is empty. The row signs in three times through
+  `paths.auth.signIn` under three User-Agents and reads one pane — the seam no earlier row
+  crossed (`seedOwnerSession` posts to better-auth's raw endpoint). §13's Sessions bullet
+  gained the column's wording; step 5's plan keeps `clientOf` as the web arm of its
+  `source` ternary. Gate: inventory exactly one `todo → passed`, 45 / 1438 / 15; `tsc`
+  0. Deploy `eed75627`, `pnpm smoke` **30/30** (no new leg — the smoke's own sign-in is
+  undici's, and the vitest row is the end-to-end walk). Rows minted before the fix keep
+  their empty User-Agent until signed in again; no backfill. Cost: 0 agents.

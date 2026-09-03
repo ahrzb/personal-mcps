@@ -189,6 +189,12 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 **Depends on.** Step 4 (`login.tsx` is the OTP script's source). Its `identity.ts` / `model.ts` / `settings.tsx` edits collide with no other step.
 
+> **G59 landed ahead of this step, 2026-09-03 (owner-found).** The web half of the Client
+> column is now `clientOf(userAgent)` in `pages/model.ts` and `callAuthResponse` forwards
+> the browser's User-Agent; the step's `sessionRow` ternary keeps that as its web arm (the
+> plan's amendment says so). One row, one deploy; the ledger row and postmortem are its
+> record.
+
 **Shape.** Small dispatch: rows (owner-reviewed, own commit) → implementation → standard gate. The rows must repair the audit's second note: `plantPasskey` (`web-pages.test.ts:6229-6250`) INSERTs a name straight into D1, so the row titled "under the name the authenticator reported" is green on data the ceremony never produces — it is retired-and-replaced by a row whose fixture plants `aaguid` with a null name.
 
 **Definition of Done.**
@@ -424,5 +430,6 @@ From the orphan-states report (`2026-09-02-orphan-states.md`) — one row per di
 | G56 | hygiene | one-line | shell | `pendingApprovals?` optional with five required callers (O35); two chromeless pages lose badge + Sign out by design (O34) | required → 2; O34 record → 12 |
 | G57 | hygiene | one-line | service worker | five push fallbacks with one producer that always sends every field (O40) | keep — owner-accepted 2026-09-02 |
 | G58 | hygiene | one-line | /settings/sessions dialog | `confirm.client` fallback title — the confirm is built from the same array it searches (O9 O39) | delete → 2 |
+| G59 | visible | small | /settings/sessions | every browser row "Unknown client" — `callAuthResponse` rebuilt the sign-in without the User-Agent, better-auth stored `""` (owner-found 2026-09-03; postmortem `2026-09-03-sessions-unknown-client.md`) | fixed inline 2026-09-03, ahead of 5 |
 
 Refuted by the audit (not gaps): `/apps/new`'s proxied branch with scripting off is reachable; passkey enrolment has a recent-auth gate (residue: no stale-cookie row — step 5); the recent-auth refusal is served (`identity.ts:658`); `AuditDetailStates`' LOADING panel is unadopted exploration (residue in G33); the Access pane's grants footer is pinned verbatim (residue: a stale comment at `app-detail.tsx:709-713`); the upstream callback's `text/plain` refusal arms are the surface's convention (only the success landing survives, G14); D15's `.actions` CSS edit was inside its groups (only `app-new.tsx` and `seed.ts` survive, G37). Refuted by the orphan report's skeptic (reachable, not orphans): `/apps`'s titled success notice (`passwordDone`), `/audit`'s expanded detail and session-filtered view, `/approvals/<id>`'s `null` / array argument arms, `/login`'s `?step=totp` as a sign-in destination, `/device`'s expired-code copy. The report's 55 fixture-quality notes (values fabricated for reachable states, grouped by page) are not copied here — each step reads its pages' notes at its preview walk, per the gate line above.

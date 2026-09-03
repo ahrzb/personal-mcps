@@ -238,6 +238,10 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Step 7 — PWA icons: G6 (inline fix)
 
+> **Landed 2026-09-03, own deploy (not riding step 8), no agents.** `f5ab0fe` (rows) +
+> `8d9ccfb` (`feat:`), bodies first; deploy `3c790b4c`, smoke 31/31 with the new icon leg;
+> 45 / 1453 / 0 — no todo rows remain. Ledger row has the detail.
+
 **Achieves.** §13's "installs to phone and desktop home screens" is unmet: `web.ts:650-666` serves the manifest with `icons: []` (`:662`), `layout.tsx:228-242` emits no icon link, `paths` (`model.ts:230-236`) has no icon route, and Chromium offers no install prompt — while the mark already exists as inline SVG (`layout.tsx:47-54`). Parked as a D9→D10 escalation (orchestration plan `:825-827`) and never discharged. Fix: serve the SVG at one path beside the stylesheet, list it in `icons` (plus a 180 px PNG or a `maskable` entry for iOS), add `<link rel="icon">` / `apple-touch-icon`.
 
 **Depends on.** Step 2; touches files no other step edits.

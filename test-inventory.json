@@ -1565,6 +1565,7 @@
     "§8/§13 · one paging contract, two presentations 13. §13 · the export applies the page's filters verbatim — a filtered export is a strict subset of the unfiltered one over the same seed": "passed",
     "§8/§13 · one paging contract, two presentations 14. §15 · an exported row carries its recorded bodies post-redaction, with stubs rendered as typed placeholders · never the bytes a blob stub stands for": "passed",
     "§8/§13 · one paging contract, two presentations 15. §13 · a row's client session id links back to this same view as ?session=… and that link returns exactly the rows sharing the session": "passed",
-    "§8/§13 · one paging contract, two presentations 16. §13 · a row's chevron is a link to this same view with ?expand=<id> carrying the page's filters — exactly the rows with something to show draw one, so a bodiless auth row draws none — and the open row's own chevron links back without expand (G1)": "passed"
+    "§8/§13 · one paging contract, two presentations 16. §13 · a row's chevron is a link to this same view with ?expand=<id> carrying the page's filters — exactly the rows with something to show draw one, so a bodiless auth row draws none — and the open row's own chevron links back without expand (G1)": "passed",
+    "§8/§13 · one paging contract, two presentations 17. §13 · every expandable row's detail is already in the page, hidden unless it is the addressed row (whose summary row is row-open), so the toggle script opens it in place with no reload and keeps ?expand=<id> in the address — a row with nothing to show renders no detail row, and the script rides the page (the twin: scripting off leaves the addressed row the only open one)": "todo"
   }
 }

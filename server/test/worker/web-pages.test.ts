@@ -1027,6 +1027,8 @@ describe("§8/§13 · one paging contract, two presentations", () => {
     }
     expect(open.filter((link) => link.label === "Show detail").length).toBe(closed.length - 2);
   });
+
+  it.todo("17. §13 · every expandable row's detail is already in the page, hidden unless it is the addressed row (whose summary row is row-open), so the toggle script opens it in place with no reload and keeps ?expand=<id> in the address — a row with nothing to show renders no detail row, and the script rides the page (the twin: scripting off leaves the addressed row the only open one)");
 });
 
 describe(`§13 · /audit's filter row — the window it names and the window it empties`, () => {

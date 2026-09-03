@@ -309,7 +309,10 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 > **G1's chevron half landed early, 2026-09-03** (`230fde7` row, `57ac66d` fix, deploy
 > `27dc01b7`, smoke 32/32; 45 / 1478 / 0): the chevron is a link to `?expand=<id>` at
 > both widths, back without it when open, filters carried; §13's audit bullet pins it.
-> Left here: the per-row anchor so the reload lands on the opened row, G24, G49, O27.
+> Then `0ef9ee4` / `dc3f119`, deploy `f4ce9502`: rows open **in place** — every detail
+> pre-rendered hidden, an inline script toggles it and mirrors `?expand=<id>` into the
+> address (the user's ask; no htmx). Left here: G24, G49, O27, and the per-row anchor
+> only for the scripting-off reload.
 
 **Achieves.** The owner's own finding: an expandable row draws a `Chevron` at both widths (`audit.tsx:333-349`) inside a `<tr>` with no anchor, form or script, and `AuditLinkQuery` / `paths.auditWith` (`model.ts:243-246`) cannot spell `expand`, so the shipped expanded state is reachable only by hand-editing the URL (G1). Once open, a row from an app with body logging off shows a bare "Client: …" with no explanation — `AuditEventRow` carries no `log_bodies` signal (G24) — and a row with neither client metadata nor bodies draws an empty panel (O27). The body-stub placeholders (`‹blob image/png · 4.2 MB›`, `‹oversize …›`, `audit.tsx:117-129`) are pinned by §13 and stored by `audit.ts:248-256`, but the loader never emits a stub onto `AuditEventRow` and the page renders them only through the same `?expand=` chain — built here: the loader carries stubs through, the `bodyStubs` fixture and test 14's page half become honest (G49). Both sit inside decision 30's deferral of the expanded-row states, so the §13 paragraph (`13-web-surface.md:162-166`) and the concept board (`design/concepts/AuditDetailStates`, whose lazy-fetch LOADING panel the spec never adopted — audit note 10; the synchronous render is the pinned pattern) are reviewed first. Fix: `expand` joins the link query; the chevron becomes `<a href={auditWith({...filters, expand: isOpen ? undefined : row.id})}>` so the open row's chevron closes it; the row gets an `id` anchor; one bodies-off sentence and one nothing-recorded sentence.
 

@@ -1514,3 +1514,23 @@ check and (manual, once) a real push notification to a real browser.
   as planned: the per-row anchor so the reload lands on the opened row, G24's bodies-off
   sentence, G49's stubs. Gate: 45 / 1478 / 0, exactly one `todo → passed`; `tsc` 0;
   states preview walked (`audit/bodyStubs`: 32 links for 16 rows, one open). Cost: 0 agents.
+- 2026-09-03 — **Audit rows open in place — the user's ask ("when I expand an audit, I
+  don't want a full page refresh"), htmx offered and declined for the smaller thing.**
+  `0ef9ee4` (one row, `it.todo` first), `dc3f119` (`feat:`), deploy `f4ce9502`, smoke
+  **32/32**. Every expandable row's detail is rendered into the page as a hidden
+  `tr.row-detail#detail-<id>` (the addressed row's is shown, its summary row `row-open`);
+  ~15 lines of inline script flip `hidden` on click, close the row that was open (the
+  server model is one open row), rewrite the flipped rows' href / label / aria-expanded
+  to what the server would have rendered, and `history.replaceState` the chevron's own
+  href so the address mirrors the state — no request, no reload, and scripting off is the
+  same state one reload later. One chevron icon for both states, `.row-open` rotates it
+  (`IconChevronUp` and `Chevron` deleted). Ceiling named in a `ponytail:` comment: 50
+  rows × two 16 KB bodies of hidden HTML worst case; per-row fetch if pages get heavy.
+  §13's audit bullet says so. The `sessionLink` test helper now reads the OPEN detail row,
+  since every row's detail is on the page. Why not htmx: the spec is server-rendered / no
+  SPA and already carries eight enhancement scripts, so htmx would fit, but it wants a
+  vendored script, a CSP thought and a browser-only failure mode for what a toggle does
+  — it stays an option for the shell (nav, rails, pager) if the user wants that too.
+  Verified in the states preview by clicking through (open → second row closes the first
+  → close drops `expand`), since vitest cannot run the script; the row pins the markup.
+  Gate: 45 / 1479 / 0, exactly one `todo → passed`; `tsc` 0. Cost: 0 agents.

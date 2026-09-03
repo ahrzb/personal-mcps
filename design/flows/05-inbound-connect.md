@@ -2,10 +2,22 @@
 
 An external MCP client (claude.ai, an agent) connects to the hub with OAuth and
 walks away holding exactly one agent's power. Rules: §19 (all of it —
-"§19 pins the flow"), §13 (`/oauth/consent`, `/oauth/connections`).
+"§19 pins the flow"), §13 (`/oauth/consent`, `/settings/clients`).
 
-Screens: **none yet** — the consent screen and connections list have no
-artboards (see README). What follows is the §19.5 contract they must render.
+## Wireframe map
+
+| Journey moment | Artboard |
+|---|---|
+| Consent screen, known client, one agent picked | `OauthConsent` |
+| Consent screen, self-registered client | `OauthConsentStates · SELF-REGISTERED CLIENT` (concept, unadopted) |
+| Consent screen, zero agents | `OauthConsentStates · NO AGENTS` (concept, unadopted) |
+| Deny redirects, no page | `OauthConsentStates · DENIED` (concept, unadopted) |
+| Connections list with Revoke | `SettingsPanes · Connected clients` |
+
+`OauthConsent` draws the live §19.5 page (adopted 2026-09-02, decision 30); the three
+`OauthConsentStates` variants above are still exploration in `design/concepts/` (see its
+README) — the owner has not reviewed them, so §19.5's SELF-REGISTERED CLIENT, NO AGENTS
+and DENIED copy is pinned in the spec, not yet contract in a shipped board.
 
 ## The journey
 
@@ -37,10 +49,12 @@ artboards (see README). What follows is the §19.5 contract they must render.
    write `oauth.consented`/`oauth.rebound`, and redirect to the provider's
    `redirect_uri`. A refusal writes nothing. Deny returns `access_denied`
    (§19.5 step 4).
-6. `/oauth/connections` lists the resulting connections with **Revoke** (§19).
+6. `/settings/clients` lists the resulting connections with **Revoke** (§19) — the third
+   pane of Settings → Access; `/oauth/connections` answers a `301` to it.
 
-## Renderings needed (next canvas pass)
+## Still to draw
 
-`OauthConsent` (+ mobile, + the zero-agents empty state) and
-`OauthConnections` (+ empty state). The consent screen is the whole security
-boundary of §19 — its copy deserves the same care `Device` got.
+Mobile variants of `OauthConsent`; the owner review that would move
+`OauthConsentStates`' three panels (self-registered marker, zero-agents empty state,
+the Deny redirect) out of `design/concepts/` and into contract. The consent screen is
+the whole security boundary of §19 — its copy deserves the same care `Device` got.

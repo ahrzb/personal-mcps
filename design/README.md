@@ -10,6 +10,10 @@ needs a sync-back before it is authoritative again.
 Nothing here is normative. The rules live in `docs/specs` (§7, §10, §13, §19);
 these files render them, and the flow docs below only walk through them.
 
+Every `.dc.html` loads `<script src="./support.js">`. That file is not, and never has
+been, part of this folder: the published canvas supplies it at render time, so a local
+open of a board 404s on it harmlessly — don't add the file, and don't remove the tag.
+
 ## Flows
 
 Reading order for anyone building or testing the UI — each doc maps a journey
@@ -33,16 +37,38 @@ directly in §13 and rendered by the artboards below.
 | Approvals list + detail | `Approvals`, `ApprovalDetail` | `MobileApprovals`, `MobileApprovalDetail` | `ApprovalStates` |
 | Apps + add-app | `Apps`, `AppNew` | `MobileApps`, `MobileAppNew` | `AppNewStates`, `AppNewProxiedStates` |
 | Audit | `Audit` | `MobileAudit` | `AuditDetailStates` |
-| Settings — panes behind a left rail | `Settings` (password + the rail), `SettingsPanes` (every other pane at pane width), `SettingsTokens` and `OauthConnections` (tokens and connected clients full width) | `MobileSettings` | `SettingsStates` |
+| Settings — panes behind a left rail | `Settings` (password, full shell + rail), `SettingsPanes` (the other five panes, at pane width — the shell and rail live on `Settings`) | `MobileSettings` | `SettingsStates` |
 | App detail (`/apps/<slug>`) — panes behind the same rail | `AppDetail` (tools), `AppDetailPanes` (the other seven) | — (follow-up) | `AppDetailStates` |
 | Cross-cutting | — | — | `Dialogs` (destructive confirms), `EmptyStates` |
 
-Five of those boards (`AppDetail*`, `SettingsTokens`, `OauthConnections`,
-`AuditDetailStates`, `AppNewProxiedStates`) were drawn as exploration and still sit on
-canvas page 2; §13 adopted the first three on 2026-09-02 (decision 30) and the last two on
-2026-09-03, so they are contract wherever they sit, until the canvas is re-laid out. `/apps/<slug>` has no mobile
+Settings' six panes, one contract board and width each:
+
+| Pane | Board | Width |
+|---|---|---|
+| Password | `Settings` | full shell (1240 px) |
+| Two-factor | `SettingsPanes` | pane (1012 px) |
+| Passkeys | `SettingsPanes` | pane (1012 px) |
+| Sessions | `SettingsPanes` | pane (1012 px) |
+| Tokens | `SettingsPanes` | pane (1012 px) |
+| Connected clients | `SettingsPanes` | pane (1012 px) |
+
+`SettingsTokens` and `OauthConnections` — the two full-shell boards page 2 held for the
+Tokens and Connected-clients panes — were **deleted 2026-09-03**, resolving decision
+30's duplication note: `SettingsPanes`'s own caption already claims every pane except
+Password, and its Tokens and Connected-clients sections were byte-for-byte identical to
+theirs (same fixture rows, same footer copy) — a second full-width rendering for only two
+of the five non-Password panes was an asymmetry with no content behind it.
+
+Three of those boards (`AppDetail*`, `AuditDetailStates`, `AppNewProxiedStates`) were
+drawn as exploration and sit on canvas page 2, re-laid out 2026-09-03; §13 adopted
+`AppDetail*` on 2026-09-02 (decision 30) and the other two on 2026-09-03, so all three
+are contract wherever they sit. `/apps/<slug>` has no mobile
 artboard: the pill row is a shell rule and covers it (§13, *Panes behind a
 rail*), but drawing `MobileAppDetail` stays a recorded follow-up.
+
+`/apps/new` and `/approvals/<id>` are chromeless by design — no nav, so no pending badge
+and no Sign out (`app-new.tsx`, `approval-detail.tsx`); `AppNew`/`MobileAppNew` and
+`ApprovalDetail` draw them that way on purpose.
 
 Each flow doc carries a **wireframe map** table pinning journey moments to
 artboard variants by their on-canvas labels (e.g. `AuthStates · DEVICE —
@@ -58,14 +84,17 @@ on 2026-09-03 (roadmap step 9: §13 gained `/agents`, `/agents/<slug>` and the g
 editor with the boards' strings pinned; the top nav's fifth slot rides the narrow nav's
 existing scroller). `AuditDetailStates` returned the same day (roadmap step 10: §13 pinned
 the three no-bodies sentences, the KB/MB stub sizes and the `event-<id>` anchor) — minus
-its LOADING panel, since the spec kept the synchronous render and never adopted the lazy
-fetch. `AppNewProxiedStates` returned with roadmap step 11 (§13 pinned the connecting
+its LOADING panel: the audit detail is rendered in the page (hidden) and toggled in place
+by a click, never fetched (§13, 2026-09-03). `AppNewProxiedStates` returned with roadmap step 11 (§13 pinned the connecting
 page, the endpoint URL rule and the field-scoped refusals) — its CONNECTING panel redrawn
 as a link and a "Not now" rather than a progress bar, since decision 30 settled that a
 create may not depend on a tab a page cannot open. Mobile variants for the five are still
-to draw. Canvas page 2 now holds the boards §13 adopted on 2026-09-02 (`AppDetail*`,
-`SettingsTokens`, `OauthConnections`), `OauthConsent`, which draws the live §19.5 page,
-`AuditDetailStates` and `AppNewProxiedStates`.
+to draw. Canvas page 2 (renamed "App detail, adopted states & consent", re-laid out
+2026-09-03) now holds the boards §13 adopted on 2026-09-02 (`AppDetail*`), `OauthConsent`,
+which draws the live §19.5 page, `AuditDetailStates` and `AppNewProxiedStates`.
+`SettingsTokens` and `OauthConnections` — the exploration-era full-shell duplicates of
+`SettingsPanes`'s Tokens and Connected-clients sections — were deleted the same day rather
+than re-laid out; see the pane table above.
 
 ## Settings, split into panes (2026-09-02)
 
@@ -84,8 +113,10 @@ recovery for a *forgotten* password stays `pnpm users reset-password` —
 there is no email on file, so there can be no reset link. `SettingsStates`
 carries the three password states (wrong current, rejected new, updated).
 
-Also open: the mobile top nav still lists four items and has no `Agents`
-entry — 390 px cannot hold five, so it needs a scroller or an overflow menu.
+*Closed 2026-09-03:* the mobile top nav holds five (Apps · Agents · Audit ·
+Approvals · Settings) — the narrow nav is already a horizontal scroller with
+its scrollbar hidden, which is the mechanism (§13; `layout.tsx`'s `NAV`), so
+no overflow menu was needed.
 
 ### Connected clients found a home (2026-09-02)
 

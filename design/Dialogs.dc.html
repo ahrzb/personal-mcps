@@ -14,7 +14,7 @@
     a:hover { color: #52525b; }
   </style>
 </helmet>
-<div style="width: 480px; min-height: 790px; box-sizing: border-box; background: #fafafa; padding: 32px 40px; display: flex; flex-direction: column; gap: 24px;">
+<div style="width: 480px; min-height: 2980px; box-sizing: border-box; background: #fafafa; padding: 32px 40px; display: flex; flex-direction: column; gap: 24px;">
 
   <div style="display: flex; flex-direction: column; gap: 8px;">
     <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a; line-height: 1.2;">Disable two-factor</div>
@@ -39,7 +39,7 @@
     <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
       <div style="display: flex; flex-direction: column; gap: 8px;">
         <div style="font-size: 16px; font-weight: 600;">Remove passkey &ldquo;MacBook Touch ID&rdquo;?</div>
-        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">This passkey can&rsquo;t be restored &mdash; you&rsquo;d have to add it again from that device. The same dialog pattern is used for revoking sessions.</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">This passkey can&rsquo;t be restored &mdash; you&rsquo;d have to add it again from that device.</div>
       </div>
       <div style="display: flex; justify-content: flex-end; gap: 8px;">
         <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
@@ -62,9 +62,121 @@
     </div>
   </div>
 
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a; line-height: 1.2;">Revoke session</div>
+    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 16px; font-weight: 600;">Revoke &ldquo;pmcp CLI &middot; device flow&rdquo;?</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">This session is signed out immediately and can&rsquo;t be restored &mdash; whoever&rsquo;s using it will need to sign in again.</div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #dc2626; color: #ffffff; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #dc2626;">Revoke</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a; line-height: 1.2;">Revoke all other sessions</div>
+    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 16px; font-weight: 600;">Revoke all other sessions?</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Every other browser and CLI session is signed out immediately. This one stays.</div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #dc2626; color: #ffffff; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #dc2626;">Revoke all others</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a; line-height: 1.2;">Revoke connection</div>
+    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 16px; font-weight: 600;">Revoke &ldquo;Claude&rdquo;?</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Its tokens stop working immediately. The agent it acted as, and that agent&rsquo;s grants, are untouched.</div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #dc2626; color: #ffffff; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #dc2626;">Revoke</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a; line-height: 1.2;">Revoke app token</div>
+    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 16px; font-weight: 600;">Revoke &ldquo;pmcp_app_9f3k&hellip;Xd2&rdquo;?</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Revoking closes the app&rsquo;s live connection.</div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #dc2626; color: #ffffff; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #dc2626;">Revoke</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a; line-height: 1.2;">Archive app</div>
+    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 16px; font-weight: 600;">Archive &ldquo;mcp-tools&rdquo;?</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">It refuses connections and leaves the list &mdash; tokens, grants and history are kept.</div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #dc2626; color: #ffffff; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #dc2626;">Archive</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a; line-height: 1.2;">Delete app &middot; detail page</div>
+    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 16px; font-weight: 600;">Delete &ldquo;mcp-tools&rdquo;?</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Revokes its tokens, closes the live connection and removes every grant. This cannot be undone.</div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #dc2626; color: #ffffff; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #dc2626;">Delete</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a; line-height: 1.2;">Delete agent</div>
+    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 16px; font-weight: 600;">Delete agent &ldquo;claude&rdquo;?</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Deleting an agent deletes its tokens and removes its grants everywhere.</div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #dc2626; color: #ffffff; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #dc2626;">Delete</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a; line-height: 1.2;">Revoke agent token</div>
+    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 16px; font-weight: 600;">Revoke &ldquo;pmcp_agt_4kJk&hellip;9fQ&rdquo;?</div>
+        <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Calls made with this key fail from now on.</div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: transparent; color: #09090b; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Cancel</div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #dc2626; color: #ffffff; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #dc2626;">Revoke</div>
+      </div>
+    </div>
+  </div>
+
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":480,"height":790}}'>
+<script data-dc-script data-props='{"$preview":{"width":480,"height":2980}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

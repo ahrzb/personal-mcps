@@ -181,7 +181,7 @@
       "x": 1080,
       "y": 4720,
       "w": 480,
-      "h": 790,
+      "h": 2980,
       "title": "Confirm dialogs"
     },
     {
@@ -219,7 +219,7 @@
     },
     {
       "file": "AppDetailPanes.dc.html",
-      "x": 1320,
+      "x": 1340,
       "y": 0,
       "w": 1012,
       "h": 2230,
@@ -228,7 +228,7 @@
     },
     {
       "file": "AppDetailStates.dc.html",
-      "x": 2412,
+      "x": 2452,
       "y": 0,
       "w": 480,
       "h": 1240,
@@ -236,27 +236,9 @@
       "page": "page-2"
     },
     {
-      "file": "SettingsTokens.dc.html",
-      "x": 0,
-      "y": 3620,
-      "w": 1240,
-      "h": 680,
-      "title": "Settings · tokens pane (variant B)",
-      "page": "page-2"
-    },
-    {
-      "file": "OauthConnections.dc.html",
-      "x": 1320,
-      "y": 3620,
-      "w": 1240,
-      "h": 600,
-      "title": "Settings · connected clients",
-      "page": "page-2"
-    },
-    {
       "file": "OauthConsent.dc.html",
-      "x": 2680,
-      "y": 3620,
+      "x": 0,
+      "y": 2390,
       "w": 480,
       "h": 600,
       "title": "OAuth consent",
@@ -264,8 +246,8 @@
     },
     {
       "file": "AuditDetailStates.dc.html",
-      "x": 3240,
-      "y": 3620,
+      "x": 580,
+      "y": 2390,
       "w": 560,
       "h": 880,
       "title": "Audit detail · States",
@@ -273,8 +255,8 @@
     },
     {
       "file": "AppNewProxiedStates.dc.html",
-      "x": 3880,
-      "y": 3620,
+      "x": 1240,
+      "y": 2390,
       "w": 480,
       "h": 2243,
       "title": "Add app · Proxied states",
@@ -283,7 +265,7 @@
     {
       "file": "GrantEditorStates.dc.html",
       "x": 0,
-      "y": 7150,
+      "y": 7850,
       "w": 520,
       "h": 1800,
       "title": "Grant editor · States"
@@ -291,7 +273,7 @@
     {
       "file": "Agents.dc.html",
       "x": 640,
-      "y": 7150,
+      "y": 7850,
       "w": 1240,
       "h": 720,
       "title": "Agents"
@@ -299,21 +281,13 @@
     {
       "file": "AgentDetail.dc.html",
       "x": 2000,
-      "y": 7150,
+      "y": 7850,
       "w": 1240,
       "h": 1020,
       "title": "Agent detail"
     }
   ],
   "annotations": [
-    {
-      "id": "admin-exploration-note",
-      "x": 0,
-      "y": -180,
-      "w": 520,
-      "page": "page-2",
-      "text": "Admin surface exploration — 2026-09-01. Unreviewed drafts: agents + grants (full-replace editor), tokens in two placements (detail-page sections vs a Tokens pane under /settings), audit expanded row, oauth consent/connections, proxied add states, re-auth gate. Spec (§13) is amended only after this settles."
-    },
     {
       "id": "settings-split-note",
       "x": 940,
@@ -330,7 +304,7 @@
     },
     {
       "id": "page-2",
-      "name": "Adopted 2026-09-02 (re-layout pending)"
+      "name": "App detail, adopted states & consent"
     }
   ],
   "launch": {

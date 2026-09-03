@@ -11,10 +11,10 @@ owner walks in their browser. Rules: §7 (Upstream OAuth), §13 (`/apps`,
 | Add form, kind/auth pickers | `AppNew` / `MobileAppNew` |
 | Row with connection state, Reconnect / Disconnect | `Apps` |
 
-The provider's consent screen is theirs, not ours. **Gap**: `AppNewStates`
-renders only the tunneled branch — the proxied states (endpoint/auth-type
-errors, the needs-reconnect row emphasized, mid-connect) are unrendered; see
-README.
+The provider's consent screen is theirs, not ours. `AppNewStates` renders only the
+tunneled branch; the proxied states live on `AppNewProxiedStates` (adopted roadmap step
+11): `AppNewProxiedStates · CONNECTING` draws the mid-connect link out to the provider,
+and `AppNewProxiedStates · ENDPOINT ERROR` draws the endpoint field's refusal.
 
 ## The journey
 

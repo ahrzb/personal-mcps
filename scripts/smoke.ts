@@ -480,6 +480,24 @@ async function main(): Promise<number> {
       return `/icon-512.png 200 image/png, PNG signature, IHDR width 512, ${bytes.length} bytes`;
     });
 
+    await step("§13 · the passkey options endpoint answers a challenge within seconds", async () => {
+      // 2026-09-03: a stuck production instance hung exactly this endpoint — and every other
+      // path where better-auth signs or verifies a cookie — for minutes until the client gave
+      // up, while the rest of the surface answered. Nothing in the suite can see a wedged
+      // isolate; only a bounded live call can. The bound is generous: a healthy answer is
+      // ~100 ms, a stuck one never comes.
+      const started = Date.now();
+      const options = await fetch(`${ORIGIN}/api/auth/passkey/generate-authenticate-options`, {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      const took = Date.now() - started;
+      expect(options.status === 200, `passkey options → ${options.status} after ${took} ms`);
+      const body = (await options.json()) as { challenge?: unknown; rpId?: unknown };
+      expect(typeof body.challenge === "string" && body.challenge.length > 0, "passkey options carried no challenge");
+      return `200 in ${took} ms, challenge present, rpId ${String(body.rpId ?? "(absent)")}`;
+    });
+
     await step("§4/§15 · /login's ?next= is escaped where it is embedded and refused where it is absolute", async () => {
       // The suite pins both consumers against miniflare; only the deployment says whether
       // the bytes that reach a real browser are the escaped ones. Hostile spelling first —

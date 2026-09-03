@@ -2193,7 +2193,7 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   // without `render`. On the twin's side the 404 earns its keep: it proves the header
   // rides the page renderer rather than a blanket middleware.
   it(
-    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — while the hub's non-HTML answers, /styles.css and the surface's 404, carry none (the twin)`,
+    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — while the hub's non-HTML answers, /styles.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
     async () => {
       const CSP = "frame-ancestors 'self'; base-uri 'self'; object-src 'none'";
       const carriers = [
@@ -2205,19 +2205,25 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
         expect(carrier.status).toBe(200);
         expect(carrier.headers.get("Content-Type")).toContain("text/html");
         expect(carrier.headers.get("Content-Security-Policy")).toBe(CSP);
+        // Every page is a function of the session (or of /login's challenge cookie): no
+        // browser or intermediary may keep a copy to re-show (2026-09-03).
+        expect(carrier.headers.get("Cache-Control")).toBe("no-store");
       }
 
-      // The twin, and the reason it is worth having: these two prove the header rides the
-      // PAGE renderer rather than a blanket middleware over every response.
+      // The twin, and the reason it is worth having: these two prove the headers ride the
+      // PAGE renderer rather than a blanket middleware over every response — the shell's
+      // static assets stay cacheable.
       const css = await call(new Request(`${ORIGIN}${paths.stylesheet}`));
       expect(css.status).toBe(200);
       expect(css.headers.get("Content-Type")).toContain("text/css");
       expect(css.headers.get("Content-Security-Policy")).toBeNull();
+      expect(css.headers.get("Cache-Control")).not.toBe("no-store");
 
       const missing = await get(`${paths.appDetail("catalog")}/tools`);
       expect(missing.status).toBe(404);
       expect(missing.headers.get("Content-Type")).toContain("text/plain");
       expect(missing.headers.get("Content-Security-Policy")).toBeNull();
+      expect(missing.headers.get("Cache-Control")).toBeNull();
     },
   );
 

@@ -1642,6 +1642,10 @@ async function render(node: unknown, status = 200): Promise<Response> {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Content-Security-Policy": "frame-ancestors 'self'; base-uri 'self'; object-src 'none'",
+      // Every page here is a function of the session (or, for /login, of the challenge
+      // cookie): a browser that keeps a copy shows a stale or someone else's page, and a
+      // phone that re-shows one instead of asking again looks hung (2026-09-03, live).
+      "Cache-Control": "no-store",
     },
   });
 }

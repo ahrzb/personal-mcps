@@ -167,7 +167,11 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   server-rendered table, newest first, with the same filters as `audit_query`
   (agent, app, event, tool, time range) and offset/limit paging backed by
   `audit_query`'s `total` (desktop shows numbered pages, mobile a "Load more" that
-  accumulates offsets — one contract, two presentations). An **Export JSONL** action
+  accumulates offsets — one contract, two presentations). The four tiles and the chart
+  are computed over the newest 1,000 matching rows while the Events count is exact; past
+  that ceiling the per-row tiles and the chart say "over the newest 1,000", and the three
+  filter selects likewise list only what the newest 1,000 rows of the namespace mention
+  *(2026-09-03, step 13: G22)*. An **Export JSONL** action
   streams every row matching the current filters, one JSON object per line: the
   handler re-runs the same query in `limit`-sized chunks and writes each chunk to a
   streaming response as it is fetched, never holding the full result set in memory —

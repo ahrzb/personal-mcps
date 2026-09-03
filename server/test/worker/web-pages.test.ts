@@ -996,6 +996,8 @@ describe("§8/§13 · one paging contract, two presentations", () => {
       new Set(truth.rows.map((event) => event.tool).filter((tool): tool is string => tool !== undefined)),
     );
   });
+
+  it.todo("16. §13 · a row's chevron is a link to this same view with ?expand=<id> carrying the page's filters — exactly the rows with something to show draw one, so a bodiless auth row draws none — and the open row's own chevron links back without expand (G1)");
 });
 
 describe(`§13 · /audit's filter row — the window it names and the window it empties`, () => {

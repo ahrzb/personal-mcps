@@ -332,6 +332,14 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Step 11 — Proxied add-app states: G43, G44, G45, G46 (spec-first dispatch)
 
+> **Landed 2026-09-03.** `d852d1b` (`spec:`), `7493155` (six rows), `9b5fa68` (`feat:`,
+> one Opus subagent), deploy `8d64b4e0`, smoke 32/32; 45 / 1490 / 0. Settled: the URL rule
+> is `https://` only with `http://` for loopback, checked at the ops; violations are
+> collected in the registry and the ops and ride the error object (not the wire's `data`,
+> which §7 keeps for -32003 — the gate caught the brief's first shape); the connecting
+> page is a 200 with "Continue to <name>" and "Not now", no auto-open. G43–G46 closed;
+> the board adopted. Ledger row has the detail.
+
 **Achieves.** Decision 30's fourth deferral, all four built per the owner. `web.ts:1246-1251 createErrors` keys a refusal to a field by whether the message contains the literal `"name"` / `"slug"` / `"endpoint"`, so the only endpoint refusal (`registry.ts:897 RegistryRefusal("upstreamUrl", …)`) lands in `errors.form` and the name/endpoint field errors (`app-new.tsx:94-95`, `:127-129`) never render (G43); there is no URL-format check at all — `registry.createApp` (`:889-935`) tests only `!draft.upstreamUrl`, so `not-a-url` is accepted and dialed later (G44 — a validation gap at the owner's own trust boundary; §13:181 already names probing the entered URL as future work); `createErrors` returns on the first match, so the `appNew.errors` fixture's simultaneous errors are impossible — built as collected violations (G45); the "Connecting to <provider>… Finish signing in, in the tab that just opened" interstitial has no type — `AppNewStep` (`model.ts:1013-1015`) has two members and a proxy+oauth create 303s straight to the provider (`web.ts:514-516`, `:1169`) — built as a third step (G46). Spec-first: §13's add-app sentence (`13-web-surface.md:175-182`) gains the states, `design/concepts/AppNewProxiedStates` is adopted onto the main canvas, §8's `app_create` refusal shape gains the field.
 
 **Depends on.** Step 8 (`app-new.tsx`'s G17 edit).
@@ -402,9 +410,9 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 From the audit's synthesis (2026-09-02). **Closed 2026-09-03** (steps 4–8, each with its
 own deploy): G3 G4 G5 G6 G7 G8 G9 G11 G12 G13 G14 G15 G16 G17 G18 G26 G27 G28 G29 G30
 G31 G36 G39 G50 G51 G52 G59; step 9 closed G2 (both ships) and the chevron fix closed G1
-ahead of step 10 (the owner's own finding, one row); step 10 closed G24, G49 and O27.
-Still open: G10 G19–G23 G25 G32–G35 G37 G38 G40–G48 G53–G58 (steps 11–14 and the
-owner-accepted keeps).
+ahead of step 10 (the owner's own finding, one row); step 10 closed G24, G49 and O27;
+step 11 closed G43, G44, G45 and G46. Still open: G10 G19–G23 G25 G32–G35 G37 G38
+G40–G42 G47 G48 G53–G58 (steps 12–13 and the owner-accepted keeps).
 
 | id | sev | size | area | gap, one line | recorded in |
 |---|---|---|---|---|---|

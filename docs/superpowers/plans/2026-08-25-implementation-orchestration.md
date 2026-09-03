@@ -1563,3 +1563,41 @@ check and (manual, once) a real push notification to a real browser.
   passed`. Lesson: do not run the preview walk during the gate. `tsc` 0. Preview walked:
   `bodiesOff`, `refused`, `bodyStubs`, and a click-through of the anchor hash. Cost: 1
   agent (Opus 5, ~226k tokens).
+- 2026-09-03 — **Roadmap step 11 landed — the proxied add-app states: G43, G44, G45, G46.**
+  `d852d1b` (`spec:` — §13's add-app flow gains the connecting page, the field-scoped
+  refusal rule and the endpoint URL rule; §8's `app_create` gains the URL rule and the
+  every-violation refusal; decision 30's scope paragraph records the two calls),
+  `7493155` (six rows, `it.todo` first: five in web-pages, one in admin-ops), `9b5fa68`
+  (`feat:`), deploy `8d64b4e0`, smoke **32/32** (one `pnpm ship` stopped on a transient
+  D1 API error before deploying and was re-run). Built by one Opus 5 subagent from a
+  written brief (`step11-brief.md`), the orchestrator writing spec and rows and
+  reviewing. What landed: `RegistryRefusal` carries a `violations` list and
+  `createApp`/`updateApp` collect instead of throwing at the first check (the proxied
+  endpoint refusal now names `"endpoint"`, the op's field, not the registry's
+  `upstreamUrl`); the endpoint rule lives in admin (`https://` only, `http://` for
+  `localhost` / `127.0.0.1` / `[::1]`) because the registry is a storage layer whose
+  seeds store `ftp://` on purpose; `app_create` merges its own slug/endpoint violations
+  with `registry.violationsOf` and refuses before writing; `attempt()` hands the list to
+  the page, `createErrors` places each sentence under its control (no more substring
+  scan), `shownSentence` drops the `"<field>" ` prefix, capitalises and ends with one
+  period; `AppNewErrors` loses `name` (§8: optional; the route sends it only when
+  non-blank; the input loses `required`); the proxy+OAuth create answers the connecting
+  page at 200 — "Connecting to <name>…", the ten-minute sentence, "Continue to <name>",
+  "Not now" — and a failed discovery lands on the app's Overview pane with the connect
+  notice; fixtures `errors` / `slugReserved` / `slugInvalid` carry the real derived
+  sentences (`Is not a valid slug.` comes from `coerce`, which runs before the registry's
+  charset check) and `connecting` is new; `AppNewProxiedStates` adopted onto page 2
+  without its progress bar. **The gate caught a spec conflict:** the brief put the list in
+  the error's `data`, and admin-pipeline's §7 row ("only -32003 carries data") failed —
+  correctly: §7 pins that every refusal but approval-required is indistinguishable by
+  shape. Fix: `HubError.violations` rides the error object in-process like `auditDetail`
+  and never the wire; §8 reworded; the admin-ops row retitled to say so (enumerated:
+  one). Builder's recorded choices: the discovery-fails twin uses an `https://` scenario
+  with no AS metadata (404 on both well-knowns) since the harness's `unreachable`
+  (`ftp://`) is now refused by the rule; the whole-form arm is unreachable from the page
+  (every form field maps to a control) and is pinned through the op's `roles` refusal;
+  `parseInput`/`coerce` refusals carry a one-entry list so a bad slug still lands under
+  Slug. Gate: first run 45 / 1489 / 1 failed (the §7 row above); after the fix 45 / 1490
+  / 0, exactly five `todo → passed` plus the one re-title; `tsc` 0; preview walked
+  (`app-new/connecting`, `app-new/errors`) before the gate. Cost: 1 agent (Opus 5,
+  ~310k tokens).

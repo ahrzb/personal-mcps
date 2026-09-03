@@ -1407,6 +1407,14 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
       expect(missing.headers.get("Content-Security-Policy")).toBeNull();
     },
   );
+
+  // plan row 6. The strip is the RULE's own work, not the platform's: nothing on this path
+  // runs a URL parser over `?next=`, so the fact that a browser reads `/<TAB>/evil.example`
+  // as `//evil.example` is one the rule has to reproduce for itself. Only a row that spells
+  // the three characters out keeps that strip from being read as decoration and deleted.
+  it.todo(
+    `§4 · ?next=/%09/evil.example, /%0A/evil.example, /%0D/evil.example and /%09%5Cevil.example each land on /apps in BOTH consumers, because the rule strips what a browser's URL parser strips before judging — while a hub-relative ?next=/settings/%09tokens reaches both with only the tab gone (/settings/tokens), and a sign-in POST whose callbackURL is /%09/evil.example redirects to /apps (the posted twin)`,
+  );
 });
 
 describe("§13 · the device decision, submitted the way the owner submits it", () => {

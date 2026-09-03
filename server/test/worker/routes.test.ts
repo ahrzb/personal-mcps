@@ -296,6 +296,15 @@ describe("§2 · usernames may not collide with routes", () => {
       expect(await probeSegment(segment)).toBe("served");
     }
   });
+
+  // Decision 30 reversed (2026-09-03): the agents pages are deferred, but the word is
+  // reserved ahead of them, because a username `agents` registered first would shadow the
+  // route for good. The reservation has to be SERVED for the §2 walk (case 2) to see it,
+  // so /agents answers its own not-built-yet text — never the anonymous 404 an unrouted
+  // path gets, which is what case 2 would read as "reserved and nothing answers it".
+  it.todo(
+    "11. §2 · agents is reserved ahead of its pages: provisioning a user named agents is refused, and GET /agents answers 404 with its own not-built-yet text rather than the anonymous 404 an unrouted path gets — served, so case 2's walk sees the reservation · /agents/anything is the same answer, the whole subtree being claimed (the twin)",
+  );
 });
 
 describe("§2/§7 · what the fallthrough serves", () => {

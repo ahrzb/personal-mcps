@@ -1879,6 +1879,12 @@ describe("§19.5 · the consent screen", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
+  // G8 (2026-09-03): the empty state sent the owner to /apps, which cannot create an agent.
+  // §19.5 amended; this row replaces the one below it, which is retired with the fix.
+  it.todo(
+    `§19.5 · a namespace with zero agents renders the picker's empty state naming pmcp agent create — never /apps, which has no agent affordance — and disables submit; consent is impossible until an agent exists · the same page with one agent submits (the twin)`,
+  );
+
   it("§19.5 · a namespace with zero agents renders the picker's empty state naming /apps and disables submit — consent is impossible until an agent exists · the same page with one agent submits (the twin)", async () => {
     const empty = await seedNamespace(env.DB, {});
     const emptySession = await seedOwnerSession(empty.owner);
@@ -4128,6 +4134,13 @@ const KEYS_APP = uniqueSlug("keysapp");
 const KEYS_AGENT = uniqueSlug("keysagt");
 
 describe(`§13 · the Tokens pane`, () => {
+  // G12 (2026-09-03): the intro named "an app or agent page" while no agent page exists.
+  // §13 now spells the interim sentence; the row pins it and its twin pins that the
+  // sentence still points at the one issuing page that does exist.
+  it.todo(
+    `§13 · until the agents pages land the Tokens intro reads "Issue new keys from an app page, or with pmcp token issue for an agent." verbatim, naming no agent page · the app page it names still carries the Issue control (the twin)`,
+  );
+
   let keys: { ns: SeededNamespace; session: SeededSession };
 
   beforeAll(async () => {

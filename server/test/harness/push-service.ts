@@ -145,6 +145,14 @@ export async function verifyVapidJwt(
  * happen is the failure this case exists to produce.
  */
 export async function decryptPushBody(posted: PostedPush, browser: FakeBrowser): Promise<string> {
+  // ONE encoding, named (G23, 2026-09-03): this receiver implements draft-04 `aesgcm` and
+  // nothing else, so it says so before deriving anything. A library swap to RFC 8291
+  // `aes128gcm` (step 14) must change this line and the derivation together — a receiver
+  // that silently accepted either would let the swap pass without proving the new bytes.
+  const encoding = Object.entries(posted.headers).find(([name]) => name.toLowerCase() === "content-encoding")?.[1];
+  if (encoding !== "aesgcm") {
+    throw new Error(`push body is not aesgcm (Content-Encoding: ${encoding ?? "absent"}) — this receiver opens aesgcm only`);
+  }
   const salt = decodeBase64Url(headerParam(posted.headers, "Encryption", "salt"));
   const senderPublicBytes = decodeBase64Url(headerParam(posted.headers, "Crypto-Key", "dh"));
   const senderPublicKey = await crypto.subtle.importKey(

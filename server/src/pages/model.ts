@@ -445,10 +445,10 @@ export const paths = {
    * nothing a hub route would add (§13: "the one credential POST that is not a form").
    */
   auth: {
-    /** Where the composition root mounts better-auth — the prefix the two untranslated
-     *  paths below carry, and the prefix identity's `callAuth` builds on. identity's, not
-     *  this file's: the mount and the base path better-auth itself routes on are one
-     *  decision (identity.AUTH_BASE_PATH). */
+    /** Where the composition root mounts better-auth — the prefix every untranslated
+     *  path below (the four passkey ceremonies) is composed from, and the prefix
+     *  identity's `callAuth` builds on. identity's, not this file's: the mount and the
+     *  base path better-auth itself routes on are one decision (identity.AUTH_BASE_PATH). */
     base: AUTH_BASE_PATH,
     signIn: "/login/sign-in/username",
     signOut: "/login/sign-out",
@@ -470,12 +470,12 @@ export const paths = {
      *  out, the authenticator's attestation back in. Named as a PAIR because the page's
      *  script calls both and a page that named only the first would ask an authenticator
      *  for a credential nothing then stores. */
-    passkeyRegister: "/api/auth/passkey/generate-register-options",
-    passkeyVerifyRegistration: "/api/auth/passkey/verify-registration",
+    passkeyRegister: `${AUTH_BASE_PATH}/passkey/generate-register-options`,
+    passkeyVerifyRegistration: `${AUTH_BASE_PATH}/passkey/verify-registration`,
     /** The authentication ceremony /login's passkey button performs — the same pair, and
      *  the endpoint whose success is a sign-in (identity stamps §5's last_used_at on it). */
-    passkeyAuthenticateOptions: "/api/auth/passkey/generate-authenticate-options",
-    passkeyVerifyAuthentication: "/api/auth/passkey/verify-authentication",
+    passkeyAuthenticateOptions: `${AUTH_BASE_PATH}/passkey/generate-authenticate-options`,
+    passkeyVerifyAuthentication: `${AUTH_BASE_PATH}/passkey/verify-authentication`,
     passkeyDelete: "/settings/passkey/delete-passkey",
     sessionRevoke: "/settings/revoke-session",
     /** The Sessions pane's **Revoke all others** (§13) — better-auth's own

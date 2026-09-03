@@ -215,11 +215,14 @@ const PUSH_SCRIPT = `(function () {
     for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
     return out;
   }
+  function label(text) {
+    var labels = btn.querySelectorAll("span");
+    for (var i = 0; i < labels.length; i++) labels[i].textContent = text;
+  }
   function markEnabled() {
     btn.setAttribute("disabled", "true");
     btn.setAttribute("aria-disabled", "true");
-    var labels = btn.querySelectorAll("span");
-    for (var i = 0; i < labels.length; i++) labels[i].textContent = "Notifications on";
+    label("Notifications on");
   }
   navigator.serviceWorker.ready
     .then(function (reg) { return reg.pushManager.getSubscription(); })
@@ -239,8 +242,15 @@ const PUSH_SCRIPT = `(function () {
         body.append("subscription", JSON.stringify(sub.toJSON()));
         return fetch(btn.dataset.pushUrl, { method: "POST", body: body });
       })
-      .then(markEnabled)
-      .catch(function () {});
+      .then(function (res) {
+        // G18: a refused save is a failure the owner has to see, not a silent no-op.
+        if (!res.ok) throw new Error("store failed");
+        markEnabled();
+      })
+      .catch(function (err) {
+        // The browser's own refusal (NotAllowedError) reads differently from the hub's.
+        label(err && err.name === "NotAllowedError" ? "Notifications blocked" : "Notifications failed");
+      });
   });
 })();`;
 

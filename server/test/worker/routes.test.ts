@@ -322,9 +322,23 @@ describe("§2 · usernames may not collide with routes", () => {
 
   // G36 (2026-09-03): four passkey endpoints were spelled as literals beside a `base`
   // that exists so nothing else has to be. Composed now; this row keeps them composed.
-  it.todo(
-    "12. §4 · every paths.auth endpoint that is better-auth's own starts with paths.auth.base — the four passkey ceremonies included — while the hub's own translations start with /login or /settings, never with the mount (the twin)",
-  );
+  it("12. §4 · every paths.auth endpoint that is better-auth's own starts with paths.auth.base — the four passkey ceremonies included — while the hub's own translations start with /login or /settings, never with the mount (the twin)", () => {
+    const own = [
+      "passkeyRegister",
+      "passkeyVerifyRegistration",
+      "passkeyAuthenticateOptions",
+      "passkeyVerifyAuthentication",
+    ] as const;
+    for (const key of own) {
+      expect(paths.auth[key].startsWith(`${paths.auth.base}/`), key).toBe(true);
+    }
+    // The twin: everything else under paths.auth is a translation the hub owns, mounted
+    // on a page's own prefix — a translation spelled under the mount would shadow it.
+    for (const [key, value] of Object.entries(paths.auth)) {
+      if (key === "base" || (own as readonly string[]).includes(key)) continue;
+      expect(value, key).toMatch(/^\/(login|settings)\//);
+    }
+  });
 });
 
 describe("§2/§7 · what the fallthrough serves", () => {

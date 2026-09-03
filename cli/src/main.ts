@@ -1659,8 +1659,15 @@ export async function connection(ctx: CliContext, cmd: ConnectionCommand): Promi
       row.createdAt === null || row.createdAt === undefined ? "" : formatDateTime(Number(row.createdAt)),
       row.lastUsedAt === null || row.lastUsedAt === undefined ? "never" : formatDateTime(Number(row.lastUsedAt)),
       row.revokedAt === null || row.revokedAt === undefined ? "active" : "revoked",
+      // G29 (2026-09-03): the two facts a reader wants first when a row looks unfamiliar —
+      // where the client lives, and whether anyone vouched for it at registration (§19.3).
+      String(row.redirectOrigin ?? ""),
+      row.selfRegistered === true ? "yes" : "",
     ]),
-    { headers: ["CONNECTION", "CLIENT", "AGENT", "CREATED", "LAST USED", "STATUS"], tty: decorated() },
+    {
+      headers: ["CONNECTION", "CLIENT", "AGENT", "CREATED", "LAST USED", "STATUS", "ORIGIN", "SELF-REGISTERED"],
+      tty: decorated(),
+    },
   ).split("\n");
   write(`${c.dim(table[0])}\n`);
   for (const line of table.slice(1)) write(`${line}\n`);

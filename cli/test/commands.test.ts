@@ -465,9 +465,23 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
 describe("§10/§19 · pmcp connections prints what connection_list already knows", () => {
   // G29 (2026-09-03): the table dropped the client's redirect origin and the DCR marker,
   // the two facts a reader wants first when a row looks unfamiliar.
-  it.todo(
-    "§10 · `pmcp connections` prints ORIGIN and SELF-REGISTERED beside the six columns it had — the origin verbatim from connection_list's redirectOrigin, `yes` for a self-registered client and blank for a vouched one · a row with an empty origin prints an empty cell, never `undefined` (the twin)",
-  );
+  it("§10 · `pmcp connections` prints ORIGIN and SELF-REGISTERED beside the six columns it had — the origin verbatim from connection_list's redirectOrigin, `yes` for a self-registered client and blank for a vouched one · a row with an empty origin prints an empty cell, never `undefined` (the twin)", async () => {
+    expect(await main(["connections"])).toBe(0);
+    const spy = process.stdout.write as unknown as { mock: { calls: unknown[][] } };
+    const lines = spy.mock.calls.map((call) => String(call[0])).join("").split("\n");
+    const header = lines[0] ?? "";
+    for (const column of ["CONNECTION", "CLIENT", "AGENT", "CREATED", "LAST USED", "STATUS", "ORIGIN", "SELF-REGISTERED"]) {
+      expect(header, column).toContain(column);
+    }
+    const first = lines.find((line) => line.includes("conn_FAKE ")) ?? lines.find((line) => line.includes("conn_FAKE")) ?? "";
+    expect(first).toContain("https://client.example");
+    expect(first).toContain("yes");
+    // The twin: a vouched client with no provider row prints an empty origin, not a word.
+    const second = lines.find((line) => line.includes("conn_FAKE2")) ?? "";
+    expect(second).not.toContain("undefined");
+    expect(second).not.toContain("yes");
+    expect(second).not.toContain("https://");
+  });
 });
 
 describe("§20.6 · the data-model commands, gateway sugar over an MCP method", () => {

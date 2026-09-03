@@ -57,6 +57,7 @@ import type { App } from "../../src/registry";
 import { capabilities, tunnelBackend } from "../../src/tunnel";
 import type { AppConnection } from "../../src/tunnel";
 import { LIST_METHOD, connectFakeApp, tick, waitFor } from "../harness/fake-app";
+import { withShrunkTimers } from "../harness/timers";
 import type { CatalogEntry, FakeApp, FakeAppOptions } from "../harness/fake-app";
 import { seedNamespace, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace, SeededApp } from "../harness/seed";
@@ -274,19 +275,10 @@ async function quiesce(turns = 25): Promise<void> {
  * leaked patch is a leak into the next file.
  */
 async function withShrunkCallTimeout<T>(body: () => Promise<T>): Promise<T> {
-  const real = globalThis.setTimeout;
-  const patched = ((handler: TimerHandler, ms?: number, ...rest: unknown[]) =>
-    (real as (...args: unknown[]) => unknown)(
-      handler,
-      ms !== undefined && ms >= CALL_TIMEOUT_MS ? SHRUNK_DEADLINE_MS : ms,
-      ...rest,
-    )) as typeof globalThis.setTimeout;
-  globalThis.setTimeout = patched;
-  try {
-    return await body();
-  } finally {
-    globalThis.setTimeout = real;
-  }
+  // The harness's one timer lever, keyed by the EXACT value the seam arms (D16 residue,
+  // 2026-09-03): the local `ms >= CALL_TIMEOUT_MS` copy this replaced would also have
+  // shrunk any longer timer, which is more than the published sentence says.
+  return withShrunkTimers(new Map([[CALL_TIMEOUT_MS, SHRUNK_DEADLINE_MS]]), body);
 }
 
 /** What limits.CALL_TIMEOUT_MS is shrunk TO for the width row — a test-run duration, not a

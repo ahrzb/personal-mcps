@@ -620,7 +620,10 @@ describe("§21.2/§21.4 what each shape forwards", () => {
 
       const aggregated = await listen(ns, ns.tokens.reader.token, null);
       const scoped = await listen(ns, ns.tokens.reader.token, slug);
-      await settle();
+      // The precondition its siblings wait for, not a fixed number of ticks: both
+      // subscriber sockets must be held by the DO before a bell can reach either — under
+      // load `settle()`'s five ticks were not always enough (3 of 8 runs, 2026-09-03).
+      expect(await untilSockets(ns.apps[slug].id, 2)).toBe(2);
 
       await app.notifyResourcesListChanged([RESOURCE]);
       expect(await waitFor(() => scoped.count(BELL_RESOURCES) > 0)).toBe(true);

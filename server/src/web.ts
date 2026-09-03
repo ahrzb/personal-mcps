@@ -1234,6 +1234,13 @@ function noticeOf(query: URLSearchParams): Notice | null {
   }
   const failed = query.get(NOTICE_KEYS.failed);
   if (failed === null) return null;
+  // §13 (G52, 2026-09-03): a decision that lost its race — the request was decided or
+  // expired between the render and the click — is not a failure of the owner's. The op
+  // refuses every non-decidable id with one message by design (§7's probe rule), so the
+  // tone is keyed on the op, not on prose.
+  if (failed === "approval_decide") {
+    return { tone: "warning", message: "That request is no longer pending." };
+  }
   return {
     tone: "danger",
     title: `${humanize(failed)} failed`,

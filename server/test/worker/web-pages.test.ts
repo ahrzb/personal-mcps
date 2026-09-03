@@ -1173,9 +1173,35 @@ describe("§13 · /approvals — deciding a request that is no longer pending", 
   // render and the click — landed as a red "Approval decide failed" through the generic
   // dispatch. §13 now pins the calm answer. approval_decide refuses every non-decidable
   // id with one message on purpose (§7's probe rule), so the tone is keyed on the op.
-  it.todo(
-    `§13 · deciding an approval that is no longer pending lands back on /approvals with the warning "That request is no longer pending." — never a red "failed" notice — · deciding a pending one lands with the success notice (the twin)`,
-  );
+  it(`§13 · deciding an approval that is no longer pending lands back on /approvals with the warning "That request is no longer pending." — never a red "failed" notice — · deciding a pending one lands with the success notice (the twin)`, async () => {
+    // A namespace of its own: the shared world's pending approval is other rows' fixture.
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "news" }] }],
+      agents: [{ slug: "agent", grants: { news: [{ role: "all", mode: "approval" }] }, tokens: [{ as: "agent" }] }],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const id = await openApproval(ns, "news");
+    const csrf = csrfOf(await page(paths.approvals, session.cookie));
+
+    // The twin first, because it is what makes the second decision a lost race.
+    const decided = await formPost(paths.approvalDecide(id), { csrf, decision: "reject" }, session.cookie);
+    expect(decided.status).toBe(303);
+    const done = new URL(decided.headers.get("Location") ?? "", ORIGIN);
+    expect(done.pathname).toBe(paths.approvals);
+    expect(done.searchParams.get("done")).toBe("approval_decide");
+    expect(await page(`${done.pathname}${done.search}`, session.cookie)).toContain("alert--success");
+
+    // The lost race: the same decision again, after the row stopped being pending.
+    const lost = await formPost(paths.approvalDecide(id), { csrf, decision: "reject" }, session.cookie);
+    expect(lost.status).toBe(303);
+    const landing = new URL(lost.headers.get("Location") ?? "", ORIGIN);
+    expect(landing.pathname).toBe(paths.approvals);
+    const landed = await page(`${landing.pathname}${landing.search}`, session.cookie);
+    expect(textOf(landed)).toContain("That request is no longer pending.");
+    expect(landed).toContain("alert--warning");
+    expect(landed).not.toContain("alert--danger");
+    expect(textOf(landed)).not.toContain("failed");
+  });
 });
 
 describe("§8 · parity direction B — forms and schemas are one source", () => {

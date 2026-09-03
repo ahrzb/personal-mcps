@@ -61,6 +61,7 @@ import { REDACTED, Registry } from "../../src/registry";
 import type { App } from "../../src/registry";
 import { tunnelBackend } from "../../src/tunnel";
 import { connectFakeApp, tick, waitFor } from "../harness/fake-app";
+import { withShrunkTimers } from "../harness/timers";
 import type { FakeApp, ToolBehavior } from "../harness/fake-app";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace, SeededApp } from "../harness/seed";
@@ -568,19 +569,9 @@ async function callRows(fixture: Fixture): Promise<AuditRow[]> {
  * next file (this project shares one runtime).
  */
 async function withShrunkCallTimeout<T>(body: () => Promise<T>): Promise<T> {
-  const real = globalThis.setTimeout;
-  const patched = ((handler: TimerHandler, ms?: number, ...rest: unknown[]) =>
-    (real as (...args: unknown[]) => unknown)(
-      handler,
-      ms !== undefined && ms >= CALL_TIMEOUT_MS ? SHRUNK_DEADLINE_MS : ms,
-      ...rest,
-    )) as typeof globalThis.setTimeout;
-  globalThis.setTimeout = patched;
-  try {
-    return await body();
-  } finally {
-    globalThis.setTimeout = real;
-  }
+  // The harness's one timer lever, keyed by the EXACT value the seam arms (D16 residue,
+  // 2026-09-03) — the local range-keyed copy this replaced is gone from both files.
+  return withShrunkTimers(new Map([[CALL_TIMEOUT_MS, SHRUNK_DEADLINE_MS]]), body);
 }
 
 /** What limits.CALL_TIMEOUT_MS is shrunk TO for the deadline case — a test-run duration, not

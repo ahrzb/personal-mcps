@@ -195,8 +195,9 @@ const FormCard: FC<{ username: string; csrfToken: string; form: AppNewForm; erro
               form.querySelectorAll("[data-note]").forEach(function (el) {
                 el.hidden = el.dataset.note !== note;
               });
-              var label = form.querySelector("[data-submit-label]");
-              if (label) label.textContent = proxy ? "Create and connect" : "Create";
+              form.querySelectorAll("[data-submit-label]").forEach(function (label) {
+                label.textContent = proxy ? "Create and connect" : "Create";
+              });
             }
             form.addEventListener("change", sync);
           })();

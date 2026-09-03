@@ -85,7 +85,10 @@ scale.** Two kinds of exit criteria:
      authored and adversarially verified in the Oracles stage. The audit then
      checks: placeholder removed → its describe gained ≥1 passed case titled
      verbatim from the oracle rows; concrete todos still flip purely; nothing
-     regresses passed → anything.
+     regresses passed → anything. *Amendment (2026-09-03, G26 ii):* a `+passed` key
+     with no prior `todo` in an earlier commit FAILS the gate unless the owner reviews
+     that title in the gate itself — the rows-first rule is the strategy's (§9 rule 1),
+     and an unreviewed oracle row is exactly what it exists to prevent.
 3. - [ ] `npx tsc --noEmit` exit 0; `uv run pytest` (clients/py) still collects
      with no new failures.
 4. - [ ] Ownership audit: `git status` touches only the entry's **Owns** globs.
@@ -471,7 +474,7 @@ check and (manual, once) a real push notification to a real browser.
   owner rows. Script staged 2026-08-26 at `.claude/workflows/d10-sweep.js` —
   launch as `Workflow({name: "d10-sweep"})`; returns `{seams, coverage}` raw,
   orchestrator writes the close-out.
-- [ ] Root `/` route (user-ordered 2026-08-26): 302 to `/services` when a
+- [ ] Root `/` route (user-ordered 2026-08-26): 302 to `/services` *(now `/apps` — decision 29's rename, noted 2026-09-03)* when a
   cookie session is present, 302 to `/login` when not — today bare `/` falls
   through the username matcher to a plain-text 404. One spec §13 sentence, one
   route ahead of the `/:user/mcp` fallthrough (read-only session peek via the
@@ -869,7 +872,10 @@ check and (manual, once) a real push notification to a real browser.
   only in Node 26.7; postmortem closed with deterministic repro), the
   smoke.ts profile bridge, `pnpm dev`, and the staged D10 sweep workflow
   (.claude/workflows/d10-sweep.js). D10 launch HELD at user request.
-- 2026-08-26 — **D10 gated — the dispatch ledger closes.** The seam sweep
+- 2026-08-26 — **D10 gated — the dispatch ledger closes.** *(Corrected 2026-09-03: the
+  retrospective found the sweep script never loaded the PSD skill — what ran were
+  unaided seam reads, so nothing below is a PSD finding; recorded rather than rewritten.)*
+  The seam sweep
   (.claude/workflows/d10-sweep.js: four Opus lenses over registry↔gateway,
   gateway↔tunnel, identity↔custody, pages↔web, plus a coverage critic;
   every finding adversarially refuted, two refuters per blocker) surfaced
@@ -884,7 +890,7 @@ check and (manual, once) a real push notification to a real browser.
   redaction fail-open, 2FA-password ceiling) + 12 coverage gaps went to
   docs/superpowers/plans/2026-08-26-d11-remediation.md, not fixed inline.
   Inline batch `c6f8ee9`: bare `/` redirects by cookie session (owner →
-  /services, else /login — user request, requireOwnerSession reused, §16
+  /services *(now /apps — decision 29, noted 2026-09-03)*, else /login — user request, requireOwnerSession reused, §16
   walk untouched); dead ApprovalsConfig.vapid removed across 8 files;
   approval-e2e CAS case 9 root-caused as a test-orchestration race (it
   asserted WHICH racing leg wins — workerd's call; now multisets within
@@ -1031,7 +1037,9 @@ check and (manual, once) a real push notification to a real browser.
   (idempotent ×2), deploy `2c6f15a5`, SMOKE PASS 26/26 live. Debt recorded, owner
   on usage credits so all deferred: plan.ts's DEFAULT_CAPABILITIES is an unlocked
   twin of gateway's private constant (lock = export + one contracts case);
-  /services page shows no capabilities column (parity spirit); the two §20.5/§6
+  /services page shows no capabilities column (parity spirit) *(retired 2026-09-03, G39:
+  §13 asks for no column and the app page's rail dims the families an app lacks, which
+  answers the question; the page is `/apps` since decision 29)*; the two §20.5/§6
   pins have no oracle rows yet (tunnel-harness work); D14 candidate parked —
   list_changed relay to consumers, blocked on an SSE/DO-stream + client-behavior
   probe (plan open question 6).
@@ -1077,7 +1085,8 @@ check and (manual, once) a real push notification to a real browser.
   binds the deploy, not the commits. Review chain at the fix stage: 12 dispositions from
   the verbatim lens (1 BLOCKER — a deleted JS prompts row, whose PYTHON twin turned out
   to be passing VACUOUSLY inside an emptied task group), 15 from the PSD lens (11 fixed,
-  4 rebutted with reasons written down), 17 from the adversarial §21.4 read (the
+  4 rebutted with reasons written down) *(corrected 2026-09-03: these numbers match no
+  run's journal — they equal D13's — so the PSD count for D14 is unrecorded, not 15)*, 17 from the adversarial §21.4 read (the
   "can an `updated` reach a socket that never passed the subscribe filter" question —
   answered no; 4 real fixes, chief among them principal keying). Suites at the gate:
   **1326/1326** across 44 files, zero todo — unit 125, tunnel 227, worker 697 (contracts

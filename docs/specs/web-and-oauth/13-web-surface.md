@@ -178,8 +178,11 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   no CSRF surface.
 - `/approvals` — cookie-session-gated: pending requests up top (agent, app, tool,
   redacted arguments, requested time, approve/reject buttons — CSRF token on the POST),
-  decision history below. `/approvals/<id>` is the detail page the `-32003` error links
-  to; only the namespace owner can open it.
+  decision history below. A decision on a request that is no longer pending (decided
+  from another tab, or expired between the render and the click) lands back with the
+  warning "That request is no longer pending." — a lost race, not a failure, so never
+  the red "failed" notice *(2026-09-03, G52)*. `/approvals/<id>` is the detail page the
+  `-32003` error links to; only the namespace owner can open it.
 - `/apps` — cookie-session-gated app management: active apps (kind, status —
   online/offline for tunneled, connection state for OAuth-proxied — roles, last seen)
   with archive/delete actions; an archived section with unarchive/delete; an add-app

@@ -2923,36 +2923,21 @@ describe(`§4/§13 · the Password pane`, () => {
 const ADDED_STAMP = /Added ([^·]+)·/g;
 
 describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
-  it(`§13 · /settings/passkeys lists one row per passkey under the name the authenticator reported, and the rail's Passkeys marker is the number of rows the pane listed · with none, the pane renders "No passkeys yet. Add one to sign in without a password." and the marker reads 0 (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {});
-    const session = await seedOwnerSession(ns.owner);
+  // plan row 8, and the replacement for the row retired with it — that one was green on
+  // data the ceremony never produces: a stored name and no aaguid. What the pane owes is
+  // the authenticator's own report — a known AAGUID reading "Windows Hello", the all-zero
+  // one privacy-preserving platforms send reading "Passkey" — with the empty pane the twin.
+  it.todo(
+    `§13 · /settings/passkeys names a row the way the authenticator reported it: a passkey stored with a known AAGUID and no name lists as "Windows Hello", one with the all-zero AAGUID that privacy-preserving platforms report lists as "Passkey", the marker reads 2 and each row links its own Remove dialog · with none, the pane renders "No passkeys yet. Add one to sign in without a password." and the marker reads 0 (the twin)`,
+  );
 
-    // The empty leg FIRST, so the populated leg's "the sentence is gone" is non-vacuous.
-    const empty = await page(paths.settingsPasskeys, session.cookie);
-    expect(empty).toContain("No passkeys yet. Add one to sign in without a password.");
-    expect(markerOf(empty, paths.settingsPasskeys)).toBe("0");
-    // The control does not depend on having one already.
-    expect(empty).toContain("Add passkey");
-
-    const planted = [
-      await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID" }),
-      await plantPasskey(ns.owner.userId, { name: "YubiKey 5C" }),
-    ];
-    const listed = await page(paths.settingsPasskeys, session.cookie);
-    expect(listed).not.toContain("No passkeys yet.");
-    expect(listed).toContain("MacBook Touch ID");
-    expect(listed).toContain("YubiKey 5C");
-    expect(markerOf(listed, paths.settingsPasskeys)).toBe("2");
-    // DISTINCT ids, never link occurrences: a pane may legally render its list twice.
-    const drawn = new Set(
-      planted.filter((id) =>
-        listed.includes(
-          paths.settingsConfirm("passkeys", "remove-passkey", id).replace(/&/g, "&amp;"),
-        ),
-      ),
-    );
-    expect(drawn.size).toBe(2);
-  });
+  // plan row 7. The Sessions pane names each session's client, and the device flow mints the
+  // one client no browser can — so the row reads both rows off a single render: the CLI's
+  // device-flow suffix beside the browser session's own client without it, and the rail's
+  // Sessions marker counting the two.
+  it.todo(
+    `§13 · a session minted by the device flow lists as "pmcp CLI · device flow" in the Sessions pane beside the browser session that rendered the page, which reads its own client with no device-flow suffix (the twin) — and the rail's Sessions marker counts both`,
+  );
 
   it(`§13 · each passkey row carries its own added stamp: two passkeys with the same name and different createdAt render two different rows`, async () => {
     const ns = await seedNamespace(env.DB, {});
@@ -3342,6 +3327,65 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
       expect(inNavigableAttribute(passkeysPane, endpoint), `${endpoint} is navigable`).toBe(false);
     }
   });
+
+  // plan row 9. Its two named traps, either of which would make a status-only assertion green
+  // for the wrong reason: better-auth's router-level originCheckMiddleware 403s a cookie-bearing
+  // POST with no Origin as MISSING_OR_NULL_ORIGIN, and better-call validates the body schema
+  // before any `use` middleware runs, so a malformed body 400s before the freshness gate does.
+  it.todo(
+    `§4 · a day-old cookie is refused at BOTH passkey register endpoints with better-auth's SESSION_NOT_FRESH code — the GET options and the POST verify, the POST carrying an Origin so the refusal is the freshness gate and not the origin check, and a body that satisfies the endpoint's schema so it is not the validator either · from a session signed in moments ago the same two calls get past that gate, the GET answering 200 with a challenge and the POST failing the ceremony itself (the twin)`,
+  );
+});
+
+describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`, () => {
+  // Rows first (§9 rule 1): the enrolment renders in place — the POST answers with the card
+  // instead of redirecting — and none of that exists yet. These six titles are what
+  // "implemented" will mean for the secret, the codes and the six boxes.
+
+  // plan row 1. Answering in place gives the minted secret exactly one carrier, this body, so
+  // the row reads the grouped line, the verify form's hidden totpuri and the QR against the
+  // "secret" parameter of that same answer's own otpauth URI — and the pane's next GET, the
+  // state no route reaches today, is the twin that draws none of it.
+  it.todo(
+    `§13/§15 · POST /settings/two-factor/enable with the owner's own password answers 200 rendering the setup card in place — the secret better-auth minted reaches the page as the grouped line and again as the verify form's hidden totpuri, both equal to the "secret" parameter of that same answer's otpauth URI, beside a QR served as a data:image/svg+xml URI and the ten backup codes from the same answer — while the answer carries no Location and the pane's own next GET draws the not-enrolled arm with the secret, the codes and the QR nowhere in it (the twin)`,
+  );
+
+  // plan row 2. Rendering in place is what keeps the secret and the codes off a URL; this row
+  // is the negative that makes it structural rather than incidental — the secret and all ten
+  // codes in the bodies, no Location on either answer, and no href or form action on either
+  // render carrying a "secret", an otpauth: URI or any code from the set.
+  it.todo(
+    `§13/§15 · nothing on the enrolment journey puts the secret or a backup code on a URL: the enable answer and the verify refusal both carry the secret and all ten codes in their bodies, and neither sets a Location, and no href or form action either render draws carries a "secret", an otpauth: or any code from the set`,
+  );
+
+  // plan row 3. Its named trap: a successful verify DELETES the session it ran under and mints
+  // a new one, and `redirectWith` forwards those Set-Cookie headers onto the 303 — so the
+  // cookie the test signed in with is dead the moment the POST returns and a follow-up GET
+  // with it bounces to /login. The twin parses the new cookie off the 303 with sessionCookieOf.
+  it.todo(
+    `§13 · a wrong code posted to /settings/two-factor/verify-totp answers 200 redrawing the SAME enrolment — byte-identical secret, the boxes aria-invalid, better-auth's own "Invalid code" on the card, the ten codes still shown — and twoFactorEnabled is still 0 · the code generated from that same secret answers 303 and re-issues the session cookie, and the pane read with THAT cookie renders the enabled arm with the codes gone (the twin)`,
+  );
+
+  // plan row 4. One shared component, two consumers — the settings enrolment card and /login's
+  // TOTP challenge — pinned on the field better-auth actually reads: a single "code". Today's
+  // pane posts digit0…digit5 and could never verify, which is the twin's half.
+  it.todo(
+    `§13 · the six boxes are stitched into the one field better-auth reads: the settings enrolment card and /login's TOTP challenge both carry data-otp-form and both render the shared component's hidden [data-otp-value] input, its six [data-otp] boxes and the same handler text, and the settings card posts a "code" field · neither card posts a digit0 field, which is what a code typed into today's pane sends (the twin)`,
+  );
+
+  // plan row 5. The reveal happens in place too, which is what makes "fresh" checkable: none of
+  // the ten codes the enrolment showed may appear in the new set. Its twins are the pane's next
+  // GET, which reveals nothing, and the wrong password, which redirects with failed= instead.
+  it.todo(
+    `§13 · Regenerate backup codes answers 200 revealing a fresh set in place — ten codes, none of them from the set the enrolment showed — while the pane's next GET reveals none and a wrong password redirects with failed= instead (the twin)`,
+  );
+
+  // plan row 6. A Copy-codes control naming fewer codes than it drew is the drift this catches:
+  // each code in its own [data-code] element and one handler reading all ten. The two arms that
+  // reveal nothing render neither the control nor a code element (the twin).
+  it.todo(
+    `§13 · the reveal carries a Copy-codes control that names every code it drew: each code sits in its own [data-code] element and one handler reads all ten · the not-enrolled arm and the enabled arm render no Copy-codes control and no code element (the twin)`,
+  );
 });
 
 /* ------------------------------------------------------------------ *

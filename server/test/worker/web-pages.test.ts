@@ -1412,8 +1412,36 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   // runs a URL parser over `?next=`, so the fact that a browser reads `/<TAB>/evil.example`
   // as `//evil.example` is one the rule has to reproduce for itself. Only a row that spells
   // the three characters out keeps that strip from being read as decoration and deleted.
-  it.todo(
+  it(
     `§4 · ?next=/%09/evil.example, /%0A/evil.example, /%0D/evil.example and /%09%5Cevil.example each land on /apps in BOTH consumers, because the rule strips what a browser's URL parser strips before judging — while a hub-relative ?next=/settings/%09tokens reaches both with only the tab gone (/settings/tokens), and a sign-in POST whose callbackURL is /%09/evil.example redirects to /apps (the posted twin)`,
+    async () => {
+      // Each of these starts "/" and its second character is neither "/" nor "\" — they
+      // pass the rule UNSTRIPPED, and are refused only because the strip runs first.
+      for (const hostile of ["/\t/evil.example", "/\n/evil.example", "/\r/evil.example", "/\t\\evil.example"]) {
+        const html = await anonymousPage(`${paths.login}?next=${encodeURIComponent(hostile)}`);
+        expect(JSON.parse(landingLiteralOf(html)) as string, hostile).toBe(paths.apps);
+        expect(unescapeAttribute(callbackLiteralOf(html)), hostile).toBe(paths.apps);
+        expect(html, hostile).not.toContain("evil.example");
+      }
+
+      // The twin: the same three characters inside a landing that stays hub-relative are
+      // removed and nothing else is — a strip, not a refusal, and not a pass-through.
+      const carried = await anonymousPage(`${paths.login}?next=${encodeURIComponent("/settings/\ttokens")}`);
+      expect(JSON.parse(landingLiteralOf(carried)) as string).toBe(paths.settingsTokens);
+      expect(unescapeAttribute(callbackLiteralOf(carried))).toBe(paths.settingsTokens);
+
+      // The posted twin, with the tab as the raw character a browser would send. Right
+      // password on purpose: a refusal redirects to /login whatever the callbackURL said.
+      const action = actionFor(await anonymousPage(paths.login), "username");
+      const answered = await formPost(action, {
+        username: signer.owner.username,
+        password: SEEDED_OWNER_PASSWORD,
+        callbackURL: "/\t/evil.example",
+      });
+      expect(answered.status, await answered.text()).toBe(303);
+      expect(answered.headers.get("Location")).toBe(paths.apps);
+      expect(sessionCookieOf(answered)).not.toBeNull();
+    },
   );
 });
 

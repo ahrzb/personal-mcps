@@ -106,7 +106,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     reported it, added, last used), **Remove** (confirm dialog), **Add passkey** (a
     WebAuthn ceremony on better-auth's own mount — the one credential POST that is not a
     form). Empty state: "No passkeys yet. Add one to sign in without a password."
-  - **Sessions** — every web and CLI session (`Client` / `Created` / `Last active`; CLI
+  - **Sessions** — every web and CLI session (`Client` / `Created` / `Last active`; a
+    browser row reads "Chrome on Windows"-style, picked from the User-Agent the sign-in
+    carried and never trusted further, "Unknown client" when it carried none; CLI
     rows read "pmcp CLI · device flow"; the rendering session is badged *current* and is
     never revocable from its own row), **Revoke** per row (confirm dialog), and **Revoke
     all others** (confirm dialog), which rides better-auth's `/revoke-other-sessions`.

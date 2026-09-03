@@ -1068,11 +1068,16 @@ export async function callAuthResponse(
 ): Promise<Response | null> {
   // deps: authRoutes · better-auth · cloudflare:workers env (PUBLIC_ORIGIN)
   const cookie = req.headers.get("Cookie");
+  const userAgent = req.headers.get("User-Agent");
   const app = authRoutes() as { fetch(request: Request): Promise<Response> };
-  // Deliberately NOT a pass-through of the caller's headers — the cookie is the only thing
-  // better-auth is entitled to see from the browser here — plus ONE header this call states
-  // about itself. better-auth refuses a cookie-bearing write that carries no `Origin`
-  // (MISSING_OR_NULL_ORIGIN, its CSRF rule for browsers), and that is every call made
+  // Deliberately NOT a pass-through of the caller's headers — the cookie and the
+  // User-Agent are the only things better-auth sees from the browser here — plus ONE
+  // header this call states about itself. The User-Agent crosses because better-auth
+  // stamps it on the session a sign-in mints, and that stamp is what /settings › Sessions
+  // labels the row with ("Chrome on Windows"); it is display data and nothing gates on it
+  // (pages/model reads a label out of it and never trusts it further). Without it every
+  // browser session reads "Unknown client". better-auth refuses a cookie-bearing write
+  // that carries no `Origin` (MISSING_OR_NULL_ORIGIN, its CSRF rule for browsers), and that is every call made
   // through here on a signed-in page: /settings's credential writes, /device's approve and
   // deny. The origin is the hub's own because the caller IS the hub — this request was
   // built three lines up, on PUBLIC_ORIGIN, out of a form the route already vouched for
@@ -1085,6 +1090,7 @@ export async function callAuthResponse(
         headers: {
           origin: env.PUBLIC_ORIGIN,
           ...(cookie === null ? {} : { cookie }),
+          ...(userAgent === null ? {} : { "user-agent": userAgent }),
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),

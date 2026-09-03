@@ -2350,14 +2350,51 @@ type BetterAuthSession = {
 function sessionRow(row: BetterAuthSession, current: string): SessionRow {
   return {
     id: row.id,
-    // Untrusted display data, shown as the client sent it and never parsed.
-    client: row.userAgent?.slice(0, 80) || "Unknown client",
+    client: clientOf(row.userAgent),
     source: "web",
     createdAt: new Date(row.createdAt).toISOString(),
     lastActiveAt: new Date(row.updatedAt).toISOString(),
     current: row.id === current,
   };
 }
+
+/**
+ * "Chrome on Windows" out of the User-Agent better-auth stamped on the session — the
+ * Client column's wording (design/SettingsPanes). Untrusted display data: a client can
+ * claim anything, so this only ever PICKS a label from two fixed lists and never
+ * interprets further; a string neither list places is shown as the client sent it, cut
+ * to 80, and an empty one is "Unknown client" (identity's `callAuthResponse` forwards
+ * the header — without it every browser sign-in through /login stores "").
+ */
+function clientOf(userAgent: string | null | undefined): string {
+  const ua = userAgent?.trim() ?? "";
+  if (ua === "") return "Unknown client";
+  const browser = BROWSER_MARKS.find(([mark]) => ua.includes(mark))?.[1];
+  const system = SYSTEM_MARKS.find(([mark]) => ua.includes(mark))?.[1];
+  if (browser === undefined && system === undefined) return ua.slice(0, 80);
+  return [browser, system].filter((part) => part !== undefined).join(" on ");
+}
+
+// Order IS the parse: Edge and Opera also say "Chrome", Chrome also says "Safari", and
+// Android also says "Linux". First match wins.
+const BROWSER_MARKS: readonly (readonly [string, string])[] = [
+  ["Edg/", "Edge"],
+  ["OPR/", "Opera"],
+  ["Firefox/", "Firefox"],
+  ["FxiOS/", "Firefox"],
+  ["CriOS/", "Chrome"],
+  ["Chrome/", "Chrome"],
+  ["Safari/", "Safari"],
+];
+const SYSTEM_MARKS: readonly (readonly [string, string])[] = [
+  ["iPhone", "iPhone"],
+  ["iPad", "iPad"],
+  ["Android", "Android"],
+  ["Windows", "Windows"],
+  ["Mac OS X", "macOS"],
+  ["CrOS", "ChromeOS"],
+  ["Linux", "Linux"],
+];
 
 /* ---------------------------- /login and /device ------------------------------ */
 

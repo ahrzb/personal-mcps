@@ -298,7 +298,7 @@ reader parses no `ADD COLUMN`.
 `User-Agent` (`cli/src/main.ts:499-503`), so a real CLI row would read "… · device flow"
 after whatever undici puts there, or "Unknown client · device flow". `sessionRow` therefore
 renders the CLI half itself — `client: row.source === "cli" ? "pmcp CLI" :
-row.userAgent?.slice(0, 80) || "Unknown client"` — and `sessionLabel` (`format.ts:65-67`)
+clientOf(row.userAgent)` — and `sessionLabel` (`format.ts:65-67`)
 appends the suffix as it already does, with no renderer change and no second definition.
 This is not an owner question: §13 pins the rendered string, and this is the only way to
 render it byte-for-byte without trusting a header the hub does not control (which the
@@ -306,6 +306,15 @@ field's own comment at `model.ts:2350` already calls untrusted display data — 
 sending `User-Agent: pmcp CLI` would otherwise mint the CLI's own label). Rejected:
 teaching `cli/src` to send the header (outside this step's files, spoofable, and
 version-dependent).
+
+> Amended 2026-09-03 (orchestrator, landed ahead of this step): the web half is no longer
+> the raw `userAgent` slice. The owner's live Sessions pane read "Unknown client" on every
+> browser row because `callAuthResponse` (`identity.ts`) forwarded only the cookie, so
+> better-auth stored `""`; it now forwards `User-Agent` too, and `sessionRow` reads
+> `clientOf(row.userAgent)` — "Chrome on Windows" / "Safari on iPhone" picked from two fixed
+> mark lists, the raw 80-char slice for a string neither list places, "Unknown client" for
+> an empty one. The implementer keeps `clientOf` as the web arm of the ternary above and
+> changes nothing in it; the `source` column still decides the CLI arm.
 
 **Passkey names.** The rule is the plugin's own documented example verbatim
 (`@better-auth/passkey/dist/index.mjs:764`), placed in the model's row builder and not the
@@ -343,7 +352,11 @@ interpolated data), so both move into ONE exported component in `pages/layout.ts
 (`OtpBoxes`, beside `TokenReveal`, which is already the home for a shared component that
 carries its own inline script) and both cards render it; `login.tsx` gains an import from
 `./layout` it does not have today. **`OtpBoxes` owns the hidden `[data-otp-value]` input,
-the `[data-otp]` box row and the one script; `data-otp-form` stays on each card's own
+the `[data-otp]` box row and the one script, and takes one prop, `invalid: boolean`, that
+sets `aria-invalid` on the boxes — today each card sets it from its own source
+(`login.tsx:158` reads `step.error`, `settings.tsx:439` reads `enrollment.error`), and
+row 3 asserts the attribute on the settings card, so the component must carry it (added
+2026-09-03 after the rows verifier's note); `data-otp-form` stays on each card's own
 `<form>`** — one attribute in two places, by necessity, because the two forms differ in
 action (`paths.auth.totpVerify` vs `paths.auth.totpVerifySettings`) and hidden fields
 (`callbackURL` vs `csrf` + `totpuri` + `codes`), and the script keys off the form first
@@ -417,6 +430,10 @@ beside its twin.
 7. `§13 · a session minted by the device flow lists as "pmcp CLI · device flow" in the Sessions pane beside the browser session that rendered the page, which reads its own client with no device-flow suffix (the twin) — and the rail's Sessions marker counts both`
 8. `§13 · /settings/passkeys names a row the way the authenticator reported it: a passkey stored with a known AAGUID and no name lists as "Windows Hello", one with the all-zero AAGUID that privacy-preserving platforms report lists as "Passkey", the marker reads 2 and each row links its own Remove dialog · with none, the pane renders "No passkeys yet. Add one to sign in without a password." and the marker reads 0 (the twin)`
 9. `§4 · a day-old cookie is refused at BOTH passkey register endpoints with better-auth's SESSION_NOT_FRESH code — the GET options and the POST verify, the POST carrying an Origin so the refusal is the freshness gate and not the origin check, and a body that satisfies the endpoint's schema so it is not the validator either · from a session signed in moments ago the same two calls get past that gate, the GET answering 200 with a challenge and the POST failing the ceremony itself (the twin)`
+
+Reading row 6's twin: "the not-enrolled arm and the enabled arm" are the two arms as plain
+GETs of the pane — the regenerate reveal draws the enabled arm WITH the fresh set and its
+Copy control at 200, and that render is row 5's, not a counter-example to row 6.
 
 Placement, decided by the orchestrator 2026-09-03 before the rows landed: rows 1-6 in the
 new describe (they are the enrolment journey); rows 7 and 8 inside the existing panes
@@ -530,7 +547,9 @@ and this step follows that precedent.
 > missing features now" — flagged, reversible, not silently assumed.** (1) The QR encoder:
 > YES — `uqr` (zero-dependency, ESM, emits SVG, no Node built-ins), pinned exact, used only
 > in `enrollmentOf`; if the owner says no, the fallback below is a §13 amendment and a
-> one-commit revert. (2) `enrollment.error`: better-auth's own "Invalid code" verbatim, the
+> one-commit revert — and since the rows landed first (`5e6ef5d`), it also retitles rows 1
+> and 2 in their own `test:` commit: row 1 names the `data:image/svg+xml` QR, and row 2's
+> "no href … carries an otpauth:" forbids exactly the link the fallback draws. (2) `enrollment.error`: better-auth's own "Invalid code" verbatim, the
 > fixture corrected; the clock hint is one `refusalOf` mapping away if wanted. (3) The
 > abandoned enrolment: recorded as truthful, nothing changes; 3b observes it. The draft's
 > `@better-auth/utils` devDependency is replaced by a harness helper (§ Rows).

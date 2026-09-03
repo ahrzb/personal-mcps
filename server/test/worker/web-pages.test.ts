@@ -3177,9 +3177,48 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
   // session's User-Agent and nothing was left to name. The fix is on both sides of that
   // seam — identity forwards the header, model reads a label out of it — and this row
   // walks the whole seam as a browser does: three form sign-ins, one pane.
-  it.todo(
-    `§13 · the Client column names the browser and system a web session was signed in from — /login's translation forwards the browser's User-Agent to better-auth, so a Chrome-on-Windows sign-in through the form lists as "Chrome on Windows" and a Safari-on-iPhone one as "Safari on iPhone", never the raw string · a sign-in that sent no User-Agent lists as "Unknown client" (the twin)`,
-  );
+  it(`§13 · the Client column names the browser and system a web session was signed in from — /login's translation forwards the browser's User-Agent to better-auth, so a Chrome-on-Windows sign-in through the form lists as "Chrome on Windows" and a Safari-on-iPhone one as "Safari on iPhone", never the raw string · a sign-in that sent no User-Agent lists as "Unknown client" (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {});
+    await seedOwnerCredential(ns.owner.userId);
+    // /login's own form, posted as a browser posts it — `formPost` minus the header this
+    // row is about, because the header is the variable.
+    const signIn = async (userAgent?: string): Promise<string> => {
+      const answered = await call(
+        new Request(`${ORIGIN}${paths.auth.signIn}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Origin: ORIGIN,
+            ...(userAgent === undefined ? {} : { "User-Agent": userAgent }),
+          },
+          body: new URLSearchParams({
+            username: ns.owner.username,
+            password: SEEDED_OWNER_PASSWORD,
+          }).toString(),
+        }),
+      );
+      const cookie = sessionCookieOf(answered);
+      expect(cookie, `sign-in with User-Agent ${userAgent ?? "(none)"}`).not.toBeNull();
+      return cookie ?? "";
+    };
+    const chrome = await signIn(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    );
+    await signIn(
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    );
+    await signIn();
+
+    const text = textOf(await page(paths.settingsSessions, chrome));
+    // Chrome's string also says "Safari" and "Mac OS X" is in the iPhone's: the labels
+    // are what the lists picked, so a parse that took the first or last token would
+    // read something else here.
+    expect(text).toContain("Chrome on Windows");
+    expect(text).toContain("Safari on iPhone");
+    expect(text).toContain("Unknown client");
+    expect(text).not.toContain("Mozilla/");
+    expect(markerOf(await page(paths.settingsSessions, chrome), paths.settingsSessions)).toBe("3");
+  });
 
   it(`§13 · the session rendering /settings/sessions is badged current and offers no Revoke — no link on its row, and its own ?confirm=revoke-session draws no dialog · every other session's row carries both (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {});

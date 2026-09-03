@@ -42,7 +42,7 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ops } from "../../src/admin";
 import type { AdminOp } from "../../src/admin";
-import { APP_PANES } from "../../src/app-routes";
+import { APP_PANES, RESERVED_APP_SLUGS } from "../../src/app-routes";
 import { Approvals } from "../../src/approvals";
 import { query, record } from "../../src/audit";
 import type { AuditQuery, AuditRow } from "../../src/audit";
@@ -68,7 +68,7 @@ import {
 } from "../../src/registry";
 import type { App, AppCapability, GrantEntry } from "../../src/registry";
 import { beginConnect } from "../../src/upstream";
-import { registerOverride, upstreamUrlFor } from "../harness/fake-upstream";
+import { AS_HOST, registerOverride, upstreamUrlFor } from "../harness/fake-upstream";
 import type { AsScenario, UpstreamScenario } from "../harness/fake-upstream";
 import { seedApp, seedNamespace, seedOwnerCredential, seedOwnerSession, seedToken, SEEDED_OWNER_PASSWORD, uniqueSlug } from "../harness/seed";
 import { totpCode } from "../harness/totp";
@@ -912,15 +912,293 @@ describe("§4/§13 · cookie sessions are the only page credential", () => {
 });
 
 describe("§13/§8 · /apps/new — proxied states: field-scoped refusals, the URL rule, several at once, and the connecting page", () => {
-  it.todo("a refusal lands under the control it names — the field read off the refusal's own violations, never a substring of its message — with aria-invalid on that input and the op's sentence beneath it (capitalised, one period), the rest of the form echoed back at 400 and nothing created · a well-formed proxied headers create succeeds and lands on the created card (the twin)");
+  /** The sentence §8's endpoint rule produces, as the OP spells it (§13 shows it capitalised
+   *  with a period; both spellings are pinned below, from this one string). */
+  const ENDPOINT_REASON = `"endpoint" must be an https:// URL (http:// only for localhost)`;
+  const ENDPOINT_SHOWN = "Must be an https:// URL (http:// only for localhost).";
 
-  it.todo("a proxied endpoint must be an https:// URL — http:// only for localhost, 127.0.0.1 and [::1]: `not-a-url`, `mcp.example.com` and `http://mcp.example.com/mcp` are refused under Endpoint on the page and by app_create alike, `http://localhost:3000/mcp` and `https://mcp.example.com/mcp` pass (the twins), and app_update applies the same rule to a stored app");
+  /** The reserved page segment `app_create` refuses — read off the route table, never
+   *  spelled, so a segment added later is walked here with no edit. Its sentence names no
+   *  field in quotes at all, which is what makes it the discriminator these rows need: a
+   *  message SCAN files it under the whole form, and only the violation's own `field`
+   *  puts it under Slug. */
+  const RESERVED_SLUG = [...RESERVED_APP_SLUGS][0];
 
-  it.todo("two violations render two field errors at once — a reserved-route slug beside a bad endpoint, both inputs aria-invalid — and a single violation renders exactly one (the twin); a violation naming no control of the form is the whole-form message");
+  /** The add-app form as /apps/new drew it, filled the way a human fills it and posted with
+   *  the token that render carried. Every case here goes through this, so none can submit a
+   *  control the page never rendered (`typedInto` refuses one). */
+  async function submitNewApp(typed: Record<string, string>): Promise<Response> {
+    const rendered = await page(paths.appNew);
+    const [drawn] = formsPostingTo(rendered, paths.appCreate);
+    expect(drawn, "/apps/new rendered no create form").toBeDefined();
+    return post(paths.appCreate, typedInto(drawn, typed), { csrf: csrfOf(rendered) });
+  }
 
-  it.todo("a proxied OAuth create answers 200 with the connecting page — \"Connecting to <name>…\", the ten-minute sentence, \"Continue to <name>\" linking the provider's authorize URL (a state row minted for this session) and \"Not now\" linking the app's Overview pane — never the 303 the app page's own Connect keeps · a create whose discovery fails lands on that Overview pane with the connect notice, the app created (the twin)");
+  /** One field of the add-app form as it came back: whether its control is `aria-invalid`,
+   *  and the sentence drawn under it. Split on the field wrapper rather than parsed — the
+   *  same shallow walk every other case in this file does to HTML. */
+  function fieldOf(
+    html: string,
+    control: "name" | "slug" | "endpoint",
+  ): { invalid: boolean; error: string | null } {
+    const chunk = html.split(`<div class="field"`).find((part) => part.includes(`id="app-${control}"`)) ?? "";
+    const error = /<div class="field-error">([\s\S]*?)<\/div>/.exec(chunk)?.[1];
+    return { invalid: chunk.includes(`aria-invalid="true"`), error: error === undefined ? null : textOf(error) };
+  }
 
-  it.todo("a blank Name is not sent: the created app's name is its slug, and `name` is not a key the form can error on");
+  /** The whole-form message the card draws above the fields, or null. */
+  function formAlert(html: string): string | null {
+    const alert = /<div class="alert alert--danger">([\s\S]*?)<\/div>/.exec(html)?.[1];
+    return alert === undefined ? null : textOf(alert);
+  }
+
+  /** A page's links as label → href. The connecting card's two buttons are anchors, so a
+   *  walk over `<a>` is how "what the owner can click next" is described. */
+  function linksOf(html: string): Record<string, string> {
+    const found: Record<string, string> = {};
+    for (const anchor of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)) {
+      found[textOf(anchor[2])] = decodeEntities(attributeOf(anchor[1], "href") ?? "");
+    }
+    return found;
+  }
+
+  /** Every app slug this namespace holds — "nothing created" read the way §8 reports it. */
+  async function slugsOf(): Promise<string[]> {
+    const listed = (await ops.app_list.handler(world.ns.owner.userId, {})) as { apps: { slug: string }[] };
+    return listed.apps.map((app) => app.slug);
+  }
+
+  it("§13/§8 · a refusal lands under the control it names — the field read off the refusal's own violations, never a substring of its message — with aria-invalid on that input and the op's sentence beneath it (capitalised, one period), the rest of the form echoed back at 400 and nothing created · a well-formed proxied headers create succeeds and lands on the created card (the twin)", async () => {
+    const endpoint = "https://mcp.example.com/mcp";
+    const refused = await submitNewApp({
+      kind: "proxy",
+      authMode: "headers",
+      name: "Reserved",
+      slug: RESERVED_SLUG,
+      endpoint,
+    });
+    expect(refused.status).toBe(400);
+    const redrawn = await refused.text();
+
+    // Under Slug, with the control marked — and the sentence itself quotes no field name,
+    // so a substring scan over the message could not have put it there.
+    expect(fieldOf(redrawn, "slug")).toEqual({
+      invalid: true,
+      error: `The slug "${RESERVED_SLUG}" is reserved: /apps/${RESERVED_SLUG} is a page.`,
+    });
+    expect(fieldOf(redrawn, "slug").error).not.toContain(`"slug"`);
+    // …and nothing else is marked: one violation, one error.
+    expect(fieldOf(redrawn, "endpoint")).toEqual({ invalid: false, error: null });
+    expect(formAlert(redrawn)).toBeNull();
+
+    // The rest of the form echoed back, so nothing the owner typed has to be retyped.
+    const [echoed] = formsPostingTo(redrawn, paths.appCreate);
+    expect(echoed.slug).toBe(RESERVED_SLUG);
+    expect(echoed.endpoint).toBe(endpoint);
+    expect(echoed.name).toBe("Reserved");
+
+    // NOTHING CREATED: a refused create is not a create (§8).
+    expect(await slugsOf()).not.toContain(RESERVED_SLUG);
+
+    // The other three slug refusals §13's boards draw, each as the page yields it from the
+    // OP's own message — derived here rather than transcribed, because server/dev/fixtures'
+    // `slugReserved`, `slugInvalid` and `errors` carry exactly these strings.
+    for (const [typed, sentence] of [
+      [PMCP_SLUG, `The slug "${PMCP_SLUG}" is reserved for the builtin admin app.`],
+      ["News_Feed", "Is not a valid slug."],
+      ["news", "Already exists in this namespace."],
+    ] as const) {
+      const answered = await submitNewApp({ kind: "tunnel", name: "Board", slug: typed });
+      expect(answered.status, typed).toBe(400);
+      expect(fieldOf(await answered.text(), "slug").error, typed).toBe(sentence);
+    }
+
+    // THE TWIN: the same form, one legal slug on, lands on the created card.
+    const slug = uniqueSlug("proxied");
+    const created = await submitNewApp({ kind: "proxy", authMode: "headers", name: "Docs", slug, endpoint });
+    expect(created.status).toBe(200);
+    const card = textOf(await created.text());
+    expect(card).toContain("App created");
+    expect(card).toContain(slug);
+    const stored = (await ops.app_get.handler(world.ns.owner.userId, { slug })) as {
+      app: { endpoint: string; auth: string };
+    };
+    expect(stored.app).toMatchObject({ endpoint, auth: "headers" });
+  });
+
+  it("§13/§8 · a proxied endpoint must be an https:// URL — http:// only for localhost, 127.0.0.1 and [::1]: `not-a-url`, `mcp.example.com` and `http://mcp.example.com/mcp` are refused under Endpoint on the page and by app_create alike, `http://localhost:3000/mcp` and `https://mcp.example.com/mcp` pass (the twins), and app_update applies the same rule to a stored app", async () => {
+    const ownerId = world.ns.owner.userId;
+
+    for (const endpoint of ["not-a-url", "mcp.example.com", "http://mcp.example.com/mcp"]) {
+      const slug = uniqueSlug("bad");
+      const refused = await submitNewApp({ kind: "proxy", authMode: "headers", name: "Bad", slug, endpoint });
+      expect(refused.status, endpoint).toBe(400);
+      expect(fieldOf(await refused.text(), "endpoint"), endpoint).toEqual({
+        invalid: true,
+        error: ENDPOINT_SHOWN,
+      });
+      // The rule is the OP's, not the page's — the same string refused at the owner's
+      // trust boundary, and nothing stored.
+      await expect(
+        ops.app_create.handler(ownerId, { slug, kind: "proxy", endpoint }),
+        endpoint,
+      ).rejects.toThrow(ENDPOINT_REASON);
+      expect(await slugsOf(), endpoint).not.toContain(slug);
+    }
+
+    // THE TWINS: loopback over http and a remote over https both pass, through the page.
+    for (const endpoint of ["http://localhost:3000/mcp", "https://mcp.example.com/mcp"]) {
+      const slug = uniqueSlug("ok");
+      const created = await submitNewApp({ kind: "proxy", authMode: "headers", name: "Fine", slug, endpoint });
+      expect(created.status, endpoint).toBe(200);
+      const stored = (await ops.app_get.handler(ownerId, { slug })) as { app: { endpoint: string } };
+      expect(stored.app.endpoint, endpoint).toBe(endpoint);
+    }
+
+    // §8 names three loopback hosts and the form has one Endpoint box, so the other two
+    // spellings are walked at the op.
+    for (const endpoint of ["http://127.0.0.1:3000/mcp", "http://[::1]:3000/mcp"]) {
+      await expect(
+        ops.app_create.handler(ownerId, { slug: uniqueSlug("loop"), kind: "proxy", endpoint }),
+        endpoint,
+      ).resolves.toBeDefined();
+    }
+
+    // app_update applies the same rule to a stored app — at update as at create (§8).
+    const slug = uniqueSlug("stored");
+    await ops.app_create.handler(ownerId, { slug, kind: "proxy", endpoint: "https://mcp.example.com/mcp" });
+    await expect(
+      ops.app_update.handler(ownerId, { slug, endpoint: "http://mcp.example.com/mcp" }),
+    ).rejects.toThrow(ENDPOINT_REASON);
+    await expect(
+      ops.app_update.handler(ownerId, { slug, endpoint: "https://mcp.example.com/v2" }),
+    ).resolves.toBeDefined();
+    const after = (await ops.app_get.handler(ownerId, { slug })) as { app: { endpoint: string } };
+    expect(after.app.endpoint).toBe("https://mcp.example.com/v2");
+  });
+
+  it("§13 · two violations render two field errors at once — a reserved-route slug beside a bad endpoint, both inputs aria-invalid — and a single violation renders exactly one (the twin); a violation naming no control of the form is the whole-form message", async () => {
+    const refused = await submitNewApp({
+      kind: "proxy",
+      authMode: "headers",
+      name: "Both",
+      slug: RESERVED_SLUG,
+      endpoint: "mcp.example.com",
+    });
+    expect(refused.status).toBe(400);
+    const redrawn = await refused.text();
+    expect(fieldOf(redrawn, "slug")).toEqual({
+      invalid: true,
+      error: `The slug "${RESERVED_SLUG}" is reserved: /apps/${RESERVED_SLUG} is a page.`,
+    });
+    expect(fieldOf(redrawn, "endpoint")).toEqual({ invalid: true, error: ENDPOINT_SHOWN });
+    expect(formAlert(redrawn)).toBeNull();
+
+    // THE TWIN: one violation is one error, and the other control comes back clean.
+    const single = await submitNewApp({
+      kind: "proxy",
+      authMode: "headers",
+      name: "One",
+      slug: uniqueSlug("one"),
+      endpoint: "mcp.example.com",
+    });
+    const only = await single.text();
+    expect(fieldOf(only, "endpoint")).toEqual({ invalid: true, error: ENDPOINT_SHOWN });
+    expect(fieldOf(only, "slug")).toEqual({ invalid: false, error: null });
+    expect(formAlert(only)).toBeNull();
+
+    // A violation naming NO control of the form is the whole-form message. `roles` is such
+    // a field — app_create declares it and the add-app form draws no control for it, which
+    // is walked here rather than assumed — so its violation can only be reported whole-form.
+    const [drawn] = formsPostingTo(await page(paths.appNew), paths.appCreate);
+    expect(Object.keys(drawn)).not.toContain("roles");
+    await expect(
+      ops.app_create.handler(world.ns.owner.userId, {
+        slug: uniqueSlug("roles"),
+        kind: "proxy",
+        endpoint: "https://mcp.example.com/mcp",
+        roles: { all: [] },
+      }),
+      // The sentence the whole-form alert would draw from this is
+      // `Role name "all" is reserved.` — server/dev/fixtures' `errors.form`.
+    ).rejects.toMatchObject({
+      // On the error object, never on the wire's `data` (§7: -32003's alone).
+      violations: [{ field: "roles", reason: `"roles" role name "all" is reserved` }],
+    });
+  });
+
+  it("§13 · a proxied OAuth create answers 200 with the connecting page — \"Connecting to <name>…\", the ten-minute sentence, \"Continue to <name>\" linking the provider's authorize URL (a state row minted for this session) and \"Not now\" linking the app's Overview pane — never the 303 the app page's own Connect keeps · a create whose discovery fails lands on that Overview pane with the connect notice, the app created (the twin)", async () => {
+    const scenario: UpstreamScenario = {
+      id: uniqueSlug("up"),
+      mode: { kind: "ok" },
+      as: { id: uniqueSlug("as") } as AsScenario,
+    };
+    const slug = uniqueSlug("linear");
+    const answered = await submitNewApp({
+      kind: "proxy",
+      authMode: "oauth",
+      name: "Linear",
+      slug,
+      endpoint: upstreamUrlFor(scenario),
+    });
+    // A 200 RENDER, never a redirect: a page cannot open a tab without a script and a
+    // create must not depend on one (decision 30), so the owner is handed a link.
+    expect(answered.status).toBe(200);
+    const html = await answered.text();
+    const text = textOf(html);
+    expect(text).toContain("Connecting to Linear…");
+    expect(text).toContain("Finish signing in at Linear — this link expires in about 10 minutes.");
+
+    const links = linksOf(html);
+    expect(links["Not now"]).toBe(paths.appPane(slug, "overview"));
+    const authorize = new URL(links["Continue to Linear"] ?? "", ORIGIN);
+    expect(authorize.host).toBe(AS_HOST);
+    // The state the link carries is a row minted for THIS session, alive for §7's window.
+    const state = authorize.searchParams.get("state") ?? "";
+    const row = await (env.DB as D1Like)
+      .prepare(`SELECT session_id, expires_at FROM upstream_oauth_state WHERE state = ?`)
+      .bind(state)
+      .first<{ session_id: string; expires_at: number }>();
+    expect(row?.session_id).toBe(world.sessionId);
+    expect(row?.expires_at).toBeGreaterThan(Date.now());
+
+    // Never the 303 the app page's own Connect keeps — that route is untouched.
+    const csrf = csrfOf(await page(paths.apps));
+    expect((await post(paths.appConnect(slug), {}, { csrf })).status).toBe(303);
+
+    // THE TWIN: discovery fails and the app still exists, so the landing is its own
+    // Overview pane. The scenario names no authorization server at all, so both
+    // well-known documents answer 404 over an https:// endpoint the URL rule accepts.
+    const blind: UpstreamScenario = { id: uniqueSlug("up"), mode: { kind: "ok" } };
+    const other = uniqueSlug("blind");
+    const failed = await submitNewApp({
+      kind: "proxy",
+      authMode: "oauth",
+      name: "Blind",
+      slug: other,
+      endpoint: upstreamUrlFor(blind),
+    });
+    expect(failed.status).toBe(303);
+    const landing = new URL(failed.headers.get("Location") ?? "", ORIGIN);
+    expect(landing.pathname).toBe(paths.appPane(other, "overview"));
+    expect(landing.searchParams.get("failed")).toBe("connect");
+    await expect(ops.app_get.handler(world.ns.owner.userId, { slug: other })).resolves.toBeDefined();
+  });
+
+  it("§13/§8 · a blank Name is not sent: the created app's name is its slug, and `name` is not a key the form can error on", async () => {
+    const slug = uniqueSlug("unnamed");
+    const created = await submitNewApp({ kind: "tunnel", name: "", slug });
+    expect(created.status).toBe(200);
+    const stored = (await ops.app_get.handler(world.ns.owner.userId, { slug })) as { app: { name: string } };
+    expect(stored.app.name).toBe(slug);
+
+    // …and a refusal marks the control it named while Name comes back clean: §8 defaults
+    // the field, so no refusal can ever name it (§13 — the form has no Name error).
+    const refused = await submitNewApp({ kind: "tunnel", name: "", slug: RESERVED_SLUG });
+    const redrawn = await refused.text();
+    expect(fieldOf(redrawn, "slug").invalid).toBe(true);
+    expect(fieldOf(redrawn, "name")).toEqual({ invalid: false, error: null });
+  });
 });
 
 describe("§8/§13 · one paging contract, two presentations", () => {

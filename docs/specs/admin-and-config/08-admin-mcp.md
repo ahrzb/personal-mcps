@@ -35,10 +35,12 @@ Tools (names final, shapes reviewed at implementation time):
   runs Connect (`auth: oauth`) or `app_set_upstream_auth` (`auth: headers`);
   `pmcp diff` flags a mode flip as destructive in the plan. *(2026-09-03, step 11:)* A
   refused create or update reports **every** violation at once, not the first: the
-  `-32602` error's `data.violations` is a list of `{ field, reason }` — the op's own
-  field names (`slug`, `endpoint`, `roles`, …) — and its `message` joins the same
-  sentences with `; `, so `pmcp` prints them all and the add-app page places each under
-  its control (§13). `app_set_upstream_auth`
+  `-32602` error carries a `violations` list of `{ field, reason }` — the op's own field
+  names (`slug`, `endpoint`, `roles`, …) — on the error object its in-process callers read
+  (the add-app page places each under its control, §13), and its `message` joins the same
+  sentences with `; `, which is all the wire carries: `data` stays `-32003`'s alone (§7),
+  so `pmcp` prints every sentence and no refusal is distinguishable by shape.
+  `app_set_upstream_auth`
   is rejected on `auth: oauth` apps, and the Connect flow (§7) is rejected on
   `auth: headers` ones — each mode has exactly one credential path. `app_list` /
   `app_get` additionally report the OAuth connection status for `auth: oauth`

@@ -39,10 +39,11 @@ import {
   Registry,
   RegistryRefusal,
   APP_CAPABILITIES,
+  patchViolations,
   SLUG_CHARSET,
   writeOnlyPaths,
 } from "./registry";
-import type { GrantEntry, RoleDeclaration, Agent, AppDetail } from "./registry";
+import type { GrantEntry, RoleDeclaration, Agent, AppDetail, Violation } from "./registry";
 import { CLOSE_ARCHIVED, CLOSE_REVOKED, sever, status, wipe } from "./tunnel";
 import { connectionStatus, disconnect, setHeaders } from "./upstream";
 import type { UpstreamConnectionStatus } from "./upstream";
@@ -226,7 +227,7 @@ function parseInput(schema: OpSchema, input: unknown): Record<string, unknown> {
   for (const [name, field] of Object.entries(schema.fields)) {
     const value = given[name];
     if (value === undefined) {
-      if (field.optional === undefined) throw invalid(`"${name}" is required`);
+      if (field.optional === undefined) throw refuse(name, `"${name}" is required`);
       continue;
     }
     parsed[name] = coerce(name, field, value);
@@ -236,19 +237,19 @@ function parseInput(schema: OpSchema, input: unknown): Record<string, unknown> {
 
 function coerce(name: string, field: Field, value: unknown): unknown {
   const bad = (): never => {
-    throw invalid(`"${name}" has the wrong type`);
+    throw refuse(name, `"${name}" has the wrong type`);
   };
   switch (field.kind) {
     case "slug":
       if (typeof value !== "string") bad();
       // The same regex `render` put in the schema: what the tool advertises is what the
       // table refuses, on read ops as much as on the creates registry also checks.
-      if (!SLUG_CHARSET.test(value as string)) throw invalid(`"${name}" is not a valid slug`);
+      if (!SLUG_CHARSET.test(value as string)) throw refuse(name, `"${name}" is not a valid slug`);
       return value;
     case "text":
       if (typeof value !== "string") bad();
       if (field.values && !field.values.includes(value as string)) {
-        throw invalid(`"${name}" is not one of the values this tool accepts`);
+        throw refuse(name, `"${name}" is not one of the values this tool accepts`);
       }
       return value;
     case "flag":
@@ -262,7 +263,7 @@ function coerce(name: string, field: Field, value: unknown): unknown {
       const values = field.values;
       // The same closed set `render` put in the schema, refused where it is declared.
       if (values && !(value as string[]).every((entry) => values.includes(entry))) {
-        throw invalid(`"${name}" is not one of the values this tool accepts`);
+        throw refuse(name, `"${name}" is not one of the values this tool accepts`);
       }
       return value;
     }
@@ -320,6 +321,26 @@ function invalid(message: string): HubError {
 }
 
 /**
+ * The same -32602 as a LIST (§8): `violations` is every violation the call found, in the
+ * op's own field names, and `message` joins their sentences with `; ` — so `pmcp` prints
+ * them all and §13's add-app form places each under the control it names. The list rides
+ * the error object for in-process callers and never the wire: `data` is -32003's alone
+ * (§7), so the mapping serializes code and message and nothing else. The one builder,
+ * because the two halves may never disagree: the message a caller reads is the list a
+ * caller parses, spelled out.
+ */
+function refusedWith(violations: readonly Violation[]): HubError {
+  const refusal = invalid(violations.map((violation) => violation.reason).join("; "));
+  refusal.violations = violations;
+  return refusal;
+}
+
+/** A refusal about ONE named input — the shape almost every check below produces. */
+function refuse(field: string, sentence: string): HubError {
+  return refusedWith([{ field, reason: sentence }]);
+}
+
+/**
  * "There is nothing here by that name", for every named thing an op can miss. One message
  * per family and no name echoed: a namespace's contents are not a caller's to enumerate
  * through error prose, and the caller already knows what they asked for.
@@ -344,9 +365,49 @@ async function domain<T>(work: Promise<T>): Promise<T> {
   try {
     return await work;
   } catch (err) {
-    if (err instanceof RegistryRefusal) throw invalid(err.message);
+    // The refusal's own list rides along, so EVERY -32602 out of these ops carries one —
+    // including the single-violation refusal a race produces after the ops already looked.
+    if (err instanceof RegistryRefusal) throw refusedWith(err.violations);
     throw err;
   }
+}
+
+/**
+ * §8's endpoint rule, at the OWNER'S TRUST BOUNDARY and deliberately not in the registry:
+ * an `https://` URL, or `http://` to loopback, and nothing else — refused at create and
+ * update alike, before anything is stored or dialed. It lives here because the registry is
+ * a storage layer whose seeds and fixtures store what they like (decision 30, 2026-09-03),
+ * and because the field this names is the OP's (`endpoint`), which the registry has never
+ * heard of.
+ */
+function endpointViolation(endpoint: string): Violation | null {
+  // deps: URL
+  const url = parseUrl(endpoint);
+  if (url?.protocol === "https:") return null;
+  if (url?.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) return null;
+  return { field: "endpoint", reason: `"endpoint" must be an https:// URL (http:// only for localhost)` };
+}
+
+/** The three hosts §8 lets `http://` reach. URL's `hostname` keeps the brackets on an
+ *  IPv6 literal, which is why the third entry carries them. */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** A URL, or null — a scheme-less host is a caller's typo, not an exception. */
+function parseUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+/** The endpoint rule as a list, applied whenever the field is present at all — an absent
+ *  `endpoint` is a different refusal (the registry's "required for a proxied app"). */
+function endpointViolations(parsed: Record<string, unknown>): Violation[] {
+  const endpoint = parsed.endpoint;
+  if (typeof endpoint !== "string") return [];
+  const violation = endpointViolation(endpoint);
+  return violation === null ? [] : [violation];
 }
 
 /**
@@ -358,9 +419,16 @@ async function domain<T>(work: Promise<T>): Promise<T> {
  */
 function assertSlugNotReserved(slug: string): void {
   // deps: errors.HubError
-  if (slug === PMCP_SLUG) {
-    throw invalid(`the slug "${PMCP_SLUG}" is reserved for the builtin admin app`);
-  }
+  const violation = reservedSlugViolation(slug);
+  if (violation !== null) throw refusedWith([violation]);
+}
+
+/** The same reservation as a VIOLATION, for `app_create` — which collects rather than
+ *  throws, so its refusal can name a bad endpoint in the same breath (§8). */
+function reservedSlugViolation(slug: string): Violation | null {
+  return slug === PMCP_SLUG
+    ? { field: "slug", reason: `the slug "${PMCP_SLUG}" is reserved for the builtin admin app` }
+    : null;
 }
 
 /**
@@ -373,11 +441,18 @@ function assertSlugNotReserved(slug: string): void {
  * Only create refuses these: no existing app can hold such a slug, so the ops that take one
  * would be refusing a row that cannot exist.
  */
-function assertSlugNotARoute(slug: string): void {
-  // deps: app-routes.RESERVED_APP_SLUGS · errors.HubError
-  if (RESERVED_APP_SLUGS.has(slug)) {
-    throw invalid(`the slug "${slug}" is reserved: /apps/${slug} is a page`);
-  }
+function routeSlugViolation(slug: string): Violation | null {
+  // deps: app-routes.RESERVED_APP_SLUGS
+  return RESERVED_APP_SLUGS.has(slug)
+    ? { field: "slug", reason: `the slug "${slug}" is reserved: /apps/${slug} is a page` }
+    : null;
+}
+
+/** Both slug reservations as one list — `app_create`'s own half of its violations. */
+function slugViolations(slug: string): Violation[] {
+  return [reservedSlugViolation(slug), routeSlugViolation(slug)].filter(
+    (violation): violation is Violation => violation !== null,
+  );
 }
 
 // ── what every op needs before it can act ─────────────────────────────────────────────
@@ -767,25 +842,36 @@ export const ops: Record<string, AdminOp> = {
       },
     },
     async run(ownerId, parsed) {
-      // deps: registry.createApp · registry.validateRoles · audit.record
+      // deps: registry.violationsOf · registry.createApp · audit.record
       const slug = parsed.slug as string;
       const kind = parsed.kind as "tunnel" | "proxy";
-      assertSlugNotReserved(slug);
-      assertSlugNotARoute(slug);
-      const created = await domain(
-        registry().createApp({
-          ownerId,
-          slug,
-          kind,
-          ...commonFields(parsed),
-          ...proxyFields(parsed),
-          // registry takes a concrete name; §8 lets the owner omit one.
-          name: (parsed.name as string) ?? slug,
-          // §8's default for the one proxy-only field that has one; registry stores what
-          // it is given, so "default 'headers'" is resolved here, where §8 states it.
-          ...(kind === "proxy" && parsed.auth === undefined ? { upstreamAuthMode: "headers" as const } : {}),
-        }),
-      );
+      const draft = {
+        ownerId,
+        slug,
+        kind,
+        ...commonFields(parsed),
+        ...proxyFields(parsed),
+        // registry takes a concrete name; §8 lets the owner omit one.
+        name: (parsed.name as string) ?? slug,
+        // §8's default for the one proxy-only field that has one; registry stores what
+        // it is given, so "default 'headers'" is resolved here, where §8 states it.
+        ...(kind === "proxy" && parsed.auth === undefined ? { upstreamAuthMode: "headers" as const } : {}),
+      };
+      // §8's "every violation at once": this op's own two checks and the registry's, asked
+      // before either is thrown, so a reserved slug and a bad endpoint arrive together. A
+      // registry violation on a field this op already refused is the SAME fact in the
+      // storage layer's words (`pmcp`), so it is dropped rather than said twice.
+      const own = [...slugViolations(slug), ...endpointViolations(parsed)];
+      const violations = [
+        ...own,
+        ...(await registry().violationsOf(draft)).filter(
+          (violation) => !own.some((mine) => mine.field === violation.field),
+        ),
+      ];
+      if (violations.length > 0) throw refusedWith(violations);
+      // createApp validates again, atomically — which is what makes a slug taken between
+      // the look and the write a refusal rather than a stored row (`domain` renders it).
+      const created = await domain(registry().createApp(draft));
       await summarise(ownerId, "app_create", { slug, kind }, slug);
       return { app: await appRow(created) };
     },
@@ -807,11 +893,15 @@ export const ops: Record<string, AdminOp> = {
       fields: { slug: SLUG_FIELD, ...APP_FIELDS },
     },
     async run(ownerId, parsed) {
-      // deps: registry.updateApp · registry.validateRoles · audit.record
+      // deps: registry.patchViolations · registry.updateApp · audit.record
       const slug = parsed.slug as string;
       const before = await app(ownerId, slug);
       const flipped = parsed.auth !== undefined && parsed.auth !== before.upstreamAuthMode;
       const patch = { ...commonFields(parsed), ...proxyFields(parsed) };
+      // The same "every violation at once" as create, over the same two sources: the URL
+      // rule this op owns, and the checks updateApp would have thrown at.
+      const violations = [...endpointViolations(parsed), ...patchViolations(before.kind, patch)];
+      if (violations.length > 0) throw refusedWith(violations);
       const updated = await domain(registry().updateApp(before.id, patch));
       // The field NAMES, not their values: several are configuration an owner wants to see
       // changed in the ledger, and none of them is a credential (§8's write-only pair is

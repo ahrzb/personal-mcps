@@ -1,14 +1,6 @@
 {
   "artboards": [
     {
-      "file": "AppNewProxiedStates.dc.html",
-      "x": 3572,
-      "y": 0,
-      "w": 480,
-      "h": 2267,
-      "title": "Add app · Proxied states"
-    },
-    {
       "file": "OauthConsentStates.dc.html",
       "x": 3240,
       "y": 3620,

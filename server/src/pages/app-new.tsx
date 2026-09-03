@@ -1,7 +1,8 @@
 /**
  * /apps/new — the add-app form (AppNew.dc.html / MobileAppNew.dc.html)
- * and its two follow-on renders (AppNewStates.dc.html): the once-only token reveal
- * for a tunneled app, and the same receipt one card lighter for a proxied one.
+ * and its three follow-on renders: the once-only token reveal for a tunneled app and the
+ * same receipt one card lighter for a proxied one (AppNewStates.dc.html), plus the
+ * connecting card an `auth: oauth` create answers with (AppNewProxiedStates.dc.html).
  *
  * Chromeless like /login and /device (model.ts): no nav, no `Layout` shell — `Layout`
  * is built for the four-section signed-in chrome and this page's props carry no
@@ -89,10 +90,11 @@ const FormCard: FC<{ username: string; csrfToken: string; form: AppNewForm; erro
       </div>
 
       <div class="form">
+        {/* No `required` and no error slot: §8 defaults a blank Name to the slug, so the
+            form neither demands one nor can be refused over one (§13). */}
         <div class="field">
           <label for="app-name">Name</label>
-          <input id="app-name" type="text" name="name" value={form.name} required aria-invalid={errors.name ? "true" : undefined} />
-          {errors.name ? <div class="field-error">{errors.name}</div> : null}
+          <input id="app-name" type="text" name="name" value={form.name} />
         </div>
 
         <div class="field">
@@ -228,6 +230,33 @@ const CreatedCard: FC<{ step: Extract<AppNewStep, { kind: "created" }> }> = ({ s
   </div>
 );
 
+/**
+ * The `auth: oauth` receipt (AppNewProxiedStates · CONNECTING). A LINK, not a redirect and
+ * not a script: §18 decision 30 settled that a create must not depend on a tab a page
+ * cannot open, so the owner clicks "Continue to <name>" and the same-tab flow §7 already
+ * runs takes over. "Not now" leaves the app in place — it exists, and its own page carries
+ * Connect for later.
+ */
+const ConnectingCard: FC<{ step: Extract<AppNewStep, { kind: "connecting" }> }> = ({ step }) => (
+  <div class="auth-card">
+    <div>
+      <div class="auth-title">Connecting to {step.name}…</div>
+      <div class="auth-desc">
+        Finish signing in at {step.name} — this link expires in about 10 minutes.
+      </div>
+    </div>
+
+    <div class="actions">
+      <a class="btn" href={paths.appPane(step.slug, "overview")}>
+        Not now
+      </a>
+      <a class="btn btn--primary" href={step.url}>
+        Continue to {step.name}
+      </a>
+    </div>
+  </div>
+);
+
 export const AppNewPage: FC<AppNewProps> = ({ username, csrfToken, step }) => (
   <>
     {html`<!doctype html>`}
@@ -251,6 +280,8 @@ export const AppNewPage: FC<AppNewProps> = ({ username, csrfToken, step }) => (
           </div>
           {step.kind === "form" ? (
             <FormCard username={username} csrfToken={csrfToken} form={step.form} errors={step.errors} />
+          ) : step.kind === "connecting" ? (
+            <ConnectingCard step={step} />
           ) : (
             <CreatedCard step={step} />
           )}

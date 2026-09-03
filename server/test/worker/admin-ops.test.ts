@@ -31,7 +31,8 @@
 //
 // deps: harness/seed (namespace fixture: owner, one tunneled + one proxied app, one
 //   agent, one token per kind) · ../../src/admin (ops, adminBackend) ·
-//   ../../src/registry · ../../src/identity · ../../src/audit · ../../src/approvals (the
+//   ../../src/registry · ../../src/identity · ../../src/audit · ../../src/errors (CODES —
+//   the refusal code the violations list rides on) · ../../src/approvals (the
 //   gate the one `fixture:approval.pending` sample is opened through — the seed harness
 //   has no approval seam, by design) · applyD1Migrations (setup) · env.DB
 
@@ -42,6 +43,7 @@ import { RESERVED_APP_SLUGS } from "../../src/app-routes";
 import { Approvals } from "../../src/approvals";
 import { query, record } from "../../src/audit";
 import type { AuditEntry, AuditRow } from "../../src/audit";
+import { CODES } from "../../src/errors";
 import type { BackendCtx, Tool } from "../../src/gateway";
 import { upsertBinding } from "../../src/oauth";
 import { tokenPattern } from "../../src/principal";
@@ -1338,6 +1340,94 @@ describe(`§8/§13 · the ops behind the Access panes, and the reserved app slug
   });
 });
 
+/**
+ * One refused call as an in-process caller sees it — the code, the message, the
+ * `violations` list the error object carries (§8) and whatever `data` it would put on the
+ * wire (§7: nothing, for a -32602). Throws when the call succeeded, so a row can never go
+ * green because nothing was refused at all. Deliberately not `refusalOfSlug`: that one
+ * always calls `app_create` with a tunneled draft and reads no list.
+ */
+async function wireRefusalOf(work: () => Promise<unknown>): Promise<{
+  code: unknown;
+  message: string;
+  violations: { field: string; reason: string }[] | undefined;
+  data: unknown;
+}> {
+  try {
+    await work();
+  } catch (thrown) {
+    const error = thrown as { code?: unknown; message?: string; violations?: unknown; data?: unknown };
+    return {
+      code: error.code,
+      message: String(error.message),
+      violations: error.violations as { field: string; reason: string }[] | undefined,
+      data: error.data,
+    };
+  }
+  throw new Error("the op accepted what this row expects it to refuse");
+}
+
 describe("§8 · a refused app_create or app_update reports every violation at once", () => {
-  it.todo("the -32602 refusal's data.violations lists each violation as { field, reason } in the op's own field names — slug and endpoint together for a reserved-route slug with a plain-http endpoint — and its message joins the same sentences with \"; \" · one violation is a one-entry list and the same message (the twin); nothing is created or updated on a refusal");
+  it("the -32602 refusal carries each violation as { field, reason } in the op's own field names on the error object — slug and endpoint together for a reserved-route slug with a plain-http endpoint — its message joins the same sentences with \"; \", and the wire gets no data (§7: -32003's alone) · one violation is a one-entry list and the same message (the twin); nothing is created or updated on a refusal (retitled 2026-09-03: the list left `data` for §7's wire rule)", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+    const before = ((await ops.app_list.handler(ownerId, {})) as { apps: { slug: string }[] }).apps.map(
+      (app) => app.slug,
+    );
+
+    // TWO AT ONCE, and neither is the other's consequence: `new` is a page the router
+    // already mounts, and the endpoint is plain http to a remote host. A first-violation
+    // refusal reports one of these and leaves the owner to discover the second.
+    const reserved = [...RESERVED_APP_SLUGS][0];
+    const both = await wireRefusalOf(() =>
+      ops.app_create.handler(ownerId, {
+        slug: reserved,
+        kind: "proxy",
+        endpoint: "http://mcp.example.com/mcp",
+      }),
+    );
+    expect(both.code).toBe(CODES.invalidParams);
+    expect(both.violations).toEqual([
+      { field: "slug", reason: `the slug "${reserved}" is reserved: /apps/${reserved} is a page` },
+      { field: "endpoint", reason: `"endpoint" must be an https:// URL (http:// only for localhost)` },
+    ]);
+    // The message is the same sentences and nothing else — `pmcp` prints it, so it may not
+    // become prose the list does not contain (§8).
+    expect(both.message).toBe((both.violations ?? []).map((violation) => violation.reason).join("; "));
+    // And the list never reaches the wire: `data` is -32003's alone (§7), so the mapping
+    // that serializes code, message and data has nothing extra to send here.
+    expect(both.data, "a -32602 carries no data on the wire").toBeUndefined();
+
+    // THE TWIN: one violation is a one-entry list carrying that same one sentence, so a
+    // single refusal reads exactly as it did before the list existed.
+    const one = await wireRefusalOf(() =>
+      ops.app_create.handler(ownerId, {
+        slug: uniqueSlug("app"),
+        kind: "proxy",
+        endpoint: "mcp.example.com",
+      }),
+    );
+    expect(one.code).toBe(CODES.invalidParams);
+    expect(one.violations).toEqual([
+      { field: "endpoint", reason: `"endpoint" must be an https:// URL (http:// only for localhost)` },
+    ]);
+    expect(one.message).toBe(`"endpoint" must be an https:// URL (http:// only for localhost)`);
+
+    // app_update refuses through the same list, and the app it refused is untouched.
+    const updated = await wireRefusalOf(() =>
+      ops.app_update.handler(ownerId, { slug: NOTION, endpoint: "http://mcp.example.com/mcp" }),
+    );
+    expect(updated.code).toBe(CODES.invalidParams);
+    expect(updated.violations).toEqual([
+      { field: "endpoint", reason: `"endpoint" must be an https:// URL (http:// only for localhost)` },
+    ]);
+    const stored = (await ops.app_get.handler(ownerId, { slug: NOTION })) as { app: { endpoint: string } };
+    expect(stored.app.endpoint).toBe(UPSTREAM_URL);
+
+    // NOTHING CREATED: a refused create is not a create (§8), whichever half refused it.
+    const after = ((await ops.app_list.handler(ownerId, {})) as { apps: { slug: string }[] }).apps.map(
+      (app) => app.slug,
+    );
+    expect(after).toEqual(before);
+  });
 });

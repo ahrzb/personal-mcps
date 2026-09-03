@@ -11,6 +11,9 @@
 // consumer only through gateway.toWire, which stays the one place a JSON-RPC error object
 // is built.
 
+/** One thing an admin op refused, in the op's own field name (§8) — see `HubError.violations`. */
+export type Violation = { field: string; reason: string };
+
 /**
  * The hub's one error vocabulary. `code` is a code from the pinned table — -32000
  * app unavailable · -32001 tool not permitted / unknown (deliberately
@@ -33,6 +36,15 @@ export class HubError extends Error {
    * anywhere else: classes and bare numbers, never a status line, header, or body.
    */
   auditDetail?: Record<string, unknown>;
+  /**
+   * §8's field-scoped list behind a `-32602` from an admin op — every violation the call
+   * found, in the op's own field names — for the in-process callers that place each
+   * sentence under a control (the add-app page). Like `auditDetail`, never serialized:
+   * the wire carries `code` and `message` (the same sentences joined with `; `) and
+   * `data` stays -32003's alone (§7), which is what keeps every other refusal
+   * indistinguishable by shape.
+   */
+  violations?: readonly Violation[];
   /** `message` must already respect log hygiene (§15): no secrets, no upstream bodies. */
   constructor(code: number, message: string, data?: unknown) {
     // deps: none

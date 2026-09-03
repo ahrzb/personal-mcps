@@ -885,26 +885,17 @@ export class Registry {
    * as patterns (assertRedactKeys): storing one that cannot is fail-open masking.
    * An absent `logBodies` resolves here, by kind (tunnel true, proxy false,
    * §15) — the stored column is always concrete, never "default".
+   *
+   * Every one of those rejections is found before any of them is thrown: the refusal
+   * carries the WHOLE list (violationsOf), so an owner fixing a draft learns all of it at
+   * once rather than one field per round trip (§8).
    */
   async createApp(draft: AppDraft): Promise<AppDetail> {
-    // deps: validateRoles · D1 `app` · crypto
-    assertSlug(draft.slug);
-    if (draft.slug === PMCP_SLUG) {
-      throw new RegistryRefusal("slug", `"${PMCP_SLUG}" is reserved for the builtin`);
-    }
+    // deps: violationsOf · D1 `app` · crypto
+    const violations = await this.violationsOf(draft);
+    if (violations.length > 0) throw RegistryRefusal.of(violations);
     const proxied = draft.kind === "proxy";
-    if (proxied && !draft.upstreamUrl) {
-      throw new RegistryRefusal("upstreamUrl", "is required for a proxied app");
-    }
-    assertKindFields(draft.kind, draft);
     const roles = draft.roles ?? {};
-    assertRoles(roles);
-    assertCapabilities(draft.capabilities);
-    assertRedactKeys("redact", draft.redact);
-    assertRedactKeys("redactResults", draft.redactResults);
-    if (await this.getApp(draft.ownerId, draft.slug)) {
-      throw new RegistryRefusal("slug", "already exists in this namespace");
-    }
 
     const row: AppRow = {
       // Opaque and fresh: never derived from user/slug, so a recreated slug can never be
@@ -960,6 +951,40 @@ export class Registry {
   }
 
   /**
+   * Everything wrong with a draft, all of it — the checks createApp would have thrown at,
+   * collected in the order it makes them (§8: a refusal reports every violation at once).
+   * `createApp` calls this itself, so a caller that asks first and creates second is
+   * validated twice rather than once-and-hopefully: the second pass is what makes a racing
+   * duplicate a refusal instead of a stored row.
+   *
+   * The proxied-endpoint violation names `endpoint` and not `upstreamUrl`: the caller
+   * typed the op's field name and gets it back (§8). What an https:// URL *is* is not
+   * asked here — the endpoint rule lives at the ops, because this module is a storage
+   * layer and its seeds store what they like (decision 30).
+   */
+  async violationsOf(draft: AppDraft): Promise<Violation[]> {
+    // deps: assertSlug · patchViolations · D1 `app` (the exists read)
+    const found = collect([
+      () => assertSlug(draft.slug),
+      () => {
+        if (draft.slug === PMCP_SLUG) {
+          throw new RegistryRefusal("slug", `"${PMCP_SLUG}" is reserved for the builtin`);
+        }
+      },
+      () => {
+        if (draft.kind === "proxy" && !draft.upstreamUrl) {
+          throw new RegistryRefusal("endpoint", "is required for a proxied app");
+        }
+      },
+    ]);
+    found.push(...patchViolations(draft.kind, draft));
+    if (await this.getApp(draft.ownerId, draft.slug)) {
+      found.push({ field: "slug", reason: `"slug" already exists in this namespace` });
+    }
+    return found;
+  }
+
+  /**
    * Patches one app row. Kind is unpatchable by construction. The
    * PROXY_ONLY fields are writable for proxied rows only — the same set
    * createApp refuses on a tunneled draft, through the same check (tunneled
@@ -972,14 +997,11 @@ export class Registry {
    * for that wipe is the caller's. Throws on an unknown id.
    */
   async updateApp(appId: string, patch: AppPatch): Promise<AppDetail> {
-    // deps: validateRoles · D1 `app`
+    // deps: patchViolations · D1 `app`
     const row = await this.row(appId);
     if (!row) throw new Error(`no app with id "${appId}"`);
-    assertKindFields(row.kind, patch);
-    if (patch.roles !== undefined) assertRoles(patch.roles);
-    assertCapabilities(patch.capabilities);
-    assertRedactKeys("redact", patch.redact);
-    assertRedactKeys("redactResults", patch.redactResults);
+    const violations = patchViolations(row.kind, patch);
+    if (violations.length > 0) throw RegistryRefusal.of(violations);
 
     const columns: string[] = [];
     const values: unknown[] = [];
@@ -1480,10 +1502,69 @@ function assertKindFields(kind: AppKind, fields: ProxyOnlyFields): void {
  * Every other throw out of this module is an invariant violation and stays a plain Error.
  */
 export class RegistryRefusal extends Error {
+  readonly violations: readonly Violation[];
   constructor(
     readonly field: string,
     readonly reason: string,
+    /** Several at once — `of` below is how a caller builds one; the default is the single
+     *  case, whose `message` is therefore byte-identical to what it always was. */
+    violations: readonly Violation[] = [{ field, reason: `"${field}" ${reason}` }],
   ) {
-    super(`"${field}" ${reason}`);
+    super(violations.map((violation) => violation.reason).join("; "));
+    this.violations = violations;
   }
+
+  /** One refusal carrying EVERY violation a write path found (§8), rather than the first.
+   *  `field`/`reason` name the first of them, so the pair still reads as it always did. */
+  static of(violations: readonly Violation[]): RegistryRefusal {
+    return new RegistryRefusal(violations[0].field, violations[0].reason, violations);
+  }
+}
+
+/**
+ * One thing wrong with a draft or a patch: the INPUT FIELD it is about, and the whole
+ * sentence naming it. §8 pins the pair as the wire shape of a refusal's `data.violations`,
+ * so an owner (and §13's add-app form) learns every mistake in one round trip rather than
+ * one per attempt. `field` is the OP's field name where the two spellings differ — the
+ * caller typed `endpoint`, never this module's `upstreamUrl`.
+ */
+import type { Violation } from "./errors";
+export type { Violation };
+
+/**
+ * The checks a draft and a patch share, COLLECTED rather than thrown at the first — every
+ * one runs, and each contributes its own sentence. Shared by createApp and updateApp so
+ * neither can validate what the other does not, and exported so admin's ops can merge
+ * these with the checks that belong at the owner's trust boundary (§8) before either
+ * write path is entered.
+ */
+export function patchViolations(kind: AppKind, patch: AppPatch): Violation[] {
+  // deps: assertKindFields · assertRoles · assertCapabilities · assertRedactKeys
+  return collect([
+    () => assertKindFields(kind, patch),
+    () => {
+      if (patch.roles !== undefined) assertRoles(patch.roles);
+    },
+    () => assertCapabilities(patch.capabilities),
+    () => assertRedactKeys("redact", patch.redact),
+    () => assertRedactKeys("redactResults", patch.redactResults),
+  ]);
+}
+
+/** Every check's violations, in the order the checks are listed. The checks THROW — they
+ *  are the same functions the single-refusal paths use — so this is the one place a
+ *  RegistryRefusal is turned back into the list it carries. */
+function collect(checks: (() => void)[]): Violation[] {
+  const found: Violation[] = [];
+  for (const check of checks) {
+    try {
+      check();
+    } catch (err) {
+      // Anything that is not a refusal is a bug and must not be collected into an owner's
+      // "you asked wrongly" list (the class comment above draws that line).
+      if (!(err instanceof RegistryRefusal)) throw err;
+      found.push(...err.violations);
+    }
+  }
+  return found;
 }

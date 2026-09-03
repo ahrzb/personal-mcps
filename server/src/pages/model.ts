@@ -1194,21 +1194,29 @@ export type AppNewForm = {
 
 /**
  * Field-scoped validation messages, keyed by the control they sit under.
- * "form" is the whole-form message (a create that failed for a reason no single
- * field owns). Every key is optional; an empty object is a clean form.
+ * "form" is the whole-form message (a violation naming no control of the form —
+ * roles, redaction paths). Every key is optional; an empty object is a clean form.
+ *
+ * NO `name` key, deliberately: §8 makes the field optional and defaults it to the
+ * slug, and a blank one is not sent at all, so no refusal can ever name it (§13).
  */
-export type AppNewErrors = Partial<Record<"name" | "slug" | "endpoint" | "form", string>>;
+export type AppNewErrors = Partial<Record<"slug" | "endpoint" | "form", string>>;
 
 /**
- * The form, then its receipt. `created` is the TOKEN REVEAL state of
+ * The form, then one of its two receipts. `created` is the TOKEN REVEAL state of
  * AppNewStates.dc.html: `token` is the plaintext app token, present in
  * this one render and never recoverable afterwards (§4) — null for proxied
- * apps, which have no token to show. An `auth: oauth` create never reaches
- * this state at all: it redirects into the provider's consent screen (§7).
+ * apps, which have no token to show.
+ *
+ * `connecting` is the `auth: oauth` receipt (AppNewProxiedStates · CONNECTING): the app
+ * exists, `url` is the provider's authorize URL with a state minted for this session, and
+ * the owner clicks it. A 200 render and never a redirect — a page cannot open a tab
+ * without a script and a create must not depend on one (§18 decision 30).
  */
 export type AppNewStep =
   | { kind: "form"; form: AppNewForm; errors: AppNewErrors }
-  | { kind: "created"; slug: string; name: string; token: string | null };
+  | { kind: "created"; slug: string; name: string; token: string | null }
+  | { kind: "connecting"; slug: string; name: string; url: string };
 
 /**
  * /apps/new — a chromeless card page like /login, so it carries `username`

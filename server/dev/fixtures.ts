@@ -1337,7 +1337,8 @@ const appNew = {
     },
   },
 
-  /** AppNewStates "SLUG ERROR": the reserved builtin, refused uniformly (§8). */
+  /** AppNewStates "SLUG ERROR": the reserved builtin, refused uniformly (§8). The sentence
+   *  is the OP's own, as the page yields it (§13) — not copy this file invents. */
   slugReserved: {
     now: NOW,
     username: "ahrzb",
@@ -1345,11 +1346,12 @@ const appNew = {
     step: {
       kind: "form",
       form: { kind: "tunnel", name: "PMCP", slug: "pmcp", endpoint: "", authMode: "headers" },
-      errors: { slug: "This slug is reserved." },
+      errors: { slug: `The slug "pmcp" is reserved for the builtin admin app.` },
     },
   },
 
-  /** Charset rejection — slugs are [a-z0-9-], no underscore (§2). */
+  /** Charset rejection — slugs are [a-z0-9-], no underscore (§2). The sentence is the one
+   *  the schema's own coercion produces, which is what refuses this slug first. */
   slugInvalid: {
     now: NOW,
     username: "ahrzb",
@@ -1363,11 +1365,13 @@ const appNew = {
         endpoint: "",
         authMode: "headers",
       },
-      errors: { slug: "Slugs are lowercase letters, digits, and dashes." },
+      errors: { slug: "Is not a valid slug." },
     },
   },
 
-  /** Every field wrong at once, plus a whole-form failure. */
+  /** AppNewProxiedStates: several violations at once, one of them naming no control of
+   *  the form (`roles`) and therefore drawn as the whole-form message. No `name` key —
+   *  §8 defaults a blank Name to the slug, so no refusal can name it. */
   errors: {
     now: NOW,
     username: "ahrzb",
@@ -1382,11 +1386,24 @@ const appNew = {
         authMode: "headers",
       },
       errors: {
-        name: "Give the app a display name.",
-        slug: "You already have an app called notion.",
-        endpoint: "Enter a full https:// URL.",
-        form: "Nothing was created.",
+        slug: "Already exists in this namespace.",
+        endpoint: "Must be an https:// URL (http:// only for localhost).",
+        form: `Role name "all" is reserved.`,
       },
+    },
+  },
+
+  /** AppNewProxiedStates "CONNECTING": the `auth: oauth` receipt — the app exists and the
+   *  owner clicks through to the provider (§18 decision 30: a link, never an auto-open). */
+  connecting: {
+    now: NOW,
+    username: "ahrzb",
+    csrfToken: CSRF,
+    step: {
+      kind: "connecting",
+      slug: "linear",
+      name: "Linear",
+      url: "https://linear.app/oauth/authorize?client_id=https%3A%2F%2Fmcp.example.com%2Fclient&state=FAKE0000-state",
     },
   },
 

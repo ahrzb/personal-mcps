@@ -45,7 +45,7 @@ import { callAuth, callAuthResponse, formatPrincipal, requireOwnerSession } from
 import type { OwnerSession } from "./identity";
 import { upsertBinding } from "./oauth";
 import { Registry } from "./registry";
-import type { App } from "./registry";
+import type { App, Violation } from "./registry";
 import { beginConnect } from "./upstream";
 import { approvalsFromEnv } from "./wiring";
 import { SettingsPage } from "./pages/settings";
@@ -572,11 +572,14 @@ export function pageRoutes(): PageRouter {
     mutation(async (c, session, form) => {
       const ctx = await context(c.req.raw, session);
       const draft = appNewForm(formQuery(form));
+      const name = draft.name.trim() === "" ? draft.slug : draft.name;
       const created = await attempt(() =>
         ops.app_create.handler(session.user.userId, {
           slug: draft.slug,
           kind: draft.kind,
-          name: draft.name,
+          // A blank Name is not SENT, so the op defaults it to the slug (§8/§13) and the
+          // form has no Name error to draw.
+          ...(draft.name.trim() === "" ? {} : { name: draft.name }),
           // Proxy-only fields are rejected on a tunneled create (§8), so they are sent
           // only where they mean something. `authMode` is the control's name and `auth`
           // is the op's — the one place the two spellings meet.
@@ -585,14 +588,27 @@ export function pageRoutes(): PageRouter {
       );
       if ("reason" in created) {
         return render(
-          AppNewPage(
-            appNewProps(ctx, { kind: "form", form: draft, errors: createErrors(created.reason) }),
-          ),
+          AppNewPage(appNewProps(ctx, { kind: "form", form: draft, errors: createErrors(created) })),
           400,
         );
       }
+      // §13's connecting page: the app now exists, so a started flow is a 200 render
+      // carrying the authorize link and a refusal lands on the app's own Overview pane
+      // (decision 30 — no auto-open, and Connect lives on that page).
       if (draft.kind === "proxy" && draft.authMode === "oauth") {
-        return connectRedirect(c, session, draft.slug);
+        const app = await new Registry(env.DB).getApp(session.user.userId, draft.slug);
+        const started =
+          app === null
+            ? { reason: "No such app." }
+            : await attempt(() => beginConnect(app, { id: session.sessionId }));
+        if ("reason" in started) {
+          return c.redirect(noticeUrl(paths.appPane(draft.slug, "overview"), "connect", started), 303);
+        }
+        return render(
+          AppNewPage(
+            appNewProps(ctx, { kind: "connecting", slug: draft.slug, name, url: String(started.value) }),
+          ),
+        );
       }
       // A proxied app has nothing that connects, so it has no token to reveal (§6).
       const minted =
@@ -606,7 +622,7 @@ export function pageRoutes(): PageRouter {
           appNewProps(ctx, {
             kind: "created",
             slug: draft.slug,
-            name: draft.name === "" ? draft.slug : draft.name,
+            name,
             token: minted !== null && "value" in minted ? tokenOf(minted.value) : null,
           }),
         ),
@@ -1308,16 +1324,23 @@ function opNamed(name: string): AdminOp | undefined {
  * must reach the composition root as the 500 it is, never a notice telling the owner they
  * asked wrongly (admin.ts draws the same line for the same reason).
  */
-async function attempt(
-  work: () => Promise<unknown>,
-): Promise<{ value: unknown } | { reason: string }> {
+async function attempt(work: () => Promise<unknown>): Promise<Attempted> {
   try {
     return { value: await work() };
   } catch (err) {
-    if (err instanceof HubError) return { reason: err.message };
-    throw err;
+    if (!(err instanceof HubError)) throw err;
+    // §8's field-scoped list, when the refusal carries one: the add-app form reads it to
+    // put each sentence under the control it names. `reason` is unchanged for everyone
+    // else — every other caller renders the message and nothing more.
+    return err.violations === undefined
+      ? { reason: err.message }
+      : { reason: err.message, violations: [...err.violations] };
   }
 }
+
+/** One ops call's answer as the pages read it: a value, or an owner-fixable refusal —
+ *  with §8's violation list where the op reported one. */
+type Attempted = { value: unknown } | { reason: string; violations?: Violation[] };
 
 /**
  * Where a finished mutation lands: the page it came from, carrying the outcome as one
@@ -1538,13 +1561,37 @@ function formQuery(form: FormData): URLSearchParams {
   return new URLSearchParams(Object.entries(formFields(form)));
 }
 
-/** A refused create, put under the control it is about — the field-scoped messages the
- *  form draws in red. admin's refusals name the field in quotes, which is what this reads. */
-function createErrors(reason: string): AppNewErrors {
-  for (const key of ["slug", "name", "endpoint"] as const) {
-    if (reason.includes(`"${key}"`)) return { [key]: reason };
+/**
+ * A refused create, split into the messages the form draws in red — read off the
+ * refusal's OWN `violations` (§8), never off a substring of its message: the two
+ * reservation sentences name no field in quotes at all, and a scan files them under the
+ * whole form. A violation naming a control of the form sits under it; anything else
+ * (roles, redaction paths) is the whole-form message. Two violations on one field join
+ * with a space, because the control has one place to say things.
+ */
+function createErrors(refused: { reason: string; violations?: Violation[] }): AppNewErrors {
+  const errors: AppNewErrors = {};
+  // A refusal that carries no list at all is still one sentence about this form.
+  const violations = refused.violations ?? [{ field: "", reason: refused.reason }];
+  for (const violation of violations) {
+    const key = violation.field === "slug" || violation.field === "endpoint" ? violation.field : "form";
+    const sentence = shownSentence(violation);
+    errors[key] = errors[key] === undefined ? sentence : `${errors[key]} ${sentence}`;
   }
-  return { form: reason };
+  return errors;
+}
+
+/**
+ * One violation as the PAGE says it: the op's own sentence with the `"<field>" ` quote
+ * prefix dropped where it has one (the control's label already says which field this is),
+ * capitalised, and ended with exactly one period. The op's words, not the page's — §13
+ * pins "the op's sentence, capitalised with one period", so nothing here invents copy.
+ */
+function shownSentence({ field, reason }: Violation): string {
+  const prefix = `"${field}" `;
+  const said = reason.startsWith(prefix) ? reason.slice(prefix.length) : reason;
+  const ended = said.endsWith(".") ? said : `${said}.`;
+  return ended.charAt(0).toUpperCase() + ended.slice(1);
 }
 
 /** token_issue's plaintext, read out of the op's own result and never anywhere else. */

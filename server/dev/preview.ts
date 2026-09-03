@@ -28,6 +28,9 @@ import { SettingsPage } from "../src/pages/settings";
 import { AppsPage } from "../src/pages/apps";
 import { AppDetailPage } from "../src/pages/app-detail";
 import { AppNewPage } from "../src/pages/app-new";
+import { AgentsPage } from "../src/pages/agents";
+import { AgentDetailPage } from "../src/pages/agent-detail";
+import { AgentNewPage } from "../src/pages/agent-new";
 import { ApprovalsPage } from "../src/pages/approvals";
 import { ApprovalDetail } from "../src/pages/approval-detail";
 import { AuditPage } from "../src/pages/audit";
@@ -41,6 +44,9 @@ const PAGES: Record<PageName, FC<any>> = {
   apps: AppsPage,
   "app-detail": AppDetailPage,
   "app-new": AppNewPage,
+  agents: AgentsPage,
+  "agent-detail": AgentDetailPage,
+  "agent-new": AgentNewPage,
   approvals: ApprovalsPage,
   "approval-detail": ApprovalDetail,
   audit: AuditPage,

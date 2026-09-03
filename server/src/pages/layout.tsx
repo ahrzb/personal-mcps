@@ -42,6 +42,9 @@ const ICON = "/icon-192.png";
 
 const NAV: { key: NavSection; label: string; href: string }[] = [
   { key: "apps", label: "Apps", href: paths.apps },
+  // §13's fifth slot (2026-09-03): the narrow nav is already a horizontal scroller with
+  // its scrollbar hidden, so five fit without an overflow menu.
+  { key: "agents", label: "Agents", href: paths.agents },
   { key: "audit", label: "Audit", href: paths.audit },
   { key: "approvals", label: "Approvals", href: paths.approvals },
   { key: "settings", label: "Settings", href: paths.settings },

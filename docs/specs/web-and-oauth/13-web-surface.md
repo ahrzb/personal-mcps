@@ -350,7 +350,8 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   apps — each holds grants and tokens." One table, every row from `agent_list` plus
   `token_list` filtered to `kind = agent` (§8; no second read path): `Agent` (the slug,
   linking to `/agents/<slug>`, with the description as its second line when set) /
-  `Grants` (per app, `<app>: role, role` in slug order; the built-in `all` spelled as
+  `Grants` (per app in slug order, `<app>: role, role` with the roles alphabetical —
+  storage order is not stable; the built-in `all` spelled as
   `all`; `none` when the agent holds no grant) / `Tokens` (`N active · used <relative>`,
   or `N active · never used`, or `none`; expired keys are not counted) / `Created`. Row
   controls: **View** (the same link) and **Delete** (confirm dialog — title "Delete agent

@@ -111,7 +111,7 @@ export { PASSWORD_MIN_LENGTH };
  * /apps/new, /approvals/<id> — are chromeless card layouts and carry no
  * section at all, which is why this never has a "none" member.
  */
-export type NavSection = "apps" | "audit" | "approvals" | "settings";
+export type NavSection = "apps" | "agents" | "audit" | "approvals" | "settings";
 
 /**
  * The redirect-back flash: every mutating page POST lands on an admin op and
@@ -236,10 +236,40 @@ export const paths = {
   },
   /** Pending requests plus decision history. */
   approvals: "/approvals",
-  /** Reserved ahead of its pages (§13 deferred; decision 30 reversed 2026-09-03): web.ts
-   *  answers the whole subtree with its own not-built-yet 404 so the §2 walk sees the
-   *  reservation served. Nothing links here yet. */
+  /** §13's agents list (2026-09-03, roadmap step 9): every agent, its grants per app and
+   *  its live keys, with New agent and Delete. */
   agents: "/agents",
+  /** The create form — agent_create's three fields; `new` is reserved from agent slugs
+   *  for it (§2), exactly as `/apps/new` reserves `new` from app slugs. */
+  agentNew: "/agents/new",
+  /** agent_create's target: a refused slug re-renders the form, a created one lands on
+   *  the agent's page — which is why it is not the generic redirect-back. */
+  agentCreate: "/agents/agent_create",
+  /** The agent page: one scroll of Grants, Tokens, Connected clients and a Danger zone. */
+  agentDetail(slug: string): string {
+    return `/agents/${encodeURIComponent(slug)}`;
+  },
+  /** The (agent × app) grant editor — its own page, linkable and script-free (§13). */
+  agentGrants(agent: string, app: string): string {
+    return `${paths.agentDetail(agent)}/grants/${encodeURIComponent(app)}`;
+  },
+  /** An op posted from the agent page, landing back on it (§13's pane rule; the op's
+   *  input rides the query like every other target's). */
+  agentOp(slug: string, op: string, args: Record<string, string> = {}): string {
+    return `${paths.agentDetail(slug)}/${op}${query(args)}`;
+  },
+  /** agent_delete from the list, landing on the list. */
+  agentDelete(slug: string): string {
+    return `/agents/agent_delete${query({ slug })}`;
+  },
+  /** The list with the Delete dialog open for one agent — addressable state (§13). */
+  agentsConfirmDelete(slug: string): string {
+    return `/agents${query({ confirm: "delete-agent", slug })}`;
+  },
+  /** The agent page with one of its two dialogs open. */
+  agentConfirm(slug: string, kind: "revoke-token" | "delete-agent", id?: string): string {
+    return `${paths.agentDetail(slug)}${query(id === undefined ? { confirm: kind } : { confirm: kind, id })}`;
+  },
   /** Read-only view over audit.query with its exact filters. */
   audit: "/audit",
   /** §19.5's consent screen — an external client's authorization request, and the
@@ -1458,6 +1488,9 @@ export type PagePropsByName = {
   apps: AppsProps;
   "app-detail": AppDetailProps;
   "app-new": AppNewProps;
+  agents: AgentsProps;
+  "agent-detail": AgentDetailProps;
+  "agent-new": AgentNewProps;
   approvals: ApprovalsProps;
   "approval-detail": ApprovalDetailProps;
   audit: AuditProps;
@@ -1612,6 +1645,206 @@ function liveTokenCounts(tokens: TokenInfo[], now: number): Map<string, number> 
     counts.set(token.refSlug, (counts.get(token.refSlug) ?? 0) + 1);
   }
   return counts;
+}
+
+/* --------------------------- /agents and /agents/<slug> --------------------------- */
+
+/** One agent_list row as the list and the page read it — `ListedAgent` plus the two
+ *  fields the Agents pane never needed. */
+type AgentListing = ListedAgent & { name: string; createdAt: number };
+
+/** A row of /agents (§13): grants summarised per app, keys counted live. */
+export type AgentRow = {
+  slug: string;
+  name: string;
+  description: string;
+  createdAt: number;
+  /** Per app in slug order: the role names held (modes are the page's business). */
+  grants: { app: string; roles: string[] }[];
+  /** Live keys (unrevoked, unexpired) and the latest use among them. */
+  tokens: { active: number; lastUsedAt: number | null };
+};
+
+export type AgentsConfirm = { kind: "delete-agent"; row: AgentRow };
+
+export type AgentsProps = ShellProps & {
+  section: "agents";
+  csrfToken: string;
+  agents: AgentRow[];
+  confirm: AgentsConfirm | null;
+};
+
+/** agent_create's three fields as the form carries them; empty means "not given". */
+export type AgentNewForm = { slug: string; name: string; description: string };
+/** A refusal under the field it names, or under the form when it names none. */
+export type AgentNewErrors = { slug?: string; form?: string };
+
+export type AgentNewProps = ShellProps & {
+  section: "agents";
+  csrfToken: string;
+  form: AgentNewForm;
+  errors: AgentNewErrors;
+};
+
+/** One app the agent holds a grant on — the chips are the same shape the app page draws. */
+export type AgentGrantRow = { app: string; appName: string; chips: AppGrantChip[] };
+/** One key bound to the agent: live or expired, never revoked (a revoked key is gone). */
+export type AgentTokenRow = {
+  id: string;
+  prefix: string;
+  createdAt: number;
+  expiresAt: number | null;
+  lastUsedAt: number | null;
+  expired: boolean;
+};
+/** One client bound to the agent (§19.6), read-only here. */
+export type AgentClientRow = { id: string; name: string; origin: string; revoked: boolean };
+export type AgentConfirm = { kind: "revoke-token"; id: string; prefix: string } | { kind: "delete-agent" };
+
+export type AgentDetailProps = ShellProps & {
+  section: "agents";
+  csrfToken: string;
+  slug: string;
+  name: string;
+  description: string;
+  createdAt: number;
+  grants: AgentGrantRow[];
+  tokens: AgentTokenRow[];
+  /** null when no client is bound — §13 draws no card then, not an empty one. */
+  clients: AgentClientRow[] | null;
+  confirm: AgentConfirm | null;
+  /** A key just minted by Issue token, shown in THIS response and never again (§4/§15). */
+  reveal: string | null;
+};
+
+/**
+ * /agents — agent_list plus token_list, the two reads `pmcp agent list` and `pmcp
+ * describe agent/<slug>` already make (§8: no second read path). The Delete dialog is
+ * the list's own `?confirm=delete-agent&slug=` state, exactly as /apps's is.
+ */
+export async function agentsProps(ctx: PageContext): Promise<AgentsProps> {
+  const [listed, credentials] = await Promise.all([
+    read<{ agents: AgentListing[] }>(ctx, "agent_list"),
+    read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
+  ]);
+  const now = Date.parse(ctx.now);
+  const rows = listed.agents.map((agent) => agentListRow(agent, credentials.tokens, now));
+  const confirmSlug = ctx.query.get("confirm") === "delete-agent" ? ctx.query.get("slug") : null;
+  const confirmRow = rows.find((row) => row.slug === confirmSlug);
+  return {
+    ...(await shell(ctx, "agents")),
+    csrfToken: ctx.csrfToken,
+    agents: rows,
+    confirm: confirmRow === undefined ? null : { kind: "delete-agent", row: confirmRow },
+  };
+}
+
+function agentListRow(agent: AgentListing, tokens: TokenInfo[], now: number): AgentRow {
+  const live = agentTokens(tokens, agent.slug, now).filter((token) => !token.expired);
+  return {
+    slug: agent.slug,
+    name: agent.name,
+    description: agent.description ?? "",
+    createdAt: agent.createdAt,
+    grants: Object.entries(agent.grants)
+      .sort(([a], [b]) => a.localeCompare(b))
+      // Roles alphabetically: agent_list relays them in storage order, which is not stable.
+      .map(([app, spelled]) => ({ app, roles: spelled.map((entry) => grantChip(entry).role).sort() })),
+    tokens: {
+      active: live.length,
+      lastUsedAt: live.reduce<number | null>(
+        (latest, token) => (token.lastUsedAt !== null && (latest === null || token.lastUsedAt > latest) ? token.lastUsedAt : latest),
+        null,
+      ),
+    },
+  };
+}
+
+/** The agent's keys as the page lists them: revoked ones are gone, expired ones stay
+ *  marked — §13 gives both one Revoke. */
+function agentTokens(tokens: TokenInfo[], slug: string, now: number): AgentTokenRow[] {
+  return tokens
+    .filter((token) => token.kind === "agent" && token.refSlug === slug && token.revokedAt === null)
+    .map((token) => ({
+      id: token.id,
+      prefix: token.prefix,
+      createdAt: token.createdAt,
+      expiresAt: token.expiresAt,
+      lastUsedAt: token.lastUsedAt,
+      expired: token.expiresAt !== null && token.expiresAt <= now,
+    }));
+}
+
+/** The form's fields out of a query or a posted form — the same helper /apps/new uses. */
+export function agentNewForm(query: URLSearchParams): AgentNewForm {
+  return {
+    slug: query.get("slug") ?? "",
+    name: query.get("name") ?? "",
+    description: query.get("description") ?? "",
+  };
+}
+
+export async function agentNewProps(
+  ctx: PageContext,
+  form: AgentNewForm,
+  errors: AgentNewErrors,
+): Promise<AgentNewProps> {
+  return { ...(await shell(ctx, "agents")), csrfToken: ctx.csrfToken, form, errors };
+}
+
+/**
+ * /agents/<slug> — four reads, all ops: agent_list (the agent and its grants), app_list
+ * (the names the Grants rows print), token_list (its keys) and connection_list (the
+ * clients bound to it, §19.6). An unknown, foreign or reserved slug is null, the page's
+ * 404 — `agent_list` is owner-scoped, so "foreign" and "unknown" are one answer.
+ */
+export async function agentDetailProps(ctx: PageContext, slug: string): Promise<AgentDetailProps | null> {
+  const [listed, apps, credentials, connections] = await Promise.all([
+    read<{ agents: AgentListing[] }>(ctx, "agent_list"),
+    read<{ apps: OpsAppRow[] }>(ctx, "app_list"),
+    read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
+    read<{ connections: ConnectionRow[] }>(ctx, "connection_list"),
+  ]);
+  const agent = listed.agents.find((row) => row.slug === slug);
+  if (agent === undefined) return null;
+  const names = new Map(apps.apps.map((app) => [app.slug, app.name]));
+  const tokens = agentTokens(credentials.tokens, slug, Date.parse(ctx.now));
+  const clients = connections.connections
+    .filter((row) => row.agentSlug === slug)
+    .map((row) => ({
+      id: row.id,
+      name: row.clientName ?? row.clientId,
+      origin: row.redirectOrigin,
+      revoked: row.revokedAt !== null,
+    }));
+  return {
+    ...(await shell(ctx, "agents")),
+    csrfToken: ctx.csrfToken,
+    slug,
+    name: agent.name,
+    description: agent.description ?? "",
+    createdAt: agent.createdAt,
+    grants: Object.entries(agent.grants)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([app, spelled]) => ({
+        app,
+        appName: names.get(app) ?? app,
+        chips: spelled.map(grantChip).sort((a, b) => a.role.localeCompare(b.role)),
+      })),
+    tokens,
+    clients: clients.length === 0 ? null : clients,
+    confirm: agentConfirm(ctx.query, tokens),
+    reveal: null,
+  };
+}
+
+function agentConfirm(query: URLSearchParams, tokens: AgentTokenRow[]): AgentConfirm | null {
+  const kind = query.get("confirm");
+  if (kind === "delete-agent") return { kind };
+  if (kind !== "revoke-token") return null;
+  const id = query.get("id") ?? "";
+  const row = tokens.find((token) => token.id === id);
+  return row === undefined ? null : { kind, id, prefix: row.prefix };
 }
 
 /* ------------------------------ /apps/<slug> ------------------------------ */

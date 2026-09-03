@@ -744,7 +744,9 @@ const AgentsPane: FC<AppDetailProps> = (props) => (
           {props.agents.map((agent) => (
             <tr>
               <td>
-                <div class="cell-name mono">{agent.slug}</div>
+                <div class="cell-name mono">
+                  <a href={paths.agentDetail(agent.slug)}>{agent.slug}</a>
+                </div>
                 <div class="list-meta">{agent.description}</div>
               </td>
               <td class="badge-row">

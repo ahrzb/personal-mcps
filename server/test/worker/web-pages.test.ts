@@ -1850,45 +1850,298 @@ describe(`§13 · the PWA icons — the install gate's own bytes`, () => {
 describe(`§13 · /agents and /agents/<slug> — the list, the page, and what points at them`, () => {
   // Rows first (§9 rule 1), from §13's sections added 2026-09-03 (roadmap step 9); the
   // (agent × app) grant editor is its own later ship and has its own rows.
-  it.todo(
-    `§13 · /agents lists every agent agent_list reports under Agent / Grants / Tokens / Created — the slug linking to /agents/<slug> with the description beneath, grants as "<app>: role, role" per app in slug order and none for an empty set, tokens as "N active · used <relative>" or "N active · never used" from token_list's live agent keys — while the empty namespace renders "No agents yet. Create one to give an AI agent its own grants and keys." beside the New agent control (the twin)`,
-  );
+  it(`§13 · /agents lists every agent agent_list reports under Agent / Grants / Tokens / Created — the slug linking to /agents/<slug> with the description beneath, grants as "<app>: role, role" per app in slug order and none for an empty set, tokens as "N active · used <relative>" or "N active · never used" from token_list's live agent keys — while the empty namespace renders "No agents yet. Create one to give an AI agent its own grants and keys." beside the New agent control (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel" }, { slug: "linear", kind: "tunnel" }],
+      agents: [
+        {
+          slug: "claude",
+          description: "Claude sessions",
+          grants: { news: [{ role: "reader", mode: "allow" }, { role: "admin", mode: "approval" }], linear: [{ role: "reader", mode: "allow" }] },
+          tokens: [{ as: "claude" }],
+        },
+        { slug: "cron", grants: {} },
+      ],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const html = await page(paths.agents, session.cookie);
+    const text = textOf(html);
+    for (const column of ["Agent", "Grants", "Tokens", "Created"]) expect(html).toMatch(new RegExp(`<th>${column}</th>`));
+    expect(html).toContain(`href="${paths.agentDetail("claude")}"`);
+    expect(html).toContain(`href="${paths.agentDetail("cron")}"`);
+    expect(text).toContain("Claude sessions");
+    // Grants per app in slug order, roles alphabetically, names only; none reads none.
+    expect(text).toMatch(/linear: reader[\s\S]*news: admin, reader/);
+    expect(text).toMatch(/cron[\s\S]*none/);
+    // The seeded key was never presented: one live key, never used.
+    expect(text).toContain("1 active · never used");
+    expect(html).toContain(`href="${paths.agentNew}"`);
 
-  it.todo(
-    `§13 · the top nav holds five entries in §13's order — Apps · Agents · Audit · Approvals · Settings — on every shell page, Agents marked aria-current="page" on /agents and on /agents/<slug> and nowhere else · /apps marks Apps alone (the twin)`,
-  );
+    // The twin: the empty namespace.
+    const fresh = await seedNamespace(env.DB, {});
+    const empty = await page(paths.agents, (await seedOwnerSession(fresh.owner)).cookie);
+    expect(textOf(empty)).toContain("No agents yet.");
+    expect(textOf(empty)).toContain("Create one to give an AI agent its own grants and keys.");
+    expect(empty).toContain(`href="${paths.agentNew}"`);
+  });
 
-  it.todo(
-    `§13/§8 · /agents/new renders agent_create's three fields — slug, name, description — and nothing else, and a posted create lands on the new agent's page · a slug the op refuses (reserved, taken, illegal) re-renders the form at 400 with the refusal under the field and creates nothing (the twin)`,
-  );
+  it(`§13 · the top nav holds five entries in §13's order — Apps · Agents · Audit · Approvals · Settings — on every shell page, Agents marked aria-current="page" on /agents and on /agents/<slug> and nowhere else · /apps marks Apps alone (the twin)`, async () => {
+    const ORDER = [paths.apps, paths.agents, paths.audit, paths.approvals, paths.settings];
+    const navOf = (html: string): { href: string; current: boolean }[] => {
+      const nav = /<nav class="nav">([\s\S]*?)<\/nav>/.exec(html)?.[1] ?? "";
+      return [...nav.matchAll(/<a class="nav-link" href="([^"]*)"( aria-current="page")?>/g)].map((m) => ({
+        href: m[1],
+        current: m[2] !== undefined,
+      }));
+    };
+    const pages: [string, string][] = [
+      [paths.agents, paths.agents],
+      [paths.agentDetail("agent"), paths.agents],
+      [paths.apps, paths.apps],
+      [paths.audit, paths.audit],
+      [paths.approvals, paths.approvals],
+      [paths.settings, paths.settings],
+    ];
+    for (const [path, current] of pages) {
+      const nav = navOf(await page(path));
+      expect(nav.map((entry) => entry.href), path).toEqual(ORDER);
+      expect(nav.filter((entry) => entry.current).map((entry) => entry.href), path).toEqual([current]);
+    }
+  });
 
-  it.todo(
-    `§13 · Delete opens the same list with the confirm dialog at ?confirm=delete-agent&slug=, titled "Delete agent “<slug>”?" over "Deleting an agent deletes its tokens and removes its grants everywhere.", whose form fronts agent_delete — afterwards the agent, its keys and its grants are gone and /agents lands with the notice · a slug naming no agent draws no dialog (the twin)`,
-  );
+  it(`§13/§8 · /agents/new renders agent_create's three fields — slug, name, description — and nothing else, and a posted create lands on the new agent's page · a slug the op refuses (reserved, taken, illegal) re-renders the form at 400 with the refusal under the field and creates nothing (the twin)`, async () => {
+    const html = await page(paths.agentNew);
+    // The create form by its action — the shell's Sign out form comes first in the document.
+    const form = [...html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].find(
+      (match) => decodeEntities(attributeOf(match[1], "action") ?? "") === paths.agentCreate,
+    );
+    expect(form, "no form posts to agent_create").toBeDefined();
+    expect(namedControls(form?.[2] ?? "").sort()).toEqual(["description", "name", "slug"]);
+    const csrf = csrfOf(html);
 
-  it.todo(
-    `§2 · new is reserved from agent slugs: agent_create refuses "new" and GET /agents/new is the form, never a page for an agent called new · any other charset-legal slug creates and answers at /agents/<slug> (the twin)`,
-  );
+    const slug = uniqueSlug("bot");
+    const created = await formPost(paths.agentCreate, { csrf, slug, name: "Bot", description: "Runs things" }, world.session.cookie);
+    expect(created.status).toBe(303);
+    expect(new URL(created.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentDetail(slug));
+    const landed = await page(paths.agentDetail(slug));
+    expect(textOf(landed)).toContain("Bot");
+    expect(textOf(landed)).toContain("Runs things");
 
-  it.todo(
-    `§13 · /agents/<slug> renders the header — the slug, an agent badge, the name when it differs from the slug, the description, Created — and the Grants card with one row per app in slug order, the app linking to /apps/<slug> and one role · mode chip per grant with all marked built-in · an agent with no grant reads "No grants yet — this agent can call nothing until one is set.", and an unknown, foreign or reserved slug is the hub's 404 (the twin)`,
-  );
+    // The twin: a taken slug — the world's own agent — is refused by the op, and the form
+    // comes back at 400 with the reason where the field is, having created nothing.
+    const before = ((await ops.agent_list.handler(world.ns.owner.userId, {})) as { agents: { slug: string }[] }).agents.length;
+    const refused = await formPost(paths.agentCreate, { csrf, slug: "agent", name: "", description: "" }, world.session.cookie);
+    expect(refused.status).toBe(400);
+    const again = await refused.text();
+    expect(again).toContain('class="field-error"');
+    expect(again).toContain(`action="${paths.agentCreate}"`);
+    const after = ((await ops.agent_list.handler(world.ns.owner.userId, {})) as { agents: { slug: string }[] }).agents.length;
+    expect(after).toBe(before);
+  });
 
-  it.todo(
-    `§13/§4/§15 · the Tokens card lists every key bound to the agent from token_list — Token / Created / Expires / Last used, an expired row marked expired — and Issue token answers 200 in place with the once-only reveal exactly as the app page's does, the plaintext on no URL · Revoke walks the confirm dialog to token_revoke and the key is gone from the card (the twin)`,
-  );
+  it(`§13 · Delete opens the same list with the confirm dialog at ?confirm=delete-agent&slug=, titled "Delete agent “<slug>”?" over "Deleting an agent deletes its tokens and removes its grants everywhere.", whose form fronts agent_delete — afterwards the agent, its keys and its grants are gone and /agents lands with the notice · a slug naming no agent draws no dialog (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel" }],
+      agents: [{ slug: "doomed", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "key" }] }],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const html = await page(paths.agentsConfirmDelete("doomed"), session.cookie);
+    expect(html).toContain("<dialog");
+    expect(textOf(html)).toContain("Delete agent “doomed”?");
+    expect(textOf(html)).toContain("Deleting an agent deletes its tokens and removes its grants everywhere.");
+    expect(formsPostingTo(html, paths.agentDelete("doomed")).length).toBeGreaterThan(0);
 
-  it.todo(
-    `§13/§19.6 · the Connected clients card lists the clients bound to this agent from connection_list — name or id, origin, active or revoked — each row linking to /settings/clients and drawing no Revoke, and the card is absent when no client is bound (the twin)`,
-  );
+    const deleted = await formPost(paths.agentDelete("doomed"), { csrf: csrfOf(html) }, session.cookie);
+    expect(deleted.status).toBe(303);
+    const landing = new URL(deleted.headers.get("Location") ?? "", ORIGIN);
+    expect(landing.pathname).toBe(paths.agents);
+    expect(landing.searchParams.get("done")).toBe("agent_delete");
+    const agents = (await ops.agent_list.handler(ns.owner.userId, {})) as { agents: { slug: string }[] };
+    expect(agents.agents.map((row) => row.slug)).not.toContain("doomed");
+    const tokens = (await ops.token_list.handler(ns.owner.userId, {})) as { tokens: { kind: string; refSlug: string }[] };
+    expect(tokens.tokens.filter((row) => row.kind === "agent" && row.refSlug === "doomed")).toEqual([]);
 
-  it.todo(
-    `§13 · the Danger zone's Delete agent opens the same dialog as the list's, on the agent's own URL, and lands on /agents with the notice · every other mutation an agent page renders lands back on /agents/<slug> (the twin)`,
-  );
+    // The twin: a slug naming no agent draws no dialog at all.
+    expect(await page(paths.agentsConfirmDelete("nobody"), session.cookie)).not.toContain("<dialog");
+  });
 
-  it.todo(
-    `§13 · every agent slug the other pages print links to /agents/<slug> — the Tokens pane's Bound to, the Connected clients pane's Acts as, the app page's Agents pane, and the consent screen's empty state, which now reads "Create one under Agents before connecting a client." — and the Tokens intro reads "Issue new keys from an app or agent page." again · app slugs still link to /apps/<slug> (the twin)`,
-  );
+  it(`§2 · new is reserved from agent slugs: agent_create refuses "new" and GET /agents/new is the form, never a page for an agent called new · any other charset-legal slug creates and answers at /agents/<slug> (the twin)`, async () => {
+    const csrf = csrfOf(await page(paths.agentNew));
+    const refused = await formPost(paths.agentCreate, { csrf, slug: "new", name: "", description: "" }, world.session.cookie);
+    expect(refused.status).toBe(400);
+    expect(textOf(await refused.text())).toContain("reserved");
+    const form = await page(paths.agentNew);
+    expect(textOf(form)).toContain("New agent");
+    expect(form).not.toContain("Danger zone");
+
+    // The twin: any other charset-legal slug creates and answers at its own page.
+    const slug = uniqueSlug("legal");
+    const created = await formPost(paths.agentCreate, { csrf, slug, name: "", description: "" }, world.session.cookie);
+    expect(created.status).toBe(303);
+    expect(textOf(await page(paths.agentDetail(slug)))).toContain(slug);
+  });
+
+  it(`§13 · /agents/<slug> renders the header — the slug, an agent badge, the name when it differs from the slug, the description, Created — and the Grants card with one row per app in slug order, the app linking to /apps/<slug> and one role · mode chip per grant with all marked built-in · an agent with no grant reads "No grants yet — this agent can call nothing until one is set.", and an unknown, foreign or reserved slug is the hub's 404 (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        { slug: "news", kind: "tunnel", name: "News MCP" },
+        { slug: "linear", kind: "tunnel", name: "Linear" },
+      ],
+      agents: [
+        {
+          slug: "claude",
+          name: "Claude",
+          description: "Claude sessions",
+          grants: { news: [{ role: "reader", mode: "allow" }, { role: "admin", mode: "approval" }], linear: [{ role: "all", mode: "allow" }] },
+        },
+        { slug: "cron", grants: {} },
+      ],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const html = await page(paths.agentDetail("claude"), session.cookie);
+    const text = textOf(html);
+    expect(text).toContain("Agents / claude");
+    expect(text).toMatch(/claude\s+agent/);
+    expect(text).toContain("Claude");
+    expect(text).toContain("Claude sessions");
+    expect(text).toContain("Created");
+    // Grants in app-slug order, the app linked, one chip per grant, the built-in marked.
+    expect(html).toContain(`href="${paths.appDetail("linear")}"`);
+    expect(html).toContain(`href="${paths.appDetail("news")}"`);
+    expect(text.indexOf("Linear")).toBeLessThan(text.indexOf("News MCP"));
+    expect(text).toContain("reader · allow");
+    expect(text).toContain("admin · approval");
+    expect(text).toMatch(/all · allow\s+built-in/);
+
+    // The twins: no grants, and no such agent.
+    const bare = await page(paths.agentDetail("cron"), session.cookie);
+    expect(textOf(bare)).toContain("No grants yet — this agent can call nothing until one is set.");
+    for (const slug of ["nobody", uniqueSlug("foreign")]) {
+      const missing = await call(new Request(`${ORIGIN}${paths.agentDetail(slug)}`, { headers: { Cookie: session.cookie } }));
+      expect(missing.status, slug).toBe(404);
+      expect(await missing.text()).toContain("No such page");
+    }
+  });
+
+  it(`§13/§4/§15 · the Tokens card lists every key bound to the agent from token_list — Token / Created / Expires / Last used, an expired row marked expired — and Issue token answers 200 in place with the once-only reveal exactly as the app page's does, the plaintext on no URL · Revoke walks the confirm dialog to token_revoke and the key is gone from the card (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, { agents: [{ slug: "keyed", grants: {} }] });
+    const session = await seedOwnerSession(ns.owner);
+    // One key that is already dead: minted for a second and left to expire.
+    await ops.token_issue.handler(ns.owner.userId, { kind: "agent", slug: "keyed", expires_in: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const listed = () =>
+      (ops.token_list.handler(ns.owner.userId, {}) as Promise<{ tokens: { id: string; kind: string; refSlug: string; prefix: string }[] }>).then((r) =>
+        r.tokens.filter((row) => row.kind === "agent" && row.refSlug === "keyed"),
+      );
+    const [dead] = await listed();
+    const html = await page(paths.agentDetail("keyed"), session.cookie);
+    for (const column of ["Token", "Created", "Expires", "Last used"]) expect(html).toMatch(new RegExp(`<th>${column}</th>`));
+    expect(textOf(html)).toMatch(new RegExp(`${dead.prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+expired`));
+
+    // Issue: 200 in place, the plaintext in the reveal and on no URL of the response.
+    const issued = await formPost(
+      paths.agentOp("keyed", "token_issue", { kind: "agent", slug: "keyed" }),
+      { csrf: csrfOf(html) },
+      session.cookie,
+    );
+    expect(issued.status).toBe(200);
+    const revealed = await issued.text();
+    const plaintext = /pmcp_agt_[A-Za-z0-9]+/.exec(textOf(revealed))?.[0];
+    expect(plaintext, "no plaintext key in the reveal").toBeDefined();
+    expect(revealed).toMatch(/id="token-value"/);
+    for (const href of revealed.matchAll(/href="([^"]*)"/g)) expect(href[1]).not.toContain(plaintext ?? "!");
+    expect((await listed()).length).toBe(2);
+
+    // The twin: Revoke walks the dialog to token_revoke, and the key is gone from the card.
+    const live = (await listed()).find((row) => row.id !== dead.id);
+    const confirm = await page(paths.agentConfirm("keyed", "revoke-token", live?.id ?? ""), session.cookie);
+    expect(confirm).toContain("<dialog");
+    expect(formsPostingTo(confirm, paths.agentOp("keyed", "token_revoke", { id: live?.id ?? "" })).length).toBeGreaterThan(0);
+    const revoked = await formPost(paths.agentOp("keyed", "token_revoke", { id: live?.id ?? "" }), { csrf: csrfOf(confirm) }, session.cookie);
+    expect(revoked.status).toBe(303);
+    expect(new URL(revoked.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentDetail("keyed"));
+    expect(textOf(await page(paths.agentDetail("keyed"), session.cookie))).not.toContain(live?.prefix ?? "!");
+  });
+
+  it(`§13/§19.6 · the Connected clients card lists the clients bound to this agent from connection_list — name or id, origin, active or revoked — each row linking to /settings/clients and drawing no Revoke, and the card is absent when no client is bound (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "news" }] }],
+      agents: [
+        { slug: "bound", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "b" }] },
+        { slug: "loner", grants: {} },
+      ],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const { clientId } = await consentOnce(ns, session.cookie, "bound", { client_name: "Claude Desktop" });
+    expect(clientId).toBeTruthy();
+    const html = await page(paths.agentDetail("bound"), session.cookie);
+    const text = textOf(html);
+    expect(text).toContain("Connected clients");
+    expect(text).toContain("Managed in Settings → Connected clients");
+    expect(text).toContain("Claude Desktop");
+    expect(text).toContain("active");
+    expect(html).toContain(`href="${paths.settingsClients}"`);
+    // Read-only: no form on this page fronts connection_revoke.
+    expect(postTargets(html).some((target) => target.endsWith("connection_revoke"))).toBe(false);
+
+    // The twin: no client bound, no card at all.
+    expect(textOf(await page(paths.agentDetail("loner"), session.cookie))).not.toContain("Connected clients");
+  });
+
+  it(`§13 · the Danger zone's Delete agent opens the same dialog as the list's, on the agent's own URL, and lands on /agents with the notice · every other mutation an agent page renders lands back on /agents/<slug> (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel" }],
+      agents: [{ slug: "gone", grants: { news: [{ role: "all", mode: "allow" }] } }],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const html = await page(paths.agentConfirm("gone", "delete-agent"), session.cookie);
+    expect(html).toContain("<dialog");
+    expect(textOf(html)).toContain("Delete agent “gone”?");
+    expect(textOf(html)).toContain("Deleting an agent deletes its tokens and removes its grants everywhere.");
+    const target = paths.agentOp("gone", "agent_delete", { slug: "gone" });
+    expect(formsPostingTo(html, target).length).toBeGreaterThan(0);
+    const csrf = csrfOf(html);
+
+    // The twin first, so the page still exists to land on: a refused revoke of a key that
+    // is not there lands back on the agent page with its failure.
+    const other = await formPost(paths.agentOp("gone", "token_revoke", { id: "tok_nope" }), { csrf }, session.cookie);
+    expect(other.status).toBe(303);
+    const back = new URL(other.headers.get("Location") ?? "", ORIGIN);
+    expect(back.pathname).toBe(paths.agentDetail("gone"));
+    expect(back.searchParams.get("failed")).toBe("token_revoke");
+
+    const deleted = await formPost(target, { csrf }, session.cookie);
+    expect(deleted.status).toBe(303);
+    const landing = new URL(deleted.headers.get("Location") ?? "", ORIGIN);
+    expect(landing.pathname).toBe(paths.agents);
+    expect(landing.searchParams.get("done")).toBe("agent_delete");
+    const agents = (await ops.agent_list.handler(ns.owner.userId, {})) as { agents: { slug: string }[] };
+    expect(agents.agents.map((row) => row.slug)).not.toContain("gone");
+  });
+
+  it(`§13 · every agent slug the other pages print links to /agents/<slug> — the Tokens pane's Bound to, the Connected clients pane's Acts as, the app page's Agents pane, and the consent screen's empty state, which now reads "Create one under Agents before connecting a client." — and the Tokens intro reads "Issue new keys from an app or agent page." again · app slugs still link to /apps/<slug> (the twin)`, async () => {
+    const agentLink = `href="${paths.agentDetail("agent")}"`;
+    const tokens = await page(paths.settingsTokens);
+    expect(tokens).toContain(agentLink);
+    expect(textOf(tokens)).toContain("Issue new keys from an app or agent page.");
+
+    await consentOnce(world.ns, world.session.cookie, "agent", { client_name: "Pointer Client" });
+    expect(await page(paths.settingsClients)).toContain(agentLink);
+    expect(await page(paths.appPane("news", "access"))).toContain(agentLink);
+
+    const empty = await seedNamespace(env.DB, {});
+    const consent = (
+      await reachConsent((await registerOAuthClient()).clientId, (await seedOwnerSession(empty.owner)).cookie, {
+        resource: oauthResourceFor(empty.owner.username),
+      })
+    ).html;
+    // The link splits the sentence in the text projection; the words are what is pinned.
+    expect(textOf(consent)).toMatch(/Create one under\s+Agents\s+before connecting a client/);
+    expect(consent).toContain(`href="${paths.agentNew}"`);
+
+    // The twin: app slugs still link to the app page.
+    expect(tokens).toContain(`href="${paths.appDetail("news")}"`);
+  });
 });
 
 describe("§19.5 · the consent screen", () => {
@@ -1964,14 +2217,15 @@ describe("§19.5 · the consent screen", () => {
 
   // G8 (2026-09-03): the empty state sent the owner to /apps, which cannot create an agent.
   // §19.5 amended; this row replaces the one below it, which is retired with the fix.
-  it(`§19.5 · a namespace with zero agents renders the picker's empty state naming pmcp agent create — never /apps, which has no agent affordance — and disables submit; consent is impossible until an agent exists · the same page with one agent submits (the twin)`, async () => {
+  it(`§19.5 · a namespace with zero agents renders the picker's empty state naming the Agents page — "Create one under Agents before connecting a client." linking /agents/new, never /apps, which has no agent affordance — and disables submit; consent is impossible until an agent exists · the same page with one agent submits (the twin)`, async () => {
     const empty = await seedNamespace(env.DB, {});
     const emptySession = await seedOwnerSession(empty.owner);
     const emptyClient = await registerOAuthClient();
     const emptyHtml = (
       await reachConsent(emptyClient.clientId, emptySession.cookie, { resource: oauthResourceFor(empty.owner.username) })
     ).html;
-    expect(textOf(emptyHtml)).toContain("pmcp agent create");
+    expect(textOf(emptyHtml)).toMatch(/Create one under\s+Agents\s+before connecting a client/);
+    expect(emptyHtml).toContain(`href="${paths.agentNew}"`);
     expect(emptyHtml).not.toContain(`href="${paths.apps}"`);
     expect(submitButtonHtml(emptyHtml, "accept")).toContain("disabled");
 
@@ -4200,9 +4454,8 @@ describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`
 
 /** §13's three Tokens-pane sentences, byte-for-byte. The footer is ONE string on purpose:
  *  its two sentences are quoted together and a split rendering is the drift these guard. */
-// §13's interim sentence (amended 2026-09-03, G12): until the agents page exists the intro
-// names the command that does — the earlier "from an app or agent page" named no route.
-const NO_ISSUE_CONTROL = "Issue new keys from an app page, or with pmcp token issue for an agent.";
+// §13's sentence, final again now that the agent page issues keys (2026-09-03, step 9).
+const NO_ISSUE_CONTROL = "Issue new keys from an app or agent page.";
 const TOKENS_FOOTER =
   "Revoking an app token closes that app's live connection. Keys are shown only once, at issue time.";
 const CLIENTS_FOOTER =
@@ -4221,16 +4474,9 @@ const KEYS_APP = uniqueSlug("keysapp");
 const KEYS_AGENT = uniqueSlug("keysagt");
 
 describe(`§13 · the Tokens pane`, () => {
-  // G12 (2026-09-03): the intro named "an app or agent page" while no agent page exists.
-  // §13 now spells the interim sentence; the row pins it and its twin pins that the
-  // sentence still points at the one issuing page that does exist.
-  it(`§13 · until the agents pages land the Tokens intro reads "Issue new keys from an app page, or with pmcp token issue for an agent." verbatim, naming no agent page · the app page it names still carries the Issue control (the twin)`, async () => {
-    const text = textOf(await page(paths.settingsTokens));
-    expect(text).toContain("Issue new keys from an app page, or with pmcp token issue for an agent.");
-    expect(text).not.toContain("agent page");
-    // The twin: the one issuing page the sentence names exists and issues.
-    expect(textOf(await page(paths.appPane("news", "token")))).toContain("Issue new token");
-  });
+  // G12's interim row (the Tokens intro naming `pmcp token issue`) was retired on
+  // 2026-09-03 when the agent page landed: the final sentence is pinned by the pointers row
+  // of the /agents describe and by the token_issue row below.
 
   let keys: { ns: SeededNamespace; session: SeededSession };
 
@@ -4270,7 +4516,7 @@ describe(`§13 · the Tokens pane`, () => {
     }
   });
 
-  it(`§13 · a bound-to app slug links to /apps/<slug> · the agent slug beside it is plain text and no anchor on the pane names an /agents/ path (the twin — the agents pages are deferred)`, async () => {
+  it(`§13 · a bound-to app slug links to /apps/<slug> · the agent slug beside it links to /agents/<slug> now that the agent page exists (the twin — re-pointed 2026-09-03, step 9)`, async () => {
     const html = await keysPage(paths.settingsTokens);
     expect(html, "the app row does not link its app").toContain(`href="${paths.appDetail(KEYS_APP)}"`);
 
@@ -4278,14 +4524,11 @@ describe(`§13 · the Tokens pane`, () => {
     // anchors, and a <span> wrapper inside one would defeat a text check.
     const anchors = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)];
     expect(anchors.length, "the walk found no anchors at all").toBeGreaterThan(0);
-    expect(textOf(html), "the agent slug is not on the pane").toContain(KEYS_AGENT);
-    for (const anchor of anchors) {
-      expect(anchor[2], "an anchor wraps the agent slug").not.toContain(KEYS_AGENT);
-      expect(
-        decodeEntities(attributeOf(anchor[1], "href") ?? ""),
-        "an anchor names an /agents/ path",
-      ).not.toContain("/agents/");
-    }
+    const agentAnchor = anchors.find(
+      (anchor) => decodeEntities(attributeOf(anchor[1], "href") ?? "") === paths.agentDetail(KEYS_AGENT),
+    );
+    expect(agentAnchor, "no anchor links the agent slug to its page").toBeDefined();
+    expect(agentAnchor?.[2] ?? "").toContain(KEYS_AGENT);
   });
 
   it(`§13 · the All · Agents · Apps filter narrows: ?kind=agent lists the namespace's agent keys and no app key, ?kind=app the reverse, and the unfiltered pane lists both (the twin) — each pill followed from the href the pane rendered`, async () => {
@@ -4416,7 +4659,7 @@ describe(`§13 · the Tokens pane`, () => {
     expect(revokeTargets(after, "token_revoke").has(live?.id ?? "")).toBe(true);
   });
 
-  it(`§13 · the Tokens pane renders no token_issue control — "Issue new keys from an app page, or with pmcp token issue for an agent." and its two-sentence footer render verbatim instead · the same pane does render token_revoke forms, so this is an absent control and not an absent pane (the twin)`, async () => {
+  it(`§13 · the Tokens pane renders no token_issue control — "Issue new keys from an app or agent page." and its two-sentence footer render verbatim instead · the same pane does render token_revoke forms, so this is an absent control and not an absent pane (the twin)`, async () => {
     const html = await keysPage(paths.settingsTokens);
     // A control of ANY shape: §13's "No Issue control" is not only about forms.
     const fronted = formsRenderedOn(html).map((form) => form.op);
@@ -4545,7 +4788,7 @@ describe(`§13/§19 · the Connected clients pane`, () => {
     }
   });
 
-  it(`§13/§19.5 · a connected client's row shows the name it registered with, the ORIGIN of its registered redirect URI beneath it — never the full URI — and the bound agent's slug as plain text under Acts as · a client that registered without a name shows its client id in the name's place (the twin)`, async () => {
+  it(`§13/§19.5 · a connected client's row shows the name it registered with, the ORIGIN of its registered redirect URI beneath it — never the full URI — and the bound agent's slug linking to /agents/<slug> under Acts as (re-pointed 2026-09-03, step 9) · a client that registered without a name shows its client id in the name's place (the twin)`, async () => {
     const AGENT = uniqueSlug("acts");
     const ns = await seedNamespace(env.DB, { agents: [{ slug: AGENT }] });
     const session = await seedOwnerSession(ns.owner);
@@ -4572,15 +4815,13 @@ describe(`§13/§19 · the Connected clients pane`, () => {
     expect(html, "the nameless client shows no id").toContain(nameless);
 
     expect(textOf(html)).toContain(AGENT);
+    // Acts as LINKS to the agent page now that it exists (2026-09-03, step 9).
     const anchors = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)];
-    expect(anchors.length, "the walk found no anchors at all").toBeGreaterThan(0);
-    for (const anchor of anchors) {
-      expect(anchor[2], "an anchor wraps the agent slug").not.toContain(AGENT);
-      expect(
-        decodeEntities(attributeOf(anchor[1], "href") ?? ""),
-        "an anchor names an /agents/ path",
-      ).not.toContain("/agents/");
-    }
+    const actsAs = anchors.find(
+      (anchor) => decodeEntities(attributeOf(anchor[1], "href") ?? "") === paths.agentDetail(AGENT),
+    );
+    expect(actsAs, "no anchor links the agent slug to its page").toBeDefined();
+    expect(actsAs?.[2] ?? "").toContain(AGENT);
   });
 
   it(`§13/§19.5 · a self-registered (DCR) client's row carries the "unverified" marker · a client registered under the owner's own session does not (the twin) — the consent screen's second identity string, repeated on the pane`, async () => {
@@ -6221,7 +6462,7 @@ describe(`§13 · /apps/<slug> — Agents, Token and the Danger zone`, () => {
     expect(markerOn(betaHtml, betaPane)).toBe("1");
   });
 
-  it(`§13 · an Agents row is the agent's slug and description as text — no link to the deferred /agents/<slug> — one role · mode chip per grant with the built-in all marked built-in, and the pane renders no Edit grants control beside the rows it does render (deferred, §13), under its verbatim footer`, async () => {
+  it(`§13 · an Agents row is the agent's slug — linking to /agents/<slug> now that the page exists (re-pointed 2026-09-03, step 9) — and description, one role · mode chip per grant with the built-in all marked built-in, and the pane renders no Edit grants control beside the rows it does render (deferred, §13), under its verbatim footer`, async () => {
     const html = await page(paths.appPane(ALPHA, "access"), access.cookie);
     const text = textOf(html);
     for (const handle of ["claude", "pi"] as const) {
@@ -6243,12 +6484,10 @@ describe(`§13 · /apps/<slug> — Agents, Token and the Danger zone`, () => {
     expect(beta).toContain("reader · allow");
     expect(beta).not.toContain("built-in");
 
-    // Slugs are TEXT: `/agents/<slug>` is deferred, so a link there would be a link to a
-    // 404 — on EITHER page, which is why beta's markup is kept rather than only its text.
-    for (const rendered of [html, betaHtml]) {
-      for (const attribute of rendered.matchAll(/href="([^"]*)"/g)) {
-        expect(decodeEntities(attribute[1]).startsWith("/agents/"), attribute[1]).toBe(false);
-      }
+    // Slugs LINK to the agent page now that it exists (2026-09-03, step 9): each row's slug
+    // is wrapped by an anchor to `/agents/<slug>` — on either page.
+    for (const handle of ["claude", "pi"] as const) {
+      expect(html, handle).toContain(`href="${paths.agentDetail(ACCESS_SLUG[handle])}"`);
     }
 
     // No editor, and the absence is the PAGE's choice: `grant_set` is a real op.

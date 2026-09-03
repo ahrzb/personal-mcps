@@ -39,6 +39,10 @@ import type {
   AppDetailHeader,
   AppDetailPane,
   AppDetailProps,
+  AgentDetailProps,
+  AgentNewProps,
+  AgentRow,
+  AgentsProps,
   AppFamilyView,
   AppNewProps,
   AppPromptRow,
@@ -2153,6 +2157,126 @@ const oauthConsent = {
  * value is that page's Props by construction), and the keys are model.ts's
  * PageName set, so a page without fixtures cannot compile.
  */
+/* ------------------------------------------------------------------ *
+ * /agents, /agents/new, /agents/<slug> (§13, 2026-09-03 — the Agents / AgentDetail boards)
+ * ------------------------------------------------------------------ */
+
+const agentRows: AgentRow[] = [
+  {
+    slug: "claude",
+    name: "Claude",
+    description: "Claude sessions",
+    createdAt: ms("2026-08-12T09:00:00.000Z"),
+    grants: [
+      { app: "linear", roles: ["reader"] },
+      { app: "news", roles: ["reader", "admin"] },
+    ],
+    tokens: { active: 1, lastUsedAt: ms("2026-08-24T12:47:00.000Z") },
+  },
+  {
+    slug: "cron",
+    name: "cron",
+    description: "Scheduled jobs",
+    createdAt: ms("2026-08-20T16:05:00.000Z"),
+    grants: [{ app: "news", roles: ["reader"] }],
+    tokens: { active: 1, lastUsedAt: null },
+  },
+];
+
+const agents = {
+  /** The artboard: two agents, grants and keys. */
+  default: { ...shell("agents"), csrfToken: CSRF, agents: agentRows, confirm: null },
+  /** A fresh namespace: the empty state and its New agent control. */
+  empty: { ...shell("agents", 0), csrfToken: CSRF, agents: [], confirm: null },
+  /** Dialogs "Delete agent", opened on the list's own URL. */
+  confirmDelete: {
+    ...shell("agents"),
+    csrfToken: CSRF,
+    agents: agentRows,
+    confirm: { kind: "delete-agent" as const, row: agentRows[0] },
+  },
+} satisfies Record<string, AgentsProps>;
+
+const agentNew = {
+  default: { ...shell("agents"), csrfToken: CSRF, form: { slug: "", name: "", description: "" }, errors: {} },
+  /** A refused slug, the reason under the field. */
+  refused: {
+    ...shell("agents"),
+    csrfToken: CSRF,
+    form: { slug: "new", name: "", description: "" },
+    errors: { slug: 'the slug "new" is reserved: /agents/new is a page' },
+  },
+} satisfies Record<string, AgentNewProps>;
+
+const agentDetailBase: Omit<AgentDetailProps, "confirm" | "reveal"> = {
+  ...shell("agents"),
+  csrfToken: CSRF,
+  slug: "claude",
+  name: "Claude",
+  description: "Claude sessions",
+  createdAt: ms("2026-08-12T09:00:00.000Z"),
+  grants: [
+    {
+      app: "linear",
+      appName: "Linear",
+      chips: [{ role: "reader", mode: "allow", builtin: false }],
+    },
+    {
+      app: "news",
+      appName: "News MCP",
+      chips: [
+        { role: "reader", mode: "allow", builtin: false },
+        { role: "admin", mode: "approval", builtin: false },
+      ],
+    },
+  ],
+  tokens: [
+    {
+      id: "tok_4kJk9fQ",
+      prefix: "pmcp_agt_4kJk…9fQ",
+      createdAt: ms("2026-08-12T09:00:00.000Z"),
+      expiresAt: ms("2026-11-10T09:00:00.000Z"),
+      lastUsedAt: ms("2026-08-24T12:47:00.000Z"),
+      expired: false,
+    },
+    {
+      id: "tok_2mQv8xT",
+      prefix: "pmcp_agt_2mQv…8xT",
+      createdAt: ms("2026-05-14T09:00:00.000Z"),
+      expiresAt: ms("2026-08-12T09:00:00.000Z"),
+      lastUsedAt: ms("2026-07-30T18:20:00.000Z"),
+      expired: true,
+    },
+  ],
+  clients: [{ id: "conn_9f2a", name: "Claude", origin: "https://claude.ai", revoked: false }],
+};
+
+const agentDetail = {
+  /** The artboard: grants on two apps, a live and an expired key, one bound client. */
+  default: { ...agentDetailBase, confirm: null, reveal: null },
+  /** A new agent: no grants, no keys, no client — the three empty arms and no clients card. */
+  fresh: {
+    ...agentDetailBase,
+    slug: "cron",
+    name: "cron",
+    description: "",
+    grants: [],
+    tokens: [],
+    clients: null,
+    confirm: null,
+    reveal: null,
+  },
+  /** Right after Issue token: the once-only reveal above the table. */
+  issued: { ...agentDetailBase, confirm: null, reveal: "pmcp_agt_7QmFAKE0000000000000000000000000000" },
+  /** Dialogs "Revoke" and "Delete agent", each on the page's own URL. */
+  confirmRevoke: {
+    ...agentDetailBase,
+    confirm: { kind: "revoke-token" as const, id: "tok_4kJk9fQ", prefix: "pmcp_agt_4kJk…9fQ" },
+    reveal: null,
+  },
+  confirmDelete: { ...agentDetailBase, confirm: { kind: "delete-agent" as const }, reveal: null },
+} satisfies Record<string, AgentDetailProps>;
+
 export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsByName[K]> } = {
   login,
   device,
@@ -2160,6 +2284,9 @@ export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsB
   apps,
   "app-detail": appDetailFixtures,
   "app-new": appNew,
+  agents,
+  "agent-detail": agentDetail,
+  "agent-new": agentNew,
   approvals,
   "approval-detail": approvalDetail,
   audit,

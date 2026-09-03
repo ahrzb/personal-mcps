@@ -302,22 +302,21 @@ describe("§2 · usernames may not collide with routes", () => {
   // route for good. The reservation has to be SERVED for the §2 walk (case 2) to see it,
   // so /agents answers its own not-built-yet text — never the anonymous 404 an unrouted
   // path gets, which is what case 2 would read as "reserved and nothing answers it".
-  it("11. §2 · agents is reserved ahead of its pages: provisioning a user named agents is refused, and GET /agents answers 404 with its own not-built-yet text rather than the anonymous 404 an unrouted path gets — served, so case 2's walk sees the reservation · /agents/anything is the same answer, the whole subtree being claimed (the twin)", async () => {
+  it("11. §2 · agents is reserved and served: provisioning a user named agents is refused, and GET /agents is a page — an anonymous request is bounced to /login, never handed the anonymous 404 — so case 2's walk sees the reservation · /agents/<anything> answers the same bounce, the gate coming before any slug lookup (the twin)", async () => {
+    // Reserved 2026-09-03 ahead of the pages, which landed the same day (§13, step 9).
     expect(RESERVED_ROUTES.has("agents")).toBe(true);
     const refused = await bootstrap({ op: "create", username: "agents" });
     expect(refused.status).toBe(409);
 
     const page = await call(new Request(`${ORIGIN}/agents`));
-    expect(page.status).toBe(404);
-    const body = await page.text();
-    expect(body).toContain("not built yet");
-    expect(body).not.toBe(await (await call(new Request(`${ORIGIN}/${UNROUTED_PATH}`))).text());
+    expect(page.status).toBe(302);
+    expect(page.headers.get("Location")).toMatch(/^\/login(\?|$)/);
     expect(await probeSegment("agents")).toBe("served");
 
-    // The twin: the whole subtree, so a future /agents/<slug> is claimed today too.
+    // The twin: the whole subtree is the page family's, gated before any slug is read.
     const deep = await call(new Request(`${ORIGIN}/agents/anything`));
-    expect(deep.status).toBe(404);
-    expect(await deep.text()).toBe(body);
+    expect(deep.status).toBe(302);
+    expect(deep.headers.get("Location")).toMatch(/^\/login(\?|$)/);
   });
 
   // G36 (2026-09-03): four passkey endpoints were spelled as literals beside a `base`

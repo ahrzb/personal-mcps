@@ -449,6 +449,23 @@ async function main(): Promise<number> {
       return `/settings 200 with the six-pane rail; /settings/clients 200; /settings/two-factor 200 drawing the Enable control; /settings/password 404; /oauth/connections 301 → /settings/clients; bearer-only change-password → 302 /login`;
     });
 
+    await step("§13 · /agents lists the smoke agent and its page shows the grant it holds", async () => {
+      // Step 9's two legs: the list and the page read through agent_list / token_list /
+      // connection_list on the real origin — the suite proves the rendering, the deployment
+      // proves the routes are mounted and the fifth nav slot ships.
+      const withCookie = { headers: { Cookie: sessionCookie }, redirect: "manual" as const };
+      const list = await fetch(`${ORIGIN}/agents`, withCookie);
+      expect(list.status === 200, `authenticated /agents → ${list.status}`);
+      const listHtml = await list.text();
+      expect(listHtml.includes(`href="/agents/${AGENT}"`), `/agents lists no ${AGENT}`);
+      const page = await fetch(`${ORIGIN}/agents/${AGENT}`, withCookie);
+      expect(page.status === 200, `authenticated /agents/${AGENT} → ${page.status}`);
+      const pageHtml = await page.text();
+      expect(pageHtml.includes(`href="/apps/${APP}"`), `/agents/${AGENT} shows no grant on ${APP}`);
+      expect(pageHtml.includes(ROLE), `/agents/${AGENT} names no ${ROLE} chip`);
+      return `/agents 200 listing ${AGENT}; /agents/${AGENT} 200 with its ${ROLE} grant on ${APP}`;
+    });
+
     await step("§13 · the install icon the manifest declares is real PNG bytes at its declared size", async () => {
       // The suite reads these bytes under Vite; only the deployment says the bundle carries
       // them too (an asset import handing back a URL string is the divergence the packaging

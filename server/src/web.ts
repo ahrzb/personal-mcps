@@ -58,6 +58,9 @@ import { Login } from "./pages/login";
 import { AppDetailPage } from "./pages/app-detail";
 import { AppNewPage } from "./pages/app-new";
 import { AppsPage } from "./pages/apps";
+import { AgentsPage } from "./pages/agents";
+import { AgentDetailPage } from "./pages/agent-detail";
+import { AgentNewPage } from "./pages/agent-new";
 import {
   settingsProps,
   approvalDetailProps,
@@ -79,6 +82,10 @@ import {
   appNewForm,
   appNewProps,
   appsProps,
+  agentsProps,
+  agentNewProps,
+  agentNewForm,
+  agentDetailProps,
 } from "./pages/model";
 import { ICON_192, ICON_512 } from "./pages/icon";
 import type {
@@ -753,16 +760,77 @@ export function pageRoutes(): PageRouter {
   app.get(paths.icon192, () => new Response(ICON_192, { headers: PNG }));
   app.get(paths.icon512, () => new Response(ICON_512, { headers: PNG }));
 
-  // /agents is reserved ahead of its pages (§2, decision 30 reversed): the whole subtree
-  // answers this and not the anonymous 404, which is what lets the §2 walk see the
-  // reservation as served. Replaced by the real pages when §13's deferred section lands.
-  const notBuilt = (): Response =>
-    new Response("The agents pages are not built yet — agents are managed with pmcp agent … for now.\n", {
-      status: 404,
-      headers: TEXT,
-    });
-  app.get(paths.agents, notBuilt);
-  app.get(`${paths.agents}/*`, notBuilt);
+  /* -------------------------------- /agents ---------------------------------- */
+  //
+  // §13's agents pages (2026-09-03, roadmap step 9). Static segments first (`/agents/new`
+  // is a page, never an agent — admin refuses the slug), then the agent's own page and
+  // its mutations. The gate is the ordinary owner session, like `/apps/<slug>/*`.
+
+  app.get(paths.agents, async (c) => {
+    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
+    return render(AgentsPage(await agentsProps(ctx)));
+  });
+
+  app.get(paths.agentNew, async (c) => {
+    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
+    return render(AgentNewPage(await agentNewProps(ctx, agentNewForm(ctx.query), {})));
+  });
+
+  // agent_create's translation: a refusal re-renders the form at 400 with the reason under
+  // the field it names; a created agent lands on its own page (§13) — which is why this is
+  // not the generic redirect-back, exactly like `paths.appCreate`.
+  app.post(
+    paths.agentCreate,
+    mutation(async (c, session, form) => {
+      const ctx = await context(c.req.raw, session);
+      const draft = agentNewForm(formQuery(form));
+      const created = await attempt(() =>
+        ops.agent_create.handler(session.user.userId, {
+          slug: draft.slug,
+          ...(draft.name === "" ? {} : { name: draft.name }),
+          ...(draft.description === "" ? {} : { description: draft.description }),
+        }),
+      );
+      if ("reason" in created) {
+        const errors = /"slug"|slug/i.test(created.reason) ? { slug: created.reason } : { form: created.reason };
+        return render(AgentNewPage(await agentNewProps(ctx, draft, errors)), 400);
+      }
+      return c.redirect(noticeUrl(paths.agentDetail(draft.slug), "agent_create", created), 303);
+    }),
+  );
+
+  app.get("/agents/:slug", async (c) => {
+    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
+    const props = await agentDetailProps(ctx, c.req.param("slug") ?? "");
+    if (props === null) return noSuchPage();
+    return render(AgentDetailPage(props));
+  });
+
+  // Issue token on the agent page: the same 200-in-place reveal the app page's Issue
+  // answers with, for the same reason (§15 — a plaintext key never rides a URL).
+  app.post(
+    `/agents/:slug/${TOKEN_ISSUE}`,
+    mutation(async (c, session, form) => {
+      const slug = c.req.param("slug") ?? "";
+      const minted = await attempt(() =>
+        ops[TOKEN_ISSUE].handler(session.user.userId, { ...queryFields(c.req.raw), ...formFields(form) }),
+      );
+      if ("reason" in minted) return c.redirect(noticeUrl(paths.agentDetail(slug), TOKEN_ISSUE, minted), 303);
+      const ctx = await context(c.req.raw, session);
+      const props = await agentDetailProps(ctx, slug);
+      if (props === null) return noSuchPage();
+      return render(AgentDetailPage({ ...props, reveal: tokenOf(minted.value) }));
+    }),
+  );
+
+  // Every other mutation the agent page renders lands back on it — except Delete, whose
+  // page is gone, which lands on the list (§13's pane rule, as /apps/<slug>'s).
+  app.post(
+    "/agents/:slug/:op",
+    dispatch((c) => (c.req.param("op") === "agent_delete" ? paths.agents : paths.agentDetail(c.req.param("slug") ?? ""))),
+  );
+
+  app.post("/agents/:op", dispatch(paths.agents));
 
   return app;
 }

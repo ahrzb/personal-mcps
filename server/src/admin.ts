@@ -990,6 +990,10 @@ export const ops: Record<string, AdminOp> = {
     async run(ownerId, parsed) {
       // deps: registry.createAgent · audit.record
       const slug = parsed.slug as string;
+      // §2 (2026-09-03): `/agents/new` is the create form, so `new` can be no agent —
+      // the same rule that keeps `new` and `connect` out of app slugs, spelled here
+      // because admin must not import the pages that own the segment.
+      if (slug === "new") throw invalid(`the slug "new" is reserved: /agents/new is a page`);
       const created = await domain(
         registry().createAgent({
           ownerId,

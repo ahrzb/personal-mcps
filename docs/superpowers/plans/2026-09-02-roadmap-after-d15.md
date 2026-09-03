@@ -258,6 +258,12 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Step 8 — One-liners: G17, G18, G14, G36, G28, G52, and 3a's string edits (inline fix)
 
+> **Landed 2026-09-03 as three ships, no agents, bodies first** — deploys `bae8fa4b`,
+> `0f3028e6`, `0d3b9a5b`, smoke 31/31 each; 45 / 1462 / 0. The owner sheet's 19
+> questions were resolved by the orchestrator (all but iPhone push, which is step 14 as
+> planned) and every answer is written into the spec or the decision log; the ledger row
+> lists the commits per ship.
+
 **Achieves.** Independent small fixes in files no other step touches, batched because scheduling costs more than doing: G17 `app-new.tsx:198 querySelector` → `querySelectorAll` + `forEach` like its siblings at `:186`, `:192` (the narrow-width submit label never updates); G18 `approvals.tsx:249-254` — check `res.ok` before `markEnabled` and replace the empty `catch` with a label or notice (denied permission and a rejected store both read as success today); G14 `upstream.ts:734`'s hardcoded `/apps` → `noticeUrl(paths.apps, "connect", …)`, or the originating pane through `state` if 37(b) said the pane owns the notice; G36 `paths.auth`'s four WebAuthn literals templated off `AUTH_BASE_PATH`, the two-vs-four comment fixed; G28's reservation half if 3a reversed decision 30:239 — `agents` into `index.ts:116-131 ROUTES` so `RESERVED_ROUTES` derives it (a hand-kept extra would break §2's derivation rule, so it is a stub route or nothing); **G52, built** — the failed-decision notice "That request is no longer pending" with its expiry line, the one real use of the `warning` tone: today a decide that loses the race throws `notPermitted` and lands through `dispatch` as a danger "failed" notice, so `noticeOf` (`web.ts:1063-1077`) gains a warning arm for that op + reason and `approvals.tsx`'s warning glyph gets its producer (placed here rather than step 6 because `approvals.tsx` is already open for G18). Plus the string edits 3a produced: G27's four in `app-detail.tsx`, G8's interim consent copy (+ `web-pages.test.ts:1385` re-pointed), G12's Tokens sentence, G29's two CLI columns.
 
 **Depends on.** 3a, step 2.
@@ -377,7 +383,10 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Appendix — the gap register
 
-From the audit's synthesis (2026-09-02):
+From the audit's synthesis (2026-09-02). **Closed 2026-09-03** (steps 4–8, each with its
+own deploy): G3 G4 G5 G6 G7 G8 G9 G11 G12 G13 G14 G15 G16 G17 G18 G26 G27 G28 G29 G30
+G31 G36 G39 G50 G51 G52 G59. Still open: G1 G2 G10 G19–G25 G32–G35 G37 G38 G40–G49
+G53–G58 (steps 9–14 and the owner-accepted keeps).
 
 | id | sev | size | area | gap, one line | recorded in |
 |---|---|---|---|---|---|

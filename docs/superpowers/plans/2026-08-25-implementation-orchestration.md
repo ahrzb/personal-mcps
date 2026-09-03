@@ -1436,3 +1436,30 @@ check and (manual, once) a real push notification to a real browser.
   exactly three `todo → passed`, `tsc` 0. `pnpm ship`: no migration, deploy `3c790b4c`,
   smoke **31/31** (new leg: `/icon-512.png` 200 `image/png`, signature, width 512, 5 332
   bytes). Cost: 0 agents.
+- 2026-09-03 — **Roadmap step 8 landed as three ships, no agents, bodies first — the
+  owner sheet's 19 questions resolved by the orchestrator** (the user: "the questions you
+  were asking were just too basic … you can resolve those"; only product decisions the
+  user would notice are theirs, and the one such — iPhone push — is already step 14).
+  Ship 1 `4df6e7b`/`521bde0`, deploy `bae8fa4b`: `agents` reserved ahead of its pages
+  (decision 30 reversed, `/agents` answers its own not-built-yet 404 so the §2 walk sees
+  it served), the Tokens intro and the consent empty state name what exists (`pmcp token
+  issue`, `pmcp agent create`), "1 arg" pinned singular, the mobile pill's aria-current
+  pinned. Ship 2 `1eafdf3`/`19dff2c`, deploy `0f3028e6`: header Connect/Disconnect and
+  the finished callback land on the app's Overview pane (37(b), closes G14), a
+  headers-mode unreachable app names its endpoint (37(a)), a never-connected tunneled
+  app dims all three families with a fourth `AppFamilyView` state (32(b)), the scoped
+  endpoint prints the real origin (32(c)), Roles stays counted on a failed listing
+  (32(d)), §20.6 yields to §13 on the Resources approval line (37(c)). Ship 3
+  `902b258`/`9b07098`, deploy `0d3b9a5b`: `pmcp connections` ORIGIN + SELF-REGISTERED
+  (G29), the lost-race warning (G52), passkey paths composed from `base` (G36), the push
+  script's res.ok and failure labels (G18), the narrow submit label (G17), the push
+  harness pinned to `aesgcm` (G23's half), the bell row waiting on `untilSockets` (D16
+  flake), both `withShrunkCallTimeout` copies delegating to the harness (D16 residue),
+  the D10/D14 PSD-record corrections, G39 retired, the gate's item 2 amended (G26 ii).
+  Rows across the three: 10 opened from `it.todo`, one retitled, one retired-and-replaced,
+  one filed under the wrong describe in a rows commit and corrected at the gate. Gates:
+  45 / 1455 / 0 → 1459 → 1462, every diff exactly the batch's `todo → passed`; `tsc` 0;
+  smoke 31/31 three times (one `pnpm ship` stopped on a transient D1 API error before
+  deploying, as designed, and was re-run). The states preview was not re-walked for
+  ships 2–3: the new states render through the empty-state component the earlier walks
+  covered. Cost: 0 agents.

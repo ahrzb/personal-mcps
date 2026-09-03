@@ -1,13 +1,17 @@
 # Owner decisions — the open questions, with context
 
-> Every question below is one the roadmap says only the owner can answer. Each entry says
-> what the thing is, where you see it on the hub, what happens today, what each answer
-> changes, and my recommendation, with links to the spec sentence and the code line it
-> turns on. Answer by number ("1 yes, 2 no, 3 the origin…"), or say **take the
-> recommendations** to accept all of them. Answered rows get the date written in.
+> **Resolved 2026-09-03.** The owner's ruling on this sheet: "the questions you were
+> asking were just too basic, you … can resolve those". So every question below was
+> decided by the orchestrator along its recommendation — with three changes on reading the
+> actual code: #4 keeps "1 arg" (the spec is amended, not the page), #9 keeps the Roles
+> count (it is configuration, not a listing), and #14 is not a question because the
+> roadmap already schedules the push-library swap as step 14. Each answer is written into
+> the spec or the decision log with the date, and shipped: steps 5–8's ledger rows name
+> the commits. The sheet stays as the record of what each question was.
 >
-> Two questions from the earlier version of this sheet are already closed: the audit
-> filter row and the install icons were both fixed and deployed on 2026-09-03.
+> Every entry says what the thing is, where you see it on the hub, what happened before,
+> what each answer changes, and the recommendation that was taken, with links to the spec
+> sentence and the code line it turned on.
 
 ## A. Needed before the next batch of fixes (roadmap step 8)
 

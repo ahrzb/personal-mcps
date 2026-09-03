@@ -1463,3 +1463,24 @@ check and (manual, once) a real push notification to a real browser.
   deploying, as designed, and was re-run). The states preview was not re-walked for
   ships 2–3: the new states render through the empty-state component the earlier walks
   covered. Cost: 0 agents.
+- 2026-09-03 — **Roadmap step 9, spec + first ship — the agents pages landed (G2's list and
+  page, G28's nav half, G8 and G12 closed); the grant editor is the second ship, running
+  as a subagent.** `d832451` (`spec:` — §13 gains `/agents`, `/agents/<slug>` and the
+  editor with the three concept boards' strings pinned, moved onto the main canvas; §2
+  reserves `new` from agent slugs; decision 30's scope paragraph notes the adoption; the
+  nav follow-up closes because the narrow nav was already a scroller), `3cc730b` (ten
+  rows), `95ca7f6` (`feat:`), deploy `0d055370`, smoke **32/32** (new leg: `/agents` lists
+  the smoke agent, its page shows the grant). Pages: `agents.tsx`, `agent-new.tsx`,
+  `agent-detail.tsx`; model `agentsProps` / `agentNewProps` / `agentDetailProps` over
+  agent_list, app_list, token_list, connection_list; routes for the list, the form
+  (`agent_create` translated like `appCreate`), the page, Issue token (200 in place, as
+  the app page's), `/agents/:slug/:op` (Delete lands on the list), `/agents/:op`; `new`
+  refused as an agent slug in admin; five nav entries; seven pointer rows re-pointed and
+  one retired; fixtures for every board state. Two things learned: agent_list relays
+  grant roles in storage order, which is not stable under load — the page sorts them and
+  §13 says so; a row that matched "the first `<form`" caught the shell's Sign out form.
+  Gate: 45 / 1471 / 0, exactly ten `todo → passed` plus the enumerated re-points; `tsc` 0.
+  **Process note, the user's:** "this is an actual task … this could be a subagent" —
+  the first ship was hand-built by the orchestrator against its own rule; the editor
+  (`b22ca54`, six rows) is built by one Opus subagent from a written brief, the
+  orchestrator reviewing. Cost so far: 0 agents for the first ship.

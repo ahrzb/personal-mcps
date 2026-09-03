@@ -280,6 +280,11 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Step 9 — `/agents`: G2, G28's nav half, closing G8 and G12 (spec-first dispatch)
 
+> **Spec + first ship landed 2026-09-03.** `d832451` (`spec:`), `3cc730b` (rows),
+> `95ca7f6` (`feat:` — list, create form, agent page, fifth nav slot, pointers), deploy
+> `0d055370`, smoke 32/32; 45 / 1471 / 0. The (agent × app) grant editor is the second
+> ship: rows `b22ca54`, build running as one Opus subagent. Ledger row has the detail.
+
 **Achieves.** The whole page family decision 30 deferred: the `/agents` list, `/agents/<slug>` detail with the (agent × app) grant editor, the fifth nav slot (`layout.tsx:39-44` holds four; 390 px cannot hold five — scroller or overflow, §13:358-360), §19.5's read-only clients row on the agent page (`19-inbound-oauth.md:403`), and the four dangling pointers become links (`consent.tsx:45-53`, `settings.tsx:769` / `:818`, `app-detail.tsx:708`). Agents exist as first-class objects everywhere in the model and can be created, listed and granted only through the admin MCP or `pmcp`; the visible harm rides G8 and G12.
 
 **Depends on.** 3a (the go; G28's reservation answer), 5 and 8 (sequential edits to `settings.tsx`, `consent.tsx`, `app-detail.tsx`).

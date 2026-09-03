@@ -3172,6 +3172,15 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
     expect(markerOf(html, paths.settingsSessions)).toBe(String(revocable.size + 1));
   });
 
+  // The owner's live pane read "Unknown client" on every browser row (2026-09-03): /login's
+  // translation rebuilt the request with only the cookie, so better-auth stored "" as the
+  // session's User-Agent and nothing was left to name. The fix is on both sides of that
+  // seam — identity forwards the header, model reads a label out of it — and this row
+  // walks the whole seam as a browser does: three form sign-ins, one pane.
+  it.todo(
+    `§13 · the Client column names the browser and system a web session was signed in from — /login's translation forwards the browser's User-Agent to better-auth, so a Chrome-on-Windows sign-in through the form lists as "Chrome on Windows" and a Safari-on-iPhone one as "Safari on iPhone", never the raw string · a sign-in that sent no User-Agent lists as "Unknown client" (the twin)`,
+  );
+
   it(`§13 · the session rendering /settings/sessions is badged current and offers no Revoke — no link on its row, and its own ?confirm=revoke-session draws no dialog · every other session's row carries both (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const other = await seedOwnerSession(ns.owner);

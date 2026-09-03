@@ -185,6 +185,12 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Step 5 — `/settings` truth pass: G3, G4, G30, G9, G16, G31 (small dispatch)
 
+> **Landed 2026-09-03, own deploy.** `5e6ef5d` (rows) + `175530d` (`feat:`); migration
+> 0008 applied remote, deploy `a501bd96`, smoke 30/30 after a one-minute sign-in outage
+> (the migration was masked by a pipe and the deploy outran it — ledger row; `pnpm ship`
+> is the countermeasure). 45 / 1447 / 6; nine `todo → passed`. G59 (browser session
+> names) went ahead of it as its own deploy.
+
 **Achieves.** The two remaining blocking gaps and everything behind the same door, from one root cause (audit note 1): `web.ts:838-870 credential()` reads only `answered.ok` and discards better-auth's response body, so `model.ts:2164 enrollment: null` and `:2165 revealedBackupCodes: null` can never be populated — the TOTP setup card (`settings.tsx:413-453`) and `BackupCodesCard` (`:546-570`) are unreachable, Enable redraws the not-enrolled arm under a success notice (G3), Regenerate rotates the owner's codes out of reach (G4), and `/login`'s backup-code card is unusable. Built here, per the owner's meaningful list: the enrolment card **and its error arm** (O4 — nothing today writes `enrollment.error`; a bad code lands on `/login?step=totp&error=…`, a query `settingsProps` never reads), the backup-codes reveal **with a working Copy codes** (G30: the card's six digit boxes have no hidden `code`, no OTP-stitching script, no `callbackURL`, and post to `/login`'s route; Copy codes is inert — reuse `login.tsx`'s input + script and `layout.tsx`'s `#copy-token` handler), the authenticator-supplied passkey name (G16: the ceremony sends no `name` and `identity.ts:130` sets no `registration.afterVerification`, so every passkey renders as "Passkey" against §13:100-103 — add `aaguid` to the row type at `model.ts:2212` and render `pk.name || getAuthenticatorName(pk.aaguid) || "Passkey"`, both exported by the plugin), the CLI session label via a `source` field (G9: `model.ts:2290 source: "web"` hardcoded — better-auth `session.additionalFields.source`, stamped `"cli"` on the device-flow sign-in, read by `sessionRow`; §13:105-107's "pmcp CLI · device flow" becomes assertable), and G31's dangling comment deleted with G3. G10's fabricated line is gone since step 2. §13 pins every string, so no board review gates it.
 
 **Depends on.** Step 4 (`login.tsx` is the OTP script's source). Its `identity.ts` / `model.ts` / `settings.tsx` edits collide with no other step.

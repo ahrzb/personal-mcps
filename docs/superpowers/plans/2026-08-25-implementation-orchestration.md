@@ -1359,3 +1359,34 @@ check and (manual, once) a real push notification to a real browser.
   0. Deploy `eed75627`, `pnpm smoke` **30/30** (no new leg — the smoke's own sign-in is
   undici's, and the vitest row is the end-to-end walk). Rows minted before the fix keep
   their empty User-Agent until signed in again; no backfill. Cost: 0 agents.
+- 2026-09-03 — **Roadmap step 5 landed (small dispatch, own deploy) — G3, G4, G30, G9, G16,
+  G31 closed.** Commits `5e6ef5d` (nine rows + the `plantPasskey` name row's enumerated
+  retirement) and `175530d` (`feat:`), plan `2026-09-03-step5-settings-truth.md`. One
+  root cause behind G3/G4: `credential()` kept only `answered.ok`. It now reads the body
+  once and takes an optional `reveal`; enable and regenerate answer 200 in place
+  (`settingsTwoFactorPage` = the pane's own GET props plus the overlay) with the QR
+  (`uqr@0.1.3`, SVG inlined as a data URI), the grouped secret out of the same
+  `otpauth://` URI, and the ten codes. New target `paths.auth.totpVerifySettings` under
+  op key `two_factor_enable`: success keeps the 303 (better-auth rotates the cookie
+  there), a refusal redraws the same enrolment from the form's hidden `totpuri` + `codes`,
+  both re-validated (`enrollmentOf`: scheme, host, secret, 512-char cap measured at the
+  encoder's ceiling; `revealedCodesOf`: ten of better-auth's shape; the newline split
+  lives in `web.ts`'s `postedCodes` with the CRLF reason). `OtpBoxes` in `layout.tsx` is
+  the one six-box component for /login and /settings (G30). `passkeyRow` names
+  `pk.name || getAuthenticatorName(aaguid) || "Passkey"` (G16). `session.additionalFields
+  .source` + a `databaseHooks.session.create.before` hook stamping "cli" on `/device/token`,
+  migration `0008_session_source.sql` (no default, no backfill — pre-0008 rows read NULL →
+  web; the owner's live CLI session reads "web" until the next `pmcp login`); `sessionRow`
+  renders "pmcp CLI" / `clientOf` on the column (G9). `twoFactor({ issuer })` so the
+  authenticator lists the hub, not "Better Auth". Reviews: one §13 verbatim pass (12/12
+  strings), PSD across three rounds — one real bug (the 512 cap), the rest comments and
+  the wire-format tidy. Gate: 45 / 1447 / 6, inventory exactly nine `todo → passed`,
+  `tsc` 0, ownership audit clean bar my own untracked `scripts/watch-agents.mjs`; states
+  preview walked (enrolling, wrong code, revealed codes). **Deploy incident:** the ship
+  chain piped wrangler through grep, the remote migration failed on a transient API error,
+  the pipe masked it and `wrangler deploy` (`a501bd96`) went out first — live sign-in 500
+  for about a minute until the migration was re-applied; smoke then **30/30** (two
+  assertions inside the §13 prefix-gate step, leg count 27 unchanged). Countermeasure
+  landed: `pnpm ship` = migrate `&&` deploy `&&` smoke, no pipes. Cost: 14 agents, 1.75 M
+  tokens, 90 min — over-weighted for the review loop (three PSD rounds for one bug); next
+  dispatch runs one verifier round.

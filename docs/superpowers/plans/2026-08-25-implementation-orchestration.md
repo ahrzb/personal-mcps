@@ -1534,3 +1534,32 @@ check and (manual, once) a real push notification to a real browser.
   Verified in the states preview by clicking through (open → second row closes the first
   → close drops `expand`), since vitest cannot run the script; the row pins the markup.
   Gate: 45 / 1479 / 0, exactly one `todo → passed`; `tsc` 0. Cost: 0 agents.
+- 2026-09-03 — **Roadmap step 10 landed — the rest of the expanded row: G24, G49, O27
+  and the anchor.** `9adc59e` (`spec:` — §13's audit bullet gains the three no-bodies
+  sentences, KB/MB stub sizes, the `event-<id>` anchor), `f9d5977` (five rows, `it.todo`
+  first), `c34f5e8` (`feat:`), deploy `75c666f7`, smoke **32/32**. Built by one Opus 5
+  subagent from a written brief (`step10-brief.md`, scratchpad), the orchestrator writing
+  spec and rows and reviewing. Model: `auditProps` reads `app_list` once (a fifth read in
+  the same `Promise.all`) for each app's `log_bodies` as it stands now; `AuditEventRow`
+  gains `noBodies?: "off" | "refused" | "unrecorded"`, set only on `tools/call`,
+  `prompts/get` and `resources/read` rows with both body columns absent — refusal first
+  (§15: a refusal never had bodies), then the app's flag, else unrecorded (before logging
+  was switched on, or the app is gone); `paths.auditWith` appends `#event-<id>` when
+  `expand` is set. Page: the sentence renders as `.detail-meta` prose above the client
+  line; `hasDetail` includes `noBodies`, so a bodies-off row is expandable for the
+  sentence alone and no panel is ever blank; `fmtMB` → `fmtSize` (a 20 KB oversize stub
+  read "0.0 MB"); the summary `<tr>` carries `id="event-<id>"` and the toggle script sets
+  the hash on both flips. Fixtures `bodiesOff` and `refused` added, `bodyStubs`' open row
+  now shows both size branches, four existing bodiless rows marked honestly. Board:
+  `AuditDetailStates` moved from `design/concepts/` onto the main canvas (page 2) without
+  its "Loading call detail…" panel; both READMEs and both `canvas.json`s follow. Reviewer's
+  one change: the two subscription events left `BODY_EVENTS` — §21.6 says they carry no
+  bodies structurally, so like an auth row they draw no sentence. Builder's recorded
+  choices: the refusal row seeded on the proxied app so refusal-over-off precedence is
+  pinned; two rows beyond the brief (a clientless bodies-off row, a row whose app is gone).
+  Gate: first run 45 / 1482 / **2 failed** — both in `tunnel/stream.test.ts`, the D16
+  socket-timing flake, with the states preview server running alongside the suite; the
+  file alone 13/13; re-run with nothing else running 45 / 1484 / 0, exactly five `todo →
+  passed`. Lesson: do not run the preview walk during the gate. `tsc` 0. Preview walked:
+  `bodiesOff`, `refused`, `bodyStubs`, and a click-through of the anchor hash. Cost: 1
+  agent (Opus 5, ~226k tokens).

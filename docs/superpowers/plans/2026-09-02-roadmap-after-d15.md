@@ -311,8 +311,10 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 > both widths, back without it when open, filters carried; §13's audit bullet pins it.
 > Then `0ef9ee4` / `dc3f119`, deploy `f4ce9502`: rows open **in place** — every detail
 > pre-rendered hidden, an inline script toggles it and mirrors `?expand=<id>` into the
-> address (the user's ask; no htmx). Left here: G24, G49, O27, and the per-row anchor
-> only for the scripting-off reload.
+> address (the user's ask; no htmx). **Step closed 2026-09-03:** `9adc59e` (`spec:`),
+> `f9d5977` (five rows), `c34f5e8` (`feat:`, one Opus subagent), deploy `75c666f7`, smoke
+> 32/32; 45 / 1484 / 0. G24, G49 and O27 closed; the anchor landed; the board adopted
+> without its loading panel. Ledger row has the detail.
 
 **Achieves.** The owner's own finding: an expandable row draws a `Chevron` at both widths (`audit.tsx:333-349`) inside a `<tr>` with no anchor, form or script, and `AuditLinkQuery` / `paths.auditWith` (`model.ts:243-246`) cannot spell `expand`, so the shipped expanded state is reachable only by hand-editing the URL (G1). Once open, a row from an app with body logging off shows a bare "Client: …" with no explanation — `AuditEventRow` carries no `log_bodies` signal (G24) — and a row with neither client metadata nor bodies draws an empty panel (O27). The body-stub placeholders (`‹blob image/png · 4.2 MB›`, `‹oversize …›`, `audit.tsx:117-129`) are pinned by §13 and stored by `audit.ts:248-256`, but the loader never emits a stub onto `AuditEventRow` and the page renders them only through the same `?expand=` chain — built here: the loader carries stubs through, the `bodyStubs` fixture and test 14's page half become honest (G49). Both sit inside decision 30's deferral of the expanded-row states, so the §13 paragraph (`13-web-surface.md:162-166`) and the concept board (`design/concepts/AuditDetailStates`, whose lazy-fetch LOADING panel the spec never adopted — audit note 10; the synchronous render is the pinned pattern) are reviewed first. Fix: `expand` joins the link query; the chevron becomes `<a href={auditWith({...filters, expand: isOpen ? undefined : row.id})}>` so the open row's chevron closes it; the row gets an `id` anchor; one bodies-off sentence and one nothing-recorded sentence.
 
@@ -400,8 +402,9 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 From the audit's synthesis (2026-09-02). **Closed 2026-09-03** (steps 4–8, each with its
 own deploy): G3 G4 G5 G6 G7 G8 G9 G11 G12 G13 G14 G15 G16 G17 G18 G26 G27 G28 G29 G30
 G31 G36 G39 G50 G51 G52 G59; step 9 closed G2 (both ships) and the chevron fix closed G1
-ahead of step 10 (the owner's own finding, one row). Still open: G10 G19–G25 G32–G35 G37
-G38 G40–G49 G53–G58 (steps 10–14 and the owner-accepted keeps).
+ahead of step 10 (the owner's own finding, one row); step 10 closed G24, G49 and O27.
+Still open: G10 G19–G23 G25 G32–G35 G37 G38 G40–G48 G53–G58 (steps 11–14 and the
+owner-accepted keeps).
 
 | id | sev | size | area | gap, one line | recorded in |
 |---|---|---|---|---|---|

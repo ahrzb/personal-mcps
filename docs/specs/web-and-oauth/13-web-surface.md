@@ -175,8 +175,17 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   shows the caller's client metadata when present (client name/version and session id,
   §5/§7) and the recorded call bodies when present (§15) — post-redaction args and
   result structuredContent, with stubs rendered as typed size placeholders (e.g.
-  `‹blob image/png · 4.2 MB›`, never the bytes); the session id renders as a link to this same audit view filtered to that
-  session (`?session=…`, backed by `audit_query`'s `session` filter). A row with something
+  `‹blob image/png · 4.2 MB›`, `‹oversize · 20 KB›` — KB under a megabyte, MB with one
+  decimal above; never the bytes); the session id renders as a link to this same audit view filtered to that
+  session (`?session=…`, backed by `audit_query`'s `session` filter). A call row with no
+  bodies says why, in one sentence, so no panel is ever blank: "Call bodies aren't
+  recorded for this app (body logging is off)." when the app's `log_bodies` is off now
+  (§15's default for proxied apps); "Refused before the call was made, so there are no
+  bodies to show." for a refusal outcome; "No bodies were recorded for this call."
+  otherwise (recorded before logging was switched on, or the app is gone) — and such a
+  row is expandable for that sentence alone. The summary row carries `id="event-<id>"`
+  and an opening chevron's link ends in `#event-<id>`, so the scripting-off reload lands
+  on the row it opened *(2026-09-03, step 10: G24, G49, O27)*. A row with something
   to show draws a chevron that is a link to this same view with `?expand=<id>` — the
   current filters ride along, and the open row's chevron links back without it; a row
   with nothing recorded draws none *(2026-09-03, G1)*. Every such row's detail is

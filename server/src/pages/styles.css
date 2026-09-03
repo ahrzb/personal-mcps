@@ -622,6 +622,10 @@ p {
   background: var(--muted);
 }
 
+.row-open .row-toggle svg {
+  transform: rotate(180deg);
+}
+
 .actions {
   display: flex;
   align-items: center;

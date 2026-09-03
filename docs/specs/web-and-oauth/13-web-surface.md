@@ -179,7 +179,12 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   session (`?session=…`, backed by `audit_query`'s `session` filter). A row with something
   to show draws a chevron that is a link to this same view with `?expand=<id>` — the
   current filters ride along, and the open row's chevron links back without it; a row
-  with nothing recorded draws none *(2026-09-03, G1)*. No mutations, so no CSRF surface.
+  with nothing recorded draws none *(2026-09-03, G1)*. Every such row's detail is
+  rendered into the page, hidden until opened: a small inline script opens it in place
+  with no request and no reload, closing the row that was open, and keeps `?expand=<id>`
+  in the address so a refresh or a shared link reproduces the state; with scripting off
+  the chevron's link reaches the same state one reload later *(2026-09-03)*. No
+  mutations, so no CSRF surface.
 - `/approvals` — cookie-session-gated: pending requests up top (agent, app, tool,
   redacted arguments, requested time, approve/reject buttons — CSRF token on the POST),
   decision history below. A decision on a request that is no longer pending (decided

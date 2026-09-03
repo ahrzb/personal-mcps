@@ -1028,7 +1028,37 @@ describe("§8/§13 · one paging contract, two presentations", () => {
     expect(open.filter((link) => link.label === "Show detail").length).toBe(closed.length - 2);
   });
 
-  it.todo("17. §13 · every expandable row's detail is already in the page, hidden unless it is the addressed row (whose summary row is row-open), so the toggle script opens it in place with no reload and keeps ?expand=<id> in the address — a row with nothing to show renders no detail row, and the script rides the page (the twin: scripting off leaves the addressed row the only open one)");
+  it("17. §13 · every expandable row's detail is already in the page, hidden unless it is the addressed row (whose summary row is row-open), so the toggle script opens it in place with no reload and keeps ?expand=<id> in the address — a row with nothing to show renders no detail row, and the script rides the page (the twin: scripting off leaves the addressed row the only open one)", async () => {
+    const filters = { limit: 50, offset: 0 };
+    const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
+    const showable = (row: AuditRow) => Boolean(row.client || row.detail || row.args || row.result);
+    // The detail row as rendered; group 1 is present exactly when the row is hidden.
+    const detailRow = (html: string, id: number) => new RegExp(`<tr class="row-detail" id="detail-${id}"( hidden[^>]*)?>`).exec(html);
+
+    const closed = await page(auditPath(filters));
+    expect(closed, "the toggle script rides the page").toContain('closest("a.row-toggle")');
+    expect(closed).not.toContain('class="row-open"');
+    for (const row of truth.rows) {
+      const found = detailRow(closed, row.id);
+      if (!showable(row)) {
+        expect(found, `bodiless row ${row.id} rendered a detail row`).toBeNull();
+        continue;
+      }
+      expect(found, `row ${row.id} has no detail row in the page`).not.toBeNull();
+      expect(found?.[1], `row ${row.id} is open on a page that addresses none`).toBeDefined();
+    }
+
+    const [addressed] = truth.rows.filter(showable);
+    expect(addressed).toBeDefined();
+    const open = await page(auditPath({ ...filters, expand: addressed?.id ?? 0 }));
+    expect(open.match(/class="row-open"/g)?.length, "exactly one summary row is open").toBe(1);
+    for (const row of truth.rows.filter(showable)) {
+      const found = detailRow(open, row.id);
+      expect(found, `row ${row.id} lost its detail row`).not.toBeNull();
+      if (row.id === addressed?.id) expect(found?.[1], "the addressed row is hidden").toBeUndefined();
+      else expect(found?.[1], `row ${row.id} is open beside the addressed one`).toBeDefined();
+    }
+  });
 });
 
 describe(`§13 · /audit's filter row — the window it names and the window it empties`, () => {
@@ -7673,10 +7703,12 @@ function expandLinks(html: string): { label: string; href: string; query: URLSea
   });
 }
 
-/** The ?session=… link the expanded row detail renders. */
+/** The ?session=… link inside the OPEN detail row — every row's detail is in the page,
+ *  so the first session link on it is not necessarily the expanded row's. */
 function sessionLink(html: string): string | null {
-  const link = /href="(\/audit\?[^"]*session=[^"]*)"/.exec(html);
-  return link === null ? null : decodeEntities(link[1]);
+  const open = /<tr class="row-detail" id="detail-\d+">([\s\S]*?)<\/tr>/.exec(html);
+  const link = open === null ? null : /href="(\/audit\?[^"]*session=[^"]*)"/.exec(open[1] ?? "");
+  return link === null ? null : decodeEntities(link[1] ?? "");
 }
 
 /** The export, parsed — one AuditRow per line, exactly as audit.exportJsonl frames it. */

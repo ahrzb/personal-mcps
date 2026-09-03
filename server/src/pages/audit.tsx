@@ -176,12 +176,6 @@ const IconChevronDown: FC = () => (
   </svg>
 );
 
-const IconChevronUp: FC = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="m18 15-6-6-6 6"></path>
-  </svg>
-);
-
 const IconChevronLeft: FC = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="m15 18-6-6 6-6"></path>
@@ -193,8 +187,6 @@ const IconChevronRight: FC = () => (
     <path d="m9 18 6-6-6-6"></path>
   </svg>
 );
-
-const Chevron: FC<{ open: boolean }> = ({ open }) => (open ? <IconChevronUp /> : <IconChevronDown />);
 
 /* ------------------------------------------------------------------ *
  * Links — every href on this page is `paths.auditWith`/`auditExport` applied
@@ -257,7 +249,8 @@ function hasDetail(row: AuditEventRow): boolean {
 
 /** The chevron IS the expand control (G1, 2026-09-03): with no script on the page,
  *  opening a row is a reload of this same view with `?expand=<id>` — the filters ride
- *  along, and the open row's chevron links back without it. */
+ *  along, and the open row's chevron links back without it. One icon for both states:
+ *  `.row-open` rotates it, so the script below can flip a row without redrawing markup. */
 const ExpandLink: FC<{ row: AuditEventRow; filters: AuditFilters; open: boolean }> = ({ row, filters, open }) => (
   <a
     class="row-toggle"
@@ -265,9 +258,32 @@ const ExpandLink: FC<{ row: AuditEventRow; filters: AuditFilters; open: boolean 
     aria-expanded={open ? "true" : "false"}
     href={auditLink(filters, { expand: open ? undefined : row.id })}
   >
-    <Chevron open={open} />
+    <IconChevronDown />
   </a>
 );
+
+/**
+ * Opening a row in place (2026-09-03): every expandable row's detail is already in the
+ * page, hidden, so a click only flips `hidden` on the sibling detail row — no request, no
+ * reload — closes whichever row was open (the server model is one open row), and mirrors
+ * the state into the address with the chevron's own href, so a refresh or a shared link
+ * reproduces it. The href, label and aria-expanded of the flipped rows are rewritten to
+ * what the server would have rendered for that state. Scripting off: the href navigates.
+ */
+const TOGGLE_SCRIPT = `document.addEventListener("click",function(e){
+var a=e.target.closest?e.target.closest("a.row-toggle"):null;if(!a)return;
+var detail=a.closest("tr").nextElementSibling;
+if(!detail||!detail.classList.contains("row-detail"))return;
+e.preventDefault();
+var to=a.href,opening=detail.hidden;
+document.querySelectorAll("tr.row-detail:not([hidden])").forEach(function(d){set(d,false)});
+if(opening)set(detail,true);
+history.replaceState(null,"",to);
+function set(d,open){d.hidden=!open;var row=d.previousElementSibling;row.classList.toggle("row-open",open);
+row.querySelectorAll("a.row-toggle").forEach(function(l){var u=new URL(l.href);
+if(open)u.searchParams.delete("expand");else u.searchParams.set("expand",d.id.slice("detail-".length));
+l.href=u.toString();l.setAttribute("aria-expanded",open?"true":"false");l.setAttribute("aria-label",open?"Hide detail":"Show detail")})}
+});`;
 
 function mobileMeta(row: AuditEventRow): string {
   const parts = [fmtDateTimeShort(row.ts), row.principal];
@@ -341,8 +357,11 @@ const EventRow: FC<{ row: AuditEventRow; filters: AuditFilters; expandedId: numb
           </div>
         </td>
       </tr>
-      {isOpen && (
-        <tr class="row-detail">
+      {/* Every expandable row's detail rides the page, hidden unless addressed, so the
+          toggle script can open it without a request. ponytail: worst case 50 rows × two
+          16 KB bodies of hidden HTML; fetch the detail per row if pages get heavy. */}
+      {expandable && (
+        <tr class="row-detail" id={`detail-${row.id}`} hidden={isOpen ? undefined : true}>
           <td colspan={7}>
             <EventDetail row={row} filters={filters} />
           </td>
@@ -646,6 +665,7 @@ export const AuditPage: FC<AuditProps> = (props) => {
             </div>
           </div>
         )}
+        {rows.length > 0 && <script dangerouslySetInnerHTML={{ __html: TOGGLE_SCRIPT }} />}
       </main>
     </Layout>
   );

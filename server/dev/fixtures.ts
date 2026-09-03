@@ -43,6 +43,8 @@ import type {
   AgentNewProps,
   AgentRow,
   AgentsProps,
+  GrantEditorProps,
+  GrantEditorRow,
   AppFamilyView,
   AppNewProps,
   AppPromptRow,
@@ -2249,6 +2251,8 @@ const agentDetailBase: Omit<AgentDetailProps, "confirm" | "reveal"> = {
     },
   ],
   clients: [{ id: "conn_9f2a", name: "Claude", origin: "https://claude.ai", revoked: false }],
+  // The one active app this agent holds nothing on — "Grant access to another app…".
+  grantable: [{ slug: "brand", name: "Brand assets" }],
 };
 
 const agentDetail = {
@@ -2275,7 +2279,88 @@ const agentDetail = {
     reveal: null,
   },
   confirmDelete: { ...agentDetailBase, confirm: { kind: "delete-agent" as const }, reveal: null },
+  /** Every active app already granted: the chooser is not drawn at all. */
+  everywhere: { ...agentDetailBase, grantable: [], confirm: null, reveal: null },
 } satisfies Record<string, AgentDetailProps>;
+
+/* ------------------------------------------------------------------ *
+ * /agents/<slug>/grants/<app> (§13, 2026-09-03 — the GrantEditorStates board)
+ * ------------------------------------------------------------------ */
+
+/** The built-in row every editor ends on — never declared, always last (§13). */
+const builtinRow: GrantEditorRow = { role: "all", patterns: null, builtin: true, undeclared: false, choice: "none" };
+
+const grantEditorBase: Omit<GrantEditorProps, "rows" | "kind" | "declaresNothing" | "error"> = {
+  ...shell("agents"),
+  csrfToken: CSRF,
+  agent: "claude",
+  app: "news",
+  appName: "News MCP",
+};
+
+const grantEditor = {
+  /** The artboard: three declared roles, two of them held, and the built-in. */
+  default: {
+    ...grantEditorBase,
+    kind: "tunnel" as const,
+    rows: [
+      { role: "reader", patterns: ["news_.*", "search"], builtin: false, undeclared: false, choice: "allow" as const },
+      { role: "admin", patterns: ["news_admin_.*"], builtin: false, undeclared: false, choice: "approval" as const },
+      { role: "search", patterns: { tools: ["search"], prompts: ["digest"] }, builtin: false, undeclared: false, choice: "none" as const },
+      builtinRow,
+    ],
+    declaresNothing: false,
+    error: null,
+  },
+  /** A held role the TUNNELED app has not declared: a warning, and Save still works. */
+  undeclaredTunnel: {
+    ...grantEditorBase,
+    kind: "tunnel" as const,
+    rows: [
+      { role: "reader", patterns: ["news_.*", "search"], builtin: false, undeclared: false, choice: "allow" as const },
+      { role: "triage", patterns: null, builtin: false, undeclared: true, choice: "allow" as const },
+      builtinRow,
+    ],
+    declaresNothing: false,
+    error: null,
+  },
+  /** The same shape on a PROXIED app: an error, and grant_set will refuse the save. */
+  undeclaredProxy: {
+    ...grantEditorBase,
+    app: "linear",
+    appName: "Linear",
+    kind: "proxy" as const,
+    rows: [
+      { role: "reader", patterns: ["linear_.*"], builtin: false, undeclared: false, choice: "allow" as const },
+      { role: "triage", patterns: null, builtin: false, undeclared: true, choice: "allow" as const },
+      builtinRow,
+    ],
+    declaresNothing: false,
+    error: null,
+  },
+  /** That save, refused: the editor redrawn on the choices that caused it. */
+  refused: {
+    ...grantEditorBase,
+    app: "linear",
+    appName: "Linear",
+    kind: "proxy" as const,
+    rows: [
+      { role: "reader", patterns: ["linear_.*"], builtin: false, undeclared: false, choice: "allow" as const },
+      { role: "triage", patterns: null, builtin: false, undeclared: true, choice: "allow" as const },
+      builtinRow,
+    ],
+    declaresNothing: false,
+    error: 'names "triage", which this app does not declare',
+  },
+  /** An app that has declared nothing yet: the sentence, above `all` alone. */
+  nothingDeclared: {
+    ...grantEditorBase,
+    kind: "tunnel" as const,
+    rows: [builtinRow],
+    declaresNothing: true,
+    error: null,
+  },
+} satisfies Record<string, GrantEditorProps>;
 
 export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsByName[K]> } = {
   login,
@@ -2287,6 +2372,7 @@ export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsB
   agents,
   "agent-detail": agentDetail,
   "agent-new": agentNew,
+  "grant-editor": grantEditor,
   approvals,
   "approval-detail": approvalDetail,
   audit,

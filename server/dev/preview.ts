@@ -31,6 +31,7 @@ import { AppNewPage } from "../src/pages/app-new";
 import { AgentsPage } from "../src/pages/agents";
 import { AgentDetailPage } from "../src/pages/agent-detail";
 import { AgentNewPage } from "../src/pages/agent-new";
+import { GrantEditorPage } from "../src/pages/grant-editor";
 import { ApprovalsPage } from "../src/pages/approvals";
 import { ApprovalDetail } from "../src/pages/approval-detail";
 import { AuditPage } from "../src/pages/audit";
@@ -47,6 +48,7 @@ const PAGES: Record<PageName, FC<any>> = {
   agents: AgentsPage,
   "agent-detail": AgentDetailPage,
   "agent-new": AgentNewPage,
+  "grant-editor": GrantEditorPage,
   approvals: ApprovalsPage,
   "approval-detail": ApprovalDetail,
   audit: AuditPage,

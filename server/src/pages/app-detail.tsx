@@ -738,6 +738,7 @@ const AgentsPane: FC<AppDetailProps> = (props) => (
           <tr>
             <th>Agent</th>
             <th>Granted roles</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -753,6 +754,13 @@ const AgentsPane: FC<AppDetailProps> = (props) => (
                 {agent.chips.map((chip) => (
                   <GrantChip chip={chip} />
                 ))}
+              </td>
+              <td class="cell-actions">
+                {/* A LINK, not a form: the editor is a page of its own (§13), so this pane
+                    fronts no `grant_set` and the pair's whole set is edited in one place. */}
+                <a class="btn btn--ghost btn--sm" href={paths.agentGrants(agent.slug, props.header.slug)}>
+                  Edit grants
+                </a>
               </td>
             </tr>
           ))}

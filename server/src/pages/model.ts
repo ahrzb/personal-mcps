@@ -74,7 +74,7 @@ import {
 import type { TokenInfo } from "../identity";
 import { DEVICE_CODE_TTL_MS } from "../limits";
 import { redactPathsIn, Registry, validateSchemaIndirection, writeOnlyPaths } from "../registry";
-import type { App, AppCapability, AppDetail, AppKind, ListKind, RoleDeclaration } from "../registry";
+import type { App, AppCapability, AppDetail, AppKind, FamilyPatterns, ListKind, RoleDeclaration } from "../registry";
 import type { ApprovalListFilters, ApprovalRow, ApprovalStatus } from "../approvals";
 import type { AuditRow, BodyStub, AuditQuery } from "../audit";
 import type { UpstreamConnectionStatus } from "../upstream";
@@ -252,6 +252,16 @@ export const paths = {
   /** The (agent × app) grant editor — its own page, linkable and script-free (§13). */
   agentGrants(agent: string, app: string): string {
     return `${paths.agentDetail(agent)}/grants/${encodeURIComponent(app)}`;
+  },
+  /** The agent page's "Grant access to another app…" — a GET form whose `app` names the
+   *  pair, which this redirects to that pair's editor, so it works with scripting off. */
+  agentGrantsChoose(agent: string): string {
+    return `${paths.agentDetail(agent)}/grants`;
+  },
+  /** The editor's Save. The final segment names the op as every other target does, even
+   *  though the route composes `roles` itself rather than dispatching generically (§13). */
+  agentGrantSet(agent: string, app: string): string {
+    return `${paths.agentGrants(agent, app)}/grant_set`;
   },
   /** An op posted from the agent page, landing back on it (§13's pane rule; the op's
    *  input rides the query like every other target's). */
@@ -1491,6 +1501,7 @@ export type PagePropsByName = {
   agents: AgentsProps;
   "agent-detail": AgentDetailProps;
   "agent-new": AgentNewProps;
+  "grant-editor": GrantEditorProps;
   approvals: ApprovalsProps;
   "approval-detail": ApprovalDetailProps;
   audit: AuditProps;
@@ -1709,6 +1720,9 @@ export type AgentDetailProps = ShellProps & {
   description: string;
   createdAt: number;
   grants: AgentGrantRow[];
+  /** §13's "Grant access to another app…": the namespace's active apps this agent holds
+   *  nothing on. Empty draws no control — there is no pair left to open. */
+  grantable: { slug: string; name: string }[];
   tokens: AgentTokenRow[];
   /** null when no client is bound — §13 draws no card then, not an empty one. */
   clients: AgentClientRow[] | null;
@@ -1831,10 +1845,144 @@ export async function agentDetailProps(ctx: PageContext, slug: string): Promise<
         appName: names.get(app) ?? app,
         chips: spelled.map(grantChip).sort((a, b) => a.role.localeCompare(b.role)),
       })),
+    // Active means what /apps means by it: an archived app refuses connections, and the
+    // builtin is no agent's to hold (§8).
+    grantable: apps.apps
+      .filter((row) => row.kind !== "builtin" && !row.archived && (agent.grants[row.slug] ?? []).length === 0)
+      .map((row) => ({ slug: row.slug, name: row.name })),
     tokens,
     clients: clients.length === 0 ? null : clients,
     confirm: agentConfirm(ctx.query, tokens),
     reveal: null,
+  };
+}
+
+/* ---------------------- /agents/<slug>/grants/<app> ---------------------- */
+
+/** The one three-way choice §13 gives a role: `none` is the absence of a grant, and the
+ *  other two are §9's two spellings. */
+export type GrantChoice = "none" | "allow" | "approval";
+
+/** One row of the editor: a role, what it matches, and the choice its control carries.
+ *  `patterns` is null where there are none to show — the built-in, and a role the app
+ *  does not declare. */
+export type GrantEditorRow = {
+  role: string;
+  patterns: string[] | FamilyPatterns | null;
+  builtin: boolean;
+  undeclared: boolean;
+  choice: GrantChoice;
+};
+
+export type GrantEditorProps = ShellProps & {
+  section: "agents";
+  csrfToken: string;
+  agent: string;
+  app: string;
+  appName: string;
+  /** Which sentence an undeclared role gets: a tunneled app's is a warning, a proxied
+   *  app's is the error `grant_set` will refuse the save with (§9). */
+  kind: AppKind;
+  rows: GrantEditorRow[];
+  /** §13's own sentence above `all` alone — an app that has declared nothing yet. */
+  declaresNothing: boolean;
+  /** A refused save, redrawn here rather than landed anywhere (§13). */
+  error: string | null;
+};
+
+/** The editor's per-row control name. Spelled ONCE, here, because this form is the one
+ *  whose fields are not the op's keys (§13) and both halves of that translation — the
+ *  page that writes the control and the route that reads it — must agree. */
+export function roleField(role: string): string {
+  return `${ROLE_FIELD_PREFIX}${role}`;
+}
+
+/** The submitted form as the choice per role — the inverse of `roleField`, so a field
+ *  the editor did not draw contributes nothing. */
+export function grantChoicesOf(fields: Record<string, string>): Record<string, GrantChoice> {
+  const choices: Record<string, GrantChoice> = {};
+  for (const [name, value] of Object.entries(fields)) {
+    if (!name.startsWith(ROLE_FIELD_PREFIX)) continue;
+    if (value === "allow" || value === "approval") choices[name.slice(ROLE_FIELD_PREFIX.length)] = value;
+    else choices[name.slice(ROLE_FIELD_PREFIX.length)] = "none";
+  }
+  return choices;
+}
+
+/** `grant_set`'s `roles` argument, composed from those choices: §9's bare name for allow
+ *  and its `:approval` suffix for the other, with `none` contributing nothing at all —
+ *  which is how the editor revokes (the op replaces the pair's whole set). */
+export function composeRoles(choices: Record<string, GrantChoice>): string[] {
+  return Object.entries(choices)
+    .filter(([, choice]) => choice !== "none")
+    .map(([role, choice]) => (choice === "approval" ? `${role}:approval` : role));
+}
+
+const ROLE_FIELD_PREFIX = "role.";
+
+/**
+ * `/agents/<slug>/grants/<app>` — the (agent × app) editor (§13). Two reads, the same two
+ * the agent page makes: `agent_list` for what the pair holds today and `app_list` for the
+ * app's name, kind and declared roles (§20.3's canonical shape). `null` is the page's 404
+ * — an unknown or foreign agent, an app that is not this owner's, and the builtin, which
+ * an agent can never hold a grant on (§8).
+ *
+ * `submitted` is the refused save being redrawn: the owner's own choices, so the row that
+ * caused the refusal is still there to fix, rather than the stored set they replaced.
+ */
+export async function grantEditorProps(
+  ctx: PageContext,
+  agentSlug: string,
+  appSlug: string,
+  submitted: { choices: Record<string, GrantChoice>; error: string } | null = null,
+): Promise<GrantEditorProps | null> {
+  const [listed, apps] = await Promise.all([
+    read<{ agents: AgentListing[] }>(ctx, "agent_list"),
+    read<{ apps: OpsAppRow[] }>(ctx, "app_list"),
+  ]);
+  const agent = listed.agents.find((row) => row.slug === agentSlug);
+  const app = apps.apps.find(
+    (row): row is Exclude<OpsAppRow, { kind: "builtin" }> => row.slug === appSlug && row.kind !== "builtin",
+  );
+  if (agent === undefined || app === undefined) return null;
+
+  const held = new Map<string, GrantChoice>(
+    (agent.grants[appSlug] ?? []).map((spelled) => {
+      const chip = grantChip(spelled);
+      return [chip.role, chip.mode];
+    }),
+  );
+  const choiceOf = (role: string): GrantChoice =>
+    (submitted === null ? held.get(role) : submitted.choices[role]) ?? "none";
+
+  const declared = Object.keys(app.roles);
+  // A role the pair carries that the app does not declare is listed all the same, marked,
+  // and left to §9's kind rule — a tunneled app may simply not have connected yet.
+  const undeclared = [...new Set([...held.keys(), ...Object.keys(submitted?.choices ?? {})])]
+    .filter((role) => role !== BUILTIN_ROLE && !declared.includes(role) && choiceOf(role) !== "none")
+    .sort();
+
+  return {
+    ...(await shell(ctx, "agents")),
+    csrfToken: ctx.csrfToken,
+    agent: agentSlug,
+    app: appSlug,
+    appName: app.name,
+    kind: app.kind,
+    rows: [
+      ...declared.map((role) => ({
+        role,
+        patterns: app.roles[role],
+        builtin: false,
+        undeclared: false,
+        choice: choiceOf(role),
+      })),
+      ...undeclared.map((role) => ({ role, patterns: null, builtin: false, undeclared: true, choice: choiceOf(role) })),
+      // §13: the built-in is never declared and always last.
+      { role: BUILTIN_ROLE, patterns: null, builtin: true, undeclared: false, choice: choiceOf(BUILTIN_ROLE) },
+    ],
+    declaresNothing: declared.length === 0,
+    error: submitted?.error ?? null,
   };
 }
 

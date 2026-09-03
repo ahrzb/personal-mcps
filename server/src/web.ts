@@ -61,6 +61,7 @@ import { AppsPage } from "./pages/apps";
 import { AgentsPage } from "./pages/agents";
 import { AgentDetailPage } from "./pages/agent-detail";
 import { AgentNewPage } from "./pages/agent-new";
+import { GrantEditorPage } from "./pages/grant-editor";
 import {
   settingsProps,
   approvalDetailProps,
@@ -86,6 +87,9 @@ import {
   agentNewProps,
   agentNewForm,
   agentDetailProps,
+  composeRoles,
+  grantChoicesOf,
+  grantEditorProps,
 } from "./pages/model";
 import { ICON_192, ICON_512 } from "./pages/icon";
 import type {
@@ -823,6 +827,53 @@ export function pageRoutes(): PageRouter {
     }),
   );
 
+  /* ------------------- /agents/<slug>/grants/<app> ------------------------ */
+  //
+  // §13's (agent × app) editor. Mounted ahead of the generic `/agents/:slug/:op`
+  // dispatcher for clarity only — these paths are a segment longer and match nothing it
+  // claims.
+
+  // The agent page's "Grant access to another app…" is a GET form, so the pair it names
+  // arrives as a query; this is what turns that into the pair's own URL, which is what
+  // makes the control work with scripting off. A submission naming no app goes back.
+  app.get("/agents/:slug/grants", async (c) => {
+    await requireOwnerSession(c.req.raw);
+    const slug = c.req.param("slug") ?? "";
+    const chosen = new URL(c.req.url).searchParams.get("app") ?? "";
+    return c.redirect(chosen === "" ? paths.agentDetail(slug) : paths.agentGrants(slug, chosen), 303);
+  });
+
+  app.get("/agents/:slug/grants/:app", async (c) => {
+    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
+    const props = await grantEditorProps(ctx, c.req.param("slug") ?? "", c.req.param("app") ?? "");
+    if (props === null) return noSuchPage();
+    return render(GrantEditorPage(props));
+  });
+
+  // Save — §13's ONE page form whose fields are not the op's keys: `roles` is a list
+  // `stringList` takes only as an array, so this route composes it from the per-row
+  // controls and calls the handler itself, the way the Issue target does rather than the
+  // generic dispatch. A refusal (a proxied app's undeclared role, §9) redraws the editor
+  // on the very choices that caused it — never a redirect, or they would be lost.
+  app.post(
+    `/agents/:slug/grants/:app/${GRANT_SET}`,
+    mutation(async (c, session, form) => {
+      const agent = c.req.param("slug") ?? "";
+      const target = c.req.param("app") ?? "";
+      const choices = grantChoicesOf(formFields(form));
+      const saved = await attempt(() =>
+        ops[GRANT_SET].handler(session.user.userId, { agent, app: target, roles: composeRoles(choices) }),
+      );
+      if (!("reason" in saved)) {
+        return c.redirect(noticeUrl(paths.agentDetail(agent), GRANT_SET, saved), 303);
+      }
+      const ctx = await context(c.req.raw, session);
+      const props = await grantEditorProps(ctx, agent, target, { choices, error: saved.reason });
+      if (props === null) return noSuchPage();
+      return render(GrantEditorPage(props), 400);
+    }),
+  );
+
   // Every other mutation the agent page renders lands back on it — except Delete, whose
   // page is gone, which lands on the list (§13's pane rule, as /apps/<slug>'s).
   app.post(
@@ -1159,6 +1210,10 @@ const CHANGE_PASSWORD = "change_password";
 /** The op **Issue new token** fronts, spelled once because its route mounts the name, keys
  *  the ops table with it and names it back in a refusal's notice. */
 const TOKEN_ISSUE = "token_issue";
+
+/** The op the grant editor's Save fronts, spelled once because its route mounts the name,
+ *  keys the ops table with it and names it back in the landing notice. */
+const GRANT_SET = "grant_set";
 
 /**
  * Which `/apps/<slug>` pane owns each mutation its panes render, so the redirect-back lands

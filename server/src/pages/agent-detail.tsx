@@ -26,7 +26,34 @@ const GrantChip: FC<{ chip: AppGrantChip }> = ({ chip }) => (
   </span>
 );
 
-const GrantsCard: FC<{ slug: string; grants: AgentGrantRow[] }> = ({ slug, grants }) => (
+/**
+ * §13's "Grant access to another app…" — a GET form, so it opens the pair's editor with
+ * scripting off and writes nothing on the way (the editor's own Save is the mutation).
+ * Absent when the agent already holds a grant on every active app: there is no pair left
+ * to open, and an empty select would be a control that does nothing.
+ */
+const AnotherApp: FC<{ slug: string; apps: { slug: string; name: string }[] }> = ({ slug, apps }) =>
+  apps.length === 0 ? null : (
+    <form method="get" action={paths.agentGrantsChoose(slug)} class="actions actions--start">
+      <label class="label" for="grant-app">
+        Grant access to another app…
+      </label>
+      <select id="grant-app" name="app">
+        {apps.map((app) => (
+          <option value={app.slug}>{app.name}</option>
+        ))}
+      </select>
+      <button type="submit" class="btn btn--outline btn--sm">
+        Edit grants
+      </button>
+    </form>
+  );
+
+const GrantsCard: FC<{ slug: string; grants: AgentGrantRow[]; grantable: { slug: string; name: string }[] }> = ({
+  slug,
+  grants,
+  grantable,
+}) => (
   <section class="card card--pad">
     <div class="card-head">
       <div>
@@ -71,6 +98,7 @@ const GrantsCard: FC<{ slug: string; grants: AgentGrantRow[] }> = ({ slug, grant
         </tbody>
       </table>
     )}
+    <AnotherApp slug={slug} apps={grantable} />
     <p class="note">Editing opens the pair's full grant set — saving replaces it entirely.</p>
   </section>
 );
@@ -231,7 +259,7 @@ export function AgentDetailPage(props: AgentDetailProps) {
           </div>
         </div>
 
-        <GrantsCard slug={slug} grants={props.grants} />
+        <GrantsCard slug={slug} grants={props.grants} grantable={props.grantable} />
         <TokensCard {...props} />
         <ClientsCard {...props} />
 

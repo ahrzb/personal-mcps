@@ -32,7 +32,9 @@
 // this file; no case may depend on a substitution another case made.
 //
 // Not pinned here, on purpose: every page's HTML (§7 — all HTML is incidental). Assertions
-// name form fields, row counts, and status codes; never markup, copy, or layout.
+// name form fields, row counts, and status codes; never markup, copy, or layout. One named
+// exception: §13's icon links, where the `rel` token IS the browser contract and not
+// presentation — and even there the href stays `paths.icon192`, never a literal.
 
 // deps: harness/seed · src/index (exports.default.fetch) · src/admin (ops — one handler substituted to prove non-execution) · src/audit · src/approvals · src/identity (session minting) · src/principal (tokenPattern) · applyD1Migrations
 
@@ -985,6 +987,43 @@ describe("§8/§13 · one paging contract, two presentations", () => {
   });
 });
 
+describe(`§13 · /audit's filter row — the window it names and the window it empties`, () => {
+  // Rows first (§9 rule 1): nothing here exists yet — the filter row has no way to apply
+  // with scripting off, its window is a readonly box over a hidden epoch pair, and an empty
+  // window still draws 24 flat bars. The local formSubmission(html) helper the first row
+  // replays the form through — method, action, the form's own fields and the pager's limit —
+  // is not written here either; it lands with the bodies.
+
+  // plan row 1. §9 rule 4(b)'s discharge for #audit-filters: the form is replayed exactly as
+  // a browser submits it, so the submit control has to exist outside every wide-only subtree
+  // and the tool the owner typed has to reach query(env.DB, …) over the window that
+  // submission names — the untouched replay, which is what a select's onchange sends, is the
+  // twin that must come back with the default window intact. The wide-only read is that
+  // discharge and not the header's "layout": a submit control hidden at the breakpoint is
+  // the defect rule 4(b) names, so the header's one exception is not being spent twice.
+  it.todo(
+    `§13 · with scripting off the filter row still applies: #audit-filters renders a submit control that sits in no wide-only subtree, and its own method, action and fields replayed as a browser submits them (§9 rule 4(b), no onchange) return exactly the rows query(env.DB, …) holds for the tool the owner typed over the window that submission names, with since and until each submitted once (the hidden pair is gone, so the value the owner set is the value the loader reads) · the same form replayed untouched returns the default 24h window unchanged — the same seeded rows, the same tool box, 24h still current, carried by the form's own hidden range field — which is also exactly what a select's onchange submits (the twin)`,
+  );
+
+  // plan row 2. The two carriers of the window, pinned apart: a typed pair is whole days
+  // echoed back as the two value attributes with no segment current, and a preset arrives as
+  // the segment's own epoch-ms link with both inputs empty beside a hidden range. Every
+  // seeded row is stamped ≈now, so the preset's previous window is the empty one. Carry row
+  // 3's min(ts)/max(ts) guard into this body too — "<the seed's day>" is only one day while
+  // every seeded row shares it.
+  it.todo(
+    `§13 · the range inputs are named since/until and take a day, not epoch ms: a submission carrying since=<the seed's day>&until=<the same day> renders that day's rows, echoes both days back as the two value attributes, and marks no segment aria-current="page" — a custom window has no current preset · the 24h segment's own epoch-ms link over the same seed marks 24h current, renders both date inputs empty beside a hidden range=24h, and reads "No comparison available", every row being stamped now and a preset's previous window lying one span further back (the preset twin)`,
+  );
+
+  // plan row 3. G50: the empty histogram is one early return, so it must co-occur with the
+  // table's own empty line and never the reverse. The window is the UTC day AFTER the
+  // ledger's, derived from the rows themselves so a midnight straddle fails by name; the
+  // seeded day is the twin that draws bars, an axis and no comparison at all.
+  it.todo(
+    `§13 · a window with nothing in it draws the empty histogram, not 24 flat bars: over the UTC day AFTER the ledger's own — the case derives that day from the rows and asserts min(ts) and max(ts) share it, so a midnight straddle fails by name — /audit renders "No events in this window." with no day axis AND the table's "No events in this range", and, that day being the previous window, an events tile reading "-100% vs previous period" · the seeded day itself draws bars, a day axis and "No comparison available", its own previous window being empty (the twin)`,
+  );
+});
+
 describe("§8 · parity direction B — forms and schemas are one source", () => {
   it("16. §8 · every form rendered on /apps and /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)", async () => {
     for (const path of [paths.apps, paths.approvals]) {
@@ -1548,6 +1587,37 @@ describe("§15 · the two auth events the ledger records", () => {
     });
     hygienic(recorded.rows[0], [codes.deviceCode, codes.userCode, minted.access_token ?? ""]);
   });
+});
+
+describe(`§13 · the PWA icons — the install gate's own bytes`, () => {
+  // Rows first (§9 rule 1): the manifest lists no icons at all today, so all three are red on
+  // the whole of G6 — the bytes, the entries that declare them, and the head that links them.
+
+  // plan row 1. The bytes, walked out of the manifest rather than transcribed: each entry's
+  // own src must answer with a PNG whose signature and IHDR width are the size that entry
+  // declares, which is what a constant pasted under the wrong entry — or a bundler handing
+  // back a path string — fails. A spelling ROUTES does not serve is the 404 twin. `icons` is
+  // `[]` today, so the walk is vacuous until the body opens on the length of the pair row 2
+  // names — without that line this row goes green against the very gap it closes.
+  it.todo(
+    `§13 · every icons[] src the manifest lists answers 200 through worker.fetch with no cookie, Content-Type image/png, and a body whose PNG signature and IHDR width are the size its entry declares — so a constant pasted under the wrong entry, or a bundler handing back a path string where bytes belong, reddens here — while /icon-256.png, a spelling ROUTES does not serve, is no segment at all and comes back on the hub's one anonymous 404 (the twin)`,
+  );
+
+  // plan row 2. The declaration rather than the bytes: exactly the 192/512 pair the install
+  // gate is built around, beside the members that already satisfied the rest of it — and the
+  // two spellings this step refuses to write, sizes "any" and any purpose at all, as the twin
+  // that keeps a later hand from adding either.
+  it.todo(
+    `§13 · the icons array carries exactly the pair §13's install gate is built around, 192x192 and 512x512, beside the name, start_url, scope and display that already satisfied the rest of it — while no entry declares sizes "any" (the Android WebAPK install failure chromium issue 40925759 reports) and none declares a purpose at all, the two spellings this step refuses to write (the twin)`,
+  );
+
+  // plan row 3. The one place this file names markup, and the header says why: the rel token
+  // IS the browser contract. /apps draws both links at paths.icon192, the row importing paths
+  // so the URL is never a literal on this side — /login's own head, which links neither, is
+  // the ceiling the fix keeps and the twin.
+  it.todo(
+    `§13 · the shell head links the icon the worker serves — /apps renders rel="icon" and rel="apple-touch-icon" at paths.icon192 beside the manifest link, the row importing paths while layout.tsx spells the URL itself as the other three assets already do — while /login's head, one of the five page files that write their own, links neither, the ceiling this fix keeps deliberately (the twin)`,
+  );
 });
 
 describe("§19.5 · the consent screen", () => {

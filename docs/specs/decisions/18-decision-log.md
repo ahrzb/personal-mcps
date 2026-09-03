@@ -254,7 +254,8 @@
     `Agents` entry is recorded as the follow-up it is. One reservation rides along: `new`
     and `connect` — the static segments under `/apps/` — can no longer be app slugs,
     derived from the route table exactly as §2 derives usernames. **Spec ahead of code**:
-    nothing in this entry is implemented; it is its own workflow after §21 (D14). Two
+    nothing in this entry is implemented; it is its own workflow after §21 (D14) *(true
+    when written; implemented by D15 on 2026-09-02 — amended 2026-09-03, G38)*. Two
     design-side follow-ups are recorded, not solved: the full-shell `SettingsTokens` and
     `OauthConnections` boards duplicate pane content the `…Panes` boards now carry, and
     `/apps/<slug>` has no mobile board.

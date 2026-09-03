@@ -1434,6 +1434,12 @@ export type AuditProps = ShellProps & {
   stats: AuditStats;
   histogram: AuditHistogram;
   /**
+   * `AUDIT_SCAN_ROWS` when `paging.total` exceeds it, else `null` — the same constant
+   * that bounds `stats`/`histogram` also caps the scan `options` is read from (§13/G22),
+   * so this one field is the page's only "am I lagging total" question either reads.
+   */
+  scanCeiling: number | null;
+  /**
    * The row whose <details> is rendered open — the EVENT DETAIL panel with the
    * summary, the client metadata, and the recorded bodies. Deep-linkable, so a
    * fixture and a shared link show the same thing; null means all collapsed.
@@ -2279,7 +2285,7 @@ async function mapped<Row>(
  * empty set", so unread is neither `—` nor `0`, and one unread half makes the whole
  * marker blank rather than reporting the half that answered.
  */
-function familyMarker(...views: AppFamilyView<unknown>[]): string {
+export function familyMarker(...views: AppFamilyView<unknown>[]): string {
   if (views.some((view) => view.state === "unread")) return "";
   if (views.every((view) => view.state === "undeclared" || view.state === "unconnected")) return DIMMED;
   return String(views.reduce((total, view) => total + (view.state === "listed" ? view.rows.length : 0), 0));
@@ -2570,6 +2576,7 @@ export async function auditProps(ctx: PageContext): Promise<AuditProps> {
     paging: { offset: filters.offset, limit: filters.limit, total: page.total },
     stats: auditStats(page.total, previous.total, scan.rows),
     histogram: auditHistogram(filters, scan.rows),
+    scanCeiling: page.total > AUDIT_SCAN_ROWS ? AUDIT_SCAN_ROWS : null,
     expandedId: positive(ctx.query.get("expand")) ?? null,
     retentionDays: auditConfig().retentionDays,
   };

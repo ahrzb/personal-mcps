@@ -392,8 +392,24 @@ const EventRow: FC<{ row: AuditEventRow; filters: AuditFilters; expandedId: numb
  * ------------------------------------------------------------------ */
 
 export const AuditPage: FC<AuditProps> = (props) => {
-  const { now, username, pendingApprovals, filters, options, rows, paging, stats, histogram, expandedId, retentionDays } =
-    props;
+  const {
+    now,
+    username,
+    pendingApprovals,
+    filters,
+    options,
+    rows,
+    paging,
+    stats,
+    histogram,
+    expandedId,
+    retentionDays,
+    scanCeiling,
+  } = props;
+  // §13/G22: the same constant that bounds the tiles/histogram also caps the scan the
+  // three filter selects are read from, so one note covers both — empty once the window
+  // is small enough for `stats`/`histogram`/`options` to already be exact.
+  const scanNote = scanCeiling !== null ? ` · over the newest ${fmtNumber(scanCeiling)}` : "";
   const currentQuery = baseQuery(filters);
   const rangeStart = paging.total === 0 ? 0 : paging.offset + 1;
   const rangeEnd = Math.min(paging.offset + paging.limit, paging.total);
@@ -523,21 +539,21 @@ export const AuditPage: FC<AuditProps> = (props) => {
             <div class="stat-label">Tool calls</div>
             <div class="stat-value">{fmtNumber(stats.toolCalls)}</div>
             <div class="stat-hint">
-              {stats.events > 0 ? `${Math.round((stats.toolCalls / stats.events) * 100)}% of all events` : "—"}
+              {stats.events > 0 ? `${Math.round((stats.toolCalls / stats.events) * 100)}% of all events${scanNote}` : "—"}
             </div>
           </div>
           <div class="stat">
             <div class="stat-label">Denied</div>
             <div class="stat-value stat-value--danger">{fmtNumber(stats.denied)}</div>
             <div class="stat-hint">
-              {stats.events > 0 ? `${((stats.denied / stats.events) * 100).toFixed(1)}% deny rate` : "—"}
+              {stats.events > 0 ? `${((stats.denied / stats.events) * 100).toFixed(1)}% deny rate${scanNote}` : "—"}
             </div>
           </div>
           <div class="stat">
             <div class="stat-label">Median latency</div>
             <div class="stat-value">{stats.medianDurationMs !== null ? fmtDuration(stats.medianDurationMs) : "—"}</div>
             <div class="stat-hint">
-              {stats.p95DurationMs !== null ? `p95 ${fmtDuration(stats.p95DurationMs)}` : "No timed calls"}
+              {stats.p95DurationMs !== null ? `p95 ${fmtDuration(stats.p95DurationMs)}${scanNote}` : `No timed calls${scanNote}`}
             </div>
           </div>
         </div>
@@ -546,8 +562,8 @@ export const AuditPage: FC<AuditProps> = (props) => {
           <div class="chart">
             <div class="chart-head">
               <span class="chart-title wide-only">Events over time</span>
-              <span class="muted wide-only">{fmtBucket(histogram.bucketMs)} buckets</span>
-              <span class="chart-title narrow-only">Events per day</span>
+              <span class="muted wide-only">{fmtBucket(histogram.bucketMs)} buckets{scanNote}</span>
+              <span class="chart-title narrow-only">Events per day{scanNote}</span>
             </div>
             <div class="chart-bars">
               {histogram.buckets.length === 0 ? (

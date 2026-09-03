@@ -357,6 +357,13 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Step 12 — Design pass: G20, G19, G32, G33, G34, page 2's re-layout (small dispatch)
 
+> **Landed 2026-09-03.** `81425e0` (`design:`, one Sonnet subagent, design files only, no
+> rows, no deploy). Settled: `Dialogs` draws all 11 confirm dialogs (not 9); `SettingsTokens`
+> and `OauthConnections` deleted as byte-for-byte duplicates of `SettingsPanes`; page 2 is
+> "App detail, adopted states & consent"; `MobileAppDetail` stays a follow-up; G25's
+> viewport control skipped (the browser pane resizes). Owed: the owner's look at the
+> redrawn boards. Ledger row has the detail.
+
 **Achieves.** The adopted boards and design docs catch up with §13 and the tree. Concepts are already out of the way (status block): `ReauthGate`, `AuditDetailStates`, `OauthConsentStates` and the rest sit in `design/concepts/` as non-normative exploration, so O26/O27/O32/O33 need nothing here. What remains on the main canvas: `AppDetailPanes:143/:156` Edit grants and `SettingsTokens:108/119/130/141` agent slugs as links (both dead by §13:287-289 / §13:114-116 — or live, if step 9 landed first), `MobileSettings:86` dropping §13:55-59's footer clause and the checkbox hint, `Settings.dc.html:26-30`'s five-item nav reconciled to whatever `NAV` holds after step 9 (G20); `Apps.dc.html:62/76/90/106` row names as text where `apps.tsx:112-115` links them (G19); two fixture comments in `server/dev/fixtures.ts` crediting boards that do not draw the state, Dialogs drawing 3 of 9 confirm dialogs, no `MobileAppDetail` (G32); README's "every other pane" mis-partition, `flows/04`'s stale Gap note, `flows/05` naming `/oauth/connections` with no wireframe map, README:62's "lazily fetched" (G33); a README line saying `./support.js` is supplied by the published canvas (G34); page 2 "Adopted 2026-09-02 (re-layout pending)" re-laid out into the canvas proper, with the full-shell `SettingsTokens` / `OauthConnections` duplication (decision 30:244-246) resolved in the same pass; O34 recorded — `/apps/new` and `/approvals/<id>` are chromeless by design and lose the badge and Sign out; G25's optional viewport control on the states preview.
 
 **Depends on.** Steps 9, 10 and 11 (they adopt boards; G20's nav reconciliation depends on whether `/agents` landed).
@@ -411,8 +418,9 @@ From the audit's synthesis (2026-09-02). **Closed 2026-09-03** (steps 4–8, eac
 own deploy): G3 G4 G5 G6 G7 G8 G9 G11 G12 G13 G14 G15 G16 G17 G18 G26 G27 G28 G29 G30
 G31 G36 G39 G50 G51 G52 G59; step 9 closed G2 (both ships) and the chevron fix closed G1
 ahead of step 10 (the owner's own finding, one row); step 10 closed G24, G49 and O27;
-step 11 closed G43, G44, G45 and G46. Still open: G10 G19–G23 G25 G32–G35 G37 G38
-G40–G42 G47 G48 G53–G58 (steps 12–13 and the owner-accepted keeps).
+step 11 closed G43, G44, G45 and G46; step 12 closed G19, G20, G32, G33 and G34 (G25
+skipped by choice: the browser pane resizes). Still open: G10 G21 G22 G23 G25 G35 G37 G38
+G40–G42 G47 G48 G53–G58 (step 13, the manual passkey leg, and the owner-accepted keeps).
 
 | id | sev | size | area | gap, one line | recorded in |
 |---|---|---|---|---|---|

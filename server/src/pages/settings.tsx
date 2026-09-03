@@ -35,7 +35,7 @@ import type {
 import { PASSWORD_MIN_LENGTH, paths, SETTINGS_CONFIRM_PANE, SETTINGS_PANES } from "./model";
 import type { PaneEntry } from "./layout";
 import { ConfirmShell, Layout, OtpBoxes, PaneRail, PanePills, paneGroups } from "./layout";
-import { formatDate, formatStamp, sessionLabel } from "./format";
+import { alertClass, formatDate, formatStamp, sessionLabel } from "./format";
 
 /**
  * The accessible names of this page's two pane navigations (§13's shell rule). They are
@@ -108,18 +108,8 @@ const PlusIcon: FC = () => (
 
 /* ---------------------------------------------------------------- notice --- */
 
-const NOTICE_CLASS: Record<Notice["tone"], string> = {
-  success: "alert alert--success",
-  warning: "alert alert--warning",
-  danger: "alert alert--danger",
-};
-
-function noticeClass(tone: Notice["tone"]): string {
-  return NOTICE_CLASS[tone];
-}
-
 const NoticeBanner: FC<{ notice: Notice }> = ({ notice }) => (
-  <div class={noticeClass(notice.tone)} role="alert">
+  <div class={alertClass(notice.tone)} role="alert">
     <div>
       {notice.title ? <div class="alert-title">{notice.title}</div> : null}
       <div class={notice.title ? "alert-text" : undefined}>{notice.message}</div>

@@ -30,6 +30,7 @@ import type { FC } from "hono/jsx";
 import { paths } from "./model";
 import type { ApprovalRow, ApprovalStatus, ApprovalsProps, Notice } from "./model";
 import { Layout } from "./layout";
+import { alertClass } from "./format";
 
 /* ------------------------------------------------------------------ *
  * Formatting — pure functions of the row's own fields and `now`.
@@ -71,17 +72,6 @@ function outcome(status: ApprovalStatus): { label: string; tone: Tone } {
   if (status === "used") return { label: "executed", tone: "success" };
   if (status === "approved") return { label: "approved", tone: "warning" };
   return { label: "expired", tone: "warning" };
-}
-
-/** One modifier per tone over the bare `.alert` base. */
-const ALERT_CLASS: Record<Notice["tone"], string> = {
-  success: "alert alert--success",
-  warning: "alert alert--warning",
-  danger: "alert alert--danger",
-};
-
-function alertClass(tone: Notice["tone"]): string {
-  return ALERT_CLASS[tone];
 }
 
 /* ------------------------------------------------------------------ *

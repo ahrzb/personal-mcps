@@ -779,7 +779,7 @@ export function canonicalCapabilities(declared: string[] | undefined): string[] 
 
 /** §20.2's default advertisement, and therefore what an absent `capabilities:` MEANS: a
  *  proxied app the hub was never told anything about serves tools. */
-const DEFAULT_CAPABILITIES = ["tools"];
+export const DEFAULT_CAPABILITIES = ["tools"];
 
 /** Two grant lists as the same set, order and spelling normalized. */
 function sameRoles(a: readonly DesiredGrant[], b: readonly DesiredGrant[]): boolean {

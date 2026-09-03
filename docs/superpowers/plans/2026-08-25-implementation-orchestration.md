@@ -928,7 +928,9 @@ check and (manual, once) a real push notification to a real browser.
   58/58, deploy `d0879ada`, SMOKE PASS 25/25 live (the device step now drives
   cookie approval on prod). The `initialize` fixture landed as its own commit
   `3a3a67a` per the contracts rule. Candidate finding recorded, not fixed:
-  nothing prunes stale audit rows past retention (out of D11 scope). All Opus
+  nothing prunes stale audit rows past retention (out of D11 scope) *(false
+  when written — audit.prune and the scheduled leg landed in d036455 the day
+  before; amended 2026-09-03, G38)*. All Opus
   per the subagent-model rule. Next: D12 — inbound OAuth — off the READY spec
   (`26d5d12`); its plan opens with a blocking better-auth probe stage.
 - 2026-08-26 — **D12 gated — the hub is an inbound OAuth authorization server.**
@@ -1194,7 +1196,8 @@ check and (manual, once) a real push notification to a real browser.
   a reviewer caught the marker counting the unfiltered list over a filtered table), 0
   flips. Ownership audit clean: every touched file is in a plan group, plus three the
   reviewers legitimately reached (the plan's own `asserts:` lines, `design/README.md`,
-  a new `pages/format.ts` unifying the two time spellings); `pages/connections.tsx`
+  a new `pages/format.ts` unifying the two time spellings) *(amended 2026-09-03, G37:
+  five files, `app-new.tsx` and `harness/seed.ts` outside every group)*; `pages/connections.tsx`
   deleted, its content the clients pane's. States preview (plan constraint 13) walked in
   the Browser pane: **106 page × fixture entries** render (settings 34, app-detail 27),
   the fixtures' rails now DERIVED from the same marker table the page uses after a
@@ -1601,3 +1604,28 @@ check and (manual, once) a real push notification to a real browser.
   / 0, exactly five `todo → passed` plus the one re-title; `tsc` 0; preview walked
   (`app-new/connecting`, `app-new/errors`) before the gate. Cost: 1 agent (Opus 5,
   ~310k tokens).
+- 2026-09-03 — **Roadmap step 12 landed — the design pass: G19, G20, G32, G33, G34, O34,
+  page 2 re-laid out.** `81425e0` (`design:`), design files only, no rows (design carries
+  no tests), no deploy. One Sonnet 5 subagent from a written brief (`step12-brief.md`),
+  verifying every claim against the tree before writing it. What changed: `Apps`,
+  `Approvals`, `Audit` boards gained the missing `Agents` nav item (the desktop nav was
+  four items on three boards; `Settings`, `AppDetailPanes`' Edit grants and
+  `SettingsTokens`' agent links were already right) and, on a follow-up, the four
+  `Mobile*` boards gained the Agents pill as the scroller the shipped nav is; all six
+  `Apps` row names drawn as links (the brief counted four; the page links every row,
+  archived included); `Dialogs` grew from 3 to all 11 `?confirm=` dialogs the pages have
+  (the register's "9" was a miscount), copy verbatim from the pages; `MobileSettings`'
+  checkbox hint and footer now match `settings.tsx`; `SettingsTokens` and
+  `OauthConnections` **deleted** — byte-for-byte duplicates of `SettingsPanes`' own
+  sections, so decision 30's duplication is resolved by removal, recorded in README with
+  a per-pane contract-board table; page 2 renamed "App detail, adopted states & consent"
+  and laid out in two rows, the stale `admin-exploration-note` removed; README's mobile-nav
+  "still open" paragraph closed, "lazily fetched" gone, the `./support.js` line added, O34
+  recorded (`/apps/new` and `/approvals/<id>` chromeless by design); `flows/04`'s Gap note
+  now points at `AppNewProxiedStates · CONNECTING / ENDPOINT ERROR`; `flows/05` names
+  `/settings/clients` and carries a wireframe map. Fixture citations checked: `:1127` and
+  `:2184` true; `:1266` (Dialogs, three) became true by drawing the panels. Skipped by
+  choice: G25's preview viewport control (the browser pane resizes); `MobileAppDetail`
+  still a recorded follow-up. Both `canvas.json`s parse, no frame overlaps (scripted).
+  The owner's eyeballing of the redrawn boards is still owed (DoD item 1 — judged). Cost:
+  1 agent (Sonnet 5, ~305k tokens).

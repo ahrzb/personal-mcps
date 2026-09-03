@@ -1350,7 +1350,9 @@ describe("§8/§13 · one paging contract, two presentations", () => {
     }
   });
 
-  it.todo("18. §13 · past the scan ceiling the per-row tiles and the chart say \"over the newest 1,000\" while the Events count stays audit_query's exact total, and the filter selects list only what the newest 1,000 rows mention · a window under the ceiling carries no such label (the twin)");
+  // Row 18 moved to its own describe below (§13/§22 · past the scan ceiling): it needs a
+  // window of 1,001 rows, and seeding that many inline here would move the counts every
+  // other row in this describe reads off `query(env.DB, …)`. Title kept byte-identical.
 });
 
 describe("§13/§15 · /audit's expanded row — the bodies, the stubs, and the sentence for their absence", () => {
@@ -1687,6 +1689,70 @@ describe(`§13 · /audit's filter row — the window it names and the window it 
     expect(drawn).toMatch(/class="chart-bar[" ]/);
     expect(drawn).toContain('class="chart-axis"');
     expect(textOf(drawn)).toContain("No comparison available");
+  });
+});
+
+describe("§13/§22 · past the scan ceiling", () => {
+  // One app and one principal vocabulary, apart from every other describe's own, so this
+  // window is addressable by app filter alone. 1,001 rows: one past model.ts's
+  // AUDIT_SCAN_ROWS (1000) — the least that flips `scanCeiling` from null to the constant.
+  const CEILING_APP = "walk-ceiling";
+  const CEILING_ROWS = 1001;
+  const OLDEST_ONLY_PRINCIPAL = "agent:walk-ceiling-oldest";
+  const NEWEST_PRINCIPAL = "agent:walk-ceiling-newest";
+
+  beforeAll(async () => {
+    const ownerId = world.ns.owner.userId;
+    const row = (principal: string, at: number) => ({
+      ownerId,
+      principal,
+      event: "tools/call",
+      app: CEILING_APP,
+      tool: `walk-ceiling-tool-${at}`,
+      outcome: "ok",
+      durationMs: 5,
+    });
+    // audit.query orders `ts DESC, id DESC` (audit.ts) — id is insertion order, so
+    // whatever ties back-to-back `Date.now()` writes draw on `ts`, id alone decides
+    // "newest". Written FIRST, this row holds the lowest id of the batch and of the
+    // whole namespace at write time, so it ranks last among every scan that follows.
+    await record(env.DB, row(OLDEST_ONLY_PRINCIPAL, 0));
+    for (let at = 1; at < CEILING_ROWS - 1; at++) await record(env.DB, row("agent:walk-ceiling", at));
+    // Written LAST: the highest id in the whole namespace, so it ranks first in every scan.
+    await record(env.DB, row(NEWEST_PRINCIPAL, CEILING_ROWS - 1));
+  });
+
+  /** One tile's hint text, read off its own `stat-hint` div — never the whole page's text,
+   *  so a phrase that landed on the wrong tile fails by name. */
+  function hintOf(html: string, label: string): string {
+    const found = new RegExp(`<div class="stat-label">${label}</div>[\\s\\S]*?<div class="stat-hint">\\s*([^<]*?)\\s*</div>`).exec(html);
+    expect(found, `no "${label}" tile on the page`).not.toBeNull();
+    return found?.[1] ?? "";
+  }
+
+  it("18. §13 · past the scan ceiling the per-row tiles and the chart say \"over the newest 1,000\" while the Events count stays audit_query's exact total, and the filter selects list only what the newest 1,000 rows mention · a window under the ceiling carries no such label (the twin)", async () => {
+    const over = await page(auditPath({ app: CEILING_APP, limit: 50 }));
+    // The Events count is exact — audit_query's `total` for this app, all 1,001 of them —
+    // while everything per-row is capped at the newest 1,000 of the same window.
+    expect(matchedLine(over)).toBe(CEILING_ROWS);
+
+    expect(hintOf(over, "Tool calls")).toContain("over the newest 1,000");
+    expect(hintOf(over, "Denied")).toContain("over the newest 1,000");
+    expect(hintOf(over, "Median latency")).toContain("over the newest 1,000");
+    expect(over).toContain("buckets · over the newest 1,000");
+    expect(over).toContain("Events per day · over the newest 1,000");
+
+    // The selects' scan claim: `options` is read off the newest 1,000 rows of the WHOLE
+    // namespace, unfiltered — so the oldest-only principal above is excluded from it and
+    // the newest-row principal is present, independent of this page's own app filter.
+    const principalSelect = /<select name="principal"[^>]*>([\s\S]*?)<\/select>/.exec(over)?.[1] ?? "";
+    expect(principalSelect).not.toContain(OLDEST_ONLY_PRINCIPAL);
+    expect(principalSelect).toContain(NEWEST_PRINCIPAL);
+
+    // The twin: the world's ordinary window is far under the ceiling and carries no label.
+    const under = await page(auditPath({ app: "news" }));
+    expect(matchedLine(under)).toBeLessThan(1000);
+    expect(under).not.toContain("over the newest 1,000");
   });
 });
 

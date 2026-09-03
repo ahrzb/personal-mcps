@@ -13,7 +13,7 @@
 
 import type { FC } from "hono/jsx";
 import { Layout } from "./layout";
-import { formatLastSeen } from "./format";
+import { alertClass, formatLastSeen } from "./format";
 import { paths } from "./model";
 import type { Notice, AppRow, AppsConfirm, AppsProps } from "./model";
 
@@ -200,14 +200,8 @@ const NoticeIcon: FC<{ tone: Notice["tone"] }> = ({ tone }) => {
   );
 };
 
-const TONE_CLASS: Record<Notice["tone"], string> = {
-  success: "alert alert--success",
-  warning: "alert alert--warning",
-  danger: "alert alert--danger",
-};
-
 const NoticeBanner: FC<{ notice: Notice }> = ({ notice }) => {
-  const toneClass = TONE_CLASS[notice.tone];
+  const toneClass = alertClass(notice.tone);
   return (
     <div class={toneClass} role={notice.tone === "danger" ? "alert" : "status"}>
       <NoticeIcon tone={notice.tone} />

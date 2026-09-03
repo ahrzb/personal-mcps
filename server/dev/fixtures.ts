@@ -45,7 +45,6 @@ import type {
   AgentsProps,
   GrantEditorProps,
   GrantEditorRow,
-  AppFamilyView,
   AppNewProps,
   AppPromptRow,
   AppRailEntry,
@@ -61,7 +60,10 @@ import type {
 // `enrollmentOf` is the ONE producer of an enrolment's three fields (§13/§15's own rule) —
 // fixtures call it rather than hand-rolling a QR, so the preview can never draw a secret,
 // a grouped display form and a QR that disagree with one another.
-import { DIMMED, enrollmentOf } from "../src/pages/model";
+// `familyMarker` is §13's three-answer family marker (a count, `—` where the app advertises
+// none, BLANK where a listing could not be read at all) — this IS the shipped rule, not a
+// copy of it, because the preview must demonstrate what the page does.
+import { DIMMED, enrollmentOf, familyMarker } from "../src/pages/model";
 import { HUB_PRINCIPAL } from "../src/principal";
 
 /* ------------------------------------------------------------------ *
@@ -932,18 +934,6 @@ const notionHeader: AppDetailHeader = {
 
 /** The four §20 families one render carries: what the panes list, and what the rail counts. */
 type AppCatalog = Pick<AppDetailProps, "tools" | "prompts" | "resources" | "templates">;
-
-/**
- * §13's three-answer family marker, over the view(s) the pane draws: a count, `—` where
- * the app advertises none, and BLANK where a listing could not be read at all — an unread
- * count is not an empty set. model.ts's `familyMarker` is the shipped one; this is the
- * same rule over fixture data, because the preview must demonstrate what the page does.
- */
-const familyMarker = (...views: AppFamilyView<unknown>[]): string => {
-  if (views.some((view) => view.state === "unread")) return "";
-  if (views.every((view) => view.state === "undeclared")) return DIMMED;
-  return String(views.reduce((n, view) => n + (view.state === "listed" ? view.rows.length : 0), 0));
-};
 
 /**
  * The rail, DERIVED from the very props the panes beside it render — §13's shell rule
@@ -1932,6 +1922,7 @@ function noBodiesBoard(row: AuditEventRow, denied: 0 | 1): AuditProps {
     histogram: histogramFor(since, AUDIT_UNTIL, Array.from({ length: 24 }, (_, i) => (i === 23 ? 1 : 0))),
     expandedId: row.id,
     retentionDays: 7,
+    scanCeiling: null,
   };
 }
 
@@ -1962,6 +1953,8 @@ const audit = {
     histogram: histogramFor(AUDIT_UNTIL - 7 * 24 * HOUR, AUDIT_UNTIL, WEEK_COUNTS),
     expandedId: 41284,
     retentionDays: 7,
+    // The one fixture that shows the label: total (1284) past AUDIT_SCAN_ROWS (§13/G22).
+    scanCeiling: 1000,
   },
 
   /** Deep in the result set: both pager arrows live, nothing expanded — and the CUSTOM
@@ -1991,6 +1984,8 @@ const audit = {
     histogram: histogramFor(AUDIT_SINCE, AUDIT_UNTIL, WEEK_COUNTS),
     expandedId: null,
     retentionDays: 7,
+    // The same 1,284-row window as `default`, so the same ceiling label (§13).
+    scanCeiling: 1000,
   },
 
   /** A session link followed (?session=…): one agent conversation, narrow window. */
@@ -2024,6 +2019,7 @@ const audit = {
     ),
     expandedId: null,
     retentionDays: 7,
+    scanCeiling: null,
   },
 
   /** EmptyStates "Audit — no results": filters narrower than the ledger. */
@@ -2056,6 +2052,7 @@ const audit = {
     histogram: { bucketMs: 150_000, buckets: [], peak: 0 },
     expandedId: null,
     retentionDays: 7,
+    scanCeiling: null,
   },
 
   /**
@@ -2131,6 +2128,7 @@ const audit = {
     histogram: histogramFor(ms("2026-08-23T14:47:00.000Z"), AUDIT_UNTIL, WEEK_COUNTS),
     expandedId: 41290,
     retentionDays: 7,
+    scanCeiling: null,
   },
 
   /** §13's first no-bodies sentence: a dispatched call on a PROXIED app, whose

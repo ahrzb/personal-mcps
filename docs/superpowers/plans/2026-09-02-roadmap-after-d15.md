@@ -1,5 +1,11 @@
 # Roadmap after D15 — tests faster, then the gaps
 
+> **Status 2026-09-03 — complete.** Steps 4–13 all landed, each with its own deploy (the
+> last is `a5b40278`, smoke 32/32, suite 45 / 1492 / 0); each step's Landed note and the
+> register's closed list say what. Owed to the owner: the manual passkey leg (G21) and a
+> look at the redrawn boards (step 12). What is still open in the register is owner-side
+> or an accepted keep.
+>
 > **Status.** D15 gated 2026-09-02: `005843d` prep, `628a5ee` rows, `3db6e49` impl, `b7c0a3d` ledger; deploy `16bdc8e5`, SMOKE PASS 29/29 live; `test-inventory.json` 45 files / 1432 passed / 0 todo; `tsc` 0. Gap audit 2026-09-02: 85 raw claims → 38 merged → 37 verified by two lenses, 5 refuted; register G1–G39 (5 blocking, 12 visible, 11 recorded, 11 hygiene). Orphan-states report 2026-09-02 (`2026-09-02-orphan-states.md`): 192 states traced, 146 reachable, 40 orphans O1–O40, 6 refuted, 55 fixture notes — its facts are G40–G58, and the **owner decided every one on 2026-09-02** (concept / garbage / meaningful — the appendix's disposition column). Concepts already moved, uncommitted: seven boards (`Agents`, `AgentDetail`, `GrantEditorStates`, `AuditDetailStates`, `AppNewProxiedStates`, `ReauthGate`, `OauthConsentStates`) now live in `design/concepts/` with their own `canvas.json` and README (`git status`: seven renames + two untracked), `design/README.md:51-55` points there, and the main canvas's page 2 is "Adopted 2026-09-02 (re-layout pending)" holding only `AppDetail`, `AppDetailPanes`, `AppDetailStates`, `SettingsTokens`, `OauthConnections`, `OauthConsent`. That move rides **D16's ledger-row commit** (step 1's last act — first in order, and a docs/design commit, so D16's four `test:` commits stay pinned to `server/test/**` + `vitest.config.mts`). Also untracked: the profiler's report and optimizer config, `.mcp.json`, `mcps.yaml`, `.impeccable/`.
 > **Covers.** Every step the orchestrator runs from here until the register is closed, in the owner's fixed order: the test-speed dispatch (D16) first, then the gaps in the audit's closing order. Each step gets its own detailed plan when it is reached; this document says what that plan must settle and gives each step a checkable Definition of Done. It settles nothing a detailed plan owns.
 
@@ -381,6 +387,13 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Step 13 — Hygiene: G35, G22, G37, G38, G39 (small dispatch)
 
+> **Landed 2026-09-03.** `1db0932` (`spec:`), `ee71fd9` (two rows), `0525623` (`chore:`,
+> one Sonnet subagent), deploy `a5b40278`, smoke 32/32; 45 / 1492 / 0. Settled: the
+> ceiling label is "· over the newest 1,000" on the three per-row hints and both chart
+> captions; the 1,001-row twin seeds through `record` in its own describe after the other
+> audit describes (one re-key); `familyMarker`'s two copies differed and the shipped one
+> won. G22, G35, G37, G38 closed; G39 was already retired. Ledger row has the detail.
+
 **Achieves.** Code and record hygiene, last because nothing waits on it. G35: `format.ts`'s exported notice-tone class table duplicated verbatim in `settings.tsx`, `audit.tsx`, `approvals.tsx` → three imports (two if step 2 already collapsed them; the table keeps `success` / `danger` / `warning` since G52 gave `warning` its producer); `familyMarker` in `model.ts:1709` and `fixtures.ts:946` → export once; `cli/src/plan.ts`'s unexported `DEFAULT_CAPABILITIES` twins `server/src/capabilities.ts`'s exported `DEFAULT_APP_CAPABILITIES` → export it and add one contracts drift case beside `plan.ts:816-823`. G22: `model.ts:1927 AUDIT_SCAN_ROWS = 1000` bounds the tiles and histogram while `paging.total` is exact → label them "newest 1000" when the total exceeds the constant (the recorded `audit_stats` op stays a future dispatch); record that the same constant caps the filter selects' option scan (`:1970`, `:1975`). G37: the D15 ledger's "three reaches" is five (`app-new.tsx`, `harness/seed.ts`). G38 (audit note 5, the sharpest record failure): the D11 candidate finding at plan `:924` was false when written — `audit.prune` and its cron leg landed in `d036455` the day before — and decision 30's "nothing in this entry is implemented" has been false since D15 gated; both amended in place. G39 per 3a: the D13.1 line at `:1033` retired or paid, "/services" fixed either way.
 
 **Depends on.** 3a (G39). Touches files no earlier step revisits.
@@ -419,8 +432,9 @@ own deploy): G3 G4 G5 G6 G7 G8 G9 G11 G12 G13 G14 G15 G16 G17 G18 G26 G27 G28 G2
 G31 G36 G39 G50 G51 G52 G59; step 9 closed G2 (both ships) and the chevron fix closed G1
 ahead of step 10 (the owner's own finding, one row); step 10 closed G24, G49 and O27;
 step 11 closed G43, G44, G45 and G46; step 12 closed G19, G20, G32, G33 and G34 (G25
-skipped by choice: the browser pane resizes). Still open: G10 G21 G22 G23 G25 G35 G37 G38
-G40–G42 G47 G48 G53–G58 (step 13, the manual passkey leg, and the owner-accepted keeps).
+skipped by choice: the browser pane resizes); step 13 closed G22, G35, G37 and G38. **The
+roadmap is complete (2026-09-03).** Still open, all owner-side or accepted: G10 G21 (the
+manual passkey leg) G23 G25 G40–G42 G47 G48 G53–G58.
 
 | id | sev | size | area | gap, one line | recorded in |
 |---|---|---|---|---|---|

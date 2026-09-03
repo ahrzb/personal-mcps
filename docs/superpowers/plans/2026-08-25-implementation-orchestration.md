@@ -1629,3 +1629,31 @@ check and (manual, once) a real push notification to a real browser.
   still a recorded follow-up. Both `canvas.json`s parse, no frame overlaps (scripted).
   The owner's eyeballing of the redrawn boards is still owed (DoD item 1 — judged). Cost:
   1 agent (Sonnet 5, ~305k tokens).
+- 2026-09-03 — **Roadmap step 13 landed — hygiene: G35, G22, G37, G38 (G39 was already
+  retired). The roadmap after D15 is complete: steps 4–13 all shipped.** `1db0932`
+  (`spec:` — §13's audit bullet: tiles and chart over the newest 1,000, said so past the
+  ceiling, the selects likewise), `ee71fd9` (two rows, `it.todo` first), `0525623`
+  (`chore:`), deploy `a5b40278`, smoke **32/32**. One Sonnet 5 subagent from a written
+  brief (`step13-brief.md`), the orchestrator writing spec and rows and reviewing. G35:
+  the tone-class literal lives only in `format.ts` (settings, approvals and apps import
+  `alertClass`); `familyMarker` is exported from `model.ts` and fixtures import it — the
+  two copies were NOT byte-identical (the fixtures' lacked the `unconnected` dimming
+  branch), so the preview's `neverConnected` state now dims as its own comment claimed;
+  the CLI's `DEFAULT_CAPABILITIES` is exported and a contracts case pins it equal to the
+  server's `DEFAULT_APP_CAPABILITIES` (plus `canonicalCapabilities(undefined)`). G22:
+  `AuditProps.scanCeiling` (`AUDIT_SCAN_ROWS` when `total` exceeds it, else null); the
+  Tool calls / Denied / Median latency hints and both chart captions append "· over the
+  newest 1,000"; the Events tile stays exact; fixtures `default` and `middlePage` (both
+  1,284 rows) carry the label, the rest null (the reviewer set `middlePage`, which the
+  builder had left null against its own total). Row 18 seeds 1,001 rows through
+  `record` (~5 s) in a describe of its own placed after every other audit describe so the
+  earlier counts hold — the inventory key moved with it (enumerated: one re-key). G38:
+  the D11 line "nothing prunes stale audit rows past retention" and decision 30's
+  "nothing in this entry is implemented" amended in place, each with the date and the
+  commit that made it false (`d036455`, D15). G37: the D15 entry's "ownership audit
+  clean … plus three the reviewers legitimately reached" amended: five files,
+  `app-new.tsx` and `harness/seed.ts` outside every group. Process lesson recorded, as
+  the step asked: a ledger claim about the tree is checked against the tree before it is
+  written. Gate: 45 / 1492 / 0, exactly two `todo → passed` plus the one re-key; `tsc` 0;
+  preview walked (`audit/default` with the label, `audit/middlePage` fixed) before the
+  gate. Cost: 1 agent (Sonnet 5, ~245k tokens).

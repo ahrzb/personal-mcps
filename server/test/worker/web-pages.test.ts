@@ -1746,25 +1746,66 @@ describe(`§13 · the PWA icons — the install gate's own bytes`, () => {
   // back a path string — fails. A spelling ROUTES does not serve is the 404 twin. `icons` is
   // `[]` today, so the walk is vacuous until the body opens on the length of the pair row 2
   // names — without that line this row goes green against the very gap it closes.
-  it.todo(
-    `§13 · every icons[] src the manifest lists answers 200 through worker.fetch with no cookie, Content-Type image/png, and a body whose PNG signature and IHDR width are the size its entry declares — so a constant pasted under the wrong entry, or a bundler handing back a path string where bytes belong, reddens here — while /icon-256.png, a spelling ROUTES does not serve, is no segment at all and comes back on the hub's one anonymous 404 (the twin)`,
-  );
+  it(`§13 · every icons[] src the manifest lists answers 200 through worker.fetch with no cookie, Content-Type image/png, and a body whose PNG signature and IHDR width are the size its entry declares — so a constant pasted under the wrong entry, or a bundler handing back a path string where bytes belong, reddens here — while /icon-256.png, a spelling ROUTES does not serve, is no segment at all and comes back on the hub's one anonymous 404 (the twin)`, async () => {
+    const manifest = (await (await call(new Request(`${ORIGIN}${paths.manifest}`))).json()) as {
+      icons: { src: string; sizes: string }[];
+    };
+    // The walk below is vacuous over an empty array, which is exactly the gap this closes.
+    expect(manifest.icons).toHaveLength(2);
+    for (const icon of manifest.icons) {
+      const answered = await call(new Request(`${ORIGIN}${icon.src}`));
+      expect(answered.status, icon.src).toBe(200);
+      expect(answered.headers.get("Content-Type"), icon.src).toBe("image/png");
+      const bytes = new Uint8Array(await answered.arrayBuffer());
+      // The PNG signature, then IHDR's width at byte 16 (big-endian) — the size the entry
+      // declares, read off the bytes rather than trusted from the declaration.
+      expect([...bytes.subarray(0, 8)], `${icon.src} signature`).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const width = new DataView(bytes.buffer).getUint32(16);
+      expect(`${width}x${width}`, icon.src).toBe(icon.sizes);
+    }
+    // The twin: a spelling ROUTES does not serve is no segment — the same anonymous 404 as
+    // any unclaimed top-level path, not an icon route answering for a size it lacks.
+    const missing = await call(new Request(`${ORIGIN}/icon-256.png`));
+    const unclaimed = await call(new Request(`${ORIGIN}/no-such-segment-${uniqueSlug("x")}`));
+    expect(missing.status).toBe(404);
+    expect(await missing.text()).toBe(await unclaimed.text());
+  });
 
   // plan row 2. The declaration rather than the bytes: exactly the 192/512 pair the install
   // gate is built around, beside the members that already satisfied the rest of it — and the
   // two spellings this step refuses to write, sizes "any" and any purpose at all, as the twin
   // that keeps a later hand from adding either.
-  it.todo(
-    `§13 · the icons array carries exactly the pair §13's install gate is built around, 192x192 and 512x512, beside the name, start_url, scope and display that already satisfied the rest of it — while no entry declares sizes "any" (the Android WebAPK install failure chromium issue 40925759 reports) and none declares a purpose at all, the two spellings this step refuses to write (the twin)`,
-  );
+  it(`§13 · the icons array carries exactly the pair §13's install gate is built around, 192x192 and 512x512, beside the name, start_url, scope and display that already satisfied the rest of it — while no entry declares sizes "any" (the Android WebAPK install failure chromium issue 40925759 reports) and none declares a purpose at all, the two spellings this step refuses to write (the twin)`, async () => {
+    const manifest = (await (await call(new Request(`${ORIGIN}${paths.manifest}`))).json()) as Record<string, unknown> & {
+      icons: Record<string, unknown>[];
+    };
+    expect(manifest.name).toBe("personal-mcps");
+    expect(manifest.start_url).toBe(paths.apps);
+    expect(manifest.scope).toBe("/");
+    expect(manifest.display).toBe("standalone");
+    expect(manifest.icons.map((icon) => icon.sizes)).toEqual(["192x192", "512x512"]);
+    expect(manifest.icons.map((icon) => icon.src)).toEqual([paths.icon192, paths.icon512]);
+    for (const icon of manifest.icons) {
+      expect(icon.type).toBe("image/png");
+      expect(icon.sizes).not.toBe("any");
+      expect(icon).not.toHaveProperty("purpose");
+    }
+  });
 
   // plan row 3. The one place this file names markup, and the header says why: the rel token
   // IS the browser contract. /apps draws both links at paths.icon192, the row importing paths
   // so the URL is never a literal on this side — /login's own head, which links neither, is
   // the ceiling the fix keeps and the twin.
-  it.todo(
-    `§13 · the shell head links the icon the worker serves — /apps renders rel="icon" and rel="apple-touch-icon" at paths.icon192 beside the manifest link, the row importing paths while layout.tsx spells the URL itself as the other three assets already do — while /login's head, one of the five page files that write their own, links neither, the ceiling this fix keeps deliberately (the twin)`,
-  );
+  it(`§13 · the shell head links the icon the worker serves — /apps renders rel="icon" and rel="apple-touch-icon" at paths.icon192 beside the manifest link, the row importing paths while layout.tsx spells the URL itself as the other three assets already do — while /login's head, one of the five page files that write their own, links neither, the ceiling this fix keeps deliberately (the twin)`, async () => {
+    const shell = await page(paths.apps);
+    expect(shell).toContain(`<link rel="manifest" href="${paths.manifest}"`);
+    expect(shell).toContain(`<link rel="icon" href="${paths.icon192}"`);
+    expect(shell).toContain(`<link rel="apple-touch-icon" href="${paths.icon192}"`);
+    // The twin: a page that writes its own head links no icon — kept, not forgotten.
+    const login = await anonymousPage(paths.login);
+    expect(login).not.toContain('rel="icon"');
+    expect(login).not.toContain('rel="apple-touch-icon"');
+  });
 });
 
 describe("§19.5 · the consent screen", () => {

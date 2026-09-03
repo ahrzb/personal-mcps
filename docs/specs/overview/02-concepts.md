@@ -6,8 +6,10 @@
   Usernames are `[a-z0-9-]`, minus a reserved list, since they become top-level URL
   segments: every top-level route segment the Worker serves is reserved — currently
   `login`, `device`, `settings`, `audit`, `approvals`, `apps`, `oauth`, `api`,
-  `connect`, `internal`, the three shell assets `manifest.webmanifest`, `sw.js`,
+  `connect`, `internal`, the five shell assets `manifest.webmanifest`, `sw.js`,
   `styles.css` *(amended 2026-08-26: the stylesheet became a served segment)*,
+  `icon-192.png`, `icon-512.png` *(amended 2026-09-03: the two PWA icons the manifest
+  declares and the shell head links, §13)*,
   `.well-known` *(amended 2026-08-26: OAuth discovery documents, §19 — the dot already
   puts it outside the username charset, like the shell assets, and it is reserved anyway
   so the walk stays total)*, plus

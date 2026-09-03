@@ -80,6 +80,7 @@ import {
   appNewProps,
   appsProps,
 } from "./pages/model";
+import { ICON_192, ICON_512 } from "./pages/icon";
 import type {
   AppDetailPane,
   Notice,
@@ -727,7 +728,14 @@ export function pageRoutes(): PageRouter {
         display: "standalone",
         background_color: "#ffffff",
         theme_color: "#ffffff",
-        icons: [],
+        // Exactly the pair Chromium's install criterion is built around, each entry's own
+        // bytes at its own size. No `sizes: "any"` (the spelling that fails Android WebAPK
+        // install, chromium issue 40925759) and no `purpose` (not part of the gate;
+        // omitted means `any`, which is what iOS's fallback wants).
+        icons: [
+          { src: paths.icon192, sizes: "192x192", type: "image/png" },
+          { src: paths.icon512, sizes: "512x512", type: "image/png" },
+        ],
       },
       { headers: { "Content-Type": "application/manifest+json; charset=utf-8" } },
     ),
@@ -739,6 +747,11 @@ export function pageRoutes(): PageRouter {
   app.get(paths.serviceWorker, () => new Response(SERVICE_WORKER, { headers: JAVASCRIPT }));
 
   app.get(paths.stylesheet, () => new Response(styles, { headers: CSS }));
+
+  // The manifest's two icons and the head's `rel="icon"`: bytes from pages/icon.ts, the
+  // same in the suite and in production, which is the whole reason they are not a file.
+  app.get(paths.icon192, () => new Response(ICON_192, { headers: PNG }));
+  app.get(paths.icon512, () => new Response(ICON_512, { headers: PNG }));
 
   return app;
 }
@@ -1449,6 +1462,9 @@ function noSuchPage(): Response {
 const TEXT = { "Content-Type": "text/plain; charset=utf-8" } as const;
 const CSS = { "Content-Type": "text/css; charset=utf-8" } as const;
 const JAVASCRIPT = { "Content-Type": "text/javascript; charset=utf-8" } as const;
+// No cache headers, like every other shell asset: an unversioned URL under a year-long
+// `immutable` would make the icon the one asset a deploy could never replace.
+const PNG = { "Content-Type": "image/png" } as const;
 
 /**
  * The whole service worker (§13): a push handler and a notificationclick handler, and no

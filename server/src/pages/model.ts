@@ -246,13 +246,19 @@ export const paths = {
 
   /* --- the PWA shell (§13) --- */
 
-  /** Installability. Named here because web.ts serves it; layout.tsx spells the same
-   *  three URLs itself, since the shell links them rather than navigating to them. */
+  /** Installability. Five URLs named here because web.ts serves them; layout.tsx spells
+   *  the four the shell LINKS itself (manifest, worker, stylesheet, the 192 icon), since
+   *  the shell links them rather than navigating to them. */
   manifest: "/manifest.webmanifest",
   /** Push + notificationclick only — never a fetch handler (the no-SPA pin). */
   serviceWorker: "/sw.js",
   /** The one stylesheet every page's document head links. */
   stylesheet: "/styles.css",
+  /** The two PNGs the manifest's `icons` declares — the pair Chromium's install gate is
+   *  built around — the first also the shell head's `rel="icon"`. Dotted, so both stay
+   *  out of the username charset as the three above already do. */
+  icon192: "/icon-192.png",
+  icon512: "/icon-512.png",
 
   /** The detail page a -32003 error links an agent's user to (§7). */
   approval(id: string): string {

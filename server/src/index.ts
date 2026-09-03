@@ -127,6 +127,8 @@ export const ROUTES = [
   "manifest.webmanifest", // web: PWA manifest (§13) — a dot keeps it out of the username charset anyway
   "sw.js", // web: install+push service worker (§13)
   "styles.css", // web: the one stylesheet every page's shell links (§13)
+  "icon-192.png", // web: the PWA icon the shell head and the manifest link (§13)
+  "icon-512.png", // web: the manifest's install-size icon (§13)
 ] as const;
 
 /** One top-level segment, as the table above names it. */
@@ -369,8 +371,8 @@ type Mount = (app: Hono<{ Bindings: Env }>, segment: ServedSegment) => void;
 /**
  * Segment → mount, exhaustive over ROUTES by type: a segment added to the table above with
  * no mount here is a compile error, and a mount that claims nothing is caught at runtime by
- * the router walk. The browser surface is one app (web.pageRoutes) that eight segments
- * dispatch into whole; the four machine segments are mounted here because each is the
+ * the router walk. The browser surface is one app (web.pageRoutes) that eleven segments
+ * dispatch into whole; the five machine segments are mounted here because each is the
  * composition root's own wiring of a sibling module.
  */
 const MOUNTS: Record<ServedSegment, Mount> = {
@@ -383,6 +385,8 @@ const MOUNTS: Record<ServedSegment, Mount> = {
   "manifest.webmanifest": browser,
   "sw.js": browser,
   "styles.css": browser,
+  "icon-192.png": browser,
+  "icon-512.png": browser,
 
   // better-auth's own surface (§4) and the CLI's one non-MCP data route (§8).
   api: (app, segment) => {

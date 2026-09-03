@@ -30,12 +30,15 @@ export type LayoutProps = {
 };
 
 /**
- * The three asset URLs the shell needs that `paths` does not name: they are served by
- * web.ts, not linked between pages, and their spellings are pinned by §13.
+ * The four asset URLs the shell LINKS rather than navigates to (`paths` names them too,
+ * because web.ts serves them): spelled here as the document head's own contract, pinned
+ * by §13. The icon is the 192 — iOS's `apple-touch-icon` wants a raster and prefers this
+ * link over any manifest entry, and a tab favicon needs no more.
  */
 const STYLESHEET = "/styles.css";
 const MANIFEST = "/manifest.webmanifest";
 const SERVICE_WORKER = "/sw.js";
+const ICON = "/icon-192.png";
 
 const NAV: { key: NavSection; label: string; href: string }[] = [
   { key: "apps", label: "Apps", href: paths.apps },
@@ -306,6 +309,8 @@ export const Layout: FC<LayoutProps> = ({ title, active, username, pendingApprov
         <title>{title}</title>
         <link rel="stylesheet" href={STYLESHEET} />
         <link rel="manifest" href={MANIFEST} />
+        <link rel="icon" href={ICON} />
+        <link rel="apple-touch-icon" href={ICON} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" />

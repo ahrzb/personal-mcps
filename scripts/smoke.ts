@@ -449,6 +449,20 @@ async function main(): Promise<number> {
       return `/settings 200 with the six-pane rail; /settings/clients 200; /settings/two-factor 200 drawing the Enable control; /settings/password 404; /oauth/connections 301 → /settings/clients; bearer-only change-password → 302 /login`;
     });
 
+    await step("§13 · the install icon the manifest declares is real PNG bytes at its declared size", async () => {
+      // The suite reads these bytes under Vite; only the deployment says the bundle carries
+      // them too (an asset import handing back a URL string is the divergence the packaging
+      // refuses). A browser that finds no icon shows no install affordance and no error.
+      const icon = await fetch(`${ORIGIN}/icon-512.png`);
+      expect(icon.status === 200, `/icon-512.png → ${icon.status}`);
+      expect(icon.headers.get("content-type") === "image/png", `/icon-512.png content-type ${icon.headers.get("content-type") ?? ""}`);
+      const bytes = new Uint8Array(await icon.arrayBuffer());
+      const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((b, i) => bytes[i] === b);
+      const width = new DataView(bytes.buffer).getUint32(16);
+      expect(signature && width === 512, `/icon-512.png is not a 512-wide PNG (${bytes.length} bytes, width ${width})`);
+      return `/icon-512.png 200 image/png, PNG signature, IHDR width 512, ${bytes.length} bytes`;
+    });
+
     await step("§4/§15 · /login's ?next= is escaped where it is embedded and refused where it is absolute", async () => {
       // The suite pins both consumers against miniflare; only the deployment says whether
       // the bytes that reach a real browser are the escaped ones. Hostile spelling first —

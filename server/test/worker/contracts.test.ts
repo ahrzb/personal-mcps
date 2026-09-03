@@ -2775,6 +2775,8 @@ describe("§4 direction C · planner steps → ops", () => {
 });
 
 describe("§9 · the planner's copy of the role-declaration rules", () => {
+  it.todo("§9/§20.2 · the planner's DEFAULT_CAPABILITIES is the server's DEFAULT_APP_CAPABILITIES — one exported constant on each side compared here, so a widened default on one side fails by name instead of a plan that quietly diffs every proxied app");
+
   it("§6/§9 · the caps cli/src/plan.ts validates a proxy `roles:` block against are limits.ts's, by name — the planner's early refusal exists so `pmcp apply` never dies mid-plan, and a copy that drifted low would call a file valid that the hub then rejects AFTER the destructive delete phase has run", async () => {
     // plan.ts deliberately re-implements registry.validateRoles rather than importing it
     // (§9: the planner never depends on the server, which is why the fixtures exist at

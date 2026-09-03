@@ -1349,6 +1349,8 @@ describe("§8/§13 · one paging contract, two presentations", () => {
       else expect(found?.[1], `row ${row.id} is open beside the addressed one`).toBeDefined();
     }
   });
+
+  it.todo("18. §13 · past the scan ceiling the per-row tiles and the chart say \"over the newest 1,000\" while the Events count stays audit_query's exact total, and the filter selects list only what the newest 1,000 rows mention · a window under the ceiling carries no such label (the twin)");
 });
 
 describe("§13/§15 · /audit's expanded row — the bodies, the stubs, and the sentence for their absence", () => {

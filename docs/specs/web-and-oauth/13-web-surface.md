@@ -94,11 +94,14 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
       minutes ago." — the session's `createdAt`, the same value the gate reads), so the
       owner can see why a stale one is bounced.
   - **Two-factor** — unchanged in substance: not enrolled → **Enable two-factor**
-    (password-confirmed); TOTP setup (QR plus the grouped secret for manual entry, a
-    6-digit verify); the backup codes revealed exactly once after enabling or
-    regenerating; enabled → the codes-remaining line, **Regenerate backup codes**,
-    **Disable two-factor** (confirm dialog). The rail dot is the one marker that is a
-    status, not a count.
+    (password-confirmed; the answer renders the setup card in place at 200 — the secret
+    and the codes never ride a URL); TOTP setup (QR plus the grouped secret for manual
+    entry, a 6-digit verify posted to the pane's own `/settings/two-factor/verify-totp`
+    — a refused code redraws the same enrolment in place with the error under the boxes,
+    a verified one lands on the enabled arm); the backup codes revealed exactly once after
+    enabling or regenerating; enabled → **Regenerate backup codes**, **Disable
+    two-factor** (confirm dialog). The rail dot is the one marker that is a status, not a
+    count.
   - **Passkeys** — unchanged in substance: one row per passkey (name as the authenticator
     reported it, added, last used), **Remove** (confirm dialog), **Add passkey** (a
     WebAuthn ceremony on better-auth's own mount — the one credential POST that is not a

@@ -5098,6 +5098,16 @@ async function seedAppDetailWorld(): Promise<void> {
 }
 
 describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
+  // Owner questions 37(b) and 37(a), decided 2026-09-03 (§13 amended): the header's
+  // controls land on the app's own page, and a headers-mode app that cannot be reached
+  // says so in its own words rather than borrowing the oauth arm's.
+  it.todo(
+    `§13 · the app header's Connect refusal and Disconnect land back on the app's own page with the notice — /apps/<slug>/app_disconnect, never /apps/app_disconnect — and a finished Connect lands there too carrying done=connect · /apps's own row controls still land on /apps (the twin)`,
+  );
+  it.todo(
+    `§13 · a headers-mode proxied app whose upstream is unreachable renders "Couldn't reach <endpoint> — the live listing failed, so nothing is shown; calls return errors until it answers again." naming its configured endpoint, with BLANK App-group markers and no Reconnect control · the oauth app whose refresh failed keeps "Token refresh failed — calls return errors until you reconnect." beside Reconnect (the twin)`,
+  );
+
   beforeAll(withAppDetailWorld);
 
   it(`§13 · /apps/<slug>/tools is a 404 — the landing pane has no alias · /apps/<slug> renders Tools and each of the seven other panes answers 200 at its own URL, carrying aria-current="page" on its own rail entry and on no other (the twin)`, async () => {
@@ -5581,6 +5591,15 @@ describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
 });
 
 describe(`§13/§20 · /apps/<slug> — Prompts, Resources, Roles and Overview`, () => {
+  // Owner questions 32(b) and 32(c), decided 2026-09-03 (§13 amended): a never-connected
+  // tunneled app has no catalog to count, and the scoped-endpoint sentence is copyable.
+  it.todo(
+    `§20.5/§13 · a tunneled app that has never connected dims Tools, Prompts and Resources alike — the hub has no catalog to count — and each pane reads "This app has never connected, so the hub has no catalog to list yet." verbatim · the tunneled app beside it that connected and declared prompts counts and lists them (the twin)`,
+  );
+  it.todo(
+    `§13/§20.2 · the Resources pane prints the scoped endpoint with the hub's own origin and the owner's username in place of <hub> and <user> — copyable, the placeholder nowhere on the page · the aggregated-endpoint sentence beside it is unchanged (the twin)`,
+  );
+
   beforeAll(withAppDetailWorld);
 
   it(`§13/§20.3 · the Prompts pane gives each prompt its name, description and declared arguments, the <slug>_<prompt> name, reachability over the role's PROMPT patterns alone — a tools-only role reaches no prompt — the fixed "Never approval-gated", and the redact entries matching the prompt's name`, async () => {

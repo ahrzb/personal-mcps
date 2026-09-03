@@ -1484,3 +1484,33 @@ check and (manual, once) a real push notification to a real browser.
   the first ship was hand-built by the orchestrator against its own rule; the editor
   (`b22ca54`, six rows) is built by one Opus subagent from a written brief, the
   orchestrator reviewing. Cost so far: 0 agents for the first ship.
+- 2026-09-03 — **Roadmap step 9, second ship — the (agent × app) grant editor landed; G2
+  closes and step 9 with it.** `b22ca54` (six rows), `23054ea` (`feat:`), deploy
+  `170d63e0`, smoke **32/32** (one `pnpm ship` stopped on a transient D1 API error
+  before deploying, as designed, and was re-run). Built by one Opus 5 subagent from a
+  written brief, the orchestrator writing the rows and reviewing routes, strings and the
+  role composition. `grant-editor.tsx`; `GET /agents/:slug/grants` (the "another app"
+  chooser, 303 to the pair), `GET /agents/:slug/grants/:app`, `POST …/grant_set`
+  composing one `role.<name>` choice per row (none / allow / approval) into `grant_set`'s
+  roles — the one page form whose fields are not the op's keys verbatim, and its row says
+  so; a refusal (an undeclared role on a proxied app) redraws the editor with the reason;
+  the agent page's Grants rows carry Edit and "Grant access to another app…" as a GET form
+  over the active apps the agent holds nothing on; the app page's Agents pane carries Edit
+  grants per row, its earlier "renders no Edit grants control" row re-pointed (enumerated).
+  Fixtures for the five board states plus `everywhere`. Gate: 45 / 1477 / 0, exactly six
+  `todo → passed` plus the one re-point; `tsc` 0. Cost: 1 agent (Opus 5).
+- 2026-09-03 — **G1 closed ahead of step 10 — the audit chevron is a link.** The user's
+  question ("why can none of the audit items be expanded?") diagnosed as the UI half of
+  G1: bodies are stored, `?expand=<id>` rendered the open row, but the chevron was a bare
+  SVG in a `<tr>` with nothing to click and `AuditLinkQuery` could not spell `expand`.
+  `230fde7` (one row, `it.todo` first), `57ac66d` (`fix:` — `expand?` joins
+  `AuditLinkQuery` as a link concern, not a filter; `ExpandLink` wraps the chevron at both
+  widths in `<a class="row-toggle" aria-label="Show/Hide detail" aria-expanded>` built by
+  `auditLink`, so the open row's chevron links back without `expand` and the filters ride
+  along; `.row-toggle` is a bare-icon link, not a bordered button; §13's audit bullet says
+  so), deploy `27dc01b7`, smoke **32/32**. The row's twin is the world's own
+  `auth.device_approved` row — no bodies (§15), so no chevron. Learned: a row draws its
+  chevron twice (wide row, compact cell), so link counts are per width. Left for step 10
+  as planned: the per-row anchor so the reload lands on the opened row, G24's bodies-off
+  sentence, G49's stubs. Gate: 45 / 1478 / 0, exactly one `todo → passed`; `tsc` 0;
+  states preview walked (`audit/bodyStubs`: 32 links for 16 rows, one open). Cost: 0 agents.

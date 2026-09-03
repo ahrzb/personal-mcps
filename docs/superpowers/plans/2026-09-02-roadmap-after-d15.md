@@ -280,10 +280,11 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Step 9 — `/agents`: G2, G28's nav half, closing G8 and G12 (spec-first dispatch)
 
-> **Spec + first ship landed 2026-09-03.** `d832451` (`spec:`), `3cc730b` (rows),
-> `95ca7f6` (`feat:` — list, create form, agent page, fifth nav slot, pointers), deploy
-> `0d055370`, smoke 32/32; 45 / 1471 / 0. The (agent × app) grant editor is the second
-> ship: rows `b22ca54`, build running as one Opus subagent. Ledger row has the detail.
+> **Landed 2026-09-03, both ships.** `d832451` (`spec:`), `3cc730b` (rows), `95ca7f6`
+> (`feat:` — list, create form, agent page, fifth nav slot, pointers), deploy `0d055370`,
+> smoke 32/32; then the (agent × app) grant editor: `b22ca54` (rows), `23054ea` (`feat:`,
+> one Opus subagent), deploy `170d63e0`, smoke 32/32; 45 / 1477 / 0. G2 closed. The two
+> ledger rows have the detail.
 
 **Achieves.** The whole page family decision 30 deferred: the `/agents` list, `/agents/<slug>` detail with the (agent × app) grant editor, the fifth nav slot (`layout.tsx:39-44` holds four; 390 px cannot hold five — scroller or overflow, §13:358-360), §19.5's read-only clients row on the agent page (`19-inbound-oauth.md:403`), and the four dangling pointers become links (`consent.tsx:45-53`, `settings.tsx:769` / `:818`, `app-detail.tsx:708`). Agents exist as first-class objects everywhere in the model and can be created, listed and granted only through the admin MCP or `pmcp`; the visible harm rides G8 and G12.
 
@@ -304,6 +305,11 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 **What its detailed plan must settle.** The editor's exact surface (per-app cards, role chips, mode toggles) and its POST shape; whether an agent gets a Danger zone (`agent_delete`) and a Token pane (`token_issue` for agents, which §13:116-118 currently routes to `pmcp`); the overflow mechanism; the `agents` reservation if not done in step 8; the smoke agent (`scripts/smoke.ts`'s `OAUTH_AGENT` reused); the ownership groups and the row count.
 
 ## Step 10 — `/audit` expanded row: G1, G24, G49 (spec-first dispatch)
+
+> **G1's chevron half landed early, 2026-09-03** (`230fde7` row, `57ac66d` fix, deploy
+> `27dc01b7`, smoke 32/32; 45 / 1478 / 0): the chevron is a link to `?expand=<id>` at
+> both widths, back without it when open, filters carried; §13's audit bullet pins it.
+> Left here: the per-row anchor so the reload lands on the opened row, G24, G49, O27.
 
 **Achieves.** The owner's own finding: an expandable row draws a `Chevron` at both widths (`audit.tsx:333-349`) inside a `<tr>` with no anchor, form or script, and `AuditLinkQuery` / `paths.auditWith` (`model.ts:243-246`) cannot spell `expand`, so the shipped expanded state is reachable only by hand-editing the URL (G1). Once open, a row from an app with body logging off shows a bare "Client: …" with no explanation — `AuditEventRow` carries no `log_bodies` signal (G24) — and a row with neither client metadata nor bodies draws an empty panel (O27). The body-stub placeholders (`‹blob image/png · 4.2 MB›`, `‹oversize …›`, `audit.tsx:117-129`) are pinned by §13 and stored by `audit.ts:248-256`, but the loader never emits a stub onto `AuditEventRow` and the page renders them only through the same `?expand=` chain — built here: the loader carries stubs through, the `bodyStubs` fixture and test 14's page half become honest (G49). Both sit inside decision 30's deferral of the expanded-row states, so the §13 paragraph (`13-web-surface.md:162-166`) and the concept board (`design/concepts/AuditDetailStates`, whose lazy-fetch LOADING panel the spec never adopted — audit note 10; the synchronous render is the pinned pattern) are reviewed first. Fix: `expand` joins the link query; the chevron becomes `<a href={auditWith({...filters, expand: isOpen ? undefined : row.id})}>` so the open row's chevron closes it; the row gets an `id` anchor; one bodies-off sentence and one nothing-recorded sentence.
 
@@ -390,8 +396,9 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 From the audit's synthesis (2026-09-02). **Closed 2026-09-03** (steps 4–8, each with its
 own deploy): G3 G4 G5 G6 G7 G8 G9 G11 G12 G13 G14 G15 G16 G17 G18 G26 G27 G28 G29 G30
-G31 G36 G39 G50 G51 G52 G59. Still open: G1 G2 G10 G19–G25 G32–G35 G37 G38 G40–G49
-G53–G58 (steps 9–14 and the owner-accepted keeps).
+G31 G36 G39 G50 G51 G52 G59; step 9 closed G2 (both ships) and the chevron fix closed G1
+ahead of step 10 (the owner's own finding, one row). Still open: G10 G19–G25 G32–G35 G37
+G38 G40–G49 G53–G58 (steps 10–14 and the owner-accepted keeps).
 
 | id | sev | size | area | gap, one line | recorded in |
 |---|---|---|---|---|---|

@@ -1390,3 +1390,23 @@ check and (manual, once) a real push notification to a real browser.
   landed: `pnpm ship` = migrate `&&` deploy `&&` smoke, no pipes. Cost: 14 agents, 1.75 M
   tokens, 90 min — over-weighted for the review loop (three PSD rounds for one bug); next
   dispatch runs one verifier round.
+- 2026-09-03 — **Roadmap step 6 landed (inline, own deploy) — G5, G11, G50, G51 closed.**
+  `f5ab0fe` (rows, with step 7's) + `5363aad` (`fix:`), plan `2026-09-03-step6-audit-chrome.md`.
+  Done by the orchestrator with no agents, bodies FIRST: the three rows were written and
+  run red against the old page (no submit control; no date inputs; day strings ignored),
+  then the fix. A visible `Apply` as the last direct child of the second `.filters` row
+  (`order: 2` narrow); two native `since`/`until` date inputs (whole UTC days, `until`
+  snapped to day end) in a `.filter-pair`, the hidden epoch pair deleted, a hidden `range`
+  carrying the preset on preset pages so a select's onchange, the pager and an untouched
+  Apply hand it back anchored to now; `auditFilters` reads either spelling through
+  `windowEdge` and falls back to `presetOf(range)` for an absent/empty/half/inverted pair;
+  `auditHistogram` returns no buckets on an empty scan; `fmtBucket` caption; `IconSort`,
+  `IconCalendar`, `fmtDateRange`, `bucketHours` deleted. Fixtures: `default` a true 7d,
+  `middlePage` custom, `histogramFor(since, until, counts)` at four sites, `empty`'s bucket
+  size the loader's own, `HUB_PRINCIPAL` from its constant. Test-side lessons, both mine:
+  a `(?:…</select>)?` optional group after `<input>` swallowed the inputs up to the next
+  select (alternation instead), and `toContain('class="chart-bar')` matched the bars'
+  `chart-bars` container (a `[" ]` after the name). Gate: 45 / 1450 / 3, inventory exactly
+  three `todo → passed`, `tsc` 0, the two gate greps 0; states preview walked (default,
+  custom, empty). `pnpm ship`: no migration, deploy `6d314379`, smoke **30/30**. Cost: 0
+  agents.

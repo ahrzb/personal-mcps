@@ -217,6 +217,10 @@ Audit closing-order steps 6 and 7 (owner decisions; the browser session) are fol
 
 ## Step 6 — `/audit` chrome: G5, G11, G50, G51 (inline fix)
 
+> **Landed 2026-09-03, own deploy, no agents.** `f5ab0fe` (rows) + `5363aad` (`fix:`),
+> bodies written and run red before the fix; deploy `6d314379`, smoke 30/30; 45 / 1450 / 3,
+> exactly three `todo → passed`. Ledger row has the detail.
+
 **Achieves.** The dead controls on an owner-reviewed page whose filter §13 already pins. `audit.tsx:408`'s `#audit-filters` GET form closes at `:477-480` with no submit control; the four selects submit via `onchange` while the tool box (`:428`) has nothing, and implicit Enter is blocked by the second text field (`:423`) — with scripting off the whole row submits nothing (G5, blocking). The date-range input (`:420-424`) is nameless and readonly although `model.ts:1992-1993` already parses `since`/`until` and `:2019-2023` has a `range: "custom"` window; the Time header's sort glyph (`:570-574`) has no anchor and §13:141 pins no sort (G11). Fix: one submit button; two native `<input type="date" name="since|until">`; delete the glyph. Two builds are tied to the input, per the owner: the custom range becomes reachable through it (G51 — the segmented control with no `aria-current` and the "vs previous period" tiles become real states, with a fixture that has a producer), and "No events in this window." (`audit.tsx:523`) is drawn for an empty window — today `auditHistogram` (`model.ts:2072-2090`) returns 24 zero buckets on every path, so one early return (G50).
 
 **Depends on.** Step 2; placed before step 10 so `audit.tsx` sees one more pass, not two.

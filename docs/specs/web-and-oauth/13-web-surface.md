@@ -206,10 +206,25 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   with archive/delete actions; an archived section with unarchive/delete; an add-app
   flow (pick tunneled or proxied — the two kinds, §2; for proxied, after the endpoint
   the form asks for the authentication type, `headers` or `oauth` (§7); tunneled
-  creation shows the app token once; choosing `oauth` continues into the provider's
-  consent screen, §7); and
+  creation shows the app token once; choosing `oauth` answers the **connecting page** —
+  a 200 render, never a redirect: "Connecting to <name>…", "Finish signing in at <name>
+  — this link expires in about 10 minutes." (§7's state TTL, the state minted for this
+  session at render), a primary "Continue to <name>" linking the provider's authorize
+  URL and "Not now" linking the app's Overview pane; when discovery fails the create
+  still succeeded and lands on that pane with the connect notice *(2026-09-03, step 11:
+  G46)*); and
   Connect/Reconnect/Disconnect for `auth: oauth` apps. CSRF tokens on every
-  mutation. Future work for the add-app form: probe the entered URL (the §7
+  mutation. A refused create redraws the form at 400 with every violation under the
+  control it names — the field is read off the refusal's own `violations` (§8), never a
+  substring of its message — as the op's sentence, capitalised with one period, and
+  `aria-invalid` on that input; a violation naming no control of the form (roles,
+  redaction paths) is the whole-form message; two violations render two errors at once
+  *(G43, G45)*. The endpoint of a proxied app must be an `https://` URL — `http://` only
+  for `localhost`, `127.0.0.1` and `[::1]` — checked by `app_create` / `app_update` at
+  the owner's trust boundary (§8), so a scheme-less host or a plain-http remote is
+  refused before anything is stored or dialed *(G44)*. A blank Name is not sent, so the
+  op defaults it to the slug (§8) and the form has no Name error. Future work for the
+  add-app form: probe the entered URL (the §7
   RFC 9728 discovery) to suggest the auth type and surface provider-specific options,
   and accept manually pre-registered client credentials for OAuth providers without
   dynamic client registration. `/oauth/upstream/callback` belongs to this cookie-session-gated surface:

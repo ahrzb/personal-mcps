@@ -234,7 +234,15 @@
     never navigated to) and §13 now says so in as many words. **Scope, pinned.** *(2026-09-03:
     the `/agents` list, `/agents/<slug>` and the (agent × app) grant editor are now
     specced in §13 — roadmap step 9 — with their three boards adopted as contract; the
-    rest of this paragraph's deferrals stand as written.)* Only the
+    rest of this paragraph's deferrals stand as written.)* *(2026-09-03, later: the audit
+    expanded-row states landed with roadmap step 10 and the proxied add-app states with
+    step 11 — both boards adopted as contract, §13 pins their strings. Two calls made
+    there: the endpoint rule is `https://` only, `http://` for loopback, checked at the
+    ops (the owner's trust boundary; the registry stays a storage layer so seeds and
+    tests may store what they like), and the connecting page is a 200 with a link and no
+    auto-open — a page cannot open a tab without a script, and a create must not depend
+    on one — so the owner clicks "Continue to <name>" and the same-tab flow §7 already
+    runs takes over.)* Only the
     reviewed pages are specced: the `/agents` list and detail, the grant editor, the audit
     expanded-row states and the proxied add-app states stay unreviewed and deferred; where
     the new pages point at them (the app page's Edit grants, agent slugs as links, the

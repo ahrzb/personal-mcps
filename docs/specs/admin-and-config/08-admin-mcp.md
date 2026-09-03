@@ -23,14 +23,22 @@ Tools (names final, shapes reviewed at implementation time):
   `redact` / `redact_results` (sensitive-field paths, §7 — either kind),
   `log_bodies` (audit body logging, §15 — either kind; absent defaults by kind,
   tunneled on / proxied off) and, for proxied apps,
-  `endpoint`, `roles` (the virtual role definitions), `auth` (`headers` | `oauth`,
+  `endpoint` (an `https://` URL — `http://` only for `localhost`, `127.0.0.1` and
+  `[::1]`; anything else is refused, at create and update alike, before anything is
+  stored or dialed *(2026-09-03, step 11)*), `roles` (the virtual role definitions),
+  `auth` (`headers` | `oauth`,
   §7), and `forward_identity` (identity headers, §7; default false); update takes the
   same minus `kind`, which is **immutable** (recreate to convert — conversion would
   orphan app tokens and DO state). Changing `auth` in either direction is accepted
   but destructive: any stored `upstream_auth_json` is wiped (audit row
   `upstream.auth_mode_changed`), leaving the app not-connected until the owner
   runs Connect (`auth: oauth`) or `app_set_upstream_auth` (`auth: headers`);
-  `pmcp diff` flags a mode flip as destructive in the plan. `app_set_upstream_auth`
+  `pmcp diff` flags a mode flip as destructive in the plan. *(2026-09-03, step 11:)* A
+  refused create or update reports **every** violation at once, not the first: the
+  `-32602` error's `data.violations` is a list of `{ field, reason }` — the op's own
+  field names (`slug`, `endpoint`, `roles`, …) — and its `message` joins the same
+  sentences with `; `, so `pmcp` prints them all and the add-app page places each under
+  its control (§13). `app_set_upstream_auth`
   is rejected on `auth: oauth` apps, and the Connect flow (§7) is rejected on
   `auth: headers` ones — each mode has exactly one credential path. `app_list` /
   `app_get` additionally report the OAuth connection status for `auth: oauth`

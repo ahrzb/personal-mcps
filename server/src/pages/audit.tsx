@@ -58,8 +58,11 @@ function fmtSignedPct(n: number): string {
   return `${n >= 0 ? "+" : ""}${n}%`;
 }
 
-function fmtMB(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+/** A stub's size as §13 spells it: KB under a megabyte, MB with one decimal above. A
+ *  20 KB body reading "0.0 MB" is a size nobody can act on, which is the whole point of
+ *  showing one instead of the bytes. */
+function fmtSize(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function rangeNoun(range: AuditFilters["range"]): string {
@@ -109,8 +112,8 @@ function isBodyStub(v: unknown): v is BodyStubLike {
 
 function stubLabel(s: BodyStubLike): string {
   return s.stub === "blob"
-    ? `‹blob ${s.contentType ?? "unknown"} · ${fmtMB(s.bytes)}›`
-    : `‹oversize · ${fmtMB(s.bytes)}›`;
+    ? `‹blob ${s.contentType ?? "unknown"} · ${fmtSize(s.bytes)}›`
+    : `‹oversize · ${fmtSize(s.bytes)}›`;
 }
 
 /** A recorded body (or a small `detail` object) as one compact line, with any
@@ -244,8 +247,17 @@ const RangeSegment: FC<{ filters: AuditFilters; now: string }> = ({ filters, now
  * ------------------------------------------------------------------ */
 
 function hasDetail(row: AuditEventRow): boolean {
-  return Boolean(row.client || row.detail || row.args || row.result);
+  return Boolean(row.client || row.detail || row.args || row.result || row.noBodies);
 }
+
+/** §13's one sentence for a call row with no bodies, so no panel is ever blank. Prose,
+ *  not a body — hence `.detail-meta` beside the client line rather than the monospace
+ *  `.detail-body` the recorded JSON gets. */
+const NO_BODIES_SENTENCE: Record<NonNullable<AuditEventRow["noBodies"]>, string> = {
+  off: "Call bodies aren't recorded for this app (body logging is off).",
+  refused: "Refused before the call was made, so there are no bodies to show.",
+  unrecorded: "No bodies were recorded for this call.",
+};
 
 /** The chevron IS the expand control (G1, 2026-09-03): with no script on the page,
  *  opening a row is a reload of this same view with `?expand=<id>` — the filters ride
@@ -280,8 +292,9 @@ document.querySelectorAll("tr.row-detail:not([hidden])").forEach(function(d){set
 if(opening)set(detail,true);
 history.replaceState(null,"",to);
 function set(d,open){d.hidden=!open;var row=d.previousElementSibling;row.classList.toggle("row-open",open);
+var id=d.id.slice("detail-".length);
 row.querySelectorAll("a.row-toggle").forEach(function(l){var u=new URL(l.href);
-if(open)u.searchParams.delete("expand");else u.searchParams.set("expand",d.id.slice("detail-".length));
+if(open){u.searchParams.delete("expand");u.hash=""}else{u.searchParams.set("expand",id);u.hash="#event-"+id}
 l.href=u.toString();l.setAttribute("aria-expanded",open?"true":"false");l.setAttribute("aria-label",open?"Hide detail":"Show detail")})}
 });`;
 
@@ -304,6 +317,7 @@ const EventDetail: FC<{ row: AuditEventRow; filters: AuditFilters }> = ({ row, f
       {summaryLine !== null && <div class="detail-body">{summaryLine}</div>}
       {argsLine !== null && <div class="detail-body">Arguments: {argsLine}</div>}
       {resultLine !== null && <div class="detail-body">Result: {resultLine}</div>}
+      {row.noBodies && <div class="detail-meta">{NO_BODIES_SENTENCE[row.noBodies]}</div>}
       {client && (clientLabel || client.sessionId) && (
         <div class="detail-meta">
           Client: {clientLabel ?? "unknown"}
@@ -329,7 +343,9 @@ const EventRow: FC<{ row: AuditEventRow; filters: AuditFilters; expandedId: numb
   const expandable = hasDetail(row);
   return (
     <>
-      <tr class={isOpen ? "row-open" : undefined}>
+      {/* The anchor an opening chevron's `#event-<id>` names, so the scripting-off reload
+          lands on the row it opened (§13). */}
+      <tr class={isOpen ? "row-open" : undefined} id={`event-${row.id}`}>
         <td class="wide-only cell-time">{fmtDateTime(row.ts)}</td>
         <td class="wide-only cell-mono">{row.principal}</td>
         <td class="wide-only">{row.event}</td>

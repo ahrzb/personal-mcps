@@ -1793,8 +1793,10 @@ const auditRows: AuditEventRow[] = [
     outcome: "-32002",
     durationMs: 8,
     client: { name: "claude-code", version: "2.1.37", sessionId: "a3f9c2d1" },
-    // A refusal never carries bodies (§15) — the detail names the class instead.
+    // A refusal never carries bodies (§15) — the detail names the class, and the panel
+    // says why there is nothing else to show (§13).
     detail: { reason: "app archived" },
+    noBodies: "refused",
   },
   {
     id: 41280,
@@ -1825,6 +1827,7 @@ const auditRows: AuditEventRow[] = [
     durationMs: 4,
     client: { name: "pmcp-cli", version: "0.9.2" },
     detail: { reason: "tool not permitted" },
+    noBodies: "refused",
   },
   {
     id: 41277,
@@ -1836,6 +1839,9 @@ const auditRows: AuditEventRow[] = [
     outcome: "ok",
     durationMs: 890,
     client: { name: "claude-code", version: "2.1.37", sessionId: "a3f9c2d1" },
+    // Dispatched, and nothing in the body columns: this app's logging is on today (41286
+    // records bodies), so the row predates the switch (§13's third sentence).
+    noBodies: "unrecorded",
   },
   {
     id: 41276,
@@ -1856,6 +1862,7 @@ const auditRows: AuditEventRow[] = [
     outcome: "ok",
     durationMs: 290,
     client: { name: "claude-code", version: "2.1.37", sessionId: "a3f9c2d1" },
+    noBodies: "unrecorded",
   },
 ];
 
@@ -1882,6 +1889,34 @@ const auditOptions = {
     "cron.swept",
   ],
 };
+
+/**
+ * The two boards that exist to show ONE panel — §13's sentence for a call row with no
+ * bodies. Everything but the row is the session board's 24h window, so what differs
+ * between them is exactly what the sentence is about.
+ */
+function noBodiesBoard(row: AuditEventRow, denied: 0 | 1): AuditProps {
+  const since = ms("2026-08-23T14:47:00.000Z");
+  return {
+    ...shell("audit"),
+    notice: null,
+    filters: { app: row.app, range: "24h", since, until: AUDIT_UNTIL, limit: 50, offset: 0 },
+    options: auditOptions,
+    rows: [row],
+    paging: { offset: 0, limit: 50, total: 1 },
+    stats: {
+      events: 1,
+      eventsDeltaPct: null,
+      toolCalls: 1,
+      denied,
+      medianDurationMs: row.durationMs ?? null,
+      p95DurationMs: row.durationMs ?? null,
+    },
+    histogram: histogramFor(since, AUDIT_UNTIL, Array.from({ length: 24 }, (_, i) => (i === 23 ? 1 : 0))),
+    expandedId: row.id,
+    retentionDays: 7,
+  };
+}
 
 const audit = {
   /** The artboard: a TRUE last 7 days (the span `rangeOf` calls "7d", so the segment is
@@ -2034,7 +2069,9 @@ const audit = {
         outcome: "ok",
         durationMs: 4820,
         client: { name: "claude-code", version: "2.1.37", sessionId: "a3f9c2d1" },
-        args: { width: 1440, height: 5200, theme: "light" },
+        // Both size units in the one open panel: an over-cap argument body just past the
+        // 16 KiB cap reads in KB, the image block below it in MB (§13).
+        args: { stub: "oversize", bytes: 20480 },
         result: {
           structuredContent: { rendered: true, source: "https://example.com/front-page" },
           content: [{ stub: "blob", contentType: "image/png", bytes: 4404019 }],
@@ -2078,6 +2115,42 @@ const audit = {
     expandedId: 41290,
     retentionDays: 7,
   },
+
+  /** §13's first no-bodies sentence: a dispatched call on a PROXIED app, whose
+   *  `log_bodies` is off by §15's default — the panel says so beside the client line. */
+  bodiesOff: noBodiesBoard(
+    {
+      id: 41292,
+      ts: ms("2026-08-24T14:28:41.000Z"),
+      principal: "agent:claude",
+      event: "tools/call",
+      app: "linear",
+      tool: "create_issue",
+      outcome: "ok",
+      durationMs: 612,
+      client: { name: "claude-code", version: "2.1.37", sessionId: "a3f9c2d1" },
+      noBodies: "off",
+    },
+    0,
+  ),
+
+  /** §13's second: a refusal, which never had bodies to record whatever the app's
+   *  setting — and no `detail` either, so the sentence is the whole panel. */
+  refused: noBodiesBoard(
+    {
+      id: 41293,
+      ts: ms("2026-08-24T14:26:09.000Z"),
+      principal: "agent:cron",
+      event: "tools/call",
+      app: "github",
+      tool: "merge_pull_request",
+      outcome: "-32001",
+      durationMs: 5,
+      client: { name: "pmcp-cli", version: "0.9.2", sessionId: "b7d1e4a8" },
+      noBodies: "refused",
+    },
+    1,
+  ),
 } satisfies Record<string, AuditProps>;
 
 /* ------------------------------------------------------------------ *

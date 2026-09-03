@@ -1062,15 +1062,170 @@ describe("§8/§13 · one paging contract, two presentations", () => {
 });
 
 describe("§13/§15 · /audit's expanded row — the bodies, the stubs, and the sentence for their absence", () => {
-  it.todo("a dispatched tools/call row with no bodies on an app whose body logging is off opens to \"Call bodies aren't recorded for this app (body logging is off).\" beside its client line — expandable for that sentence alone · a row with recorded bodies shows them and never that sentence (the twin)");
+  // Six rows of this describe's own, written through `audit.record` like every other row
+  // in the file, each under a tool name nothing else uses so `?tool=` addresses exactly
+  // one. The seeded world supplies both twins: `walk-tool-1` carries bodies and a blob
+  // stub, `walk-tool-0` is a refusal that carries them too.
+  //
+  // The two apps are the seeded world's own, and which sentence a row gets is §15's
+  // default for the app's KIND: `notion` is proxied (log_bodies off), `news` tunneled
+  // (on). Both defaults are read back off `app_list` inside the cases rather than
+  // assumed, because "the app's setting" is the whole subject here.
+  const OFF_APP = "notion";
+  const ON_APP = "news";
+  const CLIENT = { name: "walker", version: "1.0", sessionId: "sess-off" };
 
-  it.todo("a refused call (-32001) with no bodies opens to \"Refused before the call was made, so there are no bodies to show.\" — never the bodies-off sentence, whatever the app's setting · the seed's refusal that does carry bodies shows them and no sentence (the twin)");
+  beforeAll(async () => {
+    const call = {
+      ownerId: world.ns.owner.userId,
+      principal: "agent:agent",
+      event: "tools/call",
+      outcome: "ok",
+      durationMs: 12,
+    };
+    await record(env.DB, { ...call, app: OFF_APP, tool: "off-tool", client: CLIENT });
+    // The same row without a client: the sentence is then the whole panel, which is what
+    // makes "expandable for that sentence alone" a claim about the row being expandable
+    // at all rather than about the client line it usually sits beside.
+    await record(env.DB, { ...call, app: OFF_APP, tool: "off-only-tool" });
+    // A refusal on the app whose logging is OFF — the refusal is the reason whatever the
+    // app's setting, which is only checkable when the two answers differ.
+    await record(env.DB, { ...call, app: OFF_APP, tool: "refused-tool", outcome: "-32001", client: CLIENT });
+    await record(env.DB, { ...call, app: ON_APP, tool: "unrecorded-tool", client: CLIENT });
+    // An app that is gone: no `app_list` row at all, so there is no setting to read.
+    await record(env.DB, { ...call, app: "vanished", tool: "vanished-tool", client: CLIENT });
+    // Over the 16 KiB cap, so what is STORED is one oversize stub — the page never sees
+    // the string of x's, because the hub never kept it (§15).
+    await record(env.DB, { ...call, app: ON_APP, tool: "oversize-tool", client: CLIENT, args: { blob: "x".repeat(20_000) } });
+  });
 
-  it.todo("a dispatched tools/call row with no bodies on an app whose body logging is on opens to \"No bodies were recorded for this call.\" — a row from before logging was switched on, or from an app that is gone, is explained rather than left blank");
+  /** The rendered text of ONE row's detail panel, read from the open row only: every
+   *  expandable row's detail rides the page, and the open one is the one without `hidden`
+   *  (the same shape `sessionLink` reads). */
+  function detailText(html: string, id: number): string {
+    const open = new RegExp(`<tr class="row-detail" id="detail-${id}">([\\s\\S]*?)</tr>`).exec(html);
+    expect(open, `row ${id} is not the open row on this page`).not.toBeNull();
+    return textOf(open?.[1] ?? "");
+  }
 
-  it.todo("an over-cap body is stored as one oversize stub and reaches the page through the loader as ‹oversize · N KB› — KB under a megabyte, MB with one decimal above — and the export carries the same stub, never the bytes");
+  /** One row by the tool name it was recorded under — the id is the ledger's, never a
+   *  guess, so `?expand=` addresses the row this case is about. */
+  async function rowOf(tool: string): Promise<AuditRow> {
+    const lines = await exportLines({ tool });
+    expect(lines.length, `no ledger row for tool "${tool}"`).toBe(1);
+    return lines[0] as AuditRow;
+  }
 
-  it.todo("the summary row carries id=\"event-<id>\" and an opening chevron's link ends in #event-<id>, so the scripting-off reload lands on the row it opened · the open row's closing link carries no fragment (the twin)");
+  /** §15's `log_bodies` as the hub reports it, through the same read the loader makes. */
+  async function logBodiesOf(slug: string): Promise<boolean | undefined> {
+    const { apps } = (await ops.app_list.handler(world.ns.owner.userId, {})) as {
+      apps: { slug: string; logBodies: boolean }[];
+    };
+    return apps.find((app) => app.slug === slug)?.logBodies;
+  }
+
+  it("a dispatched tools/call row with no bodies on an app whose body logging is off opens to \"Call bodies aren't recorded for this app (body logging is off).\" beside its client line — expandable for that sentence alone · a row with recorded bodies shows them and never that sentence (the twin)", async () => {
+    expect(await logBodiesOf(OFF_APP), "the proxied app's §15 default is off").toBe(false);
+    const row = await rowOf("off-tool");
+    expect(row.args, "the row under test recorded an args body").toBeUndefined();
+    expect(row.result, "the row under test recorded a result body").toBeUndefined();
+
+    const detail = detailText(await page(auditPath({ tool: "off-tool", expand: row.id })), row.id);
+    expect(detail).toContain("Call bodies aren't recorded for this app (body logging is off).");
+    expect(detail, "the sentence stands beside the client line, not instead of it").toContain(CLIENT.sessionId);
+
+    // Expandable for that sentence alone: the clientless row has nothing else to show, and
+    // still draws a chevron and carries a detail panel that is exactly the sentence.
+    const alone = await rowOf("off-only-tool");
+    const closed = await page(auditPath({ tool: "off-only-tool" }));
+    expect(expandLinks(closed).map((link) => link.query.get("expand"))).toContain(String(alone.id));
+    const solo = await page(auditPath({ tool: "off-only-tool", expand: alone.id }));
+    expect(detailText(solo, alone.id)).toBe(
+      "Event detail Call bodies aren't recorded for this app (body logging is off).",
+    );
+
+    // The twin: a row that DID record bodies shows them and says nothing about logging.
+    const bodied = await rowOf(`${TOOL_PREFIX}1`);
+    const shown = detailText(await page(auditPath({ tool: `${TOOL_PREFIX}1`, expand: bodied.id })), bodied.id);
+    expect(shown).toContain("Arguments:");
+    expect(shown).not.toContain("body logging is off");
+  });
+
+  it("a refused call (-32001) with no bodies opens to \"Refused before the call was made, so there are no bodies to show.\" — never the bodies-off sentence, whatever the app's setting · the seed's refusal that does carry bodies shows them and no sentence (the twin)", async () => {
+    const row = await rowOf("refused-tool");
+    expect(row.outcome).toBe("-32001");
+    // The app's logging is off, so the two reasons disagree — and the refusal wins.
+    expect(await logBodiesOf(OFF_APP)).toBe(false);
+    const detail = detailText(await page(auditPath({ tool: "refused-tool", expand: row.id })), row.id);
+    expect(detail).toContain("Refused before the call was made, so there are no bodies to show.");
+    expect(detail).not.toContain("body logging is off");
+
+    // The twin: the seed's own -32001 row carries bodies, so it shows them and explains
+    // nothing — the sentence is for a row with no bodies, not for every refusal.
+    const seeded = await rowOf(`${TOOL_PREFIX}0`);
+    expect(seeded.outcome).toBe("-32001");
+    const shown = detailText(await page(auditPath({ tool: `${TOOL_PREFIX}0`, expand: seeded.id })), seeded.id);
+    expect(shown).toContain("Arguments:");
+    expect(shown).not.toContain("there are no bodies to show");
+  });
+
+  it("a dispatched tools/call row with no bodies on an app whose body logging is on opens to \"No bodies were recorded for this call.\" — a row from before logging was switched on, or from an app that is gone, is explained rather than left blank", async () => {
+    expect(await logBodiesOf(ON_APP), "the tunneled app's §15 default is on").toBe(true);
+    const row = await rowOf("unrecorded-tool");
+    const detail = detailText(await page(auditPath({ tool: "unrecorded-tool", expand: row.id })), row.id);
+    expect(detail).toContain("No bodies were recorded for this call.");
+    expect(detail).not.toContain("body logging is off");
+
+    // The other half of "otherwise": an app that is gone has no setting to read, and the
+    // panel is still a sentence rather than a blank.
+    expect(await logBodiesOf("vanished"), "the vanished app is not in app_list").toBeUndefined();
+    const gone = await rowOf("vanished-tool");
+    expect(detailText(await page(auditPath({ tool: "vanished-tool", expand: gone.id })), gone.id)).toContain(
+      "No bodies were recorded for this call.",
+    );
+  });
+
+  it("an over-cap body is stored as one oversize stub and reaches the page through the loader as ‹oversize · N KB› — KB under a megabyte, MB with one decimal above — and the export carries the same stub, never the bytes", async () => {
+    const row = await rowOf("oversize-tool");
+    const args = row.args as { stub?: string; bytes?: number } | undefined;
+    expect(args?.stub, "the over-cap body was not replaced whole").toBe("oversize");
+    expect(args?.bytes).toBeGreaterThan(16 * 1024);
+    expect(JSON.stringify(row), "the export carries the bytes the cap refused").not.toContain("xxxxxxxx");
+
+    const expanded = await page(auditPath({ tool: "oversize-tool", expand: row.id }));
+    expect(detailText(expanded, row.id)).toContain("‹oversize · 20 KB›");
+    expect(expanded).not.toContain("xxxxxxxx");
+
+    // Above a megabyte the same placeholder reads in MB with one decimal — the seed's
+    // 4,200,000-byte image block, which is the other side of the same formatter.
+    const bodied = await rowOf(`${TOOL_PREFIX}1`);
+    expect(detailText(await page(auditPath({ tool: `${TOOL_PREFIX}1`, expand: bodied.id })), bodied.id)).toContain(
+      "‹blob image/png · 4.0 MB›",
+    );
+  });
+
+  it("the summary row carries id=\"event-<id>\" and an opening chevron's link ends in #event-<id>, so the scripting-off reload lands on the row it opened · the open row's closing link carries no fragment (the twin)", async () => {
+    const row = await rowOf("unrecorded-tool");
+    const closed = await page(auditPath({ tool: "unrecorded-tool" }));
+    expect(closed, "the summary row carries no anchor").toMatch(new RegExp(`<tr[^>]* id="event-${row.id}"`));
+
+    // The opening chevron: the same URL the closed page would be reloaded with, plus the
+    // fragment that scrolls the reload to the row it opened.
+    const opening = expandLinks(closed).filter((link) => link.query.get("expand") === String(row.id));
+    expect(opening.length, "one chevron per breakpoint").toBe(2);
+    for (const link of opening) expect(new URL(link.href, ORIGIN).hash).toBe(`#event-${row.id}`);
+
+    // Follow it as a browser with no script does: the row is open, still anchored, and its
+    // own chevron — which closes the row — carries no fragment to scroll to.
+    const open = await page(opening[0]?.href ?? "");
+    expect(open).toMatch(new RegExp(`<tr class="row-open" id="event-${row.id}"`));
+    const back = expandLinks(open).filter((link) => link.label === "Hide detail");
+    expect(back.length).toBe(2);
+    for (const link of back) {
+      expect(link.query.get("expand")).toBeNull();
+      expect(new URL(link.href, ORIGIN).hash).toBe("");
+    }
+  });
 });
 
 describe(`§13 · /audit's filter row — the window it names and the window it empties`, () => {

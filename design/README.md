@@ -32,15 +32,15 @@ directly in §13 and rendered by the artboards below.
 | Sign-in, 2FA, backup code, device | `Login`, `TwoFactor`, `Device` | `MobileLogin`, `MobileTwoFactor`, `MobileDevice` | `AuthStates` |
 | Approvals list + detail | `Approvals`, `ApprovalDetail` | `MobileApprovals`, `MobileApprovalDetail` | `ApprovalStates` |
 | Apps + add-app | `Apps`, `AppNew` | `MobileApps`, `MobileAppNew` | `AppNewStates` |
-| Audit | `Audit` | `MobileAudit` | — |
+| Audit | `Audit` | `MobileAudit` | `AuditDetailStates` |
 | Settings — panes behind a left rail | `Settings` (password + the rail), `SettingsPanes` (every other pane at pane width), `SettingsTokens` and `OauthConnections` (tokens and connected clients full width) | `MobileSettings` | `SettingsStates` |
 | App detail (`/apps/<slug>`) — panes behind the same rail | `AppDetail` (tools), `AppDetailPanes` (the other seven) | — (follow-up) | `AppDetailStates` |
 | Cross-cutting | — | — | `Dialogs` (destructive confirms), `EmptyStates` |
 
-The last three of those boards (`AppDetail*`, `SettingsTokens`,
-`OauthConnections`) were drawn as exploration and still sit on canvas page 2;
-§13 adopted them on 2026-09-02 (decision 30), so they are contract wherever
-they sit, until the canvas is re-laid out. `/apps/<slug>` has no mobile
+Four of those boards (`AppDetail*`, `SettingsTokens`, `OauthConnections`,
+`AuditDetailStates`) were drawn as exploration and still sit on canvas page 2;
+§13 adopted the first three on 2026-09-02 (decision 30) and the audit detail states on
+2026-09-03, so they are contract wherever they sit, until the canvas is re-laid out. `/apps/<slug>` has no mobile
 artboard: the pill row is a shell rule and covers it (§13, *Panes behind a
 rail*), but drawing `MobileAppDetail` stays a recorded follow-up.
 
@@ -50,15 +50,19 @@ EXPIRED CODE`, `AppNewStates · TOKEN REVEAL`).
 
 ## Concepts (moved to `design/concepts/`, 2026-09-02)
 
-The unreviewed exploration boards — `AuditDetailStates`, `AppNewProxiedStates`,
-`ReauthGate`, `OauthConsentStates` — live in `design/concepts/` with their own
+The unreviewed exploration boards — `AppNewProxiedStates`, `ReauthGate`,
+`OauthConsentStates` — live in `design/concepts/` with their own
 `canvas.json` and README. Nothing there is contract; a board returns here when the owner
 reviews it and §13 is amended. `Agents`, `AgentDetail` and `GrantEditorStates` returned
 on 2026-09-03 (roadmap step 9: §13 gained `/agents`, `/agents/<slug>` and the grant
 editor with the boards' strings pinned; the top nav's fifth slot rides the narrow nav's
-existing scroller). Mobile variants for the three are still to draw. Canvas page 2 now holds
-only the boards §13 adopted on 2026-09-02 (`AppDetail*`, `SettingsTokens`,
-`OauthConnections`) and `OauthConsent`, which draws the live §19.5 page.
+existing scroller). `AuditDetailStates` returned the same day (roadmap step 10: §13 pinned
+the three no-bodies sentences, the KB/MB stub sizes and the `event-<id>` anchor) — minus
+its LOADING panel, since the spec kept the synchronous render and never adopted the lazy
+fetch. Mobile variants for the four are still to draw. Canvas page 2 now holds
+the boards §13 adopted on 2026-09-02 (`AppDetail*`, `SettingsTokens`,
+`OauthConnections`), `OauthConsent`, which draws the live §19.5 page, and
+`AuditDetailStates`.
 
 ## Settings, split into panes (2026-09-02)
 

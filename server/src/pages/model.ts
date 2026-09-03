@@ -313,9 +313,14 @@ export const paths = {
     return `/approvals/${encodeURIComponent(id)}`;
   },
 
-  /** /audit under a set of filters — nav links, paging, and the session link alike. */
+  /**
+   * /audit under a set of filters — nav links, paging, and the session link alike. A link
+   * that OPENS a row carries `#event-<id>` as well, so the scripting-off reload lands on
+   * the row it opened (§13); the closing link, built without `expand`, carries none, and
+   * neither does `auditExport`, which never receives one.
+   */
   auditWith(filters: AuditLinkQuery): string {
-    return `/audit${query({ ...filters })}`;
+    return `/audit${query({ ...filters })}${filters.expand === undefined ? "" : `#event-${filters.expand}`}`;
   },
 
   /**
@@ -1347,6 +1352,15 @@ export type RecordedBody = Record<string, unknown> | BodyStub;
 export type AuditEventRow = Omit<AuditRow, "ownerId" | "args" | "result"> & {
   args?: RecordedBody;
   result?: RecordedBody;
+  /**
+   * Why a CALL row carries no bodies (§13/§15) — set only on the events that can carry
+   * them (`tools/call` and §20's audited reads) and only when both body columns are
+   * absent, so the page can say it in one sentence instead of drawing a blank panel:
+   * `refused` (a refusal outcome — checked first, because a refusal never had bodies
+   * whatever the app's setting), `off` (the app's `log_bodies` is off NOW), or
+   * `unrecorded` (recorded before logging was switched on, or the app is gone).
+   */
+  noBodies?: "off" | "refused" | "unrecorded";
 };
 
 /**
@@ -2514,7 +2528,7 @@ const RANGE_SPAN_MS: Record<Exclude<AuditRange, "custom">, number> = {
 export async function auditProps(ctx: PageContext): Promise<AuditProps> {
   const filters = auditFilters(ctx);
   const scoped = auditQueryOf(filters);
-  const [page, scan, previous, everything] = await Promise.all([
+  const [page, scan, previous, everything, apps] = await Promise.all([
     read<{ rows: AuditRow[]; total: number }>(ctx, "audit_query", {
       ...scoped,
       limit: filters.limit,
@@ -2531,7 +2545,12 @@ export async function auditProps(ctx: PageContext): Promise<AuditProps> {
       limit: 1,
     }),
     read<{ rows: AuditRow[]; total: number }>(ctx, "audit_query", { limit: AUDIT_SCAN_ROWS }),
+    // Why a bodiless call row is bodiless: the app's `log_bodies` as it stands NOW (§15).
+    // app_list's own rows, archived apps and the virtual `pmcp` builtin included — a row
+    // whose app is gone is simply absent from the map, which is the `unrecorded` case.
+    read<{ apps: OpsAppRow[] }>(ctx, "app_list"),
   ]);
+  const logBodies = new Map(apps.apps.map((app) => [app.slug, app.logBodies]));
   return {
     ...(await shell(ctx, "audit")),
     // Read-only page, so the flash the shell carries for the others is dropped here
@@ -2539,7 +2558,7 @@ export async function auditProps(ctx: PageContext): Promise<AuditProps> {
     notice: null,
     filters,
     options: filterOptions(everything.rows),
-    rows: page.rows.map(eventRow),
+    rows: page.rows.map((row) => eventRow(row, logBodies)),
     paging: { offset: filters.offset, limit: filters.limit, total: page.total },
     stats: auditStats(page.total, previous.total, scan.rows),
     histogram: auditHistogram(filters, scan.rows),
@@ -2621,14 +2640,37 @@ function presetOf(raw: string | null): Exclude<AuditRange, "custom"> {
 }
 
 /** One audit row as the page sees it: the namespace id dropped (every row here
- *  belongs to the viewer's own, and carrying it would only invite rendering it). */
-function eventRow(row: AuditRow): AuditEventRow {
+ *  belongs to the viewer's own, and carrying it would only invite rendering it),
+ *  plus why a call row carries no bodies. */
+function eventRow(row: AuditRow, logBodies: Map<string, boolean>): AuditEventRow {
   const { ownerId: _ownerId, args, result, ...rest } = row;
+  const why = noBodiesReason(row, logBodies);
   return {
     ...rest,
     ...(args === undefined ? {} : { args: args as RecordedBody }),
     ...(result === undefined ? {} : { result: result as RecordedBody }),
+    ...(why === undefined ? {} : { noBodies: why }),
   };
+}
+
+/**
+ * The events that CAN carry bodies — `tools/call` plus §20's audited reads, which the
+ * gateway records under their own method names (§20.4). Not the two subscription methods:
+ * §21.6 records them like a read but they structurally carry none, so — like an auth or a
+ * config row — they have no bodies to explain and draw no sentence.
+ */
+const BODY_EVENTS = new Set(["tools/call", "prompts/get", "resources/read"]);
+
+/** §15's four refusal outcomes — a refusal never had bodies, whatever the app's setting. */
+const REFUSAL_OUTCOMES = new Set(["-32000", "-32001", "-32002", "-32003"]);
+
+/** Why this row shows no bodies, or `undefined` when it has some or could never have had
+ *  any. The refusal check comes first for the reason §15 gives it: several refusals happen
+ *  before any redaction map exists, so no setting could have made bodies appear. */
+function noBodiesReason(row: AuditRow, logBodies: Map<string, boolean>): AuditEventRow["noBodies"] {
+  if (!BODY_EVENTS.has(row.event) || row.args !== undefined || row.result !== undefined) return undefined;
+  if (REFUSAL_OUTCOMES.has(row.outcome)) return "refused";
+  return row.app !== undefined && logBodies.get(row.app) === false ? "off" : "unrecorded";
 }
 
 /** The three selects' values, from the namespace rather than from the visible

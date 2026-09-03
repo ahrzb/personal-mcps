@@ -263,6 +263,15 @@
       "page": "page-2"
     },
     {
+      "file": "AuditDetailStates.dc.html",
+      "x": 3240,
+      "y": 3620,
+      "w": 560,
+      "h": 880,
+      "title": "Audit detail · States",
+      "page": "page-2"
+    },
+    {
       "file": "GrantEditorStates.dc.html",
       "x": 0,
       "y": 7150,

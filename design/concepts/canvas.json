@@ -9,14 +9,6 @@
       "title": "Add app · Proxied states"
     },
     {
-      "file": "AuditDetailStates.dc.html",
-      "x": 2680,
-      "y": 2420,
-      "w": 560,
-      "h": 1063,
-      "title": "Audit detail · States"
-    },
-    {
       "file": "OauthConsentStates.dc.html",
       "x": 3240,
       "y": 3620,

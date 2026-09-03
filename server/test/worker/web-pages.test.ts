@@ -911,6 +911,18 @@ describe("§4/§13 · cookie sessions are the only page credential", () => {
   });
 });
 
+describe("§13/§8 · /apps/new — proxied states: field-scoped refusals, the URL rule, several at once, and the connecting page", () => {
+  it.todo("a refusal lands under the control it names — the field read off the refusal's own violations, never a substring of its message — with aria-invalid on that input and the op's sentence beneath it (capitalised, one period), the rest of the form echoed back at 400 and nothing created · a well-formed proxied headers create succeeds and lands on the created card (the twin)");
+
+  it.todo("a proxied endpoint must be an https:// URL — http:// only for localhost, 127.0.0.1 and [::1]: `not-a-url`, `mcp.example.com` and `http://mcp.example.com/mcp` are refused under Endpoint on the page and by app_create alike, `http://localhost:3000/mcp` and `https://mcp.example.com/mcp` pass (the twins), and app_update applies the same rule to a stored app");
+
+  it.todo("two violations render two field errors at once — a reserved-route slug beside a bad endpoint, both inputs aria-invalid — and a single violation renders exactly one (the twin); a violation naming no control of the form is the whole-form message");
+
+  it.todo("a proxied OAuth create answers 200 with the connecting page — \"Connecting to <name>…\", the ten-minute sentence, \"Continue to <name>\" linking the provider's authorize URL (a state row minted for this session) and \"Not now\" linking the app's Overview pane — never the 303 the app page's own Connect keeps · a create whose discovery fails lands on that Overview pane with the connect notice, the app created (the twin)");
+
+  it.todo("a blank Name is not sent: the created app's name is its slug, and `name` is not a key the form can error on");
+});
+
 describe("§8/§13 · one paging contract, two presentations", () => {
   it("10. §8 · the page's \"N events match\" line is audit.query's `total`, not the rendered row count — they differ whenever a page is not the last one", async () => {
     const filters = { event: "tools/call", app: "news" };

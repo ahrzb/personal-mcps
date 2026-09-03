@@ -1337,3 +1337,7 @@ describe(`§8/§13 · the ops behind the Access panes, and the reserved app slug
     expect((await connectionsOf(ownerId)).find((row) => row.id === bindingId)?.revokedAt).toEqual(expect.any(Number));
   });
 });
+
+describe("§8 · a refused app_create or app_update reports every violation at once", () => {
+  it.todo("the -32602 refusal's data.violations lists each violation as { field, reason } in the op's own field names — slug and endpoint together for a reserved-route slug with a plain-http endpoint — and its message joins the same sentences with \"; \" · one violation is a one-entry list and the same message (the twin); nothing is created or updated on a refusal");
+});

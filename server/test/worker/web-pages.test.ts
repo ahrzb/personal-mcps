@@ -1061,6 +1061,18 @@ describe("§8/§13 · one paging contract, two presentations", () => {
   });
 });
 
+describe("§13/§15 · /audit's expanded row — the bodies, the stubs, and the sentence for their absence", () => {
+  it.todo("a dispatched tools/call row with no bodies on an app whose body logging is off opens to \"Call bodies aren't recorded for this app (body logging is off).\" beside its client line — expandable for that sentence alone · a row with recorded bodies shows them and never that sentence (the twin)");
+
+  it.todo("a refused call (-32001) with no bodies opens to \"Refused before the call was made, so there are no bodies to show.\" — never the bodies-off sentence, whatever the app's setting · the seed's refusal that does carry bodies shows them and no sentence (the twin)");
+
+  it.todo("a dispatched tools/call row with no bodies on an app whose body logging is on opens to \"No bodies were recorded for this call.\" — a row from before logging was switched on, or from an app that is gone, is explained rather than left blank");
+
+  it.todo("an over-cap body is stored as one oversize stub and reaches the page through the loader as ‹oversize · N KB› — KB under a megabyte, MB with one decimal above — and the export carries the same stub, never the bytes");
+
+  it.todo("the summary row carries id=\"event-<id>\" and an opening chevron's link ends in #event-<id>, so the scripting-off reload lands on the row it opened · the open row's closing link carries no fragment (the twin)");
+});
+
 describe(`§13 · /audit's filter row — the window it names and the window it empties`, () => {
   // Rows first (§9 rule 1), bodies written against the page as it was: the filter row had
   // no way to apply with scripting off, its window was a readonly box over a hidden epoch

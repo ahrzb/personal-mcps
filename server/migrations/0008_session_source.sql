@@ -1,0 +1,25 @@
+-- 0008_session_source.sql — §13's Sessions pane has to tell a CLI session from a browser
+-- one, and better-auth's own `session` table stores nothing that does. One nullable column,
+-- written by better-auth alone: identity.ts declares it through
+-- `session.additionalFields` (`input: false`, defaultValue "web"), and the one write that
+-- is not that default is the `databaseHooks.session.create.before` hook, which stamps
+-- "cli" when the minting endpoint IS `/device/token`.
+--
+-- No SQL DEFAULT, per 0002's own written rule (0002_hub.sql:26-33): a DEFAULT would be a
+-- second, never-exercised answer to "what does an absent value mean". The one answer lives
+-- in better-auth's `defaultValue` above, and the page normalises anything that is not
+-- "cli" to "web" — which it must anyway, for the rows that predate this file.
+--
+-- REGENERATION NOTE, the one thing this migration owes that `passkey.last_used_at`'s does
+-- not: because `source` is declared through `session.additionalFields`, a regenerated 0001
+-- (`@better-auth/cli generate` — 0001_auth.sql:3-9 declares that file regenerable
+-- wholesale) WOULD carry this column already. At that regeneration THIS FILE must be
+-- deleted, or a fresh install fails on "duplicate column name: source". It is a separate
+-- file today for the ordinary reason (0007_rename_app_agent.sql:9-11): migrations are
+-- history, and nothing here rewrites an earlier one.
+--
+-- No backfill. Every pre-migration row reads NULL → "web", which is true of all of them
+-- (none was minted by `/device/token` with the column present) — including the owner's own
+-- live CLI session, which reads "web" until the next `pmcp login`.
+
+ALTER TABLE "session" ADD COLUMN "source" TEXT;

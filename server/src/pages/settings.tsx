@@ -34,7 +34,7 @@ import type {
 } from "./model";
 import { PASSWORD_MIN_LENGTH, paths, SETTINGS_CONFIRM_PANE, SETTINGS_PANES } from "./model";
 import type { PaneEntry } from "./layout";
-import { ConfirmShell, Layout, PaneRail, PanePills, paneGroups } from "./layout";
+import { ConfirmShell, Layout, OtpBoxes, PaneRail, PanePills, paneGroups } from "./layout";
 import { formatDate, formatStamp, sessionLabel } from "./format";
 
 /**
@@ -407,8 +407,9 @@ const PasswordFooter: FC<{ username: string }> = ({ username }) => (
 const TwoFactorCard: FC<{
   twoFactor: TwoFactorSummary;
   enrollment: TotpEnrollment | null;
+  revealedBackupCodes: string[] | null;
   csrfToken: string;
-}> = ({ twoFactor, enrollment, csrfToken }) => {
+}> = ({ twoFactor, enrollment, revealedBackupCodes, csrfToken }) => {
   if (enrollment) {
     return (
       <div class="card card--pad">
@@ -424,22 +425,14 @@ const TwoFactorCard: FC<{
           style="align-self: center; border-radius: var(--radius-lg);"
         />
         <div class="secret">{enrollment.secret}</div>
-        <form method="post" action={paths.auth.totpVerify} class="form">
+        {/* csrf makes this a real credential now (totpVerifySettings, not /login's
+            translation) — totpuri and codes carry the enrolment forward so a refusal can
+            redraw it in place (web.ts's `reveal`; neither ever touches a URL, §15). */}
+        <form method="post" action={paths.auth.totpVerifySettings} class="form" data-otp-form>
           <input type="hidden" name="csrf" value={csrfToken} />
-          <div class="otp">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <input
-                key={i}
-                type="text"
-                inputmode="numeric"
-                autocomplete="one-time-code"
-                maxlength={1}
-                name={`digit${i}`}
-                aria-label={`Digit ${i + 1} of 6`}
-                aria-invalid={enrollment.error ? "true" : undefined}
-              />
-            ))}
-          </div>
+          <input type="hidden" name="totpuri" value={enrollment.totpUri} />
+          <input type="hidden" name="codes" value={(revealedBackupCodes ?? []).join("\n")} />
+          <OtpBoxes invalid={enrollment.error !== null} />
           {enrollment.error ? <p class="field-error center">{enrollment.error}</p> : null}
           <div class="actions actions--start">
             <button type="submit" class="btn btn--primary">
@@ -543,7 +536,7 @@ const BackupCodesCard: FC<{ codes: string[] }> = ({ codes }) => (
     <div class="card-title">Backup codes</div>
     <div class="code-grid">
       {codes.map((code) => (
-        <div class="code-chip" key={code}>
+        <div class="code-chip" data-code key={code}>
           {code}
         </div>
       ))}
@@ -554,13 +547,21 @@ const BackupCodesCard: FC<{ codes: string[] }> = ({ codes }) => (
       Store these somewhere safe — they are shown only once.
     </p>
     <div class="actions actions--start">
-      <button type="button" class="btn btn--outline">
+      <button type="button" class="btn btn--outline" id="copy-codes">
         Copy codes
       </button>
       <a class="btn btn--primary" href={paths.settingsTwoFactor}>
         Done
       </a>
     </div>
+    {/* layout.tsx's TokenReveal copy handler, one shape over: every [data-code] chip's
+        textContent, newline-joined — the reveal's own shape, so the pasted set matches
+        what's on screen digit for digit. */}
+    <script
+      dangerouslySetInnerHTML={{
+        __html: `(function(){var b=document.getElementById("copy-codes");if(!b)return;b.addEventListener("click",function(){var chips=document.querySelectorAll("[data-code]");var text=Array.prototype.map.call(chips,function(c){return c.textContent||"";}).join("\\n");navigator.clipboard.writeText(text);});})();`,
+      }}
+    />
   </div>
 );
 
@@ -1029,6 +1030,7 @@ const Pane: FC<SettingsProps> = (props) => {
           <TwoFactorCard
             twoFactor={props.twoFactor}
             enrollment={props.enrollment}
+            revealedBackupCodes={props.revealedBackupCodes}
             csrfToken={props.csrfToken}
           />
           {props.revealedBackupCodes ? <BackupCodesCard codes={props.revealedBackupCodes} /> : null}

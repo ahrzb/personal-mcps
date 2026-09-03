@@ -1565,11 +1565,13 @@ describe("§10 · applying the set", () => {
       await dropEverything();
       const migrations = env.TEST_MIGRATIONS;
       await applyD1Migrations(env.DB, migrations.slice(0, migrations.length - 1)); // 1..N-1: auth + hub + approval
-      // Rows written under N−1 — spelled by hand rather than through seedFixture, because N
-      // IS the 2026-09-01 rename: under N−1 the two tables are still `service` and
-      // `service_account`, and the harness writes the names N leaves behind. That is also
-      // what makes this the case for a renaming migration rather than an additive one — the
-      // rows below are inserted under the old vocabulary and read back under the new.
+      // Rows written under N−1 — spelled by hand rather than through seedFixture, because
+      // what N−1's schema is called moves with N. N is now 0008, an ADDITIVE ALTER on
+      // `session`, and 0007 (inside 1..N−1 here) has already renamed `service`→`app` and
+      // `service_account`→`agent`: so these inserts speak 0007's OUTPUT vocabulary, which
+      // is what the schema this case builds actually holds. The app/agent/token rows are
+      // "rows 0008 must not drop"; the `session` row below is the live data 0008's own
+      // column lands on.
       const ctx: FixtureCtx = {
         ownerId: `usr_FAKE0000_${crypto.randomUUID()}`,
         appId: `app_FAKE0000_${crypto.randomUUID()}`,
@@ -1584,7 +1586,17 @@ describe("§10 · applying the set", () => {
         createdAt: now,
         updatedAt: now,
       });
-      await insertRow("service", {
+      // The row N actually lands on: a session written before `source` exists at all.
+      const sessionId = `ses_FAKE0000_${crypto.randomUUID()}`;
+      await insertRow("session", {
+        id: sessionId,
+        expiresAt: new Date(now + 86_400_000).toISOString(),
+        token: `tok_FAKE0000_${crypto.randomUUID()}`,
+        createdAt: new Date(now).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+        userId: ctx.ownerId,
+      });
+      await insertRow("app", {
         id: ctx.appId,
         owner_id: ctx.ownerId,
         slug: `app-${crypto.randomUUID()}`,
@@ -1597,18 +1609,17 @@ describe("§10 · applying the set", () => {
         log_bodies: 1,
         created_at: now,
       });
-      await insertRow("service_account", {
+      await insertRow("agent", {
         id: ctx.agentId,
         owner_id: ctx.ownerId,
         slug: `agt-${crypto.randomUUID()}`,
         name: "Fixture Agent",
         created_at: now,
       });
-      // One token per kind, in N−1's CHECK vocabulary — the column N cannot ALTER and has
-      // to rebuild the table for.
+      // One token per kind, in N−1's CHECK vocabulary.
       await insertRow("token", {
         id: `tok_FAKE0000_${crypto.randomUUID()}`,
-        kind: "service",
+        kind: "app",
         ref_id: ctx.appId,
         hash: `sha256_FAKE0000_${crypto.randomUUID()}`,
         prefix: "pmcp_svc_FAK",
@@ -1616,21 +1627,29 @@ describe("§10 · applying the set", () => {
       });
       await insertRow("token", {
         id: `tok_FAKE0000_${crypto.randomUUID()}`,
-        kind: "service_account",
+        kind: "agent",
         ref_id: ctx.agentId,
         hash: `sha256_FAKE0000_${crypto.randomUUID()}`,
         prefix: "pmcp_sa_FAKE",
         created_at: now,
       });
 
-      await applyD1Migrations(env.DB, migrations); // N: the rename, on top of live data
+      await applyD1Migrations(env.DB, migrations); // N, on top of live data
 
-      // N's own schema objects, named rather than derived, so migration 0008 makes these
-      // lines visibly stale instead of silently witnessing N−1.
+      // N's own live-data claim: the column 0008 adds reads NULL on the row that predates
+      // it — no SQL DEFAULT and no backfill, which is what makes `sessionRow`'s "anything
+      // that is not cli is web" the one answer rather than a second one.
+      const session = await db()
+        .prepare(`SELECT "source" FROM "session" WHERE "id" = ?`)
+        .bind(sessionId)
+        .first<{ source: string | null }>();
+      expect(session, "0008 dropped the session row it landed on").not.toBeNull();
+      expect(session?.source).toBeNull();
+
+      // The rows 0008 must not drop, named rather than derived so a migration 0009 makes
+      // these lines visibly stale instead of silently witnessing N−1.
       expect(await countFor("app", ctx)).toBe(1);
       expect(await countFor("agent", ctx)).toBe(1);
-      // The rebuilt table is the one that could have LOST rows: both survive, each with its
-      // kind translated — which is the whole difference between a rename and a recreate.
       const tokens = await db()
         .prepare(`SELECT "kind", "ref_id", "prefix" FROM token ORDER BY "kind"`)
         .all<{ kind: string; ref_id: string; prefix: string }>();

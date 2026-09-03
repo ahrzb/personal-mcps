@@ -419,6 +419,16 @@ async function main(): Promise<number> {
       }
       const clients = await fetch(`${ORIGIN}/settings/clients`, withCookie);
       expect(clients.status === 200, `authenticated /settings/clients → ${clients.status}`);
+      // The two-factor pane is the one whose render needs a QR encoder shipped with the
+      // bundle: a deployment missing it answers 500 where the suite is green. The fresh
+      // namespace has no factor, so the arm this walk always meets is the not-enrolled
+      // one, and its own control is what says the card drew rather than just the shell.
+      const twoFactor = await fetch(`${ORIGIN}/settings/two-factor`, withCookie);
+      expect(twoFactor.status === 200, `authenticated /settings/two-factor → ${twoFactor.status}`);
+      expect(
+        (await twoFactor.text()).includes("Enable two-factor"),
+        "/settings/two-factor rendered no Enable two-factor control",
+      );
       const alias = await fetch(`${ORIGIN}/settings/password`, withCookie);
       expect(alias.status === 404, `/settings/password (no alias, §13) → ${alias.status}`);
       const moved = await fetch(`${ORIGIN}/oauth/connections`, withCookie);
@@ -436,7 +446,7 @@ async function main(): Promise<number> {
         bearerOnly.status === 302 && (bearerOnly.headers.get("location") ?? "").startsWith("/login"),
         `bearer-only POST /settings/change-password → ${bearerOnly.status} ${bearerOnly.headers.get("location") ?? ""}`,
       );
-      return `/settings 200 with the six-pane rail; /settings/clients 200; /settings/password 404; /oauth/connections 301 → /settings/clients; bearer-only change-password → 302 /login`;
+      return `/settings 200 with the six-pane rail; /settings/clients 200; /settings/two-factor 200 drawing the Enable control; /settings/password 404; /oauth/connections 301 → /settings/clients; bearer-only change-password → 302 /login`;
     });
 
     await step("§4/§15 · /login's ?next= is escaped where it is embedded and refused where it is absolute", async () => {

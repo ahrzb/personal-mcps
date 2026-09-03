@@ -114,13 +114,38 @@ function buildAuth() {
     // the same public /api/auth mount and self-provisions a full namespace to
     // any unauthenticated caller — the whole gate, bypassed.
     emailAndPassword: { enabled: true, disableSignUp: true, minPasswordLength: PASSWORD_MIN_LENGTH },
+    // §13's Sessions pane has to tell a CLI session from a browser one, and better-auth
+    // stores nothing that does. Written by better-auth alone: `input: false` keeps it off
+    // every request body, and the one write that is not the default is the hook below.
+    session: { additionalFields: { source: { type: "string", defaultValue: "web", input: false } } },
+    // The device flow mints its session inside /device/token's own handler
+    // (device-authorization/routes.mjs:455) and better-auth runs that handler inside an
+    // endpoint context whose `path` IS the route (api/dispatch.mjs:199), which
+    // createSession resolves for the before-hook (db/with-hooks.mjs:6-19). So the one
+    // endpoint that mints a CLI session names itself, and nothing is inferred from a
+    // header the caller controls. A null context is not an error: createSession is also
+    // reached from paths that have none, and there the defaultValue answers.
+    databaseHooks: {
+      session: {
+        create: {
+          before: async (_session, context) =>
+            context?.path === "/device/token" ? { data: { source: "cli" } } : undefined,
+        },
+      },
+    },
     plugins: [
       // §2's charset, handed to the plugin that would otherwise apply its own (which
       // rejects the hyphen every generated username may carry). One rule for what a
       // username is, spelled where §2 says it: admin.provisionUser writes it, this
       // accepts it.
       usernamePlugin({ usernameValidator: (name) => USERNAME_CHARSET.test(name) }),
-      twoFactor(),
+      // §13's authenticator entry, named by the same decision argued one line below for
+      // `passkey({ rpName })`. Without it the `otpauth://` URI falls back to
+      // `ctx.context.appName` (two-factor/index.mjs:169), and `betterAuth()` sets no
+      // appName — so the owner's authenticator app would list better-auth's default,
+      // "Better Auth" (context/create-context.mjs:130), as the account's issuer. Not
+      // `betterAuth({ appName })`: that moves every other default reading appName for no gain.
+      twoFactor({ issuer: "personal-mcps" }),
       // §4's optional WebAuthn, from its own package pinned in lockstep with core
       // (`@better-auth/passkey@1.7.1`). `origin` is pinned because the plugin's default is
       // the request's own Origin header, and the ceremony verifies the browser's signed
@@ -569,6 +594,15 @@ export async function passkeyLastUsed(userId: string): Promise<Record<string, nu
     .all<{ id: string; last_used_at: number }>();
   return Object.fromEntries(results.map((row) => [row.id, row.last_used_at]));
 }
+
+/**
+ * The plugin's own AAGUID → authenticator-name table ("iCloud Keychain", "Google Password
+ * Manager", …), re-exported because §4 gives this module sole custody of better-auth and
+ * its packages: the model's `passkeyRow` names an unnamed credential with it and imports it
+ * from HERE, beside `passkeyLastUsed`, rather than reaching into `@better-auth/passkey`.
+ * A pure lookup — no state, no I/O — so re-exporting the plugin's function is the whole of it.
+ */
+export { getAuthenticatorName } from "@better-auth/passkey";
 
 /**
  * The ownership test both listTokens and revokeToken key on: `token.ref_id` has no

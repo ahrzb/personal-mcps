@@ -71,6 +71,7 @@ import { beginConnect } from "../../src/upstream";
 import { registerOverride, upstreamUrlFor } from "../harness/fake-upstream";
 import type { AsScenario, UpstreamScenario } from "../harness/fake-upstream";
 import { seedApp, seedNamespace, seedOwnerCredential, seedOwnerSession, seedToken, SEEDED_OWNER_PASSWORD, uniqueSlug } from "../harness/seed";
+import { totpCode } from "../harness/totp";
 import type { SeededNamespace, SeededSession, TokenSpec } from "../harness/seed";
 
 /**
@@ -580,6 +581,16 @@ async function enrollTwoFactor(userId: string): Promise<void> {
     .prepare(`UPDATE "user" SET "twoFactorEnabled" = 1 WHERE "id" = ?`)
     .bind(userId)
     .run();
+}
+
+/** The same column, read — the postcondition a refused verify has to leave behind, and the
+ *  one thing no rendered page says (settingsProps reports the summary, not the flag). */
+async function twoFactorEnabledOf(userId: string): Promise<number> {
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT "twoFactorEnabled" AS enabled FROM "user" WHERE "id" = ?`)
+    .bind(userId)
+    .first<{ enabled: number | null }>();
+  return row?.enabled ?? 0;
 }
 
 /** Obviously fake, and never the seeded password: what a credential POST carries when the
@@ -1219,10 +1230,12 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
         typedInto(form, { password: SEEDED_OWNER_PASSWORD }),
         session.cookie,
       );
-      expect(answered.status).toBe(303);
-      // `done=`, not `failed=`: better-auth accepted the password this form carried. The
-      // refusal leg is the POST-prefix walk's, where a wrong one comes back as `failed=`.
-      expect(answered.headers.get("Location")).toContain("done=");
+      // 200, not a redirect: better-auth accepted the password this form carried and its
+      // answer IS the page (the enrolment card in place — a secret cannot ride a URL, §15).
+      // The refusal leg is the POST-prefix walk's, where a wrong password comes back 303
+      // with `failed=`.
+      expect(answered.status).toBe(200);
+      expect(await answered.text(), "the 200 rendered no enrolment").toContain("data:image/svg+xml");
     }
 
     // The enable above created the two-factor row; this makes it live, which is the only
@@ -1239,8 +1252,9 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
         typedInto(form, { password: SEEDED_OWNER_PASSWORD }),
         session.cookie,
       );
-      expect(answered.status).toBe(303);
-      expect(answered.headers.get("Location")).toContain("done=");
+      // Accepted, and the fresh set is revealed in place for the same reason.
+      expect(answered.status).toBe(200);
+      expect(await answered.text(), "the 200 revealed no codes").toContain("data-code");
     }
   });
 });
@@ -2997,16 +3011,65 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
   // data the ceremony never produces: a stored name and no aaguid. What the pane owes is
   // the authenticator's own report — a known AAGUID reading "Windows Hello", the all-zero
   // one privacy-preserving platforms send reading "Passkey" — with the empty pane the twin.
-  it.todo(
+  it(
     `§13 · /settings/passkeys names a row the way the authenticator reported it: a passkey stored with a known AAGUID and no name lists as "Windows Hello", one with the all-zero AAGUID that privacy-preserving platforms report lists as "Passkey", the marker reads 2 and each row links its own Remove dialog · with none, the pane renders "No passkeys yet. Add one to sign in without a password." and the marker reads 0 (the twin)`,
+    async () => {
+      const ns = await seedNamespace(env.DB, {});
+      const session = await seedOwnerSession(ns.owner);
+
+      // The twin first, before anything is planted: the pane with none.
+      const empty = await page(paths.settingsPasskeys, session.cookie);
+      expect(textOf(empty)).toContain("No passkeys yet. Add one to sign in without a password.");
+      expect(markerOf(empty, paths.settingsPasskeys)).toBe("0");
+
+      // Exactly what a registration writes and the retired row never had: an AAGUID and no
+      // name at all (the Add-passkey ceremony sends none). One model the plugin's own table
+      // knows, and the all-zero value privacy-preserving platforms report instead.
+      const known = await plantPasskey(ns.owner.userId, { aaguid: "08987058-cadc-4b81-b6e1-30de50dcbe96" });
+      const anonymous = await plantPasskey(ns.owner.userId, { aaguid: "00000000-0000-0000-0000-000000000000" });
+
+      const html = await page(paths.settingsPasskeys, session.cookie);
+      expect(markerOf(html, paths.settingsPasskeys)).toBe("2");
+      // Read off each row's OWN Remove dialog, whose title model.ts builds from the same
+      // resolved name the row lists — so "Windows Hello" cannot be satisfied by the pane's
+      // own chrome, and the two rows are told apart by the name each one carries.
+      for (const [id, name] of [
+        [known, "Windows Hello"],
+        [anonymous, "Passkey"],
+      ] as const) {
+        const link = confirmLinkFor(html, "remove-passkey", id);
+        expect(link, `the pane drew no Remove dialog for ${id}`).not.toBeNull();
+        expect(textOf(await page(link ?? "", session.cookie))).toContain(`Remove passkey “${name}”?`);
+      }
+    },
   );
 
   // plan row 7. The Sessions pane names each session's client, and the device flow mints the
   // one client no browser can — so the row reads both rows off a single render: the CLI's
   // device-flow suffix beside the browser session's own client without it, and the rail's
   // Sessions marker counting the two.
-  it.todo(
+  it(
     `§13 · a session minted by the device flow lists as "pmcp CLI · device flow" in the Sessions pane beside the browser session that rendered the page, which reads its own client with no device-flow suffix (the twin) — and the rail's Sessions marker counts both`,
+    async () => {
+      const ns = await seedNamespace(env.DB, {});
+      const browser = await seedOwnerSession(ns.owner);
+      // The whole RFC 8628 walk, because /device/token is the one endpoint that stamps the
+      // column — a row planted by hand would be the test asserting its own setup.
+      await deviceFlowToken(browser.cookie);
+
+      const listed = await page(paths.settingsSessions, browser.cookie);
+      const text = textOf(listed);
+      // The client no browser can be, with format.ts's suffix on it.
+      expect(text).toContain("pmcp CLI · device flow");
+      // The twin, on the same render: the browser session that drew this page sent no
+      // User-Agent, so it reads the label an unnamed web session gets — and never the CLI's
+      // label, nor the suffix, which a `source` stamped from a header would give it.
+      expect(text).toContain("Unknown client");
+      expect(text, "the browser session was labelled a device-flow one").not.toContain(
+        "Unknown client · device flow",
+      );
+      expect(markerOf(listed, paths.settingsSessions)).toBe("2");
+    },
   );
 
   it(`§13 · each passkey row carries its own added stamp: two passkeys with the same name and different createdAt render two different rows`, async () => {
@@ -3436,6 +3499,31 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
       }
     }
 
+    // The two /settings renders no GET produces: `credential`'s reveals answer 200 with the
+    // pane rather than redirecting (a secret cannot ride a URL, §15), and the enrolment
+    // card's verify form is a /settings control this walk would otherwise never see — a
+    // hole in the totality, not a named exclusion. Enable first: the fresh set is minted
+    // against the row enable creates. Checks (1) and (3) again, over what each 200 drew.
+    const revealCsrf = csrfOf(await page(paths.settingsTwoFactor, session.cookie));
+    for (const target of [paths.auth.totpEnable, paths.auth.backupCodesGenerate]) {
+      // Regenerate only answers for an owner whose factor is LIVE, which no page can make
+      // it (the verify that flips the column needs a code derived from the minted secret).
+      if (target === paths.auth.backupCodesGenerate) await enrollTwoFactor(ns.owner.userId);
+      const revealed = await formPost(
+        target,
+        { csrf: revealCsrf, password: SEEDED_OWNER_PASSWORD },
+        session.cookie,
+      );
+      expect(revealed.status, `POST ${target}`).toBe(200);
+      const drew = formsOn(await revealed.text());
+      for (const action of drew) {
+        const op = action.split("?")[0].split("/").filter(Boolean).pop() ?? "";
+        expect(Object.prototype.hasOwnProperty.call(ops, op), `${target}'s reveal fronts "${op}"`).toBe(false);
+        expect(BETTER_AUTH_ACTIONS.has(op), `${target}'s reveal posts to "${op}"`).toBe(true);
+        expect(action.startsWith(paths.auth.base), `${target}'s reveal posts at ${action}`).toBe(false);
+      }
+    }
+
     // THE EXCLUSION, enumerated and then spent: the Add-passkey ceremony is the one
     // credential POST under /settings that is not a form, and the ceremony row claims it.
     const passkeysPane = await page(paths.settingsPasskeys, session.cookie);
@@ -3450,59 +3538,394 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
   // for the wrong reason: better-auth's router-level originCheckMiddleware 403s a cookie-bearing
   // POST with no Origin as MISSING_OR_NULL_ORIGIN, and better-call validates the body schema
   // before any `use` middleware runs, so a malformed body 400s before the freshness gate does.
-  it.todo(
+  it(
     `§4 · a day-old cookie is refused at BOTH passkey register endpoints with better-auth's SESSION_NOT_FRESH code — the GET options and the POST verify, the POST carrying an Origin so the refusal is the freshness gate and not the origin check, and a body that satisfies the endpoint's schema so it is not the validator either · from a session signed in moments ago the same two calls get past that gate, the GET answering 200 with a challenge and the POST failing the ceremony itself (the twin)`,
+    async () => {
+      const ns = await seedNamespace(env.DB, {});
+      const stale = await seedOwnerSession(ns.owner);
+      const fresh = await seedOwnerSession(ns.owner);
+      await ageSession(stale.token);
+
+      // NOT through callAuthResponse, which sets `origin` itself and would hide the first
+      // trap: these are the ceremony's own calls, made the way its browser script makes
+      // them. The body satisfies verify-registration's schema (`response`), so a refusal
+      // cannot be better-call's validator answering before any middleware runs.
+      const options = (cookie: string): Promise<Response> =>
+        call(new Request(`${ORIGIN}${paths.auth.passkeyRegister}`, { headers: { Cookie: cookie } }));
+      const verify = (cookie: string): Promise<Response> =>
+        call(
+          new Request(`${ORIGIN}${paths.auth.passkeyVerifyRegistration}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Origin: ORIGIN, Cookie: cookie },
+            body: JSON.stringify({ response: {} }),
+          }),
+        );
+      /** better-auth's own name for the refusal — the CODE and never the status, because
+       *  the two traps above are both 403s too. */
+      const codeOf = async (response: Response): Promise<string> => {
+        const body = (await response.json().catch(() => null)) as { code?: unknown } | null;
+        return typeof body?.code === "string" ? body.code : "";
+      };
+
+      expect(await codeOf(await options(stale.cookie)), `GET ${paths.auth.passkeyRegister}`).toBe(
+        "SESSION_NOT_FRESH",
+      );
+      expect(
+        await codeOf(await verify(stale.cookie)),
+        `POST ${paths.auth.passkeyVerifyRegistration}`,
+      ).toBe("SESSION_NOT_FRESH");
+
+      // The twin: the same two calls from a session signed in moments ago get PAST that
+      // gate — the options endpoint answers a challenge, and the verify gets far enough to
+      // fail the ceremony itself rather than the freshness check.
+      const challenged = await options(fresh.cookie);
+      expect(challenged.status).toBe(200);
+      expect((await challenged.json()) as Record<string, unknown>).toHaveProperty("challenge");
+      expect(await codeOf(await verify(fresh.cookie))).not.toBe("SESSION_NOT_FRESH");
+    },
   );
 });
 
 describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`, () => {
-  // Rows first (§9 rule 1): the enrolment renders in place — the POST answers with the card
-  // instead of redirecting — and none of that exists yet. These six titles are what
-  // "implemented" will mean for the secret, the codes and the six boxes.
+  // The journey has ONE entrance and no other: /settings never renders the enrolment card
+  // on a GET (settingsProps has no producer for it), so every row below starts by posting
+  // the pane's own Enable form and reading the 200 that answers with the card.
+
+  /**
+   * The enrolment card as the pane's own Enable form produces it — the password typed into
+   * the form the not-enrolled arm drew, posted as a browser posts it. The whole Response is
+   * handed back rather than its body, because "carries no Location" is one of the claims.
+   */
+  async function enable(cookie: string): Promise<Response> {
+    const forms = formsPostingTo(await page(paths.settingsTwoFactor, cookie), paths.auth.totpEnable);
+    expect(forms.length, "the Two-factor pane rendered no Enable two-factor form").toBeGreaterThan(0);
+    return formPost(paths.auth.totpEnable, typedInto(forms[0], { password: SEEDED_OWNER_PASSWORD }), cookie);
+  }
+
+  /** The verify form the enrolment card drew, as a browser would submit it untouched — the
+   *  CSRF token, the two hidden carriers and the stitched `code` field, each at the value
+   *  the page put there. */
+  function verifyForm(html: string): Record<string, string> {
+    const forms = formsPostingTo(html, paths.auth.totpVerifySettings);
+    expect(forms.length, "the enrolment card drew no verify form").toBeGreaterThan(0);
+    return forms[0];
+  }
+
+  /** The `secret` parameter of one card's own otpauth URI — better-auth's unpadded base32,
+   *  which is both what the QR encodes and what an authenticator is typed. */
+  function secretOf(form: Record<string, string>): string {
+    const uri = new URL(form.totpuri ?? "");
+    expect(uri.protocol, "the verify form carries no otpauth URI").toBe("otpauth:");
+    expect(uri.host).toBe("totp");
+    const secret = uri.searchParams.get("secret") ?? "";
+    expect(secret, "the otpauth URI names no secret").not.toBe("");
+    return secret;
+  }
+
+  /** How settings.tsx spells the manual-entry line today — the same secret, grouped for
+   *  reading aloud. §13 pins that the secret is readable by hand, never the element, so
+   *  this is the single place that spelling drifts. */
+  function groupedSecretOn(html: string): string {
+    const line = /<div class="secret">([^<]*)<\/div>/.exec(html)?.[1];
+    expect(line, "the card drew no grouped secret").not.toBeUndefined();
+    return line ?? "";
+  }
+
+  /** The QR's own `src`, which §15 requires to be self-contained rather than a fetch. */
+  function qrSrcOn(html: string): string {
+    const src = /<img[^>]*\bsrc="(data:[^"]*)"/.exec(html)?.[1];
+    expect(src, "the card drew no data: image").not.toBeUndefined();
+    return src ?? "";
+  }
+
+  /** Every code a reveal drew, read off the `data-code` element each one sits in — that
+   *  attribute is what the Copy control's own selector reads, so this walk returns the set
+   *  the handler would copy rather than a second, independent reading of the page. */
+  function revealedCodesOn(html: string): string[] {
+    return [...html.matchAll(/<[^>]*\bdata-code="[^"]*"[^>]*>([\s\S]*?)</g)].map((chip) => textOf(chip[1]));
+  }
+
+  /** The six code boxes one OTP card drew, as the tags they are — found through the
+   *  `data-otp` hook the shared script keys off rather than through their styling. */
+  function otpBoxesOn(html: string): string[] {
+    const row = /<div\b[^>]*\bdata-otp="[^"]*"[^>]*>([\s\S]*?)<\/div>/.exec(html);
+    return row === null ? [] : [...row[1].matchAll(/<input\b[^>]*>/g)].map((box) => box[0]);
+  }
+
+  /** Every inline script one page embedded, as its text. */
+  function scriptsOn(html: string): string[] {
+    return [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map((script) => script[1]);
+  }
+
+  /** The ONE stitching script an OTP card embeds, found by the hidden field it writes —
+   *  row 4's "the same handler text" is an equality between two renders, so the harvest
+   *  names what the script does and never where it sits. */
+  function otpScriptOn(html: string): string {
+    const found = scriptsOn(html).filter((body) => body.includes("data-otp-value"));
+    expect(found.length, "the page embedded no single OTP stitching script").toBe(1);
+    return found[0];
+  }
 
   // plan row 1. Answering in place gives the minted secret exactly one carrier, this body, so
   // the row reads the grouped line, the verify form's hidden totpuri and the QR against the
   // "secret" parameter of that same answer's own otpauth URI — and the pane's next GET, the
   // state no route reaches today, is the twin that draws none of it.
-  it.todo(
+  it(
     `§13/§15 · POST /settings/two-factor/enable with the owner's own password answers 200 rendering the setup card in place — the secret better-auth minted reaches the page as the grouped line and again as the verify form's hidden totpuri, both equal to the "secret" parameter of that same answer's otpauth URI, beside a QR served as a data:image/svg+xml URI and the ten backup codes from the same answer — while the answer carries no Location and the pane's own next GET draws the not-enrolled arm with the secret, the codes and the QR nowhere in it (the twin)`,
+    async () => {
+      const ns = await seedNamespace(env.DB, {});
+      const session = await seedOwnerSession(ns.owner);
+
+      const answered = await enable(session.cookie);
+      expect(answered.status, `POST ${paths.auth.totpEnable}`).toBe(200);
+      // In place, so there is no redirect for the secret to ride at all (§15).
+      expect(answered.headers.get("Location"), "the enable answer set a Location").toBeNull();
+      const card = await answered.text();
+
+      const secret = secretOf(verifyForm(card));
+      // The grouped line is the SAME secret, spaced — not a second one minted for display,
+      // which is exactly what an owner typing it into an authenticator would discover.
+      expect(groupedSecretOn(card).replace(/\s/g, "")).toBe(secret);
+      expect(qrSrcOn(card).startsWith("data:image/svg+xml"), "the QR is not an inline SVG").toBe(true);
+      const codes = revealedCodesOn(card);
+      expect(codes.length, "the card drew no ten backup codes").toBe(10);
+
+      // The twin: the pane's own next GET is the not-enrolled arm, and nothing of the
+      // enrolment survives into it — better-auth will not repeat any of it.
+      const next = await page(paths.settingsTwoFactor, session.cookie);
+      expect(
+        formsPostingTo(next, paths.auth.totpEnable).length,
+        "the next GET did not draw the not-enrolled arm",
+      ).toBeGreaterThan(0);
+      expect(next, "the secret survived into the pane's next GET").not.toContain(secret);
+      expect(next, "an otpauth URI survived into the pane's next GET").not.toContain("otpauth:");
+      expect(next, "the QR survived into the pane's next GET").not.toContain("data:image/svg+xml");
+      for (const code of codes) expect(next, `${code} survived into the pane's next GET`).not.toContain(code);
+    },
   );
 
   // plan row 2. Rendering in place is what keeps the secret and the codes off a URL; this row
   // is the negative that makes it structural rather than incidental — the secret and all ten
   // codes in the bodies, no Location on either answer, and no href or form action on either
   // render carrying a "secret", an otpauth: URI or any code from the set.
-  it.todo(
+  it(
     `§13/§15 · nothing on the enrolment journey puts the secret or a backup code on a URL: the enable answer and the verify refusal both carry the secret and all ten codes in their bodies, and neither sets a Location, and no href or form action either render draws carries a "secret", an otpauth: or any code from the set`,
+    async () => {
+      const ns = await seedNamespace(env.DB, {});
+      const session = await seedOwnerSession(ns.owner);
+
+      const enabled = await enable(session.cookie);
+      const card = await enabled.text();
+      const form = verifyForm(card);
+      const secret = secretOf(form);
+      const codes = revealedCodesOn(card);
+      expect(codes.length).toBe(10);
+
+      // The refusal redraws the same enrolment, so it is the second body that holds both —
+      // and the one a hand-written URL would be easiest to smuggle into.
+      const refused = await formPost(
+        paths.auth.totpVerifySettings,
+        typedInto(form, { code: "000000" }),
+        session.cookie,
+      );
+      const redrawn = await refused.text();
+
+      for (const [name, body, response] of [
+        ["the enable answer", card, enabled],
+        ["the verify refusal", redrawn, refused],
+      ] as const) {
+        expect(response.status, name).toBe(200);
+        expect(response.headers.get("Location"), `${name} set a Location`).toBeNull();
+        // Present FIRST: a render that drew neither would satisfy every negative below.
+        expect(body, `${name} lost the secret`).toContain(secret);
+        for (const code of codes) expect(body, `${name} lost ${code}`).toContain(code);
+        expect(inNavigableAttribute(body, "secret"), `${name} put a secret on a URL`).toBe(false);
+        expect(inNavigableAttribute(body, "otpauth:"), `${name} put an otpauth URI on a URL`).toBe(false);
+        for (const code of codes) {
+          expect(inNavigableAttribute(body, code), `${name} put ${code} on a URL`).toBe(false);
+        }
+      }
+    },
   );
 
   // plan row 3. Its named trap: a successful verify DELETES the session it ran under and mints
   // a new one, and `redirectWith` forwards those Set-Cookie headers onto the 303 — so the
   // cookie the test signed in with is dead the moment the POST returns and a follow-up GET
   // with it bounces to /login. The twin parses the new cookie off the 303 with sessionCookieOf.
-  it.todo(
+  it(
     `§13 · a wrong code posted to /settings/two-factor/verify-totp answers 200 redrawing the SAME enrolment — byte-identical secret, the boxes aria-invalid, better-auth's own "Invalid code" on the card, the ten codes still shown — and twoFactorEnabled is still 0 · the code generated from that same secret answers 303 and re-issues the session cookie, and the pane read with THAT cookie renders the enabled arm with the codes gone (the twin)`,
+    async () => {
+      const ns = await seedNamespace(env.DB, {});
+      const session = await seedOwnerSession(ns.owner);
+
+      const card = await (await enable(session.cookie)).text();
+      const form = verifyForm(card);
+      const secret = secretOf(form);
+      const codes = revealedCodesOn(card);
+
+      const refused = await formPost(
+        paths.auth.totpVerifySettings,
+        typedInto(form, { code: "000000" }),
+        session.cookie,
+      );
+      expect(refused.status, `POST ${paths.auth.totpVerifySettings}`).toBe(200);
+      const redrawn = await refused.text();
+      // THE SAME enrolment, byte for byte: a redraw that called /two-factor/enable again
+      // would answer with a fresh secret and silently invalidate the QR already scanned.
+      expect(secretOf(verifyForm(redrawn))).toBe(secret);
+      expect(groupedSecretOn(redrawn)).toBe(groupedSecretOn(card));
+      const boxes = otpBoxesOn(redrawn);
+      expect(boxes.length, "the redraw drew no box row").toBe(6);
+      for (const box of boxes) expect(box, "a box is not aria-invalid").toContain(`aria-invalid="true"`);
+      // better-auth's own sentence, not one this hub wrote for it.
+      expect(textOf(redrawn)).toContain("Invalid code");
+      expect(revealedCodesOn(redrawn), "the refusal cost the owner the codes").toEqual(codes);
+      expect(await twoFactorEnabledOf(ns.owner.userId), "a wrong code enabled the factor").toBe(0);
+
+      // The twin: the six digits an authenticator would show for that same secret, played
+      // by the harness because nothing in the tree can produce them.
+      const accepted = await formPost(
+        paths.auth.totpVerifySettings,
+        typedInto(form, { code: await totpCode(secret) }),
+        session.cookie,
+      );
+      expect(accepted.status).toBe(303);
+      // The trap this row exists for: better-auth deleted the session this ran under and
+      // minted a new one, and `redirectWith` forwarded it — so the cookie the case signed
+      // in with is dead, and the pane has to be read with the one the 303 set.
+      const rotated = sessionCookieOf(accepted);
+      expect(rotated, "the successful verify re-issued no session cookie").not.toBeNull();
+      expect(rotated).not.toBe(session.cookie);
+      const enabledArm = await page(paths.settingsTwoFactor, rotated ?? "");
+      expect(
+        formsPostingTo(enabledArm, paths.auth.backupCodesGenerate).length,
+        "the pane did not draw the enabled arm",
+      ).toBeGreaterThan(0);
+      expect(revealedCodesOn(enabledArm), "the enabled arm still showed the codes").toEqual([]);
+    },
   );
 
   // plan row 4. One shared component, two consumers — the settings enrolment card and /login's
   // TOTP challenge — pinned on the field better-auth actually reads: a single "code". Today's
   // pane posts digit0…digit5 and could never verify, which is the twin's half.
-  it.todo(
+  it(
     `§13 · the six boxes are stitched into the one field better-auth reads: the settings enrolment card and /login's TOTP challenge both carry data-otp-form and both render the shared component's hidden [data-otp-value] input, its six [data-otp] boxes and the same handler text, and the settings card posts a "code" field · neither card posts a digit0 field, which is what a code typed into today's pane sends (the twin)`,
+    async () => {
+      const ns = await seedNamespace(env.DB, {});
+      const session = await seedOwnerSession(ns.owner);
+      const card = await (await enable(session.cookie)).text();
+      const challenge = await anonymousPage(`${paths.login}?step=totp`);
+
+      for (const [name, html] of [
+        ["the settings enrolment card", card],
+        ["/login's TOTP challenge", challenge],
+      ] as const) {
+        // On the FORM, which is what the script looks for first — the two forms differ in
+        // action and hidden fields, so the hook is each caller's own to carry.
+        expect(/<form\b[^>]*\bdata-otp-form=/.test(html), `${name}'s form carries no data-otp-form`).toBe(true);
+        expect(/<input\b[^>]*\bdata-otp-value=/.test(html), `${name} renders no hidden [data-otp-value]`).toBe(true);
+        expect(otpBoxesOn(html).length, `${name}'s box row`).toBe(6);
+      }
+      // ONE definition rather than two copies: a second copy is exactly how G30 happened.
+      expect(otpScriptOn(card)).toBe(otpScriptOn(challenge));
+
+      const loginForms = formsPostingTo(challenge, paths.auth.totpVerify);
+      expect(loginForms.length, "/login drew no TOTP challenge form").toBeGreaterThan(0);
+      for (const [name, form] of [
+        ["the settings card", verifyForm(card)],
+        ["/login's card", loginForms[0]],
+      ] as const) {
+        // The field better-auth's verify-totp actually reads …
+        expect(Object.keys(form), `${name} posts no "code" field`).toContain("code");
+        // … and the twin: the six names a code typed into today's pane sends instead, which
+        // better-auth reads as no code at all.
+        expect(Object.keys(form), `${name} still posts digit0`).not.toContain("digit0");
+      }
+    },
   );
 
   // plan row 5. The reveal happens in place too, which is what makes "fresh" checkable: none of
   // the ten codes the enrolment showed may appear in the new set. Its twins are the pane's next
   // GET, which reveals nothing, and the wrong password, which redirects with failed= instead.
-  it.todo(
+  it(
     `§13 · Regenerate backup codes answers 200 revealing a fresh set in place — ten codes, none of them from the set the enrolment showed — while the pane's next GET reveals none and a wrong password redirects with failed= instead (the twin)`,
+    async () => {
+      const ns = await seedNamespace(env.DB, {});
+      const session = await seedOwnerSession(ns.owner);
+      // The enrolment's own set, which is what "fresh" is measured against.
+      const enrolled = revealedCodesOn(await (await enable(session.cookie)).text());
+      expect(enrolled.length).toBe(10);
+      // The enabled arm is the only one that draws the Regenerate control at all.
+      await enrollTwoFactor(ns.owner.userId);
+
+      const forms = formsPostingTo(
+        await page(paths.settingsTwoFactor, session.cookie),
+        paths.auth.backupCodesGenerate,
+      );
+      expect(forms.length, "the enabled arm rendered no Regenerate backup codes form").toBeGreaterThan(0);
+      const answered = await formPost(
+        paths.auth.backupCodesGenerate,
+        typedInto(forms[0], { password: SEEDED_OWNER_PASSWORD }),
+        session.cookie,
+      );
+      expect(answered.status, `POST ${paths.auth.backupCodesGenerate}`).toBe(200);
+      expect(answered.headers.get("Location"), "the regenerate answer set a Location").toBeNull();
+      const fresh = revealedCodesOn(await answered.text());
+      expect(fresh.length, "the reveal drew no ten codes").toBe(10);
+      expect(
+        fresh.filter((code) => enrolled.includes(code)),
+        "a regenerated code was one the enrolment already showed",
+      ).toEqual([]);
+
+      // The twins: the pane's own next GET reveals none …
+      expect(revealedCodesOn(await page(paths.settingsTwoFactor, session.cookie))).toEqual([]);
+      // … and a wrong password has no set to show, so it takes the flash instead.
+      const refused = await formPost(
+        paths.auth.backupCodesGenerate,
+        typedInto(forms[0], { password: WRONG_PASSWORD }),
+        session.cookie,
+      );
+      expect(refused.status).toBe(303);
+      expect(refused.headers.get("Location") ?? "").toContain("failed=");
+    },
   );
 
   // plan row 6. A Copy-codes control naming fewer codes than it drew is the drift this catches:
   // each code in its own [data-code] element and one handler reading all ten. The two arms that
   // reveal nothing render neither the control nor a code element (the twin).
-  it.todo(
+  it(
     `§13 · the reveal carries a Copy-codes control that names every code it drew: each code sits in its own [data-code] element and one handler reads all ten · the not-enrolled arm and the enabled arm render no Copy-codes control and no code element (the twin)`,
+    async () => {
+      const ns = await seedNamespace(env.DB, {});
+      const session = await seedOwnerSession(ns.owner);
+      const card = await (await enable(session.cookie)).text();
+
+      // EVERY code the answer minted sits in its own element. The set the verify form
+      // carries forward comes from that same answer, so this is two independent readings of
+      // one reveal — a card that chipped nine of ten fails here rather than at a keyboard.
+      const carried = (verifyForm(card).codes ?? "").split("\n").map((code) => code.trim());
+      expect(carried.length, "the verify form carried no ten codes forward").toBe(10);
+      expect(revealedCodesOn(card)).toEqual(carried);
+
+      // ONE handler, and what it reads is the attribute every chip carries — which is what
+      // makes "names every code it drew" a fact about the page and not about an ordering.
+      const handlers = scriptsOn(card).filter((body) => body.includes("copy-codes"));
+      expect(handlers.length, "the reveal drew no single Copy-codes handler").toBe(1);
+      expect(handlers[0], "the handler does not read the chips").toContain("[data-code]");
+      expect(card, "the reveal drew no Copy-codes control").toContain(`id="copy-codes"`);
+
+      // The twins, as plain GETs of the pane's two arms.
+      const notEnrolled = await page(paths.settingsTwoFactor, session.cookie);
+      await enrollTwoFactor(ns.owner.userId);
+      const enabledArm = await page(paths.settingsTwoFactor, session.cookie);
+      for (const [name, html] of [
+        ["the not-enrolled arm", notEnrolled],
+        ["the enabled arm", enabledArm],
+      ] as const) {
+        expect(html, `${name} drew a Copy-codes control`).not.toContain("copy-codes");
+        expect(revealedCodesOn(html), `${name} drew a code element`).toEqual([]);
+      }
+    },
   );
 });
 
@@ -6626,20 +7049,27 @@ function markerOf(html: string, href: string): string {
  * A registration's passkey row, minus the ceremony: no test can perform WebAuthn, so the
  * row is written the way the plugin would write it (its columns, ISO dates) and everything
  * asserted afterwards goes through the page's own links, forms and the real route.
+ *
+ * `name` is OPTIONAL and `aaguid` is writable because those two together are what a real
+ * registration produces: /settings' Add-passkey ceremony sends no name at all, and the
+ * plugin writes an aaguid on every registration. A row with a stored name is the state a
+ * hand-named credential is in — which the model's name rule keeps as its first term, and
+ * which every other call site here is still exercising.
  */
 async function plantPasskey(
   userId: string,
-  fields: { name: string; createdAt?: string; credentialId?: string },
+  fields: { name?: string | null; aaguid?: string; createdAt?: string; credentialId?: string },
 ): Promise<string> {
   const id = uniqueSlug("pk");
   await (env.DB as D1Like)
     .prepare(
-      `INSERT INTO "passkey" ("id", "name", "publicKey", "userId", "credentialID", "counter", "deviceType", "backedUp", "createdAt")
-       VALUES (?, ?, 'pk', ?, ?, 0, 'singleDevice', 0, ?)`,
+      `INSERT INTO "passkey" ("id", "name", "aaguid", "publicKey", "userId", "credentialID", "counter", "deviceType", "backedUp", "createdAt")
+       VALUES (?, ?, ?, 'pk', ?, ?, 0, 'singleDevice', 0, ?)`,
     )
     .bind(
       id,
-      fields.name,
+      fields.name ?? null,
+      fields.aaguid ?? null,
       userId,
       // Nameable, because §5's stamp is keyed by the CREDENTIAL id an assertion carries
       // and a row that cannot say its own cannot check which passkey was stamped.

@@ -16,6 +16,7 @@ import { html } from "hono/html";
 import type { FC } from "hono/jsx";
 import type { LoginProps, LoginStep } from "./model";
 import { loginUrl, paths } from "./model";
+import { OtpBoxes } from "./layout";
 
 /** Not exported by ./layout — the same mark, redrawn here for this chromeless page. */
 const BrandMark: FC = () => (
@@ -145,21 +146,7 @@ const TotpCard: FC<{ step: Extract<LoginStep, { kind: "totp" }>; redirectTo: str
         of .form's 16px — the one geometry .form doesn't fit here. */}
     <form method="post" action={paths.auth.totpVerify} class="contents" data-otp-form>
       <input type="hidden" name="callbackURL" value={landingUrl(redirectTo)} />
-      <input type="hidden" name="code" data-otp-value />
-      <div class="otp" data-otp>
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <input
-            type="text"
-            inputmode="numeric"
-            pattern="[0-9]*"
-            maxlength={1}
-            autocomplete="one-time-code"
-            aria-label={`Digit ${i + 1}`}
-            aria-invalid={step.error ? "true" : undefined}
-            autofocus={i === 0 ? true : undefined}
-          />
-        ))}
-      </div>
+      <OtpBoxes invalid={step.error !== null} />
       {step.error ? <p class="field-error center">{step.error}</p> : null}
       <button type="submit" class="btn btn--primary btn--block">
         Verify
@@ -209,38 +196,6 @@ const BackupCodeCard: FC<{ step: Extract<LoginStep, { kind: "backup-code" }>; re
     </p>
   </div>
 );
-
-/**
- * Combines the six digit boxes into the hidden `code` field better-auth's verify-totp
- * expects, with auto-advance and backspace-back — the one bit of behavior the six-box
- * layout cannot deliver without it, since the form posts straight past web.ts to
- * better-auth (no stitching happens server-side). Static text, no interpolated data.
- */
-const OTP_SCRIPT = `(function(){
-  var form = document.querySelector('[data-otp-form]');
-  if (!form) return;
-  var boxes = Array.prototype.slice.call(form.querySelectorAll('[data-otp] input'));
-  var hidden = form.querySelector('[data-otp-value]');
-  function sync() { hidden.value = boxes.map(function (b) { return b.value; }).join(''); }
-  boxes.forEach(function (box, i) {
-    box.addEventListener('input', function () {
-      box.value = box.value.replace(/[^0-9]/g, '').slice(-1);
-      sync();
-      if (box.value && boxes[i + 1]) boxes[i + 1].focus();
-    });
-    box.addEventListener('keydown', function (e) {
-      if (e.key === 'Backspace' && !box.value && boxes[i - 1]) boxes[i - 1].focus();
-    });
-    box.addEventListener('paste', function (e) {
-      var text = (e.clipboardData || window.clipboardData).getData('text').replace(/[^0-9]/g, '');
-      if (!text) return;
-      e.preventDefault();
-      for (var j = 0; j < boxes.length; j++) boxes[j].value = text[j] || '';
-      sync();
-      (boxes[Math.min(text.length, boxes.length) - 1] || boxes[0]).focus();
-    });
-  });
-})();`;
 
 /**
  * §13's passkey button, made live. A sign-in by passkey is an assertion ceremony rather
@@ -362,7 +317,6 @@ export const Login: FC<LoginProps> = ({ step, redirectTo }) => (
             </div>
           )}
         </div>
-        {step.kind === "totp" ? <script dangerouslySetInnerHTML={{ __html: OTP_SCRIPT }} /> : null}
       </body>
     </html>
   </>

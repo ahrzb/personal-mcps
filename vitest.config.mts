@@ -70,7 +70,7 @@ const workerPool = {
  * 1,542 URLs and 13.2 s of cold setup, measured; with it, 417 URLs and 6.8 s. It changes
  * only how a test LOADS its dependencies, never what runs.
  *
- * The seven DIRECT deps and no transitive one: pnpm's strict layout puts kysely, zod, jose
+ * The eight DIRECT deps and no transitive one: pnpm's strict layout puts kysely, zod, jose
  * and the rest where the optimizer's resolver cannot see them, and pre-bundling
  * `@sentry/cloudflare`'s dependents drags in `node:async_hooks`. The two externals are the
  * schemes workerd supplies at runtime, which the bundler must leave alone for the same
@@ -88,6 +88,7 @@ const preBundledDeps = {
           "@better-auth/infra",
           "@sentry/cloudflare",
           "hono",
+          "uqr",
           "webpush-webcrypto",
         ],
         rolldownOptions: { external: [/^node:/, /^cloudflare:/] },

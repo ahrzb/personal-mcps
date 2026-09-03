@@ -67,11 +67,13 @@ import {
   auditQueryOf,
   consentProps,
   deviceProps,
+  enrollmentOf,
   hubRelative,
   loginProps,
   loginUrl,
   NOTICE_KEYS,
   paths,
+  revealedCodesOf,
   SETTINGS_PANES,
   appDetailProps,
   appNewForm,
@@ -84,6 +86,7 @@ import type {
   PageContext,
   AppNewErrors,
   PasswordField,
+  SettingsProps,
 } from "./pages/model";
 // The one stylesheet, as bytes a worker can serve (see the *.css declaration in
 // workers-env.d.ts for why an import is how it gets here).
@@ -282,9 +285,62 @@ export function pageRoutes(): PageRouter {
   // pane's.
   app.post(
     paths.auth.totpEnable,
-    credential(paths.settingsTwoFactor, "/two-factor/enable", "two_factor_enable", (form) => ({
-      password: field(form, "password") ?? "",
-    })),
+    credential(
+      paths.settingsTwoFactor,
+      "/two-factor/enable",
+      "two_factor_enable",
+      (form) => ({ password: field(form, "password") ?? "" }),
+      // better-auth mints the secret AND the ten codes in this one answer and will never
+      // repeat either — a second enable rotates the secret, and nothing can show the codes
+      // again (§4) — so the answer IS the page: 200 in place with both, and no Location for
+      // either to ride (§15). It sets no cookie, so rendering here is safe (`credential`'s
+      // constraint). A refusal carries no enrolment and its form posted none, so there is
+      // nothing to redraw and the flash answers instead.
+      async (req, session, _form, outcome) => {
+        if (!outcome.ok) return null;
+        const enrollment = enrollmentOf(String(outcome.answer.totpURI ?? ""), null);
+        return enrollment === null
+          ? null
+          : settingsTwoFactorPage(req, session, {
+              enrollment,
+              revealedBackupCodes: answeredCodes(outcome.answer),
+            });
+      },
+    ),
+  );
+
+  // The enrolment card's own target: the code typed into the six boxes, checked by the same
+  // better-auth endpoint /login's challenge card posts to. It is here rather than there
+  // because /login's translation is not a `credential` — this one inherits the CSRF check
+  // and §4's freshness, and answers a wrong code in place (pages/model's
+  // `paths.auth.totpVerifySettings`).
+  app.post(
+    paths.auth.totpVerifySettings,
+    credential(
+      paths.settingsTwoFactor,
+      "/two-factor/verify-totp",
+      "two_factor_enable",
+      (form) => ({ code: field(form, "code") ?? "" }),
+      async (req, session, form, outcome) => {
+        // SUCCESS keeps the 303, and it is the one arm in this family that must: better-auth
+        // has just deleted the session this ran under and minted a new one, so a render here
+        // would read the props with a dead cookie. The flash says what happened on the pane
+        // the NEW cookie draws, under the op key the journey started with.
+        if (outcome.ok) return null;
+        // A refused code redraws the SAME enrolment. It cannot be re-derived — get-totp-uri
+        // wants a password this card has not got, and a second enable would rotate the
+        // secret the owner has already scanned — so the card carries it forward in its own
+        // hidden fields, and both are validated before they are drawn again because both are
+        // hand-postable. Neither ever touches a URL, which is what §15 forbids.
+        const enrollment = enrollmentOf(field(form, "totpuri") ?? "", outcome.message);
+        return enrollment === null
+          ? null
+          : settingsTwoFactorPage(req, session, {
+              enrollment,
+              revealedBackupCodes: postedCodes(field(form, "codes") ?? ""),
+            });
+      },
+    ),
   );
 
   app.post(
@@ -301,6 +357,16 @@ export function pageRoutes(): PageRouter {
       "/two-factor/generate-backup-codes",
       "backup_codes_generate",
       (form) => ({ password: field(form, "password") ?? "" }),
+      // The same seam as enable's, with the smaller overlay: a fresh set is revealed exactly
+      // once and a URL is not where it can be revealed (§15). This endpoint sets no cookie,
+      // so the in-place answer is safe here by `credential`'s own rule; a wrong password has
+      // no set to show and takes the flash.
+      async (req, session, _form, outcome) => {
+        const revealed = outcome.ok ? answeredCodes(outcome.answer) : null;
+        return revealed === null
+          ? null
+          : settingsTwoFactorPage(req, session, { enrollment: null, revealedBackupCodes: revealed });
+      },
     ),
   );
 
@@ -833,29 +899,111 @@ async function signInTranslation(
  * the /settings render would leave a day-old cookie plus a password able to enrol a second
  * factor or revoke a session — and a browser posts these targets directly. It is spelled
  * once, here, because every credential route is spelled through this function: that is what
- * makes "all of them" true of the family rather than of the five that exist today.
+ * makes "all of them" true of the family rather than of the seven that exist today.
  */
 function credential(
   pane: string,
   endpoint: string,
   op: string,
   body: (form: FormData, req: Request) => Record<string, unknown> | Promise<Record<string, unknown>>,
+  /** What this target answers with instead of the flash, when better-auth's own answer IS
+   *  the point: it cannot ride a URL (§15) and `NOTICE_KEYS` cannot carry it
+   *  (pages/model's `NOTICE_KEYS`). Returning null falls back to the flash — which is how
+   *  a refusal with nothing to redraw AND a success that must not render both answer.
+   *  That fallback is the WORST answer on a success arm and is deliberately kept anyway:
+   *  a reveal that cannot read an ok payload (a better-auth field rename) tells the owner
+   *  "done" with a secret already minted and, for regenerate, the previous set already
+   *  invalidated. The two reveal rows are the whole guard against that — see the enable
+   *  and regenerate rows in web-pages.test.ts. Throwing instead would trade a silent loss
+   *  for a 500 on an operation better-auth has already committed, which is not better.
+   *  The body is read exactly ONCE, on whichever arm this is, because a Response answers
+   *  once: `refusalOf` moves ABOVE the redirect so the notice and this share that read.
+   *  CONSTRAINT this function does not enforce: a target whose SUCCESS re-issues the
+   *  session cookie must not reveal on that arm — the props below would be read with the
+   *  cookie better-auth just deleted, and the CSRF token minted off a dead session id
+   *  (`context`). /two-factor/verify-totp is exactly that target, which is why its
+   *  success keeps the 303. */
+  reveal?: (
+    req: Request,
+    session: OwnerSession,
+    form: FormData,
+    outcome:
+      | { ok: true; answer: Record<string, unknown> }
+      | { ok: false; code: string; message: string },
+  ) => Promise<unknown>,
 ): (c: Context) => Promise<Response> {
   // deps: mutation · identity.callAuthResponse
-  return mutation(async (c, _session, form) => {
+  return mutation(async (c, session, form) => {
     const answered = await callAuthResponse(c.req.raw, endpoint, await body(form, c.req.raw));
     const succeeded = answered !== null && answered.ok;
+    // Read once, on whichever arm. Parsing the success body costs the four call sites
+    // without a reveal nothing: `redirectWith` takes only `Set-Cookie` headers off
+    // `answered`, never its body.
+    const outcome = succeeded
+      ? { ok: true as const, answer: (await answered!.json().catch(() => ({}))) as Record<string, unknown> }
+      : { ok: false as const, ...(await refusalOf(answered)) };
+    const node = reveal ? await reveal(c.req.raw, session, form, outcome) : null;
+    if (node) return render(node);
     return redirectWith(
       // `pane` and not `paths.settings`: §13 lands a notice on the pane that RENDERED the
-      // form, and five of these six forms are drawn somewhere other than the page root.
-      noticeUrl(
-        pane,
-        op,
-        succeeded ? { value: null } : { reason: (await refusalOf(answered)).message },
-      ),
+      // form, and every one of them is drawn on a pane that is not the page root.
+      noticeUrl(pane, op, outcome.ok ? { value: null } : { reason: outcome.message }),
       succeeded ? answered : null,
     );
   }, { recent: true });
+}
+
+/**
+ * The one render behind all three /settings/two-factor reveals: the pane exactly as its
+ * own GET would draw it, plus the overlay only a POST can know. `settingsProps` is
+ * untouched — `enrollment: null` / `revealedBackupCodes: null` stay the loader's answer,
+ * because a GET has neither — so the invariant `SettingsProps` documents (an overlay on
+ * top of `twoFactor`, never an alternative to it) stays true by construction.
+ *
+ * Safe under a POST for two reasons that are both somebody else's: identity's
+ * `callAuthResponse` builds a FRESH request out of the cookie alone, and `context` reads
+ * only `new URL(req.url)`'s query, which a POST target has none of. It is also why the
+ * reveal renders NO notice — there is no flash on a POST URL to read.
+ */
+async function settingsTwoFactorPage(
+  req: Request,
+  session: OwnerSession,
+  overlay: Pick<SettingsProps, "enrollment" | "revealedBackupCodes">,
+): Promise<unknown> {
+  // deps: pages/model.settingsProps · context
+  return SettingsPage({
+    ...(await settingsProps(await context(req, session), req, "two-factor")),
+    ...overlay,
+  });
+}
+
+/**
+ * The ten codes out of a better-auth answer that carries them: its wire format is a JSON
+ * array, so there is nothing to decode — only `revealedCodesOf`'s judgement, which is what
+ * makes a renamed or reshaped payload draw nothing instead of garbage.
+ */
+function answeredCodes(answer: Record<string, unknown>): string[] | null {
+  // deps: pages/model.revealedCodesOf
+  const codes = answer.backupCodes;
+  return Array.isArray(codes) ? revealedCodesOf(codes.map(String)) : null;
+}
+
+/**
+ * The same ten out of the enrolment form's hidden `codes` field, whose wire format is the
+ * newline-joined set settings.tsx writes with `join("\n")` — those two are the only places
+ * that know it. The `trim` is load-bearing, not tidiness: a browser normalizes a form
+ * value's newlines to CRLF, so without it every code arrives with a trailing `\r`, fails
+ * the shape check, and the refusal redraw silently loses all ten. The suite posts through
+ * `URLSearchParams`, which does not normalize, so nothing would go red.
+ */
+function postedCodes(codes: string): string[] | null {
+  // deps: pages/model.revealedCodesOf
+  return revealedCodesOf(
+    codes
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== ""),
+  );
 }
 
 /**

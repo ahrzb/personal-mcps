@@ -51,6 +51,10 @@
 // (Date.parse) rather than reaching for a clock of its own.
 
 import { env } from "cloudflare:workers";
+// The only thing in the tree that can draw a QR (`enrollmentOf`), and the only reason it
+// is a dependency at all: §13 pins "QR plus the grouped secret", and the point of a QR is
+// a phone camera. Zero-dependency, pure ESM, no Node built-ins — it runs on workerd.
+import { renderSVG } from "uqr";
 import { ops } from "../admin";
 import type { AppPane } from "../app-routes";
 import type { AppRow as OpsAppRow } from "../admin";
@@ -60,7 +64,13 @@ import { argumentRows, reachabilityFor } from "../catalog-view";
 import type { ArgumentRow, Reach, Reachability } from "../catalog-view";
 import { ownerCatalog } from "../gateway";
 import type { ListedItem } from "../gateway";
-import { AUTH_BASE_PATH, callAuth, passkeyLastUsed, PASSWORD_MIN_LENGTH } from "../identity";
+import {
+  AUTH_BASE_PATH,
+  callAuth,
+  getAuthenticatorName,
+  passkeyLastUsed,
+  PASSWORD_MIN_LENGTH,
+} from "../identity";
 import type { TokenInfo } from "../identity";
 import { DEVICE_CODE_TTL_MS } from "../limits";
 import { redactPathsIn, Registry, validateSchemaIndirection, writeOnlyPaths } from "../registry";
@@ -425,11 +435,18 @@ export const paths = {
     base: AUTH_BASE_PATH,
     signIn: "/login/sign-in/username",
     signOut: "/login/sign-out",
-    /** /login's challenge card posts here, and so would /settings's enrollment card —
-     *  which cannot render today (see settingsProps's note on `enrollment`). */
+    /** /login's challenge card posts here: the code that finishes a sign-in a second
+     *  factor held. /settings's enrolment card posts at `totpVerifySettings` below —
+     *  same better-auth endpoint, different target, for the reason spelled there. */
     totpVerify: "/login/two-factor/verify-totp",
     backupCodeVerify: "/login/two-factor/verify-backup-code",
     totpEnable: "/settings/two-factor/enable",
+    /** /settings's enrolment card posts here — the code typed into the six boxes under
+     *  the QR. A target of its own rather than `totpVerify` above, because this one is a
+     *  `credential`: it inherits the CSRF check and §4's freshness gate, and its REFUSAL
+     *  is answered in place at 200 with the same enrolment redrawn (web.ts's `reveal`
+     *  says why the QR cannot be re-derived). /login's translation does neither. */
+    totpVerifySettings: "/settings/two-factor/verify-totp",
     totpDisable: "/settings/two-factor/disable",
     backupCodesGenerate: "/settings/two-factor/generate-backup-codes",
     /** The registration ceremony /settings/passkeys' **Add passkey** performs: options
@@ -589,6 +606,16 @@ export type TwoFactorSummary = { enabled: false } | { enabled: true };
  * credential in flight, never persisted by a page and never logged (§15).
  */
 export type TotpEnrollment = {
+  /**
+   * better-auth's own `otpauth://` string — what the QR below encodes, and what the two
+   * fields under it are derived from. The card carries it forward in the verify form's
+   * hidden `totpuri` because a refused code has to redraw THIS enrolment and the hub
+   * cannot re-derive it: better-auth's `get-totp-uri` wants a password the card has not
+   * got, and enabling a second time would rotate the secret the owner has already
+   * scanned. A form field, never a URL (§15) — and validated again on the way back in
+   * (`enrollmentOf`), because a hidden input is hand-postable.
+   */
+  totpUri: string;
   /** The otpauth:// QR as a self-contained data: URI — no external image fetch. */
   qrDataUri: string;
   /** The same secret in its grouped display form: "JBSW Y3DP EHPK 3PXP". */
@@ -596,6 +623,58 @@ export type TotpEnrollment = {
   /** Set when a submitted code did not verify. */
   error: string | null;
 };
+
+/**
+ * The enrolment above, built out of better-auth's own `otpauth://` URI — the ONE producer
+ * of all three fields, so the QR and the grouped secret cannot disagree about what was
+ * minted. The grouped form is that URI's own `secret` parameter, which better-auth writes
+ * as unpadded base32 (`@better-auth/utils`' `base32.encode(secret, { padding: false })`) —
+ * exactly what an authenticator wants typed in — cut into fours for reading aloud.
+ *
+ * It VALIDATES, because the URI is also a hidden field the refusal arm echoes back out of
+ * the posted form (web.ts's `reveal`): a hand-posted value would otherwise draw arbitrary
+ * text and an arbitrary QR under "scan this", and neither is an enrolment. `null` means
+ * there is nothing to redraw — web.ts answers with the flash instead.
+ */
+export function enrollmentOf(totpuri: string, error: string | null): TotpEnrollment | null {
+  let uri: URL;
+  try {
+    uri = new URL(totpuri);
+  } catch {
+    return null;
+  }
+  const secret = uri.searchParams.get("secret") ?? "";
+  // The length bound is `renderSVG`'s: it THROWS above the QR's capacity (measured on uqr
+  // 0.1.3: ~2.9 KB), so without it a hand-posted 3 KB `totpuri` escapes this function's
+  // "enrolment or null" contract as an uncaught 500. A real otpauth:// URI is ~120 chars.
+  if (uri.protocol !== "otpauth:" || uri.host !== "totp" || secret === "" || totpuri.length > 512) {
+    return null;
+  }
+  return {
+    totpUri: totpuri,
+    // The URI itself is the payload a camera reads; the SVG is inlined so the card fetches
+    // nothing (§15 — a secret does not become an image request to anywhere).
+    qrDataUri: `data:image/svg+xml;utf8,${encodeURIComponent(renderSVG(totpuri))}`,
+    secret: (secret.match(/.{1,4}/g) ?? []).join(" "),
+    error,
+  };
+}
+
+/**
+ * The ten codes a reveal draws — the same reason `enrollmentOf` validates: one of the two
+ * answers carrying them is a hand-postable hidden field, and without a rule an arbitrary
+ * string renders under "Store these somewhere safe". The shape is better-auth's own
+ * generator's (`backup-codes`: two five-character alphanumeric halves), and the count is
+ * the ten it always mints; anything else is not that set and is drawn as nothing at all.
+ *
+ * It takes the set already decoded, because there is no ONE wire format to decode: one
+ * caller holds a JSON array and the other a newline-joined form field. Both live in
+ * web.ts (`answeredCodes`, `postedCodes`); this judges what they hand over.
+ */
+export function revealedCodesOf(codes: readonly string[]): string[] | null {
+  if (codes.length !== 10) return null;
+  return codes.every((code) => /^[a-zA-Z0-9]{5}-[a-zA-Z0-9]{5}$/.test(code)) ? [...codes] : null;
+}
 
 /** One passkey row. Timestamps ISO-8601; `lastUsedAt` null until first sign-in (§5). */
 export type PasskeyRow = {
@@ -2182,12 +2261,11 @@ function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram
  * reads it the way the browser does, through identity's own mounted endpoints,
  * rather than reaching into tables that module owns.
  *
- * One thing is not sourceable through those endpoints today, and is reported as what
- * it is rather than invented: every session reads as `source: "web"` because nothing
- * better-auth stores distinguishes a device-flow session from a browser one — the
- * distinction identity enforces is the cookie's signature, not a column. (Passkeys ARE
- * sourced, from the plugin's own listing; their `lastUsedAt` is §5's own column, read
- * here through `identity.passkeyLastUsed` — absent means never used.)
+ * Everything the rows say is sourced, and each from the one place that knows it: a
+ * session's `source` is identity's own column, stamped by better-auth on the single
+ * endpoint that mints a device-flow session (`sessionRow` says what a NULL one means);
+ * a passkey's name comes from the plugin's listing, and its `lastUsedAt` from §5's own
+ * column, read here through `identity.passkeyLastUsed` — absent means never used.
  *
  * A second thing is not said at all, which is the same rule applied: `/get-session`
  * reports `twoFactorEnabled` and nothing else, and the backup codes live encrypted in a
@@ -2274,15 +2352,33 @@ function tokenKindOf(query: URLSearchParams): TokenRow["kind"] | null {
 }
 
 /** The passkey fields /settings draws, as the plugin's own listing spells them. */
-type BetterAuthPasskey = { id: string; name?: string | null; createdAt?: string | null };
+type BetterAuthPasskey = {
+  id: string;
+  name?: string | null;
+  createdAt?: string | null;
+  /** The authenticator model's own identifier, written by every registration the plugin
+   *  performs and returned unprojected by its listing — which is what makes the name rule
+   *  below possible without a migration or a second read. */
+  aaguid?: string | null;
+};
 
 /** `name` is what the authenticator reported, which may be nothing; `createdAt` is set by
  *  every registration the plugin performs, so a null one is a hand-inserted row.
- *  `lastUsed` is §5's epoch-ms column, absent until an assertion has verified. */
+ *  `lastUsed` is §5's epoch-ms column, absent until an assertion has verified.
+ *
+ *  The name rule is the plugin's own documented one, spelled HERE rather than in the page
+ *  so the row, the rail and the Remove dialog's title all read one definition: a stored
+ *  name first (what a hand-named row has), then the model the AAGUID names, then the
+ *  generic word. §13's "the name the authenticator reported" is satisfied by the middle
+ *  term — an AAGUID is reported by the authenticator.
+ *  ponytail: the plugin's AAGUID table has 14 entries and platforms that keep the model
+ *  private register an all-zero one under the default `attestation: "none"` flow, so
+ *  "Passkey" stays the steady state for most rows; a longer table is the upgrade path,
+ *  and it is the plugin's to grow, not this file's. */
 function passkeyRow(pk: BetterAuthPasskey, now: string, lastUsed?: number): PasskeyRow {
   return {
     id: pk.id,
-    name: pk.name || "Passkey",
+    name: pk.name || getAuthenticatorName(pk.aaguid) || "Passkey",
     addedAt: pk.createdAt ?? now,
     lastUsedAt: lastUsed === undefined ? null : new Date(lastUsed).toISOString(),
   };
@@ -2345,13 +2441,23 @@ type BetterAuthSession = {
   createdAt: string;
   updatedAt: string;
   userAgent?: string | null;
+  /** identity's own `session.additionalFields` column, written by better-auth alone: "cli"
+   *  on the one endpoint that mints a device-flow session, "web" everywhere else. Optional
+   *  and nullable because rows that predate the migration carry neither. */
+  source?: string | null;
 };
 
 function sessionRow(row: BetterAuthSession, current: string): SessionRow {
+  // The one place the union is enforced, which it has to be regardless of the column's
+  // declared type: a pre-migration row reads NULL, and NULL is a browser session.
+  const source = row.source === "cli" ? "cli" : "web";
   return {
     id: row.id,
-    client: clientOf(row.userAgent),
-    source: "web",
+    // §13:107's own string, said here rather than derived: the CLI sends no User-Agent, so
+    // a real CLI row would read "Unknown client", and a browser that CLAIMED to be the CLI
+    // would mint the CLI's label out of the untrusted header below. The column decides.
+    client: source === "cli" ? "pmcp CLI" : clientOf(row.userAgent),
+    source,
     createdAt: new Date(row.createdAt).toISOString(),
     lastActiveAt: new Date(row.updatedAt).toISOString(),
     current: row.id === current,

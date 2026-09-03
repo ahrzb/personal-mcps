@@ -52,7 +52,10 @@ import type {
 } from "../src/pages/model";
 // The dimmed marker is a VALUE, not a spelling: model.ts owns the glyph so nothing can
 // decide what "advertises none" looks like twice (§13).
-import { DIMMED } from "../src/pages/model";
+// `enrollmentOf` is the ONE producer of an enrolment's three fields (§13/§15's own rule) —
+// fixtures call it rather than hand-rolling a QR, so the preview can never draw a secret,
+// a grouped display form and a QR that disagree with one another.
+import { DIMMED, enrollmentOf } from "../src/pages/model";
 
 /* ------------------------------------------------------------------ *
  * Shared scaffolding
@@ -197,18 +200,30 @@ const device = {
  * /settings
  * ------------------------------------------------------------------ */
 
+// Every name here is one `passkeyRow` (model.ts) can actually produce: the ceremony sends
+// no name of its own, so a row reads either the plugin's own AAGUID table
+// (`@better-auth/passkey/dist/index.mjs:739-753`) or, for an AAGUID the table does not
+// have — or the all-zero one privacy-preserving platforms report — the literal "Passkey".
+// The third row is that steady state: the most common real render, and the one no fixture
+// drew before this (orphan note).
 const passkeys: PasskeyRow[] = [
   {
     id: "pk_7f2a91",
-    name: "MacBook Touch ID",
+    name: "Windows Hello",
     addedAt: "2026-03-12T09:14:00.000Z",
     lastUsedAt: "2026-08-23T21:02:00.000Z",
   },
   {
     id: "pk_1c8e40",
-    name: "YubiKey 5C",
+    name: "Google Password Manager",
     addedAt: "2026-01-08T17:40:00.000Z",
     lastUsedAt: "2026-08-02T08:25:00.000Z",
+  },
+  {
+    id: "pk_9a04dd",
+    name: "Passkey",
+    addedAt: "2026-06-30T13:05:00.000Z",
+    lastUsedAt: "2026-08-18T19:22:00.000Z",
   },
 ];
 
@@ -242,25 +257,26 @@ const sessions: SessionRow[] = [
   },
 ];
 
-/** A 140×140 stand-in for the enrollment QR — self-contained, no external fetch. */
-const QR_PLACEHOLDER =
-  "data:image/svg+xml;utf8," +
-  encodeURIComponent(
-    "<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'>" +
-      "<rect width='140' height='140' fill='#f4f4f5'/>" +
-      "<text x='70' y='76' text-anchor='middle' font-family='monospace' " +
-      "font-size='13' fill='#71717a'>QR</text></svg>",
-  );
+/** better-auth's own `otpauth://` shape — the same string `/two-factor/enable` mints, with
+ *  a fake-but-well-formed secret. `enrollmentOf` is what turns this into the QR and the
+ *  grouped display form, exactly as the live route does, so the preview cannot draw a QR
+ *  the secret does not encode. */
+const TOTP_URI = "otpauth://totp/personal-mcps:owner?secret=JBSWY3DPEHPK3PXP&issuer=personal-mcps";
 
+/** better-auth's own shape — two five-character alphanumeric halves, ten of them
+ *  (`backup-codes/index.mjs:14-16`), not the eight four-character halves fabricated here
+ *  before (orphan note). */
 const BACKUP_CODES = [
-  "a1b2-c3d4",
-  "e5f6-a7b8",
-  "c9d0-e1f2",
-  "a3b4-c5d6",
-  "e7f8-a9b0",
-  "c1d2-e3f4",
-  "a5b6-c7d8",
-  "e9f0-a1b2",
+  "a1b2c-3d4e5",
+  "f6g7h-8i9j0",
+  "k1l2m-3n4o5",
+  "p6q7r-8s9t0",
+  "u1v2w-3x4y5",
+  "z6a7b-8c9d0",
+  "e1f2g-3h4i5",
+  "j6k7l-8m9n0",
+  "o1p2q-3r4s5",
+  "t6u7v-8w9x0",
 ];
 
 const tokens: TokenRow[] = [
@@ -495,36 +511,28 @@ const settings = {
     ...settingsBase,
     pane: "two-factor",
     twoFactor: { enabled: false },
-    enrollment: {
-      qrDataUri: QR_PLACEHOLDER,
-      secret: "JBSW Y3DP EHPK 3PXP",
-      error: null,
-    },
+    enrollment: enrollmentOf(TOTP_URI, null)!,
     passkeys: [],
     sessions: [sessions[0]!],
   },
 
-  /** The enrollment code did not verify — the setup card re-renders with the error. */
+  /** The enrollment code did not verify — the setup card re-renders with the error, which
+   *  is better-auth's own two-word sentence (`totp/index.mjs`'s `INVALID_CODE`), not
+   *  hand-written copy. */
   totpEnrollError: {
     ...shell("settings", 0),
     ...settingsBase,
     pane: "two-factor",
     twoFactor: { enabled: false },
-    enrollment: {
-      qrDataUri: QR_PLACEHOLDER,
-      secret: "JBSW Y3DP EHPK 3PXP",
-      error: "That code didn't match. Check your device's clock and try again.",
-    },
+    enrollment: enrollmentOf(TOTP_URI, "Invalid code")!,
     passkeys: [],
     sessions: [sessions[0]!],
   },
 
-  /** SettingsStates "Backup codes": the one render that ever shows them. */
+  /** SettingsStates "Backup codes": the one render that ever shows them. In-place, on the
+   *  POST's own 200 — there is no flash to read on that answer, so this carries none. */
   backupCodesRevealed: {
-    ...shell("settings", 0, {
-      tone: "success",
-      message: "Two-factor authentication is on.",
-    }),
+    ...shell("settings", 0),
     ...settingsBase,
     pane: "two-factor",
     revealedBackupCodes: BACKUP_CODES,
@@ -545,7 +553,7 @@ const settings = {
     ...shell("settings"),
     ...settingsBase,
     pane: "passkeys",
-    confirm: { kind: "remove-passkey", id: "pk_7f2a91", name: "MacBook Touch ID" },
+    confirm: { kind: "remove-passkey", id: "pk_7f2a91", name: "Windows Hello" },
   },
 
   /** Dialogs, same pattern: revoking the CLI's device-flow session. */
@@ -572,31 +580,27 @@ const settings = {
     confirm: { kind: "revoke-connection", id: "con_claude01", client: "Claude" },
   },
 
-  /** A failed better-auth mutation redirected back with its reason. */
+  /** A failed better-auth mutation redirected back with its reason — `noticeOf`'s own
+   *  title (`${humanize(failed)} failed`) and better-auth's own INVALID_PASSWORD message,
+   *  the same one `passwordWrongCurrent` carries verbatim; both halves were hand-written
+   *  copy before this (orphan note). */
   error: {
     ...shell("settings", 2, {
       tone: "danger",
-      title: "Could not disable two-factor",
-      message: "That password was not accepted. Nothing was changed.",
+      title: "Two factor disable failed",
+      message: "Invalid password",
     }),
     ...settingsBase,
     pane: "two-factor",
   },
 
-  /** Edge: authenticator names and user agents nobody sized a column for. */
+  /** Edge: a user agent nobody sized a column for. No passkey name belongs here — every
+   *  one a real row can carry is short, from `passkeyRow`'s own fixed table or the literal
+   *  "Passkey" (retired: a hand-invented long authenticator name no ceremony ever sends). */
   longNames: {
     ...shell("settings"),
     ...settingsBase,
     pane: "passkeys",
-    passkeys: [
-      {
-        id: "pk_长_0001",
-        name: "Windows Hello on DESKTOP-QK7ZP2X (Enhanced Sign-in Security, TPM 2.0 platform authenticator)",
-        addedAt: "2026-02-01T00:00:00.000Z",
-        lastUsedAt: null,
-      },
-      ...passkeys,
-    ],
     sessions: [
       sessions[0]!,
       {

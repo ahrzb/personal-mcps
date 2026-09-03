@@ -226,6 +226,75 @@ export const TokenReveal: FC<{ token: string; children?: Child }> = ({ token, ch
   </>
 );
 
+/**
+ * The stitching behind `OtpBoxes` below: static text, no interpolated data, moved
+ * verbatim off /login (G30 — the settings card had six named boxes and none of this, so a
+ * correctly typed code posted `code=""` and could never verify). Auto-advance,
+ * backspace-back and paste all funnel into the one hidden field better-auth's `code`
+ * reads, because the form posts straight past web.ts to better-auth — no stitching
+ * happens server-side.
+ */
+const OTP_SCRIPT = `(function(){
+  var form = document.querySelector('[data-otp-form]');
+  if (!form) return;
+  var boxes = Array.prototype.slice.call(form.querySelectorAll('[data-otp] input'));
+  var hidden = form.querySelector('[data-otp-value]');
+  function sync() { hidden.value = boxes.map(function (b) { return b.value; }).join(''); }
+  boxes.forEach(function (box, i) {
+    box.addEventListener('input', function () {
+      box.value = box.value.replace(/[^0-9]/g, '').slice(-1);
+      sync();
+      if (box.value && boxes[i + 1]) boxes[i + 1].focus();
+    });
+    box.addEventListener('keydown', function (e) {
+      if (e.key === 'Backspace' && !box.value && boxes[i - 1]) boxes[i - 1].focus();
+    });
+    box.addEventListener('paste', function (e) {
+      var text = (e.clipboardData || window.clipboardData).getData('text').replace(/[^0-9]/g, '');
+      if (!text) return;
+      e.preventDefault();
+      for (var j = 0; j < boxes.length; j++) boxes[j].value = text[j] || '';
+      sync();
+      (boxes[Math.min(text.length, boxes.length) - 1] || boxes[0]).focus();
+    });
+  });
+})();`;
+
+/**
+ * The six-box TOTP code entry both credential targets that check one render — /login's
+ * challenge card and /settings's enrolment card (§13). One definition rather than two
+ * copies: a second copy is exactly how G30 happened. Owns the hidden `[data-otp-value]`
+ * input better-auth's `code` field reads, the six unnamed `[data-otp]` boxes (only the
+ * hidden field is ever submitted) and the one stitching script above. `data-otp-form`
+ * stays on each caller's own `<form>` — the script looks for it first, and the two forms
+ * differ in `action` and hidden fields, which is the caller's business.
+ *
+ * `invalid` sets `aria-invalid` on the boxes; each caller reads its own refusal source
+ * (`step.error` at /login, `enrollment.error` at /settings) and passes the one bit this
+ * component needs.
+ */
+export const OtpBoxes: FC<{ invalid: boolean }> = ({ invalid }) => (
+  <>
+    <input type="hidden" name="code" data-otp-value />
+    <div class="otp" data-otp>
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <input
+          key={i}
+          type="text"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          maxlength={1}
+          autocomplete="one-time-code"
+          aria-label={`Digit ${i + 1}`}
+          aria-invalid={invalid ? "true" : undefined}
+          autofocus={i === 0 ? true : undefined}
+        />
+      ))}
+    </div>
+    <script dangerouslySetInnerHTML={{ __html: OTP_SCRIPT }} />
+  </>
+);
+
 export const Layout: FC<LayoutProps> = ({ title, active, username, pendingApprovals, children }) => (
   <>
     {html`<!doctype html>`}

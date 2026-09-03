@@ -67,7 +67,9 @@ import {
   auditQueryOf,
   consentProps,
   deviceProps,
+  hubRelative,
   loginProps,
+  loginUrl,
   NOTICE_KEYS,
   paths,
   SETTINGS_PANES,
@@ -870,24 +872,12 @@ function redirectWith(to: string, from: Response | null): Response {
 
 /**
  * Where a finished sign-in lands: the form's own `callbackURL` — which is how /login
- * carries a deep link through the round trip (LoginProps.redirectTo) — accepted only as a
- * hub-relative path. A form field is a caller's input, and honouring an absolute one would
- * make /login an open redirect for anyone who can get a browser to post here.
+ * carries a deep link through the round trip (LoginProps.redirectTo) — read through
+ * `hubRelative`, the one rule /login's other consumer (the rendered `?next=`) reads too.
+ * Anything that rule refuses lands on /apps.
  */
 function landingOf(form: FormData): string {
-  const target = field(form, "callbackURL") ?? "";
-  return target.startsWith("/") && !target.startsWith("//") ? target : paths.apps;
-}
-
-/** /login under a set of query fields; an absent or empty one leaves no trace. */
-function loginUrl(fields: Record<string, string | null | undefined>): string {
-  const search = new URLSearchParams();
-  for (const [name, value] of Object.entries(fields)) {
-    if (value === null || value === undefined || value === "") continue;
-    search.set(name, value);
-  }
-  const rendered = search.toString();
-  return rendered === "" ? paths.login : `${paths.login}?${rendered}`;
+  return hubRelative(field(form, "callbackURL")) ?? paths.apps;
 }
 
 /**
@@ -1279,11 +1269,27 @@ function jsonOrNull(raw: string): unknown {
 
 /** A rendered page. Hono JSX components are functions of their props, so a page is its
  *  own document — the shelled ones wrap themselves in Layout, the chromeless ones draw
- *  their own — and rendering is stringifying what the component returned. */
+ *  their own — and rendering is stringifying what the component returned.
+ *
+ *  This is the hub's ONLY text/html site (the states preview under server/dev has its own,
+ *  without the header), which is why the CSP rides here rather than a middleware: the three
+ *  directives below need no per-response nonce and touch no inline code, so they close
+ *  clickjacking, `<base>` injection and plugin embedding on the whole page surface in one
+ *  line. `frame-ancestors 'self'`, not `'none'`: a same-origin embed stays possible and
+ *  refusing it would buy nothing. A nonce'd `script-src` is deferred: eight
+ *  inline `<script>` sites would each need a per-response nonce threaded through props
+ *  that carry none, and 43 inline `style=` attributes would force `'unsafe-inline'` on
+ *  `style-src` regardless. */
 async function render(node: unknown, status = 200): Promise<Response> {
   const rendered = (node as { toString(): string | Promise<string> }).toString();
   const body = typeof rendered === "string" ? rendered : await rendered;
-  return new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
+  return new Response(body, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": "frame-ancestors 'self'; base-uri 'self'; object-src 'none'",
+    },
+  });
 }
 
 /** The browser surface's own 404: a path under a segment the hub serves, and no page

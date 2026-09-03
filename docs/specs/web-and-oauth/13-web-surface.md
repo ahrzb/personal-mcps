@@ -9,7 +9,9 @@ marked 2026-09-02 below is **spec ahead of code** — implemented as its own wor
 
 Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is required:
 
-- `/login` — username + password, TOTP challenge, passkey button.
+- `/login` — username + password, TOTP challenge, passkey button. Sign-in landing: a
+  `?next=` deep link is honoured only when it is hub-relative; anything else — absolute,
+  scheme-relative, or the `/\` spelling a browser folds into `//` — lands on `/apps`.
 - `/device` — device-approval page (user enters the code the CLI printed). Since we
   hand-build it anyway: it shows the requesting IP and user-agent and states plainly
   that approval grants **full admin CLI control of the namespace** (RFC 8628 §5.4 /

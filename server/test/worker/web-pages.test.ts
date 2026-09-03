@@ -1207,33 +1207,171 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
 });
 
 describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule for both consumers", () => {
-  // Rows first (§9 rule 1): the guard, the escape and the CSP header are not implemented
-  // yet, and these five titles are what "implemented" will mean. The landing has TWO
-  // consumers — the inline passkey script's LANDING literal and the hidden callbackURL the
-  // three cards post — so a row about the rule pins both, and only a row about one
-  // consumer's own spelling names one.
+  // The landing has TWO consumers — the inline passkey script's LANDING literal and the
+  // hidden callbackURL the three cards post — so a row about the rule pins both, and only
+  // a row about one consumer's own spelling names one.
 
-  // plan row 1
-  it.todo(
+  /** The passkey script's landing, as the LITERAL the page embedded — quotes included, so
+   *  a row can ask what the ESCAPING did before asking what the value is. */
+  function landingLiteralOf(html: string): string {
+    const literal = /var LANDING = ("[^"]*");/.exec(html)?.[1];
+    expect(literal, "the page embedded no LANDING literal").not.toBeUndefined();
+    return literal ?? "";
+  }
+
+  /** The hidden callbackURL, as the RAW attribute text — same reason. */
+  function callbackLiteralOf(html: string): string {
+    const value = /name="callbackURL"\s+value="([^"]*)"/.exec(html)?.[1];
+    expect(value, "the page rendered no callbackURL field").not.toBeUndefined();
+    return value ?? "";
+  }
+
+  /** The href of the card's "use the other method" link, as a browser would follow it. */
+  function switchHrefOf(html: string, method: "totp" | "backup-code"): string {
+    const href = new RegExp(`<a href="([^"]*method=${method}[^"]*)"`).exec(html)?.[1];
+    expect(href, `the card rendered no ${method} switch link`).not.toBeUndefined();
+    return decodeEntities(href ?? "");
+  }
+
+  /** An attribute value back to the string the renderer was given. The file's
+   *  `decodeEntities` undoes `&amp;` alone, which is all a URL ever needs; these rows read
+   *  MARKUP back out of an attribute, so they undo the two escapes that markup earns.
+   *  `&amp;` last, so an escaped `&lt;` in the input is not decoded twice. */
+  function unescapeAttribute(raw: string): string {
+    return raw.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  }
+
+  /** A `?next=` deep link's own owner: signing in is what the posted arm below does, and
+   *  the file's world owner is shared with cases that could leave a two-factor challenge
+   *  in front of a password (a sign-in that answers `twoFactorRedirect` lands on /login,
+   *  not on the landing, and would prove nothing about `landingOf`). */
+  let signer: SeededNamespace;
+
+  beforeAll(async () => {
+    signer = await seedNamespace(env.DB, {});
+    await seedOwnerCredential(signer.owner.userId);
+  });
+
+  it(
     `§15 · a hub-relative ?next=/apps%3C/script%3E%3Cimg src=x onerror=…%3E%E2%80%A8 reaches both embeds and is escaped in both — the inline script's LANDING carries no raw "<" and no raw U+2028 line separator, and the hidden callbackURL carries &lt;, so "</script><img" appears nowhere in the document — while ?next=/settings/tokens reaches the same two verbatim (the twin)`,
+    async () => {
+      // The payload PASSES the hub-relative rule on purpose — it starts "/a" — so it
+      // reaches both embeds. Escaping, not refusal, is what this row is about.
+      const payload = "/apps</script><img src=x onerror=alert(1)>\u2028";
+      const html = await anonymousPage(`${paths.login}?next=${encodeURIComponent(payload)}`);
+      expect(html).not.toContain("</script><img");
+      expect(html).not.toContain("<img src=x");
+
+      const landing = landingLiteralOf(html);
+      expect(landing).not.toContain("<");
+      expect(landing).not.toContain("\u2028");
+      // Escaped, not truncated: the literal still evaluates to exactly what arrived.
+      expect(JSON.parse(landing) as string).toBe(payload);
+
+      const callback = callbackLiteralOf(html);
+      expect(callback).toContain("&lt;/script&gt;");
+      expect(unescapeAttribute(callback)).toBe(payload);
+
+      // The twin: a relative deep link reaches the same two consumers byte for byte, so
+      // the escape above is an escape and not a fallback wearing one's clothes.
+      const clean = await anonymousPage(`${paths.login}?next=${encodeURIComponent(paths.settingsTokens)}`);
+      expect(JSON.parse(landingLiteralOf(clean)) as string).toBe(paths.settingsTokens);
+      expect(unescapeAttribute(callbackLiteralOf(clean))).toBe(paths.settingsTokens);
+    },
   );
 
   // plan row 2. The posted arm names TWO spellings deliberately: an absolute callbackURL
   // already lands on /apps under today's `landingOf` (it fails `startsWith("/")`), so the
   // backslash spelling is the leg that fails until `hubRelative` lands — without it no row
   // here gates the posted consumer's half of the fix.
-  it.todo(
+  it(
     `§4 · ?next=https://evil.example, ?next=//evil.example, ?next=/%5Cevil.example (the backslash spelling a browser folds into //) and an empty ?next= each land on /apps in BOTH consumers — the script's LANDING and the hidden callbackURL — and a sign-in POST carrying an absolute callbackURL, or that same backslash spelling which today's two-branch test lets through, redirects to /apps too (the posted twin, one rule)`,
+    async () => {
+      for (const hostile of ["https://evil.example", "//evil.example", "/\\evil.example", ""]) {
+        const html = await anonymousPage(`${paths.login}?next=${encodeURIComponent(hostile)}`);
+        expect(JSON.parse(landingLiteralOf(html)) as string, hostile).toBe(paths.apps);
+        expect(unescapeAttribute(callbackLiteralOf(html)), hostile).toBe(paths.apps);
+        // Not merely "not honoured": the string reaches no embed of the document at all.
+        expect(html, hostile).not.toContain("evil.example");
+      }
+
+      // The posted twin. The password is the RIGHT one deliberately — a refusal redirects
+      // to /login whatever the callbackURL said, and would pin nothing about `landingOf`.
+      for (const hostile of ["https://evil.example/hijack", "/\\evil.example/hijack"]) {
+        const action = actionFor(await anonymousPage(paths.login), "username");
+        const answered = await formPost(action, {
+          username: signer.owner.username,
+          password: SEEDED_OWNER_PASSWORD,
+          callbackURL: hostile,
+        });
+        expect(answered.status, await answered.text()).toBe(303);
+        expect(answered.headers.get("Location"), hostile).toBe(paths.apps);
+        // A refusal wearing a 303: the sign-in itself has to have succeeded.
+        expect(sessionCookieOf(answered), hostile).not.toBeNull();
+      }
+    },
   );
 
-  // plan row 3
-  it.todo(
+  it(
     `§13 · a TOTP challenge reached as /login?step=totp&next=/settings/tokens links "Use a backup code instead" to /login?method=backup-code&next=%2Fsettings%2Ftokens, and the backup-code card it opens carries callbackURL=/settings/tokens — with no next= the switch links carry none and the card lands on /apps (the twin)`,
+    async () => {
+      const totp = await anonymousPage(
+        `${paths.login}?step=totp&next=${encodeURIComponent(paths.settingsTokens)}`,
+      );
+      const href = switchHrefOf(totp, "backup-code");
+      const switched = new URL(href, ORIGIN);
+      expect(switched.pathname).toBe(paths.login);
+      expect(switched.searchParams.get("method")).toBe("backup-code");
+      expect(switched.searchParams.get("next")).toBe(paths.settingsTokens);
+      // The encoded spelling the title names — a switch link a browser can follow.
+      expect(href).toContain("next=%2Fsettings%2Ftokens");
+
+      // Followed as a browser follows it: the card it opens posts the same landing.
+      const backup = await anonymousPage(href);
+      expect(unescapeAttribute(callbackLiteralOf(backup))).toBe(paths.settingsTokens);
+      // And the way back carries it too, so a round trip between the two cards is lossless.
+      expect(new URL(switchHrefOf(backup, "totp"), ORIGIN).searchParams.get("next")).toBe(
+        paths.settingsTokens,
+      );
+
+      // The twin: with no deep link there is nothing to carry, and `loginUrl` drops an
+      // empty field rather than spelling it — so the link is bare and the card lands on /apps.
+      const bare = await anonymousPage(`${paths.login}?step=totp`);
+      const bareHref = switchHrefOf(bare, "backup-code");
+      expect(bareHref).toBe(`${paths.login}?method=backup-code`);
+      expect(unescapeAttribute(callbackLiteralOf(await anonymousPage(bareHref)))).toBe(paths.apps);
+    },
   );
 
-  // plan row 4
-  it.todo(
+  it(
     `§19.5 · a switch made from the signed-authorize arm keeps the /oauth2/authorize landing byte for byte, pinned at both ends: the TOTP card's backup-code link carries inside next= the very landing that card itself posts as callbackURL, and the card the link opens renders that same string as its own callbackURL, sig and client_id intact`,
+    async () => {
+      const { clientId } = await registerOAuthClient();
+      const authorized = await call(new Request(authorizeUrl(clientId)));
+      expect(authorized.status).toBe(302);
+      const location = authorized.headers.get("Location") ?? "";
+      expect(location).toMatch(/^\/login\?/);
+
+      // The challenge card, reached on that same signed query.
+      const totp = await anonymousPage(`${location}&step=totp`);
+      const posted = unescapeAttribute(callbackLiteralOf(totp));
+      const href = switchHrefOf(totp, "backup-code");
+      const carried = new URL(href, ORIGIN).searchParams.get("next") ?? "";
+      expect(carried.startsWith(`${paths.auth.base}/oauth2/authorize?`)).toBe(true);
+      expect(carried).toContain(`client_id=${clientId}`);
+      expect(carried).toContain("sig=");
+      // End one: the link carries the landing the card it sits on was about to post.
+      expect(carried).toBe(posted);
+
+      // End two: the card the link opens posts that same string. One equality is the whole
+      // round trip — `loginUrl` encoded it, `loginProps` decoded it, and `hubRelative` let
+      // it through because it starts "/api/…".
+      const backup = await anonymousPage(href);
+      expect(unescapeAttribute(callbackLiteralOf(backup))).toBe(carried);
+      // The signed pair rides INSIDE next=, never on /login's own query, which is why the
+      // switched URL does not re-trigger the authorize arm and land back on itself.
+      expect(new URL(href, ORIGIN).searchParams.has("sig")).toBe(false);
+    },
   );
 
   // plan row 5, with the 404 on the NO-header side of the twin — a deviation from § Rows,
@@ -1241,8 +1379,33 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   // the tree's only text/html site); every 404 here is `noSuchPage()`, text/plain, built
   // without `render`. On the twin's side the 404 earns its keep: it proves the header
   // rides the page renderer rather than a blanket middleware.
-  it.todo(
+  it(
     `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — while the hub's non-HTML answers, /styles.css and the surface's 404, carry none (the twin)`,
+    async () => {
+      const CSP = "frame-ancestors 'self'; base-uri 'self'; object-src 'none'";
+      const carriers = [
+        await call(new Request(`${ORIGIN}${paths.login}`)),
+        await get(paths.apps),
+        await get(paths.appNew),
+      ];
+      for (const carrier of carriers) {
+        expect(carrier.status).toBe(200);
+        expect(carrier.headers.get("Content-Type")).toContain("text/html");
+        expect(carrier.headers.get("Content-Security-Policy")).toBe(CSP);
+      }
+
+      // The twin, and the reason it is worth having: these two prove the header rides the
+      // PAGE renderer rather than a blanket middleware over every response.
+      const css = await call(new Request(`${ORIGIN}${paths.stylesheet}`));
+      expect(css.status).toBe(200);
+      expect(css.headers.get("Content-Type")).toContain("text/css");
+      expect(css.headers.get("Content-Security-Policy")).toBeNull();
+
+      const missing = await get(`${paths.appDetail("catalog")}/tools`);
+      expect(missing.status).toBe(404);
+      expect(missing.headers.get("Content-Type")).toContain("text/plain");
+      expect(missing.headers.get("Content-Security-Policy")).toBeNull();
+    },
   );
 });
 

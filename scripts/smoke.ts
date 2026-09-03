@@ -439,6 +439,27 @@ async function main(): Promise<number> {
       return `/settings 200 with the six-pane rail; /settings/clients 200; /settings/password 404; /oauth/connections 301 → /settings/clients; bearer-only change-password → 302 /login`;
     });
 
+    await step("§4/§15 · /login's ?next= is escaped where it is embedded and refused where it is absolute", async () => {
+      // The suite pins both consumers against miniflare; only the deployment says whether
+      // the bytes that reach a real browser are the escaped ones. Hostile spelling first —
+      // a value that PASSES the hub-relative rule and so reaches the inline script.
+      const injected = await fetch(`${ORIGIN}/login?next=/apps%3C/script%3E%3Cimg%20src=x%3E`);
+      expect(injected.status === 200, `/login with an injected next= → ${injected.status}`);
+      const html = await injected.text();
+      // The payload's own bytes, not a bare `</script><` — the passkey script is the last
+      // child of .auth-card, so `</script></div>` puts that pair in every /login response.
+      expect(
+        !html.includes("</script><img") && !html.includes("<img src=x"),
+        "/login embedded the raw payload from ?next=",
+      );
+      // Then the open-redirect half: an absolute target reaches no embed at all.
+      const absolute = await fetch(`${ORIGIN}/login?next=https://evil.example`);
+      expect(absolute.status === 200, `/login with an absolute next= → ${absolute.status}`);
+      const callbackUrl = /name="callbackURL"\s+value="([^"]*)"/.exec(await absolute.text())?.[1];
+      expect(callbackUrl === "/apps", `absolute next= rendered callbackURL "${callbackUrl ?? "(none)"}"`);
+      return `injected next= carries no "</script><img" and no "<img src=x"; absolute next= → callbackURL /apps`;
+    });
+
     await step(`§13 · /apps/${APP} renders the Tools pane from the app's registered catalog`, async () => {
       // The tunnel leg above registered `echo` over the real client library; the detail
       // page's Tools pane reads the DO's cached catalog through the door's own listing

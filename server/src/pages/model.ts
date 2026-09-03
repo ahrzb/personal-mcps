@@ -458,6 +458,37 @@ export const paths = {
  * ------------------------------------------------------------------ */
 
 /**
+ * The ONE rule both of /login's landing consumers stand on: a target that stays inside
+ * this hub, or null. A path starting `/` whose second character is neither `/` nor `\` is
+ * returned; anything else — absolute, scheme-relative, the backslash spelling
+ * browsers fold into `//` (the WHATWG parser treats `\` as `/` for special schemes, which
+ * is why `/\evil.example` is a host and not a path), empty, absent — is null.
+ *
+ * Both consumers are a caller's input: the `?next=` a browser follows into GET /login, and
+ * the `callbackURL` a browser posts to the sign-in routes. Honouring an absolute one makes
+ * /login an open redirect for anyone who can get a browser here, so the two read one rule
+ * rather than two spellings of it.
+ */
+export function hubRelative(target: string | null | undefined): string | null {
+  // Judged after the strip the WHATWG parser performs first: it deletes every ASCII tab,
+  // LF and CR before parsing, so `/<TAB>/evil.example` IS `//evil.example` by the time a
+  // browser reads it. The stripped string is returned because it is what the browser uses.
+  const path = target?.replace(/[\t\n\r]/g, "") ?? "";
+  return path.startsWith("/") && path[1] !== "/" && path[1] !== "\\" ? path : null;
+}
+
+/** /login under a set of query fields; an absent or empty one leaves no trace. */
+export function loginUrl(fields: Record<string, string | null | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [name, value] of Object.entries(fields)) {
+    if (value === null || value === undefined || value === "") continue;
+    search.set(name, value);
+  }
+  const rendered = search.toString();
+  return rendered === "" ? paths.login : `${paths.login}?${rendered}`;
+}
+
+/**
  * The three things /login can be showing, as one discriminated union rather than
  * three pages: better-auth answers a password POST with either a session or a
  * two-factor challenge, and the backup-code form is the same challenge in
@@ -2351,8 +2382,10 @@ export function loginProps(now: string, query: URLSearchParams, rawSearch: strin
     // never reads a destination out of that query — no next=, no return_to= — which is
     // exactly why the check below runs BEFORE `query.get("next")` is ever consulted:
     // identity's own login redirect (an ordinary deep link, e.g. from /approvals/<id>)
-    // carries no `sig`/`client_id` pair, so nothing here changes for it.
-    redirectTo: oauthRedirectTarget(query, rawSearch) ?? query.get("next"),
+    // carries no `sig`/`client_id` pair, so nothing here changes for it. The OAuth arm is
+    // NOT passed through `hubRelative`: it is relative by construction, and its query is
+    // the signed bytes. The `next` arm is a caller's input and goes through the rule.
+    redirectTo: oauthRedirectTarget(query, rawSearch) ?? hubRelative(query.get("next")),
   };
 }
 

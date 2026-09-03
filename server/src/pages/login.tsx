@@ -15,7 +15,7 @@
 import { html } from "hono/html";
 import type { FC } from "hono/jsx";
 import type { LoginProps, LoginStep } from "./model";
-import { paths } from "./model";
+import { loginUrl, paths } from "./model";
 
 /** Not exported by ./layout — the same mark, redrawn here for this chromeless page. */
 const BrandMark: FC = () => (
@@ -42,19 +42,44 @@ const STEP_TITLE: Record<LoginStep["kind"], string> = {
 };
 
 /**
- * There is no §13 path for switching between the totp and backup-code sub-views of a
- * pending challenge — `paths` only names the two verify targets, not this. The pending
- * challenge itself lives in better-auth's own session, not in this query string; `method`
- * only tells GET /login which card to draw, so this is additive to `paths.login` rather
- * than a route of its own. Flagged in this task's returned styleGaps for the model owner.
+ * The link between the totp and backup-code sub-views of a pending challenge. The pending
+ * challenge itself lives in better-auth's own session, not in this query string: `method`
+ * only tells GET /login which card to draw, which is why this is additive to `paths.login`
+ * rather than a route of its own.
+ *
+ * It carries the LANDING as well, because the card it opens has to post the same
+ * `callbackURL` the card it left was posting — a switch that dropped it would silently
+ * turn a deep link (and §19.5's signed authorize landing) into /apps. `loginUrl` encodes
+ * the value and `loginProps` reads it back byte for byte, so the round trip is lossless.
  */
-function switchMethod(method: "totp" | "backup-code"): string {
-  return `${paths.login}?method=${method}`;
+function switchMethod(method: "totp" | "backup-code", redirectTo: string | null): string {
+  return loginUrl({ method, next: redirectTo });
 }
 
 /** The always-present redirect target, spelled out even when `redirectTo` is null. */
 function landingUrl(redirectTo: string | null): string {
   return redirectTo ?? paths.apps;
+}
+
+/**
+ * One value as a JavaScript literal inside an inline `<script>` — a JSON literal is one,
+ * with the three characters an HTML parser or a JS parser reads differently escaped:
+ *
+ *  - `<` → `\u003c`, which is what closes the `</script>` and `<!--` doors. `/` buys
+ *    nothing once `<` is gone and is deliberately left alone.
+ *  - U+2028 / U+2029, legal in JSON strings and line TERMINATORS in JavaScript source,
+ *    which would otherwise end the statement mid-literal.
+ *
+ * Every embed in this file's scripts goes through it, the compile-time constants included,
+ * so the rule is "a script literal is `jsLiteral`" rather than "this one variable". It
+ * lives here rather than in ./format because no other page embeds a non-constant value:
+ * layout.tsx's `id`, settings.tsx's two paths and apps.tsx's dialog id are all constants.
+ */
+function jsLiteral(value: string): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }
 
 const CredentialsCard: FC<{ step: Extract<LoginStep, { kind: "credentials" }>; redirectTo: string | null }> = ({
@@ -144,7 +169,7 @@ const TotpCard: FC<{ step: Extract<LoginStep, { kind: "totp" }>; redirectTo: str
         the narrow breakpoint (.switch-method in styles.css); desktop keeps it
         a plain link (TwoFactor.dc.html). */}
     <p class="muted center switch-method">
-      <a href={switchMethod("backup-code")}>Use a backup code instead</a>
+      <a href={switchMethod("backup-code", redirectTo)}>Use a backup code instead</a>
     </p>
   </div>
 );
@@ -180,7 +205,7 @@ const BackupCodeCard: FC<{ step: Extract<LoginStep, { kind: "backup-code" }>; re
       </button>
     </form>
     <p class="muted center">
-      <a href={switchMethod("totp")}>Use your authenticator app instead</a>
+      <a href={switchMethod("totp", redirectTo)}>Use your authenticator app instead</a>
     </p>
   </div>
 );
@@ -236,9 +261,9 @@ function passkeySignInScript(landing: string): string {
   return `(function () {
   var buttons = document.querySelectorAll('[data-passkey-signin]');
   if (!buttons.length || !window.PublicKeyCredential) return;
-  var OPTIONS = ${JSON.stringify(paths.auth.passkeyAuthenticateOptions)};
-  var VERIFY = ${JSON.stringify(paths.auth.passkeyVerifyAuthentication)};
-  var LANDING = ${JSON.stringify(landing)};
+  var OPTIONS = ${jsLiteral(paths.auth.passkeyAuthenticateOptions)};
+  var VERIFY = ${jsLiteral(paths.auth.passkeyVerifyAuthentication)};
+  var LANDING = ${jsLiteral(landing)};
   function decode(value) {
     var raw = atob(String(value).replace(/-/g, '+').replace(/_/g, '/'));
     var out = new Uint8Array(raw.length);

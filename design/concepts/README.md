@@ -15,8 +15,7 @@ hub answers a deny with a redirect, never a page).
 
 | Board | Explores |
 |---|---|
-| `Agents`, `AgentDetail` | `/agents` list + detail: per-app grant cards, agent tokens |
-| `GrantEditorStates` | the (agent × app) editor — Save replaces the pair's whole set; undeclared-role warn (tunneled) vs error (proxied); the `all` role |
+| ~~`Agents`, `AgentDetail`, `GrantEditorStates`~~ | adopted 2026-09-03 (§13 `/agents`, `/agents/<slug>`, the grant editor) — moved back to `design/` |
 | `AuditDetailStates` | in-page expanded audit row, lazily fetched: metadata chips, redacted bodies, typed stubs, bodies-off, non-call events |
 | `OauthConsent` + `OauthConsentStates` | the §19.5 consent screen (self-registered marker, zero-agents empty state) — a step inside the authorize redirect, never navigated to, so it stays chromeless and gets no nav slot |
 | `AppNewProxiedStates` | the proxied add-app branch: headers vs oauth, mid-connect, endpoint error |

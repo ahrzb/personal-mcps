@@ -50,10 +50,13 @@ EXPIRED CODE`, `AppNewStates · TOKEN REVEAL`).
 
 ## Concepts (moved to `design/concepts/`, 2026-09-02)
 
-The unreviewed exploration boards — `Agents`, `AgentDetail`, `GrantEditorStates`,
-`AuditDetailStates`, `AppNewProxiedStates`, `ReauthGate`, `OauthConsentStates` — live in
-`design/concepts/` with their own `canvas.json` and README. Nothing there is contract; a
-board returns here when the owner reviews it and §13 is amended. Canvas page 2 now holds
+The unreviewed exploration boards — `AuditDetailStates`, `AppNewProxiedStates`,
+`ReauthGate`, `OauthConsentStates` — live in `design/concepts/` with their own
+`canvas.json` and README. Nothing there is contract; a board returns here when the owner
+reviews it and §13 is amended. `Agents`, `AgentDetail` and `GrantEditorStates` returned
+on 2026-09-03 (roadmap step 9: §13 gained `/agents`, `/agents/<slug>` and the grant
+editor with the boards' strings pinned; the top nav's fifth slot rides the narrow nav's
+existing scroller). Mobile variants for the three are still to draw. Canvas page 2 now holds
 only the boards §13 adopted on 2026-09-02 (`AppDetail*`, `SettingsTokens`,
 `OauthConnections`) and `OauthConsent`, which draws the live §19.5 page.
 

@@ -231,7 +231,10 @@
     and only shelling it into the rail was acceptable and lost to one-prefix uniformity —
     rail state and §4's gate as a single rule — and to the redirect costing one route.
     `/oauth/consent` keeps no nav slot on purpose (a step inside the authorize redirect,
-    never navigated to) and §13 now says so in as many words. **Scope, pinned.** Only the
+    never navigated to) and §13 now says so in as many words. **Scope, pinned.** *(2026-09-03:
+    the `/agents` list, `/agents/<slug>` and the (agent × app) grant editor are now
+    specced in §13 — roadmap step 9 — with their three boards adopted as contract; the
+    rest of this paragraph's deferrals stand as written.)* Only the
     reviewed pages are specced: the `/agents` list and detail, the grant editor, the audit
     expanded-row states and the proxied add-app states stay unreviewed and deferred; where
     the new pages point at them (the app page's Edit grants, agent slugs as links, the

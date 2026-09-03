@@ -261,6 +261,30 @@
       "h": 600,
       "title": "OAuth consent",
       "page": "page-2"
+    },
+    {
+      "file": "GrantEditorStates.dc.html",
+      "x": 0,
+      "y": 7150,
+      "w": 520,
+      "h": 1800,
+      "title": "Grant editor · States"
+    },
+    {
+      "file": "Agents.dc.html",
+      "x": 640,
+      "y": 7150,
+      "w": 1240,
+      "h": 720,
+      "title": "Agents"
+    },
+    {
+      "file": "AgentDetail.dc.html",
+      "x": 2000,
+      "y": 7150,
+      "w": 1240,
+      "h": 1020,
+      "title": "Agent detail"
     }
   ],
   "annotations": [

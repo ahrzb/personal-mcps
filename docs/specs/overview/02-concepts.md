@@ -43,7 +43,9 @@
   own roles; the hub logs such drift, §6, but the blast radius is accepted as
   one-app-wide).
 - **Agent** — an identity for an AI agent or system (`claude`, `cron`). Holds
-  **grants**.
+  **grants**. Slugs are `[a-z0-9-]`, unique per owner, and `new` is reserved from them
+  *(2026-09-03: `/agents/new` is the create form, §13 — the same derivation that keeps
+  `new` and `connect` out of app slugs)*.
 - **Grant** — (agent, app, role, mode). An agent may call exactly
   the tools matched by the union of its granted roles per app. `mode` is `allow`
   (default) or `approval`: an approval-mode call does not execute until the owner

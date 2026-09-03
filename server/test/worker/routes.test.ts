@@ -319,6 +319,12 @@ describe("§2 · usernames may not collide with routes", () => {
     expect(deep.status).toBe(404);
     expect(await deep.text()).toBe(body);
   });
+
+  // G36 (2026-09-03): four passkey endpoints were spelled as literals beside a `base`
+  // that exists so nothing else has to be. Composed now; this row keeps them composed.
+  it.todo(
+    "12. §4 · every paths.auth endpoint that is better-auth's own starts with paths.auth.base — the four passkey ceremonies included — while the hub's own translations start with /login or /settings, never with the mount (the twin)",
+  );
 });
 
 describe("§2/§7 · what the fallthrough serves", () => {

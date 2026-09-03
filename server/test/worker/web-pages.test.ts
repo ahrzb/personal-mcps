@@ -1168,6 +1168,16 @@ describe(`§13 · /audit's filter row — the window it names and the window it 
   });
 });
 
+describe("§13 · /approvals — deciding a request that is no longer pending", () => {
+  // G52 (2026-09-03): the lost race — a request decided or expired between the page
+  // render and the click — landed as a red "Approval decide failed" through the generic
+  // dispatch. §13 now pins the calm answer. approval_decide refuses every non-decidable
+  // id with one message on purpose (§7's probe rule), so the tone is keyed on the op.
+  it.todo(
+    `§13 · deciding an approval that is no longer pending lands back on /approvals with the warning "That request is no longer pending." — never a red "failed" notice — · deciding a pending one lands with the success notice (the twin)`,
+  );
+});
+
 describe("§8 · parity direction B — forms and schemas are one source", () => {
   it("16. §8 · every form rendered on /apps and /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)", async () => {
     for (const path of [paths.apps, paths.approvals]) {

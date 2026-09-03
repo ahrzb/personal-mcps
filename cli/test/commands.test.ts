@@ -118,7 +118,30 @@ function replyFor(op: string): Record<string, unknown> {
       // One row exercises the print path, lastUsedAt: null its "never" fallback (§19).
       return {
         connections: [
-          { id: "conn_FAKE", clientId: "client_FAKE", clientName: "Claude", agentSlug: "bot", createdAt: 0, lastUsedAt: null },
+          {
+            id: "conn_FAKE",
+            clientId: "client_FAKE",
+            clientName: "Claude",
+            agentSlug: "bot",
+            createdAt: 0,
+            lastUsedAt: null,
+            revokedAt: null,
+            redirectOrigin: "https://client.example",
+            selfRegistered: true,
+          },
+          // The twin row: vouched at registration, and a provider that holds no client row
+          // reports an empty origin — the cell must print empty, never `undefined`.
+          {
+            id: "conn_FAKE2",
+            clientId: "client_FAKE2",
+            clientName: null,
+            agentSlug: "bot",
+            createdAt: 0,
+            lastUsedAt: 0,
+            revokedAt: null,
+            redirectOrigin: "",
+            selfRegistered: false,
+          },
         ],
       };
     default:
@@ -437,6 +460,14 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
     expect(await main(["call", "news", "echo", "hello"])).toBe(2);
     expect(sent).toHaveLength(1);
   });
+});
+
+describe("§10/§19 · pmcp connections prints what connection_list already knows", () => {
+  // G29 (2026-09-03): the table dropped the client's redirect origin and the DCR marker,
+  // the two facts a reader wants first when a row looks unfamiliar.
+  it.todo(
+    "§10 · `pmcp connections` prints ORIGIN and SELF-REGISTERED beside the six columns it had — the origin verbatim from connection_list's redirectOrigin, `yes` for a self-registered client and blank for a vouched one · a row with an empty origin prints an empty cell, never `undefined` (the twin)",
+  );
 });
 
 describe("§20.6 · the data-model commands, gateway sugar over an MCP method", () => {

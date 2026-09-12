@@ -151,6 +151,13 @@ That prints an 87-character public key and a 43-character private key — for ex
 `BJ81ZfPO…VLl1M` and `jLldFOXd…WO44o`. Keep them together; the public half is served
 to browsers by the approvals page, and a mismatched pair fails only at push time.
 
+There is nothing else to sign. Web Push on Apple's platforms is the same VAPID ES256
+pair every other browser uses — no Apple Developer Program membership, no push
+certificate, and no Safari "website push package" (those were the pre-16.4 mechanism).
+What Apple additionally requires is on the *device*, not in your secrets: iOS delivers
+web push only to a site the owner has **added to the Home Screen**, which is what the
+PWA manifest (§13) makes installable. Safari on macOS 13+ needs no install.
+
 ### Putting them in
 
 `wrangler secret put` reads the value from stdin (or prompts) — never from argv, so

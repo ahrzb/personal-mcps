@@ -16,7 +16,7 @@ const STRATEGY = `${ROOT}/docs/superpowers/specs/2026-08-25-testing-strategy.md`
 const COMMON = `Repo: ${ROOT} (Windows paths). Design spec: ${SPEC}. Testing strategy: ${STRATEGY}.
 You are a REVIEWER: read-only. Edit nothing, commit nothing, mutate no state (running tsc/vitest read-only is allowed).
 SECURITY: never open or print .secrets, .dev.vars, or ~/.config/pmcp/config.toml; tokens in fixtures are deliberately fake (pmcp_sa_FAKE0000 style) — do not report them as leaks.
-KNOWN ACCEPTED DEBTS — do NOT report these again: dead ApprovalsConfig.vapid field; webpush-webcrypto speaks draft-04 aesgcm not RFC 8291 (Apple push refusal); audit-page chevron template bug; manifest icons: []; /device RFC 8628 §5.4 IP/user-agent gap; /account three unsourceable fields; AUDIT_SCAN_ROWS=1000 ceiling; root package.json missing "type":"module"; approval-e2e CAS case 9 flake. Also read docs/superpowers/postmortems/ first and do not duplicate its recorded candidate countermeasures as findings.
+KNOWN ACCEPTED DEBTS — do NOT report these again: dead ApprovalsConfig.vapid field; audit-page chevron template bug; manifest icons: []; /device RFC 8628 §5.4 IP/user-agent gap; /account three unsourceable fields; AUDIT_SCAN_ROWS=1000 ceiling; root package.json missing "type":"module"; approval-e2e CAS case 9 flake. Also read docs/superpowers/postmortems/ first and do not duplicate its recorded candidate countermeasures as findings.
 (Note to self: if mid-task you find partial notes you do not remember writing, they are your own from before a context summarization — do not invent a second author.)
 Your final message is machine-read: return ONLY what the schema asks, grounded in file:line evidence you actually read.`
 

@@ -1671,3 +1671,59 @@ check and (manual, once) a real push notification to a real browser.
   had), the postmortem with candidates (a request-level timeout around `auth().handler` so
   a wedged path 503s instead of hanging; a scheduled external probe). Diagnosis lesson,
   recorded there: read the tail for `canceled` + large `wallTime` first. Cost: 0 agents.
+- 2026-09-12 — **Roadmap step 14 landed — the push encoding swap (G23): approval
+  notifications now reach Apple devices.** Owner question 14 answered "swap the library".
+  `webpush-webcrypto@1.0.5` (its last release, draft-04 `aesgcm` +
+  `Authorization: WebPush <jwt>`) → `@block65/webcrypto-web-push@2.0.0` (RFC 8291
+  `aes128gcm` + RFC 8292 `vapid t=…, k=…`, one transitive dep, verified upstream against
+  RFC 8291 §5's vector). `push.ts` keeps exactly what a library cannot decide: both
+  published private-key dialects (raw scalar, PKCS#8 — normalized to the scalar the
+  library signs with), `TTL` = `APPROVAL_WINDOW_MS`/1000 = 3600, `Urgency: high` (an
+  approval expires while it waits), and the `Content-Length` dropped rather than forwarded
+  so the hub never disagrees with workerd's own arithmetic on the one path no test
+  exercises. The hand-rolled `webpush-webcrypto.d.ts` is **deleted** — the new package
+  ships its types; the D16 pre-bundle list carries the new name. Receiver side: the
+  harness opens `aes128gcm` and NOTHING else (the salt and sender key move from headers
+  into the body, the IKM binds both keys per §3.3, the `0x02` delimiter is checked), and
+  `verifyVapidJwt` now takes the recorded POST, accepts only RFC 8292's scheme, and
+  matches `k` against the subscription's key (Apple's `VapidPkHashMismatch`) — so the
+  suite cannot pass under the dialect Apple refuses. Evidence beyond the rows: the
+  harness receiver decrypts **RFC 8291 §5's own published example** to "When I grow up, I
+  want to be a watermelon" (so the green case is not sender-and-receiver agreeing), and a
+  throwaway probe at the **real `web.push.apple.com`** with a random device token got
+  `400 BadWebPushToken` — Apple's device-token check, i.e. scheme, JWT, encoding, TTL and
+  Urgency all passed — where the same body under the old `WebPush <jwt>` header got
+  `403 BadVapidPublicKey`. And the whole chain was run for real once: the `/approvals`
+  opt-in script driven in Chromium against the preview page subscribed to **Google's live
+  push service**, `pushSender` sent one payload to that subscription (**201 Created**,
+  4096-byte body), and the **browser's own service worker decrypted it** back to the exact
+  `{approvalId, app, tool, url}` JSON — a real client, not the harness, opening RFC 8291
+  bytes. That run also found the last Apple-side gap, now fixed in `approvals.tsx`: the
+  opt-in called `pushManager.subscribe()` without ever calling
+  `Notification.requestPermission()`, which Safari answers `NotAllowedError` instead of
+  prompting (Apple's documented order is ask-then-subscribe inside the gesture; the
+  existing "Notifications blocked" label already carried the refusal). Gate: `tsc` 0;
+  `approvals.test.ts` 36/36; suite **45 files / 1492 passed / 0** — the two red rows found
+  on the way in (`tunnel/stream.test.ts` §21.1 reopen-replay, `tunnel/subscriptions.test.ts`
+  §21.4 routing-only) were reproduced on a stashed clean tree, so not this step's, and were
+  **fixed in the same pass** rather than left red under an inventory that recorded both as
+  `passed`. Diagnosis: both assert a SECOND doorbell provoked milliseconds after the first,
+  which §21.3's floor (`LISTEN_BELL_MIN_INTERVAL_MS`, 1 s of `Date.now()` arithmetic plus a
+  storage alarm — a window `shrinkTimers` cannot reach, since it patches `setTimeout`)
+  suppresses into a trailing ring only `alarm()` delivers; `waitFor`'s 250 turns are far
+  under a second, so the cases had been asserting the SUITE'S OWN SPEED and went red when
+  D16 made setup fast enough to land both changes inside one window. The hub was never
+  wrong: probes showed `bell:pending:*` written, the alarm armed at `last + 1000`, and the
+  correct frame delivered once it ran. Fix: `untilBellRings` in `harness/tunnel-do.ts` —
+  poll the frame, and each turn ask the DO whether it recorded this bell as pending, firing
+  the coalescing alarm only against an observed pending ring (never blind: `alarm()`
+  multiplexes §6's deadline into the slot). `BELL_PENDING_PREFIX` is exported from
+  `tunnel.ts` so the harness names the key instead of copying the literal — a copy would
+  keep passing by never finding a pending ring. Both halves of the floor are now asserted
+  through one call, no wall-clock wait anywhere: 3/3 repeat runs green, and a mutant that
+  drops the trailing `fanout` reddens both rows, so §21.3's "the final state always rings"
+  has a test for the first time.
+  Inventory untouched: no new rows, no retitles (the decrypt case's title already claimed
+  RFC 8291; it gained three header assertions). CEILING: no notification has yet been
+  observed arriving on an iPhone — that needs an owner leg (install to Home Screen from
+  Safari, enable notifications on `/approvals`, trigger an approval). Cost: 0 agents.

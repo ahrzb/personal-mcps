@@ -277,7 +277,13 @@ cannot pass by accident when the library changes.
 
 **Recommendation: swap the library in step 14, pin the label now.**
 
-**Answer:**
+**Answer:** *(2026-09-12)* **Swap the library.** Done: `@block65/webcrypto-web-push@2`
+sends RFC 8291 `aes128gcm` under an RFC 8292 `vapid t=…, k=…` header. The label the
+receiver pins is now `aes128gcm` (`push-service.ts`), so the decrypt case refuses the old
+dialect; the receiver itself was checked against RFC 8291 §5's published example, and
+Apple's live endpoint now answers the transport `BadWebPushToken` — its device-token
+check, i.e. everything before it passed — where the old dialect got `403
+BadVapidPublicKey`.
 
 ### 15. May a test that was never reviewed as a title stand (G26 ii)
 

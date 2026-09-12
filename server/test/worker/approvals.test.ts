@@ -37,22 +37,21 @@
 // and reference limits.APPROVAL_WINDOW_MS / RETENTION_DAYS by name, never a literal (§7).
 // Parallel, per-file isolation, order free.
 //
-// IMPLEMENTATION NOTE (2026-08-26), superseding the 2026-08-25 one that parked the bullet
-// above: the transport landed (`src/push`, on webpush-webcrypto), so the decrypt case is
-// real and nothing else moved — every other case still runs against the seam
-// (`ApprovalsConfig.push`: one encrypted POST, one status back), whose fake is here rather
-// than at an outboundService endpoint. The split is deliberate: which subscriptions a push
-// reaches, that the PAYLOAD names app, tool and approval id and carries no arguments,
-// that a 404/410 prunes and nothing else does, and that a failing push never fails the
-// request are all decisions of `approvals`, and are pinned at the seam; only the one case
-// whose subject is the BYTES runs the real transport into a push service the suite plays
-// (harness/push-service.ts).
+// IMPLEMENTATION NOTE (2026-08-26, amended 2026-09-12): the transport landed (`src/push`),
+// so the decrypt case is real and nothing else moved — every other case still runs against
+// the seam (`ApprovalsConfig.push`: one encrypted POST, one status back), whose fake is
+// here rather than at an outboundService endpoint. The split is deliberate: which
+// subscriptions a push reaches, that the PAYLOAD names app, tool and approval id and
+// carries no arguments, that a 404/410 prunes and nothing else does, and that a failing
+// push never fails the request are all decisions of `approvals`, and are pinned at the
+// seam; only the one case whose subject is the BYTES runs the real transport into a push
+// service the suite plays (harness/push-service.ts).
 //
-// Carried honestly from that transport: webpush-webcrypto@1.0.5 encrypts with the older
-// `aesgcm` content encoding rather than RFC 8291's `aes128gcm` (src/push's header states
-// the gap in full). The case below therefore decrypts what the sanctioned library actually
-// sends; its title's "RFC 8291" is the SPEC's requirement, not yet the wire's, and closing
-// that is a dependency decision above this file's pay grade.
+// The 2026-09-12 amendment is the library swap (G23): the wire is now RFC 8291 `aes128gcm`
+// under an RFC 8292 `vapid t=…, k=…` header, which is what Apple's push service accepts
+// and what this file's title has always claimed. The receiver opens that encoding and no
+// other, so the case below fails if the hub ever regresses to the draft dialect — the
+// whole point of pinning one encoding in the harness.
 //
 // deps: test/harness/push-service (the push service the one decrypt case runs against) ·
 // server/src/push (pushSender — the real transport, wired only by that case) ·
@@ -83,6 +82,7 @@ import type { App } from "../../src/registry";
 import {
   decryptPushBody,
   generateVapidPair,
+  pushHeader,
   pushService,
   subscribeFakeBrowser,
   verifyVapidJwt,
@@ -1115,10 +1115,18 @@ describe("§13/§15 · notifying the owner", () => {
     expect(pushed.posted).toHaveLength(1);
     const [posted] = pushed.posted;
     expect(posted.endpoint).toBe(endpoint("phone"));
+    // The three headers a push service JUDGES the request by, Apple most strictly of all
+    // (`BadWebPushRequest` / `BadTtl` / `BadUrgency` are its own reason codes): the
+    // encoding whose decrypt runs below, a TTL that is the approval's own window in
+    // seconds — the notification dies with the decision it offers — and the urgency that
+    // asks for delivery now rather than at the device's convenience.
+    expect(pushHeader(posted, "content-encoding")).toBe("aes128gcm");
+    expect(pushHeader(posted, "ttl")).toBe(String(Math.floor(APPROVAL_WINDOW_MS / 1000)));
+    expect(pushHeader(posted, "urgency")).toBe("high");
 
     // The hub's identity to the push service: ES256 over the endpoint's ORIGIN (a token
     // minted for one app is not reusable at another) claiming the configured subject.
-    const claims = await verifyVapidJwt(posted.headers.Authorization, vapid.publicKey);
+    const claims = await verifyVapidJwt(posted, vapid.publicKey);
     expect(claims.aud).toBe(new URL(endpoint("phone")).origin);
     expect(claims.sub).toBe(VAPID_SUBJECT);
     // The one assertion in this file judged against the WALL clock, and deliberately: the
@@ -1128,7 +1136,7 @@ describe("§13/§15 · notifying the owner", () => {
     // The oracle has teeth: the same token against another VAPID key is a refusal, so the
     // verification above is the CONFIGURED key's, not any key's.
     const stranger = await generateVapidPair();
-    await expect(verifyVapidJwt(posted.headers.Authorization, stranger.publicKey)).rejects.toThrow();
+    await expect(verifyVapidJwt(posted, stranger.publicKey)).rejects.toThrow();
 
     // Nothing readable rests on the third-party push service: the id is not in the bytes.
     expect(new TextDecoder().decode(posted.body)).not.toContain(opened.approvalId);

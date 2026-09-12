@@ -17,6 +17,9 @@ importers:
       '@better-auth/passkey':
         specifier: 1.7.1
         version: 1.7.1(@better-auth/core@1.7.1(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(@opentelemetry/api@1.9.1)(better-call@1.4.0(zod@4.4.3))(jose@6.2.10)(kysely@0.29.5)(nanostores@1.5.2))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.1)(better-auth@1.7.1(@opentelemetry/api@1.9.1)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.1)(yaml@2.9.0))))(better-call@1.4.0(zod@4.4.3))(nanostores@1.5.2)
+      '@block65/webcrypto-web-push':
+        specifier: 2.0.0
+        version: 2.0.0
       '@clack/prompts':
         specifier: ^1.7.0
         version: 1.7.0
@@ -41,9 +44,6 @@ importers:
       uqr:
         specifier: 0.1.3
         version: 0.1.3
-      webpush-webcrypto:
-        specifier: ^1.0.5
-        version: 1.0.5
       wrap-ansi:
         specifier: ^10.0.1
         version: 10.0.1
@@ -212,6 +212,10 @@ packages:
 
   '@better-fetch/fetch@1.3.1':
     resolution: {integrity: sha512-ABkD1WhyfPZprKRQI3bhATjeiFuNWC9PXhfGWqL+sg/gKrM977oFrYkdb4msM3hgUGonr7KlOsOFT5TU2rht9g==}
+
+  '@block65/webcrypto-web-push@2.0.0':
+    resolution: {integrity: sha512-BMrw8hABq5krABWPy3zFJvBC73HeRkyT/GTZ2AD7wqzo9hd9vO56MstBqjGMIxIw3e4lbRUbYxgihCcfhoTI2g==}
+    engines: {node: '>=22.0.0'}
 
   '@clack/core@1.4.3':
     resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
@@ -1315,6 +1319,10 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  uint8array-extras@1.5.0:
+    resolution: {integrity: sha512-rvKSBiC5zqCCiDZ9kAOszZcDvdAHwwIKJG33Ykj43OKcWsnmcBRL09YTU4nOeHZ8Y2a7l1MgTd08SBe9A8Qj6A==}
+    engines: {node: '>=18'}
+
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
@@ -1411,9 +1419,6 @@ packages:
         optional: true
       jsdom:
         optional: true
-
-  webpush-webcrypto@1.0.5:
-    resolution: {integrity: sha512-lDKQtVxi97dJQeJ6SK4kZHazYzCc6GosluXMqzLYwBc8z2il15l8zxW1e7qAF6GrcPdpHgBZkbI17mNvOQ8lZg==}
 
   why-is-node-running@2.3.0:
     resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
@@ -1594,6 +1599,10 @@ snapshots:
       '@noble/hashes': 2.3.0
 
   '@better-fetch/fetch@1.3.1': {}
+
+  '@block65/webcrypto-web-push@2.0.0':
+    dependencies:
+      uint8array-extras: 1.5.0
 
   '@clack/core@1.4.3':
     dependencies:
@@ -2493,6 +2502,8 @@ snapshots:
 
   typescript@5.9.3: {}
 
+  uint8array-extras@1.5.0: {}
+
   undici-types@8.3.0: {}
 
   undici@7.29.0: {}
@@ -2543,8 +2554,6 @@ snapshots:
       '@types/node': 26.3.0
     transitivePeerDependencies:
       - msw
-
-  webpush-webcrypto@1.0.5: {}
 
   why-is-node-running@2.3.0:
     dependencies:

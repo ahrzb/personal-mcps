@@ -1,11 +1,11 @@
 // push-service.ts — the suite PLAYING a push service (§13). A fake that merely counted
 // requests would bless an unencrypted or misdirected payload, so this one does what
-// Mozilla's or Google's endpoint does: it holds the POST, checks the sender's VAPID
-// identity against the public key the hub published, and opens the body with the
+// Apple's, Mozilla's or Google's endpoint does: it holds the POST, checks the sender's
+// VAPID identity against the public key the hub published, and opens the body with the
 // subscription keypair the browser half generated. Real WebCrypto on both sides (strategy
-// §9) — nothing here is stubbed, and the receiver below is written from the encoding's
-// own steps rather than by calling back into the sender's library, so a sender that
-// derives the wrong key fails instead of agreeing with itself.
+// §9) — nothing here is stubbed, and the receiver below is written from RFC 8291's and
+// RFC 8188's own steps rather than by calling back into the sender's library, so a sender
+// that derives the wrong key fails instead of agreeing with itself.
 //
 // What it deliberately does NOT do: answer per-endpoint statuses or count attempts. That
 // is the transport SEAM's fake, which lives in approvals.test.ts, and every case about
@@ -18,11 +18,11 @@
 import type { PushSubscriptionJson } from "../../src/approvals";
 import type { PushFetch } from "../../src/push";
 
-/** One POST the push service received, verbatim: the encrypted body and the headers that open it. */
+/** One POST the push service received, verbatim: the encrypted body and the headers that carry it. */
 export type PostedPush = {
   endpoint: string;
   headers: Record<string, string>;
-  body: ArrayBuffer;
+  body: Uint8Array<ArrayBuffer>;
 };
 
 /**
@@ -93,26 +93,31 @@ export async function subscribeFakeBrowser(endpoint: string): Promise<FakeBrowse
 export type VapidClaims = { aud: string; sub: string; exp: number };
 
 /**
- * Verify the sender's VAPID token the way a push service does — ES256 over
+ * Verify the sender's VAPID identity the way a push service does — ES256 over
  * `header.payload`, against the public key the hub published — and hand back the claims.
- * REJECTS on a signature that does not verify, on a token signed by another key, and on a
- * header that is not `ES256`: this is the oracle, so it has to be able to say no.
+ * REJECTS on a signature that does not verify, on a token signed by another key, on a
+ * header that is not `ES256`, and on an Authorization that is not RFC 8292's: this is the
+ * oracle, so it has to be able to say no.
  *
- * Accepts either Authorization dialect a VAPID sender may speak — RFC 8292's
- * `vapid t=<jwt>, k=<key>` and the earlier `WebPush <jwt>` — because which one the
- * transport emits is its library's business, while the signature and the claims are the
- * property under test.
+ * ONE dialect, and deliberately: `vapid t=<jwt>, k=<public key>` (RFC 8292 §3.1), with `k`
+ * the very key the subscription was made with. Apple answers the earlier `WebPush <jwt>`
+ * scheme `BadAuthorizationHeader` and a mismatched `k` `VapidPkHashMismatch`, so a
+ * receiver that accepted either would bless a push Apple silently drops.
  */
 export async function verifyVapidJwt(
-  authorization: string | undefined,
+  posted: PostedPush,
   vapidPublicKey: string,
 ): Promise<VapidClaims> {
+  const authorization = pushHeader(posted, "authorization");
   if (!authorization) throw new Error("push service: no Authorization header on the push");
-  const token = /^vapid\s+t=([^,\s]+)/i.exec(authorization)?.[1] ?? /^WebPush\s+(\S+)$/i.exec(authorization)?.[1];
-  if (!token) throw new Error(`push service: unreadable VAPID Authorization header`);
-  const [header, claims, signature] = token.split(".");
-  if (!header || !claims || !signature) throw new Error("push service: malformed JWT");
-  const declared = JSON.parse(new TextDecoder().decode(decodeBase64Url(header))) as {
+  const token = /^vapid\s+t=([^,\s]+)/i.exec(authorization)?.[1];
+  const advertisedKey = /[,\s]k=([^,\s]+)/i.exec(authorization)?.[1];
+  if (!token || !advertisedKey) {
+    throw new Error(`push service: Authorization is not RFC 8292's "vapid t=…, k=…": ${authorization}`);
+  }
+  const [jwtHeader, jwtClaims, jwtSignature] = token.split(".");
+  if (!jwtHeader || !jwtClaims || !jwtSignature) throw new Error("push service: malformed JWT");
+  const declared = JSON.parse(new TextDecoder().decode(decodeBase64Url(jwtHeader))) as {
     typ?: string;
     alg?: string;
   };
@@ -127,34 +132,64 @@ export async function verifyVapidJwt(
   const verified = await crypto.subtle.verify(
     { name: "ECDSA", hash: "SHA-256" },
     key,
-    decodeBase64Url(signature),
-    new TextEncoder().encode(`${header}.${claims}`),
+    decodeBase64Url(jwtSignature),
+    new TextEncoder().encode(`${jwtHeader}.${jwtClaims}`),
   );
   if (!verified) throw new Error("push service: VAPID signature does not verify against this key");
-  return JSON.parse(new TextDecoder().decode(decodeBase64Url(claims))) as VapidClaims;
+  // Checked after the signature so the refusal above stays the one a foreign key earns: a
+  // token can verify under a key the request never advertised, and that is still refused.
+  if (advertisedKey !== vapidPublicKey) {
+    throw new Error("push service: the k= public key is not the one this subscription was made with");
+  }
+  return JSON.parse(new TextDecoder().decode(decodeBase64Url(jwtClaims))) as VapidClaims;
 }
 
+/** An uncompressed P-256 point — 0x04 ‖ x(32) ‖ y(32) — which is what a record's key id is. */
+const P256_POINT_BYTES = 65;
+
+/** RFC 8188 §2: salt(16) ‖ record size(4) ‖ key id length(1), and then the key id. */
+const RECORD_HEADER_PREFIX_BYTES = 21;
+
+/** RFC 8188 §2: the byte that ends the LAST record's plaintext, before its zero padding. */
+const LAST_RECORD_DELIMITER = 0x02;
+
 /**
- * Open the encrypted body with the subscription's own keys — the browser half of the push
- * content encoding, derived here from the encoding's steps: ECDH against the sender's
- * ephemeral key, HKDF over the auth secret for the pseudo-random key, then a nonce and a
- * content-encryption key over the salt, and AES-GCM under them. The leading two bytes of
- * the plaintext are the padding length the sender disguised the payload's size with.
+ * Open the encrypted body with the subscription's own keys — the browser half of RFC
+ * 8291, derived here from its steps: ECDH against the sender's ephemeral key, HKDF over
+ * the auth secret for the input keying material, then a content-encryption key and a
+ * nonce over the record's salt, and AES-GCM under them.
  *
  * Throws if anything about the request contradicts the encoding — a decrypt that cannot
  * happen is the failure this case exists to produce.
  */
 export async function decryptPushBody(posted: PostedPush, browser: FakeBrowser): Promise<string> {
-  // ONE encoding, named (G23, 2026-09-03): this receiver implements draft-04 `aesgcm` and
-  // nothing else, so it says so before deriving anything. A library swap to RFC 8291
-  // `aes128gcm` (step 14) must change this line and the derivation together — a receiver
-  // that silently accepted either would let the swap pass without proving the new bytes.
-  const encoding = Object.entries(posted.headers).find(([name]) => name.toLowerCase() === "content-encoding")?.[1];
-  if (encoding !== "aesgcm") {
-    throw new Error(`push body is not aesgcm (Content-Encoding: ${encoding ?? "absent"}) — this receiver opens aesgcm only`);
+  // ONE encoding, named (G23, closed 2026-09-12): this receiver implements RFC 8291's
+  // `aes128gcm` and nothing else, so it says so before deriving anything. The draft-04
+  // `aesgcm` the hub sent until the library swap put the salt and the sender's key in
+  // HEADERS and mixed a context block into the key derivation; both moved into the body
+  // here, so the two encodings cannot be opened by one reader — and a regression to the
+  // dialect Apple refuses reddens on this line rather than passing quietly.
+  const encoding = pushHeader(posted, "content-encoding");
+  if (encoding !== "aes128gcm") {
+    throw new Error(
+      `push service: body is not aes128gcm (Content-Encoding: ${encoding ?? "absent"}) — this receiver opens aes128gcm only`,
+    );
   }
-  const salt = decodeBase64Url(headerParam(posted.headers, "Encryption", "salt"));
-  const senderPublicBytes = decodeBase64Url(headerParam(posted.headers, "Crypto-Key", "dh"));
+
+  // RFC 8188 §2.1 header, then the single record.
+  const body = posted.body;
+  const keyIdLength = body[RECORD_HEADER_PREFIX_BYTES - 1];
+  if (keyIdLength !== P256_POINT_BYTES) {
+    throw new Error(`push service: the record's key id is ${keyIdLength} bytes, not a P-256 point`);
+  }
+  const headerBytes = RECORD_HEADER_PREFIX_BYTES + keyIdLength;
+  if (body.byteLength <= headerBytes) throw new Error("push service: the body is shorter than its own header");
+  const salt = body.subarray(0, 16);
+  const recordSize = new DataView(body.buffer, body.byteOffset + 16, 4).getUint32(0);
+  if (body.byteLength - headerBytes > recordSize) {
+    throw new Error("push service: the record is longer than the size its header declares");
+  }
+  const senderPublicBytes = body.subarray(RECORD_HEADER_PREFIX_BYTES, headerBytes);
   const senderPublicKey = await crypto.subtle.importKey(
     "raw",
     senderPublicBytes,
@@ -169,44 +204,57 @@ export async function decryptPushBody(posted: PostedPush, browser: FakeBrowser):
     256,
   );
   const shared = await crypto.subtle.importKey("raw", sharedBits, "HKDF", false, ["deriveBits"]);
-  const pseudoRandomBits = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt: browser.authSecret, info: label("auth") },
+  // RFC 8291 §3.3: the input keying material is what binds the key to BOTH public keys,
+  // salted by the subscription's own auth secret — so a body encrypted for another
+  // subscription cannot be opened here even if the ECDH somehow agreed. (Draft-04 bound
+  // the two keys in a context block per derivation instead; this is the same property,
+  // moved.)
+  const ikmBits = await crypto.subtle.deriveBits(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: browser.authSecret,
+      info: concat([
+        new TextEncoder().encode("WebPush: info\0"),
+        browser.publicKeyBytes,
+        senderPublicBytes,
+      ]),
+    },
     shared,
     256,
   );
-  const pseudoRandom = await crypto.subtle.importKey("raw", pseudoRandomBits, "HKDF", false, [
-    "deriveBits",
-  ]);
+  const ikm = await crypto.subtle.importKey("raw", ikmBits, "HKDF", false, ["deriveBits"]);
 
-  // Both derivations are salted the same and differ only in this context block, which
-  // binds the keys to BOTH public keys — a payload encrypted for another subscription
-  // cannot be opened here even if the ECDH somehow agreed.
-  const context = concat([
-    new TextEncoder().encode("P-256\0"),
-    length16(browser.publicKeyBytes),
-    browser.publicKeyBytes,
-    length16(senderPublicBytes),
-    senderPublicBytes,
-  ]);
-  const nonce = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt, info: concat([label("nonce"), context]) },
-    pseudoRandom,
-    96,
-  );
+  // RFC 8188 §2.2/2.3: key and nonce are salted the same and differ only in their label.
   const contentKeyBits = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt, info: concat([label("aesgcm"), context]) },
-    pseudoRandom,
+    { name: "HKDF", hash: "SHA-256", salt, info: label("aes128gcm") },
+    ikm,
     128,
+  );
+  const nonce = await crypto.subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt, info: label("nonce") },
+    ikm,
+    96,
   );
   const contentKey = await crypto.subtle.importKey("raw", contentKeyBits, "AES-GCM", false, [
     "decrypt",
   ]);
 
   const padded = new Uint8Array(
-    await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, contentKey, posted.body),
+    await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: nonce },
+      contentKey,
+      body.subarray(headerBytes),
+    ),
   );
-  const padding = new DataView(padded.buffer, padded.byteOffset).getUint16(0);
-  return new TextDecoder().decode(padded.subarray(2 + padding));
+  // The plaintext ends at the delimiter, and everything after it is the zero padding the
+  // sender disguised the payload's LENGTH with (RFC 8291 §4 asks for a constant one).
+  let end = padded.byteLength;
+  while (end > 0 && padded[end - 1] === 0x00) end -= 1;
+  if (end === 0 || padded[end - 1] !== LAST_RECORD_DELIMITER) {
+    throw new Error("push service: the record carries no 0x02 delimiter — its padding is not RFC 8188's");
+  }
+  return new TextDecoder().decode(padded.subarray(0, end - 1));
 }
 
 /** `Content-Encoding: <name>\0` — the info string each derivation is separated by. */
@@ -214,9 +262,14 @@ function label(name: string): Uint8Array<ArrayBuffer> {
   return new TextEncoder().encode(`Content-Encoding: ${name}\0`);
 }
 
-/** A P-256 point's length as the context block spells it: two bytes, big-endian. */
-function length16(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
-  return new Uint8Array([bytes.byteLength >> 8, bytes.byteLength & 0xff]);
+/**
+ * One header off the recorded POST, by LOWER-CASE name. The seam hands headers as a plain
+ * record, so their casing is the sender's choice while a push service's reading of them is
+ * not — every case that judges a header (here and in approvals.test.ts, which asserts the
+ * three Apple validates) goes through this rather than pinning the library's spelling.
+ */
+export function pushHeader(posted: PostedPush, name: string): string | undefined {
+  return Object.entries(posted.headers).find(([key]) => key.toLowerCase() === name)?.[1];
 }
 
 function concat(parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
@@ -227,14 +280,6 @@ function concat(parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
     at += part.byteLength;
   }
   return total;
-}
-
-/** One `name=value` out of a `salt=…` / `dh=…;p256ecdsa=…` push header. */
-function headerParam(headers: Record<string, string>, header: string, name: string): string {
-  const raw = headers[header] ?? headers[header.toLowerCase()];
-  const value = raw === undefined ? undefined : new RegExp(`(?:^|[;,\\s])${name}=([^;,\\s]+)`).exec(raw)?.[1];
-  if (!value) throw new Error(`push service: no ${name} in the ${header} header`);
-  return value;
 }
 
 function base64Url(bytes: ArrayBuffer | Uint8Array): string {

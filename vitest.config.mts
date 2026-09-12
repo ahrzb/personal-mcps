@@ -89,7 +89,7 @@ const preBundledDeps = {
           "@sentry/cloudflare",
           "hono",
           "uqr",
-          "webpush-webcrypto",
+          "@block65/webcrypto-web-push",
         ],
         rolldownOptions: { external: [/^node:/, /^cloudflare:/] },
       },

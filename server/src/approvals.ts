@@ -136,7 +136,7 @@ export type ApprovalsConfig = {
    * — which subscriptions receive it, what the payload may name (§15: never
    * arguments), and that a 404/410 prunes the row — stays inside notifyOwner;
    * this seam hides only the VAPID ES256 + RFC 8291 crypto, which is a
-   * library's job and not this module's (the header's webpush-webcrypto).
+   * library's job and not this module's (see push.ts's header).
    * Absent = no transport wired, so nothing is sent — a push is best-effort by
    * contract, and an unwired hub must not fail the request that created the row.
    */
@@ -509,9 +509,10 @@ export class Approvals {
   /**
    * Best-effort Web Push to every subscription of the namespace owner: names
    * the app and tool plus the approval id — NEVER arguments (payloads rest
-   * on third-party push services; §15's hygiene rule). VAPID ES256 + RFC 8291
-   * payload encryption via a small Workers-compatible webpush library (e.g.
-   * webpush-webcrypto — do not hand-roll the crypto); tapping the notification
+   * on third-party push services; §15's hygiene rule). RFC 8291 `aes128gcm`
+   * payload encryption under an RFC 8292 VAPID token, via a small
+   * Workers-compatible webpush library — do not hand-roll the crypto, and see
+   * push.ts for why those two RFCs and no earlier dialect; tapping the notification
    * opens `/approvals/<id>`. A 404/410 from a push service prunes that
    * subscription row. Never throws — a push failure must not fail the request
    * that created the row.

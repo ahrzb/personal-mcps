@@ -6,27 +6,38 @@
 // approvals.notifyOwner, which is why this module knows nothing of approvals, D1, or the
 // hub's vocabulary and takes one subscription and one opaque string.
 //
-// The crypto is the library's, not ours (§13 names webpush-webcrypto, and the approvals
-// header forbids hand-rolling it): a VAPID ES256 token over the endpoint's origin plus the
-// configured subject, and a body only the subscription's own keypair can open. What this
-// module owns around it is exactly two things the library does not do — reading a VAPID
-// private key in either dialect it is published in, and turning the request the library
-// hands back into a fetch.
+// The crypto is the library's, not ours (§13 names a small Workers-compatible webpush
+// library and the approvals header forbids hand-rolling it): @block65/webcrypto-web-push
+// encrypts the body under RFC 8291's `aes128gcm` and signs the RFC 8292 `vapid t=…, k=…`
+// token with the configured ES256 pair. What this module owns around it is exactly three
+// things the library does not decide — reading a VAPID private key in either dialect it is
+// published in, the two header values a push service judges the request by (TTL and
+// Urgency, both of which mean something specific for an approval), and turning the request
+// the library hands back into a fetch.
 //
-// IMPLEMENTATION NOTE (2026-08-26), stated because §13 asks for something narrower than
-// what the sanctioned dependency delivers: webpush-webcrypto@1.0.5 (its latest) encrypts
-// with the older `aesgcm` content encoding and sends VAPID as `Authorization: WebPush
-// <jwt>` — NOT RFC 8291's `aes128gcm` nor RFC 8292's `vapid t=…,k=…`. The two are
-// interoperable with Chrome's and Mozilla's push services and were the deployed standard
-// before them, but Apple's Web Push (Safari/iOS, which is exactly where a PWA's approval
-// notification wants to land) accepts aes128gcm only. Closing that is a dependency
-// decision, not a code one: either another Workers-compatible library or a hand-rolled
-// RFC 8291 the approvals header forbids. Push is best-effort by contract (§7), so the
-// failure mode is a notification that never arrives and a dashboard that still holds the
-// truth. This module stays the ONE place a swap touches: nothing outside it names the
-// library, the encoding, or a header.
+// WHY THIS LIBRARY, AND WHAT APPLE REQUIRES (2026-09-12, closing G23 and superseding the
+// 2026-08-26 note that recorded it): Apple's Web Push — Safari and iOS Home Screen web
+// apps, which is exactly where an owner's approval notification wants to land — refuses
+// both dialects the previous dependency sent. webpush-webcrypto@1.0.5 (still its last
+// release) encrypts with the draft-04 `aesgcm` content encoding and authorizes with the
+// pre-RFC `Authorization: WebPush <jwt>` scheme; Apple answers those `BadWebPushRequest`
+// and `BadAuthorizationHeader`, while Chrome's and Mozilla's services accept them — so the
+// loss was Apple-only and silent. The rules Apple's documented `reason` codes spell out,
+// and where each one is satisfied now:
+//   · `aes128gcm` body, at most 4 KB  — the library (one record, padded to exactly 4096,
+//                                      so the ciphertext length leaks no plaintext length)
+//   · `vapid t=<jwt>, k=<public key>` — the library, from the pair below; `k` must be the
+//                                      key the browser subscribed with (VapidPkHashMismatch)
+//   · JWT `sub` a `mailto:` or https  — `sub` is PUBLIC_ORIGIN (wiring.vapidFromEnv), an
+//     URL, `aud` the endpoint's         https origin; `aud` and `exp` (+12 h, inside the
+//     origin, `exp` under 24 h out      one-day ceiling) are the library's
+//   · `TTL`, present and positive      — below, from APPROVAL_WINDOW_MS
+//   · `Urgency`, one of four names     — below: `high`
+// Push stays best-effort by contract (§7): a refusal costs a notification, never a row.
+// This module stays the ONE place a swap touches — nothing outside it names the library,
+// the encoding, or a header.
 
-import { ApplicationServerKeys, generatePushHTTPRequest } from "webpush-webcrypto";
+import { buildPushPayload } from "@block65/webcrypto-web-push";
 import type { PushSubscriptionJson } from "./approvals";
 import { APPROVAL_WINDOW_MS } from "./limits";
 
@@ -37,7 +48,7 @@ import { APPROVAL_WINDOW_MS } from "./limits";
  */
 export type PushFetch = (
   endpoint: string,
-  init: { method: string; headers: Record<string, string>; body: ArrayBuffer },
+  init: { method: string; headers: Record<string, string>; body: Uint8Array<ArrayBuffer> },
 ) => Promise<{ status: number }>;
 
 /** The VAPID identity a hub pushes under: the published keypair and the contact claim (§13). */
@@ -52,19 +63,35 @@ export function pushSender(
   vapid: VapidKeys,
   send: PushFetch = (endpoint, init) => fetch(endpoint, init),
 ): (subscription: PushSubscriptionJson, payload: string) => Promise<{ status: number }> {
-  // deps: webpush-webcrypto (generatePushHTTPRequest) · src/limits (APPROVAL_WINDOW_MS) · fetch
+  // deps: @block65/webcrypto-web-push (buildPushPayload) · crypto.subtle (PKCS#8 import)
+  // · src/limits (APPROVAL_WINDOW_MS) · fetch
   return async (subscription, payload) => {
-    const { headers, body, endpoint } = await generatePushHTTPRequest({
-      applicationServerKeys: await applicationServerKeys(vapid),
-      payload,
-      target: subscription,
-      adminContact: vapid.subject,
-      // The push is worth exactly as long as the approval it names can still be acted on:
-      // a phone that comes back online inside the window still gets the notification, and
-      // one that comes back after it would only offer the owner a dead link.
-      ttl: Math.floor(APPROVAL_WINDOW_MS / 1000),
-    });
-    return { status: (await send(endpoint, { method: "POST", headers, body })).status };
+    const { headers, body } = await buildPushPayload(
+      {
+        data: payload,
+        options: {
+          // The push is worth exactly as long as the approval it names can still be acted
+          // on: a phone that comes back online inside the window still gets the
+          // notification, and one that comes back after it would only offer the owner a
+          // dead link.
+          ttl: Math.floor(APPROVAL_WINDOW_MS / 1000),
+          // The one class of push where a battery-saving delay defeats the message: the
+          // approval expires while it waits, and Apple delivers `high` immediately.
+          urgency: "high",
+        },
+      },
+      // `expirationTime` is part of the browser's subscription JSON and of no interest to
+      // a sender, so §5 does not store it; the library's type asks for it explicitly.
+      { ...subscription, expirationTime: null },
+      { ...vapid, privateKey: await privateScalar(vapid.privateKey) },
+    );
+    // Every header the library set is one a push service reads — except the length, which
+    // the runtime computes from the body it is about to send anyway. Forwarding a
+    // Content-Length the hub did not compute would put an arithmetic disagreement between
+    // the library and workerd on the one path no test exercises.
+    const { "content-length": _length, ...forwarded } = headers;
+    const answer = await send(subscription.endpoint, { method: "POST", headers: forwarded, body });
+    return { status: answer.status };
   };
 }
 
@@ -74,40 +101,23 @@ const RAW_PRIVATE_SCALAR_BYTES = 32;
 const ES256 = { name: "ECDSA", namedCurve: "P-256" } as const;
 
 /**
- * Read the configured VAPID pair into the CryptoKeys the library signs with. The public
- * half has one form — base64url over the raw P-256 point, the same bytes the browser
- * subscribes with as `applicationServerKey` (§13) — but the private half is published in
- * two: the raw 32-byte scalar every VAPID generator prints, and the PKCS#8 wrapper
- * WebCrypto's own `exportKey` (and this library's `toJSON`) produces. Both are accepted
- * because which one a deployment's secret holds is not visible from here, and a push that
- * silently never sends is the worst way to find out.
+ * The VAPID private half in the one form the library signs with: base64url over the raw
+ * 32-byte scalar, which is what every VAPID generator prints and what the deploy guide
+ * tells an operator to store. A deployment's secret may instead hold the PKCS#8 wrapper
+ * WebCrypto's own `exportKey` produces, and which one it is is not visible from here — so
+ * both are read, the wrapper by importing it for its scalar. Throws on a string that is
+ * neither, which notifyOwner absorbs (§15: a push never fails the request that created
+ * the row) — the same outcome as an unreadable key silently signing nothing, but loud in
+ * the logs.
  */
-async function applicationServerKeys(vapid: VapidKeys): Promise<ApplicationServerKeys> {
-  // deps: crypto.subtle (ECDSA import) · webpush-webcrypto (ApplicationServerKeys)
-  const publicBytes = decodeBase64Url(vapid.publicKey);
-  const privateBytes = decodeBase64Url(vapid.privateKey);
-  // Extractable: the library exports it again for the `p256ecdsa` key the push service
-  // checks the signature with.
-  const publicKey = await crypto.subtle.importKey("raw", publicBytes, ES256, true, []);
-  const privateKey =
-    privateBytes.byteLength === RAW_PRIVATE_SCALAR_BYTES
-      ? await crypto.subtle.importKey("jwk", privateJwk(publicBytes, privateBytes), ES256, false, [
-          "sign",
-        ])
-      : await crypto.subtle.importKey("pkcs8", privateBytes, ES256, false, ["sign"]);
-  return new ApplicationServerKeys(publicKey, privateKey);
-}
-
-/** The scalar plus the point it belongs to, as the one private-key form WebCrypto imports whole. */
-function privateJwk(publicBytes: Uint8Array, scalar: Uint8Array): JsonWebKey {
-  // An uncompressed P-256 point is 0x04 ‖ x(32) ‖ y(32); JWK wants the halves apart.
-  return {
-    kty: "EC",
-    crv: "P-256",
-    x: encodeBase64Url(publicBytes.subarray(1, 33)),
-    y: encodeBase64Url(publicBytes.subarray(33, 65)),
-    d: encodeBase64Url(scalar),
-  };
+async function privateScalar(privateKey: string): Promise<string> {
+  // deps: crypto.subtle (ECDSA import/export)
+  const bytes = decodeBase64Url(privateKey);
+  if (bytes.byteLength === RAW_PRIVATE_SCALAR_BYTES) return privateKey;
+  const wrapped = await crypto.subtle.importKey("pkcs8", bytes, ES256, true, ["sign"]);
+  const { d } = await crypto.subtle.exportKey("jwk", wrapped);
+  if (d === undefined) throw new Error("VAPID_PRIVATE_KEY: a PKCS#8 key exported without its scalar");
+  return d;
 }
 
 function decodeBase64Url(value: string): Uint8Array<ArrayBuffer> {
@@ -116,11 +126,4 @@ function decodeBase64Url(value: string): Uint8Array<ArrayBuffer> {
     .replace(/_/g, "/")
     .padEnd(Math.ceil(value.length / 4) * 4, "=");
   return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
-}
-
-function encodeBase64Url(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
 }

@@ -219,7 +219,21 @@ const PUSH_SCRIPT = `(function () {
     .then(function (sub) { if (sub) markEnabled(); })
     .catch(function () {});
   btn.addEventListener("click", function () {
-    navigator.serviceWorker.ready
+    // Apple's documented order, and harmless in every other browser: ask for permission
+    // from inside the gesture, then subscribe immediately. Safari answers subscribe() on a
+    // "default" permission with NotAllowedError rather than prompting, so asking first is
+    // the difference between a prompt and a dead button on iOS. (The || reads the current
+    // state for a pre-16 Safari, whose requestPermission takes a callback and returns
+    // nothing; iOS web push needs 16.4 anyway.)
+    Promise.resolve(Notification.requestPermission())
+      .then(function (permission) {
+        if ((permission || Notification.permission) !== "granted") {
+          var refused = new Error("notification permission: " + permission);
+          refused.name = "NotAllowedError";
+          throw refused;
+        }
+        return navigator.serviceWorker.ready;
+      })
       .then(function (reg) {
         return reg.pushManager.subscribe({
           userVisibleOnly: true,

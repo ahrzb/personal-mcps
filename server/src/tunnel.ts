@@ -601,9 +601,15 @@ const DEFAULT_CAPABILITIES = DEFAULT_APP_CAPABILITIES;
  * §21.3's floor state, DURABLE (constraint 5): when each bell last rang, and which bells
  * owe a trailing ring. Prefixed keys rather than one record so the coalescing alarm drains
  * them with a single list — and so `wipe`'s deleteAll takes them with everything else.
+ *
+ * The pending half is EXPORTED for one reader outside this module: the tunnel suite's
+ * `untilBellRings` (harness/tunnel-do.ts) waits on it to know a change was suppressed
+ * before it fires the coalescing alarm. Named rather than copied, because a test that
+ * spelled `"bell:pending:"` itself would keep passing after this prefix changed — and it
+ * would go on passing by never finding a pending ring at all.
  */
 const BELL_RANG_PREFIX = "bell:rang:";
-const BELL_PENDING_PREFIX = "bell:pending:";
+export const BELL_PENDING_PREFIX = "bell:pending:";
 
 /**
  * The ONE alarm slot's other purpose, as stored state (constraint 2): the instant §6's

@@ -1,9 +1,10 @@
 // tunnel-do.ts — the plumbing every suite in `test/tunnel/` needs and none of them owns:
 // the DO addressing rule, the two ways of waiting for the hub to settle, the socket
-// still-open probe, and the caller context a backend receives. Each of these is ONE
-// decision — how an app id becomes a stub, how long a wait may run before it is a
-// failed assertion rather than a slow test — and each was spelled in three or four files
-// before it lived here.
+// still-open probe, the doorbell wait that survives §21.3's floor, and the caller context
+// a backend receives. Each of these is ONE decision — how an app id becomes a stub, how
+// long a wait may run before it is a failed assertion rather than a slow test, which half
+// of the bell floor a case is allowed to depend on — and each was spelled in three or four
+// files before it lived here.
 //
 // Separate from fake-app.ts on purpose: this half imports `cloudflare:test`, which is
 // the pool's own seam, while the fake app is a plain WebSocket client that must stay
@@ -13,16 +14,16 @@
 // tokens, which grants — is the part that genuinely differs per file, and a shared seeder
 // would make every suite's premise unreadable from the suite.
 //
-// deps: cloudflare:test (env.APP_CONNECTION) · vitest expect · harness/fake-app
-// (tick, waitFor, FakeApp) · src/tunnel (status, tunnelBackend, AppConnection) ·
-// src/registry (Registry, App)
+// deps: cloudflare:test (env.APP_CONNECTION, runInDurableObject, runDurableObjectAlarm) ·
+// vitest expect · harness/fake-app (tick, waitFor, FakeApp) · src/tunnel (status,
+// tunnelBackend, AppConnection, BELL_PENDING_PREFIX) · src/registry (Registry, App)
 
-import { env, runInDurableObject } from "cloudflare:test";
+import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { expect } from "vitest";
 import type { BackendCtx, Tool } from "../../src/gateway";
 import { Registry } from "../../src/registry";
 import type { App } from "../../src/registry";
-import { status, tunnelBackend } from "../../src/tunnel";
+import { BELL_PENDING_PREFIX, status, tunnelBackend } from "../../src/tunnel";
 import type { AppConnection } from "../../src/tunnel";
 import { tick } from "./fake-app";
 import type { FakeApp } from "./fake-app";
@@ -44,6 +45,46 @@ export function liveSockets(appId: string): Promise<number> {
     connectionStub(appId),
     (_instance: AppConnection, state) => state.getWebSockets().length,
   );
+}
+
+/**
+ * Wait for one of §21.3's doorbells to reach a stream, WHICHEVER half of the floor
+ * delivers it — and answer whether it did.
+ *
+ * The floor is why this exists rather than a bare `waitFor` on the frame: the first ring in
+ * a quiet window goes out immediately, but a change inside LISTEN_BELL_MIN_INTERVAL_MS of
+ * it is suppressed into a pending trailing ring that ONLY the coalescing alarm delivers.
+ * Which half a case gets is decided by how many real milliseconds the suite happened to
+ * spend between two provocations — the floor is wall-clock arithmetic plus a storage alarm,
+ * so `shrinkTimers` (which patches setTimeout) cannot reach it and no amount of ticking
+ * makes a one-second window pass. A case that waited only for the frame therefore asserted
+ * the suite's own speed: two of them passed for months and went red when D16 made setup
+ * fast enough to land both changes inside the same window.
+ *
+ * So: poll the frame, and each turn ALSO ask the DO whether it recorded this bell as
+ * pending — when it has, fire the one alarm that flushes it. Nothing is shrunk and nothing
+ * is slept; both paths are asserted through the same call, and §21.3's "the final state
+ * always rings" is what fails when it stops being true.
+ *
+ * The alarm is pulled only against an observed pending ring, never blind: `alarm()`
+ * multiplexes §6's registration deadline into the same slot, and a firing with nothing
+ * pending spends that deadline (closing a socket still inside its handshake window).
+ */
+export async function untilBellRings(
+  appId: string,
+  bell: string,
+  arrived: () => boolean,
+): Promise<boolean> {
+  for (let turn = 0; turn < POLL_TURNS; turn++) {
+    if (arrived()) return true;
+    const stub = connectionStub(appId);
+    const pending = await runInDurableObject(stub, (_instance: AppConnection, state) =>
+      state.storage.get<boolean>(BELL_PENDING_PREFIX + bell),
+    );
+    if (pending === true) await runDurableObjectAlarm(stub);
+    await tick();
+  }
+  return arrived();
 }
 
 /**

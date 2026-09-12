@@ -34,11 +34,11 @@
  * another case's socket.
  */
 
-// deps: harness/seed · harness/fake-app (connectFakeApp, openSubscriber, tick, waitFor) · harness/tunnel-do (backendCtx, connectionStub) · cloudflare:test (env, runInDurableObject) · src/tunnel (tunnelBackend, subscribe, unsubscribe) · src/capabilities (RESOURCES_UPDATED, uriByteLength) · src/limits (LISTEN_SUBSCRIPTIONS_MAX, SUBSCRIBE_URI_MAX_BYTES) · src/registry (Registry)
+// deps: harness/seed · harness/fake-app (connectFakeApp, openSubscriber, tick, waitFor) · harness/tunnel-do (backendCtx, connectionStub, untilBellRings) · cloudflare:test (env, runInDurableObject, runDurableObjectAlarm) · src/tunnel (tunnelBackend, subscribe, unsubscribe) · src/capabilities (BELL_RESOURCES, RESOURCES_UPDATED, uriByteLength) · src/limits (LISTEN_SUBSCRIPTIONS_MAX, SUBSCRIBE_URI_MAX_BYTES) · src/registry (Registry)
 
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
-import { RESOURCES_UPDATED, uriByteLength } from "../../src/capabilities";
+import { BELL_RESOURCES, RESOURCES_UPDATED, uriByteLength } from "../../src/capabilities";
 import type { Tool } from "../../src/gateway";
 import { LISTEN_SUBSCRIPTIONS_MAX, SUBSCRIBE_URI_MAX_BYTES } from "../../src/limits";
 import { Registry } from "../../src/registry";
@@ -54,7 +54,7 @@ import type {
 } from "../harness/fake-app";
 import { seedNamespace, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
-import { backendCtx, connectionStub } from "../harness/tunnel-do";
+import { backendCtx, connectionStub, untilBellRings } from "../harness/tunnel-do";
 
 // ── the fixture and the plumbing every case here shares ───────────────────────────────
 
@@ -552,13 +552,18 @@ describe("§21.4 notifications/resources/updated is routed, never broadcast", ()
     // …the cache still serves what the last warm stored…
     expect(await connectionStub(fixture.appId).listCatalog("resources")).toEqual([RESOURCE]);
     // …and no bell rang, because nothing the hub stores changed.
-    expect(stream.count("notifications/resources/list_changed")).toBe(0);
+    expect(stream.count(BELL_RESOURCES)).toBe(0);
 
     // The sibling frame, for contrast: THAT one re-lists and rings.
     await app.notifyResourcesListChanged([]);
     expect(await waitFor(() => listCount(app) > listed)).toBe(true);
+    // The bell itself, through either half of §21.3's floor: the warm above already spent
+    // this family's leading ring milliseconds ago, so on a fast run the hub owes a TRAILING
+    // ring that only the coalescing alarm delivers. `untilBellRings` waits for the DO to
+    // record it as pending and then fires that alarm — the assertion is the ring, never the
+    // suite's speed.
     expect(
-      await waitFor(() => stream.count("notifications/resources/list_changed") > 0),
+      await untilBellRings(fixture.appId, BELL_RESOURCES, () => stream.count(BELL_RESOURCES) > 0),
     ).toBe(true);
   });
 

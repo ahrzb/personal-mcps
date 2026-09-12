@@ -37,7 +37,7 @@
  * assumes the DO rings and routes correctly and asserts only what the Worker does with it.
  */
 
-// deps: harness/seed · harness/fake-app (connectFakeApp, tick, waitFor) · harness/tunnel-do (connectionStub, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env, runInDurableObject, runDurableObjectAlarm) · src/identity (revokeToken) · src/registry (Registry, seedGrants) · src/limits (LISTEN_KEEPALIVE_MS, LISTEN_FANOUT_MAX, CALL_TIMEOUT_MS) · src/capabilities (BELL_*, RESOURCES_UPDATED) · harness/timers (withShrunkTimers)
+// deps: harness/seed · harness/fake-app (connectFakeApp, tick, waitFor) · harness/tunnel-do (connectionStub, untilBellRings, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env, runInDurableObject, runDurableObjectAlarm) · src/identity (revokeToken) · src/registry (Registry, seedGrants) · src/limits (LISTEN_KEEPALIVE_MS, LISTEN_FANOUT_MAX, CALL_TIMEOUT_MS) · src/capabilities (BELL_*, RESOURCES_UPDATED) · harness/timers (withShrunkTimers)
 
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
@@ -57,7 +57,7 @@ import type { CatalogEntry, FakeApp } from "../harness/fake-app";
 import { seedGrants, seedNamespace, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 import { withShrunkTimers } from "../harness/timers";
-import { connectionStub } from "../harness/tunnel-do";
+import { connectionStub, untilBellRings } from "../harness/tunnel-do";
 
 // ── the held stream, as a consumer holds it ───────────────────────────────────────────
 
@@ -375,7 +375,13 @@ describe("§21.1 the stream a caller gets", () => {
       expect(second.notifications).toEqual([]);
 
       await app.notifyToolsListChanged([TOOL, { name: "other", inputSchema: { type: "object" } }]);
-      expect(await waitFor(() => second.count(BELL_TOOLS) > 0)).toBe(true);
+      // The second provocation in this case lands milliseconds after the first, so §21.3's
+      // floor decides whether this bell arrives as a leading ring or as the trailing one
+      // its alarm owes. Either satisfies "the fresh change after reopen arrives"; what the
+      // case must never assert is how fast the suite happens to be.
+      expect(
+        await untilBellRings(ns.apps[slug].id, BELL_TOOLS, () => second.count(BELL_TOOLS) > 0),
+      ).toBe(true);
       // A bare data frame: no resumption vocabulary anywhere on the wire.
       expect(second.lines.some((line) => line.startsWith("id:"))).toBe(false);
       expect(second.lines.some((line) => line.startsWith("event:"))).toBe(false);

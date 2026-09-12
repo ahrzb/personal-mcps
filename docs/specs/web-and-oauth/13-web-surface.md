@@ -512,6 +512,13 @@ approval request sends a Web Push (VAPID keys in Worker secrets, ES256 via WebCr
 RFC 8291 payload encryption) naming the app and tool — never arguments — which
 opens `/approvals/<id>` on tap. A `404`/`410` from the push service prunes the
 subscription. Best-effort delivery; the dashboard is the source of truth (§7).
+*(Amended 2026-09-12, closing G23:* the wire is pinned to the pair Apple's push service
+accepts and no earlier dialect — RFC 8291 `aes128gcm` bodies under an RFC 8292
+`vapid t=<jwt>, k=<key>` header, with a positive `TTL` and `Urgency: high`. The
+VAPID pair is the whole of the signing: Apple requires no developer-program
+certificate and no Safari website push package, but iOS delivers only to a web app the
+owner has added to the Home Screen, which is what the manifest above makes possible.
+`server/src/push.ts` is the one place any of it is spelled.*)
 
 The dashboard pages `/apps`, `/apps/<slug>`, `/approvals`, `/audit` — and, *(amended
 2026-09-02)*, the Tokens and Connected clients panes of `/settings` — and the CLI are all

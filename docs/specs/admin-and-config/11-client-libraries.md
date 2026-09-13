@@ -28,29 +28,31 @@ serve(  # blocks; connects, registers, reconnects forever
 
 JS (`@personal-mcps/client` on npm): identical shape — `serve(server, { url, token, roles })`,
 with the same two spellings (`Roles = Record<string, string[] | { tools?: string[];
-prompts?: string[]; resources?: string[] }>`). Both libraries pass the declaration through
-verbatim: normalization and validation are the hub's (§6), so neither library gains a
-rule that could disagree with it.
+prompts?: string[]; resources?: string[] }>`).
 
-Library responsibilities: dial + authenticate, `hub/register`, **answer the hub's
-`server/discover`** *(added 2026-08-26, §20/§6: the library, not the author's SDK, owns
-this answer — it is a hub↔library control question, no MCP SDK implements the method, and
-the library is what knows which families the author actually registered. It is the one
-MCP-namespace method the library handles itself instead of bridging through. A library
-that does **not** implement it is not broken: the resulting `-32601` is the hub's
-"capabilities unknown" signal and the hub falls back to warming tools only, §6 — which is
-what keeps every app already in the field working unchanged)*, bridge WS frames to the
-SDK's server session (custom transport), send `notifications/tools/list_changed` on tool
-mutations *(and, from 2026-08-26, whichever of the prompts/resources list_changed
-notifications the author's SDK emits — the bridge is transparent, so this is a
-pass-through, not a feature the library implements)*, protocol pings, reconnect with backoff (403 at upgrade / close `4002` =
-archived → keep retrying at max backoff, §6), stop on `hub/replaced`. Plus two
-in-handler affordances (§7): the caller identity — `ctx.principal`, `ctx.roles`,
-`ctx.has_role("editor")`, read from the forwarded `_meta` — and sensitive-field
-marking, in two spellings: a `Secret` field type for pydantic-/zod-style tool
-definitions (`api_key: Secret[str]` — the emitted JSON Schema carries
-`writeOnly: true` at that path, in input and output models alike; schema-only,
-values still serialize normally on the wire — the HUB does the masking, §7), and
-path-based sugar for hand-written schemas (`sensitive(schema, ["password"])`,
-input or output schema alike).
+Go (`github.com/ahrzb/personal-mcps/clients/go`): the same semantics through
+`pmcp.Serve(ctx, server, pmcp.Options{URL, Token, Roles})`; `pmcp.Patterns` is the
+bare tools list and `pmcp.Families` is the per-family form. All three libraries
+pass the declaration through verbatim: normalization and validation are the
+hub's (§6), so no library gains a rule that could disagree with it.
+
+Library responsibilities: dial + authenticate, `hub/register`, answer the hub's
+`server/discover`, bridge WS frames to the SDK's server session, pass through
+list-changed/resource-updated notifications, protocol pings, reconnect with
+backoff (403 at upgrade / close `4002` = archived → keep retrying at max
+backoff, §6), and stop on `hub/replaced`. Python and JS answer
+`server/discover` inside their transport because their SDK adapters predate the
+method. The Go transport restricts the protocol to `2026-07-28` and lets the
+official Go SDK ≥ 1.7 answer it from the server's real registered capabilities;
+the observable wire contract is identical. A client boundary that cannot
+answer sends `-32601`, the hub's “capabilities unknown” signal, and the hub
+falls back to warming tools only (§6).
+
+The packages also expose two in-handler affordances (§7): caller identity —
+principal, roles, and a role predicate read from forwarded `_meta` — and
+sensitive-field marking. Python exposes `Secret[T]` plus `sensitive()`, JS
+exposes `secret()` plus `sensitive()`, and Go exposes `Secret()` plus
+`Sensitive()` over `jsonschema.Schema`. Every spelling emits `writeOnly: true`
+at the marked input or output path; values still serialize normally on the
+wire, and the hub performs masking (§7, §15).
 

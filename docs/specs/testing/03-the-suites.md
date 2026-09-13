@@ -44,12 +44,12 @@
 
 ### Clients and scripts
 
-JS and Python each get: a transport file against an in-process fake hub (real
-upgrade rejection with 401 vs 403 — the split the fatal-vs-retry policy turns on),
-a reconnect-policy table transcribed from the shared close-code fixture (the
-deliberate cross-language duplication, one oracle), an api file, and a contract
-consumer. Python: `anyio_mode="auto"`, asyncio backend, a ~10-line recorded-sleep
-fixture instead of a fake clock (anyio has no injectable clock on asyncio).
+JS and Python each keep their existing transport, API, and contract-consumer
+suites. Go keeps the same behavioral coverage in `clients/go/pmcp_test.go`: a
+real in-process WebSocket drives `hub/register`, `server/discover`, a tool call,
+resource subscription, caller metadata, and replacement shutdown through the
+official SDK; pure rows pin URL derivation, backoff, schema marking, and both
+shared fixtures.
 `scripts/test/bootstrap-contract.test.ts` pins the status→message mapping — the
 one place a bare fetch stub is legitimate.
 

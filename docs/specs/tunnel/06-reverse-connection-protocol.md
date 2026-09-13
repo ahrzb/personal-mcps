@@ -103,7 +103,7 @@ Two message namespaces:
    *server*. v1 forwarded `tools/list` and `tools/call`; *(amended 2026-08-26, §20:
    plus `server/discover`, `prompts/list`, `prompts/get`, `resources/list`,
    `resources/templates/list`, `resources/read` and `completion/complete` — the frame
-   shape is unchanged, so the wire and both client libraries carry them with no new
+   shape is unchanged, so the wire and all client libraries carry them with no new
    framing)* *(amended 2026-09-01, §21.4: plus `resources/subscribe` and
    `resources/unsubscribe`, same rule)*. The client library also sends
    `notifications/tools/list_changed` when the user's server changes its tool set; the DO

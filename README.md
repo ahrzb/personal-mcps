@@ -7,7 +7,7 @@ with per-agent grants, human approvals, and an audit trail. One deploy, no ports
 opened anywhere.
 
 ```
- bot (Python/JS, anywhere)                     consumer (Claude Code, scripts)
+ bot (Python/JS/Go, anywhere)                  consumer (Claude Code, scripts)
         │  wss://<hub>/connect                        │  POST https://<hub>/<user>/mcp
         │  Authorization: Bearer pmcp_app_…           │  Authorization: Bearer pmcp_agt_…
         ▼                                             ▼
@@ -34,7 +34,7 @@ opened anywhere.
   when signed in, `/login` otherwise.
 - **CLI** — `pmcp` covers login (RFC 8628 device flow), apps, agents, tokens,
   approvals, audit, and a YAML access config with `diff`/`apply`.
-- **Client libraries** — Python and TypeScript twins that keep an ordinary MCP
+- **Client libraries** — Python, TypeScript, and Go packages keep an ordinary MCP
   server object reachable through the tunnel. See the
   [client quickstart](docs/quickstart-clients.md).
 
@@ -47,7 +47,8 @@ opened anywhere.
 | [cli](cli) | The `pmcp` CLI (`cli/pmcp.mts`, TypeScript run via `--experimental-strip-types`) |
 | [clients/js](clients/js) | TypeScript app-author library |
 | [clients/py](clients/py) | Python app-author library (`pmcp-client`, standalone `uv` project) |
-| [contracts](contracts) | Checked-in wire fixtures (close codes, tunnel frames) shared by hub and both clients |
+| [clients/go](clients/go) | Go app-author library (official MCP Go SDK transport) |
+| [contracts](contracts) | Checked-in wire fixtures (close codes, tunnel frames) shared by hub and all clients |
 | [scripts](scripts) | `users.mts` (bootstrap user management), `smoke.ts` (post-deploy probe), `test-inventory.mjs` |
 | [docs/specs](docs/specs/README.md) | **The source of truth.** The design spec (§-references throughout the code point here) and the testing strategy, one file per section — [docs/specs/README.md](docs/specs/README.md) is the index |
 | [docs/superpowers/plans](docs/superpowers/plans) | Implementation ledgers |
@@ -75,6 +76,12 @@ Python client tests run in their own environment:
 
 ```bash
 cd clients/py && uv run pytest
+```
+
+The Go client is a standalone module:
+
+```bash
+cd clients/go && go test ./...
 ```
 
 Deploy and verify:

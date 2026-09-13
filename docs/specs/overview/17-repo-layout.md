@@ -7,6 +7,7 @@ personal-mcps/
   clients/
     js/              # @personal-mcps/client
     py/              # pmcp-client (uv project)
+    go/              # github.com/ahrzb/personal-mcps/clients/go module
   examples/
     news-py/         # smallest possible app, used in docs and e2e
   scripts/           # users.ts

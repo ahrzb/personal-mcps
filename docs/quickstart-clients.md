@@ -3,12 +3,12 @@
 The client libraries do one thing: keep an ordinary MCP server object reachable
 through the hub's reverse tunnel. You write the server with the official MCP SDK;
 `serve()` dials the hub, registers, reconnects forever, and never shows you a
-socket. Python and TypeScript are twins — same options, same lifecycle, same
+socket. Python, TypeScript, and Go expose the same options, lifecycle, and
 close-code policy (spec §6, §11).
 
-Neither library is published to a registry yet — both install straight from this
-git repo ([clients/py](../clients/py) and [clients/js](../clients/js) are the
-package roots).
+The packages install from this git repo. Their roots are
+[clients/py](../clients/py), [clients/js](../clients/js), and
+[clients/go](../clients/go).
 
 ## 0. One-time setup
 
@@ -126,7 +126,54 @@ Same contract as Python: options fall back to `PMCP_URL` / `PMCP_APP_TOKEN`,
 and the returned promise pends for the life of the app. For a hand-rolled SDK
 session, construct `HubTransport` directly — `serve()` is sugar over it.
 
-## 3. Roles
+## 3. Go
+
+```bash
+go get github.com/ahrzb/personal-mcps/clients/go@master
+```
+
+Requires Go ≥ 1.25. Build the server with the official Go MCP SDK:
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/ahrzb/personal-mcps/clients/go"
+    "github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+type WeatherInput struct {
+    City string `json:"city" jsonschema:"city whose weather to return"`
+}
+
+type WeatherOutput struct {
+    Forecast string `json:"forecast"`
+}
+
+func main() {
+    server := mcp.NewServer(&mcp.Implementation{Name: "mybot", Version: "v1"}, nil)
+    mcp.AddTool(server, &mcp.Tool{Name: "get_weather", Description: "Current weather for a city"},
+        func(_ context.Context, _ *mcp.CallToolRequest, input WeatherInput) (*mcp.CallToolResult, WeatherOutput, error) {
+            return nil, WeatherOutput{Forecast: "sunny in " + input.City}, nil
+        })
+
+    err := pmcp.Serve(context.Background(), server, pmcp.Options{
+        Roles: pmcp.Roles{"reader": pmcp.Patterns{"get_*"}},
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+`Options.URL` and `Options.Token` override `PMCP_URL` / `PMCP_APP_TOKEN`.
+For a hand-rolled SDK session, pass `pmcp.NewHubTransport(...)` to
+`server.Run`.
+
+## 4. Roles
 
 The `roles` declaration maps role names to anchored patterns over tool names
 (`get_*` matches `get_weather`; a bare name matches itself; `*` matches all).
@@ -141,7 +188,7 @@ pmcp diff      # preview against the YAML access config
 pmcp apply
 ```
 
-## 4. Who is calling?
+## 5. Who is calling?
 
 Inside a tool handler, read the hub-asserted caller off the request's `_meta` —
 consumers cannot forge these fields:
@@ -157,10 +204,17 @@ const who = caller(extra.requestMeta);
 if (!who.hasRole("admin")) throw new Error("admin only");
 ```
 
+```go
+who := pmcp.Caller(req.Params.GetMeta())
+if !who.HasRole("admin") {
+    return nil, errors.New("admin only")
+}
+```
+
 On a request that never passed through the hub (local testing), the fields are
 simply absent: empty principal, no roles, no error.
 
-## 5. Secrets in tool schemas
+## 6. Secrets in tool schemas
 
 Mark fields whose values must never land in logs, audit, or approval prompts —
 the hub masks them before anything is persisted or shown:
@@ -182,7 +236,16 @@ const input = { username: z.string(), password: secret(z.string()) };
 const schema = sensitive(jsonSchema, ["credentials.token"]);
 ```
 
-## 6. Connect a consumer
+```go
+schema, err := jsonschema.For[Login](nil)
+if err != nil {
+    return err
+}
+schema, err = pmcp.Sensitive(schema, "credentials.token")
+// Pass schema as mcp.Tool.InputSchema or OutputSchema.
+```
+
+## 7. Connect a consumer
 
 Issue an agent key (shown once, `pmcp_agt_…`):
 
@@ -204,7 +267,7 @@ can see:
 pmcp tools
 ```
 
-## 7. Lifecycle — what serve() does on failure
+## 8. Lifecycle — what serve() does on failure
 
 | Event | Behavior |
 |---|---|

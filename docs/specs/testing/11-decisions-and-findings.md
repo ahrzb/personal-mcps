@@ -84,8 +84,8 @@ Resolved 2026-08-25 — **the skeleton-authoring escalations**, decided as a bat
   parameters and reference the names.
 - **Close-code behavior vocabulary**: three behaviors (`stop_fatal` /
   `stop_quiet` / `reconnect`) plus a `schedule` attribute (`exponential` /
-  `max_only`) — matching the row shape both client suites already carry; the
-  contracts README and both client docstrings align to this one vocabulary.
+  `max_only`) — matching the row shape all three client suites carry; the
+  contracts README and client documentation align to this one vocabulary.
 
 Open: none.
 

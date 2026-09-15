@@ -47,7 +47,7 @@ import {
   familyBell,
 } from "./capabilities";
 import type { CapabilityKind, EndpointShape } from "./capabilities";
-import { archived, CODES, HubError, invalidParams, notPermitted, unavailable } from "./errors";
+import { archived, CODES, HubError, invalidParams, methodNotFound, notPermitted, unavailable } from "./errors";
 import { formatPrincipal, principalKey, tokenPattern } from "./principal";
 import type { Principal } from "./principal";
 import { pushSender } from "./push";
@@ -353,11 +353,6 @@ async function route(
   }
 }
 
-/** §7's -32601, spelled once: an unserved method and a served one the ADDRESSED shape does
- *  not answer are the same refusal, so neither can be told from the other. */
-function methodNotFound(): HubError {
-  return new HubError(CODES.methodNotFound, "method not found");
-}
 
 /**
  * What a method the hub forwards over an app socket carries beyond its own params (§6,

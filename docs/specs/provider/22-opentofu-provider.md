@@ -48,9 +48,13 @@ credential resolution is a hash lookup; `owner_id` is indexed because list and r
 
 | Op | Input | Output |
 |---|---|---|
-| `admin_token_issue` | `{ expires_in?: number \| "never" }` | `{ id, token (**writeOnly**), prefix, created_at, expires_at }` |
-| `admin_token_list` | `{}` | `{ tokens: [{ id, prefix, created_at, expires_at, last_used_at, revoked_at }] }` |
+| `admin_token_issue` | `{ expires_in?: number \| "never" }` | `{ id, token (**writeOnly**), prefix, createdAt, expiresAt }` |
+| `admin_token_list` | `{}` | `{ tokens: [{ id, prefix, createdAt, expiresAt, lastUsedAt, revokedAt }] }` |
 | `admin_token_revoke` | `{ id }` | `{ id }` |
+
+The casing split is the hub's existing convention, not a slip: inputs are snake_case because
+they mirror §9's YAML, and outputs are camelCase because they are rows a TypeScript client
+consumes. An op's input and output therefore spell the same column two ways.
 
 `expires_in` defaults to 365 days. Expiry is **fixed, not sliding** — an admin token is not a
 session. Revocation is by `id`, never by prefix or plaintext. **Rotation is issue-then-revoke**,

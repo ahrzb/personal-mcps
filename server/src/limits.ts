@@ -44,8 +44,11 @@ export const AGENT_TOKEN_TTL_MS = 90 * 24 * 60 * 60_000;
 
 /**
  * §22.1 — the fixed, non-sliding default life of a `pmcp_adm_` admin token: 365 days.
- * Unlike AGENT_TOKEN_TTL_MS this is never extended by use — an admin token is not a
- * session, and rotation is issue-then-revoke by a human, never a refresh.
+ * Non-sliding like AGENT_TOKEN_TTL_MS, not unlike it: both deadlines are set once at
+ * issuance and only `last_used_at` moves afterwards. The credential this is deliberately
+ * unlike is a better-auth session, whose `expiresAt` IS pushed forward on use — an admin
+ * token is not a session, and its rotation is issue-then-revoke by a human, never a
+ * refresh. A default, not a maximum: an explicit `expires_in` or `"never"` overrides it.
  */
 export const ADMIN_TOKEN_TTL_MS = 365 * 24 * 60 * 60_000;
 

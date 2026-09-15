@@ -20,7 +20,7 @@ import { RESERVED_APP_SLUGS } from "./app-routes";
 import type { Approvals } from "./approvals";
 import { query, record } from "./audit";
 import { approvalsFromEnv } from "./wiring";
-import { CODES, HubError, notPermitted } from "./errors";
+import { CODES, HubError, methodNotFound, notPermitted } from "./errors";
 import type { AppBackend, Tool } from "./gateway";
 import {
   countTokensFor,
@@ -1561,10 +1561,23 @@ async function referentOf(ownerId: string, kind: TokenKind, slug: string): Promi
  * its set is empty rather than a case this policy has to reason about.
  */
 export function adminOpsFor(principal: Principal): ReadonlySet<string> {
-  if (principal.kind === "agent") return new Set();
   const names = Object.keys(ops);
-  if (principal.kind === "user") return new Set(names);
-  return new Set(names.filter((name) => name !== "approval_decide" && name !== "admin_token_issue"));
+  // A `switch` returning from every arm, not a chain of `if`s with a bare final `return`:
+  // §22.1 asks for the exhaustiveness check because the FINAL arm is the dangerous one.
+  // Written as a fall-through, a fourth `Principal` kind would inherit the admin arm and
+  // silently receive every op but two — this function fails OPEN by default, so the
+  // compiler has to be the thing that notices. With an annotated return type and no
+  // `default`, adding a kind makes this a type error (TS2366) rather than a grant.
+  switch (principal.kind) {
+    case "agent":
+      // index.visibleOnScoped refuses an agent before the request arrives, so this is
+      // unreachable rather than a policy — empty is the fail-closed spelling of that.
+      return new Set();
+    case "user":
+      return new Set(names);
+    case "admin":
+      return new Set(names.filter((name) => name !== "approval_decide" && name !== "admin_token_issue"));
+  }
 }
 
 /**
@@ -1611,7 +1624,21 @@ export const adminBackend: AppBackend = {
     return [];
   },
   async call(app, msg, ctx) {
-    // deps: ops · adminOpsFor · errors.notPermitted
+    // deps: ops · adminOpsFor · errors.notPermitted · errors.methodNotFound
+    //
+    // The gateway routes THREE consumer methods through one `AppBackend.call` —
+    // `tools/call`, `prompts/get` and `resources/read` — each arriving with the addressed
+    // item in `params.name`. A backend that reads `params.name` without reading `method`
+    // therefore answers all three identically, and this one serves only the first: §20.6
+    // makes the builtin tools-only, listing prompts and resources as empty families.
+    //
+    // Unguarded, `prompts/get` with `name: "agent_list"` EXECUTED the admin op, and the
+    // gateway then wrote the row as a prompt fetch — whose audit shape carries no
+    // arguments and consults no `sensitivePaths`, unlike the tool path. Authorization was
+    // never the hole (`adminOpsFor` still gated it, and only `user`/`admin` principals
+    // reach this app at all); §15's argument record was, so a mutation could be driven
+    // through a method whose audit row cannot describe it.
+    if (msg.method !== "tools/call") throw methodNotFound();
     const name = typeof msg.params?.name === "string" ? msg.params.name : "";
     const op = opNamed(name);
     // The same code and the same words the gateway answers an ungranted tool with: an

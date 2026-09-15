@@ -138,6 +138,18 @@ export const notPermitted = (): HubError => new HubError(CODES.notPermitted, "to
 export const archived = (): HubError => new HubError(CODES.archived, "app archived");
 
 /**
+ * §7's -32601, spelled once: an unserved method and a served one the ADDRESSED shape does
+ * not answer are the same refusal, so neither can be told from the other.
+ *
+ * Lives here rather than in the gateway because a BACKEND needs it too. The gateway routes
+ * `tools/call`, `prompts/get` and `resources/read` through one `AppBackend.call`, so a
+ * backend that serves only one of the three is the only place that knows the other two are
+ * unserved — and it cannot say so in the hub's own words from a module that does not export
+ * them (admin.adminBackend.call).
+ */
+export const methodNotFound = (): HubError => new HubError(CODES.methodNotFound, "method not found");
+
+/**
  * -32602 as a CONSUMER meets it (§21.4): a `resources/subscribe` refused because the
  * socket's subscription set is full or the URI is over its byte cap. Payload-free like the
  * three above — the cap is not echoed (§21's open question pins `data` unset), and the

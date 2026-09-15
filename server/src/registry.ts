@@ -1292,7 +1292,18 @@ export class Registry {
    */
   async resolveAccess(principal: Principal, app: App): Promise<ToolFilter> {
     // deps: buildToolFilter · D1 `grant_` · D1 `app`
-    if (principal.kind !== "agent") return buildToolFilter([{ role: "all", mode: "allow" }], {});
+    //
+    // Spelled as a switch because the shape it replaces — `kind !== "agent"` → grant every
+    // tool — fails OPEN: a fourth `Principal` kind would receive an unfiltered
+    // everything-filter on every app, which is the single widest privilege in the hub. The
+    // annotated return type with no `default` arm makes adding a kind a type error instead.
+    switch (principal.kind) {
+      case "user":
+      case "admin":
+        return buildToolFilter([{ role: "all", mode: "allow" }], {});
+      case "agent":
+        break;
+    }
     // Re-read, never trust the passed row: a role widened at reconnect must bite on the very
     // next call. The virtual `pmcp` app has no row, which reads as "declares nothing".
     const row = await this.row(app.id);

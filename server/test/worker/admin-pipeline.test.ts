@@ -101,6 +101,35 @@ describe("§8 — the builtin rides the ordinary pipeline", () => {
     expect(recorded.args, "a builtin call's arguments are recorded").toBeDefined();
     expect(recorded.result, "and so is its result").toBeDefined();
   });
+
+  it("§20.6 · a `prompts/get` naming an admin op is -32601 and does NOT execute it — one backend, three methods", async () => {
+    const hub = await fixture();
+    // The gateway routes `tools/call`, `prompts/get` and `resources/read` through the ONE
+    // `AppBackend.call`, each carrying the addressed item in `params.name`. A backend that
+    // reads `params.name` without reading `method` therefore answers all three alike, and
+    // the builtin serves only the first (§20.6: prompts and resources are empty families
+    // here). The payload is deliberately a MUTATION, because the valuable assertion is not
+    // the code — it is that nothing happened.
+    const slug = uniqueSlug("confused");
+    const answered = await hub.owner(
+      { method: "prompts/get", params: { name: "agent_create", arguments: { slug, name: "Via Prompts" } } },
+      PMCP_SLUG,
+    );
+    expect(answered.error?.code, JSON.stringify(answered)).toBe(METHOD_NOT_FOUND);
+
+    // The agent does not exist, so the op did not run. Read through the op the hub itself
+    // serves rather than the table, so a passing assertion means the namespace is clean.
+    const listed = await hub.owner(call("agent_list", {}), PMCP_SLUG);
+    const agents = structured(listed).agents as { slug: string }[];
+    expect(agents.map((agent) => agent.slug)).not.toContain(slug);
+
+    // And §15's ledger agrees: no `tools/call` row appeared for it either. An op driven
+    // through the prompt path would be recorded as a prompt fetch, whose audit shape
+    // carries no arguments and consults no `sensitivePaths` — which is the reason this
+    // mattered beyond method hygiene.
+    const recorded = await auditRows(hub.ownerId, "tools/call");
+    expect(recorded.map((row) => row.tool)).not.toContain("agent_create");
+  });
 });
 
 describe("§8 — agents and the builtin, structurally", () => {
@@ -268,9 +297,11 @@ const ROLE = "reader";
  *  credentials `app_set_upstream_auth` really carries. */
 const SENTINEL = "FAKE0000-never-echoed-upstream-key";
 
-/** §7's refusal codes as this file observes them, plus JSON-RPC's own for a bad input. */
+/** §7's refusal codes as this file observes them, plus JSON-RPC's own for a bad input and
+ *  for a method the addressed shape does not serve (§20.2). */
 const NOT_PERMITTED = -32001;
 const INVALID_PARAMS = -32602;
+const METHOD_NOT_FOUND = -32601;
 
 /** One seeded world plus the two credentials that drive it. */
 type Hub = {

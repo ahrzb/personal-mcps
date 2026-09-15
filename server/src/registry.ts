@@ -251,6 +251,16 @@ export type AgentDraft = {
 };
 
 /**
+ * Input to updateAgent. `slug` is absent by construction — an agent has no rename op,
+ * because a slug rename is a distinct decision (identity, not display) that §22.4 never
+ * asked for; only the display fields createAgent also takes are patchable.
+ */
+export type AgentPatch = Partial<{
+  name: string;
+  description: string;
+}>;
+
+/**
  * The reserved slug of the built-in admin app. No `app` row ever exists
  * for it: createApp rejects it, getApp returns null for it, and every
  * admin op that takes a slug rejects it with one uniform error. Because the
@@ -851,18 +861,19 @@ export class Registry {
   }
 
   /**
-   * The apps a principal can see, archived rows included: for an owner,
-   * every row in their namespace; for an agent, exactly the rows it
-   * holds at least one grant on — so a zero-grant agent sees nothing and can
-   * enumerate nothing. Never contains the virtual `pmcp` builtin. Aggregation
-   * skips archived rows itself; they are returned here because the -32002
-   * answer and the /apps page both need them.
+   * The apps a principal can see, archived rows included: for an owner (or an admin
+   * token acting on its behalf, §22.1 — though it never actually reaches here: the
+   * builtin `pmcp` app has no row and admission refuses it everywhere else), every row
+   * in their namespace; for an agent, exactly the rows it holds at least one grant on —
+   * so a zero-grant agent sees nothing and can enumerate nothing. Never contains the
+   * virtual `pmcp` builtin. Aggregation skips archived rows itself; they are returned
+   * here because the -32002 answer and the /apps page both need them.
    */
   async listAppsFor(principal: Principal): Promise<AppDetail[]> {
     // deps: D1 `app` · D1 `grant_`
     // A zero-grant agent's subselect is empty, so "sees nothing" needs no special case.
     const [sql, key] =
-      principal.kind === "user"
+      principal.kind !== "agent"
         ? [`SELECT * FROM app WHERE owner_id = ?`, principal.userId]
         : [
             `SELECT * FROM app
@@ -1142,6 +1153,35 @@ export class Registry {
   }
 
   /**
+   * Patches an agent's display fields — createAgent's twin, minus `slug`. §22.4's whole
+   * reason: without this, a display-name typo forces `RequiresReplace` in the provider,
+   * and replace-of-agent is `agent_delete` then `agent_create` — the same cascade that
+   * revokes every live token on the agent for a cosmetic edit. An empty patch is a legal
+   * no-op, updateApp's own "no columns, no write, unchanged row" branch, so an idempotent
+   * apply that resends unchanged fields never has to special-case them out first.
+   */
+  async updateAgent(agentId: string, patch: AgentPatch): Promise<Agent> {
+    // deps: D1 `agent`
+    const columns: string[] = [];
+    const values: unknown[] = [];
+    const set = (column: string, value: unknown) => {
+      columns.push(`${column} = ?`);
+      values.push(value);
+    };
+    if (patch.name !== undefined) set("name", patch.name);
+    if (patch.description !== undefined) set("description", patch.description);
+    if (columns.length > 0) {
+      await this.db
+        .prepare(`UPDATE agent SET ${columns.join(", ")} WHERE id = ?`)
+        .bind(...values, agentId)
+        .run();
+    }
+    const row = await this.db.prepare(`SELECT * FROM agent WHERE id = ?`).bind(agentId).first<AgentRow>();
+    if (!row) throw new Error(`agent "${agentId}" vanished mid-update`);
+    return toAgent(row);
+  }
+
+  /**
    * Deletes the row; grant rows cascade via FK. Token deletion is admin's
    * cascade. Deleting an already-absent id is a no-op.
    */
@@ -1244,10 +1284,15 @@ export class Registry {
    * Works unchanged for the virtual `pmcp` app: owners see everything,
    * agents resolve to zero grants — no special case. Never throws for
    * "no access"; absence of grants is a normal ToolFilter (see roleNames).
+   *
+   * An `admin` principal (§22.1) gets the same everything-filter a `user` does — its OWN
+   * restriction (every op but `approval_decide`/`admin_token_issue`) is a `pmcp`-only,
+   * op-NAME-level policy (admin.adminOpsFor), never a grant, and the only app it can ever
+   * reach here is the builtin, whose declaration is empty regardless.
    */
   async resolveAccess(principal: Principal, app: App): Promise<ToolFilter> {
     // deps: buildToolFilter · D1 `grant_` · D1 `app`
-    if (principal.kind === "user") return buildToolFilter([{ role: "all", mode: "allow" }], {});
+    if (principal.kind !== "agent") return buildToolFilter([{ role: "all", mode: "allow" }], {});
     // Re-read, never trust the passed row: a role widened at reconnect must bite on the very
     // next call. The virtual `pmcp` app has no row, which reads as "declares nothing".
     const row = await this.row(app.id);

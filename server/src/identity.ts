@@ -38,11 +38,12 @@ import { Hono } from "hono";
 import { deleteUser, provisionUser } from "./admin";
 import { record } from "./audit";
 import { PROTECTED_RESOURCE_PATH, resolveOAuthPrincipal } from "./oauth";
-import { formatPrincipal, TOKEN_PREFIX } from "./principal";
+import { ADMIN_TOKEN_PREFIX, formatPrincipal, TOKEN_PREFIX } from "./principal";
 import type { Principal } from "./principal";
 import {
   DEVICE_CODE_TTL_MS,
   AGENT_TOKEN_TTL_MS,
+  ADMIN_TOKEN_TTL_MS,
   TOKEN_LAST_USED_STAMP_MS,
 } from "./limits";
 
@@ -301,6 +302,12 @@ async function resolveCredential(
   if (presented.startsWith(TOKEN_PREFIX.agent)) {
     return agentFor(presented, now);
   }
+  // §22.1: the admin-token family's own table, checked by its own prefix — never a third
+  // `token.kind`. Like the two legs above, a `pmcp_adm_` bearer whose lookup MISSES
+  // answers null here rather than falling through to a session lookup.
+  if (presented.startsWith(ADMIN_TOKEN_PREFIX)) {
+    return adminFor(presented, now);
+  }
   // §19.6: a JWT-shaped bearer is a credential regime of its own — answered by the OAuth
   // leg ALONE, and that leg is TERMINAL. Whatever it fails on (bad signature, wrong issuer
   // or audience, expired, missing `mcp` scope, no binding, revoked, deleted agent), the
@@ -357,6 +364,37 @@ async function agentFor(presented: string, now: () => number): Promise<Principal
 }
 
 /**
+ * The `pmcp_adm_` leg (§22.1): its own table, its own hash lookup — never `token`'s,
+ * never gated by a `kind` column, because there is no polymorphic referent to check.
+ * Unrevoked and unexpired, and the owning `user` row must still exist (§22.1's
+ * `ON DELETE CASCADE` means it normally will not linger dangling the way an agent's
+ * FK-less `ref_id` can, but a row read mid-delete is still handled the same way every
+ * other dangling-referent lookup here is: null, not a crash). Resolves to the SAME
+ * shape a session yields — `formatPrincipal`/`principalKey` are deliberately blind to
+ * which of the two produced it — tagged `admin` so authorization (index.visibleOnScoped,
+ * registry.resolveAccess, admin.adminOpsFor) can still tell them apart where it matters.
+ */
+async function adminFor(presented: string, now: () => number): Promise<Principal | null> {
+  const row = await db()
+    .prepare(
+      `SELECT "id", "owner_id", "expires_at", "last_used_at", "revoked_at"
+         FROM admin_token WHERE "hash" = ?`,
+    )
+    .bind(await hashToken(presented))
+    .first<AdminTokenRow>();
+  if (row === null || row.revoked_at != null) return null;
+  const at = now();
+  if (row.expires_at != null && row.expires_at <= at) return null;
+  const user = await db()
+    .prepare(`SELECT "id", "username" FROM "user" WHERE id = ?`)
+    .bind(row.owner_id)
+    .first<{ id: string; username: string }>();
+  if (user === null) return null;
+  await stampAdminTokenLastUsed(row, at);
+  return { kind: "admin", userId: user.id, username: user.username };
+}
+
+/**
  * The fall-through leg: better-auth's own session lookup, riding §4's `bearer()` plugin.
  * The Authorization header is rebuilt into a bare Headers rather than passed through,
  * because better-auth would happily read a Cookie from the original — and on `/<user>/mcp*`
@@ -376,9 +414,9 @@ function namespaceOf(req: Request): string {
   return decodeURIComponent(new URL(req.url).pathname.split("/")[1] ?? "");
 }
 
-/** The namespace a resolved principal lives in — its owner's user id, either kind. */
+/** The namespace a resolved principal lives in — its owner's user id, every kind. */
 function namespaceIdOf(p: Principal): string {
-  return p.kind === "user" ? p.userId : p.ownerId;
+  return p.kind === "agent" ? p.ownerId : p.userId;
 }
 
 /** The user id behind a username, or null when no such user exists. */
@@ -497,6 +535,16 @@ type TokenRow = {
   revoked_at: number | null;
 };
 
+/** The `admin_token` columns every resolve reads — snake_case, as the table spells them.
+ *  No `kind`, no `ref_id`: the table's whole point is that it needs neither (§22.1). */
+type AdminTokenRow = {
+  id: string;
+  owner_id: string;
+  expires_at: number | null;
+  last_used_at: number | null;
+  revoked_at: number | null;
+};
+
 /**
  * How much of the token the listing shows: §5's "first ~12 chars" — enough to tell two
  * live credentials apart in `token_list`, far short of guessing either. An
@@ -553,6 +601,13 @@ function randomSecret(): string {
 async function stampLastUsed(row: Pick<TokenRow, "id" | "last_used_at">, at: number): Promise<void> {
   if (row.last_used_at != null && at - row.last_used_at < TOKEN_LAST_USED_STAMP_MS) return;
   await db().prepare(`UPDATE token SET "last_used_at" = ? WHERE "id" = ?`).bind(at, row.id).run();
+}
+
+/** The same coarse stamp as stampLastUsed, over `admin_token` rather than `token` — its
+ *  own table, so its own write (§22.1). */
+async function stampAdminTokenLastUsed(row: Pick<AdminTokenRow, "id" | "last_used_at">, at: number): Promise<void> {
+  if (row.last_used_at != null && at - row.last_used_at < TOKEN_LAST_USED_STAMP_MS) return;
+  await db().prepare(`UPDATE admin_token SET "last_used_at" = ? WHERE "id" = ?`).bind(at, row.id).run();
 }
 
 /**
@@ -846,6 +901,89 @@ export async function revokeToken(ownerId: string, id: string): Promise<boolean>
   const { meta } = await db()
     .prepare(`UPDATE token SET "revoked_at" = COALESCE("revoked_at", ?)
                WHERE "id" = ? AND ${OWNED_BY}`)
+    .bind(Date.now(), id, ownerId)
+    .run();
+  return meta.changes > 0;
+}
+
+// ── §22.1: the admin_token family — its own table, no referent, no `kind` column ───────
+
+/**
+ * One row of an admin-token listing (§22.1) — no `kind`, no referent: the row itself IS
+ * the credential, scoped to its owner alone. Never plaintext, never the hash — the same
+ * discipline TokenInfo holds for the shared table.
+ */
+export type AdminTokenInfo = {
+  id: string;
+  prefix: string;
+  createdAt: number;
+  expiresAt: number | null;
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+};
+
+/**
+ * Mints an admin token (§22.1): `pmcp_adm_`-prefixed, SHA-256 at rest, plaintext returned
+ * exactly once, never recoverable afterwards. `expiresIn` is seconds or `"never"`; an
+ * absent one takes the FIXED 365-day default (ADMIN_TOKEN_TTL_MS) — never sliding, because
+ * an admin token is not a session. Trusts the caller: that the calling principal is a
+ * session (never another admin token — no self-minting) is admin.adminOpsFor's check, not
+ * this function's, for the same reason issueToken trusts referentOf's resolution.
+ */
+export async function issueAdminToken(
+  ownerId: string,
+  expiresIn: number | "never" | undefined,
+  now: () => number = Date.now,
+): Promise<{ id: string; token: string; prefix: string; createdAt: number; expiresAt: number | null }> {
+  // deps: D1 `admin_token` · crypto.getRandomValues · crypto.subtle
+  const createdAt = now();
+  const id = crypto.randomUUID();
+  const token = ADMIN_TOKEN_PREFIX + randomSecret();
+  const prefix = token.slice(0, PREFIX_DISPLAY_LENGTH);
+  const expiresAt = expiresIn === "never" ? null : expiresIn !== undefined ? createdAt + expiresIn * 1000 : createdAt + ADMIN_TOKEN_TTL_MS;
+  await db()
+    .prepare(
+      `INSERT INTO admin_token ("id", "owner_id", "hash", "prefix", "expires_at", "created_at")
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(id, ownerId, await hashToken(token), prefix, expiresAt, createdAt)
+    .run();
+  // The one and only time the plaintext exists outside the caller's hand.
+  return { id, token, prefix, createdAt, expiresAt };
+}
+
+/** Every admin token in the namespace, newest first — live, expired, and revoked rows
+ *  alike, exactly as listTokens shows the shared table's rotation state. */
+export async function listAdminTokens(ownerId: string): Promise<AdminTokenInfo[]> {
+  // deps: D1 `admin_token`
+  const { results } = await db()
+    .prepare(
+      `SELECT "id", "prefix", "created_at", "expires_at", "last_used_at", "revoked_at"
+         FROM admin_token WHERE "owner_id" = ? ORDER BY "created_at" DESC`,
+    )
+    .bind(ownerId)
+    .all<AdminTokenRow & { prefix: string; created_at: number }>();
+  return results.map((row) => ({
+    id: row.id,
+    prefix: row.prefix,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at ?? null,
+    lastUsedAt: row.last_used_at ?? null,
+    revokedAt: row.revoked_at ?? null,
+  }));
+}
+
+/**
+ * Revokes one admin token: immediately dead on every consumer surface — the next request
+ * carrying it gets 401. Returns false when `id` names no admin token inside `ownerId`'s
+ * namespace. Idempotent: revoking a revoked token returns true and changes nothing. Never
+ * touches a socket — an admin token opens none (§22.1).
+ */
+export async function revokeAdminToken(ownerId: string, id: string): Promise<boolean> {
+  // deps: D1 `admin_token`
+  const { meta } = await db()
+    .prepare(`UPDATE admin_token SET "revoked_at" = COALESCE("revoked_at", ?)
+               WHERE "id" = ? AND "owner_id" = ?`)
     .bind(Date.now(), id, ownerId)
     .run();
   return meta.changes > 0;
@@ -1162,7 +1300,7 @@ export function whoamiRoute(): unknown {
 
 /** The username whose namespace a principal acts in — its own, or its owner's. */
 async function namespaceNameOf(p: Principal): Promise<string> {
-  if (p.kind === "user") return p.username;
+  if (p.kind !== "agent") return p.username;
   const row = await db()
     .prepare(`SELECT "username" FROM "user" WHERE "id" = ?`)
     .bind(p.ownerId)

@@ -25,10 +25,18 @@
  * machine identity confined by its grants; `ownerId` names the namespace it lives in
  * and `slug` is its per-owner name. App tokens (`pmcp_app_`) never become a
  * Principal — they authenticate only the /connect upgrade, via resolveAppToken.
+ *
+ * `admin` (§22.1) is a `pmcp_adm_` bearer: an owner-scoped credential that reaches only
+ * the builtin `pmcp` admin surface, never a single app tool. It carries the SAME fields
+ * a `user` does — an admin token is deliberately indistinguishable from its owner
+ * downstream (formatPrincipal, principalKey) — and exists as its own union member
+ * anyway, because authorization (index.visibleOnScoped, registry.resolveAccess,
+ * admin.adminOpsFor) has to tell the two apart even where display does not.
  */
 export type Principal =
   | { kind: "user"; userId: string; username: string }
-  | { kind: "agent"; agentId: string; ownerId: string; slug: string };
+  | { kind: "agent"; agentId: string; ownerId: string; slug: string }
+  | { kind: "admin"; userId: string; username: string };
 
 /**
  * The one canonical principal string — `user:<username>` or `agent:<slug>` — used
@@ -39,7 +47,16 @@ export type Principal =
  */
 export function formatPrincipal(p: Principal): string {
   // deps: none
-  return p.kind === "user" ? `user:${p.username}` : `agent:${p.slug}`;
+  // §22.1: an admin token's audience is the SAME owner a session names — the non-goal
+  // is per-credential attribution, not per-kind — so it falls into the `user` arm rather
+  // than growing one of its own.
+  switch (p.kind) {
+    case "user":
+    case "admin":
+      return `user:${p.username}`;
+    case "agent":
+      return `agent:${p.slug}`;
+  }
 }
 
 /**
@@ -57,7 +74,13 @@ export function formatPrincipal(p: Principal): string {
  */
 export function principalKey(p: Principal): string {
   // deps: none
-  return p.kind === "user" ? `user:${p.userId}` : `agent:${p.agentId}`;
+  switch (p.kind) {
+    case "user":
+    case "admin":
+      return `user:${p.userId}`;
+    case "agent":
+      return `agent:${p.agentId}`;
+  }
 }
 
 /**
@@ -71,12 +94,14 @@ export function principalKey(p: Principal): string {
 export const HUB_PRINCIPAL = "hub";
 
 /**
- * The prefix per token kind — the ONE place the wire spelling of a credential lives.
- * Written at mint (identity.issueToken), matched at resolve, and never trusted as evidence
- * of kind (that is the `kind` column's job, §6). It sits in this leaf rather than in
- * identity for the same reason the principal format does: the §15 scrubbers have to NAME
- * credential material while only identity may MINT it, and a scrubber that transcribed the
- * grammar instead of importing it stops matching the day a prefix is rotated or extended.
+ * The prefix per `token`-table kind — the ONE place the wire spelling of an `agent`/`app`
+ * credential lives. Written at mint (identity.issueToken), matched at resolve, and never
+ * trusted as evidence of kind (that is the `kind` column's job, §6). It sits in this leaf
+ * rather than in identity for the same reason the principal format does: the §15 scrubbers
+ * have to NAME credential material while only identity may MINT it, and a scrubber that
+ * transcribed the grammar instead of importing it stops matching the day a prefix is
+ * rotated or extended. Deliberately two-membered forever: `admin_token` is its own table
+ * with its own prefix below, never a third `TokenKind` (§22.1).
  */
 export const TOKEN_PREFIX = {
   agent: "pmcp_agt_",
@@ -84,14 +109,27 @@ export const TOKEN_PREFIX = {
 } as const;
 
 /**
- * The credential grammar as a matcher, derived from TOKEN_PREFIX so a new kind — or a
- * longer scheme tag — is hunted by every §15 sink the day it is minted. `minBody` is what
- * separates token MATERIAL from §5's deliberately-stored display prefix: a real secret's
- * body is base64url over 256 bits, while `token.prefix` is a dozen characters the schema
- * means to keep, so a sweep over stored columns asks for a floor and a scrubber over prose
- * does not.
+ * §22.1's `pmcp_adm_` admin-token prefix — deliberately NOT a `TOKEN_PREFIX` member (that
+ * union stays two-membered, one per `token.kind` value) even though it joins the same
+ * credential grammar below. Written at mint (identity.issueAdminToken), matched at resolve
+ * (identity.resolveCredential's `pmcp_adm_` leg).
+ */
+export const ADMIN_TOKEN_PREFIX = "pmcp_adm_";
+
+/**
+ * The credential grammar as a matcher, derived from every live prefix — `TOKEN_PREFIX`'s
+ * two plus `ADMIN_TOKEN_PREFIX` — so a new one is hunted by every §15 sink the day it is
+ * minted: the audit and Sentry scrubbers, the gateway URI scrubber, the database hygiene
+ * sweep, and the contract sweep. The prefix grammar and the token-KIND union (TokenKind,
+ * two-membered) are deliberately different things: §22.1 is what separated them, since
+ * `admin_token` needed a third wire prefix without a third `token.kind` value to match it.
+ * `minBody` is what separates token MATERIAL from §5's deliberately-stored display prefix:
+ * a real secret's body is base64url over 256 bits, while `token.prefix` is a dozen
+ * characters the schema means to keep, so a sweep over stored columns asks for a floor and
+ * a scrubber over prose does not.
  */
 export function tokenPattern(minBody = 1, flags = ""): RegExp {
   // deps: none
-  return new RegExp(`(?:${Object.values(TOKEN_PREFIX).join("|")})[A-Za-z0-9_-]{${minBody},}`, flags);
+  const prefixes = [...Object.values(TOKEN_PREFIX), ADMIN_TOKEN_PREFIX];
+  return new RegExp(`(?:${prefixes.join("|")})[A-Za-z0-9_-]{${minBody},}`, flags);
 }

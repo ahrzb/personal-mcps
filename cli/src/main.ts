@@ -320,6 +320,24 @@ async function adminOp(ctx: CliContext, name: string, args: Record<string, unkno
 }
 
 /**
+ * §22.1's CLI-side half of the acceptance table: a `pmcp_adm_` admin token administers
+ * the hub and reaches no single app's own tools, so the commands that would otherwise
+ * address one — `ls`, `call`, `get`, `read`, and the hidden `tools`/`prompts`/`resources`
+ * — refuse it client-side, before any request, the same way resolveContext's `pmcp_app_`
+ * check does: failing locally beats a confusing server refusal. Every other command
+ * (`admin-token`, `token`, `app`, `agent`, `approvals`, `connections`, `audit`, `diff`,
+ * `apply`) is unaffected — they front the builtin `pmcp` app's own ops, which an admin
+ * token DOES reach (minus `approval_decide` and `admin_token_issue`, refused server-side).
+ */
+function refuseAdminToken(ctx: CliContext): void {
+  if (!ctx.token.startsWith("pmcp_adm_")) return;
+  throw new CliError(
+    "unauthenticated",
+    "a pmcp_adm_ admin token administers the hub and cannot reach a single app's tools",
+  );
+}
+
+/**
  * The one reader of a list-shaped op result: `rows<AppRow>(await adminOp(…),
  * "apps")`. The typed row is the point — every caller shares AppRow / AgentRow
  * instead of re-deriving a row's shape by hand at each rendering site.
@@ -666,6 +684,10 @@ export async function profile(cmd: ProfileCommand): Promise<number> {
  */
 export async function ls(ctx: CliContext): Promise<number> {
   // deps: mcpCall · render.columnize
+  // No refuseAdminToken here, unlike the six consumer subcommands: `ls` fronts `app_list`, an
+  // ADMIN op on /mcp/pmcp, which §22.1's acceptance table grants `pmcp_adm_` outright. The other
+  // six address /mcp/<app-slug> and are refused because that surface is closed to admin tokens.
+  // Refusing inventory client-side would deny a credential something the hub honours.
   const apps = rows<AppRow>(await adminOp(ctx, "app_list"), "apps");
   if (globals.json) return emitDocument({ apps });
   const c = styling(decorated());
@@ -719,6 +741,7 @@ function declaredRoles(row: AppRow): string {
  */
 export async function tools(ctx: CliContext, app: string): Promise<number> {
   // deps: mcpList
+  refuseAdminToken(ctx);
   const listed = (await mcpList(ctx, app)) as Record<string, any>[];
   if (globals.json) return emitDocument({ app, tools: listed });
   for (const tool of listed) write(`${catalogLine(String(tool.name), String(tool.description ?? ""), 28, decorated())}\n`);
@@ -739,6 +762,7 @@ export async function call(
   args: Record<string, unknown>,
 ): Promise<number> {
   // deps: mcpCall · enrichCallFailure
+  refuseAdminToken(ctx);
   try {
     const result = (await mcpCall(ctx, target.app, target.tool, args)) as { isError?: boolean };
     write(`${renderJson(result, documentColor())}\n`);
@@ -844,6 +868,7 @@ function indent(text: string, spaces: number): string {
  */
 export async function prompts(ctx: CliContext, app: string): Promise<number> {
   // deps: rpc
+  refuseAdminToken(ctx);
   const result = (await rpc(ctx, scoped(ctx, app), "prompts/list")) as { prompts?: unknown[] };
   const listed = (result?.prompts ?? []) as Record<string, any>[];
   if (globals.json) return emitDocument({ app, prompts: listed });
@@ -864,6 +889,7 @@ export async function prompt(
   args: Record<string, unknown>,
 ): Promise<number> {
   // deps: rpc
+  refuseAdminToken(ctx);
   const result = await rpc(ctx, scoped(ctx, app), "prompts/get", { name, arguments: args });
   write(`${renderJson(result, documentColor())}\n`);
   return 0;
@@ -877,6 +903,7 @@ export async function prompt(
  */
 export async function resources(ctx: CliContext, app: string, opts: { templates?: boolean }): Promise<number> {
   // deps: rpc
+  refuseAdminToken(ctx);
   if (opts.templates === true) {
     const result = (await rpc(ctx, scoped(ctx, app), "resources/templates/list")) as { resourceTemplates?: unknown[] };
     const listed = (result?.resourceTemplates ?? []) as Record<string, any>[];
@@ -901,6 +928,7 @@ export async function resources(ctx: CliContext, app: string, opts: { templates?
  */
 export async function read(ctx: CliContext, app: string, uri: string): Promise<number> {
   // deps: rpc
+  refuseAdminToken(ctx);
   const result = await rpc(ctx, scoped(ctx, app), "resources/read", { uri });
   write(`${renderJson(result, documentColor())}\n`);
   return 0;
@@ -1186,13 +1214,15 @@ export async function app(ctx: CliContext, cmd: AppCommand): Promise<number> {
 export type AgentCommand =
   | { sub: "list" }
   | { sub: "create"; slug: string; name?: string; description?: string }
+  | { sub: "update"; slug: string; name?: string; description?: string }
   | { sub: "delete"; slug: string };
 
 /**
- * `pmcp agent …` — sugar over agent_list / agent_create /
+ * `pmcp agent …` — sugar over agent_list / agent_create / agent_update /
  * agent_delete (§8). `list` prints each agent with its grants inline (per
  * app: role names and modes) — the same single read the diff planner
- * rides. `delete` is destructive — grants cascade and the agent's tokens are
+ * rides. `update` patches `name`/`description`; `slug` is immutable (§22.4).
+ * `delete` is destructive — grants cascade and the agent's tokens are
  * deleted server-side — and asks for confirmation unless `--yes`.
  */
 export async function agent(ctx: CliContext, cmd: AgentCommand): Promise<number> {
@@ -1220,6 +1250,18 @@ export async function agent(ctx: CliContext, cmd: AgentCommand): Promise<number>
     });
     if (globals.json) return emitDocument(created);
     write(`created ${cmd.slug}\n`);
+    return 0;
+  }
+  if (cmd.sub === "update") {
+    // No fields given is legal — agent_update's own no-op (§22.4): the hub leaves the
+    // row unchanged and returns it, so this prints the same success line either way.
+    const updated = await adminOp(ctx, "agent_update", {
+      slug: cmd.slug,
+      ...(cmd.name === undefined ? {} : { name: cmd.name }),
+      ...(cmd.description === undefined ? {} : { description: cmd.description }),
+    });
+    if (globals.json) return emitDocument(updated);
+    write(`updated ${cmd.slug}\n`);
     return 0;
   }
   if (!globals.yes) {
@@ -1369,6 +1411,58 @@ export async function token(ctx: CliContext, cmd: TokenCommand): Promise<number>
     return 0;
   }
   const tokens = rows<Record<string, any>>(await adminOp(ctx, "token_list"), "tokens");
+  if (globals.json) return emitDocument({ tokens });
+  const c = styling(decorated());
+  const table = columnize(
+    tokens.map((row) => [
+      String(row.id),
+      String(row.prefix ?? ""),
+      row.expiresAt === null || row.expiresAt === undefined ? "never" : formatDate(Number(row.expiresAt)),
+      row.lastUsedAt === null || row.lastUsedAt === undefined ? "never" : formatDateTime(Number(row.lastUsedAt)),
+    ]),
+    { headers: ["TOKEN", "PREFIX", "EXPIRES", "LAST USED"], tty: decorated() },
+  ).split("\n");
+  write(`${c.dim(table[0])}\n`);
+  for (const line of table.slice(1)) write(`${line}\n`);
+  return 0;
+}
+
+/**
+ * One admin-token command, normalized from `pmcp admin-token …` argv (§22.1). `issue`
+ * requires a signed-in session — an admin token cannot mint a successor, refused
+ * server-side by admin.adminOpsFor, not here — and `expires` arrives already resolved
+ * by main's expiresIn to what admin_token_issue declares: a count of SECONDS, or the
+ * literal `never`, so the human spelling "365d" never reaches this type.
+ */
+export type AdminTokenCommand =
+  | { sub: "issue"; expires?: number | "never" }
+  | { sub: "list" }
+  | { sub: "revoke"; id: string };
+
+/**
+ * `pmcp admin-token …` — sugar over admin_token_issue / admin_token_list /
+ * admin_token_revoke (§22.1). `issue` prints the plaintext key exactly once and the CLI
+ * never stores it, exactly like `token issue`. Unlike agent/app keys, an admin token
+ * opens no socket, so `revoke` reports only the row.
+ */
+export async function adminToken(ctx: CliContext, cmd: AdminTokenCommand): Promise<number> {
+  // deps: mcpCall
+  if (cmd.sub === "issue") {
+    const minted = await adminOp(ctx, "admin_token_issue", cmd.expires === undefined ? {} : { expires_in: cmd.expires });
+    if (globals.json) return emitDocument(minted);
+    write(`${String(minted.id)}\n${String(minted.token)}\n`);
+    return 0;
+  }
+  if (cmd.sub === "revoke") {
+    const id = await withIdPrefix(ctx, cmd.id, { op: "admin_token_list", key: "tokens" }, async (resolved) => {
+      await adminOp(ctx, "admin_token_revoke", { id: resolved });
+      return resolved;
+    });
+    if (globals.json) return emitDocument({ id, revoked: true });
+    write(`revoked ${id}\n`);
+    return 0;
+  }
+  const tokens = rows<Record<string, any>>(await adminOp(ctx, "admin_token_list"), "tokens");
   if (globals.json) return emitDocument({ tokens });
   const c = styling(decorated());
   const table = columnize(
@@ -2052,6 +2146,14 @@ function buildProgram(): Command {
       pendingExit = (await agent(await context(), { sub: "create", slug, name: opts.name, description: opts.description })) as 0 | 1;
     });
   agents
+    .command("update <slug>")
+    .description("update an agent's name/description (slug is immutable)")
+    .option("--name <name>", "display name")
+    .option("--description <text>", "description")
+    .action(async (slug: string, opts: { name?: string; description?: string }) => {
+      pendingExit = (await agent(await context(), { sub: "update", slug, name: opts.name, description: opts.description })) as 0 | 1;
+    });
+  agents
     .command("delete <slug>")
     .description("delete an agent (grants cascade)")
     .action(async (slug: string) => {
@@ -2113,6 +2215,27 @@ function buildProgram(): Command {
     .description("revoke one credential, immediately")
     .action(async (id: string) => {
       pendingExit = (await token(await context(), { sub: "revoke", id })) as 0 | 1;
+    });
+
+  const adminTokens = on("admin-token", "issue, list and revoke pmcp_adm_ hub-admin tokens");
+  adminTokens
+    .command("issue")
+    .description("mint a hub-admin credential from a signed-in session")
+    .option("--expires <duration>", "365d | 3600 | never")
+    .action(async (opts: { expires?: string }) => {
+      pendingExit = (await adminToken(await context(), { sub: "issue", expires: expiresIn(opts.expires) })) as 0 | 1;
+    });
+  adminTokens
+    .command("list")
+    .description("this namespace's admin tokens, never plaintext")
+    .action(async () => {
+      pendingExit = (await adminToken(await context(), { sub: "list" })) as 0 | 1;
+    });
+  adminTokens
+    .command("revoke <id>")
+    .description("revoke one admin token, immediately")
+    .action(async (id: string) => {
+      pendingExit = (await adminToken(await context(), { sub: "revoke", id })) as 0 | 1;
     });
 
   on("audit", "the namespace's event history", "pmcp audit --app mcp-tools --since 7d")

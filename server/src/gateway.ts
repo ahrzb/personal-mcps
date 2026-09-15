@@ -258,7 +258,15 @@ export async function mcpMessage(
   // A notification carries no id, so there is nothing to answer to (§ JSON-RPC 2.0).
   if (msg.id === undefined) return new Response(null, { status: 202 });
   const ctx: BackendCtx = { principal, roles: [], clientMeta: captureClientMeta(msg) };
-  const ownerId = principal.kind === "user" ? principal.userId : principal.ownerId;
+  const ownerId = principal.kind === "agent" ? principal.ownerId : principal.userId;
+  // §22.1: the aggregate has no slug to check visibility against (index.visibleOnScoped
+  // only runs when one is addressed), so an admin token that resolved past the door —
+  // it carries a real session's credential shape — would otherwise reach every method
+  // here undistinguished from its owner. Refused explicitly, before ANY method
+  // dispatches: the scoped `pmcp` endpoint is the only door this credential opens.
+  if (slug === undefined && principal.kind === "admin") {
+    return jsonRpc(toWire(notPermitted(), msg.id ?? null));
+  }
   try {
     if (msg.method === LISTEN_METHOD) return await listenStream(env, ownerId, ctx, slug, reauthorize);
     // §21.4: the session id a subscribe names its stream with is a REQUEST header, and this

@@ -59,6 +59,7 @@ export const COMMANDS: readonly CliCommand[] = [
   { name: "app set-auth", ops: ["app_set_upstream_auth"] },
   { name: "agent list", ops: ["agent_list"] },
   { name: "agent create", ops: ["agent_create"] },
+  { name: "agent update", ops: ["agent_update"] },
   { name: "agent delete", ops: ["agent_delete"] },
   { name: "approvals", ops: ["approval_list"] },
   { name: "approve", ops: ["approval_decide"] },
@@ -66,6 +67,9 @@ export const COMMANDS: readonly CliCommand[] = [
   { name: "token issue", ops: ["token_issue"] },
   { name: "token list", ops: ["token_list"] },
   { name: "token revoke", ops: ["token_revoke"] },
+  { name: "admin-token issue", ops: ["admin_token_issue"] },
+  { name: "admin-token list", ops: ["admin_token_list"] },
+  { name: "admin-token revoke", ops: ["admin_token_revoke"] },
   { name: "audit", ops: ["audit_query"] },
   // A serialization of the same query, not a new capability (§8's third pinned exception).
   { name: "audit --export jsonl", ops: ["audit_query"], exception: "jsonl-export" },

@@ -261,7 +261,7 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
   {
     file: "contracts/admin-ops.json",
     spec: "§8",
-    emission: "Object.keys(admin.ops) and each op's input schema as adminBackend renders it, plus token_issue's outputSchema with its writeOnly key field",
+    emission: "Object.keys(admin.ops) and each op's input schema as adminBackend renders it, plus token_issue's and admin_token_issue's outputSchemas with their writeOnly key field",
     consumers: [],
     producer: "worker",
   },
@@ -2469,15 +2469,17 @@ describe("§4 · admin op names and schemas", () => {
     expect(Object.keys(pinned).sort()).toEqual(served.map((tool) => tool.name).sort());
   }, CASE_BUDGET_MS);
 
-  it("§15 · admin-ops.json records token_issue's outputSchema with its key field writeOnly, and no other op declares one — the uniform-body rule's whole footprint", () => {
+  it("§15/§22.1 · admin-ops.json records token_issue's and admin_token_issue's outputSchemas with their key field writeOnly, and no other op declares one — the uniform-body rule's whole footprint", () => {
     const outputs = fixture(ADMIN_OPS).outputSchemas as Record<string, Record<string, unknown>>;
-    expect(Object.keys(outputs)).toEqual(["token_issue"]);
-    const properties = outputs.token_issue.properties as Record<string, Record<string, unknown>>;
-    expect(properties.token.writeOnly).toBe(true);
-    // The mark is on the key alone: the row id and the display prefix are recorded verbatim
-    // (§5), which is what makes the uniform rule need no pmcp special case.
-    expect(properties.id.writeOnly).toBeUndefined();
-    expect(properties.prefix.writeOnly).toBeUndefined();
+    expect(Object.keys(outputs)).toEqual(["token_issue", "admin_token_issue"]);
+    for (const op of Object.keys(outputs)) {
+      const properties = outputs[op].properties as Record<string, Record<string, unknown>>;
+      expect(properties.token.writeOnly).toBe(true);
+      // The mark is on the key alone: the row id and the display prefix are recorded
+      // verbatim (§5), which is what makes the uniform rule need no pmcp special case.
+      expect(properties.id.writeOnly).toBeUndefined();
+      expect(properties.prefix.writeOnly).toBeUndefined();
+    }
   });
 });
 

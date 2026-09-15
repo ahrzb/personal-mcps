@@ -1,0 +1,63 @@
+name: check
+
+# The first real gate in this repo. Until now `publish.yml` was the only workflow and it runs on
+# push to master to publish npm packages — it has never run a test, a typecheck or a build, so
+# every green tick here has meant "npm accepted a tarball" and nothing more.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  # The suite that actually exists: 1504 tests across 45 files, plus the typecheck. Deliberately
+  # NOT routed through `nix flake check` — the Workers pool needs `workerd`, whose postinstall
+  # downloads a runtime binary, and a Nix sandbox has no network (§22.7 rules `checks` out of
+  # running vitest for exactly this reason). So it runs here, with pnpm, where the network exists.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          # Same major the flake pins and `publish.yml` uses: one installer resolves this
+          # lockfile everywhere, or three node_modules are possible from one lockfile.
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  # The flake: builds the `pmcp` CLI and runs its install-check, which imports the built
+  # entrypoint (so every dependency must resolve) and asserts the shipped `--version` matches
+  # cli/package.json. Both halves were verified by breaking them.
+  #
+  # `--frozen-lockfile` above and the flake's `pnpmDeps` hash are two independent readers of one
+  # lockfile, which is the point: a lockfile edit that forgets the hash fails here, and the
+  # failure names the hash to paste.
+  flake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix flake check -L
+      - run: nix run .#pmcp -- --version
+
+  # §22.5's parity oracle, run from the hub side against the hub's own working tree.
+  #
+  # The direction is deliberate. `repository_dispatch` into the provider repo was rejected: the
+  # POST returns 204 fire-and-forget so this workflow could not fail on a red provider run, and
+  # the provider would evaluate a stale pin of this repo anyway. Instead the provider exposes the
+  # check as a flake app taking the fixture as an argument, and a hub change that outruns the
+  # provider fails CI *here*, where the change is.
+  #
+  # The check is asymmetric on purpose: an op or field the PROVIDER handles that this fixture
+  # lacks is fine, one this fixture has that the provider lacks fails. Both repos are public, so
+  # no deploy key or PAT is needed — §22.5 was written when they were private.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix run github:ahrzb/terraform-provider-pmcp#coverage-check -- ./contracts/admin-ops.json

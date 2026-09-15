@@ -45,7 +45,7 @@ import { query, record } from "../../src/audit";
 import type { AuditEntry, AuditRow } from "../../src/audit";
 import { CODES } from "../../src/errors";
 import type { BackendCtx, Tool } from "../../src/gateway";
-import { issueAdminToken } from "../../src/identity";
+import { issueAdminToken, resolvePrincipal } from "../../src/identity";
 import { upsertBinding } from "../../src/oauth";
 import { tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, SLUG_CHARSET, writeOnlyPaths } from "../../src/registry";
@@ -1038,6 +1038,103 @@ describe("§19/§8 · connections (fronting oauth.ts)", () => {
     const written = await adminRows(ns.owner.userId);
     expect(written.map((row) => row.event)).toContain("admin.connection_revoke");
     expect(JSON.stringify(written)).not.toMatch(tokenPattern(16));
+  });
+});
+
+// ── §22.1/§22.4 · agent_update's partial patch, and the admin_token family's real
+// state transitions, beyond the generic table's plumbing checks ──────────────────────
+//
+// The table above (`agent_update`, `admin_token_issue`, `admin_token_list`,
+// `admin_token_revoke` rows) proves each op is wired into the ops table and the audit
+// ledger; it does not prove any of the three claims below, because its one sample per
+// row and `resolves.toBeDefined()` oracle cannot see them. Here against the same
+// `ops.<name>.handler` seam the table uses.
+
+describe("§22.4 · agent_update is a true partial patch", () => {
+  it("§22.4 · updating `name` alone leaves `description` byte-identical, and the converse", async () => {
+    const ns = await seedNamespace(env.DB, {
+      agents: [{ slug: CLAUDE, name: "Claude", description: "the original note" }],
+    });
+
+    const named = (await ops.agent_update.handler(ns.owner.userId, {
+      slug: CLAUDE,
+      name: "Claude Renamed",
+    })) as { agent: { name: string; description: string | undefined } };
+    expect(named.agent.name).toBe("Claude Renamed");
+    expect(named.agent.description, "an omitted field is left alone, not blanked").toBe("the original note");
+
+    // The converse direction: `description` moves, the name this same call just set holds.
+    const described = (await ops.agent_update.handler(ns.owner.userId, {
+      slug: CLAUDE,
+      description: "a new note",
+    })) as { agent: { name: string; description: string | undefined } };
+    expect(described.agent.description).toBe("a new note");
+    expect(described.agent.name, "the other field's own omission is likewise left alone").toBe("Claude Renamed");
+  });
+});
+
+describe("§22.1 · admin tokens (fronting identity.ts's admin_token family)", () => {
+  /**
+   * The request a `pmcp_adm_` bearer arrives on — the same `/<user>/mcp` shape
+   * resolvePrincipal's own consumer surface uses (auth-matrix.test.ts). The reserved
+   * invalid host keeps this file's requests as inert as UPSTREAM_URL's.
+   */
+  function adminBearerRequest(username: string, token: string): Request {
+    return new Request(`https://admin-ops.pmcp-test.invalid/${username}/mcp`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+  }
+
+  it("§22.1 · admin_token_revoke ends authentication on the next resolve, not just its own answer: issue, resolve, revoke, fail to resolve", async () => {
+    const ns = await seedNamespace(env.DB, {});
+    const issued = await issueAdminToken(ns.owner.userId, undefined);
+
+    expect(await resolvePrincipal(adminBearerRequest(ns.owner.username, issued.token))).toEqual({
+      kind: "admin",
+      userId: ns.owner.userId,
+      username: ns.owner.username,
+    });
+
+    await ops.admin_token_revoke.handler(ns.owner.userId, { id: issued.id });
+
+    await expect(
+      resolvePrincipal(adminBearerRequest(ns.owner.username, issued.token)),
+      "the revoked token must stop authenticating, not merely echo its id back",
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("§22.1 · admin_token_list returns what was issued, by id and prefix, and never a `token` key or the plaintext value issue returned", async () => {
+    const ns = await seedNamespace(env.DB, {});
+    const first = (await ops.admin_token_issue.handler(ns.owner.userId, {})) as {
+      id: string;
+      token: string;
+      prefix: string;
+    };
+    const second = (await ops.admin_token_issue.handler(ns.owner.userId, {})) as {
+      id: string;
+      token: string;
+      prefix: string;
+    };
+
+    const listed = (await ops.admin_token_list.handler(ns.owner.userId, {})) as {
+      tokens: Record<string, unknown>[];
+    };
+
+    const byId = new Map(listed.tokens.map((row) => [row.id as string, row]));
+    expect(byId.get(first.id)?.prefix, "the first issued token is listed with its own prefix").toBe(first.prefix);
+    expect(byId.get(second.id)?.prefix, "the second issued token is listed with its own prefix").toBe(
+      second.prefix,
+    );
+
+    // The assertion that matters: no row carries a `token` key, a `hash` key, or either
+    // plaintext value issue returned — this fails the moment anyone widens the SELECT.
+    for (const row of listed.tokens) {
+      expect(row).not.toHaveProperty("token");
+      expect(row).not.toHaveProperty("hash");
+    }
+    const serialized = JSON.stringify(listed);
+    expect(serialized).not.toContain(first.token);
+    expect(serialized).not.toContain(second.token);
   });
 });
 

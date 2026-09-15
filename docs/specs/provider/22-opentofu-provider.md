@@ -82,8 +82,28 @@ these are required, not optional:
 
 #### Issuance and authorization
 
-**Issuance requires a session principal.** An admin token cannot mint another, so a leak cannot
-outlive revocation of the human.
+**Issuance requires a session principal.** An admin token cannot mint another, so this
+credential family cannot self-perpetuate: every `pmcp_adm_` token traces to a human sign-in.
+
+**It does not follow that a leak cannot outlive revocation, and this spec previously claimed it
+did.** An admin token reaches `agent_create`, `grant_set` and `token_issue`, so a holder can
+create an agent, grant it `all` on a real app, and issue it a never-expiring `pmcp_agt_` key.
+That key references the agent, not the admin token; `agentFor` never consults `admin_token`, so
+revoking the admin token leaves it working — and it reaches `POST /<user>/mcp/<other-slug>`,
+which its parent is refused. The `approval_decide` exclusion is likewise narrower than it looks:
+`grant_set` can move a role from `approval` to `allow`, which removes the human gate without
+deciding anything.
+
+Those three ops are not removable. They are the provider's entire purpose — `pmcp_agent`,
+`pmcp_grant` and `pmcp_token` are three of its five resources — so a credential that cannot
+reach them cannot run a `tofu apply`. The authority is therefore real and deliberate: **an admin
+token is a namespace-administration credential whose authority is the owner's, minus two acts.**
+The two exclusions are integrity gates on those specific acts, not a boundary on what the
+credential can cause to exist.
+
+The operator consequence is the part worth writing down: **revocation is not retroactive.**
+Revoking a leaked admin token stops that token; it does not undo what the token did. Recovery is
+an audit — `agent_list`, `token_list` and each agent's inline grants — not a single revoke.
 
 `adminBackend.call` receives `ctx.principal` and discards it — every `AdminOp.handler` sees only
 `ownerId` — so op restrictions cannot live in handlers. They live in one exported policy,
@@ -106,9 +126,20 @@ approve its own requests defeats the human gate it administers) and `admin_token
 | `POST /<user>/mcp/<other-slug>` | yes | no |
 | browser routes, `/api/auth/*`, `/connect` | yes / n/a | no |
 
-The narrowing is about **app tools**: an admin token administers the hub and cannot call a single
-app tool. That inversion is the security argument — today an operator credential in an age file
-is a full human session.
+The narrowing is about **app tools**: an admin token administers the hub and cannot itself call a
+single app tool. Read as containment that claims too much — as shown above, it can issue an agent
+key that does. What the rows above actually buy, stated without overreach:
+
+- **A smaller live surface.** No browser routes, no `/api/auth/*`, no `/connect`, no aggregate
+  endpoint, no direct app tool. A stolen admin token cannot be replayed into a web session.
+- **A bounded life.** A fixed, non-sliding default expiry, where a session token slides forward
+  on every use and so lives as long as it is used.
+- **Individual revocability and visibility.** One credential of many, revocable by `id` without
+  disturbing the others, and enumerable in `admin_token_list` / the `pmcp_tokens` data source —
+  where a leaked session token is a row an operator cannot name.
+
+That is the real inversion, and it is still worth having: today an operator credential in an age
+file **is** a full human session, with none of those three properties.
 
 **Expired, revoked and malformed remain indistinguishable**: all return `401` with
 `WWW-Authenticate: Bearer error="invalid_token"`, unchanged. Distinguishing expiry would tell a
@@ -125,9 +156,26 @@ and reads fields it does not carry: `identity.namespaceIdOf:388`, `namespaceName
 
 Without them the *yes* rows above do not work — `/<user>/mcp/pmcp` 404s — and the *no* rows are
 enforced only by accident, since the aggregate has no kind gate and refuses an admin principal
-solely because a grant query binds `undefined`. Each site becomes a `switch` **with a `never`
-default arm**; the exhaustiveness check, not the keyword, is what makes the compiler the witness.
-The aggregate gains an explicit kind gate.
+solely because a grant query binds `undefined`. The aggregate gains an explicit kind gate.
+
+**Which sites need a `switch`, established empirically rather than by rule.** Add a fourth member
+to the union and typecheck: that is the whole test, and it is cheap enough to re-run whenever the
+union grows. Most of the sites above already error under `strict` without any rewrite, because
+they *read a field* the new member does not carry (TS2339) or already return from every arm of an
+annotated function (TS2366) — the exhaustiveness check, not the keyword, is what makes the
+compiler the witness, so a field read is the same witness as a `never` arm and needs no edit.
+
+What the canary actually finds is the minority that stay **silent**, and those are the ones that
+matter, because both of them fail *open*:
+
+- `registry.resolveAccess` keyed on `kind !== "agent"` and returned an everything-filter — the
+  widest privilege in the hub — to any kind it had never heard of.
+- `admin.adminOpsFor` ended in a bare `return` of the admin arm, so a new kind would inherit
+  every admin op but two.
+
+Both become `switch`es whose omitted `default` makes the next kind a type error. The rule is
+therefore **"every site that fails open becomes a switch"**, not "every site becomes a switch":
+rewriting the seven the compiler already catches buys nothing and costs a diff.
 
 **Serialization.** The existing user and agent spellings are unchanged, and the new arm returns
 the owner's spellings verbatim: `formatPrincipal(admin)` → `user:<username>`,
@@ -156,11 +204,22 @@ pmcp admin-token list
 pmcp admin-token revoke <id>
 ```
 
-All honour `--json`. The CLI **accepts** `pmcp_adm_` in `PMCP_TOKEN` and in profiles. The
-consumer subcommands that address a single app — `call`, `get`, `read`, and the hidden
-`tools`/`prompts`/`resources` — fail with `unauthenticated` and a hint naming the credential
-kind, because they reach `POST /<user>/mcp/<other-slug>`, which the table above refuses.
+All honour `--json`. The CLI **accepts** `pmcp_adm_` in `PMCP_TOKEN` and in profiles. The consumer
+subcommands that address a single app — `call`, `get`, `read`, and the hidden
+`tools`/`prompts`/`resources` — fail with `unauthenticated` and a hint naming the credential kind
+**when the addressed slug is not `pmcp`**, because those reach
+`POST /<user>/mcp/<other-slug>`, which the table above refuses.
 `cli/src/main.ts`'s existing `pmcp_app_` refusal gains this second arm.
+
+**The slug condition is load-bearing, and an earlier draft omitted it.** The premise "these reach
+another slug" is false exactly when the slug IS the builtin: the table grants `POST
+/<user>/mcp/pmcp` to an admin token, so `pmcp call pmcp grant_set` — the documented imperative
+grant-edit path — is honoured by the hub and was refused by its own client. The refusal is
+therefore target-based at all six sites, not blanket. Per subcommand against `pmcp`: `call` and
+`tools` are real (the builtin dispatches ops and renders a catalog); `prompts` and `resources`
+legitimately answer EMPTY rather than refusing, since §20.6 makes those empty families here, and
+an empty family is not an auth failure; `get` and `read` name an item that cannot exist, and get
+the server's own not-found semantics rather than a client-side lie about the credential.
 
 **`ls` is not among them**, though an earlier draft listed it. It fronts `app_list` — an admin op
 on `/mcp/pmcp`, which the table grants outright — so refusing it client-side would deny an admin

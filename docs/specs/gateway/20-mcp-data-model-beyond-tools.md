@@ -341,4 +341,12 @@ this is the residue when an author does not.
   them through the hub with no library change; the libraries pass the declaration through
   and let the hub validate it.
 - **The `pmcp` builtin**: tools only. Its scoped endpoint answers empty prompt and
-  resource lists and declares neither capability.
+  resource lists and declares neither capability. **Its `call` must read `msg.method`, not
+  only `params.name`** — the gateway routes `tools/call`, `prompts/get` and `resources/read`
+  through one `AppBackend.call`, each carrying the addressed item in `params.name`, so a
+  backend that ignores `method` serves all three alike. Unguarded, `prompts/get` with
+  `name: "agent_create"` executed the admin op and the gateway recorded it as a prompt
+  fetch — an audit shape that carries no arguments and consults no `sensitivePaths`.
+  Authorization was intact throughout (`adminOpsFor` still gated it); §15's argument record
+  was not. A backend serving a strict subset of the three answers the rest `-32601`, which
+  is why that helper lives in `errors.ts` rather than inside the gateway.

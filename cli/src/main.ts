@@ -1801,9 +1801,9 @@ Auth & profiles
 
 Admin
   app create|archive|unarchive|delete|disconnect|set-auth
-  agent list|create|delete
+  agent list|create|update|delete
   approvals · approve <id> · reject <id>
-  token issue|list|revoke
+  token issue|list|revoke · admin-token issue|list|revoke
   connect <app> · connections · connection revoke <id>
   audit [--export jsonl]
 

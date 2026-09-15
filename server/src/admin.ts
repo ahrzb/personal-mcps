@@ -775,6 +775,20 @@ const AGENT_FIELDS: Record<string, Field> = {
 };
 
 /**
+ * The same two fields as a PATCH declares them. The kinds and optionality are derived from
+ * `AGENT_FIELDS` rather than restated, so the pair still cannot drift on the parts a caller
+ * is validated against — only the prose differs, and it has to: `optional` means "defaults
+ * to the slug" on create and "leaves the current value alone" on update, and these
+ * descriptions are SERVED as the tool's inputSchema. Sharing the create wording told an
+ * MCP client that omitting `name` would reset it, which would make a careful client resend
+ * the current value on every patch — the one thing §22.4's partial patch exists to avoid.
+ */
+const AGENT_PATCH_FIELDS: Record<string, Field> = {
+  name: { ...AGENT_FIELDS.name, description: "Display name; omit to leave it unchanged." },
+  description: { ...AGENT_FIELDS.description, description: "Free-text note shown beside the agent; omit to leave it unchanged." },
+};
+
+/**
  * One row of the table, assembled so its schema is USED twice from one declaration rather
  * than restated: `defineOp` runs the input through it before `run` is entered, and
  * adminBackend renders the same object as the tool's inputSchema. Two things follow that
@@ -1120,8 +1134,8 @@ export const ops: Record<string, AdminOp> = {
    */
   agent_update: defineOp({
     schema: {
-      description: "Update an agent's display fields. `slug` is immutable.",
-      fields: { slug: { kind: "slug", description: "The agent's slug." }, ...AGENT_FIELDS },
+      description: "Update an agent's display fields. `slug` selects the agent and is immutable.",
+      fields: { slug: { kind: "slug", description: "The agent to patch." }, ...AGENT_PATCH_FIELDS },
     },
     async run(ownerId, parsed) {
       // deps: registry.updateAgent · audit.record

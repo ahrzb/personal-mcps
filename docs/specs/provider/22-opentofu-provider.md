@@ -105,6 +105,22 @@ The operator consequence is the part worth writing down: **revocation is not ret
 Revoking a leaked admin token stops that token; it does not undo what the token did. Recovery is
 an audit — `agent_list`, `token_list` and each agent's inline grants — not a single revoke.
 
+Three boundaries make "stops that token" narrower than it sounds, all traced rather than
+assumed:
+
+- **Already-admitted work finishes.** A request authenticated before the revoke write runs to
+  completion, including a mutating one; the principal is resolved once per request and the
+  dispatcher does not re-read `admin_token`. There is no wall-clock bound on that window,
+  because the body may still be arriving.
+- **A held stream closes on its next tick, not at the write.** An admin `subscriptions/listen`
+  re-authorizes on the keepalive cadence (`LISTEN_KEEPALIVE_MS`), so a revoked token keeps its
+  stream for up to one interval. The cost is bounded: that stream opens no subscriber sockets
+  (`pmcp` returns an empty fan-out), so it carries no app notifications.
+- **A minted app token's socket outlives even its own expiry.** App-token expiry is checked at
+  the `/connect` upgrade only, and the socket then survives until reconnect or an explicit
+  sever. So a `pmcp_app_` credential an admin token created can hold a live tunnel after both
+  the admin token and the app token are dead. Revoking the parent triggers no sever.
+
 `adminBackend.call` receives `ctx.principal` and discards it — every `AdminOp.handler` sees only
 `ownerId` — so op restrictions cannot live in handlers. They live in one exported policy,
 `adminOpsFor(principal)`, consulted at **both**:
@@ -124,7 +140,24 @@ approve its own requests defeats the human gate it administers) and `admin_token
 | `GET /api/whoami` | yes | yes |
 | `POST /<user>/mcp` (aggregate) | yes | **no** — explicit kind gate |
 | `POST /<user>/mcp/<other-slug>` | yes | no |
-| browser routes, `/api/auth/*`, `/connect` | yes / n/a | no |
+| browser routes, `/api/auth/*`, `/connect` | see below | no |
+| `POST /internal/users` | no | no |
+
+Two rows need their cells read carefully rather than as a route matrix.
+
+**The browser row's session column is not "yes".** Browser authentication is cookie-only —
+`requireOwnerSession` reads `Cookie` and never `Authorization` — so a *session bearer* does not
+open those routes either. The better-auth mount rejects `Authorization` except for three
+anonymous legs (`sign-out`, `device/code`, `device/token`), and none confers authority on the
+bearer it arrives with; `/connect` requires a `pmcp_app_` prefix specifically, so no session or
+admin bearer reaches it. The admin **no** is what the row is for; the session cell is "cookie,
+not bearer".
+
+**`/internal/users` is not Principal-dispatched at all**, which is why it was missing. It is
+gated by a constant-time comparison against `BOOTSTRAP_SECRET`, answering an anonymous 404 when
+that is unset. Neither a session nor an admin token is a credential there, and adding admin
+tokens changed nothing about it — it belongs in the table precisely so the next reader does not
+have to re-derive that.
 
 The narrowing is about **app tools**: an admin token administers the hub and cannot itself call a
 single app tool. Read as containment that claims too much — as shown above, it can issue an agent

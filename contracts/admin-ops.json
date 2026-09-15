@@ -1,8 +1,12 @@
 {
   "names": [
+    "admin_token_issue",
+    "admin_token_list",
+    "admin_token_revoke",
     "agent_create",
     "agent_delete",
     "agent_list",
+    "agent_update",
     "app_archive",
     "app_create",
     "app_delete",
@@ -365,6 +369,29 @@
       ],
       "additionalProperties": false
     },
+    "agent_update": {
+      "type": "object",
+      "description": "Update an agent's display fields. `slug` is immutable.",
+      "properties": {
+        "slug": {
+          "description": "The agent's slug.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "name": {
+          "description": "Display name; defaults to the slug.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Free-text note shown beside the agent.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "additionalProperties": false
+    },
     "agent_delete": {
       "type": "object",
       "description": "Delete an agent, its grants, and its tokens. Terminal.",
@@ -511,6 +538,46 @@
       ],
       "additionalProperties": false
     },
+    "admin_token_issue": {
+      "type": "object",
+      "description": "Mint a hub-admin credential from a signed-in session. Shown once, here.",
+      "properties": {
+        "expires_in": {
+          "description": "Seconds until expiry, or never. Defaults to 365 days — fixed, never sliding.",
+          "oneOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "const": "never"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "admin_token_list": {
+      "type": "object",
+      "description": "List this namespace's admin tokens. Never plaintext.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "admin_token_revoke": {
+      "type": "object",
+      "description": "Revoke one admin token. Immediate on every surface.",
+      "properties": {
+        "id": {
+          "description": "The token row's id, as admin_token_list reports it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
     "connection_list": {
       "type": "object",
       "description": "List the OAuth clients connected to this namespace.",
@@ -618,6 +685,44 @@
         "prefix",
         "kind",
         "slug",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "admin_token_issue": {
+      "type": "object",
+      "description": "The minted admin credential.",
+      "properties": {
+        "id": {
+          "description": "The token row's id — what admin_token_revoke takes.",
+          "type": "string"
+        },
+        "token": {
+          "description": "The plaintext key. Shown once; the hub stores only its SHA-256.",
+          "writeOnly": true,
+          "type": "string"
+        },
+        "prefix": {
+          "description": "The first characters, as admin_token_list displays them.",
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "Epoch ms.",
+          "type": "integer"
+        },
+        "expiresAt": {
+          "description": "Epoch ms, or null when it never expires.",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "token",
+        "prefix",
+        "createdAt",
         "expiresAt"
       ],
       "additionalProperties": false

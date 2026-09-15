@@ -591,9 +591,15 @@ function isJson(request: Request): boolean {
  * zero-grant agent cannot enumerate the namespace — and the reserved `pmcp` builtin is
  * one more slug it holds no grants on (§8: admin tokens only), never a 401 that would
  * invite it to authenticate differently. Owners see every app in their own namespace.
+ *
+ * §22.1: an `admin` principal (a `pmcp_adm_` bearer) is visible on `pmcp` alone — the
+ * one door its credential family exists to open — and on nothing else, ahead of the
+ * ordinary app lookup below: it holds no grants and is not an owner, so falling through
+ * would answer "no app" rather than the deliberate "no admin surface here" this states.
  */
 async function visibleOnScoped(env: Env, principal: Principal, slug: string): Promise<boolean> {
-  if (slug === PMCP_SLUG) return principal.kind === "user";
+  if (slug === PMCP_SLUG) return principal.kind === "user" || principal.kind === "admin";
+  if (principal.kind === "admin") return false;
   const registry = new Registry(env.DB);
   const ownerId = principal.kind === "user" ? principal.userId : principal.ownerId;
   const app = await registry.getApp(ownerId, slug);

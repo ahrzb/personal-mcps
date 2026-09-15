@@ -45,6 +45,7 @@ import { query, record } from "../../src/audit";
 import type { AuditEntry, AuditRow } from "../../src/audit";
 import { CODES } from "../../src/errors";
 import type { BackendCtx, Tool } from "../../src/gateway";
+import { issueAdminToken } from "../../src/identity";
 import { upsertBinding } from "../../src/oauth";
 import { tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, SLUG_CHARSET, writeOnlyPaths } from "../../src/registry";
@@ -286,6 +287,18 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
     declaresOutputSchema: false,
     sample: { slug: "scratch-agent" },
   },
+  // §22.4: patches an agent's display fields; `slug` is immutable. `slugArg: "agent"`
+  // for the same reason as agent_create — §8 reserves `pmcp` for APP slugs only. The
+  // smallest succeeding sample changes `name` alone, `description` staying untouched.
+  {
+    op: "agent_update",
+    slugArg: "agent",
+    writes: "mutating",
+    sideEvents: [],
+    cascade: [],
+    declaresOutputSchema: false,
+    sample: { slug: "claude", name: "Claude Renamed" },
+  },
   // §8/§15: "ONE atomic D1 batch removes the agent row (grants cascade by FK) and the
   // agent's token rows, so a racing request can never authenticate against a
   // half-deleted agent." No sockets are involved — the batch is the whole cascade.
@@ -380,6 +393,42 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
     cascade: [],
     declaresOutputSchema: false,
     sample: { id: "fixture:token.sa" },
+  },
+  // §22.1: a `pmcp_adm_` credential, present ONLY in this result, once — the SECOND
+  // (and last) op whose output declares a `writeOnly` field, beside token_issue's. No
+  // slug at all (`slugArg: "none"`): an admin token binds to its owner alone.
+  {
+    op: "admin_token_issue",
+    slugArg: "none",
+    writes: "mutating",
+    sideEvents: [],
+    cascade: [],
+    declaresOutputSchema: true,
+    sample: {},
+  },
+  // §22.1: "list this namespace's admin tokens … never plaintext" — the same
+  // rotation-state shape token_list shows the shared table's rows.
+  {
+    op: "admin_token_list",
+    slugArg: "none",
+    writes: "read",
+    sideEvents: [],
+    cascade: [],
+    declaresOutputSchema: false,
+    sample: {},
+  },
+  // §22.1: "revoke one admin token, immediate on every surface." The sample is a row id
+  // no static cell can hold — `fixture:admin_token.mine` mints one through
+  // identity.issueAdminToken (resolveSample, below), exactly like `fixture:token.sa`
+  // resolves token_revoke's.
+  {
+    op: "admin_token_revoke",
+    slugArg: "none",
+    writes: "mutating",
+    sideEvents: [],
+    cascade: [],
+    declaresOutputSchema: false,
+    sample: { id: "fixture:admin_token.mine" },
   },
   // §19/§8: "the OAuth clients connected to this namespace … never a token, a client
   // secret, or a JWT." A read like `app_list`/`agent_list` — empty input succeeds.
@@ -635,14 +684,16 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
       expect(tools.map((t) => t.name).sort()).toEqual(Object.keys(ops).sort());
     });
 
-    it("§8 · token_issue alone declares an outputSchema, and its key field carries `writeOnly`", async () => {
+    it("§8/§22.1 · exactly two ops declare an outputSchema — token_issue and admin_token_issue — and each one's key field carries `writeOnly`", async () => {
       const tools = await listAdminTools();
       expect(tools.filter((t) => t.outputSchema !== undefined).map((t) => t.name)).toEqual(
         rows.filter((r) => r.declaresOutputSchema).map((r) => r.op),
       );
       // registry.writeOnlyPaths is the ONE definition of the mark's path grammar (§7);
       // recomputing it here would be a second one.
-      expect(writeOnlyPaths(tools.find((t) => t.name === "token_issue")?.outputSchema)).toEqual([TOKEN_FIELD]);
+      for (const row of rows.filter((r) => r.declaresOutputSchema)) {
+        expect(writeOnlyPaths(tools.find((t) => t.name === row.op)?.outputSchema)).toEqual([TOKEN_FIELD]);
+      }
     });
 
     it("§8 · adminBackend.sensitivePaths answers `{ args: [], results: [...] }` for known ops and null for an unknown name", async () => {
@@ -743,6 +794,7 @@ async function resolveSample(
     if (value === "fixture:token.sa") resolved[field] = ns.tokens[SA_TOKEN].id;
     if (value === "fixture:approval.pending") resolved[field] = await openPendingApproval(ns);
     if (value === "fixture:binding.oauth") resolved[field] = await openOauthBinding(ns);
+    if (value === "fixture:admin_token.mine") resolved[field] = (await issueAdminToken(ns.owner.userId, undefined)).id;
   }
   return resolved;
 }

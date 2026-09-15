@@ -43,6 +43,13 @@ export const RETENTION_DAYS = 7;
 export const AGENT_TOKEN_TTL_MS = 90 * 24 * 60 * 60_000;
 
 /**
+ * §22.1 — the fixed, non-sliding default life of a `pmcp_adm_` admin token: 365 days.
+ * Unlike AGENT_TOKEN_TTL_MS this is never extended by use — an admin token is not a
+ * session, and rotation is issue-then-revoke by a human, never a refresh.
+ */
+export const ADMIN_TOKEN_TTL_MS = 365 * 24 * 60 * 60_000;
+
+/**
  * §5 — how coarse `token.last_used_at` is: a successful resolve advances it at most
  * once per this window, so the column is a rotation/staleness signal (§15) rather than
  * a write on every request.

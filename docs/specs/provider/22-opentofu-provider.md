@@ -152,10 +152,18 @@ pmcp admin-token list
 pmcp admin-token revoke <id>
 ```
 
-All honour `--json`. The CLI **accepts** `pmcp_adm_` in `PMCP_TOKEN` and in profiles; consumer
-subcommands (`ls`, `call`, `get`, `read`, and the hidden `tools`/`prompts`/`resources`) fail with
-`unauthenticated` and a hint naming the credential kind, because they reach the aggregate endpoint
-the table above refuses. `cli/src/main.ts`'s existing `pmcp_app_` refusal gains this second arm.
+All honour `--json`. The CLI **accepts** `pmcp_adm_` in `PMCP_TOKEN` and in profiles. The
+consumer subcommands that address a single app — `call`, `get`, `read`, and the hidden
+`tools`/`prompts`/`resources` — fail with `unauthenticated` and a hint naming the credential
+kind, because they reach `POST /<user>/mcp/<other-slug>`, which the table above refuses.
+`cli/src/main.ts`'s existing `pmcp_app_` refusal gains this second arm.
+
+**`ls` is not among them**, though an earlier draft listed it. It fronts `app_list` — an admin op
+on `/mcp/pmcp`, which the table grants outright — so refusing it client-side would deny an admin
+token an operation the hub honours, and basic inventory is exactly what an automation credential
+needs. The rationale that these commands "reach the aggregate endpoint" was also loose: none of
+them reach the aggregate; the six reach a *per-app* slug, which is a different row of the same
+table.
 
 #### Governance cost
 
@@ -278,7 +286,7 @@ Three consequences that must be documented for an operator, because two of them 
 | `expires_in` | number \| string | optional, `RequiresReplace` | seconds or `"never"`; omitted takes the hub default (90 days for an agent key) |
 | `rotation` | number | optional, `RequiresReplace` | bump to reissue; the hub has no rotate op, so replacement *is* issue-then-revoke |
 | `token` | string | computed, **sensitive** | the plaintext, available only from the apply that created it |
-| `id`, `prefix`, `created_at`, `expires_at` | | computed | metadata, readable forever via `token_list` |
+| `id`, `prefix`, `created_at`, `expires_at`, `revoked_at` | | computed | metadata, readable forever via `token_list`. `revoked_at` is here because the lifecycle rule below needs it: a revoked row stays in state, and without this attribute revocation would be invisible there |
 
 Lifecycle specifics, because this resource is the least ordinary one here:
 
@@ -549,6 +557,7 @@ accepting what the hub's `parseInput` would reject.
 | `connection_list`, `connection_revoke` | inbound OAuth bindings are created by browser consent; revoke-only |
 | `app_disconnect` | clears a live oauth bundle — an imperative act, not a state |
 | `audit_query` | unbounded log; see the data-source ruling |
+| `app_list` | no plural apps data source: §22.4 makes `pmcp_tokens` "the one **plural** data source, and it earns the exception" because its purpose is surfacing what the provider did *not* create. Apps have no such blind spot — every managed app is a resource, and `pmcp_app` reads one by slug — so a plural source would bake a whole inventory into state for nothing. Reads go through `app_get`; `agent_list` is managed only because there is no `agent_get` |
 
 #### Gating here, without a deadlock
 

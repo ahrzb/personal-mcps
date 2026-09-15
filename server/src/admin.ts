@@ -26,8 +26,11 @@ import {
   countTokensFor,
   deleteTokensForStatement,
   formatPrincipal,
+  issueAdminToken,
   issueToken,
+  listAdminTokens,
   listTokens,
+  revokeAdminToken,
   revokeToken,
   tokenFor,
   USERNAME_CHARSET,
@@ -43,7 +46,7 @@ import {
   SLUG_CHARSET,
   writeOnlyPaths,
 } from "./registry";
-import type { GrantEntry, RoleDeclaration, Agent, AppDetail, Violation } from "./registry";
+import type { GrantEntry, RoleDeclaration, Agent, AgentPatch, AppDetail, Violation } from "./registry";
 import { CLOSE_ARCHIVED, CLOSE_REVOKED, sever, status, wipe } from "./tunnel";
 import { connectionStatus, disconnect, setHeaders } from "./upstream";
 import type { UpstreamConnectionStatus } from "./upstream";
@@ -762,6 +765,15 @@ const APP_FIELDS: Record<string, Field> = {
 /** The slug field, spelled once — every op that takes one takes the same one. */
 const SLUG_FIELD: Field = { kind: "slug", description: "The app's slug, unique in this namespace." };
 
+/** The agent fields both create and update declare, so the two forms cannot drift —
+ *  APP_FIELDS' twin, minus everything proxy-only: an agent is a credential holder, not
+ *  an upstream, and has no `slug` here either — create takes its own (unique-per-owner)
+ *  and update has none at all (§22.4: no rename op). */
+const AGENT_FIELDS: Record<string, Field> = {
+  name: { kind: "text", description: "Display name; defaults to the slug.", optional: true },
+  description: { kind: "text", description: "Free-text note shown beside the agent.", optional: true },
+};
+
 /**
  * One row of the table, assembled so its schema is USED twice from one declaration rather
  * than restated: `defineOp` runs the input through it before `run` is entered, and
@@ -1073,8 +1085,7 @@ export const ops: Record<string, AdminOp> = {
       description: "Create an agent. It holds no grants until grant_set runs.",
       fields: {
         slug: { kind: "slug", description: "The agent's slug, unique in this namespace." },
-        name: { kind: "text", description: "Display name; defaults to the slug.", optional: true },
-        description: { kind: "text", description: "Free-text note shown beside the agent.", optional: true },
+        ...AGENT_FIELDS,
       },
     },
     async run(ownerId, parsed) {
@@ -1094,6 +1105,36 @@ export const ops: Record<string, AdminOp> = {
       );
       await summarise(ownerId, "agent_create", { slug });
       return { agent: await agentRow(created) };
+    },
+  }),
+
+  /**
+   * `{ slug, name?, description? }` — patch an agent's display fields. `slug` is
+   * immutable: §22.4's whole reason for this op is that without it, correcting a
+   * display-name typo is `RequiresReplace` in the provider, and the only replacement
+   * path is `agent_delete` then `agent_create` — which cascades `deleteTokensForStatement`
+   * and revokes every live token on the agent for a cosmetic edit. Same optional-field
+   * semantics as app_update: an omitted field is left alone, and a call with neither
+   * field set reaches registry.updateAgent's own no-column, no-write, unchanged-row
+   * branch — a legal no-op, not a refusal.
+   */
+  agent_update: defineOp({
+    schema: {
+      description: "Update an agent's display fields. `slug` is immutable.",
+      fields: { slug: { kind: "slug", description: "The agent's slug." }, ...AGENT_FIELDS },
+    },
+    async run(ownerId, parsed) {
+      // deps: registry.updateAgent · audit.record
+      const slug = parsed.slug as string;
+      const target = await agent(ownerId, slug);
+      const patch: AgentPatch = {
+        ...(parsed.name === undefined ? {} : { name: parsed.name as string }),
+        ...(parsed.description === undefined ? {} : { description: parsed.description as string }),
+      };
+      const updated = await registry().updateAgent(target.id, patch);
+      // The field NAMES, not their values — app_update's own audit shape.
+      await summarise(ownerId, "agent_update", { slug, fields: Object.keys(patch) });
+      return { agent: await agentRow(updated) };
     },
   }),
 
@@ -1330,6 +1371,88 @@ export const ops: Record<string, AdminOp> = {
   }),
 
   /**
+   * `{ expires_in? }` → a `pmcp_adm_` credential, present ONLY in this result, once —
+   * the whole point of the shared `writeOnly`-marked-output masking rule (§8/§22.1):
+   * this op joins token_issue as the second (and last) admin op whose output declares
+   * one. Session principals only — an admin token cannot mint a successor — enforced by
+   * adminOpsFor below, never here: op restrictions cannot live in a handler that sees
+   * only `ownerId` (§22.1's own accounting of why). Expiry is fixed, never sliding:
+   * defaults to 365 days (ADMIN_TOKEN_TTL_MS); `never` is honored like every other
+   * expiring credential here.
+   */
+  admin_token_issue: defineOp({
+    schema: {
+      description: "Mint a hub-admin credential from a signed-in session. Shown once, here.",
+      fields: {
+        expires_in: {
+          kind: "duration",
+          description: "Seconds until expiry, or never. Defaults to 365 days — fixed, never sliding.",
+          optional: true,
+        },
+      },
+    },
+    outputSchema: {
+      description: "The minted admin credential.",
+      fields: {
+        id: { kind: "text", description: "The token row's id — what admin_token_revoke takes." },
+        token: {
+          kind: "text",
+          description: "The plaintext key. Shown once; the hub stores only its SHA-256.",
+          writeOnly: true,
+        },
+        prefix: { kind: "text", description: "The first characters, as admin_token_list displays them." },
+        createdAt: { kind: "count", description: "Epoch ms." },
+        expiresAt: { kind: "count", description: "Epoch ms, or null when it never expires.", nullable: true },
+      },
+    },
+    async run(ownerId, parsed) {
+      // deps: identity.issueAdminToken · audit.record
+      const { expires_in } = parsed as { expires_in?: number | "never" };
+      const issued = await issueAdminToken(ownerId, expires_in);
+      // What was issued, never the key itself (§8) — no referent to name, unlike token_issue.
+      await summarise(ownerId, "admin_token_issue", { tokenId: issued.id });
+      return {
+        id: issued.id,
+        token: issued.token,
+        prefix: issued.prefix,
+        createdAt: issued.createdAt,
+        expiresAt: issued.expiresAt,
+      };
+    },
+  }),
+
+  /**
+   * List the namespace's admin tokens: display prefix, created, expiry, revocation, and
+   * the coarse `last_used_at` — the same rotation-state shape token_list shows the
+   * shared table's rows, minus the `kind`/referent fields an admin token has none of.
+   */
+  admin_token_list: defineOp({
+    schema: { description: "List this namespace's admin tokens. Never plaintext.", fields: {} },
+    async run(ownerId) {
+      // deps: identity.listAdminTokens
+      return { tokens: await listAdminTokens(ownerId) };
+    },
+  }),
+
+  /**
+   * `{ id }` — revoke an admin token; the credential is dead on its next resolve (§15).
+   * No socket to sever, unlike token_revoke's app leg: an admin token opens none.
+   */
+  admin_token_revoke: defineOp({
+    schema: {
+      description: "Revoke one admin token. Immediate on every surface.",
+      fields: { id: { kind: "text", description: "The token row's id, as admin_token_list reports it." } },
+    },
+    async run(ownerId, parsed) {
+      // deps: identity.revokeAdminToken · audit.record
+      const { id } = parsed as { id: string };
+      if (!(await revokeAdminToken(ownerId, id))) throw absent("token");
+      await summarise(ownerId, "admin_token_revoke", { tokenId: id });
+      return { id };
+    },
+  }),
+
+  /**
    * §19/§8: the OAuth clients connected to this namespace — client name and id, the
    * agent each is bound to, created/last-used, the two identity strings §19.5's consent
    * screen shows about the client (its registered redirect ORIGIN, and whether it
@@ -1423,28 +1546,56 @@ async function referentOf(ownerId: string, kind: TokenKind, slug: string): Promi
 }
 
 /**
+ * Which admin ops a principal may reach — the ONE policy `adminBackend.call` and
+ * `adminBackend.listTools` both consult (§22.1), because `adminBackend.call` receives
+ * `ctx.principal` and would otherwise discard it: every `AdminOp.handler` sees only
+ * `ownerId`, so op-level restriction cannot live in a handler. Consulted at both sites
+ * rather than call alone, because listTools advertising an op the credential will then
+ * be refused is an MCP capability contradiction, not merely an inconsistency.
+ *
+ * A `user` principal (a session) reaches every op. An `admin` principal (a `pmcp_adm_`
+ * bearer) reaches every op except `approval_decide` — a machine credential approving its
+ * own pending requests defeats the human gate it administers — and `admin_token_issue`,
+ * because an admin token must never mint a successor. An `agent` principal never reaches
+ * this surface at all (index.visibleOnScoped refuses it before the request arrives), so
+ * its set is empty rather than a case this policy has to reason about.
+ */
+export function adminOpsFor(principal: Principal): ReadonlySet<string> {
+  if (principal.kind === "agent") return new Set();
+  const names = Object.keys(ops);
+  if (principal.kind === "user") return new Set(names);
+  return new Set(names.filter((name) => name !== "approval_decide" && name !== "admin_token_issue"));
+}
+
+/**
  * The builtin `pmcp` app — the third AppBackend beside tunnel and upstream, so
  * the gateway pipeline (auth → filter → archived → approvals → dispatch) has no admin
- * special case. listTools renders every op as a Tool (name = ops key, inputSchema from
- * its schema, outputSchema where declared); call dispatches to ops[tool].handler with
- * `app.ownerId` and wraps a
+ * special case. listTools renders every op adminOpsFor(ctx.principal) admits as a Tool
+ * (name = ops key, inputSchema from its schema, outputSchema where declared); call
+ * dispatches to ops[tool].handler with `app.ownerId`, refusing the same way for an op
+ * that does not exist and one adminOpsFor refuses (§22.1/§7: the two must be
+ * indistinguishable, or a probe could tell them apart) and wraps a
  * successful result — HubError escapes to the gateway, the only place errors become
  * JSON-RPC. sensitivePaths answers `{ args: [], results: [...] }` for known ops — no
- * admin tool takes a sensitive argument, and the only sensitive result is
- * token_issue's `writeOnly`-marked key, masked by §15's uniform body rule (no
- * pmcp-specific logging rule exists) — and
- * null for unknown names. Only `app.ownerId` is consulted — the pmcp App value
- * is virtual, no row exists for it (§8).
+ * admin tool takes a sensitive argument, and the only sensitive results are
+ * token_issue's and admin_token_issue's `writeOnly`-marked keys, masked by §15's uniform
+ * body rule (no pmcp-specific logging rule exists) — and
+ * null for unknown names. Only `app.ownerId` is consulted for dispatch — the pmcp App
+ * value is virtual, no row exists for it (§8); `ctx.principal` is consulted for
+ * adminOpsFor alone.
  */
 export const adminBackend: AppBackend = {
   async listTools(app, ctx) {
-    // deps: ops · jsonSchema (schema → inputSchema rendering)
-    return Object.entries(ops).map(([name, op]) => {
-      const schema = op.schema as OpSchema;
-      const tool: Tool = { name, description: schema.description, inputSchema: jsonSchema(schema) };
-      if (op.outputSchema !== undefined) tool.outputSchema = jsonSchema(op.outputSchema as OpSchema);
-      return tool;
-    });
+    // deps: ops · adminOpsFor · jsonSchema (schema → inputSchema rendering)
+    const allowed = adminOpsFor(ctx.principal);
+    return Object.entries(ops)
+      .filter(([name]) => allowed.has(name))
+      .map(([name, op]) => {
+        const schema = op.schema as OpSchema;
+        const tool: Tool = { name, description: schema.description, inputSchema: jsonSchema(schema) };
+        if (op.outputSchema !== undefined) tool.outputSchema = jsonSchema(op.outputSchema as OpSchema);
+        return tool;
+      });
   },
   // §20.6: the pmcp builtin is tools only — its scoped endpoint answers these three empty
   // rather than -32601, because an empty family is a different fact from an unimplemented
@@ -1460,13 +1611,14 @@ export const adminBackend: AppBackend = {
     return [];
   },
   async call(app, msg, ctx) {
-    // deps: ops · errors.notPermitted
+    // deps: ops · adminOpsFor · errors.notPermitted
     const name = typeof msg.params?.name === "string" ? msg.params.name : "";
     const op = opNamed(name);
     // The same code and the same words the gateway answers an ungranted tool with: an
-    // unknown admin tool must not be distinguishable from one (§7) — which is why this
-    // reaches for the shared factory rather than spelling either half again.
-    if (op === undefined) throw notPermitted();
+    // unknown admin tool, and one adminOpsFor(ctx.principal) refuses, must not be
+    // distinguishable from each other (§7/§22.1) — which is why this reaches for the
+    // shared factory rather than spelling any of the three refusals again.
+    if (op === undefined || !adminOpsFor(ctx.principal).has(name)) throw notPermitted();
     const value = await op.handler(app.ownerId, msg.params?.arguments);
     return {
       jsonrpc: "2.0",

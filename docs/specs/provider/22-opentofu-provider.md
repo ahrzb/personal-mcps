@@ -265,8 +265,8 @@ Three consequences that must be documented for an operator, because two of them 
   `tofu destroy` reaches credentials the provider never created and cannot list in its plan.
 - **Bumping `rotation` replaces only the managed row.** Ad-hoc keys for the same principal keep
   working. That enables staged rotation and misleads anyone who reads it as rotating "the" key.
-- **Ad-hoc keys are invisible to state**, which is exactly how the live hub came to hold
-  credentials for `proton-mail` and `openclaw` that `mcps.yaml` never declared. The
+- **Ad-hoc keys are invisible to state**, which is how `shed` came to hold app tokens for
+  `proton-mail-read` and `proton-mail-mutate` — two identities `mcps.yaml` does not declare. The
   `pmcp_tokens` data source (§22.4) exists to close that blind spot.
 
 **Schema** (`pmcp_token`):
@@ -762,30 +762,38 @@ is itself the signal that the typed layer is behind.
 #### Consuming it from `shed`, including its own services' tokens
 
 `shed` runs several bots that dial this hub, and it manages their credentials declaratively
-through `pmcp_token` rather than minting them by hand. Today those credentials reach the host as
-agenix env files, four of which carry hub identities: `mcp-tools-environment.age` (a hub token
-bundled with DuoCards, papers and Sentry credentials), `openclaw-environment.age`, and
-`proton-mail-read-token.age` / `proton-mail-mutate-token.age` for the two gateway identities.
+through `pmcp_token` rather than minting them by hand. Three of its agenix files carry hub
+identities: `mcp-tools-environment.age` (a hub token bundled with DuoCards, papers and Sentry
+credentials, read as `PMCP_APP_TOKEN` from `services.mcp-tools.environmentFile`), and
+`proton-mail-read-token.age` / `proton-mail-mutate-token.age`, each a **bare token file** loaded
+with `LoadCredential=app-token:<path>` and read with a whole-file trim. `openclaw-environment.age`
+carries no hub credential.
 
 **Decided:** tofu owns the hub-side lifecycle — the app or agent row, the token's issuance, its
 `rotation`, and its revocation. `pmcp_token` is the authority for *which* credentials exist.
 
-**Open, and tracked as its own decision:** how an issued plaintext gets from tofu state into the
-file a systemd unit reads. Nothing here is free, because agenix files are age-encrypted to
-`operator` + `shed` and committed, and tofu cannot produce one without shelling out.
+**Delivery is out of scope**, ruled 2026-09-15: it changes `shed` and a private flake input, and
+a rotation procedure settled at the tail of this effort would be rushed. What this section owes
+instead is the capability contract in §22.2 — overlapping generations, `create_before_destroy` as
+a guarantee, `pmcp_tokens` inventory, idempotent revoke — and the boundary that nothing hub-side
+identifies which credential a live consumer is using.
 
-The shape that looks most likely — and it is a recommendation, not a ruling — is to **split each
-hub token into its own age file**, as `proton-mail` already does with its two identities, so a
-`local-exec` can own a whole file instead of rewriting one line inside a multi-credential env
-file. `services.<name>.environmentFile` becomes a list, or the unit gains a second
-`EnvironmentFile`. The consequence to accept explicitly is that the plaintext then exists in two
-places — tofu state and the age file — which is a wider blast radius than either alone, and the
-`local-exec` makes `tofu apply` depend on the operator's age identity being present.
+Two facts a later effort should not have to rediscover, because both were established the
+expensive way:
 
-Until that is settled, `shed` can adopt `pmcp_token` for lifecycle while continuing to deliver
-values by hand: the resource is authoritative, and the operator copies a newly issued value into
-agenix once. That is a real intermediate state rather than a broken one, because the lifecycle
-half is where the drift was.
+- **A restart is not implied by a deploy.** agenix activation rewrites `/run/agenix/<name>` behind
+  a constant path, so a unit whose definition did not change is not restarted. Setting
+  `restartTriggers` to `config.age.secrets.<name>.file` — the *ciphertext* store path — fixes this
+  from `shed`'s own configuration, with no private-module change.
+- **The delivery payloads differ per consumer**, per the formats above, so one writer cannot serve
+  all three. And `mcp-tools`' token sits inside a multi-credential env file behind a singular
+  `environmentFile` in a private input, which is why it is the expensive one and Proton's two are
+  not.
+
+Until delivery is settled, `shed` adopts `pmcp_token` for lifecycle and delivers values by hand:
+the resource is authoritative, and the operator copies a newly issued value into agenix once.
+That is a real intermediate state rather than a broken one, because the lifecycle half is where
+the drift was.
 
 ---
 

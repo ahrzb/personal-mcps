@@ -102,11 +102,25 @@
   cold-start cost). The **CLI is carved out**: `cli/` may take runtime
   dependencies of its own (§10 pins the current list: commander,
   @clack/prompts, picocolors, wrap-ansi, smol-toml, yaml). They are declared in
-  the root `package.json` — the install the repo actually runs — and mirrored
-  into `cli/package.json` for the published bin, because `cli/build.mjs`
-  type-strips without bundling, so the published `dist/` imports them at
-  runtime. Clients (`clients/js`, `clients/py`) keep their own minimal,
+  `cli/package.json` alone. *(Amended 2026-09-15: they used to be declared in the
+  root manifest **and** mirrored into `cli/`, because the workspace had no
+  `packages:` key and `cli/` was therefore not an importer — nothing resolved
+  without the root copy. Two declarations of one set drifted, with npm resolving
+  from `cli/` and local `pnpm pmcp` from the root. The workspace is now real and
+  the root copy is gone; `pnpm pmcp` resolves upward into `cli/node_modules`.)*
+  Clients (`clients/js`, `clients/py`) keep their own minimal,
   separately-declared dependencies as before.
-- **Monorepo**: pnpm workspaces (`server`, `cli`, `clients/js`) + `uv` project
-  (`clients/py`).
+- **Monorepo**: pnpm workspaces with exactly two importers, `cli` and
+  `clients/js` — the two published npm packages — plus a `uv` project
+  (`clients/py`) and a standalone Go module (`clients/go`), neither of which is
+  npm. `server/` deliberately has **no manifest**: Wrangler builds it from the
+  root, so one there would be a third declaration with no consumer. *(Amended
+  2026-09-15: this line previously named `server` as a workspace package and
+  omitted that none of the three directories were importers at all.)*
+- **Toolchain authority**: `flake.nix`'s devShell — Node 24, pnpm 10, Go 1.25,
+  `uv` — added 2026-09-15 (§22.7). It sits beside the documented `pnpm install`
+  flow rather than replacing it, so contributors without Nix keep working, and
+  where a manifest or document disagrees with the flake the flake is correct.
+  Wrangler stays an npm dependency so it matches the lockfile: its version
+  decides how the Worker runs, and two sources for that is one too many.
 

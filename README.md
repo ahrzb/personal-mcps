@@ -53,6 +53,11 @@ opened anywhere.
 | [docs/specs](docs/specs/README.md) | **The source of truth.** The design spec (§-references throughout the code point here) and the testing strategy, one file per section — [docs/specs/README.md](docs/specs/README.md) is the index |
 | [docs/superpowers/plans](docs/superpowers/plans) | Implementation ledgers |
 | [docs/superpowers/postmortems](docs/superpowers/postmortems) | One file per escaped bug |
+| [flake.nix](flake.nix) | The pinned toolchain and the `pmcp` package; the version authority |
+
+The pnpm workspace has exactly two importers, `cli` and `clients/js` — the two published npm
+packages. `server/` deliberately has no manifest of its own, because Wrangler builds it from the
+root, and `clients/py` and `clients/go` are not npm packages at all.
 
 ## Everyday commands
 
@@ -94,20 +99,51 @@ npx wrangler deploy
 pnpm smoke        # probes the deployed hub end to end
 ```
 
-## Using the CLI
+### The toolchain, and where its versions come from
 
-No clone needed — the repo is an npm package whose one bin is `pmcp`
-(Node ≥ 22.18 / 23.6):
+`nix develop` gives you a shell with the versions this repo is actually built and tested
+against — Node 24, pnpm 10, Go 1.25, uv — and **the flake is the authority**: when a manifest or
+a document disagrees with `flake.nix`, the flake is right and the other is stale.
+
+It sits **beside** `pnpm install`, not in front of it. Contributors without Nix keep working
+exactly as before; the flake exists so the versions stop being folklore, and so the `pmcp` CLI
+can be built reproducibly from source.
 
 ```bash
-npm install -g "github:ahrzb/personal-mcps"
+nix develop             # the pinned toolchain
+nix build .#pmcp        # the CLI, built from this tree rather than from npm
+nix flake check         # builds the CLI and asserts it runs and matches its manifest
+```
+
+Wrangler is deliberately *not* in the shell: it stays an npm dependency so it matches the
+lockfile, because its version decides how the Worker runs and two sources for that is one too
+many.
+
+One maintenance note. `flake.nix` pins a `pnpmDeps` hash covering the whole lockfile, so **any
+dependency change needs it regenerated** — `nix build .#pmcp` fails with the expected hash in its
+`got:` line, and `nix flake check` in CI is what catches a stale one.
+
+
+## Using the CLI
+
+Three ways in, in the order most people want them:
+
+```bash
+npm i -g @ahrzb/personal-mcp-cli      # published; `pmcp` on your PATH (Node ≥ 22.18)
+nix run github:ahrzb/personal-mcps#pmcp -- --version   # no install, no Node of your own
+nix develop                           # a shell with the pinned Node, pnpm, Go and uv
 ```
 
 ```bash
 pmcp login        # device flow: opens <hub>/device, approve in a signed-in browser
 ```
 
-Inside a clone, `pnpm pmcp <command>` runs the same CLI.
+Inside a clone, `pnpm pmcp <command>` runs the same CLI from source — no build step, because
+Node ≥ 22.18 strips the TypeScript types natively.
+
+`npm install -g github:ahrzb/personal-mcps` used to be documented here and **never worked**: the
+root manifest is `private` with no `bin` and no `prepare`, so npm installed a package that
+exposed nothing runnable. The published `@ahrzb/personal-mcp-cli` replaces it.
 
 Hubs are named by profiles in `~/.config/pmcp/config.toml`; pick one with
 `--profile <name>` or `PMCP_PROFILE`, and the flat env vars `PMCP_URL` /

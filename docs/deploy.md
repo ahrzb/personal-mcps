@@ -13,9 +13,16 @@ collected in [§9](#9-what-was-the-authors) at the end.
 - A Cloudflare account (the free plan covers everything here: Workers, D1, Durable
   Objects on the SQLite backend).
 - Node ≥ 22.18 / 23.6 — the CLI and the repo's scripts are TypeScript run through
-  Node's native type stripping, and `cli/package.json` sets `engines.node >= 20`
-  for the published CLI alone.
-- `pnpm` (the repo is a pnpm workspace).
+  Node's native type stripping, which is exactly where that floor comes from. The
+  published CLI declares the same `engines.node` floor; an earlier version of this
+  note said `>= 20`, which no release ever supported.
+- `pnpm` 10 (the repo is a pnpm workspace, with `cli` and `clients/js` as its two
+  importers).
+
+Or skip both: `nix develop` provides the versions this repo is actually tested
+against — Node 24, pnpm 10, Go 1.25, `uv` — and `flake.nix` is the authority when a
+manifest or a document disagrees with it. The Nix shell sits beside this flow rather
+than replacing it; everything below works either way.
 
 ```bash
 pnpm install

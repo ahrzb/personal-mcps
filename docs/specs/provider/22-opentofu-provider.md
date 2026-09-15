@@ -668,9 +668,11 @@ repo's CI runs it against its own working tree:
 nix run github:ahrzb/terraform-provider-pmcp#coverage-check -- ./contracts/admin-ops.json
 ```
 
-No circular flake input, and a hub change that outruns the provider fails CI **here**. Because
-both repositories are private, the CI step needs a deploy key or PAT with read access to the
-provider repo — an explicit prerequisite, not an implementation detail.
+No circular flake input, and a hub change that outruns the provider fails CI **here**.
+*(Amended 2026-09-15: this clause required a deploy key or PAT, on the premise that both
+repositories were private. Both are public, so `nix run github:ahrzb/terraform-provider-pmcp#coverage-check`
+needs no credential at all — verified running against the live provider flake, and verified
+failing on a fixture-ahead op. If either repo goes private again the prerequisite returns.)*
 
 **Staging, so a two-repo change can land.** The check is asymmetric — an op or field the
 *provider* handles that the fixture lacks is allowed; one the *fixture* has that the provider
@@ -784,12 +786,26 @@ owns the Worker.
   the change pnpm gives `cli/` its own `node_modules` and `pnpm pmcp` resolves upward into it.
 - The README's `npm install -g github:ahrzb/personal-mcps` is removed: the root is `private` with
   no `bin` and no `prepare`, so it installs nothing runnable. `@ahrzb/personal-mcp-cli` replaces it.
-- Derivation: `stdenv.mkDerivation` + `pnpm.fetchDeps` + `pnpmConfigHook`, one pinned `pnpm_10`
+- Derivation: `stdenv.mkDerivation` + `fetchPnpmDeps` + `pnpmConfigHook`, one pinned `pnpm_10`
   shared by fetcher, hook and devShell; build is `node cli/build.mjs` (node builtins only, no
-  bundler); install `dist`, the pruned store, and a `bin/pmcp` wrapper. `fetchDeps` pulls the whole
-  workspace closure to build a five-package CLI — accepted for simplicity; `--ignore-scripts`
-  keeps the `allowBuilds` postinstalls for esbuild and workerd from running, which is safe only
-  because nothing in the CLI build path needs either.
+  bundler); install `dist`, the pruned store, and a `bin/pmcp` wrapper. `fetchPnpmDeps` pulls the
+  whole workspace closure to build a six-package CLI — accepted for simplicity;
+  `--ignore-scripts` keeps the `allowBuilds` postinstalls for esbuild and workerd from running,
+  which is safe only because nothing in the CLI build path needs either.
+
+  *(Built 2026-09-15. Three things in this paragraph did not survive contact, recorded so the
+  next reader does not retry them. **`pnpm.fetchDeps` and `pnpm_10.configHook` are the deprecated
+  spellings** — top-level `fetchPnpmDeps` and `pnpmConfigHook` with `.override` keep the pin, and
+  `fetcherVersion` must be 3; the top-level hook does not propagate pnpm, so pnpm is an explicit
+  `nativeBuildInput`. **`pnpm deploy` cannot produce the self-contained tree**: even `--offline`
+  it re-resolves the workspace and wants registry metadata the fetched store lacks, and
+  `node-linker=hoisted` hoists to the workspace root so `cli/node_modules` comes out empty.
+  **"The pruned store" is not a pnpm flag** — `--filter --prod --frozen-lockfile` still
+  materialises every importer, shipping 583 MiB of wrangler, vitest, typescript and workerd. The
+  closure is therefore computed: a breadth-first walk from `cli/node_modules` over the symlinks
+  between `.pnpm` entries, which yields 16 of 176 entries and 2.7 MiB. What makes that safe is
+  the install check — it imports the built entrypoint, so every static import must resolve,
+  where `--version` alone would exercise two of the six packages.)*
 - **The devShell is the version authority**: `nodejs_24` (satisfying `cli/package.json`'s
   `>=22.18` and providing native type stripping), `pnpm_10`, `go_1_25`, `uv`. Wrangler stays an
   npm dependency so it matches the lockfile. The manifests and docs are corrected **to** the
@@ -930,6 +946,13 @@ mode with `wrangler d1 migrations apply DB --local` against the `DB` binding, an
 `PUBLIC_ORIGIN`, `BOOTSTRAP_SECRET`, `BETTER_AUTH_SECRET` and `UPSTREAM_CREDS_KEY` set to
 throwaway values. `TF_ACC=1` and `TF_ACC_TERRAFORM_PATH` point at the nixpkgs `opentofu`. Because
 no ephemeral resources exist, OpenTofu's `ExpectNonEmptyPlan` divergence never arises.
+
+*(Unblocked 2026-09-15: "the `personal-mcps` flake input" had no flake to be — this repo carried
+no Nix at all, which is why the rig was never built. It does now, so the remaining work is in the
+provider repo: a `personal-mcps` input, `apps.acceptance`, the `TestAcc*` suite, and the nightly
+workflow. What the devShell does NOT yet provide is `wrangler` — it stays an npm dependency to
+match the lockfile, so the rig gets it from `pnpm install` inside the checked-out input rather
+than from the shell.)*
 
 **Acceptance is an app, not a check** — `nix flake check`'s sandbox cannot boot a Worker and reach
 it over loopback. `apps.acceptance` starts the rig and runs

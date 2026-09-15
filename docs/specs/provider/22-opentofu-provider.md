@@ -245,11 +245,11 @@ make. Managing app tokens only was considered and rejected: the delivery stories
 token's consumer is a systemd unit on a host tofu already manages; an agent key's consumer is a
 laptop or script it cannot reach), but delivery is not what the resource is for. Lifecycle is.
 
-The cost accepted with agent keys specifically: they are the most valuable credentials here to
-leak — the live grants are `[all]`, bare, so no approval gate stands behind them — and tofu
-cannot deliver them, so management buys planned expiry, rotation and revocation rather than
-automation. That trade was made deliberately, and it is the reason `pmcp_tokens` exists beside
-the resource: whatever is *not* managed should at least be visible.
+The cost accepted with agent keys specifically: tofu cannot deliver them, so management buys
+planned expiry, rotation and revocation rather than automation, while the plaintext still lands
+in committed state — and permanently, since every token ever issued persists as ciphertext in
+history that revocation cannot unpublish. That trade was made deliberately, and it is the reason
+`pmcp_tokens` exists beside the resource: whatever is *not* managed should at least be visible.
 
 **Managed and ad-hoc tokens coexist, by construction.** `token`'s only uniqueness is on `hash`
 — there is no constraint on `(kind, ref_id)` and `token_issue` never revokes a prior key — so an

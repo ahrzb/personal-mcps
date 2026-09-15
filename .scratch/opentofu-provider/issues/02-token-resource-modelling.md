@@ -93,9 +93,9 @@ authenticates with.
 **Which kinds, settled separately.** `token_issue` has exactly two — app tokens (a bot holding a
 tunnelled app's slot) and agent keys (a consumer calling `/<user>/mcp`). App tokens were an
 immediate yes. Agent keys were weighed on their own, because tofu cannot deliver them — their
-consumers are laptops and scripts — and because the live grants are `[all]`, bare, so no approval
-gate stands behind a leaked one. Managing app tokens only, with a data source for agent-key
-visibility, was the standing recommendation.
+consumers are laptops and scripts — so management buys lifecycle without automation while the
+plaintext still lands in committed state. Managing app tokens only, with a data source for
+agent-key visibility, was the standing recommendation.
 
 **The owner chose both** (2026-09-15), on the reasoning that lifecycle, not delivery, is what the
 resource is for: planned expiry, rotation and revocation are worth having even where the value is

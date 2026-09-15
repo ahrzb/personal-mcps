@@ -322,15 +322,19 @@ async function adminOp(ctx: CliContext, name: string, args: Record<string, unkno
 /**
  * §22.1's CLI-side half of the acceptance table: a `pmcp_adm_` admin token administers
  * the hub and reaches no single app's own tools, so the commands that would otherwise
- * address one — `ls`, `call`, `get`, `read`, and the hidden `tools`/`prompts`/`resources`
- * — refuse it client-side, before any request, the same way resolveContext's `pmcp_app_`
- * check does: failing locally beats a confusing server refusal. Every other command
- * (`admin-token`, `token`, `app`, `agent`, `approvals`, `connections`, `audit`, `diff`,
- * `apply`) is unaffected — they front the builtin `pmcp` app's own ops, which an admin
- * token DOES reach (minus `approval_decide` and `admin_token_issue`, refused server-side).
+ * address one — `call`, `get`, `read`, and the hidden `tools`/`prompts`/`resources` —
+ * refuse it client-side, before any request, the same way resolveContext's `pmcp_app_`
+ * check does: failing locally beats a confusing server refusal. The refusal is keyed on
+ * the ADDRESSED SLUG, not blanket: when that slug is the builtin `PMCP_SLUG` itself, the
+ * surface being reached IS the hub's own admin surface — the same one `ls` already fronts
+ * unconditionally — so an admin token must reach it exactly as `admin-token`/`token`/`app`/
+ * `agent`/`approvals`/`connections`/`audit`/`diff`/`apply` do (minus `approval_decide` and
+ * `admin_token_issue`, refused server-side). Every non-`pmcp` slug is still refused with
+ * its original message: that surface stays closed to admin tokens.
  */
-function refuseAdminToken(ctx: CliContext): void {
+function refuseAdminToken(ctx: CliContext, app: string): void {
   if (!ctx.token.startsWith("pmcp_adm_")) return;
+  if (app === PMCP_SLUG) return;
   throw new CliError(
     "unauthenticated",
     "a pmcp_adm_ admin token administers the hub and cannot reach a single app's tools",
@@ -741,7 +745,7 @@ function declaredRoles(row: AppRow): string {
  */
 export async function tools(ctx: CliContext, app: string): Promise<number> {
   // deps: mcpList
-  refuseAdminToken(ctx);
+  refuseAdminToken(ctx, app);
   const listed = (await mcpList(ctx, app)) as Record<string, any>[];
   if (globals.json) return emitDocument({ app, tools: listed });
   for (const tool of listed) write(`${catalogLine(String(tool.name), String(tool.description ?? ""), 28, decorated())}\n`);
@@ -762,7 +766,7 @@ export async function call(
   args: Record<string, unknown>,
 ): Promise<number> {
   // deps: mcpCall · enrichCallFailure
-  refuseAdminToken(ctx);
+  refuseAdminToken(ctx, target.app);
   try {
     const result = (await mcpCall(ctx, target.app, target.tool, args)) as { isError?: boolean };
     write(`${renderJson(result, documentColor())}\n`);
@@ -868,7 +872,7 @@ function indent(text: string, spaces: number): string {
  */
 export async function prompts(ctx: CliContext, app: string): Promise<number> {
   // deps: rpc
-  refuseAdminToken(ctx);
+  refuseAdminToken(ctx, app);
   const result = (await rpc(ctx, scoped(ctx, app), "prompts/list")) as { prompts?: unknown[] };
   const listed = (result?.prompts ?? []) as Record<string, any>[];
   if (globals.json) return emitDocument({ app, prompts: listed });
@@ -889,7 +893,7 @@ export async function prompt(
   args: Record<string, unknown>,
 ): Promise<number> {
   // deps: rpc
-  refuseAdminToken(ctx);
+  refuseAdminToken(ctx, app);
   const result = await rpc(ctx, scoped(ctx, app), "prompts/get", { name, arguments: args });
   write(`${renderJson(result, documentColor())}\n`);
   return 0;
@@ -903,7 +907,7 @@ export async function prompt(
  */
 export async function resources(ctx: CliContext, app: string, opts: { templates?: boolean }): Promise<number> {
   // deps: rpc
-  refuseAdminToken(ctx);
+  refuseAdminToken(ctx, app);
   if (opts.templates === true) {
     const result = (await rpc(ctx, scoped(ctx, app), "resources/templates/list")) as { resourceTemplates?: unknown[] };
     const listed = (result?.resourceTemplates ?? []) as Record<string, any>[];
@@ -928,7 +932,7 @@ export async function resources(ctx: CliContext, app: string, opts: { templates?
  */
 export async function read(ctx: CliContext, app: string, uri: string): Promise<number> {
   // deps: rpc
-  refuseAdminToken(ctx);
+  refuseAdminToken(ctx, app);
   const result = await rpc(ctx, scoped(ctx, app), "resources/read", { uri });
   write(`${renderJson(result, documentColor())}\n`);
   return 0;
@@ -2223,7 +2227,10 @@ function buildProgram(): Command {
     .description("mint a hub-admin credential from a signed-in session")
     .option("--expires <duration>", "365d | 3600 | never")
     .action(async (opts: { expires?: string }) => {
-      pendingExit = (await adminToken(await context(), { sub: "issue", expires: expiresIn(opts.expires) })) as 0 | 1;
+      // Resolved before the context, matching `token issue` (§10): an untranslatable
+      // lifetime fails the same way — before any credential resolution or request.
+      const expires = expiresIn(opts.expires);
+      pendingExit = (await adminToken(await context(), { sub: "issue", expires })) as 0 | 1;
     });
   adminTokens
     .command("list")

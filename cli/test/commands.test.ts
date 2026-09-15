@@ -449,6 +449,31 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
     });
   });
 
+  it("§10 · `pmcp admin-token issue --expires <garbage>` fails locally, before `await context()` resolves a credential — the malformed duration is parsed left of the whoami round-trip, exactly like `token issue`'s", async () => {
+    const rejected = countingHub();
+    expect(await main(["admin-token", "issue", "--expires", "90 days"])).toBe(2);
+    expect(rejected.calls, "a malformed --expires must be caught before any request, including whoami").toBe(0);
+  });
+
+  it("§22.1 · `refuseAdminToken` is target-based, not blanket: a `pmcp_adm_` token is refused against an ordinary app slug but honoured against the builtin `pmcp` slug — the same surface `ls` already fronts unconditionally", async () => {
+    vi.stubEnv("PMCP_TOKEN", "pmcp_adm_FAKE0000000000000000000000000000");
+
+    // Refused: `news` is an ordinary app surface, still closed to admin tokens.
+    const rejected = countingHub();
+    expect(await main(["call", "news", "echo", "text=hi"])).toBe(1);
+    expect(rejected.calls, "the refusal fires after whoami resolves the token kind, before any app-facing request").toBe(1);
+    const stderr = process.stderr.write as unknown as { mock: { calls: unknown[][] } };
+    expect(stderr.mock.calls.map((c) => String(c[0])).join("")).toContain(
+      "a pmcp_adm_ admin token administers the hub and cannot reach a single app's tools",
+    );
+
+    // Honoured: `pmcp` IS the builtin admin surface `ls` already reaches unconditionally —
+    // the same op dispatch §22.1's acceptance table grants `pmcp_adm_` outright.
+    const frames = recordingHub();
+    expect(await main(["call", "pmcp", "grant_set", "agent=bot", "app=news", "roles=reader"])).toBe(0);
+    expect(frames.map((frame) => frame.name)).toEqual(["grant_set"]);
+  });
+
   it("§7 · `pmcp call` partitions its words by SHAPE: the aggregated `<slug>_<tool>` name composes with key=value arguments, and a word that is neither is an error rather than a silently dropped argument", async () => {
     const sent: unknown[] = [];
     vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {

@@ -1057,11 +1057,19 @@ describe("§10 · help and --version, answered before anything is resolved", () 
     expect(hub.calls).toBe(0);
   });
 
-  it("§10 · `--version` prints one line and nothing else", async () => {
+  it("§10 · `--version` prints one line, and that line is cli/package.json's version — the published bin must not disagree with the package that shipped it", async () => {
     countingHub();
     expect(await main(["--version"])).toBe(0);
     const stdout = process.stdout.write as unknown as { mock: { calls: unknown[][] } };
-    expect(stdout.mock.calls.map((call) => String(call[0])).join("").trim().split("\n")).toHaveLength(1);
+    const printed = stdout.mock.calls.map((call) => String(call[0])).join("").trim().split("\n");
+    expect(printed).toHaveLength(1);
+    // main.ts's VERSION is a literal because the dist build has no JSON reader, so the two
+    // spellings can drift silently — and did: a release bumped package.json while the bin
+    // kept printing the previous version. The manifest is the source of truth here.
+    const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      version: string;
+    };
+    expect(printed[0], "`pmcp --version` versus cli/package.json").toBe(manifest.version);
   });
 
   it("§10 · every COMMANDS row is discoverable in the top-level overview — the help literal is a separate surface from the argv table, and nothing else notices when a new family misses it", async () => {

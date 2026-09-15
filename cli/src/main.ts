@@ -42,8 +42,10 @@ import { parseDesired, planChanges } from "./plan.ts";
 import type { CurrentAgent, CurrentApp, CurrentState, DesiredGrant, Plan, RoleDeclaration } from "./plan.ts";
 import { catalogLine, columnize, renderJson, schemaTable, styling, wrapText } from "./render.ts";
 
-/** Printed by `--version`; kept in step with cli/package.json by hand (dist has no reader for it). */
-const VERSION = "0.1.0";
+/** Printed by `--version`. Duplicated from cli/package.json because the dist build is a
+ *  source-to-dist transform with no JSON reader — held in step by the parity test in
+ *  cli/test/commands.test.ts rather than by hand, since "by hand" is how it last drifted. */
+const VERSION = "0.2.0";
 
 /**
  * COPIED wire shape — the GET /api/whoami response, pinned by §8 as the

@@ -14,5 +14,9 @@ __pycache__/
 cli/dist/
 clients/js/dist/
 
+# `nix build` drops this symlink into the tree; the store path it points at is the artifact
+result
+result-*
+
 # live browser session cookies — never committed
 cookies.txt

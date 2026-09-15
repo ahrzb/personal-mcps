@@ -1,3 +1,14 @@
+# `cli` and `clients/js` are the two published packages, so they are the two importers. Before
+# this key existed neither was one: the lockfile carried only the root, which meant each
+# published manifest's dependencies were mirrored at the root to make anything resolve — two
+# declarations of one dependency set, drifting, with npm resolving from the package and local
+# `pnpm pmcp` resolving from the root (§22.7).
+#
+# `server/` gets no manifest on purpose: Wrangler builds it from the root, so a manifest there
+# would be a third declaration with no consumer. `clients/py` and `clients/go` are not npm at all.
+packages:
+  - cli
+  - clients/js
 allowBuilds:
   esbuild: true # bundler used by wrangler; postinstall places its platform binary
   workerd: true # the Workers runtime itself — its postinstall downloads the binary wrangler dev runs

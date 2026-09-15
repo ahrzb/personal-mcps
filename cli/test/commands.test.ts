@@ -1063,4 +1063,28 @@ describe("§10 · help and --version, answered before anything is resolved", () 
     const stdout = process.stdout.write as unknown as { mock: { calls: unknown[][] } };
     expect(stdout.mock.calls.map((call) => String(call[0])).join("").trim().split("\n")).toHaveLength(1);
   });
+
+  it("§10 · every COMMANDS row is discoverable in the top-level overview — the help literal is a separate surface from the argv table, and nothing else notices when a new family misses it", async () => {
+    countingHub();
+    expect(await main(["help"])).toBe(0);
+    const stdout = process.stdout.write as unknown as { mock: { calls: unknown[][] } };
+    const overview = stdout.mock.calls.map((call) => String(call[0])).join("");
+    // Word-wise rather than by the literal row name: the overview groups subcommands
+    // (`token issue|list|revoke`, `connection revoke <id>`) so no row appears verbatim.
+    // What has to hold is that every word a caller would type is somewhere in the text —
+    // which is exactly what fails when a whole family is added and never announced.
+    // Boundaries include `[`/`]` so `audit [--export jsonl]` counts as announcing both
+    // of its words.
+    const announced = (word: string) => new RegExp(`(^|[\\s|·\\[])${word}([\\s|·\\]]|$)`, "m").test(overview);
+    // The five deliberately hidden aliases, whose documented forms ARE announced:
+    // `describe app/<slug>` covers tools/prompts/resources, and `get prompt|resource/…`
+    // covers prompt/read (main.ts's command builder marks exactly these five hidden). A
+    // sixth hidden command added later fails here until it is named in this list, which is
+    // the right direction: the omission becomes a deliberate act rather than an oversight.
+    const hiddenAliases = ["tools", "prompts", "resources", "prompt", "read"];
+    const missing = COMMANDS.filter(
+      (command) => !hiddenAliases.includes(command.name) && command.name.split(" ").some((word) => !announced(word)),
+    ).map((command) => command.name);
+    expect(missing, "COMMANDS rows absent from the overview help").toEqual([]);
+  });
 });

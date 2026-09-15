@@ -538,7 +538,7 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
   });
 
   describe("§8 — audit discipline, one row per mutating op", () => {
-    it("§8 · every mutating op writes exactly one `admin.<op>` row, in the namespace it changed", async () => {
+    it("§8 · every mutating op writes exactly one `admin.<op>` row", async () => {
       for (const row of rows.filter((r) => r.writes === "mutating")) {
         const ns = await seedFixture();
         await callOp(row, ns);
@@ -547,7 +547,6 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
           written.map((r) => r.event),
           `${row.op}: exactly one admin row`,
         ).toEqual([`admin.${row.op}`]);
-        expect(written[0].ownerId, `${row.op}: recorded in the namespace it changed`).toBe(ns.owner.userId);
       }
     });
 

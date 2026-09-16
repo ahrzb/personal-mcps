@@ -580,7 +580,19 @@ type CommonRow = {
 };
 
 type BuiltinRow = { kind: "builtin"; builtin: true };
-type TunnelRow = { kind: "tunnel"; createdAt: number; status: "online" | "offline"; lastSeen: number | null };
+type TunnelRow = {
+  kind: "tunnel";
+  createdAt: number;
+  status: "online" | "offline";
+  lastSeen: number | null;
+  /**
+   * §20.3's owner map (2026-09-17) — the tunnel variant's alone, because a proxied app's
+   * roles are already all the owner's and its `roles` IS this. Always present, `{}` when
+   * the owner defined none: unlike `capabilities`, there is no "undeclared" state to
+   * preserve — the column is NOT NULL DEFAULT '{}' and the Roles pane always has a map.
+   */
+  ownerRoles: RoleDeclaration;
+};
 type ProxyRow = {
   kind: "proxy";
   createdAt: number;
@@ -621,6 +633,7 @@ async function appRow(detail: AppDetail): Promise<AppRow> {
       createdAt: detail.createdAt,
       status: await tunnelStatus(detail.id),
       lastSeen: detail.lastConnectedAt,
+      ownerRoles: detail.ownerRoles,
     };
   }
   return {
@@ -722,6 +735,11 @@ function commonFields(input: Record<string, unknown>): Record<string, unknown> {
     ...(input.redact === undefined ? {} : { redact: input.redact }),
     ...(input.redact_results === undefined ? {} : { redactResults: input.redact_results }),
     ...(input.log_bodies === undefined ? {} : { logBodies: input.log_bodies }),
+    // §20.3's owner map is TUNNEL-only, and it is relayed here rather than from a
+    // `tunnelFields` twin of proxyFields: the kind rule is registry's (assertOwnerRoles),
+    // which is what makes the refusal one sentence in one place for create and update
+    // alike, in the op's own field name.
+    ...(input.owner_roles === undefined ? {} : { ownerRoles: input.owner_roles as RoleDeclaration }),
   };
 }
 
@@ -745,6 +763,11 @@ const APP_FIELDS: Record<string, Field> = {
     kind: "roleDeclaration",
     description:
       "Proxied only: role name → tool patterns, or (§20.3) the per-family object of tool/prompt/resource patterns.",
+    optional: true,
+  },
+  owner_roles: {
+    kind: "roleDeclaration",
+    description: "Owner-defined roles on a tunneled app — the app's own declaration wins on a name collision.",
     optional: true,
   },
   capabilities: {

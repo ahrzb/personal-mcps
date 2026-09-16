@@ -11,7 +11,8 @@
     "kind": "tunnel",
     "createdAt": "<number>",
     "status": "offline",
-    "lastSeen": null
+    "lastSeen": null,
+    "ownerRoles": {}
   },
   "proxy": {
     "slug": "contracts-proxy",

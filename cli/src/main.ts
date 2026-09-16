@@ -91,6 +91,8 @@ export type AppRow = {
   builtin?: boolean;
   /** tunneled rows only */
   status?: "online" | "offline";
+  /** tunneled rows only — §20.3's owner-defined roles, beside the app's own `roles` */
+  ownerRoles?: RoleDeclaration;
   /** proxied rows only */
   endpoint?: string;
   auth?: "headers" | "oauth";
@@ -390,7 +392,10 @@ async function readCurrentState(ctx: CliContext): Promise<CurrentState> {
               // by plan.canonicalCapabilities, in one place, on both sides at once).
               ...(row.capabilities === undefined ? {} : { capabilities: row.capabilities }),
             }
-          : {}),
+          : // §20.3's owner map, passed through UNDEFAULTED like `capabilities` above:
+            // absent and `{}` mean the same thing, and `plan.changedFields` canonicalizes
+            // both sides, so nothing is invented here.
+            { ...(row.ownerRoles === undefined ? {} : { ownerRoles: row.ownerRoles }) }),
       }),
     ),
     agents: agents.map(

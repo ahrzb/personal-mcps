@@ -1,6 +1,8 @@
-// catalog-view.ts — the two pure computations `/apps/<slug>` needs and nothing else has:
-// the **Arguments** table read off a tool's `inputSchema`, and the **reachability** set that
-// answers §13's "Reachable by `<agent>` · via `<role>`".
+// catalog-view.ts — the pure computations `/apps/<slug>` needs and nothing else has: the
+// **Arguments** table read off a tool's `inputSchema`, the same schema walked WHOLE into
+// dotted leaf paths (`schemaLeaves` — what the Catalog details and the Recording pane's
+// mask rows read), and the **reachability** set that answers §13's "Reachable by
+// `<agent>` · via `<role>`".
 //
 // Both are the page's, and neither is a second implementation of anything: the reachability
 // MODE is `registry.buildToolFilter(entries, declared).check(subject, family)` — the door's
@@ -63,6 +65,76 @@ export function argumentRows(inputSchema: unknown): ArgumentRow[] {
       ...(hasDefault ? { default: property.default } : {}),
     };
   });
+}
+
+/**
+ * One LEAF of a schema, as the Catalog details' Arguments/Result cards and the Recording
+ * pane's path rows both read it: the dotted path, its type, and the three facts a mask
+ * decision turns on — whether the level above requires it, whether the app declared it
+ * `writeOnly` (already masked, never tickable), and its default. `default` and `hasDefault`
+ * carry the same meaning they do on ArgumentRow above, for the same reason.
+ */
+export type SchemaLeaf = {
+  path: string;
+  type: string;
+  required: boolean;
+  writeOnly: boolean;
+  hasDefault: boolean;
+  default?: unknown;
+};
+
+/**
+ * A JSON schema's leaves as dotted paths (`credentials.token`), objects recursed into,
+ * arrays printed as `<type>[]` and not recursed; `required` from each level's list.
+ *
+ * The ceiling is deliberate and it is the ARRAY: `tags: string[]` is one leaf, not a
+ * subtree, because §7's redaction paths address values and not elements — a mask on
+ * `tags` covers the whole list, and a row per element index would be a path no mask could
+ * ever be written against. An array OF objects prints `object[]` for the same reason.
+ *
+ * `required` is read PER LEVEL, never inherited: an optional object holding a required
+ * child yields a required leaf, which is what the level's own `required` list says and
+ * what the Arguments card draws. Composition keywords (`anyOf`, `$ref`, …) are not walked
+ * — a schema with no `properties` at a level is a leaf there, typed by whatever `type` it
+ * names — so this is total over anything an app sent: a non-object, an object with no
+ * properties, and an absent schema all yield `[]` rather than a throw inside a render.
+ *
+ * Cycles cannot arise: a JSON schema arrives as parsed JSON from D1 or an upstream
+ * listing, so it is a tree by construction.
+ */
+export function schemaLeaves(schema: unknown): SchemaLeaf[] {
+  // deps: none
+  const properties = objectOf(objectOf(schema)?.properties);
+  if (properties === null) return [];
+  const declared = objectOf(schema)?.required;
+  const required = new Set(Array.isArray(declared) ? declared.filter((name) => typeof name === "string") : []);
+  return Object.entries(properties).flatMap(([name, value]) => {
+    const property = objectOf(value) ?? {};
+    const type = typeof property.type === "string" ? property.type : "";
+    const nested = type === "object" ? schemaLeaves(property) : [];
+    // An object that declares no properties of its own has no leaves BELOW it, so it is
+    // one itself — otherwise it would vanish from the table entirely.
+    if (nested.length > 0) return nested.map((leaf) => ({ ...leaf, path: `${name}.${leaf.path}` }));
+    const hasDefault = "default" in property;
+    return [
+      {
+        path: name,
+        type: type === "array" ? `${itemType(property.items)}[]` : type,
+        required: required.has(name),
+        writeOnly: property.writeOnly === true,
+        hasDefault,
+        ...(hasDefault ? { default: property.default } : {}),
+      },
+    ];
+  });
+}
+
+/** An array's element type as the `<type>[]` rendering names it — `""` when the schema
+ *  declares no `items`, or declares them as anything but a plain typed schema, so the
+ *  leaf reads `[]` rather than claiming a type nobody wrote down. */
+function itemType(items: unknown): string {
+  const type = objectOf(items)?.type;
+  return typeof type === "string" ? type : "";
 }
 
 /** One agent that reaches a subject, as §13's "Reachable by …" line renders it. */

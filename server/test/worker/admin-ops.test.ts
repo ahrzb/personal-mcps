@@ -48,8 +48,8 @@ import type { BackendCtx, Tool } from "../../src/gateway";
 import { issueAdminToken, resolvePrincipal } from "../../src/identity";
 import { upsertBinding } from "../../src/oauth";
 import { tokenPattern } from "../../src/principal";
-import { PMCP_SLUG, SLUG_CHARSET, writeOnlyPaths } from "../../src/registry";
-import type { App } from "../../src/registry";
+import { PMCP_SLUG, Registry, SLUG_CHARSET, writeOnlyPaths } from "../../src/registry";
+import type { App, ToolFilter } from "../../src/registry";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 
@@ -1632,23 +1632,184 @@ describe("§8 · a refused app_create or app_update reports every violation at o
 // docs/superpowers/plans/2026-09-17-app-three-pane.md §1 (owner-defined roles).
 
 describe("§8/§20.3 · owner_roles — the owner's own roles on a tunneled app", () => {
-  it.todo(
-    "§8 · `app_create` and `app_update` take `owner_roles` on a TUNNELED app, validated exactly like `roles`, and `app_get` / `app_list` report it back as `ownerRoles` on the tunnel row in §20.3's canonical read shape · twin: the proxied and builtin rows carry no `ownerRoles` key at all, and the tunnel row's `roles` (the app's own declaration) is untouched by the write",
-  );
+  it("§8 · `app_create` and `app_update` take `owner_roles` on a TUNNELED app, validated exactly like `roles`, and `app_get` / `app_list` report it back as `ownerRoles` on the tunnel row in §20.3's canonical read shape · twin: the proxied and builtin rows carry no `ownerRoles` key at all, and the tunnel row's `roles` (the app's own declaration) is untouched by the write", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
 
-  it.todo(
-    "§8 · `owner_roles` on a PROXIED app is refused by both `app_create` and `app_update` with the one violation `owner_roles is for tunneled apps — a proxied app's roles are \"roles\"`, at -32602, and nothing is created or updated · twin: the same declaration sent as `roles` on that same proxied app is accepted, which is what makes the refusal about the FIELD and not about the declaration",
-  );
+    const created = uniqueSlug("owned");
+    await ops.app_create.handler(ownerId, {
+      slug: created,
+      kind: "tunnel",
+      owner_roles: { mine: ["get_.*"] },
+    });
+    expect(await ownerRolesOf(ownerId, created)).toEqual({ mine: ["get_.*"] });
 
-  it.todo(
-    "§8/§20.3 · `owner_roles` gets `roles`' own `validateRoles` — the reserved name `all`, a role name outside `[a-z0-9_-]`, an uncompilable pattern and an unknown family key are each a violation naming `owner_roles` as its field, reported with every other violation of the same call · twin: a legal per-family declaration at the caps stores and reads back",
-  );
+    // …and on update, in the per-family spelling — read back CANONICAL (§20.3), so a
+    // tools-only role comes home as the bare list whichever way it was written.
+    await ops.app_update.handler(ownerId, {
+      slug: NEWS,
+      owner_roles: { mine: { tools: ["get_.*"] }, spanning: { prompts: ["draft_.*"] } },
+    });
+    expect(await ownerRolesOf(ownerId, NEWS)).toEqual({
+      mine: ["get_.*"],
+      spanning: { prompts: ["draft_.*"] },
+    });
+    // The APP's own declaration is a different column and this write did not touch it.
+    expect(((await ops.app_get.handler(ownerId, { slug: NEWS })) as { app: { roles: unknown } }).app.roles).toEqual({});
 
-  it.todo(
-    "§20.3 · an owner role IS declared for the undeclared check: `grant_set` naming a role only `owner_roles` defines on a tunneled app returns NO warning, and `resolveAccess` for that agent allows the tools the owner's patterns name · twin: a name in neither map still warns and still matches nothing",
-  );
+    // THE TWIN: the key is the TUNNEL variant's. A proxied row and the builtin carry none.
+    const listed = ((await ops.app_list.handler(ownerId, {})) as { apps: Record<string, unknown>[] }).apps;
+    const row = (slug: string) => listed.find((app) => app.slug === slug) ?? {};
+    expect(Object.keys(row(NEWS))).toContain("ownerRoles");
+    expect(Object.keys(row(NOTION))).not.toContain("ownerRoles");
+    expect(Object.keys(row(PMCP_SLUG))).not.toContain("ownerRoles");
+  });
 
-  it.todo(
-    "§20.3 · the app's declaration wins at the door: with the same role name in both maps, `resolveAccess` answers the APP's patterns — the owner's shadowed definition allows nothing — and a reconnect's `upsertDeclaredRoles` rewrites `roles_json` alone, so the owner's map survives it byte for byte · twin: an owner role the app does not declare keeps resolving across that same reconnect",
-  );
+  it("§8 · `owner_roles` on a PROXIED app is refused by both `app_create` and `app_update` with the one violation `owner_roles is for tunneled apps — a proxied app's roles are \"roles\"`, at -32602, and nothing is created or updated · twin: the same declaration sent as `roles` on that same proxied app is accepted, which is what makes the refusal about the FIELD and not about the declaration", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+    const violation = {
+      field: "owner_roles",
+      reason: `owner_roles is for tunneled apps — a proxied app's roles are "roles"`,
+    };
+    const before = ((await ops.app_list.handler(ownerId, {})) as { apps: { slug: string }[] }).apps.map(
+      (app) => app.slug,
+    );
+
+    const refusedSlug = uniqueSlug("proxied");
+    const created = await wireRefusalOf(() =>
+      ops.app_create.handler(ownerId, {
+        slug: refusedSlug,
+        kind: "proxy",
+        endpoint: UPSTREAM_URL,
+        owner_roles: { mine: ["search"] },
+      }),
+    );
+    expect(created.code).toBe(CODES.invalidParams);
+    expect(created.violations).toEqual([violation]);
+    expect(created.message).toBe(violation.reason);
+
+    const updated = await wireRefusalOf(() =>
+      ops.app_update.handler(ownerId, { slug: NOTION, owner_roles: { mine: ["search"] } }),
+    );
+    expect(updated.code).toBe(CODES.invalidParams);
+    expect(updated.violations).toEqual([violation]);
+
+    // Nothing created, nothing updated — a refused write is not a write (§8).
+    const after = ((await ops.app_list.handler(ownerId, {})) as { apps: { slug: string }[] }).apps.map(
+      (app) => app.slug,
+    );
+    expect(after).toEqual(before);
+    expect(((await ops.app_get.handler(ownerId, { slug: NOTION })) as { app: { roles: unknown } }).app.roles).toEqual({});
+
+    // THE TWIN: the very same declaration under `roles` is the proxied app's OWN way of
+    // saying it, and it is accepted — so the refusal is about the field, not the value.
+    await ops.app_update.handler(ownerId, { slug: NOTION, roles: { mine: ["search"] } });
+    expect(((await ops.app_get.handler(ownerId, { slug: NOTION })) as { app: { roles: unknown } }).app.roles).toEqual({
+      mine: ["search"],
+    });
+  });
+
+  it("§8/§20.3 · `owner_roles` gets `roles`' own `validateRoles` — the reserved name `all`, a role name outside `[a-z0-9_-]`, an uncompilable pattern and an unknown family key are each a violation naming `owner_roles` as its field, reported with every other violation of the same call · twin: a legal per-family declaration at the caps stores and reads back", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+    const refusals = [
+      { all: ["search"] },
+      { ["Reader"]: ["search"] },
+      { mine: ["get_(.*"] },
+      { mine: { tolls: ["x"] } },
+    ];
+    for (const owner_roles of refusals) {
+      const refused = await wireRefusalOf(() => ops.app_update.handler(ownerId, { slug: NEWS, owner_roles }));
+      const label = JSON.stringify(owner_roles);
+      expect(refused.code, label).toBe(CODES.invalidParams);
+      // The field is the one the owner typed — `roles` would send them to the wrong block.
+      expect((refused.violations ?? []).map((violation) => violation.field), label).toEqual(["owner_roles"]);
+      expect(await ownerRolesOf(ownerId, NEWS), label).toEqual({});
+    }
+
+    // THE TWIN: the same validator's accept side, in the per-family spelling and at the
+    // pattern cap — so a validator that refused everything cannot pass this row.
+    await ops.app_update.handler(ownerId, {
+      slug: NEWS,
+      owner_roles: { spanning: { tools: ["a".repeat(128)], prompts: ["draft_.*"], resources: ["news://.*"] } },
+    });
+    expect(await ownerRolesOf(ownerId, NEWS)).toEqual({
+      spanning: { tools: ["a".repeat(128)], prompts: ["draft_.*"], resources: ["news://.*"] },
+    });
+  });
+
+  it("§20.3 · an owner role IS declared for the undeclared check: `grant_set` naming a role only `owner_roles` defines on a tunneled app returns NO warning, and `resolveAccess` for that agent allows the tools the owner's patterns name · twin: a name in neither map still warns and still matches nothing", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+    await ops.app_update.handler(ownerId, { slug: NEWS, owner_roles: { mine: ["get_.*"] } });
+
+    const granted = (await ops.grant_set.handler(ownerId, {
+      agent: CLAUDE,
+      app: NEWS,
+      roles: ["mine"],
+    })) as { warnings: string[] };
+    expect(granted.warnings).toEqual([]);
+
+    // The door's own answer, against real D1: the owner's patterns bite.
+    const door = await doorFor(ns, NEWS);
+    expect(door.check("get_news", "tools")).toBe("allow");
+    expect(door.check("set_config", "tools")).toBe("deny");
+
+    // THE TWIN: a name in NEITHER map is still undeclared — the tunneled warning survives,
+    // so "an owner role is declared" has not become "every name is declared".
+    const stranger = (await ops.grant_set.handler(ownerId, {
+      agent: CLAUDE,
+      app: NEWS,
+      roles: ["nobodys"],
+    })) as { warnings: string[] };
+    expect(stranger.warnings.length).toBe(1);
+    expect(stranger.warnings[0]).toContain("nobodys");
+    expect((await doorFor(ns, NEWS)).check("get_news", "tools")).toBe("deny");
+  });
+
+  it("§20.3 · the app's declaration wins at the door: with the same role name in both maps, `resolveAccess` answers the APP's patterns — the owner's shadowed definition allows nothing — and a reconnect's `upsertDeclaredRoles` rewrites `roles_json` alone, so the owner's map survives it byte for byte · twin: an owner role the app does not declare keeps resolving across that same reconnect", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+    const registry = new Registry(env.DB);
+    await ops.app_update.handler(ownerId, {
+      slug: NEWS,
+      owner_roles: { reader: ["owner_tool"], mine: ["get_.*"] },
+    });
+    await ops.grant_set.handler(ownerId, { agent: CLAUDE, app: NEWS, roles: ["reader", "mine"] });
+
+    // Before the connect: the owner's `reader` is the only one there is.
+    expect((await doorFor(ns, NEWS)).check("owner_tool", "tools")).toBe("allow");
+
+    // The app connects and declares the same NAME — the registration path, untouched by
+    // this dispatch: it replaces roles_json and nothing else.
+    await registry.upsertDeclaredRoles(ns.apps[NEWS].id, { reader: ["app_tool"] });
+
+    const after = await doorFor(ns, NEWS);
+    expect(after.check("app_tool", "tools")).toBe("allow");
+    // The shadowed definition is gone at the door — replaced, never unioned.
+    expect(after.check("owner_tool", "tools")).toBe("deny");
+    // …but it is still STORED: the owner's map is the owner's, and a reconnect is not a
+    // write to it. Re-reading it is how the Roles pane draws `app · replaced yours`.
+    expect(await ownerRolesOf(ownerId, NEWS)).toEqual({ reader: ["owner_tool"], mine: ["get_.*"] });
+    // THE TWIN: the owner role the app did NOT declare still resolves after the reconnect.
+    expect(after.check("get_news", "tools")).toBe("allow");
+  });
 });
+
+/** §20.3's owner map as the read ops report it — one spelling for every row above. */
+async function ownerRolesOf(ownerId: string, slug: string): Promise<unknown> {
+  const { app } = (await ops.app_get.handler(ownerId, { slug })) as { app: { ownerRoles?: unknown } };
+  return app.ownerRoles;
+}
+
+/** The door the seeded agent gets on one app, asked the way the gateway asks it — real
+ *  grants, real columns, the merge inside `resolveAccess` and never re-spelled here. */
+async function doorFor(ns: SeededNamespace, slug: string): Promise<ToolFilter> {
+  const registry = new Registry(env.DB);
+  const app = ns.apps[slug];
+  return registry.resolveAccess(
+    { kind: "agent", agentId: ns.agents[CLAUDE].id, ownerId: ns.owner.userId, slug: CLAUDE },
+    (await registry.appById(app.id))!,
+  );
+}

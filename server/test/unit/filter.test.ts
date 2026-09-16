@@ -34,11 +34,12 @@
 // turns these verdicts into, in order (worker/order.table.test.ts). This file pins the
 // verdict, never its wire consequence.
 
-// deps: none (no harness — pure seam) · registry.buildToolFilter · registry.validateRoles · registry.matchesPattern (real sibling, never faked) · limits.ROLE_PATTERNS_MAX/ROLE_PATTERN_MAX_LENGTH · no platform APIs
+// deps: none (no harness — pure seam) · registry.buildToolFilter · registry.validateRoles · registry.effectiveRoles · registry.matchesPattern (real sibling, never faked) · limits.ROLE_PATTERNS_MAX/ROLE_PATTERN_MAX_LENGTH · no platform APIs
 
 import { describe, it, expect } from "vitest";
 import {
   buildToolFilter,
+  effectiveRoles,
   validateRoles,
   type AccessMode,
   type GrantEntry,
@@ -818,11 +819,69 @@ describe("§7 step 2 · buildToolFilter — laws", () => {
 // docs/superpowers/plans/2026-09-17-app-three-pane.md §1 (owner-defined roles).
 
 describe("§20.3 · effectiveRoles — the owner's map, with the app's declaration on top", () => {
-  it.todo(
-    "§20.3 · effectiveRoles is the map the door resolves against: a name only the owner defined survives into it, a name only the app declared survives into it, and a name in BOTH resolves to the app's patterns — buildToolFilter over the merged map allows the app's tool and denies the one the owner's shadowed definition named · twin: an app that declares nothing at all leaves every owner role intact, patterns and all",
-  );
+  it("§20.3 · effectiveRoles is the map the door resolves against: a name only the owner defined survives into it, a name only the app declared survives into it, and a name in BOTH resolves to the app's patterns — buildToolFilter over the merged map allows the app's tool and denies the one the owner's shadowed definition named · twin: an app that declares nothing at all leaves every owner role intact, patterns and all", () => {
+    const detail = {
+      ownerRoles: { mine: ["owner_only"], reader: ["shadowed_tool"] } satisfies RoleDeclaration,
+      declaredRoles: { theirs: ["app_only"], reader: ["app_tool"] } satisfies RoleDeclaration,
+    };
+    expect(effectiveRoles(detail)).toEqual({
+      mine: ["owner_only"],
+      theirs: ["app_only"],
+      reader: ["app_tool"],
+    });
 
-  it.todo(
-    "§20.3 · the replacement is per ROLE, never per family: an app declaring `reader` as a tools-only list replaces the owner's three-family `reader` WHOLE, so the merged map grants nothing in prompts or resources under that name · twin: the owner's other role keeps all three of its families, and neither input map is mutated (effectiveRoles is pure, like every seam in this file)",
-  );
+    // The verdict, asked the way the door asks it — the merge is only worth anything if
+    // buildToolFilter over the result answers for all three names.
+    const door = buildToolFilter(
+      [
+        { role: "mine", mode: "allow" },
+        { role: "theirs", mode: "allow" },
+        { role: "reader", mode: "allow" },
+      ],
+      effectiveRoles(detail),
+    );
+    expect(door.check("owner_only", "tools")).toBe("allow");
+    expect(door.check("app_only", "tools")).toBe("allow");
+    expect(door.check("app_tool", "tools")).toBe("allow");
+    // The shadowed definition is GONE, not unioned: this is the whole content of "the
+    // app's declaration replaces yours", and a merge that unioned patterns would let an
+    // owner quietly widen a role the app owns.
+    expect(door.check("shadowed_tool", "tools")).toBe("deny");
+
+    // THE TWIN: an app declaring nothing leaves the owner's map exactly as it stands.
+    expect(effectiveRoles({ ownerRoles: detail.ownerRoles, declaredRoles: {} })).toEqual(detail.ownerRoles);
+  });
+
+  it("§20.3 · the replacement is per ROLE, never per family: an app declaring `reader` as a tools-only list replaces the owner's three-family `reader` WHOLE, so the merged map grants nothing in prompts or resources under that name · twin: the owner's other role keeps all three of its families, and neither input map is mutated (effectiveRoles is pure, like every seam in this file)", () => {
+    const ownerRoles: RoleDeclaration = {
+      reader: { tools: ["get_.*"], prompts: ["draft_.*"], resources: ["news://.*"] },
+      mine: { tools: ["get_.*"], prompts: ["draft_.*"], resources: ["news://.*"] },
+    };
+    const declaredRoles: RoleDeclaration = { reader: ["app_tool"] };
+    const before = JSON.parse(JSON.stringify({ ownerRoles, declaredRoles }));
+
+    const door = buildToolFilter(
+      [
+        { role: "reader", mode: "allow" },
+        { role: "mine", mode: "allow" },
+      ],
+      effectiveRoles({ ownerRoles, declaredRoles }),
+    );
+    expect(door.check("app_tool", "tools")).toBe("allow");
+    // Whole-role replacement, asked of `reader` ALONE so the sibling role cannot answer
+    // for it: the families the app's declaration omits are omitted, not inherited, and a
+    // per-FAMILY merge would keep both of these allowing.
+    const readerOnly = buildToolFilter([{ role: "reader", mode: "allow" }], effectiveRoles({ ownerRoles, declaredRoles }));
+    expect(readerOnly.check("app_tool", "tools")).toBe("allow");
+    expect(readerOnly.check("get_news", "tools")).toBe("deny");
+    expect(readerOnly.check("draft_note", "prompts")).toBe("deny");
+    expect(readerOnly.check("news://feed/7", "resources")).toBe("deny");
+    // THE TWIN: the role the app did not name keeps all three of its families.
+    const mineOnly = buildToolFilter([{ role: "mine", mode: "allow" }], effectiveRoles({ ownerRoles, declaredRoles }));
+    expect(mineOnly.check("get_news", "tools")).toBe("allow");
+    expect(mineOnly.check("draft_note", "prompts")).toBe("allow");
+    expect(mineOnly.check("news://feed/7", "resources")).toBe("allow");
+
+    expect({ ownerRoles, declaredRoles }).toEqual(before);
+  });
 });

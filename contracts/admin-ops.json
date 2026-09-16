@@ -113,6 +113,29 @@
             ]
           }
         },
+        "owner_roles": {
+          "description": "Owner-defined roles on a tunneled app — the app's own declaration wins on a name collision.",
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
         "capabilities": {
           "description": "Proxied only: which MCP families this upstream serves (default: tools only).",
           "type": "array",
@@ -192,6 +215,29 @@
         },
         "roles": {
           "description": "Proxied only: role name → tool patterns, or (§20.3) the per-family object of tool/prompt/resource patterns.",
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "owner_roles": {
+          "description": "Owner-defined roles on a tunneled app — the app's own declaration wins on a name collision.",
           "type": "object",
           "additionalProperties": {
             "oneOf": [

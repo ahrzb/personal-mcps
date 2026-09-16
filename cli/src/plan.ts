@@ -62,6 +62,14 @@ export type DesiredApp = {
   /** proxy only: virtual role definitions, §20.3's per-family shape */
   roles?: RoleDeclaration;
   /**
+   * tunnel only: the roles the OWNER defined, `roles`' mirror image by kind (§20.3,
+   * 2026-09-17). Desired state in the way a tunneled app's `roles` is not — the owner
+   * wrote these, the app did not — which is exactly why the file may carry them. Always
+   * present on a tunneled app (the planner defaults it to `{}`, the server's own value),
+   * so an emptied block plans the clear rather than "leave it alone".
+   */
+  ownerRoles?: RoleDeclaration;
+  /**
    * proxy only: §20.2's owner-declared advertisement — which MCP families the scoped
    * handshake advertises (subset of tools/prompts/resources/completions). Absent, not
    * defaulted: the hub's own default (tools only) applies, and inventing `["tools"]` here
@@ -108,6 +116,9 @@ export type CurrentApp = {
   builtin: boolean;
   /** declared roles — from registration for tunnel kind, from config for proxy kind (§20.3's canonical read shape) */
   roles: RoleDeclaration;
+  /** tunnel only: §20.3's owner map as `app_list` reports it — absent on a proxied row,
+   *  where the owner's roles ARE `roles`; `{}` and absent mean the same thing here. */
+  ownerRoles?: RoleDeclaration;
   redact: Record<string, string[]>;
   redactResults: Record<string, string[]>;
   logBodies: boolean;
@@ -203,6 +214,9 @@ export function parseDesired(doc: unknown): DesiredConfig {
 /** Every key the app grammar knows, split by the kind that may carry it (§9). */
 const COMMON_APP_KEYS = ["kind", "name", "description", "archived", "redact", "redact_results", "log_bodies"];
 const PROXY_ONLY_KEYS = ["endpoint", "auth", "forward_identity", "roles", "capabilities"];
+/** §20.3's owner map — the one key with the opposite polarity, so it gets its own list
+ *  rather than a place in either of the two above. */
+const TUNNEL_ONLY_KEYS = ["owner_roles"];
 
 /** One `apps:` entry, defaults applied. Structural problems throw with the path. */
 function parseApp(slug: string, value: unknown): DesiredApp {
@@ -211,7 +225,17 @@ function parseApp(slug: string, value: unknown): DesiredApp {
   const kind = pick(fields.kind, ["tunnel", "proxy"], `${path}.kind`) ?? "tunnel";
   // A proxy-only key on a tunneled app is a lie about the hub's role surface, not a
   // harmless extra — so the misplacement throws exactly like an unknown key would.
-  reject(fields, kind === "proxy" ? [...COMMON_APP_KEYS, ...PROXY_ONLY_KEYS] : COMMON_APP_KEYS, path);
+  // Named before the generic sweep, so the misplacement reads as the RULE it breaks
+  // rather than as "no such key" — `owner_roles` is a key of this grammar, on the other
+  // kind (§20.3, the mirror of the proxy-only rule below).
+  if (kind === "proxy" && fields.owner_roles !== undefined) {
+    throw new TypeError(`${path}.owner_roles is for tunneled apps — a proxied app's roles are \`roles\``);
+  }
+  reject(
+    fields,
+    kind === "proxy" ? [...COMMON_APP_KEYS, ...PROXY_ONLY_KEYS] : [...COMMON_APP_KEYS, ...TUNNEL_ONLY_KEYS],
+    path,
+  );
   const common = {
     slug,
     kind,
@@ -222,7 +246,9 @@ function parseApp(slug: string, value: unknown): DesiredApp {
     redactResults: pathMap(fields.redact_results, `${path}.redact_results`),
     logBodies: flag(fields.log_bodies, `${path}.log_bodies`) ?? kind === "tunnel",
   };
-  if (kind === "tunnel") return common;
+  // §20.3: always concrete on a tunneled app, because desired state is total — deleting
+  // the block must plan the clear, and an `undefined` here would read as "leave it alone".
+  if (kind === "tunnel") return { ...common, ownerRoles: roleDeclarationMap(fields.owner_roles, `${path}.owner_roles`) };
   const endpoint = text(fields.endpoint, `${path}.endpoint`);
   // A proxied app with no forwarding target claims a hub capability that does not
   // exist; the hub's own op requires it too.
@@ -536,7 +562,11 @@ function appProblems(app: DesiredApp, existing: CurrentApp | undefined): string[
   if (existing !== undefined && existing.kind !== app.kind) {
     problems.push(`${path}: kind is immutable (${existing.kind} on the server, ${app.kind} in the file)`);
   }
-  if (app.kind === "proxy") problems.push(...roleDeclarationProblems(path, app.roles ?? {}));
+  // The same declaration grammar, whichever block wrote it down: `roles:` on a proxied app,
+  // `owner_roles:` on a tunneled one (§20.3). The block PATH is the argument, so a violation
+  // names the key the operator actually typed.
+  if (app.kind === "proxy") problems.push(...roleDeclarationProblems(`${path}.roles`, app.roles ?? {}));
+  else problems.push(...roleDeclarationProblems(`${path}.owner_roles`, app.ownerRoles ?? {}));
   problems.push(...redactKeyProblems(`${path}.redact`, app.redact));
   problems.push(...redactKeyProblems(`${path}.redact_results`, app.redactResults));
   return problems;
@@ -568,8 +598,9 @@ function redactKeyProblems(path: string, map: Record<string, string[]>): string[
 export const ROLE_FAMILIES = ["tools", "prompts", "resources"] as const;
 
 /**
- * `hub/register`'s validation, extended to §20.3's per-family shape and applied to a
- * proxied app's config-declared roles (§6, §8). It is deliberately a SECOND
+ * `hub/register`'s validation, extended to §20.3's per-family shape and applied to whichever
+ * role block the file wrote — a proxied app's `roles:` or a tunneled app's `owner_roles:`
+ * (§6, §8, §20.3). `block` is that key's own path, so the violation names it. It is a SECOND
  * implementation of `server/src/registry.ts`'s validateRoles — §9 keeps the planner free of
  * any server import — so the caps below are exported and locked to `server/src/limits.ts`
  * in the parity suite; see them. A bare pattern list is judged as the tools family; a
@@ -577,15 +608,15 @@ export const ROLE_FAMILIES = ["tools", "prompts", "resources"] as const;
  * is a violation of its own. The two size caps apply PER FAMILY LIST, never summed across a
  * role — a role at the cap in all three families is legal.
  */
-function roleDeclarationProblems(path: string, roles: RoleDeclaration): string[] {
+function roleDeclarationProblems(block: string, roles: RoleDeclaration): string[] {
   const problems: string[] = [];
   for (const [role, declared] of Object.entries(roles)) {
-    if (role === BUILTIN_ROLE) problems.push(`${path}.roles.${role}: \`${BUILTIN_ROLE}\` is the built-in, never declarable`);
+    if (role === BUILTIN_ROLE) problems.push(`${block}.${role}: \`${BUILTIN_ROLE}\` is the built-in, never declarable`);
     else if (!ROLE_NAME_PATTERN.test(role)) {
-      problems.push(`${path}.roles.${role}: a role name is [a-z0-9_-]{1,${ROLE_NAME_MAX_LENGTH}}`);
+      problems.push(`${block}.${role}: a role name is [a-z0-9_-]{1,${ROLE_NAME_MAX_LENGTH}}`);
     }
     for (const [family, patterns] of Object.entries(familiesOf(declared))) {
-      const familyPath = `${path}.roles.${role}.${family}`;
+      const familyPath = `${block}.${role}.${family}`;
       if (!(ROLE_FAMILIES as readonly string[]).includes(family)) {
         problems.push(`${familyPath}: "${family}" is not a role family — tools, prompts, or resources`);
         continue;
@@ -650,7 +681,16 @@ function grantProblems(
   // A proxied app's roles live in this very file, so an undeclared one can never
   // become declared later; a tunneled app's arrive at connect time, so the file is
   // merely ahead of the first connection.
-  const declared = kind === "proxy" ? Object.keys(declaredIn?.roles ?? {}) : Object.keys(onServer?.roles ?? {});
+  // On a tunnel the owner's own roles count as declared too, exactly as they do at the
+  // hub's `setGrants` (§20.3, 2026-09-17) — the file's block when the file declares the
+  // app, the row's otherwise — or every role an owner just defined would warn on every run.
+  const declared =
+    kind === "proxy"
+      ? Object.keys(declaredIn?.roles ?? {})
+      : [
+          ...Object.keys(onServer?.roles ?? {}),
+          ...Object.keys(declaredIn?.ownerRoles ?? onServer?.ownerRoles ?? {}),
+        ];
   for (const grant of wanted) {
     // An inline item carries its own pattern, so there is nothing for the app to declare —
     // the undeclared split below is about role NAMES, which never contain a `/`.
@@ -678,7 +718,7 @@ function wireFields(app: DesiredApp): Record<string, unknown> {
           roles: app.roles ?? {},
           ...(app.capabilities === undefined ? {} : { capabilities: app.capabilities }),
         }
-      : {}),
+      : { owner_roles: app.ownerRoles ?? {} }),
   };
 }
 
@@ -706,16 +746,21 @@ function changedFields(app: DesiredApp, existing: CurrentApp): Record<string, un
     auth: existing.auth,
     forward_identity: existing.forwardIdentity,
     roles: existing.roles,
+    // §20.3: absent ≡ `{}` — the row omits the key on a proxied app, and the comparison
+    // below canonicalizes both sides anyway, so there is nothing to default here.
+    owner_roles: existing.ownerRoles,
   };
   const changed: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(wire)) {
-    // `roles` compares by MEANING, not by spelling (§20.3): a bare list and its equivalent
-    // `{tools:[...]}` are the same grant, so they must plan nothing, while a different
-    // FAMILY key under the identical patterns is a real change. Every other field compares
-    // structurally as before.
+    // Both role blocks compare by MEANING, not by spelling (§20.3): a bare list and its
+    // equivalent `{tools:[...]}` are the same grant, so they must plan nothing, while a
+    // different FAMILY key under the identical patterns is a real change.
     const same =
-      key === "roles"
-        ? deepEqual(canonicalRoles(value as RoleDeclaration), canonicalRoles((server.roles as RoleDeclaration) ?? {}))
+      key === "roles" || key === "owner_roles"
+        ? deepEqual(
+            canonicalRoles(value as RoleDeclaration),
+            canonicalRoles((server[key] as RoleDeclaration) ?? {}),
+          )
         : deepEqual(value, server[key]);
     if (!same) changed[key] = value;
   }

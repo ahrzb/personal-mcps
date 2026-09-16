@@ -140,7 +140,7 @@ function tools(plan: Plan): string[] {
 }
 
 describe("parseDesired · defaults and grammar (§9, §15)", () => {
-  it("§9 · every default applied — absent kind → tunnel, absent name → slug, description \"\", archived false, redact/redact_results {} — so two files that mean the same thing normalize equal", () => {
+  it("§9 · every default applied — absent kind → tunnel, absent name → slug, description \"\", archived false, redact/redact_results {}, a tunneled owner_roles {} (retitled 2026-09-17) — so two files that mean the same thing normalize equal", () => {
     const bare = parseDesired(doc({ news: null }));
     expect(bare.apps).toEqual([
       {
@@ -152,6 +152,7 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
         redact: {},
         redactResults: {},
         logBodies: true,
+        ownerRoles: {},
       },
     ]);
     // The same meaning spelled out in full normalizes to the identical value.
@@ -165,6 +166,7 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
           redact: {},
           redact_results: {},
           log_bodies: true,
+          owner_roles: {},
         },
       }),
     );
@@ -283,7 +285,7 @@ describe("parseDesired · defaults and grammar (§9, §15)", () => {
 });
 
 describe("planChanges · the steps a difference produces (§8, §9)", () => {
-  it("§9 · file-only app and file-only agent → app_create / agent_create carrying the normalized fields", () => {
+  it("§9 · file-only app and file-only agent → app_create / agent_create carrying the normalized fields, a tunneled app's `owner_roles` among them (retitled 2026-09-17)", () => {
     const plan = planChanges(
       parseDesired(doc({ news: { name: "News MCP" } }, { claude: { name: "Claude" } })),
       state(),
@@ -298,6 +300,7 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
         redact: {},
         redact_results: {},
         log_bodies: true,
+        owner_roles: {},
       },
     ]);
     expect(stepsOf(plan, "agent_create")).toEqual([{ slug: "claude", name: "Claude", description: "" }]);
@@ -1024,7 +1027,9 @@ export function desiredFromCurrent(current: CurrentState): DesiredConfig {
               // the absence too rather than inventing the default the planner applies.
               ...(app.capabilities === undefined ? {} : { capabilities: app.capabilities }),
             }
-          : {}),
+          : // §20.3's owner map is the tunnel's half of the same carve-out: the OWNER wrote
+            // it, so unlike `roles` it IS desired state and the projection carries it.
+            { ownerRoles: app.ownerRoles ?? {} }),
       })),
     agents: current.agents.map((agent) => ({
       slug: agent.slug,
@@ -1152,15 +1157,91 @@ agents:
 // docs/superpowers/plans/2026-09-17-app-three-pane.md §1 (owner-defined roles).
 
 describe("§9/§20.3 · `owner_roles:` — the owner's roles in the file", () => {
-  it.todo(
-    "§9 · `owner_roles:` is the TUNNEL's key and `roles:` is the PROXY's: `owner_roles` on a `kind: proxy` app throws naming the offending path (`owner_roles is for tunneled apps`), and `roles` on a `kind: tunnel` app stays the hard error it already is · twin: each key on its own kind parses, with the `roles:` grammar — a bare list and the per-family object alike",
-  );
+  it("§9 · `owner_roles:` is the TUNNEL's key and `roles:` is the PROXY's: `owner_roles` on a `kind: proxy` app throws naming the offending path (`owner_roles is for tunneled apps`), and `roles` on a `kind: tunnel` app stays the hard error it already is · twin: each key on its own kind parses, with the `roles:` grammar — a bare list and the per-family object alike", () => {
+    expect(() =>
+      parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", owner_roles: { mine: ["search"] } } })),
+    ).toThrow(/apps\.notion\.owner_roles is for tunneled apps/);
+    // The existing rule, unmoved: the proxy's own key is still refused on a tunnel.
+    expect(() => parseDesired(doc({ news: { roles: { reader: ["search"] } } }))).toThrow(/apps\.news\.roles/);
 
-  it.todo(
-    "§9/§20.3 · an `owner_roles:` block gets the same declaration validation the proxy `roles:` block gets — `all` never declarable, the role-name charset, the two size caps per family list, an unknown family key and the compile check — each a hard error naming the path under `owner_roles` · twin: a legal block at the caps plans without a problem",
-  );
+    // The twin — each key on its own kind, in both spellings of the declaration.
+    const tunnel = parseDesired(
+      doc({ news: { owner_roles: { mine: ["get_.*"], spanning: { prompts: ["draft_.*"] } } } }),
+    );
+    expect(tunnel.apps[0].ownerRoles).toEqual({ mine: ["get_.*"], spanning: { prompts: ["draft_.*"] } });
+    const proxy = parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", roles: { reader: ["search"] } } }));
+    expect(proxy.apps[0].roles).toEqual({ reader: ["search"] });
+    // …and a tunneled app that writes no block still normalizes to the server's own value,
+    // so deleting the block plans the clear rather than reading as "leave it alone".
+    expect(parseDesired(doc({ news: {} })).apps[0].ownerRoles).toEqual({});
+  });
 
-  it.todo(
-    "§9 · `pmcp diff` compares the file's `owner_roles` to the row's `ownerRoles` with absent ≡ `{}` and plans `app_update { owner_roles }` in the op's own snake_case spelling; a tunneled `app_create` carries the block too · twin: the same declaration spelled as a bare list where the server rendered `{tools: [...]}` plans NOTHING, so a file written before this key existed never diffs against the server (the `roles` equivalence, applied to the same comparison)",
-  );
+  it("§9/§20.3 · an `owner_roles:` block gets the same declaration validation the proxy `roles:` block gets — `all` never declarable, the role-name charset, the two size caps per family list, an unknown family key and the compile check — each a hard error naming the path under `owner_roles` · twin: a legal block at the caps plans without a problem", () => {
+    const tunnel = (owner_roles: RoleDeclaration): DesiredConfig => parseDesired(doc({ news: { owner_roles } }));
+    const capped = (length: number): string[] => Array.from({ length }, () => "a".repeat(128));
+    const refusals: RoleDeclaration[] = [
+      { all: ["search"] },
+      { ["Reader"]: ["search"] },
+      { ["r".repeat(65)]: ["search"] },
+      { mine: ["get_(.*"] },
+      { mine: ["a".repeat(129)] },
+      { mine: Array.from({ length: 65 }, (_unused, index) => `tool_${index}`) },
+      { mine: { tolls: ["x"] } },
+      { mine: { resources: ["news://[["] } },
+    ];
+    for (const owner_roles of refusals) {
+      const plan = planChanges(tunnel(owner_roles), state());
+      const label = JSON.stringify(owner_roles).slice(0, 40);
+      expect(plan.errors.length, label).toBeGreaterThan(0);
+      // The violation names the key the operator typed, never the proxy's `roles`.
+      expect(plan.errors.every((problem) => problem.startsWith("apps.news.owner_roles.")), label).toBe(true);
+    }
+    // The twin, at the caps and across all three families — the same per-family rule the
+    // proxy block gets, so neither copy of validateRoles can tighten without the other.
+    const twin = planChanges(
+      tunnel({ ["r".repeat(64)]: capped(64), spanning: { tools: capped(64), prompts: capped(64), resources: capped(64) } }),
+      state(),
+    );
+    expect(twin.errors).toEqual([]);
+  });
+
+  it("§9 · `pmcp diff` compares the file's `owner_roles` to the row's `ownerRoles` with absent ≡ `{}` and plans `app_update { owner_roles }` in the op's own snake_case spelling; a tunneled `app_create` carries the block too · twin: the same declaration spelled as a bare list where the server rendered `{tools: [...]}` plans NOTHING, so a file written before this key existed never diffs against the server (the `roles` equivalence, applied to the same comparison)", () => {
+    const file = (owner_roles: RoleDeclaration): DesiredConfig => parseDesired(doc({ news: { owner_roles } }));
+    const mine = { mine: ["get_.*"] };
+
+    // A row that carries no owner map at all — absent ≡ {} — against a file that declares one.
+    const added = planChanges(file(mine), state([currentApp({ slug: "news" })]));
+    expect(added.errors).toEqual([]);
+    expect(stepsOf(added, "app_update")).toEqual([{ slug: "news", owner_roles: mine }]);
+
+    // …and the clear, from the other direction: the row holds one, the file's block is gone.
+    const cleared = planChanges(
+      parseDesired(doc({ news: {} })),
+      state([currentApp({ slug: "news", ownerRoles: mine })]),
+    );
+    expect(stepsOf(cleared, "app_update")).toEqual([{ slug: "news", owner_roles: {} }]);
+
+    // A file-only app carries the block into the create rather than planning an update
+    // behind it — `app_create` takes the field (§8).
+    const created = planChanges(file(mine), state());
+    expect(stepsOf(created, "app_create")[0]).toMatchObject({ slug: "news", owner_roles: mine });
+    expect(stepsOf(created, "app_update")).toEqual([]);
+
+    // THE TWIN: §20.3's bare-list ≡ {tools: [...]} equivalence, on this block too. The
+    // server renders the canonical form back, so a planner comparing spellings would
+    // replan this app on every run and `pmcp apply` would never converge.
+    const quiet = planChanges(
+      file(mine),
+      state([currentApp({ slug: "news", ownerRoles: { mine: { tools: ["get_.*"] } } })]),
+    );
+    expect(quiet.steps).toEqual([]);
+
+    // The proxied twin of the kind rule: an owner map on the row is never compared for a
+    // proxied app, because the file cannot carry one (its roles ARE the owner's).
+    const proxied = planChanges(
+      parseDesired(doc({ notion: { kind: "proxy", endpoint: "https://x/mcp", roles: {} } })),
+      state([proxyRow("notion", {})]),
+    );
+    expect(proxied.steps).toEqual([]);
+  });
 });

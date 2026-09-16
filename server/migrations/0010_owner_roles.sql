@@ -1,0 +1,23 @@
+-- 0010_owner_roles.sql — §20.3's second role map: the roles the OWNER defined on a
+-- TUNNELED app, beside the `roles_json` the app itself declares at connect.
+--
+-- A second column rather than a merge into `roles_json`, because the two have different
+-- authors and different lifetimes: `upsertDeclaredRoles` REPLACES `roles_json` whole on
+-- every reconnect (0002_hub.sql), so an owner role merged into it would be erased by the
+-- next handshake — and the collision rule ("a name the app declares replaces the owner's
+-- definition of it") is only statable while the two maps are still distinguishable at
+-- read time. `registry.effectiveRoles` is where they become one map, and every gate-side
+-- reader asks it rather than either column.
+--
+-- Tunnel-only by rule, not by constraint: a proxied app's roles are already all the
+-- owner's, so its `roles_json` IS its owner map and this column stays '{}'. Expressing
+-- that as a CHECK would mean a per-kind constraint on a column whose "empty" value is a
+-- legal JSON literal the tunneled case also writes; the refusal lives at the write path
+-- instead (registry.patchViolations, and the `owner_roles` op field it names).
+--
+-- Same storage discipline as `roles_json`: the NORMALIZED per-family object, never the
+-- canonical read shape, and NOT NULL so no read ever has to spell "null means {}".
+-- DEFAULT '{}' is what makes this migration a pure add — every existing row, of either
+-- kind, already reads as "the owner defined none".
+
+ALTER TABLE app ADD COLUMN owner_roles_json TEXT NOT NULL DEFAULT '{}';

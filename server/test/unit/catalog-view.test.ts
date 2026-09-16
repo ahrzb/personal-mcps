@@ -1,5 +1,6 @@
 // catalog-view.test.ts — the pure computations behind /apps/<slug>: the Arguments table read
-// off a tool's inputSchema, and reachability as the door's own answer (§13, §20.3).
+// off a tool's inputSchema, the same schema walked whole into dotted leaf paths, and
+// reachability as the door's own answer (§13, §20.3).
 //
 // PINS that the page never re-implements the door: the mode an entry carries is
 // registry.buildToolFilter(...).check(subject, family), the roles it names are the ones
@@ -13,7 +14,7 @@
 // deps: none (no harness — pure seams) · src/catalog-view · registry.buildToolFilter (the door itself, never faked) · no platform APIs
 
 import { describe, it, expect } from "vitest";
-import { argumentRows, reachability } from "../../src/catalog-view";
+import { argumentRows, reachability, schemaLeaves } from "../../src/catalog-view";
 import { buildToolFilter } from "../../src/registry";
 import type { GrantEntry, RoleDeclaration, RoleFamily } from "../../src/registry";
 
@@ -182,11 +183,72 @@ describe(`§13 · catalog-view — the Arguments table and reachability are the 
 // docs/superpowers/plans/2026-09-17-app-three-pane.md §1 (catalog schema leaves).
 
 describe("§13 · catalog-view — schemaLeaves, the whole schema as dotted paths", () => {
-  it.todo(
-    "§13 · schemaLeaves walks a schema into dotted leaf paths: a nested object is RECURSED into and contributes `credentials.token` rather than a row named `credentials`, an array contributes one leaf typed `<type>[]` and is never recursed into, and `required` is read from EACH level's own list — a required object holding an optional child yields one required leaf and one optional one · twin: `argumentRows` over the same schema still reads the top level alone, which is why both exports stay",
-  );
+  it("§13 · schemaLeaves walks a schema into dotted leaf paths: a nested object is RECURSED into and contributes `credentials.token` rather than a row named `credentials`, an array contributes one leaf typed `<type>[]` and is never recursed into, and `required` is read from EACH level's own list — a required object holding an optional child yields one required leaf and one optional one · twin: `argumentRows` over the same schema still reads the top level alone, which is why both exports stay", () => {
+    const schema = {
+      type: "object",
+      required: ["credentials", "query"],
+      properties: {
+        query: { type: "string" },
+        credentials: {
+          type: "object",
+          required: ["token"],
+          properties: {
+            token: { type: "string", writeOnly: true },
+            region: { type: "string" },
+          },
+        },
+        tags: { type: "array", items: { type: "string" } },
+        // An array OF objects is still one leaf: §7's masks address the value, and a path
+        // per element index is a path no mask could be written against.
+        pages: { type: "array", items: { type: "object", properties: { body: { type: "string" } } } },
+        // An object that declares no properties of its own has nothing BELOW it, so it is
+        // a leaf itself rather than vanishing from the table.
+        opaque: { type: "object" },
+      },
+    };
+    expect(schemaLeaves(schema).map((leaf) => [leaf.path, leaf.type, leaf.required])).toEqual([
+      ["query", "string", true],
+      // `required` is per LEVEL: `token` is required by `credentials`' own list, `region`
+      // is not, and neither inherits the outer level's verdict about `credentials`.
+      ["credentials.token", "string", true],
+      ["credentials.region", "string", false],
+      ["tags", "string[]", false],
+      ["pages", "object[]", false],
+      ["opaque", "object", false],
+    ]);
 
-  it.todo(
-    "§13 · every leaf carries `writeOnly` as declared and the schema's own default VALUE — `false`, not `\"false\"` — with `hasDefault` telling a declared `default: undefined` from no default at all, exactly as `argumentRows` does · twin: a value that is not a schema, a schema with no `properties`, and an absent schema each yield an empty list rather than a throw inside a page render",
-  );
+    // THE TWIN: the top-level table is a different answer to a different question, and both
+    // callers exist — one row per declared property, `credentials` among them, un-recursed.
+    expect(argumentRows(schema).map((row) => row.name)).toEqual([
+      "query",
+      "credentials",
+      "tags",
+      "pages",
+      "opaque",
+    ]);
+  });
+
+  it("§13 · every leaf carries `writeOnly` as declared and the schema's own default VALUE — `false`, not `\"false\"` — with `hasDefault` telling a declared `default: undefined` from no default at all, exactly as `argumentRows` does · twin: a value that is not a schema, a schema with no `properties`, and an absent schema each yield an empty list rather than a throw inside a page render", () => {
+    const leaves = schemaLeaves({
+      type: "object",
+      properties: {
+        secret: { type: "object", properties: { key: { type: "string", writeOnly: true } } },
+        loud: { type: "boolean", default: false },
+        declared: { type: "string", default: undefined },
+        plain: { type: "string" },
+      },
+    });
+    expect(leaves).toEqual([
+      { path: "secret.key", type: "string", required: false, writeOnly: true, hasDefault: false },
+      { path: "loud", type: "boolean", required: false, writeOnly: false, hasDefault: true, default: false },
+      { path: "declared", type: "string", required: false, writeOnly: false, hasDefault: true, default: undefined },
+      { path: "plain", type: "string", required: false, writeOnly: false, hasDefault: false },
+    ]);
+
+    // THE TWIN: total over anything an app sent. A schema is whatever arrived from D1 or an
+    // upstream listing, and a throw here is a 500 on a page that was only drawing a table.
+    for (const notASchema of [undefined, null, 42, "tool", [], { type: "object" }, { properties: null }]) {
+      expect(schemaLeaves(notASchema), JSON.stringify(notASchema) ?? "undefined").toEqual([]);
+    }
+  });
 });

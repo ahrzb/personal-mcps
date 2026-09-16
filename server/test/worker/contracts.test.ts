@@ -2543,6 +2543,7 @@ const CURRENT_APP_KEYS = {
   archived: true,
   builtin: true,
   roles: true,
+  ownerRoles: true,
   redact: true,
   redactResults: true,
   logBodies: true,

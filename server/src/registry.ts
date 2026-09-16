@@ -15,11 +15,13 @@
 // BOTH directions (§7): tunnel walks cached input and output schemas with the
 // former; approvals and the gateway's audit-body path mask with the latter.
 //
-// HIDES: the roles_json / redact_json / redact_results_json / log_bodies /
-// capabilities_json column formats (the tunnel DO hands wire-shaped
+// HIDES: the roles_json / owner_roles_json / redact_json / redact_results_json /
+// log_bodies / capabilities_json column formats (the tunnel DO hands wire-shaped
 // declarations to upsertDeclaredRoles and never touches the columns), that
-// roles_json stores the NORMALIZED per-family object while every read renders
-// §20.3's canonical form, how patterns compile and match, and how grant rows
+// roles_json and owner_roles_json store the NORMALIZED per-family object while every
+// read renders §20.3's canonical form, that the two are one map at read time
+// (effectiveRoles — the app's declaration replaces the owner's definition of a name),
+// how patterns compile and match, and how grant rows
 // plus a declaration resolve into a ToolFilter. This module never writes audit
 // rows, never maps errors to
 // JSON-RPC, and never reads or decrypts upstream credential envelopes — its one
@@ -172,6 +174,14 @@ export type AppDetail = App & {
   forwardIdentity: boolean;                // proxied only; X-Pmcp-* headers upstream
   declaredRoles: RoleDeclaration;          // §20.3's canonical form, never the stored one
   /**
+   * The roles the OWNER defined on a tunneled app (§20.3, 2026-09-17) — the same canonical
+   * read shape `declaredRoles` carries, and `{}` on a proxied app, whose roles are already
+   * all the owner's and live in `declaredRoles`. Never the map a gate reads on its own:
+   * `effectiveRoles` is what the door, the undeclared check and every reachability caller
+   * ask, because a name the app declares replaces the owner's definition of it.
+   */
+  ownerRoles: RoleDeclaration;
+  /**
    * §20.2's owner-declared capability list — proxied only, and what that app's
    * SCOPED handshake advertises. `null` is "undeclared", which means `tools` only: the
    * answer every proxied app in the field already gives.
@@ -207,6 +217,8 @@ export type AppDraft = {
   upstreamAuthMode?: "headers" | "oauth";
   forwardIdentity?: boolean;
   roles?: RoleDeclaration;
+  /** §20.3, TUNNELED only — the owner's own roles, `roles`' mirror image by kind. */
+  ownerRoles?: RoleDeclaration;
   /** §20.2, proxied only; absent means `tools` only. Typed as strings: it arrives from YAML. */
   capabilities?: string[];
   redact?: Record<string, string[]>;
@@ -226,6 +238,8 @@ export type AppPatch = Partial<{
   upstreamAuthMode: "headers" | "oauth";
   forwardIdentity: boolean;
   roles: RoleDeclaration;
+  /** §20.3, TUNNELED only — refused on a proxied row, whose roles are already the owner's. */
+  ownerRoles: RoleDeclaration;
   capabilities: string[];
   redact: Record<string, string[]>;
   redactResults: Record<string, string[]>;
@@ -427,6 +441,19 @@ function canonicalRoles(stored: RoleDeclaration): RoleDeclaration {
       return [role, toolsOnly ? (families.tools ?? []) : families];
     }),
   );
+}
+
+/** The roles the door resolves against: the owner's, then the app's declaration on top —
+ *  a name the app declares replaces the owner's definition of it (§20.3, 2026-09-17). */
+export function effectiveRoles(detail: Pick<AppDetail, "declaredRoles" | "ownerRoles">): RoleDeclaration {
+  // deps: none
+  //
+  // Replacement is per ROLE, which is what the spread gives and what the Roles pane's
+  // `app · replaced yours` badge says: the app owns the NAME, so a tools-only declaration
+  // of a name the owner defined across three families grants nothing in the other two.
+  // Merging per family instead would let an owner widen a role the app owns, which is the
+  // one thing the collision rule exists to forbid.
+  return { ...detail.ownerRoles, ...detail.declaredRoles };
 }
 
 /** The role-name grammar validateRoles reports against. */
@@ -978,6 +1005,7 @@ export class Registry {
       // §20.3: the column holds the normalized per-family object; every READ renders the
       // canonical form back, so no surface ever sees this shape.
       roles_json: JSON.stringify(normalizeRoles(roles)),
+      owner_roles_json: JSON.stringify(normalizeRoles(draft.ownerRoles ?? {})),
       capabilities_json: draft.capabilities === undefined ? null : JSON.stringify(draft.capabilities),
       redact_json: JSON.stringify(draft.redact ?? {}),
       redact_results_json: JSON.stringify(draft.redactResults ?? {}),
@@ -990,9 +1018,9 @@ export class Registry {
     await this.db
       .prepare(
         `INSERT INTO app (id, owner_id, slug, name, description, kind, upstream_url,
-           upstream_auth_mode, forward_identity, roles_json, capabilities_json, redact_json,
-           redact_results_json, log_bodies, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           upstream_auth_mode, forward_identity, roles_json, owner_roles_json, capabilities_json,
+           redact_json, redact_results_json, log_bodies, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         row.id,
@@ -1005,6 +1033,7 @@ export class Registry {
         row.upstream_auth_mode,
         row.forward_identity,
         row.roles_json,
+        row.owner_roles_json,
         row.capabilities_json,
         row.redact_json,
         row.redact_results_json,
@@ -1079,6 +1108,7 @@ export class Registry {
     if (patch.upstreamUrl !== undefined) set("upstream_url", patch.upstreamUrl);
     if (patch.forwardIdentity !== undefined) set("forward_identity", patch.forwardIdentity ? 1 : 0);
     if (patch.roles !== undefined) set("roles_json", JSON.stringify(normalizeRoles(patch.roles)));
+    if (patch.ownerRoles !== undefined) set("owner_roles_json", JSON.stringify(normalizeRoles(patch.ownerRoles)));
     if (patch.capabilities !== undefined) set("capabilities_json", JSON.stringify(patch.capabilities));
     if (patch.redact !== undefined) set("redact_json", JSON.stringify(patch.redact));
     if (patch.redactResults !== undefined) set("redact_results_json", JSON.stringify(patch.redactResults));
@@ -1265,7 +1295,10 @@ export class Registry {
     // deps: validateRoles · parseGrantEntry · compilePattern · D1 `grant_` · D1 `app`
     const row = await this.row(appId);
     if (!row) throw new Error(`no app with id "${appId}"`);
-    const declared: RoleDeclaration = JSON.parse(row.roles_json);
+    // The EFFECTIVE map, not the app's declaration: an owner role IS declared for this
+    // check (§20.3, 2026-09-17), so the tunneled warning and the proxied error fire only
+    // for a name in neither map.
+    const declared = effectiveRoles(toDetail(row));
     const warnings: string[] = [];
     const seen = new Set<string>();
 
@@ -1374,7 +1407,11 @@ export class Registry {
     // Re-read, never trust the passed row: a role widened at reconnect must bite on the very
     // next call. The virtual `pmcp` app has no row, which reads as "declares nothing".
     const row = await this.row(app.id);
-    const declared: RoleDeclaration = row ? JSON.parse(row.roles_json) : {};
+    // Both maps, merged the one way §20.3 pins: the owner's, then the app's declaration on
+    // top. Re-read per call like the declaration itself, so an owner role saved on the
+    // Roles pane bites on the very next call and a reconnect's redeclaration shadows it
+    // just as immediately.
+    const declared = row ? effectiveRoles(toDetail(row)) : {};
     const { results } = await this.db
       .prepare(
         `SELECT role, mode FROM grant_
@@ -1470,6 +1507,7 @@ type AppRow = {
   forward_identity: number;
   upstream_auth_json: string | null;
   roles_json: string;
+  owner_roles_json: string;               // §20.3's owner map, tunnel kind only; '{}' on a proxy
   capabilities_json: string | null;       // proxy kind only; NULL = undeclared = tools only (§20.2)
   redact_json: string;
   redact_results_json: string;
@@ -1504,6 +1542,7 @@ function toDetail(row: AppRow): AppDetail {
     upstreamAuthMode: row.upstream_auth_mode,
     forwardIdentity: row.forward_identity !== 0,
     declaredRoles: canonicalRoles(JSON.parse(row.roles_json)),
+    ownerRoles: canonicalRoles(JSON.parse(row.owner_roles_json)),
     capabilities: row.capabilities_json === null ? null : JSON.parse(row.capabilities_json),
     redact: JSON.parse(row.redact_json),
     redactResults: JSON.parse(row.redact_results_json),
@@ -1535,10 +1574,31 @@ function assertSlug(slug: string): void {
   if (!SLUG_CHARSET.test(slug)) throw new RegistryRefusal("slug", "must match [a-z0-9-]");
 }
 
-/** validateRoles' violations, as the throw every write path owes its caller. */
-function assertRoles(decl: RoleDeclaration): void {
+/** validateRoles' violations, as the throw every write path owes its caller. `field` is the
+ *  OP's spelling, because both role maps are validated by this one function and an owner's
+ *  `owner_roles` mistake must not be reported against `roles` (§8's "name the field"). */
+function assertRoles(decl: RoleDeclaration, field: "roles" | "owner_roles" = "roles"): void {
   const violations = validateRoles(decl);
-  if (violations.length > 0) throw new RegistryRefusal("roles", violations.join("; "));
+  if (violations.length > 0) throw new RegistryRefusal(field, violations.join("; "));
+}
+
+/**
+ * §20.3's kind rule for the OWNER map, the mirror image of assertKindFields': `owner_roles`
+ * is a TUNNELED app's field, because a proxied app's roles are already all the owner's and
+ * live in `roles`. Spelled as its own check rather than a fourth entry in PROXY_ONLY —
+ * that list is "proxied only", and this is the one field with the opposite polarity.
+ *
+ * The violation is authored whole rather than left to RegistryRefusal's `"<field>" <reason>`
+ * default: the sentence itself quotes `"roles"`, and a second pair of quotes around the
+ * subject would read as two fields being named.
+ */
+function assertOwnerRoles(kind: AppKind, ownerRoles: RoleDeclaration | undefined): void {
+  if (ownerRoles === undefined) return;
+  if (kind === "proxy") {
+    const reason = `owner_roles is for tunneled apps — a proxied app's roles are "roles"`;
+    throw new RegistryRefusal("owner_roles", reason, [{ field: "owner_roles", reason }]);
+  }
+  assertRoles(ownerRoles, "owner_roles");
 }
 
 /**
@@ -1668,6 +1728,7 @@ export function patchViolations(kind: AppKind, patch: AppPatch): Violation[] {
     () => {
       if (patch.roles !== undefined) assertRoles(patch.roles);
     },
+    () => assertOwnerRoles(kind, patch.ownerRoles),
     () => assertCapabilities(patch.capabilities),
     () => assertRedactKeys("redact", patch.redact),
     () => assertRedactKeys("redactResults", patch.redactResults),

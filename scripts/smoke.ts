@@ -525,19 +525,28 @@ async function main(): Promise<number> {
       return `injected next= carries no "</script><img" and no "<img src=x"; absolute next= → callbackURL /apps`;
     });
 
-    await step(`§13 · /apps/${APP} renders the Tools pane from the app's registered catalog`, async () => {
-      // The tunnel leg above registered `echo` over the real client library; the detail
-      // page's Tools pane reads the DO's cached catalog through the door's own listing
-      // (§13, §20.6), so the tool's name on the page is the deployment's DO, D1 and page
-      // template agreeing about one fact.
-      const detail = await fetch(`${ORIGIN}/apps/${APP}`, { headers: { Cookie: sessionCookie } });
+    await step(`§13 · /apps/${APP} renders the Catalog pane from the app's registered catalog`, async () => {
+      // The tunnel leg above registered `echo` over the real client library; the landing
+      // pane IS the Catalog (2026-09-17) and reads the DO's cached catalog through the
+      // door's own listing (§13, §20.6), so the tool's name on the page is the
+      // deployment's DO, D1 and page template agreeing about one fact. The aggregated
+      // name lives in the details, which the pane reaches with `?sel=tool:<name>`.
+      const detail = await fetch(`${ORIGIN}/apps/${APP}?sel=tool:${TOOL}`, { headers: { Cookie: sessionCookie } });
       expect(detail.status === 200, `authenticated /apps/${APP} → ${detail.status}`);
       const html = await detail.text();
       expect(html.includes(TOOL), `/apps/${APP} lists no ${TOOL}`);
       expect(html.includes(`${APP}_${TOOL}`), `/apps/${APP} carries no aggregated name ${APP}_${TOOL}`);
+      // The Catalog holds prompts and resources now, so their old pane URLs are permanent
+      // moves onto the landing — and the landing still has no alias of its own.
+      const moved = await fetch(`${ORIGIN}/apps/${APP}/prompts`, { headers: { Cookie: sessionCookie }, redirect: "manual" });
+      expect(moved.status === 301, `/apps/${APP}/prompts (301 to the Catalog, §2) → ${moved.status}`);
+      expect(
+        moved.headers.get("location") === `/apps/${APP}`,
+        `/apps/${APP}/prompts → ${moved.headers.get("location") ?? "(no Location)"}`,
+      );
       const alias = await fetch(`${ORIGIN}/apps/${APP}/tools`, { headers: { Cookie: sessionCookie }, redirect: "manual" });
-      expect(alias.status === 404, `/apps/${APP}/tools (no alias, §13) → ${alias.status}`);
-      return `200 listing ${TOOL} as ${APP}_${TOOL}; /apps/${APP}/tools → 404`;
+      expect(alias.status === 404, `/apps/${APP}/tools (no alias, §2) → ${alias.status}`);
+      return `200 listing ${TOOL} as ${APP}_${TOOL}; /apps/${APP}/prompts → 301 /apps/${APP}; /apps/${APP}/tools → 404`;
     });
 
     await step("audit_query sees the calls", async () => {

@@ -3256,24 +3256,7 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(tokens).toContain(`href="${paths.appDetail("news")}"`);
   });
 
-  it(`§13 · the app page's Agents pane carries Edit grants → /agents/<agent>/apps/<slug> per row now that the editor is a pane of the agent page, and its footer still reads "Grants are edited per agent × app pair — saving replaces that pair's whole set." (the twin — re-pointed 2026-09-16)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel", name: "News MCP" }],
-      agents: [
-        { slug: "claude", grants: { news: [{ role: "all", mode: "allow" }] } },
-        { slug: "cron", grants: { news: [{ role: "all", mode: "approval" }] } },
-      ],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const html = await page(paths.appPane("news", "access"), session.cookie);
-    for (const agent of ["claude", "cron"]) {
-      expect(linkTexts(html, paths.agentApp(agent, "news")), agent).toContain("Edit grants");
-    }
-    // The twin: the pane still says what saving does, and still fronts no grant_set form —
-    // the control is a link into the pair's pane, not a second editor here.
-    expect(textOf(html)).toContain(AGENTS_FOOTER);
-    expect(formsRenderedOn(html).map((form) => form.op)).not.toContain("grant_set");
-  });
+  it.todo(`§6 · every agent slug the app page's Agents pane prints links to its own /agents/<agent>/apps/<slug> pane through the details' open agent page link, now that the app page carries the grant editor in place — the pane fronting grant_set itself rather than pointing at a second editor (the twin, re-pointed 2026-09-17)`);
 });
 
 describe(`§13 · /agents/<slug>/apps/<app> — the (agent × app) grant pane`, () => {
@@ -7172,51 +7155,105 @@ const CATALOG_ROLES = {
 
 const PLAIN_TOOLS = [{ name: "plain_ping", description: "Answer.", inputSchema: { type: "object" } }];
 
-/** The §13 sentences these rows pin, spelled as §13 spells them — backticks included, so
- *  a reader can diff a literal against the spec; `pinned()` takes them off. */
-const TOOLS_FOOTER =
-  "Schemas come from the app's last `tools/list` — the hub stores them, it does not author them.";
-const TUNNELED_TOOLS_HEADER = "Advertised by the app on its last connect. Re-listed on every reconnect";
+/** The brief's sentences these rows pin (docs/superpowers/plans/2026-09-17-app-three-pane.md
+ *  §2–§7, which §13 then records), spelled as it spells them — backticks included, so a
+ *  reader can diff a literal against the spec; `pinned()` takes them off. */
+const CATALOG_TUNNELED_SUB = "advertised by the app on its last connect · re-listed on every reconnect";
+const CATALOG_PROXIED_SUB = "fetched live from the upstream";
+const NEVER_CONNECTED = "This app has never connected, so the hub has no catalog to list yet.";
 const REFRESH_FAILED = "Token refresh failed — calls return errors until you reconnect.";
-const SCHEMA_UNSOUND = "schema-unsound — approval-gated calls refuse, bodies are not recorded";
-const NO_AGENT_YET = "Reachable by no agent yet";
-const NO_REDACTED = "No redacted fields";
-const NO_APPROVAL = "No approval required";
-const APPROVAL_REQUIRED = "Approval required for";
-const NEVER_GATED = "Never approval-gated";
+const NONE_ADVERTISED = "none advertised";
+const NO_MATCH = "no match";
+const NO_AGENT = "no agent";
+const CATALOG_PROMPT = "Select a tool, prompt or resource for its details.";
+const REACH_SOURCE = "computed with the gate's own matcher over each agent's grant";
+const MATCHED_BY_URI = "by URI, never by name";
+const NO_AGENT_YET = "no agent yet";
+const NO_REDACTED = "no redacted fields";
+const NO_APPROVAL = "none required";
+const NEVER_GATED = "never asked for prompts";
 
-/** §20's two rules, as §13 quotes them. The scoped-endpoint rule is spelled as its two
- *  unambiguous halves because its middle carries the endpoint itself, whose host half
- *  §13 leaves as a placeholder (the owner question constraint 32(c) records). */
-const SCOPED_ONLY_HEAD = "Resources are served on the scoped endpoint only";
-const SCOPED_ONLY_TAIL =
-  "The aggregated endpoint answers `-32601`, because a URI cannot carry a slug prefix and stay the URI the app knows.";
-const URI_NOT_NAME =
-  "Grants match resources by URI, never by name — a role's resource patterns are URI patterns, and templates are matched against their raw `uriTemplate`.";
+/** The unread / undeclared states, per kind, with the family or endpoint substituted
+ *  exactly as the brief substitutes it. */
+const unreachable = (endpoint: string): string =>
+  `Couldn't reach ${endpoint} — the live listing failed, so nothing is shown; calls return errors until it answers again.`;
+const tunneledUndeclared = (family: string): string =>
+  `This app declared no ${family} capability on its last connect.`;
+const proxiedOmits = (family: string): string =>
+  `The \`capabilities\` configured for this app omit ${family}.`;
+const catalogFoot = (family: string): string =>
+  `The same block the audit row and the agent page show for this ${family}. Editing reach happens on Agents, masking on Recording.`;
 
-/** §13's Roles pane, per kind, plus the two lines an app that declared none renders. */
-const ROLES_TUNNELED = "Declared by the app at connect time.";
-const ROLES_TRUST =
-  "Roles are self-declared by the tunneled app — granting a role trusts the app's declaration.";
-const ROLES_PROXIED = "Roles are defined in config (virtual) for proxied apps.";
-const ROLES_NONE = "No roles declared";
-const ROLES_FALLBACK = "Grants fall back to the built-in `all` role — every tool, present and future.";
+/** §4 · the Roles pane. */
+const ROLES_SUB = "named sets of what this app exposes";
+const ROLES_TUNNELED_TAIL = "the app's declaration wins when it declares a name you defined";
+const ROLES_PROXIED_TAIL = "a proxied app declares none, so every role is yours";
+const ROLES_PROMPT = "Select a role to see what it can do, or add one of your own.";
+const ROLE_REPLACED = "app · replaced yours";
+const ROLE_REPLACED_TITLE = "the app declares this name — its declaration replaced yours";
+const ROLE_ALL_ITEMS = "every tool, prompt and resource, present and future";
+const HELD_BY_NONE = "held by no agent";
+const ALL_EXPLAINED = "Every tool, prompt and resource, present and future. Never declarable, only grantable.";
+const COLLISION_RULE =
+  "if the app later declares a name you defined, its declaration replaces yours — the row says so";
+const DELETE_ROLE_HINT = "grants naming it keep the name and match nothing until it exists again";
+const PATTERNS_LEGEND = "anchored · * aliases .*";
+const appRoleExplained = (name: string): string =>
+  `Declared by ${name} at connect. Read-only: the app owns it and may widen it on its next connect.`;
+const shadowedExplained = (name: string): string =>
+  `${name} declares this name, so its declaration replaced the one you had defined. Read-only: the app owns it.`;
+const yoursTunneled = (name: string, role: string): string =>
+  `Defined by you. If ${name} later declares a role named ${role}, the app's declaration replaces this one.`;
+const YOURS_PROXIED =
+  "Defined by you. A proxied app declares no roles, so this is the only kind it has.";
+const declaredByApp = (name: string): string =>
+  `${name} is declared by the app — its declaration would replace yours`;
 
-/** §15's two per-kind defaults, as §13 asks the Overview pane to name them. */
+/** §5 · the Recording pane. */
+const RECORDING_SUB = "what the audit trail keeps, and what it masks";
+const RECORD_BODIES = "Record call bodies";
+const PROXIED_UNMASKED =
+  "A proxied app's schema is not cached at call time, so nothing is masked automatically. Tick what is secret before you save, or it is stored in the clear for 7 days.";
+const MASKED_BEFORE =
+  "These fields are replaced with ‹redacted› before a call is written to the trail. Everything else in the body is kept as sent.";
+const LOGGING_OFF_NOTE =
+  "Body logging is off, so no bodies reach the trail; the masks below apply once it is turned on.";
+const RECORDING_NOTE =
+  "A tick writes one literal (tool, path) entry per tool; nothing here is a pattern and nothing is typed. Masking applies to the approval record too.";
+const KEEPS_CAP = "16 KiB per body — an over-cap body is one oversize stub";
+const KEEPS_NEVER = "refused calls, token material, writeOnly and config-masked fields";
+const ALWAYS_MASKED = "declared by the app — always masked";
+const NO_PATH_MATCHES = "no path matches";
+const NO_SCHEMA_FIELDS = "no schema declares any field";
+const noOutputSchema = (tools: string): string =>
+  `${tools} declare no output schema — a result path there can only come from a recorded call (mask from evidence).`;
+
+/** §6 · the Agents pane. */
+const AGENTS_SUB = "who can call this app, and how";
+const AGENTS_NOTE =
+  "Granting a new agent starts from the agent's own page — Agents → the agent → Grant another app.";
+const agentsPrompt = (slug: string): string => `Select an agent to edit what it may call on ${slug}.`;
+const grantLegend = (agent: string, slug: string): string =>
+  `${agent}'s grant on ${slug}. Solid: set on the row · hollow: implied by a role · a row cannot lower what a role grants.`;
+const removeAgentBody = (agent: string, slug: string): string =>
+  `${agent} loses every entry on ${slug}. History stays; a waiting request expires.`;
+
+/** §7 · Token and Overview. */
+const TOKEN_SUB = "what the app presents to dial in";
+const TOKEN_ROTATION =
+  "app tokens have no expiry — rotate by issuing, then revoking the old one. Revoking the key a live socket used closes it.";
+const NO_LIVE_TOKEN = "No live token — the app cannot connect until one is issued.";
+const REVEAL_ONCE = "Shown once — copy it now";
+const EXPIRES_NEVER = "never — revoke on compromise";
+const tokenScope = (slug: string): string =>
+  `Only valid for opening the reverse WebSocket as ${slug}.`;
+
+/** §15's two per-kind defaults, as the Overview pane names them. */
 const LOG_BODIES_TUNNEL = "On — tunneled default";
 const LOG_BODIES_PROXY = "Off — proxied default";
 
-/** §20.2's proxied dimming sentence, and §20.5's tunneled pair, each with the family
- *  substituted exactly as §13 says they are. */
-const proxiedOmits = (family: string): string =>
-  `The \`capabilities\` configured for this app omit ${family} (§20.2) — add it with \`app_update\` or the YAML.`;
-const tunneledUndeclared = (family: string): readonly string[] => [
-  `This app declared no ${family} capability on its last connect, so the hub advertises none and serves an empty list.`,
-  `Declare ${family} with your MCP SDK and they appear here after the next reconnect — the client library passes the declaration through untouched.`,
-];
-
-/** The eight pane URLs of one app, in §13's table order — built from `paths`, never
- *  spelled, and the landing pane first because the landing pane IS Tools. */
+/** The seven pane URLs of one app, in the brief's table order — built from `paths`, never
+ *  spelled, and the landing first because the landing pane IS the Catalog. */
 function appPaneHrefs(slug: string): string[] {
   return [paths.appDetail(slug), ...APP_PANES.map((pane) => paths.appPane(slug, pane))];
 }
@@ -7341,11 +7378,13 @@ async function seedAppDetailWorld(): Promise<void> {
   detail = { ns, session, bearer: await deviceFlowToken(session.cookie) };
 }
 
-describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
+describe(`§2 · /apps/<slug> — the seven panes, the rail, the header and the three levels`, () => {
+  beforeAll(withAppDetailWorld);
+
   // Owner questions 37(b) and 37(a), decided 2026-09-03 (§13 amended): the header's
   // controls land on the app's own page, and a headers-mode app that cannot be reached
   // says so in its own words rather than borrowing the oauth arm's.
-  it(`§13 · the app header's Connect refusal and Disconnect land back on the app's own page with the notice — /apps/<slug>/app_disconnect, never /apps/app_disconnect — and a finished Connect lands there too carrying done=connect · /apps's own row controls still land on /apps (the twin)`, async () => {
+  it(`§2 · the app header's Connect refusal and Disconnect land back on the app's own page with the notice — /apps/<slug>/app_disconnect, never /apps/app_disconnect — and a finished Connect lands there too carrying done=connect · /apps's own row controls still land on /apps (the twin)`, async () => {
     await breakBrokensCredential();
     const html = await appPage(paths.appDetail(BROKEN));
     // The header's Disconnect posts to the app page's own dispatch, never the list's.
@@ -7368,941 +7407,149 @@ describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
     expect(back.pathname).toBe(paths.appPane(BROKEN, "overview"));
     expect(back.searchParams.get("done")).toBe("app_disconnect");
 
-    // The twin: /apps's own row control still lands on /apps.
-    const fromList = await formPost(paths.appDisconnect(BROKEN), { csrf }, detail.session.cookie);
-    expect(fromList.status).toBe(303);
-    expect(new URL(fromList.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.apps);
-  });
-  it(`§13 · a headers-mode proxied app whose upstream is unreachable renders "Couldn't reach <endpoint> — the live listing failed, so nothing is shown; calls return errors until it answers again." naming its configured endpoint, with BLANK App-group markers and no Reconnect control · the oauth app whose refresh failed keeps "Token refresh failed — calls return errors until you reconnect." beside Reconnect (the twin)`, async () => {
-    const html = await appPage(paths.appDetail(DOWN));
-    const text = textOf(html);
-    expect(text).toContain(
-      `Couldn't reach ${upstreamUrlFor(downScenario)} — the live listing failed, so nothing is shown; calls return errors until it answers again.`,
-    );
-    for (const href of [paths.appDetail(DOWN), paths.appPane(DOWN, "prompts"), paths.appPane(DOWN, "resources")]) {
-      expect(markerOn(html, href), href).toBe("");
-    }
-    expect(formsPostingTo(html, paths.appConnect(DOWN))).toEqual([]);
-    expect(text).not.toContain(pinned(REFRESH_FAILED));
-
-    // The twin: the oauth arm keeps its own sentence and its Reconnect.
-    await breakBrokensCredential();
-    const oauth = await appPage(paths.appDetail(BROKEN));
-    expect(textOf(oauth)).toContain(pinned(REFRESH_FAILED));
-    expect(textOf(oauth)).not.toContain("Couldn't reach");
-    expect(formsPostingTo(oauth, paths.appConnect(BROKEN)).length).toBeGreaterThan(0);
-  });
-
-  beforeAll(withAppDetailWorld);
-
-  it(`§13 · /apps/<slug>/tools is a 404 — the landing pane has no alias · /apps/<slug> renders Tools and each of the seven other panes answers 200 at its own URL, carrying aria-current="page" on its own rail entry and on no other (the twin)`, async () => {
-    const aliased = await get(`${paths.appDetail(CATALOG)}/tools`, detail.session.cookie);
-    expect(aliased.status, "GET /apps/<slug>/tools").toBe(404);
-
-    // The landing pane IS Tools, said by the one line only that pane draws: its own
-    // verbatim footer. A heading would prove less — the rail repeats every pane's label.
-    expect(textOf(await appPage(paths.appDetail(CATALOG)))).toContain(pinned(TOOLS_FOOTER));
-
-    const hrefs = appPaneHrefs(CATALOG);
-    expect(hrefs).toHaveLength(8);
-    for (const href of hrefs) {
-      const current = railEntries(await appPage(href), APP_RAIL_NAV_LABEL).filter((entry) => entry.current);
-      expect(current.map((entry) => entry.href), `aria-current on ${href}`).toEqual([href]);
-    }
-  });
-
-  it(`§13 · the app rail carries exactly the eight entries of §13's pane table, App and Access as headings with the Danger zone ungrouped after them, and Overview and Danger zone carry no marker where the six others do (the twin)`, async () => {
-    const html = await appPage(paths.appDetail(CATALOG));
-    const rail = railEntries(html, APP_RAIL_NAV_LABEL);
-    expect(rail.map((entry) => entry.href)).toEqual(appPaneHrefs(CATALOG));
-
-    // The headings, positionally: §13 groups App then Access and leaves the Danger zone
-    // ungrouped AFTER them, so the claim is about where each word falls among the labels.
-    const text = textOf(navBlock(html, APP_RAIL_NAV_LABEL) ?? "");
-    const at = (needle: string): number => {
-      const found = text.indexOf(needle);
-      expect(found, `the rail names "${needle}"`).toBeGreaterThanOrEqual(0);
-      return found;
-    };
-    expect(at("App")).toBeLessThan(at("Tools"));
-    expect(at("Overview")).toBeLessThan(at("Access"));
-    expect(at("Access")).toBeLessThan(at("Agents"));
-    expect(text.slice(at("Token"), at("Danger zone"))).not.toMatch(/App|Access/);
-
-    const marker = new Map(rail.map((entry) => [entry.href, entry.marker]));
-    const unmarked = [paths.appPane(CATALOG, "overview"), paths.appPane(CATALOG, "danger")];
-    for (const href of unmarked) expect(marker.get(href), href).toBe("");
-    for (const href of appPaneHrefs(CATALOG).filter((href) => !unmarked.includes(href))) {
-      expect(marker.get(href), href).not.toBe("");
-    }
-    // The twin that keeps "no marker" from reading as "an empty marker": the Roles pane's
-    // `none` is a marker STRING, and an app that declared no roles renders it.
-    const fresh = railEntries(await appPage(paths.appDetail(FRESHAPP)), APP_RAIL_NAV_LABEL);
-    expect(fresh.find((entry) => entry.href === paths.appPane(FRESHAPP, "roles"))?.marker).toBe("none");
-  });
-
-  it(`§13 · the header names the app, its slug and its kind badge — a tunneled app's status and last seen, a proxied app's endpoint, auth mode and forward identity read back from app_get's own row — and renders Connect/Reconnect and Disconnect only where auth is oauth · a headers-mode app renders neither target (the twin)`, async () => {
-    const tunneled = await appRowOf(TUNNELAPP);
-    const tunnelHtml = await appPage(paths.appDetail(TUNNELAPP));
-    const tunnelText = textOf(tunnelHtml);
-    expect(tunnelText).toContain(tunneled.name);
-    expect(tunnelText).toContain(TUNNELAPP);
-    expect(tunnelText).toMatch(/\btunnel\b/);
-    // No socket is open in this describe, so §8's own row says offline and so must the page.
-    expect(tunneled.status).toBe("offline");
-    expect(tunnelText).toMatch(/\boffline\b/);
-
-    // Last seen, without pinning a format: the app the beforeAll stamped and the one that
-    // has never connected must not read the same.
-    const freshHtml = await appPage(paths.appDetail(FRESHAPP));
-    expect(lastSeenOf(tunnelHtml)).not.toBe("");
-    expect(lastSeenOf(freshHtml)).not.toBe("");
-    expect(lastSeenOf(tunnelHtml)).not.toBe(lastSeenOf(freshHtml));
-
-    const proxied = await appRowOf(CATALOG);
-    const catalogHtml = await appPage(paths.appDetail(CATALOG));
-    const catalogText = textOf(catalogHtml);
-    expect(catalogText).toContain(String(proxied.endpoint));
-    expect(catalogText).toMatch(/\bproxy\b/);
-    expect(catalogText).toMatch(/\bheaders\b/);
-    expect(catalogText).toContain("Forward identity");
-
-    // §13 gives an `auth: oauth` app all three controls; both targets are `paths`'s, so
-    // the app page cannot invent a third spelling of what /apps already posts to.
-    const brokenHtml = await appPage(paths.appDetail(BROKEN));
-    expect(formsPostingTo(brokenHtml, paths.appConnect(BROKEN)).length).toBeGreaterThan(0);
-    expect(formsPostingTo(brokenHtml, paths.appHeaderDisconnect(BROKEN)).length).toBeGreaterThan(0);
-    // Read off the LIST's render and compared: /apps draws Connect as a submit button's
-    // `formaction`, so the comparison is over every target either page posts to.
+    // THE TWIN: the list's own rows still post to the list's targets, so the move above is
+    // the app page's and not a page-wide rename.
     expect(postTargets(await appPage(paths.apps))).toContain(paths.appConnect(BROKEN));
-    expect(postTargets(brokenHtml)).toContain(paths.appConnect(BROKEN));
-    // The header's state word is the one §8's row reports, `_` read as a space.
-    const broken = await appRowOf(BROKEN);
-    expect(textOf(brokenHtml).toLowerCase()).toContain(String(broken.connection).replace(/_/g, " "));
-
-    // The twin: nothing dials in to a headers-mode app, so it draws neither target.
-    expect(formsPostingTo(catalogHtml, paths.appConnect(CATALOG))).toEqual([]);
-    expect(formsPostingTo(catalogHtml, paths.appHeaderDisconnect(CATALOG))).toEqual([]);
+    expect(postTargets(await appPage(paths.apps))).toContain(paths.appDisconnect(BROKEN));
   });
 
-  it(`§13 · every App-group rail marker is the number of rows its own pane lists — Tools, Prompts, and Resources as resources plus templates — and the Resources pane's two tabs carry those two counts at ?tab=resources and ?tab=templates`, async () => {
-    const toolsHtml = await appPage(paths.appDetail(CATALOG));
-    const toolsText = textOf(toolsHtml);
-    for (const name of CATALOG_TOOL_NAMES) expect(mentions(toolsText, name), name).toBe(1);
-    for (const name of [...CATALOG_PROMPT_NAMES, ...CATALOG_RESOURCE_URIS]) {
-      expect(mentions(toolsText, name), `${name} on the Tools pane`).toBe(0);
-    }
-    expect(markerOn(toolsHtml, paths.appDetail(CATALOG))).toBe(String(CATALOG_TOOLS.length));
+  it.todo(`§2 · APP_PANES is the six non-landing panes in the brief's table order — roles, recording, overview, access, token, danger — each answering 200 at its own URL with aria-current="page" on its own rail entry and on no other, while the landing /apps/<slug> IS the Catalog · /apps/<slug>/tools and /apps/<slug>/catalog are 404s (no alias for the landing) and an unknown pane is that same noSuchPage 404 (the twin)`);
 
-    const promptsHtml = await appPage(paths.appPane(CATALOG, "prompts"));
-    const promptsText = textOf(promptsHtml);
-    for (const name of CATALOG_PROMPT_NAMES) expect(mentions(promptsText, name), name).toBe(1);
-    for (const name of [...CATALOG_TOOL_NAMES, ...CATALOG_RESOURCE_URIS]) {
-      expect(mentions(promptsText, name), `${name} on the Prompts pane`).toBe(0);
-    }
-    expect(markerOn(promptsHtml, paths.appPane(CATALOG, "prompts"))).toBe(String(CATALOG_PROMPTS.length));
+  it.todo(`§2 · GET /apps/<slug>/prompts and GET /apps/<slug>/resources answer 301 to /apps/<slug> — the Catalog holds them and the query is DROPPED, so ?sel= and ?q= do not ride along — while the six real panes answer 200 at their own URLs and the 301 is permanent, never a 302 or a 303 (the twin)`);
 
-    // The marker is the two tabs SUMMED, read off the pane being counted.
-    const resourcesUrl = paths.appPane(CATALOG, "resources");
-    const templatesUrl = `${resourcesUrl}?tab=templates`;
-    const resourcesHtml = await appPage(resourcesUrl);
-    const templatesHtml = await appPage(templatesUrl);
-    const summed = String(CATALOG_RESOURCES.length + CATALOG_TEMPLATES.length);
-    expect(markerOn(resourcesHtml, resourcesUrl)).toBe(summed);
-    expect(markerOn(templatesHtml, resourcesUrl)).toBe(summed);
+  it.todo(`§2 · the app rail carries exactly the seven entries of the brief's pane table, in its order and under its headings — App holding Catalog, Roles, Recording and Overview, Access holding Agents and Token, and Danger zone ungrouped after them — and no pane renders a pill row: no nav.pill-row and no "App panes, compact" navigation on any of the seven, while /settings still renders its (the twin)`);
 
-    for (const [html, listed, hidden] of [
-      [resourcesHtml, CATALOG_RESOURCE_URIS, CATALOG_TEMPLATE_URIS],
-      [templatesHtml, CATALOG_TEMPLATE_URIS, CATALOG_RESOURCE_URIS],
-    ] as const) {
-      const text = textOf(html);
-      for (const uri of listed) expect(mentions(text, uri), uri).toBe(1);
-      for (const uri of hidden) expect(mentions(text, uri), `${uri} on the other tab`).toBe(0);
-      for (const name of [...CATALOG_TOOL_NAMES, ...CATALOG_PROMPT_NAMES]) {
-        expect(mentions(text, name), `${name} on the Resources pane`).toBe(0);
-      }
-      // Both tab links render on both tabs, each carrying its own count.
-      expect(linkTexts(html, resourcesUrl)).toContain(`Resources ${CATALOG_RESOURCES.length}`);
-      expect(linkTexts(html, templatesUrl)).toEqual([`Templates ${CATALOG_TEMPLATES.length}`]);
-    }
-    // The bare pane URL is the Resources tab, not a third state.
-    expect(textOf(await appPage(`${resourcesUrl}?tab=resources`))).toBe(textOf(resourcesHtml));
-  });
+  it.todo(`§2 · the Catalog rail marker is the app's tools + prompts + resources summed, BLANK when a family could not be read and the dimmed — when the app never connected; the Roles marker is the effective role count or "none"; the Agents marker is the number of agents holding ≥1 grant; the Token marker is the live count and the dimmed — for a proxied app; Overview and Danger zone carry no marker at all (the twin)`);
 
-  it(`§20.2/§13 · a tunneled app that declares prompts at registration carries a prompts count and lists them, while the app beside it that declared none dims to — (the twin), and the same live registration renders the header's online status and a last seen the never-connected app has not got`, async () => {
-    const slug = uniqueSlug("declares");
-    const served = [
-      { name: uniqueSlug("brief").replace(/-/g, "_"), description: "One." },
-      { name: uniqueSlug("recap").replace(/-/g, "_"), description: "Two." },
-    ];
-    const close = await dialTunnel(slug, { capabilities: ["tools", "prompts"], prompts: served });
-    try {
-      const html = await appPage(paths.appDetail(slug));
-      expect(markerOn(html, paths.appPane(slug, "prompts"))).toBe(String(served.length));
-      expect(markerOn(html, paths.appPane(slug, "resources"))).toBe(DIMMED_MARKER);
-      const promptsText = textOf(await appPage(paths.appPane(slug, "prompts")));
-      for (const prompt of served) expect(promptsText).toContain(prompt.name);
-      // The family it did NOT declare renders the tunneled empty state instead.
-      const resourcesText = textOf(await appPage(paths.appPane(slug, "resources")));
-      for (const sentence of tunneledUndeclared("resources")) expect(resourcesText).toContain(pinned(sentence));
+  it.todo(`§2 · the Recording rail marker is the Two-factor dot's own markup and never a number — rail-dot--on with the sr-only text "on" while body logging is on, rail-dot--off with "off" when it is off — read on one app either side of a saved switch (the twin)`);
 
-      // The twin, same kind and same render path: the app that declared nothing dims.
-      expect(markerOn(await appPage(paths.appDetail(TUNNELAPP)), paths.appPane(TUNNELAPP, "prompts"))).toBe(
-        DIMMED_MARKER,
-      );
+  it.todo(`§2 · the header's title row is the "Apps ›" crumb linking /apps, the app's name, then its slug, kind and status as badge--title, with the description as the subtitle — and ONE tiles line beneath reading "T tools · P prompts · R resources · A agents · body logging on|off", a tunneled app adding " · last seen <relative>" and no pane carrying a separate "Last seen" note anywhere (the twin: the proxied app's tiles carry no last seen)`);
 
-      expect(textOf(html)).toMatch(/\bonline\b/);
-      expect(lastSeenOf(html)).not.toBe(lastSeenOf(await appPage(paths.appDetail(FRESHAPP))));
-    } finally {
-      await close();
-    }
-  });
+  it.todo(`§2 · the proxied header card — endpoint, auth mode, forward identity and the Connect / Disconnect controls — sits above the pane on every pane EXCEPT Overview, which absorbs those fields into its own listing · a tunneled app renders no header card on any pane (the twin)`);
 
-  it(`§20.2/§13 · a family the app advertises none of dims its rail entry to — and its pane renders the empty state that says why, verbatim, per kind, with the family name substituted · the families it does advertise carry counts and list rows (the twin)`, async () => {
-    // Proxied: PLAIN declared no `capabilities` at all, which §20.2 reads as tools only.
-    const plainHtml = await appPage(paths.appDetail(PLAIN));
-    expect(markerOn(plainHtml, paths.appDetail(PLAIN))).toBe(String(PLAIN_TOOLS.length));
-    expect(textOf(plainHtml)).toContain(PLAIN_TOOLS[0].name);
-    for (const family of ["prompts", "resources"] as const) {
-      const href = paths.appPane(PLAIN, family);
-      expect(markerOn(plainHtml, href)).toBe(DIMMED_MARKER);
-      // A dimmed entry is still a link — §13 says so in as many words.
-      expect(railEntries(plainHtml, APP_RAIL_NAV_LABEL).map((entry) => entry.href)).toContain(href);
-      expect(textOf(await appPage(href))).toContain(pinned(proxiedOmits(family)));
-    }
+  it.todo(`§2 · the app page's root carries data-level chosen from the URL alone — 1 on /apps/<slug>, 2 on each of the six panes, 3 on a pane carrying sel= — and the level header above the content names the level above and the current thing: at 1 "‹ Apps" → /apps titled with the app's name, at 2 "‹ <name>" → /apps/<slug> titled with the pane's own rail label, at 3 "‹ <pane label>" → the pane URL WITHOUT sel but keeping q, new and which, titled with the selected row's name`);
 
-    // Tunneled: the same absence, said the other way (§20.5).
-    const tunnelHtml = await appPage(paths.appDetail(TUNNELAPP));
-    for (const family of ["prompts", "resources"] as const) {
-      expect(markerOn(tunnelHtml, paths.appPane(TUNNELAPP, family))).toBe(DIMMED_MARKER);
-      const text = textOf(await appPage(paths.appPane(TUNNELAPP, family)));
-      for (const sentence of tunneledUndeclared(family)) expect(text).toContain(pinned(sentence));
-    }
-
-    // Non-vacuity: the app that advertises all three renders neither sentence anywhere.
-    const catalogText = textOf(await appPage(paths.appPane(CATALOG, "prompts")));
-    expect(catalogText).not.toContain(pinned(proxiedOmits("prompts")));
-    expect(catalogText).not.toContain(pinned(tunneledUndeclared("prompts")[0]));
-  });
-
-  it(`§13 · a proxied app whose live listing fails renders BLANK App-group markers, never — and never 0, and its Tools pane renders "Token refresh failed — calls return errors until you reconnect." beside Reconnect instead of an empty list · a reachable app's markers are numbers and its Tools pane lists rows (the twin)`, async () => {
-    await breakBrokensCredential();
-
-    const html = await appPage(paths.appDetail(BROKEN));
-    for (const href of [
-      paths.appDetail(BROKEN),
-      paths.appPane(BROKEN, "prompts"),
-      paths.appPane(BROKEN, "resources"),
-    ]) {
-      // BROKEN declared all three families, so `—` here would itself be the bug, and `0`
-      // would be the "an unread count is not an empty set" one.
-      expect(markerOn(html, href), href).toBe("");
-      expect(markerOn(html, href), href).not.toBe(DIMMED_MARKER);
-      expect(markerOn(html, href), href).not.toBe("0");
-    }
-    expect(textOf(html)).toContain(pinned(REFRESH_FAILED));
-    expect(formsPostingTo(html, paths.appConnect(BROKEN)).length).toBeGreaterThan(0);
-    expect(mentions(textOf(html), `${BROKEN}_`)).toBe(0);
-    // §13 (32(d), 2026-09-03): Roles counts the owner's own configuration, not the
-    // listing, so it is the one App-group marker a failed listing does not blank.
-    expect(markerOn(html, paths.appPane(BROKEN, "roles"))).not.toBe("");
-
-    const catalogHtml = await appPage(paths.appDetail(CATALOG));
-    expect(markerOn(catalogHtml, paths.appDetail(CATALOG))).toBe(String(CATALOG_TOOLS.length));
-    expect(markerOn(catalogHtml, paths.appPane(CATALOG, "prompts"))).toBe(String(CATALOG_PROMPTS.length));
-    expect(markerOn(catalogHtml, paths.appPane(CATALOG, "resources"))).toBe(
-      String(CATALOG_RESOURCES.length + CATALOG_TEMPLATES.length),
-    );
-    expect(textOf(catalogHtml)).toContain("paper_fetch");
-    expect(textOf(catalogHtml)).not.toContain(pinned(REFRESH_FAILED));
-  });
-
-  it(`§13 · a Tools row is the tool's name, the first line of its description and no args / N args, and its expanded block — the full description plus the Arguments table read off inputSchema — arrives in that same response, server-rendered, never a second request, beneath the pane's verbatim footer`, async () => {
-    const text = textOf(await appPage(paths.appDetail(CATALOG)));
-    expect(text).toContain("paper_fetch");
-    expect(text).toContain(PAPER_SUMMARY);
-    expect(text).toContain("3 args");
-    expect(text).toContain("jobfeed_crawl");
-    expect(text).toContain("no args");
-
-    // The expanded block is in the SAME response: the second description line and the
-    // Arguments table's own content, with the nested schema's property nowhere at all.
-    expect(text).toContain(PAPER_DETAIL);
-    // Each argument as ONE contiguous run — `textOf` turns every `</td><td>` into a single
-    // space, so this ties a name to its type and its Required cell. Loose tokens would not:
-    // "required" is a substring of §13's approval lines and "string" of PAPER_DETAIL, both
-    // on this very render, so a table with the wrong columns would still pass.
-    expect(text).toContain("doi string required");
-    expect(text).toContain("force_refresh boolean optional · defaults to false");
-    expect(text).toContain("options object optional");
-    expect(text).not.toContain("depth");
-
-    expect(text).toContain(pinned(TOOLS_FOOTER));
-
-    // No second request exists, and no parameter selects a row: the same four names and
-    // the same expanded content come back under a query the page never reads.
-    const queried = textOf(await appPage(`${paths.appDetail(CATALOG)}?tool=paper_fetch`));
-    for (const name of CATALOG_TOOL_NAMES) expect(queried).toContain(name);
-    expect(queried).toContain(PAPER_DETAIL);
-    expect(queried).toContain("optional · defaults to false");
-
-    // §13 attaches the tunneled header line to the tunneled branch and gives the proxied
-    // live fetch none.
-    expect(textOf(await appPage(paths.appDetail(TUNNELAPP)))).toContain(pinned(TUNNELED_TOOLS_HEADER));
-    expect(text).not.toContain(pinned(TUNNELED_TOOLS_HEADER));
-  });
-
-  it(`§13/§7 · the Tools pane is the owner's own unfiltered read: a tool no granted pattern reaches is listed all the same, beside the ones that are (§7 step 2 — owner → all tools)`, async () => {
-    // "No agent reaches it" is grounded in the DOOR, not in the fixture: every agent's
-    // own grants, run through the matcher the pipeline runs, deny both tools.
-    const held = await grantsOnCatalog();
-    expect(Object.keys(held).length).toBeGreaterThan(0);
-    for (const [agent, entries] of Object.entries(held)) {
-      for (const name of ["secret_push", "bad_schema"]) {
-        expect(buildToolFilter(entries, CATALOG_ROLES).check(name, "tools"), `${agent} → ${name}`).toBe("deny");
-      }
-    }
-    const text = textOf(await appPage(paths.appDetail(CATALOG)));
-    for (const name of CATALOG_TOOL_NAMES) expect(text, name).toContain(name);
-  });
-
-  it(`§13/§20.3 · "Called by agents as <slug>_<tool>" and the reachability line the door's own matcher computes: a literal role and a pattern role each name their agents and the role in the sentence §13 pins, an agent holding no grant on this app is named by neither, and a tool no granted pattern matches renders "Reachable by no agent yet" (the twin)`, async () => {
-    const text = textOf(await appPage(paths.appDetail(CATALOG)));
-    const blocks = blocksOf(text, CATALOG_TOOL_NAMES);
-
-    // §13's line 1 WITH its frame, per tool block: a bare aggregated name is also what the
-    // fixture's own tool names look like, and dropping the prefix would leave that green.
-    for (const name of ["paper_fetch", "jobfeed_crawl", "secret_push"]) {
-      expect(blocks[name], name).toContain(`Called by agents as ${CATALOG}_${name}`);
-    }
-
-    // The SENTENCE FRAME of line 2, so a bare list of names cannot pass.
-    for (const name of ["paper_fetch", "jobfeed_crawl"]) {
-      expect(blocks[name], name).toContain("Reachable by");
-      expect(blocks[name], name).toContain("· via");
-    }
-    expect(blocks.paper_fetch).toContain("reader-agent");
-    // The ROLE half, behind the separator: a bare toContain("reader") is already implied by
-    // the agent's own slug, so "· via" is the only place the role name can prove itself.
-    expect(blocks.paper_fetch).toContain("· via reader");
-    for (const named of ["crawl-agent", "mixed-agent", "crawler", "both"]) {
-      expect(blocks.jobfeed_crawl, named).toContain(named);
-    }
-
-    // An agent granted only on another app is named by neither line — and the same slug
-    // IS named on that other app's own tool, beside the built-in role it holds.
-    expect(text).not.toContain("all-agent");
-    const plainText = textOf(await appPage(paths.appDetail(PLAIN)));
-    const plainBlock = blocksOf(plainText, [PLAIN_TOOLS[0].name])[PLAIN_TOOLS[0].name];
-    expect(plainBlock).toContain("all-agent");
-    expect(plainBlock).toContain("all");
-
-    expect(blocks.secret_push).toContain(NO_AGENT_YET);
-    expect(blocks.secret_push).not.toContain("· via");
-    for (const agent of ["reader-agent", "crawl-agent", "mixed-agent"]) {
-      expect(blocks.secret_push, agent).not.toContain(agent);
-    }
-  });
-
-  it(`§13/§2 · the approval posture is "No approval required" where every reaching agent reaches in allow mode and "Approval required for <agent>" where one reaches only in approval mode — an agent holding an allow role and an approval role that both match the same tool is named by neither line's approval half (allow wins)`, async () => {
-    const blocks = blocksOf(textOf(await appPage(paths.appDetail(CATALOG))), CATALOG_TOOL_NAMES);
-
-    expect(blocks.paper_fetch).toContain(NO_APPROVAL);
-    expect(blocks.paper_fetch).not.toContain(APPROVAL_REQUIRED);
-
-    expect(blocks.jobfeed_crawl).toContain(APPROVAL_REQUIRED);
-    expect(blocks.jobfeed_crawl).not.toContain(NO_APPROVAL);
-    const sentence = approvalSentence(blocks.jobfeed_crawl);
-    expect(sentence).toContain("crawl-agent");
-    // mixed-agent holds `crawler:approval` AND `both:allow`, both matching this tool, so
-    // the door answers allow and this half must not name it — while the reachability line
-    // beside it still does, which is what keeps the absence non-vacuous.
-    expect(sentence).not.toContain("mixed-agent");
-    expect(blocks.jobfeed_crawl).toContain("mixed-agent");
-  });
-
-  it(`§13/§7 · the redaction line reads "No redacted fields" where nothing matches · it lists the writeOnly argument paths beside the redact and redact_results entries that match where something does, and a tool whose schema carries indirection the hub will not resolve reads "schema-unsound — approval-gated calls refuse, bodies are not recorded" (the twin)`, async () => {
-    // Read through the door's own functions, never transcribed: §7's matching is what
-    // decides that `secret_.*` reaches `secret_push`, and the fixture cannot quietly
-    // become sound behind the indirection assertion.
-    const registry = new Registry(env.DB);
-    const app = await registry.getApp(detail.ns.owner.userId, CATALOG);
-    if (app === null) throw new Error("the app-detail fixture's catalog app vanished");
-    const marked = writeOnlyPaths(SECRET_SCHEMA);
-    const configured = await registry.redactPathsFor(app, "secret_push", "args");
-    const results = await registry.redactPathsFor(app, "secret_push", "results");
-    expect(marked.length, "the writeOnly walk found nothing").toBeGreaterThan(0);
-    expect(configured.length, "the redact map matched nothing").toBeGreaterThan(0);
-    expect(results.length, "the redact_results map matched nothing").toBeGreaterThan(0);
-    expect(validateSchemaIndirection(BAD_SCHEMA).length, "the unsound schema is sound").toBeGreaterThan(0);
-
-    const blocks = blocksOf(textOf(await appPage(paths.appDetail(CATALOG))), CATALOG_TOOL_NAMES);
-    for (const path of [...marked, ...configured, ...results]) {
-      expect(blocks.secret_push, path).toContain(path);
-    }
-    expect(blocks.bad_schema).toContain(SCHEMA_UNSOUND);
-
-    expect(blocks.paper_fetch).toContain(NO_REDACTED);
-    for (const path of [...marked, ...configured, ...results]) {
-      expect(blocks.paper_fetch, path).not.toContain(path);
-    }
-  });
-
-  it(`§13 · the app page's root carries data-level chosen from the URL alone — 1 on /apps/<slug>, 2 on each of the seven other panes — and the level header above the content names the level above and the current thing: at 1 the back link "‹ Apps" → /apps titled with the app's name, at 2 "‹ <name>" → /apps/<slug> titled with the pane's own rail label (Prompts … Danger zone) · the wide title row "Apps › <name>" is in the document at both levels, the "Apps / <slug>" crumb line above it is gone, and no pane renders a pill row — no nav.pill-row and no "App panes, compact" navigation on any of the eight — while /settings still renders its (the twin; 2026-09-16, replacing "gets the pill row too")`, async () => {
-    const name = "Catalog app";
-    const landingHref = paths.appDetail(CATALOG);
-    const rail = railEntries(await appPage(landingHref), APP_RAIL_NAV_LABEL);
-    let walked = 0;
-    for (const href of appPaneHrefs(CATALOG)) {
-      const html = await appPage(href);
-      const landing = href === landingHref;
-      // The level is the page root's — one attribute on one element.
-      expect([...html.matchAll(/\sdata-level="([^"]*)"/g)].map((match) => match[1]), href).toEqual([landing ? "1" : "2"]);
-
-      const header = levelHeader(html);
-      expect(header.back, `${href}: the back link`).toBe(landing ? "‹ Apps" : `‹ ${name}`);
-      expect(header.href, `${href}: the back link`).toBe(landing ? paths.apps : landingHref);
-      const label = rail.find((entry) => entry.href === href)?.label ?? "";
-      expect(label, href).not.toBe("");
-      expect(header.title, `${href}: the level header's title`).toContain(landing ? name : label);
-
-      // The wide title row is in the document at both levels; the crumb line is gone.
-      const text = textOf(html);
-      expect(text, href).toContain(`Apps › ${name}`);
-      expect(text, href).not.toContain(`Apps / ${CATALOG}`);
-
-      // No pill row, by class and by landmark name alike.
-      expect(html, href).not.toContain("pill-row");
-      expect(railEntries(html, APP_PILL_NAV_LABEL), href).toEqual([]);
-      walked += 1;
-    }
-    expect(walked).toBe(8);
-
-    // The twin: /settings still renders its pill row under the same session.
-    expect(navBlock(await page(paths.settings, detail.session.cookie), PILL_NAV_LABEL)).not.toBeNull();
-  });
-
-  it(`§13 · a tunneled app's Tools pane is the DO's cached catalog: the tools it advertised on its last connect are listed under a numeric Tools marker while its socket is open, and are still listed, unchanged and still counted, after the socket closes and the header reads offline`, async () => {
-    const slug = uniqueSlug("cached");
-    const served = [
-      { name: uniqueSlug("keep").replace(/-/g, "_"), description: "One.", inputSchema: { type: "object" } },
-      { name: uniqueSlug("hold").replace(/-/g, "_"), description: "Two.", inputSchema: { type: "object" } },
-    ];
-    const close = await dialTunnel(slug, { capabilities: ["tools"], tools: served });
-    let closed = false;
-    try {
-      const online = await appPage(paths.appDetail(slug));
-      for (const tool of served) expect(textOf(online)).toContain(tool.name);
-      expect(markerOn(online, paths.appDetail(slug))).toBe(String(served.length));
-      expect(textOf(online)).toMatch(/\bonline\b/);
-
-      await close();
-      closed = true;
-      // An offline tunneled app can answer no live call, so a pane that dialled instead
-      // of reading the DO's cache renders the empty state here.
-      const offline = await appPage(paths.appDetail(slug));
-      for (const tool of served) expect(textOf(offline)).toContain(tool.name);
-      expect(markerOn(offline, paths.appDetail(slug))).toBe(String(served.length));
-      expect(textOf(offline)).toMatch(/\boffline\b/);
-    } finally {
-      if (!closed) await close();
-    }
-  });
-
-  it(`§20.5/§13 · a tunneled app that declared no tools dims Tools to — and its LANDING pane renders the tunneled empty state with tools substituted, verbatim · the prompts the same app did declare carry a count and list a row (the twin)`, async () => {
-    const slug = uniqueSlug("quiet");
-    const served = [{ name: uniqueSlug("only").replace(/-/g, "_"), description: "The one prompt." }];
-    const close = await dialTunnel(slug, { capabilities: ["prompts"], prompts: served });
-    try {
-      const html = await appPage(paths.appDetail(slug));
-      const landing = railEntries(html, APP_RAIL_NAV_LABEL).find(
-        (entry) => entry.href === paths.appDetail(slug),
-      );
-      expect(landing?.marker).toBe(DIMMED_MARKER);
-      // A dimmed entry stays a link.
-      expect(landing?.href).toBe(paths.appDetail(slug));
-      const text = textOf(html);
-      for (const sentence of tunneledUndeclared("tools")) expect(text).toContain(pinned(sentence));
-      expect(mentions(text, `${slug}_`)).toBe(0);
-
-      // The twin, same app and same render: the family it DID declare is counted and listed.
-      expect(markerOn(html, paths.appPane(slug, "prompts"))).toBe(String(served.length));
-      expect(textOf(await appPage(paths.appPane(slug, "prompts")))).toContain(served[0].name);
-    } finally {
-      await close();
-    }
-  });
-
-  it(`§20.6 · the Tools pane is the scoped endpoint's own listing and not a second read: tools/list posted to /<user>/mcp/<slug> with the owner's own bearer answers exactly the names the pane rendered and exactly the number its rail marker shows — for a tunneled app and for a proxied one`, async () => {
-    const tunneled = uniqueSlug("paired");
-    const served = [
-      { name: uniqueSlug("alpha").replace(/-/g, "_"), description: "One.", inputSchema: { type: "object" } },
-      { name: uniqueSlug("beta").replace(/-/g, "_"), description: "Two.", inputSchema: { type: "object" } },
-    ];
-    const close = await dialTunnel(tunneled, { capabilities: ["tools"], tools: served });
-    try {
-      const seen: string[][] = [];
-      for (const [slug, names] of [
-        [CATALOG, CATALOG_TOOL_NAMES],
-        [tunneled, served.map((tool) => tool.name)],
-      ] as const) {
-        const html = await appPage(paths.appDetail(slug));
-        const text = textOf(html);
-        const rendered = names.filter((name) => text.includes(name));
-        const marker = markerOn(html, paths.appDetail(slug));
-        const answered = await scopedList(slug, "tools/list");
-        const wire = new Set((answered.tools ?? []).map((tool) => tool.name));
-        expect([...wire].sort(), slug).toEqual([...rendered].sort());
-        expect(wire.size, slug).toBe(Number(marker));
-        expect(wire.size, slug).toBeGreaterThan(0);
-        seen.push([...wire].sort());
-      }
-      // Non-vacuity: one constant could not satisfy both apps.
-      expect(seen[0]).not.toEqual(seen[1]);
-    } finally {
-      await close();
-    }
-  });
-
-  it(`§13 · a proxied app whose upstream cannot be reached at all renders the unread state rather than an empty one: its App-group markers are blank — never — and never 0 — and its Tools pane lists no tool and says nothing about the app advertising none · the reachable proxied app beside it lists rows under numeric markers (the twin)`, async () => {
-    // The precondition through the door itself, so the fixture cannot quietly become
-    // reachable: a scoped listing for DOWN answers an error rather than a list.
-    const answered = await scopedList(DOWN, "tools/list");
-    expect(answered.tools, "the unreachable upstream answered a list").toBeUndefined();
-
-    const html = await appPage(paths.appDetail(DOWN));
-    for (const href of [paths.appDetail(DOWN), paths.appPane(DOWN, "prompts"), paths.appPane(DOWN, "resources")]) {
-      expect(markerOn(html, href), href).toBe("");
-      expect(markerOn(html, href), href).not.toBe(DIMMED_MARKER);
-      expect(markerOn(html, href), href).not.toBe("0");
-    }
-    // No tool row, read structurally: every listed row draws its aggregated `<slug>_`
-    // name, so the prefix's absence IS the absence of rows.
-    const text = textOf(html);
-    expect(mentions(text, `${DOWN}_`)).toBe(0);
-    expect(text).not.toContain(pinned(proxiedOmits("tools")));
-
-    const catalogHtml = await appPage(paths.appDetail(CATALOG));
-    expect(markerOn(catalogHtml, paths.appDetail(CATALOG))).toBe(String(CATALOG_TOOLS.length));
-    expect(markerOn(catalogHtml, paths.appPane(CATALOG, "prompts"))).toBe(String(CATALOG_PROMPTS.length));
-    expect(markerOn(catalogHtml, paths.appPane(CATALOG, "resources"))).toBe(
-      String(CATALOG_RESOURCES.length + CATALOG_TEMPLATES.length),
-    );
-    expect(textOf(catalogHtml)).toContain("paper_fetch");
-    expect(textOf(catalogHtml)).toContain(`${CATALOG}_paper_fetch`);
-  });
-
-  it(`§13 · a tool's description is the Markdown an app wrote it in (2026-09-16): the expanded row renders **bold** as <strong>, a fence as <pre><code> and a list as <ul>, and an http link carries rel="noopener noreferrer" target="_blank" — while the app's own markup never becomes markup: a javascript: link renders as its own text with no anchor, and a literal <script> arrives escaped · the summary line above it is the same first paragraph inline, with every block wrapper dropped so the row stays one line (the twin)`, async () => {
-    const html = await appPage(paths.appDetail(CATALOG));
-
-    expect(html).toContain("<strong>weekly</strong>");
-    expect(html).toContain("<code>notes://inbox</code>");
-    expect(html).toContain("<pre><code>");
-    expect(html).toContain("<li>newest first</li>");
-    expect(html).toContain('<a href="https://example.com/docs" rel="noopener noreferrer" target="_blank">handbook</a>');
-
-    // The refused scheme survives as WORDS — no href, no anchor — and the app's tag as the
-    // four characters it is. Neither is ever an element.
-    expect(html).not.toContain("javascript:");
-    expect(textOf(html)).toContain("run it");
-    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
-    expect(html).not.toContain("<script>alert(1)</script>");
-
-    // No `class`, `id` or `style` rides in on app prose: the renderer's own fence would
-    // otherwise carry `class="language-sh"` into the hub's one stylesheet.
-    expect(html).not.toContain("language-sh");
-
-    // The twin: the summary line is the first paragraph INLINE — its marks render, and the
-    // blocks below it do not, which is what keeps a `<summary>` one line high.
-    const summary = /<span class="tool-summary md">([\s\S]*?)<\/span>/.exec(html.slice(html.indexOf("md_notes")))?.[1] ?? "";
-    expect(summary).toBe("Draft the <strong>weekly</strong> note from <code>notes://inbox</code>.");
-  });
+  it.todo(`§2 · the three wide panes render the listing alone — Overview, Danger zone, and Token for a PROXIED app carry listing--wide, no details pane and no level 3, so a sel= on them is still data-level 2 · a tunneled app's Token pane and the four other panes render listing + details and reach level 3 (the twin)`);
 });
 
-describe(`§13/§20 · /apps/<slug> — Prompts, Resources, Roles and Overview`, () => {
-  // Owner questions 32(b) and 32(c), decided 2026-09-03 (§13 amended): a never-connected
-  // tunneled app has no catalog to count, and the scoped-endpoint sentence is copyable.
-  it(`§20.5/§13 · a tunneled app that has never connected dims Tools, Prompts and Resources alike — the hub has no catalog to count — and each pane reads "This app has never connected, so the hub has no catalog to list yet." verbatim · the tunneled app beside it that connected and declared prompts counts and lists them (the twin)`, async () => {
-    const NEVER = "This app has never connected, so the hub has no catalog to list yet.";
-    for (const pane of ["tools", "prompts", "resources"] as const) {
-      const html = await appPage(pane === "tools" ? paths.appDetail(FRESHAPP) : paths.appPane(FRESHAPP, pane));
-      for (const href of [paths.appDetail(FRESHAPP), paths.appPane(FRESHAPP, "prompts"), paths.appPane(FRESHAPP, "resources")]) {
-        expect(markerOn(html, href), `${pane} pane, marker ${href}`).toBe(DIMMED_MARKER);
-      }
-      expect(textOf(html), pane).toContain(NEVER);
-      expect(textOf(html), pane).not.toContain("declared no");
-    }
-    // The twin: an app that connected and declared prompts counts and lists them.
-    const slug = uniqueSlug("connected");
-    const served = [{ name: uniqueSlug("brief").replace(/-/g, "_"), description: "One." }];
-    const close = await dialTunnel(slug, { capabilities: ["tools", "prompts"], prompts: served });
-    try {
-      const connected = await appPage(paths.appPane(slug, "prompts"));
-      expect(markerOn(connected, paths.appPane(slug, "prompts"))).toBe(String(served.length));
-      expect(textOf(connected)).toContain(served[0].name);
-      expect(textOf(connected)).not.toContain(NEVER);
-    } finally {
-      await close();
-    }
-  });
-  it(`§13/§20.2 · the Resources pane prints the scoped endpoint with the hub's own origin and the owner's username in place of <hub> and <user> — copyable, the placeholder nowhere on the page · the aggregated-endpoint sentence beside it is unchanged (the twin)`, async () => {
-    const html = await appPage(paths.appPane(CATALOG, "resources"));
-    const text = textOf(html);
-    expect(text).toContain(`${ORIGIN}${paths.mcpScoped(detail.ns.owner.username, CATALOG)}`);
-    expect(html).not.toContain("&lt;hub&gt;");
-    expect(html).not.toContain("<hub>");
-    // The twin: the second sentence of the rule is untouched.
-    expect(text).toContain("The aggregated endpoint answers -32601");
-  });
-
+describe(`§3 · /apps/<slug> — the Catalog pane`, () => {
   beforeAll(withAppDetailWorld);
 
-  it(`§13/§20.3 · the Prompts pane gives each prompt its name, description and declared arguments, the <slug>_<prompt> name, reachability over the role's PROMPT patterns alone — a tools-only role reaches no prompt — the fixed "Never approval-gated", and the redact entries matching the prompt's name`, async () => {
-    // §7's own function decides which `redact` entry reaches this prompt name — the map
-    // is family-blind (§20.3), so the page and this row read the same matcher.
-    const registry = new Registry(env.DB);
-    const app = await registry.getApp(detail.ns.owner.userId, CATALOG);
-    if (app === null) throw new Error("the app-detail fixture's catalog app vanished");
-    const redacted = await registry.redactPathsFor(app, "digest_daily", "args");
-    expect(redacted.length, "the redact map matched no prompt").toBeGreaterThan(0);
+  it.todo(`§3 · the Catalog listing header is the title Catalog over its kind's subtitle — tunneled "advertised by the app on its last connect · re-listed on every reconnect", proxied "fetched live from the upstream" — the summary line "T tools · P prompts · R resources · reachable by N agent(s)", and the filter as a GET form named q with the placeholder "filter tools, prompts, resources…" (the twin: the two kinds side by side)`);
 
-    const text = textOf(await appPage(paths.appPane(CATALOG, "prompts")));
-    const blocks = blocksOf(text, CATALOG_PROMPT_NAMES);
-    for (const prompt of CATALOG_PROMPTS) {
-      expect(blocks[prompt.name], prompt.name).toContain(prompt.description);
-      expect(blocks[prompt.name], prompt.name).toContain(NEVER_GATED);
-    }
+  it.todo(`§3 · the three groups "Tools · N", "Prompts · N" and "Resources · N" list the whole catalog in ONE pane — resources and templates in the Resources group, a template listed by its raw uriTemplate — and every row IS its own ?sel= link: sel=tool:<name>, sel=prompt:<name>, sel=resource:<uri>, the URI encoded and never the name (the twin: a resource whose NAME matches another row's URI is still selected by its own URI)`);
 
-    // The declared arguments, and the hub block §13 attaches to each row.
-    expect(blocks.digest_daily).toContain("day");
-    expect(blocks.digest_daily).toContain("Which day.");
-    expect(blocks.digest_daily).toContain("required");
-    expect(blocks.digest_daily).toContain(`${CATALOG}_digest_daily`);
-    expect(blocks.digest_daily).toContain("Reachable by reader-agent · via reader");
-    for (const path of redacted) expect(blocks.digest_daily, path).toContain(path);
+  it.todo(`§3 · a group of an unadvertised family reads "none advertised" beside its heading over ONE note row — tunneled "This app declared no <family> capability on its last connect." / proxied "The capabilities configured for this app omit <family>." with the family substituted — while the families the same app does advertise carry counts and list rows (the twin)`);
 
-    // The prompt no granted PROMPT pattern reaches — `reader`'s `digest_.*` misses it.
-    expect(blocks.weekly_note).toContain(NO_AGENT_YET);
+  it.todo(`§3 · a tunneled app that has never connected renders ONE note — "This app has never connected, so the hub has no catalog to list yet." — in place of all three groups, and its Catalog rail marker is the dimmed — · the tunneled app beside it that connected lists its groups under a numeric marker (the twin)`);
 
-    // A tools-only role reaches no prompt: both agents holding one are named on the
-    // Tools pane and on neither prompt here.
-    const toolsText = textOf(await appPage(paths.appDetail(CATALOG)));
-    for (const agent of ["crawl-agent", "mixed-agent"]) {
-      expect(text, agent).not.toContain(agent);
-      expect(toolsText, agent).toContain(agent);
-    }
+  it.todo(`§3 · a proxied app whose live listing failed renders the unread state, never an empty one: "Couldn't reach <endpoint> — the live listing failed, so nothing is shown; calls return errors until it answers again." naming its own configured endpoint, or "Token refresh failed — calls return errors until you reconnect." beside Reconnect where the refresh is what broke — with a BLANK Catalog marker, never — and never 0 · the reachable proxied app beside it lists rows (the twin)`);
 
-    // §13's "the same shape without a schema table": a prompt has no `inputSchema`, so
-    // neither of the Tools table's own strings appears on this pane. Both carry their
-    // allow-twin on the render above — a renamed column header would otherwise leave the
-    // negative green while the property it stands for went unchecked (§9 rule 2).
-    expect(toolsText).toMatch(/\bType\b/);
-    expect(text).not.toContain("optional · defaults to");
-    expect(text).not.toMatch(/\bType\b/);
-  });
+  it.todo(`§3 · a Catalog row is the name in mono over its description as one inline line, with one badge per agent that reaches it — "<agent>" where the grant allows and "<agent> · ask" as badge--warning where it asks — or the dim "no agent" where none does; an agent holding no grant on this app is named on no row, and an agent holding an allow role and an ask role over the same item is badged once, allow (the twin)`);
 
-  it(`§20.2/§13 · the Resources pane's rows are URI / Name / Type with templates listed by their raw uriTemplate, reachability is matched against the URI and against that raw template and NEVER against the name, no redaction line is rendered, and the pane carries §20's two rules`, async () => {
-    const resourcesUrl = paths.appPane(CATALOG, "resources");
-    const resourcesText = textOf(await appPage(resourcesUrl));
-    const templatesText = textOf(await appPage(`${resourcesUrl}?tab=templates`));
+  it.todo(`§3 · q filters every group by name or description substring and a group nothing matches reads "no match" under its own heading while the groups that do match still list rows · the unfiltered pane lists every row (the twin)`);
 
-    const blocks = blocksOf(resourcesText, CATALOG_RESOURCE_URIS);
-    for (const row of CATALOG_RESOURCES) {
-      expect(blocks[row.uri], row.uri).toContain(row.name);
-      expect(blocks[row.uri], row.uri).toContain(row.mimeType);
-    }
-    expect(blocks["news://feed/latest"]).toContain("Reachable by reader-agent · via reader");
-    // The decoy: its NAME matches `reader`'s `news://feed/*` and its URI does not, and the
-    // pane matched the URI — §20.2's rule, asserted as the bug it prevents. The trap is
-    // armed through the DOOR's own matcher first: a fixture pattern that drifted to match
-    // only the URI would disarm it silently and leave the negative passing for free.
-    expect(
-      buildToolFilter([{ role: "reader", mode: "allow" }], CATALOG_ROLES).check(
-        CATALOG_RESOURCES[1].name,
-        "resources",
-      ),
-      "the decoy's NAME no longer matches the granted pattern",
-    ).not.toBe("deny");
-    expect(blocks["news://archive/2021"]).toContain(NO_AGENT_YET);
-    expect(blocks["news://archive/2021"]).not.toContain("reader-agent");
+  it.todo(`§3 · the Catalog details with nothing selected is the title Catalog over "Select a tool, prompt or resource for its details." and the card "Where this comes from": Schemas → tunneled "the app's last tools/list — the hub stores them, it does not author them" / proxied "the upstream's live listing, under a 10 s deadline", Reach → "computed with the gate's own matcher over each agent's grant"`);
 
-    // The template listed by its RAW uriTemplate, braces intact, reached because `*`
-    // aliases `.*` over that same string (§20.3 — the hub never expands a template).
-    const template = blocksOf(templatesText, CATALOG_TEMPLATE_URIS)[CATALOG_TEMPLATE_URIS[0]];
-    expect(template).toContain(CATALOG_TEMPLATES[0].name);
-    expect(template).toContain("Reachable by reader-agent · via reader");
+  it.todo(`§3 · a selected tool draws its name, a "tool" family badge and the full description as Markdown over the Arguments card: one row per schema LEAF — dotted paths, objects recursed into, an array printed as <type>[] and not recursed, required read off each level's own list — with a "writeOnly · masked" warning badge where the leaf declares it and "none" where the schema declares nothing, and a "Result · outputSchema" card of the same rows only where the tool declares one (the twin: the tool next door that declares none draws no Result card)`);
 
-    // No redaction line on either tab — URIs are not bodies (§13). The Tools pane next
-    // door renders both halves on the same app, which is what makes the absence a claim.
-    const registry = new Registry(env.DB);
-    const app = await registry.getApp(detail.ns.owner.userId, CATALOG);
-    if (app === null) throw new Error("the app-detail fixture's catalog app vanished");
-    const toolPaths = [
-      ...(await registry.redactPathsFor(app, "secret_push", "args")),
-      ...(await registry.redactPathsFor(app, "secret_push", "results")),
-    ];
-    const promptPaths = await registry.redactPathsFor(app, "digest_daily", "args");
-    expect([...toolPaths, ...promptPaths].length, "the redact maps matched nothing").toBeGreaterThan(0);
-    for (const text of [resourcesText, templatesText]) {
-      expect(text).not.toContain(NO_REDACTED);
-      for (const path of [...toolPaths, ...promptPaths]) expect(text, path).not.toContain(path);
-    }
-    // Each absent path is named on the pane whose family the `redact` entry matched, so
-    // no half of the absence can be passing because nothing renders it anywhere.
-    const toolsText = textOf(await appPage(paths.appDetail(CATALOG)));
-    expect(toolsText).toContain(NO_REDACTED);
-    for (const path of toolPaths) expect(toolsText, path).toContain(path);
-    const promptsText = textOf(await appPage(paths.appPane(CATALOG, "prompts")));
-    for (const path of promptPaths) expect(promptsText, path).toContain(path);
+  it.todo(`§3/§20.3 · a selected PROMPT's Arguments card is one row per DECLARED argument and never a schema leaf — the argument's name as the path, its description or — in the type column, required / optional read off the declaration and no writeOnly badge anywhere — and it draws no Result card and no Resource card · a selected resource draws the Resource card instead — URI, Type, "Served on" → "the scoped endpoint only — <origin>/<user>/mcp/<slug>" printed with the hub's own origin and the owner's username, copyable and with the placeholder nowhere on the page, and "Matched" → "by URI, never by name" — and no Arguments card (the twin)`);
 
-    // §20's two rules, verbatim, on both tabs — with the endpoint the first one names.
-    for (const text of [resourcesText, templatesText]) {
-      expect(text).toContain(SCOPED_ONLY_HEAD);
-      expect(text).toContain(pinned(SCOPED_ONLY_TAIL));
-      expect(text).toContain(pinned(URI_NOT_NAME));
-      expect(text).toContain(paths.mcpScoped(detail.ns.owner.username, CATALOG));
-    }
-  });
+  it.todo(`§3 · the "What only the hub knows" card: "Called as <slug>_<name> on the aggregated endpoint" on a tool and a prompt and on NO resource; "Reachable by" as one line per agent "<agent> · via <entries>" or "no agent yet"; "Approval" reading "asked for <agents>" / "none required" on a tool and "never asked for prompts" on a prompt and absent on a resource; "Redaction" reading "arguments <paths> · results <paths>" over the config entries plus the writeOnly leaves, or "no redacted fields", and absent on a resource (the twin)`);
 
-  it(`§13/§20.1 · completion/complete gets no pane: the rail names no completions entry and /apps/<slug>/completions is a 404 · the seven pane URLs the table does name each answer 200 (the twin)`, async () => {
-    const rail = railEntries(await appPage(paths.appDetail(CATALOG)), APP_RAIL_NAV_LABEL);
-    expect(rail.filter((entry) => entry.href.endsWith("/completions"))).toEqual([]);
-    expect(rail.filter((entry) => entry.label.includes("Completion"))).toEqual([]);
+  it.todo(`§3 · the Catalog details foot reads "The same block the audit row and the agent page show for this <family>. Editing reach happens on Agents, masking on Recording." with the family substituted and both words linking their own panes — /apps/<slug>/access and /apps/<slug>/recording`);
 
-    // A family that gets no pane is indistinguishable from a segment naming nothing.
-    const missing = await get(`${paths.appDetail(CATALOG)}/completions`, detail.session.cookie);
-    const nonsense = await get(`${paths.appDetail(CATALOG)}/${uniqueSlug("nope")}`, detail.session.cookie);
-    expect(missing.status, "GET /apps/<slug>/completions").toBe(404);
-    expect(nonsense.status).toBe(404);
-    expect(await missing.text()).toBe(await nonsense.text());
+  it.todo(`§3/§7 · the Catalog is the owner's own unfiltered read AND the scoped endpoint's own listing: a tool no granted pattern reaches is listed beside the ones that are (§7 step 2 — owner → all), and tools/list, prompts/list, resources/list and resources/templates/list posted to /<user>/mcp/<slug> under the owner's own bearer answer exactly the names the pane rendered and exactly the numbers its rail marker sums — for a tunneled app and for a proxied one`);
 
-    // The twin, in the same fixture: the seven the table DOES name each answer 200.
-    for (const href of appPaneHrefs(CATALOG).slice(1)) {
-      expect((await get(href, detail.session.cookie)).status, href).toBe(200);
-    }
-  });
+  it.todo(`§3 · a tunneled app's Catalog is the DO's cached catalog: the tools it advertised on its last connect are listed and counted while its socket is open, and are still listed, unchanged and still counted, after the socket closes and the header reads offline`);
 
-  it(`§13/§20.3 · the Roles pane renders the declared roles in §20.3's canonical read shape under its kind's own sentence — tunneled adds the trust-boundary line, proxied says roles are config — and an app that declared none renders "No roles declared" beside the built-in-all fallback with none on its rail entry (the twin)`, async () => {
-    const tunnelHtml = await appPage(paths.appPane(TUNNELAPP, "roles"));
-    const tunnelText = textOf(tunnelHtml);
-    expect(tunnelText).toContain(ROLES_TUNNELED);
-    expect(tunnelText).toContain(ROLES_TRUST);
-    expect(tunnelText).not.toContain(ROLES_PROXIED);
-    expect(tunnelText).toContain("reader");
-    expect(tunnelText).toContain("get_.*");
-    expect(markerOn(tunnelHtml, paths.appPane(TUNNELAPP, "roles"))).toBe("1");
+  it.todo(`§3 · a description is the Markdown an app wrote it in (2026-09-16): the row renders its FIRST paragraph inline with every block wrapper dropped so the row stays one line, the details render it whole — **bold** as <strong>, a fence as <pre><code>, a list as <ul>, an http link carrying rel="noopener noreferrer" target="_blank" — while the app's own markup never becomes markup: a javascript: link renders as its own text with no anchor and a literal <script> arrives escaped (the twin)`);
 
-    const catalogHtml = await appPage(paths.appPane(CATALOG, "roles"));
-    const catalogText = textOf(catalogHtml);
-    expect(catalogText).toContain(ROLES_PROXIED);
-    expect(catalogText).not.toContain(ROLES_TUNNELED);
-    expect(catalogText).not.toContain(ROLES_TRUST);
-    expect(markerOn(catalogHtml, paths.appPane(CATALOG, "roles"))).toBe(
-      String(Object.keys(CATALOG_ROLES).length),
-    );
-
-    // §20.3's canonical read shape has TWO directions, and both are on this one page:
-    // `app_get` hands back a bare list for the tools-only role and the per-family object
-    // for the other, so a pane that always spelled one of them fails here.
-    const roles = (await appRowOf(CATALOG)).roles;
-    expect(Array.isArray(roles.crawler), "crawler is not canonicalized to a bare list").toBe(true);
-    expect(Array.isArray(roles.reader), "reader is not canonicalized to a family object").toBe(false);
-    const blocks = blocksOf(catalogText, Object.keys(CATALOG_ROLES));
-    expect(blocks.crawler).toContain("jobfeed_.*");
-    for (const family of ["tools", "prompts", "resources"]) {
-      expect(blocks.reader, family).toContain(family);
-      expect(blocks.crawler, family).not.toContain(family);
-    }
-
-    // The twin: an app that declared none says so, and its marker is the literal `none`
-    // §13's table spells — not "0", and not the dimmed em dash a family earns.
-    const freshHtml = await appPage(paths.appPane(FRESHAPP, "roles"));
-    const freshText = textOf(freshHtml);
-    expect(freshText).toContain(ROLES_NONE);
-    expect(freshText).toContain(pinned(ROLES_FALLBACK));
-    expect(markerOn(freshHtml, paths.appPane(FRESHAPP, "roles"))).toBe("none");
-  });
-
-  it(`§13/§8 · the Overview pane is app_get's row as a definition list — slug, created, kind, and a proxied app's endpoint, auth mode and forward identity — with body logging reading "On — tunneled default" / "Off — proxied default" at each kind's default, neither string where the owner set it explicitly, and none where no redaction is configured`, async () => {
-    // Every value is compared against §8's OWN row rather than against a transcription,
-    // so the op's shape and the pane cannot drift apart unnoticed.
-    const catalogRow = await appRowOf(CATALOG);
-    const catalogText = textOf(await appPage(paths.appPane(CATALOG, "overview")));
-    expect(catalogText).toContain(CATALOG);
-    expect(catalogText).toMatch(/\bproxy\b/);
-    expect(catalogText).toContain(String(catalogRow.endpoint));
-    expect(catalogText).toMatch(/\bheaders\b/);
-    // The three proxied-only LABELS, each the allow-twin of a negative below: the header's
-    // upstream card draws no rows on this pane, so nothing else claims them (§9 rule 2).
-    expect(catalogText).toContain("Endpoint");
-    expect(catalogText).toMatch(/\bAuth\b/);
-    expect(catalogText).toContain("Forward identity");
-    expect(catalogText).toContain(LOG_BODIES_PROXY);
-    // Created renders a value beside its label; its FORMAT is incidental (§7).
-    const head = blocksOf(catalogText, ["Slug", "Created", "Kind"]);
-    expect(head.Created.replace("Created", "").trim()).not.toBe("");
-
-    const tunnelText = textOf(await appPage(paths.appPane(TUNNELAPP, "overview")));
-    expect(tunnelText).toMatch(/\btunnel\b/);
-    expect(tunnelText).toContain(LOG_BODIES_TUNNEL);
-    // The three proxied-only rows are absent on a tunneled app — and so is the header's
-    // upstream card, which is why "Forward identity" is readable as this pane's own.
-    expect(tunnelText).not.toContain("Forward identity");
-    expect(tunnelText).not.toContain("Endpoint");
-    // `Auth` on its own boundary: a tunneled Overview leaking the row with an empty value
-    // is exactly what §13's "for proxied apps" refuses.
-    expect(tunnelText).not.toMatch(/\bAuth\b/);
-
-    // The owner set it explicitly against its kind's default, so naming a default here
-    // would be false — and the label still renders, which is what keeps this non-vacuous.
-    const freshText = textOf(await appPage(paths.appPane(FRESHAPP, "overview")));
-    expect(freshText).toContain("Body logging");
-    expect(freshText).not.toContain(LOG_BODIES_TUNNEL);
-    expect(freshText).not.toContain(LOG_BODIES_PROXY);
-
-    // Redaction: `none` where nothing is configured, the config paths where something is.
-    const tunnelRow = await appRowOf(TUNNELAPP);
-    expect(Object.keys(tunnelRow.redact), "the tunneled fixture configures redaction").toEqual([]);
-    const tunnelBlocks = blocksOf(tunnelText, ["Redacted arguments", "Redacted results"]);
-    expect(tunnelBlocks["Redacted arguments"]).toContain("none");
-    expect(tunnelBlocks["Redacted results"]).toContain("none");
-    const catalogBlocks = blocksOf(catalogText, ["Redacted arguments", "Redacted results"]);
-    expect(catalogBlocks["Redacted arguments"]).not.toContain("none");
-    for (const path of Object.values(catalogRow.redact).flat()) {
-      expect(catalogBlocks["Redacted arguments"], path).toContain(path);
-    }
-    for (const path of Object.values(catalogRow.redactResults).flat()) {
-      expect(catalogBlocks["Redacted results"], path).toContain(path);
-    }
-
-    // The definition list belongs to THIS pane: the one beside it draws none of it.
-    expect(textOf(await appPage(paths.appPane(CATALOG, "roles")))).not.toContain("Body logging");
-  });
-
-  it(`§13 · the five App-group panes edit nothing: Tools, Prompts, Resources, Roles and Overview render no mutating form of any kind · the same page's header and Danger zone do (the twin)`, async () => {
-    // §13's "The page edits nothing here." and Roles' "read-only", as the negative half of
-    // this page's §9 rule 4a partition. The three targets allowed are not the pane's: two
-    // are the header's own controls (§13 gives them to every pane of an `auth: oauth` app)
-    // and one is the shell's Sign out, which layout.tsx renders into every signed-in page.
-    const appGroup = (slug: string): string[] => [
-      paths.appDetail(slug),
-      ...(["prompts", "resources", "roles", "overview"] as const).map((pane) =>
-        paths.appPane(slug, pane),
-      ),
-    ];
-    const found = new Set<string>();
-    for (const slug of [CATALOG, BROKEN]) {
-      // The allowance is the PAGE'S OWN, per slug: merged across both apps it would let a
-      // pane of one app post at the other app's Connect target.
-      const allowed = [
-        paths.auth.signOut,
-        paths.appConnect(slug),
-        paths.appDisconnect(slug),
-        paths.appHeaderDisconnect(slug),
-      ];
-      for (const url of appGroup(slug)) {
-        const html = await appPage(url);
-        for (const action of formsOn(html)) {
-          expect(allowed, `${url} posts to ${action}`).toContain(action);
-          found.add(action);
-        }
-        // And none of them names an admin.ops key beyond the header's own.
-        for (const op of opsOn(html)) {
-          expect(["connect", "app_disconnect", "sign-out"], `${url} fronts ${op}`).toContain(op);
-        }
-      }
-    }
-    // BROKEN's header really drew its controls, so the walk above was not over five pages
-    // with nothing on them at all.
-    expect([...found]).toContain(paths.appConnect(BROKEN));
-
-    // THE TWIN: the Token pane and the Danger zone between them DO edit, so the negative
-    // above is not a claim about pages with no forms anywhere. The archive half stays on
-    // BROKEN — the app the walk covered — while the Token half MUST move to a tunneled app:
-    // a proxied app's Token pane draws prose and no control ("the hub dials the upstream;
-    // nothing dials in", §13/§2), so there is no token form on BROKEN to find.
-    const editing = new Set([
-      ...opsOn(await appPage(paths.appPane(TUNNELAPP, "token"))),
-      ...opsOn(await appPage(paths.appConfirm(BROKEN, "danger", "archive"))),
-    ]);
-    expect([...editing]).toContain("token_issue");
-    expect([...editing]).toContain("app_archive");
-  });
-
-  it(`§13 · the Resources pane draws the three column names §13 spells — URI / Name / Type — on both of its tabs, beside the rows they head`, async () => {
-    const resourcesUrl = paths.appPane(CATALOG, "resources");
-    for (const [url, listed] of [
-      [resourcesUrl, CATALOG_RESOURCE_URIS],
-      [`${resourcesUrl}?tab=templates`, CATALOG_TEMPLATE_URIS],
-    ] as const) {
-      const text = textOf(await appPage(url));
-      // The §20 rules block alone carries three capitalised, word-bounded URIs, so a pane
-      // with no header at all would satisfy `\bURI\b` against the unsubtracted text.
-      const stripped = [SCOPED_ONLY_HEAD, SCOPED_ONLY_TAIL, URI_NOT_NAME].reduce(
-        (rest, rule) => rest.replace(pinned(rule), ""),
-        text,
-      );
-      expect(stripped, url).toMatch(/\bURI\b/);
-      // Case-sensitive: the rules' own "never by name" cannot satisfy `\bName\b`, and
-      // `mimeType` carries no word boundary before its `Type`.
-      expect(text, url).toMatch(/\bName\b/);
-      expect(text, url).toMatch(/\bType\b/);
-      // The rows they head are on this same render, so no header is claimed over an
-      // empty tab.
-      for (const uri of listed) expect(text, uri).toContain(uri);
-    }
-  });
-
-  it(`§20.6/§20.2 · the aggregated name is tools and prompts only: neither Resources tab renders a <slug>_ name anywhere · the Prompts pane next door renders one and the Tools pane another (the twin)`, async () => {
-    const resourcesUrl = paths.appPane(CATALOG, "resources");
-    // Over TEXT, never raw html: an `id="<slug>_resources"` is markup the spec says
-    // nothing about (§7), and a raw check would go red on one.
-    for (const url of [resourcesUrl, `${resourcesUrl}?tab=templates`]) {
-      expect(textOf(await appPage(url)), url).not.toContain(`${CATALOG}_`);
-    }
-    // The twin, so the absence is about this pane rather than about the whole convention.
-    expect(textOf(await appPage(paths.appPane(CATALOG, "prompts")))).toContain(`${CATALOG}_digest_daily`);
-    expect(textOf(await appPage(paths.appDetail(CATALOG)))).toContain(`${CATALOG}_paper_fetch`);
-  });
-
-  it(`§20.6 · the Prompts and Resources panes are the scoped endpoint's own listings too — prompts/list, resources/list and resources/templates/list under the owner's own bearer answer exactly the names each pane rendered, exactly the count each tab shows, and the Resources rail marker is those two counts summed`, async () => {
-    const promptsUrl = paths.appPane(CATALOG, "prompts");
-    const promptsHtml = await appPage(promptsUrl);
-    const rendered = new Set(CATALOG_PROMPT_NAMES.filter((name) => textOf(promptsHtml).includes(name)));
-    const wirePrompts = new Set(((await scopedList(CATALOG, "prompts/list")).prompts ?? []).map((p) => p.name));
-    expect([...wirePrompts].sort()).toEqual([...rendered].sort());
-    expect(wirePrompts.size).toBe(Number(markerOn(promptsHtml, promptsUrl)));
-
-    const resourcesUrl = paths.appPane(CATALOG, "resources");
-    const templatesUrl = `${resourcesUrl}?tab=templates`;
-    const resourcesHtml = await appPage(resourcesUrl);
-    const templatesHtml = await appPage(templatesUrl);
-    const shownResources = new Set(CATALOG_RESOURCE_URIS.filter((uri) => textOf(resourcesHtml).includes(uri)));
-    const shownTemplates = new Set(CATALOG_TEMPLATE_URIS.filter((uri) => textOf(templatesHtml).includes(uri)));
-    const wireResources = new Set(
-      ((await scopedList(CATALOG, "resources/list")).resources ?? []).map((row) => row.uri ?? ""),
-    );
-    const wireTemplates = new Set(
-      ((await scopedList(CATALOG, "resources/templates/list")).resourceTemplates ?? []).map(
-        (row) => row.uriTemplate ?? "",
-      ),
-    );
-    expect([...wireResources].sort()).toEqual([...shownResources].sort());
-    expect([...wireTemplates].sort()).toEqual([...shownTemplates].sort());
-    expect(linkTexts(resourcesHtml, resourcesUrl)).toContain(`Resources ${wireResources.size}`);
-    expect(linkTexts(resourcesHtml, templatesUrl)).toEqual([`Templates ${wireTemplates.size}`]);
-    // The claim a per-tab equality cannot make: one rail marker over two listings.
-    expect(markerOn(resourcesHtml, resourcesUrl)).toBe(String(wireResources.size + wireTemplates.size));
-
-    // Non-vacuity: three non-empty answers, and the two resource sets disjoint, so one
-    // listing cannot be satisfying both tabs.
-    for (const answered of [wirePrompts, wireResources, wireTemplates]) {
-      expect(answered.size).toBeGreaterThan(0);
-    }
-    expect([...wireResources].filter((uri) => wireTemplates.has(uri))).toEqual([]);
-  });
+  it.todo(`§3 · the Catalog pane edits nothing: on either kind of app it renders no mutating form of any kind, no checkbox and no radio · the same page's header card, Roles, Recording and Agents panes do (the twin)`);
 });
 
+describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
+  beforeAll(withAppDetailWorld);
+
+  it.todo(`§4 · the Roles listing header is the title Roles over "named sets of what this app exposes" and the summary "D declared by the app · Y yours · plus the built-in all" — tunneled adding " · the app's declaration wins when it declares a name you defined", proxied " · a proxied app declares none, so every role is yours" — and the LISTING carries no filter at all (the twin: the two kinds side by side)`);
+
+  it.todo(`§4 · one row per effective role with the built-in all LAST, each the name in mono under a source badge — built-in / app / "app · replaced yours" titled "the app declares this name — its declaration replaced yours" / "yours" as badge--success — over "tools a, b · prompts c · matches N" ("every tool, prompt and resource, present and future" for all), with one badge per agent holding it ("<agent>" / "<agent> · ask") or the dim "held by no agent"; the row IS the ?sel=role:<name> link and the foot's left carries New role → ?new=1`);
+
+  it.todo(`§4/§20.3 · a name the owner defined AND the app declares appears ONCE, its content the app's declaration and its badge "app · replaced yours" — effectiveRoles, the app on top, never a union of the two maps — while the owner's other names keep the "yours" badge and the app's other names keep "app" (the twin: the same owner map before the app declared that name)`);
+
+  it.todo(`§4 · "matches N" is the count of catalog items the role's own patterns match, computed with the gate's own matcher: a literal role and a pattern role each carry their own N, a pattern reaching prompts and resources counts them too, and a role whose patterns match nothing today reads matches 0 rather than omitting the clause (the twin)`);
+
+  it.todo(`§4 · the Roles details with nothing selected is "Select a role to see what it can do, or add one of your own." over the card "Two sources, one rule": "The app's" → tunneled "declared at connect; read-only here — the app owns them" / proxied "none: a proxied app declares no roles"; "Yours" → "defined here by ticking items or adding patterns; usable in grants like any role"; "Collision" → "if the app later declares a name you defined, its declaration replaces yours — the row says so"`);
+
+  it.todo(`§4 · a selected app-declared role is read-only: the name, the "declared by the app" badge, its holders' badges and "Declared by <name> at connect. Read-only: the app owns it and may widen it on its next connect." — or, where it shadows one of the owner's, "<name> declares this name, so its declaration replaced the one you had defined. Read-only: the app owns it." — every item row drawn as a locked check titled "in this role" or an empty box titled "not in this role" and never a checkbox, no filter, no Add as pattern, no Delete role and no Save (the twin: the owner's own role beside it draws all of them)`);
+
+  it.todo(`§4 · the built-in all's details read "Every tool, prompt and resource, present and future. Never declarable, only grantable." with no groups, no Patterns section and no form of any kind`);
+
+  it.todo(`§4 · a selected role of the owner's own is editable: the explanation per kind — tunneled "Defined by you. If <name> later declares a role named <role>, the app's declaration replaces this one." / proxied "Defined by you. A proxied app declares no roles, so this is the only kind it has." — the filter (GET, q, placeholder "filter, or type a pattern…", carrying sel), the groups "Tools · K of N", "Prompts · K of N", "Resources · K of N" with K the count in the role and a family the app has none of omitted, and per row a checkbox <input type="checkbox" name="i.<family>/<name>" value="1"> checked at the literal, or a .cb.lock titled "matched by <patterns>" where a pattern already reaches it`);
+
+  it.todo(`§4 · "Patterns · N" is one row per non-literal pattern — the pattern, its family and "matches N today, and any added later" under the legend "anchored · * aliases .*" — each carrying a remove submit named drop with the value "<family>/<pattern>" while the role is editable and a locked check where it is not (the twin)`);
+
+  it.todo(`§4 · ?new=1 draws the new-role editor — an <input name="role"> with the placeholder "role name" and pattern [a-z0-9_-]+ in place of the name, an empty hidden was=, every checkbox unchecked, no Patterns rows and no Delete role — and the listing's New role link is what reaches it · a saved role's editor carries the hidden role, the hidden was=<name> and the Delete (the twin)`);
+
+  it.todo(`§4 · with q a NON-literal the editor offers the row "<q> · tools · would match N today, and any added later" with Add as pattern (name="add" value="<q>"), the family reading resources where q carries :// and tools otherwise · a literal q filters the rows and offers nothing (the twin)`);
+
+  it.todo(`§4/§8 · role_set composes ONE app_update: the stored owner map, minus was, plus role → per family the checked i. literals + the keep patterns − drop + add, empty families omitted — writing owner_roles on a TUNNELED app and roles on a PROXIED one and never both — then lands 303 on /apps/<slug>/roles?sel=role:<name> with the notice · a pattern the form still lists survives a save that did not touch it, through its hidden keep=<family>/<pattern> (the twin: the same save with the keep fields dropped loses it)`);
+
+  it.todo(`§4/§8 · Delete role posts delete=1 and composes the stored map minus was ALONE — no other role changes and no dialog, the hint beside it reading "grants naming it keep the name and match nothing until it exists again" — landing 303 on /apps/<slug>/roles; a grant naming the deleted role keeps the name and matches nothing until it exists again (the twin)`);
+
+  it.todo(`§4/§9 · a refused role_set redraws the pane at 400 with the reason in a danger alert and every submitted choice preserved, never a bare error page and never a partial write: an empty or illegal name, the reserved all, a pattern that does not compile, and — on a tunneled app — a name the app declares, refused with "<name> is declared by the app — its declaration would replace yours"; after each the stored map is byte-identical to what it was (the twin)`);
+
+  it.todo(`§4/§8 · owner_roles is for tunneled apps: the proxied app's Roles editor posts roles and its app_update refuses owner_roles with "owner_roles is for tunneled apps — a proxied app's roles are \`roles\`", while the tunneled app's editor posts owner_roles and leaves roles_json untouched (the twin — the page never mixes them)`);
+});
+
+describe(`§5/§15 · /apps/<slug> — the Recording pane and recording_set`, () => {
+  beforeAll(withAppDetailWorld);
+
+  it.todo(`§5 · the Recording listing header is the title Recording over "what the audit trail keeps, and what it masks", the switch Record call bodies at the right edge as a REAL <input type="checkbox" name="log" value="1"> with its label text visible, the summary "body logging on|off · <kind> default | set explicitly · M masked path(s) by config" with " · W declared writeOnly by the app" only where any are, and the filter (GET, q, placeholder "filter paths…")`);
+
+  it.todo(`§5 · a proxied app with logging on and nothing masked carries the warning "A proxied app's schema is not cached at call time, so nothing is masked automatically. Tick what is secret before you save, or it is stored in the clear for 7 days." above the sections · the same app with something masked, and a tunneled app in the same state, carry none (the twin)`);
+
+  it.todo(`§5 · the two sections are "Arguments · N path(s)" (from each tool's inputSchema) and "Results · N path(s)" (from outputSchema, where declared), each path indexed ONCE over every tool's schemaLeaves and sorted by how many tools take it then by name — a row being the path in mono, its type, "T tool(s)", then " · declared writeOnly[ on K]" or " · masked on its tool | all T | K of T" (the twin: a path two tools take is one row, not two)`);
+
+  it.todo(`§5 · a path's control is a checkbox named p.<dir>.<path> with value 1, checked exactly when every EDITABLE tool masks it, and disabled and locked where no tool is editable because all of them declare it writeOnly · a path no tool masks is unchecked and enabled (the twin)`);
+
+  it.todo(`§5 · a path masked on SOME but not all of its tools renders EXPANDED with no p. field at all — its per-tool rows shown and the path checkbox replaced by the locked-mixed glyph — so no save can silently clear a partial state · the same path masked on every tool renders collapsed and checked (the twin)`);
+
+  it.todo(`§5 · ?which=args:<path> and ?which=results:<path> expand one path's per-tool rows and turn that path's link into "hide", repeatable so two paths open at once, and the link is drawn only where more than one tool takes the path or any tool declares it writeOnly — an expanded sub-row being the tool name with "declared by the app — always masked" and a locked check where the tool declares it writeOnly, else a checkbox named m.<dir>.<tool>.<path> (the twin: a path one tool takes and nobody declares carries no which link)`);
+
+  it.todo(`§5 · under Results, where the tools declare no output schema and q is empty, the note "<tools or \"N tools\"> declare no output schema — a result path there can only come from a recorded call (mask from evidence)." · an empty section reads "no path matches" under a filter and "no schema declares any field" without one (the twin)`);
+
+  it.todo(`§5 · the Recording details are "Masked before recording" over "These fields are replaced with ‹redacted› before a call is written to the trail. Everything else in the body is kept as sent." — or, with logging off, "Body logging is off, so no bodies reach the trail; the masks below apply once it is turned on." — then one card per direction, "Arguments · N masked" and "Results · N masked", listing each masked path with "on <tools>" ("N tools" past three) and "declared writeOnly by <tools>", or "nothing masked — arguments|results are recorded whole" (the twin)`);
+
+  it.todo(`§5 · the card "What a recorded call keeps" is verbatim — Arguments → "params.arguments, post-redaction"; Results → "structuredContent post-redaction; text, image and resource blocks become size stubs, never bytes"; Cap → "16 KiB per body — an over-cap body is one oversize stub"; Kept for → "7 days, then pruned with the rest of the audit table · Export JSONL to keep longer" linking the audit export; Never → "refused calls, token material, writeOnly and config-masked fields" — over the note "A tick writes one literal (tool, path) entry per tool; nothing here is a pattern and nothing is typed. Masking applies to the approval record too.", with the foot's left reading "Recorded calls to <slug> →" linking /audit?app=<slug>`);
+
+  it.todo(`§5/§8 · recording_set composes ONE app_update { slug, log_bodies, redact, redact_results }: each ticked p. path becomes an entry on every editable tool that takes it, each ticked m. becomes that tool alone, and every hidden keep.<dir>=<tool>:<path> — the stored entries no schema row represents, added from evidence or keyed by a pattern — survives the save untouched · the same submission with the keep fields dropped loses exactly those entries (the twin)`);
+
+  it.todo(`§5/§9 · the switch is the save: recording_set posted with log unticked turns body logging off and with it ticked turns it on, each landing 303 back on the pane with the notice and the summary line reading the new state · a refused save redraws the pane at 400 with the reason and every submitted tick preserved (the twin)`);
+});
+
+describe(`§6 · /apps/<slug> — the Agents pane and grant_set`, () => {
+  beforeAll(withAppDetailWorld);
+  beforeAll(async () => {
+    access = await seedAccessWorld();
+  });
+
+  it.todo(`§6 · the Agents listing header is the title Agents over "who can call this app, and how" and the summary "N agent(s) hold a grant · open one to edit its grant on <slug>", over exactly the agents holding ≥1 grant on THIS app read from agent_list's inline grants, with the rail's Agents marker the number of rows it drew · an agent granted only on another app is absent here and present on that app's own pane (the twin)`);
+
+  it.todo(`§6 · an Agents row is the agent slug in mono over its description, then "allowed" with one mono badge per allow entry (or —) and "ask first" with one warning badge per approval entry (or —), then "reaches R of T tools · K ask first[ · P of PT prompts][ · Q of QT resources] · C calls · 7 d" with C the tools/call rows audit_query reports for that principal on this app in seven days — and NO right-hand control; after the rows the note "Granting a new agent starts from the agent's own page — Agents → the agent → Grant another app." linking /agents (the twin)`);
+
+  it.todo(`§6 · the Agents details with nothing selected is "Select an agent to edit what it may call on <slug>." over the card "Per tool": the first six tools, each with the agents reaching it as "<agent>[ (ask)]" comma-joined or "no agent", then "… N more in the Catalog" with N the remainder (the twin: an app of six tools or fewer draws no "more" line)`);
+
+  it.todo(`§6 · a selected agent draws the header — the slug in mono, an "agent" badge, the description and an open agent page link to /agents/<agent>/apps/<slug> — over "<agent>'s grant on <slug>. Solid: set on the row · hollow: implied by a role · a row cannot lower what a role grants."`);
+
+  it.todo(`§6 · the editor IS the agent page's, verbatim: the reach summary line, the groups Roles, Tools · N, Prompts · N, Resources · N and Patterns · N, the same rows, the same none · ask · allow radios named e.<entry> with the same checked, hollow-implied and disabled-below states and the same drop and carry fields — one shared renderer, asserted by the two pages drawing the SAME control set for the same pair — and no pattern offer here, the details carrying no filter (the twin: the agent page's own pane)`);
+
+  it.todo(`§6/§8 · Save on the app page's Agents pane composes the same grant_set the agent page's route composes and lands 303 on /apps/<slug>/access?sel=agent:<agent> with the notice · the same submission made on the agent page lands on the agent page (the twin), and both leave the pair's saved set identical`);
+
+  it.todo(`§6/§9 · a refused grant_set from the app page redraws the pane at 400 with the reason above the editor and every submitted choice preserved, never a bare error page and never a partial write`);
+
+  it.todo(`§6 · Remove <agent> opens ?confirm=remove-agent&agent=<slug> on THIS pane — the dialog "Remove <agent> from <slug>?" over "<agent> loses every entry on <slug>. History stays; a waiting request expires." — whose form posts clear=1 to grant_set, after which the agent is off the pane and off the rail's Agents marker · the same query on another pane's URL draws no dialog (the twin)`);
+});
 
 /* ------------------------------------------------------------------ *
  * /apps/<slug> — the Access group, the Danger zone, and the refusals
@@ -8310,13 +7557,12 @@ describe(`§13/§20 · /apps/<slug> — Prompts, Resources, Roles and Overview`,
 
 /** §13's pinned sentences for the three panes below, each byte-identical with the spec
  *  (the backticked ones go through `pinned`; none of these carries a code span). */
-const AGENTS_FOOTER = "Grants are edited per agent × app pair — saving replaces that pair's whole set.";
-const PROXIED_NO_TOKENS = "Proxied apps hold no tokens — the hub dials the upstream; nothing dials in (§2).";
+const PROXIED_NO_TOKENS = "Proxied apps hold no tokens — the hub dials the upstream; nothing dials in.";
 const REVOKE_CLOSES = "Revoking closes the app's live connection.";
 const ISSUE_ROTATION = "The previous token keeps working until you revoke it.";
 const ARCHIVE_SENTENCE = "It refuses connections and leaves the list — tokens, grants and history are kept.";
-const DELETE_SENTENCE =
-  "Revokes its tokens, closes the live connection and removes every grant. This cannot be undone.";
+const deleteSentence = (tokens: number, agents: number): string =>
+  `Revokes its ${tokens} token(s), closes the live connection and removes every grant (${agents} agent(s)). This cannot be undone.`;
 const ARCHIVED_BANNER =
   "Archived apps refuse connections; everything is kept — tokens, grants and audit history.";
 
@@ -8392,71 +7638,21 @@ function dialsIn(token: string): Promise<{ appId: string; tokenId: string } | nu
   return resolveAppToken(new Request(`${ORIGIN}/connect`, { headers: { Authorization: `Bearer ${token}` } }));
 }
 
-describe(`§13 · /apps/<slug> — Agents, Token and the Danger zone`, () => {
+describe(`§7 · /apps/<slug> — Token, Overview and the Danger zone`, () => {
+
+  it.todo(`§7 · the Token listing header is the title Token over "what the app presents to dial in", the Issue new token button at the right edge, and the summary "L live · app tokens have no expiry — rotate by issuing, then revoking the old one. Revoking the key a live socket used closes it." — a row being the prefix in mono with "holds the live socket" as a success badge where it does and "new" where it was just issued, over "issued <relative> · used <relative> | never used" and a Revoke reaching ?confirm=revoke-token&id= · an app with no live key reads "No live token — the app cannot connect until one is issued." (the twin)`);
+
+  it.todo(`§7 · a just-issued token is SELECTED and its reveal is drawn in the details — "Shown once — copy it now", the key, "The previous token keeps working until you revoke it." — over Issued, "Expires → never — revoke on compromise", Last used and "Connection → holds the live socket now | none", beneath the prefix, an "app token" badge and "Only valid for opening the reverse WebSocket as <slug>." · the same pane re-fetched carries no plaintext anywhere (the twin)`);
+
+  it.todo(`§7 · the Overview pane is WIDE and is app_get's own row as a definition list — Slug, Kind, Created, a proxied app's Endpoint / Auth / Forward identity, a tunneled app's Last seen, Body logging reading "On — tunneled default" / "Off — proxied default" at each kind's default and the bare word where the owner set it explicitly, and Description — read-only: the pane renders no mutating form of any kind, the Body logging line included, the switch living on Recording (the twin)`);
+
+  it.todo(`§10 · the long-data fixtures render whole rather than truncating a listing away: a 300-character pattern on a role, a 40-word tool description and a 60-character slug each appear in full in their own pane's row and in its details, and the pane still draws every other row beside them (the twin)`);
   beforeAll(withAppDetailWorld);
   beforeAll(async () => {
     access = await seedAccessWorld();
   });
 
-  it(`§13 · /apps/<slug>/access lists exactly the agents holding ≥1 grant on this app, read from agent_list's inline grants, and the rail's Agents marker is the number of rows it drew · an agent granted only on another app is absent here and present on that app's own pane (the twin)`, async () => {
-    // Ground truth from the op, so the absence below is FILTERING rather than an empty
-    // namespace: all three agents exist and all three are listed by agent_list.
-    const listed = (await ops.agent_list.handler(access.ownerId, {})) as { agents: { slug: string }[] };
-    const known = listed.agents.map((agent) => agent.slug);
-    for (const slug of Object.values(ACCESS_SLUG)) expect(known, slug).toContain(slug);
 
-    const alphaPane = paths.appPane(ALPHA, "access");
-    const alphaHtml = await page(alphaPane, access.cookie);
-    const alpha = textOf(alphaHtml);
-    expect(alpha).toContain(ACCESS_SLUG.claude);
-    expect(alpha).toContain(ACCESS_SLUG.pi);
-    expect(alpha).not.toContain(ACCESS_SLUG.stray);
-    expect(markerOn(alphaHtml, alphaPane)).toBe("2");
-
-    // One agent_list, two panes, two answers — the twin.
-    const betaPane = paths.appPane(BETA, "access");
-    const betaHtml = await page(betaPane, access.cookie);
-    const beta = textOf(betaHtml);
-    expect(beta).toContain(ACCESS_SLUG.stray);
-    expect(beta).not.toContain(ACCESS_SLUG.claude);
-    expect(beta).not.toContain(ACCESS_SLUG.pi);
-    expect(markerOn(betaHtml, betaPane)).toBe("1");
-  });
-
-  it(`§13 · an Agents row is the agent's slug — linking to /agents/<slug> now that the page exists (re-pointed 2026-09-03, step 9) — and description, one role · mode chip per grant with the built-in all marked built-in, and the pane itself fronts no grant_set form: editing is a link into the pair's own editor (re-pointed 2026-09-03, step 9), under its verbatim footer`, async () => {
-    const html = await page(paths.appPane(ALPHA, "access"), access.cookie);
-    const text = textOf(html);
-    for (const handle of ["claude", "pi"] as const) {
-      expect(ACCESS_NAME[handle], "the fixture's name must differ from its slug").not.toBe(
-        ACCESS_SLUG[handle],
-      );
-      expect(text, handle).toContain(ACCESS_SLUG[handle]);
-      expect(text, handle).toContain(ACCESS_DESCRIPTION[handle]);
-    }
-    // The chips in §13's own spelling: one per grant, the built-in `all` marked.
-    expect(text).toContain("all · allow");
-    expect(text).toContain("built-in");
-    expect(text).toContain("reader · approval");
-
-    // Non-vacuity of the marking WITHOUT counting occurrences — beta's only agent holds
-    // `reader` alone, so the word must not be on that pane at all.
-    const betaHtml = await page(paths.appPane(BETA, "access"), access.cookie);
-    const beta = textOf(betaHtml);
-    expect(beta).toContain("reader · allow");
-    expect(beta).not.toContain("built-in");
-
-    // Slugs LINK to the agent page now that it exists (2026-09-03, step 9): each row's slug
-    // is wrapped by an anchor to `/agents/<slug>` — on either page.
-    for (const handle of ["claude", "pi"] as const) {
-      expect(html, handle).toContain(`href="${paths.agentDetail(ACCESS_SLUG[handle])}"`);
-    }
-
-    // The editor is a PAGE, so the pane fronts no `grant_set` form of its own — the
-    // control beside each row is a link, and the editor's own rows pin where it goes.
-    expect(Object.keys(ops)).toContain("grant_set");
-    expect(formsRenderedOn(html).map((form) => form.op)).not.toContain("grant_set");
-    expect(text).toContain(AGENTS_FOOTER);
-  });
 
   it(`§13 · /apps/<slug>/token lists a tunneled app's live tokens by display prefix and the rail marker is that live count · the same app's revoked and expired tokens are absent from the pane though token_list still reports all three (the twin), and no plaintext appears anywhere on it`, async () => {
     const slug = uniqueSlug("feedlist");
@@ -8668,7 +7864,7 @@ describe(`§13 · /apps/<slug> — Agents, Token and the Danger zone`, () => {
     const confirm = paths.appConfirm(doomed, "danger", "delete");
     expect(links(await page(dangerPane, cookie), confirm)).toBe(true);
     const dialog = await page(confirm, cookie);
-    expect(textOf(dialog)).toContain(DELETE_SENTENCE);
+    expect(textOf(dialog)).toContain(deleteSentence(1, 1));
     expect(textOf(dialog)).toContain(doomed);
 
     const posted = await formPost(actionFor(dialog, "app_delete"), submissionOf(dialog), cookie);
@@ -8811,26 +8007,6 @@ describe(`§13 · /apps/<slug> — Agents, Token and the Danger zone`, () => {
     }
   });
 
-  it(`§13 · the Agents pane draws the two column names §13 spells — Agent and Granted roles — over the rows they head · the same render carries the slugs, descriptions and role · mode chips those columns describe (the twin)`, async () => {
-    // No header is checked against an empty pane: the op says at least one agent holds a
-    // grant on alpha before anything is read off the render.
-    const listed = (await ops.agent_list.handler(access.ownerId, {})) as {
-      agents: { slug: string; grants: Record<string, string[]> }[];
-    };
-    const holders = listed.agents.filter((agent) => (agent.grants[ALPHA] ?? []).length > 0);
-    expect(holders.length).toBeGreaterThan(0);
-
-    const text = textOf(await page(paths.appPane(ALPHA, "access"), access.cookie));
-    // The word boundary is load-bearing: the rail entry reads `Agents` and the footer says
-    // "per agent × app pair".
-    expect(text).toMatch(/\bAgent\b/);
-    expect(text).toContain("Granted roles");
-
-    // The twin, on the same render — the rows those columns head.
-    for (const agent of holders) expect(text, agent.slug).toContain(agent.slug);
-    for (const handle of ["claude", "pi"] as const) expect(text).toContain(ACCESS_DESCRIPTION[handle]);
-    expect(text).toContain("all · allow");
-  });
 
   it(`§8/§13 · Issue new token reaches the op although its route answers 200 instead of the generic redirect: the post writes exactly one admin.token_issue audit row naming the app and the id token_list then reports, and that row carries neither the revealed key nor any token material`, async () => {
     const slug = uniqueSlug("feedaudit");
@@ -9831,19 +9007,6 @@ function blocksOf(text: string, names: readonly string[]): Record<string, string
     blocks[name] = text.slice(at[index], index + 1 < at.length ? at[index + 1] : text.length);
   });
   return blocks;
-}
-
-/** §13's approval line out of one tool's block. It is the third of four hub lines, so it
- *  runs from its own opening to whichever line follows — which is how "that agent is not
- *  named in THAT sentence" is asserted about the sentence and not about the block. */
-function approvalSentence(block: string): string {
-  const at = block.indexOf(APPROVAL_REQUIRED);
-  if (at < 0) return "";
-  const rest = block.slice(at + APPROVAL_REQUIRED.length);
-  const ends = [NO_REDACTED, "Redacted ", SCHEMA_UNSOUND]
-    .map((end) => rest.indexOf(end))
-    .filter((found) => found >= 0);
-  return ends.length === 0 ? rest : rest.slice(0, Math.min(...ends));
 }
 
 /** The header's last-seen value, without pinning its format: §13 gives a tunneled app a

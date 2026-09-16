@@ -1543,6 +1543,20 @@ check and (manual, once) a real push notification to a real browser.
   the file passed 13/13 alone each time (the known socket flake under load); a third full
   run was started to leave the inventory clean. Cost: 1 spec + 1 pages + 1 tests agent
   (Opus), no verifier round — the user's review and the orchestrator's walk stood in for it.
+- 2026-09-16 — **Two small ships after the phone rendering: the agent page fluid, and app
+  descriptions as Markdown.** `dd4dfbb` (`fix:` — the owner: "using too little of screen
+  real estate": `page--fluid`, the listing growing 520 → 760 with the viewport, the frame
+  using the window's height; inline, no agents; deploy **`730f45f4`**, smoke 34/34).
+  `63ffcb8` (`feat:` — the owner: "render the docs as proper markdown": `markdown.ts` over
+  `marked` 18.0.13 with the output whitelisted — app HTML escaped, links http/https/mailto
+  only with rel and target, images as links, headings demoted; one Opus subagent; deploy
+  **`b8f8fff5`**, smoke 34/34; gate 46 files, 1,538 passed). **Rows-first exception, for
+  the owner's review**: the Markdown change authored its nine rows with the code, no
+  prior todo commit — five in `server/test/unit/markdown.test.ts` and two in
+  `web-pages.test.ts` (titles in the commit's diff), because the trust rule and the
+  renderer were designed together. `f4bce19` (`design:` — the layout & density guideline,
+  `design/layout-and-density.md`, with the audit's inconsistencies mapped to fixes; applying
+  it is the next dispatch, visual gate per page).
 - 2026-09-03 — **G1 closed ahead of step 10 — the audit chevron is a link.** The user's
   question ("why can none of the audit items be expanded?") diagnosed as the UI half of
   G1: bodies are stored, `?expand=<id>` rendered the open row, but the chevron was a bare

@@ -14,9 +14,9 @@
     a:hover { color: #52525b; }
   </style>
 </helmet>
-<div style="width: 1240px; min-height: 740px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
+<div style="width: 1380px; min-height: 740px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
 
-  <div style="height: 56px; box-sizing: border-box; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; padding: 0 32px;">
+  <div style="height: 56px; box-sizing: border-box; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; padding: 0 24px;">
     <div style="display: flex; align-items: center; gap: 24px;">
       <div style="display: flex; align-items: center; gap: 8px;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>
@@ -36,16 +36,16 @@
     </div>
   </div>
 
-  <div style="width: 1180px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 24px;">
+  <div style="width: 1332px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 24px;">
 
     <div style="display: flex; flex-direction: column; gap: 4px;">
       <div style="font-size: 24px; font-weight: 600;">Settings</div>
       <div style="font-size: 14px; color: #71717a;">Sign-in and access for ahrzb.</div>
     </div>
 
-    <div style="display: flex; align-items: flex-start; gap: 32px;">
+    <div style="display: flex; align-items: stretch; border: 1px solid #e4e4e7; border-radius: 12px; overflow: hidden; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
 
-      <div style="width: 200px; flex-shrink: 0; display: flex; flex-direction: column; gap: 20px;">
+      <div style="width: 200px; flex-shrink: 0; box-sizing: border-box; border-right: 1px solid #e4e4e7; background: #fafafa; padding: 16px 8px; display: flex; flex-direction: column; gap: 20px;">
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa; padding: 0 10px;">Sign-in</div>
           <div style="display: flex; flex-direction: column; gap: 2px;">
@@ -79,9 +79,9 @@
         </div>
       </div>
 
-      <div style="width: 640px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="flex: 1; min-width: 0; box-sizing: border-box; padding: 24px; display: flex; flex-direction: column; gap: 16px; max-width: 688px;">
 
-        <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 20px;">
           <div style="display: flex; flex-direction: column; gap: 4px;">
             <div style="font-size: 16px; font-weight: 600;">Password</div>
             <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Used with your username at sign-in. App and agent tokens are unaffected.</div>
@@ -125,7 +125,7 @@
   </div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":1240,"height":740}}'>
+<script data-dc-script data-props='{"$preview":{"width":1380,"height":740}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

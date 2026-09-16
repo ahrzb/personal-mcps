@@ -30,6 +30,20 @@ directly in §13 and rendered by the artboards below.
 
 ## Artboards
 
+Every desktop board is drawn at one of the three page shapes of
+[layout-and-density.md](layout-and-density.md) §2, and its artboard is that shape plus its
+gutters:
+
+| Shape | Content | Artboard | Boards |
+|---|---|---|---|
+| **document** | 760 px (auth card 400) | 1080, or 480 for a card board | `Approvals`, `ApprovalDetail`, `AppNew`, `Login`, `TwoFactor`, `Device`, the states boards |
+| **table** | 1280 px, centred | 1380 | `Apps`, `Agents`, `Audit` |
+| **workspace** | full width inside 24 px gutters — 1332 — the *panes* capped (rail 200, listing 520, details the rest) | 1380 | `Settings`, `AppDetail`, `AgentDetail` |
+
+`SettingsPanes`, `AppDetailPanes` and `AgentDetailPanes` are gallery boards, not pages:
+they draw one pane each at the width that pane has inside the frame, so their artboards
+(1012, 1012, 1380) follow the pane, not the shape.
+
 | Screen | Desktop | Mobile | States / extras |
 |---|---|---|---|
 | Design system (tokens, anatomy; the layout & density ladder, reasoned in [layout-and-density.md](layout-and-density.md)) | `Main` | — | — |
@@ -37,7 +51,7 @@ directly in §13 and rendered by the artboards below.
 | Approvals list + detail | `Approvals`, `ApprovalDetail` | `MobileApprovals`, `MobileApprovalDetail` | `ApprovalStates` |
 | Apps + add-app | `Apps`, `AppNew` | `MobileApps`, `MobileAppNew` | `AppNewStates`, `AppNewProxiedStates` |
 | Audit | `Audit` | `MobileAudit` | `AuditDetailStates` |
-| Settings — panes behind a left rail | `Settings` (password, full shell + rail), `SettingsPanes` (the other five panes, at pane width — the shell and rail live on `Settings`) | `MobileSettings` | `SettingsStates` |
+| Settings — panes behind a left rail | `Settings` (password, the workspace shell: rail 200 in the framed box), `SettingsPanes` (the other five panes, at pane width — the shell and rail live on `Settings`) | `MobileSettings` | `SettingsStates` |
 | App detail (`/apps/<slug>`) — panes behind the same rail | `AppDetail` (tools), `AppDetailPanes` (the other seven) | — (follow-up) | `AppDetailStates` |
 | Agents + agent page (`/agents`, `/agents/<slug>`) — three panes behind a rail | `Agents` (the list), `AgentDetail` (an app's grants: rail · listing · details), `AgentDetailPanes` (Credentials, Activity, Grant another app, Danger zone) | `MobileAgentDetail` (the three panes as three levels with back buttons), `MobileAgentDetailStates` (sidebar, draft, grant step, credentials, paged activity, a request) — the list has none yet | `AgentDetailStates` |
 | Cross-cutting | — | — | `Dialogs` (destructive confirms), `EmptyStates` |
@@ -46,12 +60,12 @@ Settings' six panes, one contract board and width each:
 
 | Pane | Board | Width |
 |---|---|---|
-| Password | `Settings` | full shell (1240 px) |
-| Two-factor | `SettingsPanes` | pane (1012 px) |
-| Passkeys | `SettingsPanes` | pane (1012 px) |
-| Sessions | `SettingsPanes` | pane (1012 px) |
-| Tokens | `SettingsPanes` | pane (1012 px) |
-| Connected clients | `SettingsPanes` | pane (1012 px) |
+| Password | `Settings` | the workspace shell — 1380 artboard, 1332 inside its gutters, rail 200 + pane |
+| Two-factor | `SettingsPanes` | pane (1012 px artboard) |
+| Passkeys | `SettingsPanes` | pane (1012 px artboard) |
+| Sessions | `SettingsPanes` | pane (1012 px artboard) |
+| Tokens | `SettingsPanes` | pane (1012 px artboard) |
+| Connected clients | `SettingsPanes` | pane (1012 px artboard) |
 
 `SettingsTokens` and `OauthConnections` — the two full-shell boards page 2 held for the
 Tokens and Connected-clients panes — were **deleted 2026-09-03**, resolving decision
@@ -74,6 +88,25 @@ and no Sign out (`app-new.tsx`, `approval-detail.tsx`); `AppNew`/`MobileAppNew` 
 Each flow doc carries a **wireframe map** table pinning journey moments to
 artboard variants by their on-canvas labels (e.g. `AuthStates · DEVICE —
 EXPIRED CODE`, `AppNewStates · TOKEN REVEAL`).
+
+**Applied 2026-09-16: the layout & density ladder.** Every board was brought to
+[layout-and-density.md](layout-and-density.md) §2. `Apps`, `Agents` and `Audit` went from a
+1140 wrap in a 1240 artboard to the table shape — 1280 in 1380, nav gutters 32 → 24.
+`Settings` and `AppDetail` became workspaces: their rail and pane now sit in the same
+1px-bordered, radius-12 box the agent page uses, the rail 200 wide on the sunken ground,
+the pane beside it, in a 1380 artboard with a 1332 wrap. `AgentDetail` and
+`AgentDetailPanes` kept their frame and took the same widths (wrap 1176 → 1332, rail
+180 → 200). `Login` and `TwoFactor` moved to the 400 auth card in a 480 artboard, matching
+`Device` / `ApprovalDetail` / `AppNew`. `Approvals` stays a 760 document. Everywhere: one
+badge at 20 / 11 (was 22 / 12), buttons 28 and 30 → 32 and minis / segments 22 → 24
+(segment width 44), table header rows at 12 px vertical padding with `Audit`'s rows dense
+at 6, the narrow nav row clipped like the scroller it is, and nothing below 11 px — the
+10 px family labels, rail eyebrows and count pills and the 9 px info glyph all moved up.
+`canvas.json` carries the new sizes and page 1 was re-laid out around them. Two things the
+ladder did not settle, both left as drawn: the framed rail's 28 px entries (pinned by the
+2026-09-16 density commit as the board's dense column, not the 40 px default row) and the
+28 px monospace cells that display a backup code or a token prefix — they are values on
+show, not controls, so no control height applies.
 
 ## Concepts (moved to `design/concepts/`, 2026-09-02)
 

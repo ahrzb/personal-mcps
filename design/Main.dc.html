@@ -204,11 +204,24 @@
     </div>
   </div>
 
+  <div style="display: flex; flex-direction: column; gap: 12px; padding-top: 8px; border-top: 1px solid #e4e4e7;">
+    <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #71717a;">Layout &amp; density — the ladder (design/layout-and-density.md, 2026-09-16)</div>
+    <div style="display: grid; grid-template-columns: 150px 1fr; row-gap: 6px; column-gap: 16px; font-size: 12px; line-height: 1.5;">
+      <div style="color: #71717a;">Breakpoints</div><div>narrow &lt; 768 (phone shell, 44px targets) · regular 768–1023 (rail, no split panes) · wide ≥ 1024 (panes side by side, 24px gutters)</div>
+      <div style="color: #71717a;">Page shapes</div><div><b>document</b> 760px (approvals, forms; auth card 400) · <b>table</b> 1280px (apps, agents, audit) · <b>workspace</b> full width, its panes capped (agent page, app page, settings)</div>
+      <div style="color: #71717a;">Panes</div><div>rail 200 · listing 520 → 760 · details ≥ 360 · prose inside a pane ≤ 72ch</div>
+      <div style="color: #71717a;">Rows</div><div>dense 32 (listing, audit, endpoints) · default 40 (tables, rail, menus) · touch 44 (narrow)</div>
+      <div style="color: #71717a;">Controls</div><div>36 page actions · 32 in a card, cell or foot · 24 inline in a dense row (WCAG AA target) · 44 at narrow</div>
+      <div style="color: #71717a;">Badges · type</div><div>one badge, 20px / 11px · type 24 / 18 / 16 / 15 / 14 / 13 / 12 / 11, nothing smaller</div>
+      <div style="color: #71717a;">Sources</div><div>Carbon 2x grid + data table · Primer layout · Material 3 window classes + pane scaffold · Atlassian · Ant · Apple HIG · Fluent 2 · NN/g · WCAG 1.4.8</div>
+    </div>
+  </div>
+
   <div style="font-size: 12px; color: #71717a;">Controls 36px · control radius 8 · card radius 12 · borders #e4e4e7 · shadow 0 1px 2px at 5%</div>
 
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":880,"height":1560}}'>
+<script data-dc-script data-props='{"$preview":{"width":880,"height":1780}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

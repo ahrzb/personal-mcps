@@ -32,7 +32,7 @@ directly in §13 and rendered by the artboards below.
 
 | Screen | Desktop | Mobile | States / extras |
 |---|---|---|---|
-| Design system (tokens, anatomy) | `Main` | — | — |
+| Design system (tokens, anatomy; the layout & density ladder, reasoned in [layout-and-density.md](layout-and-density.md)) | `Main` | — | — |
 | Sign-in, 2FA, backup code, device | `Login`, `TwoFactor`, `Device` | `MobileLogin`, `MobileTwoFactor`, `MobileDevice` | `AuthStates` |
 | Approvals list + detail | `Approvals`, `ApprovalDetail` | `MobileApprovals`, `MobileApprovalDetail` | `ApprovalStates` |
 | Apps + add-app | `Apps`, `AppNew` | `MobileApps`, `MobileAppNew` | `AppNewStates`, `AppNewProxiedStates` |

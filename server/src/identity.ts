@@ -73,7 +73,17 @@ export const USERNAME_CHARSET = /^[a-z0-9-]+$/;
 export const PASSWORD_MIN_LENGTH = 12;
 
 /**
- * The ONE better-auth instantiation (§4), built once per isolate (auth() below says why).
+ * The ONE better-auth configuration (§4). Read-only session resolution and bootstrap
+ * password work share the memoised instance returned by `auth()`; requests entering
+ * better-auth's public handler get a fresh instance in `authRoutes()`.
+ *
+ * That split is deliberate. D12's jwt()+oauthProvider() made construction expensive
+ * enough that rebuilding on ordinary page and MCP requests caused Cloudflare Error 1102,
+ * while production twice observed a handler instance remain wedged after a two-factor
+ * sign-in and then hang every cookie-signing/verifying request until redeploy. A
+ * request-scoped handler contains such state to the request that created it; the hot
+ * read-only path still pays construction once per isolate.
+ *
  * The plugin list is the spec's, passkey included: `@better-auth/passkey` is a separate
  * package 1.7 does not bundle, pinned in lockstep with core. §5's `last_used_at` stamp on
  * a verified assertion is `stampPasskeyUse`, called from the mount's own handler below.
@@ -90,18 +100,16 @@ export const PASSWORD_MIN_LENGTH = 12;
  */
 let cachedAuth: ReturnType<typeof buildAuth> | undefined;
 function auth() {
-  // Built ONCE per isolate, not per request. D12's jwt()+oauthProvider() made each
-  // betterAuth() construction ~5.6x heavier (~0.85ms→~4.8ms CPU plus proportional
-  // allocation), and auth() is called on most request paths; rebuilding it every call
-  // pressured isolates into Cloudflare Error 1102 ("exceeded resource limits") under load.
-  // `env` (cloudflare:workers) is a per-isolate-stable binding proxy, so capturing it at the
-  // first build is correct, and better-auth is designed to be constructed once and reused.
+  // Built ONCE per isolate for the hot read-only callers below. D12's
+  // jwt()+oauthProvider() made each betterAuth() construction ~5.6x heavier
+  // (~0.85ms→~4.8ms CPU plus proportional allocation); rebuilding it on most request
+  // paths pressured isolates into Cloudflare Error 1102 ("exceeded resource limits").
+  // `env` is a per-isolate-stable binding proxy, so capturing it here is correct.
   return (cachedAuth ??= buildAuth());
 }
 
-/** The single betterAuth construction, isolated so `cachedAuth` takes THIS call's exact return
- *  type — `database: env.DB as never` makes the generic `ReturnType<typeof betterAuth>`
- *  unassignable, so the memo must be typed off the builder, not off betterAuth itself. */
+/** The shared betterAuth builder. Keeping its exact return type here lets `cachedAuth`
+ * avoid the unassignable generic produced by `database: env.DB as never`. */
 function buildAuth() {
   return betterAuth({
     database: env.DB as never,
@@ -1015,14 +1023,17 @@ export function deleteTokensForStatement(refId: string): D1Stmt {
  * The mountable better-auth surface — login and TOTP challenge endpoints, passkey
  * ceremonies, RFC 8628 device flow (codes shortened to ~10 minutes), session
  * management, and the bearer plugin the CLI rides — returned as one route group (a
- * Hono sub-app at implementation; typed unknown so no framework type leaks). This is
- * the only place better-auth is instantiated (once per isolate, auth() above). Logins —
- * password and passkey alike — and device approvals write audit rows, and a verified
- * assertion also stamps §5's `last_used_at`. Mounted by the composition root under the
- * reserved auth paths; the credential family here is deliberately never exposed as
- * pmcp tools, and a request carrying an `Authorization` header reaches only the two
- * endpoints it has business at (BEARER_ADMITTED below — §4's session-scope guard, standing
- * at the mount rather than only at the hub's wrappers).
+ * Hono sub-app at implementation; typed unknown so no framework type leaks).
+ *
+ * Each public-handler request gets its own better-auth instance. This is the containment
+ * boundary for the production stuck-instance failure described above; session reads made
+ * elsewhere keep using the memoised `auth()` instance. Logins — password and passkey
+ * alike — and device approvals write audit rows, and a verified assertion also stamps
+ * §5's `last_used_at`. Mounted by the composition root under the reserved auth paths; the
+ * credential family here is deliberately never exposed as pmcp tools, and a request
+ * carrying an `Authorization` header reaches only the endpoints it has business at
+ * (BEARER_ADMITTED below — §4's session-scope guard, standing at the mount rather than
+ * only at the hub's wrappers).
  */
 export function authRoutes(): unknown {
   // deps: better-auth · audit.record · D1 `passkey`
@@ -1039,7 +1050,7 @@ export function authRoutes(): unknown {
     // request body better-auth is about to consume, so it is read off a clone before the
     // handler runs and written only once the handler says the assertion verified.
     const asserted = await assertedCredentialId(c.req.raw);
-    const response = await auth().handler(c.req.raw);
+    const response = await buildAuth().handler(c.req.raw);
     await recordAuthEvent(c.req.raw, response);
     if (asserted !== null && response.ok) await stampPasskeyUse(asserted);
     return response;

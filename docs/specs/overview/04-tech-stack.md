@@ -14,8 +14,10 @@
   For proxied apps the Worker dials upstream with `Client` from
   `@modelcontextprotocol/client` (Streamable HTTP transport; it handles legacy-upstream
   handshakes itself).
-- **Auth**: better-auth **≥ 1.7** with D1 as `database` (instantiated per request — D1
-  bindings are request-scoped). Plugins:
+- **Auth**: better-auth **≥ 1.7** with D1 as `database`. The hot read-only session path
+  shares one instance per isolate; the public better-auth handler builds one per request,
+  containing any stuck cookie-signing state to that request without paying the full
+  `jwt()` + `oauthProvider()` construction cost on ordinary page and MCP traffic. Plugins:
   - `username()` — login is username + password; email is a synthesized placeholder
     (`<username>@users.local`), never used.
   - `twoFactor()` — optional TOTP + backup codes.

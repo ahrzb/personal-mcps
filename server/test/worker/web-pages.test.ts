@@ -5361,6 +5361,52 @@ describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`
       }
     },
   );
+  it(
+    `§4/§13 · after a complete TOTP sign-in, the minted browser session opens /apps and the same Worker isolate still answers /login — the full password challenge and successful second-factor path, not enrollment verification`,
+    async () => {
+      const ns = await seedNamespace(env.DB, {});
+      await seedOwnerCredential(ns.owner.userId);
+      const enrollmentSession = await seedOwnerSession(ns.owner);
+      const enrollmentCard = await (await enable(enrollmentSession.cookie)).text();
+      const enrollmentForm = verifyForm(enrollmentCard);
+      const secret = secretOf(enrollmentForm);
+      const enrolled = await formPost(
+        paths.auth.totpVerifySettings,
+        typedInto(enrollmentForm, { code: await totpCode(secret) }),
+        enrollmentSession.cookie,
+      );
+      expect(enrolled.status).toBe(303);
+
+      const password = await formPost(paths.auth.signIn, {
+        username: ns.owner.username,
+        password: SEEDED_OWNER_PASSWORD,
+        callbackURL: paths.apps,
+      });
+      expect(password.status).toBe(303);
+      const challengeUrl = password.headers.get("Location") ?? "";
+      expect(challengeUrl).toContain("step=totp");
+      const challengeCookie = password.headers
+        .getSetCookie()
+        .map((header) => header.split(";")[0])
+        .join("; ");
+      expect(challengeCookie, "password sign-in set no two-factor challenge cookie").not.toBe("");
+
+      const challenge = await anonymousPage(challengeUrl);
+      const forms = formsPostingTo(challenge, paths.auth.totpVerify);
+      expect(forms.length, "the challenge page rendered no TOTP form").toBeGreaterThan(0);
+      const verified = await formPost(
+        paths.auth.totpVerify,
+        typedInto(forms[0], { code: await totpCode(secret) }),
+        challengeCookie,
+      );
+      expect(verified.status).toBe(303);
+      const signedIn = sessionCookieOf(verified);
+      expect(signedIn, "successful TOTP verification minted no session cookie").not.toBeNull();
+      expect((await get(paths.apps, signedIn ?? "")).status).toBe(200);
+      expect((await get(paths.login)).status).toBe(200);
+    },
+  );
+
 });
 
 /* ------------------------------------------------------------------ *

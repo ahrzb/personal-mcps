@@ -35,7 +35,7 @@
 // ponytail: no argv, no flags, no dry-run mode. Two env vars and a fixed walk — a knob
 // nobody has asked for is a knob that goes stale. Add one when a second caller appears.
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { applyProfile, main as cli } from "../cli/src/main.ts";
 import { caller, HubTransport } from "../clients/js/src/index.ts";
 
@@ -758,6 +758,51 @@ async function main(): Promise<number> {
         return `client ${clientId} → aud ${resource}; aggregate+scoped tools/call both as agent:${OAUTH_AGENT}; ${calls.length} audit row(s); revoked → 401 with challenge`;
       },
     );
+
+    await step("§4 · a complete TOTP sign-in stays bounded and leaves the Worker responsive", async () => {
+      const enable = await fetch(`${ORIGIN}/api/auth/two-factor/enable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: sessionCookie, Origin: ORIGIN },
+        body: JSON.stringify({ password }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const enabled = asRecord(await enable.json().catch(() => ({})), "two-factor enable response");
+      expect(enable.ok, `two-factor enable → ${enable.status}`);
+      const totpUri = new URL(asString(enabled.totpURI, "totpURI"));
+      const secret = asString(totpUri.searchParams.get("secret"), "TOTP secret");
+
+      const enrollment = await verifyTotp(secret, sessionCookie);
+      session = enrollment.token;
+      sessionCookie = enrollment.cookie;
+
+      const passwordResponse = await fetch(`${ORIGIN}/api/auth/sign-in/username`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: USERNAME, password }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const challenged = asRecord(await passwordResponse.json().catch(() => ({})), "two-factor challenge response");
+      expect(passwordResponse.ok && challenged.twoFactorRedirect === true, `password challenge → ${passwordResponse.status}`);
+      const challengeCookie = responseCookies(passwordResponse);
+      expect(challengeCookie !== "", "password challenge set no cookie");
+
+      const signedIn = await verifyTotp(secret, challengeCookie);
+      session = signedIn.token;
+      sessionCookie = signedIn.cookie;
+      const page = await fetch(`${ORIGIN}/apps`, {
+        headers: { Cookie: sessionCookie },
+        signal: AbortSignal.timeout(10_000),
+      });
+      expect(page.status === 200, `post-TOTP /apps → ${page.status}`);
+      const challenge = await fetch(`${ORIGIN}/api/auth/passkey/generate-authenticate-options`, {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      const challengeBody = asRecord(await challenge.json().catch(() => ({})), "post-TOTP passkey challenge");
+      expect(challenge.ok && typeof challengeBody.challenge === "string", `post-TOTP cookie signing → ${challenge.status}`);
+      return "enrolled, password challenged, TOTP verified, /apps 200, next cookie signature 200";
+    });
+
   } catch {
     // The step that failed already printed why; the walk stops and cleanup still runs.
   }
@@ -862,15 +907,61 @@ async function signIn(username: string, password: string): Promise<{ token: stri
   const body = asRecord(await response.json(), "sign-in response");
   const token = response.headers.get("set-auth-token") ?? body.token;
   if (typeof token !== "string" || token === "") throw new Error("sign-in carried no session token");
-  // Every cookie the sign-in set, sent back together — what a browser does, and the only
-  // rule here that needs no knowledge of better-auth's cookie NAMES (which carry a
-  // `__Secure-` prefix under https and may be more than one).
-  const cookie = response.headers
+  // Every cookie the sign-in set, sent back together — what a browser does, without
+  // duplicating better-auth's cookie names here.
+  const cookie = responseCookies(response);
+  if (cookie === "") throw new Error("sign-in set no session cookie");
+  return { token, cookie };
+}
+
+/** Every cookie a better-auth response set, returned in the carrier the next request
+ * sends. Cookie names are deliberately not duplicated here. */
+function responseCookies(response: Response): string {
+  return response.headers
     .getSetCookie()
     .map((header) => header.split(";")[0])
     .join("; ");
-  if (cookie === "") throw new Error("sign-in set no session cookie");
-  return { token, cookie };
+}
+
+/** The authenticator half of RFC 6238 using Node's crypto and better-auth's defaults:
+ * HMAC-SHA1, six digits, 30-second steps. */
+function totpCode(secret: string, at: number = Date.now()): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0;
+  let value = 0;
+  const bytes: number[] = [];
+  for (const symbol of secret.replace(/=+$/, "").toUpperCase()) {
+    const index = alphabet.indexOf(symbol);
+    if (index < 0) throw new Error("TOTP secret is not base32");
+    value = (value << 5) | index;
+    bits += 5;
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(at / 30_000)));
+  const digest = createHmac("sha1", Buffer.from(bytes)).update(counter).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const binary = digest.readUInt32BE(offset) & 0x7fffffff;
+  return String(binary % 1_000_000).padStart(6, "0");
+}
+
+/** One bounded TOTP verification, for both enrollment and sign-in challenge. */
+async function verifyTotp(secret: string, cookie: string): Promise<{ token: string; cookie: string }> {
+  const response = await fetch(`${ORIGIN}/api/auth/two-factor/verify-totp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie, Origin: ORIGIN },
+    body: JSON.stringify({ code: totpCode(secret) }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const body = asRecord(await response.json().catch(() => ({})), "TOTP verify response");
+  expect(response.ok, `TOTP verify → ${response.status}`);
+  const token = asString(response.headers.get("set-auth-token") ?? body.token, "TOTP session token");
+  const nextCookie = responseCookies(response);
+  expect(nextCookie !== "", "TOTP verify set no session cookie");
+  return { token, cookie: nextCookie };
 }
 
 /** One JSON POST, optionally as a signed-in user — the device-flow leg's whole transport. */

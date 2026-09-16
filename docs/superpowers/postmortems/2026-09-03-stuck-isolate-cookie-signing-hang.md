@@ -51,14 +51,26 @@ stale-copy theory plausible.
   `Cache-Control: no-store` (not the cause; the rule signed-in pages should have had, and it
   removes the stale-copy false lead for good). Commit `619eef4`, deploy `ff254f61`, smoke
   33/33 with the new leg at 66 ms.
+- Recurrence: on 2026-09-10 the owner reported the same post-TOTP whole-site hang. An
+  unchanged redeploy immediately restored the cookie-signing probe; five consecutive
+  challenges answered 200, then the durable containment shipped as deploy
+  `9a95517b-2a8c-4cc8-a019-ea7a39d3870d`.
+- Durable containment: requests entering better-auth's public handler now get a fresh
+  better-auth instance. The hot read-only session path remains memoised, avoiding D12's
+  Error 1102 construction regression, while state created or wedged during TOTP/passkey
+  handling cannot poison later handler requests. The live smoke now performs the complete
+  TOTP journey — enroll, password challenge, verify, authenticated page, then another
+  cookie signature — with a 10-second bound on every susceptible call. It passed as step
+  31 of 34 against the deployed fix.
 
 ## Countermeasure candidates
 - A scheduled external probe of the two cookie-signing endpoints (sign-in with a bogus user
   is not enough — it exits before signing; the passkey options leg is the cheap
   representative), alerting on a bound rather than on status.
-- A request-level timeout around `auth().handler` in the identity door so a wedged path
-  answers 503 in seconds rather than hanging until the client gives up — a 503 would have
-  appeared in the tail immediately and named the endpoint.
+- A request-level timeout remains a fallback if one fresh handler request can itself hang:
+  it would answer 503 in seconds instead of waiting until the client gives up. It is not
+  added preemptively because it cannot cancel a better-auth mutation safely; retrying a
+  timed-out credential write risks duplicate effects.
 - Run the manual passkey leg (G21) on production after the next auth-related deploy, and
   record it in the ledger; it is still owed.
 - When a live report says "hangs", read the tail for `canceled` outcomes with large

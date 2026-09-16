@@ -13,7 +13,6 @@ personal-mcps/
   scripts/           # users.mts, smoke.ts, test-inventory.mjs
   contracts/         # checked-in wire fixtures shared by hub and every client
   docs/specs/        # the source of truth, one file per section
-  mcps.yaml          # the owner's actual config (not gitignored: it contains no secrets)
   pnpm-workspace.yaml
   flake.nix          # pinned toolchain + the pmcp package (§22.7)
 ```

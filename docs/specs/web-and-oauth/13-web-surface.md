@@ -384,9 +384,11 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   2026-09-16, decision 31 — `Agents` and `AgentDetail` re-adopted, `AgentDetailPanes` and
   `AgentDetailStates` added, `GrantEditorStates` deleted)* —
   cookie-session-gated. The **fifth top-nav entry**, `Agents`, second after `Apps`
-  (Apps · Agents · Audit · Approvals · Settings); the narrow nav is already a horizontal
-  scroller with its scrollbar hidden, so the fifth slot needs no overflow menu — the
-  follow-up recorded below is closed. Title "Agents", subtitle "Identities that call your
+  (Apps · Agents · Audit · Approvals · Settings); the narrow shell carries all five in its
+  sidebar, so the fifth slot needs no overflow menu — the follow-up recorded below is
+  closed *(2026-09-16: was "the narrow nav is already a horizontal scroller with its
+  scrollbar hidden"; the scroller is gone — see **The narrow shell** below)*. Title
+  "Agents", subtitle "Identities that call your
   apps — each holds grants and keys." *(2026-09-16: was "grants and tokens" — a key is
   not always a token; an OAuth client signs in as the agent too)*. A **plain list**, one
   row per agent from `agent_list` plus `token_list` filtered to `kind = agent` (§8; no
@@ -454,8 +456,11 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     `+ Grant another app…` entry carrying the count of grantable
     apps; `Agent` — Credentials with its `live · clients` counts, Activity with the
     pending-approval count; then the tail group Danger zone. The active entry is
-    `aria-current="page"`; archived apps are `rail-link--dim`. Mobile: `PanePills`, the
-    shell's pill row.
+    `aria-current="page"`; archived apps are `rail-link--dim`. ~~Mobile: `PanePills`, the
+    shell's pill row.~~ *(2026-09-16, owner: **not** on this page — below the breakpoint
+    the rail is level 1, drawn as a full-width list, and `PanePills` is removed from the
+    agent page entirely; **The three levels** below. `/settings` and `/apps/<slug>` keep
+    the pill row.)*
   - **Header tiles** *(2026-09-16)*: "N apps · A allow · K ask first · D dormant",
     counted over the grant sets — **no catalog read**. Neither `/agents` nor this header
     fetches a catalog; only the open app pane does.
@@ -614,6 +619,49 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     `?confirm=delete-agent` dialog → landing on `/agents` with the notice; details, "What
     deletion removes": Grants (N apps), Tokens, Clients ("— the binding cascades"),
     History ("kept — audit rows name the principal, not the row").
+  - **The three levels** — the narrow rendering *(2026-09-16, owner-approved:
+    `MobileAgentDetail`, `MobileAgentDetailStates`, from `design/concepts/AgentMobileDemo.html`;
+    decision 31)*. Wide is unchanged, three panes side by side. Below the shell's
+    breakpoint **one level is visible at a time**, chosen from the URL **by the server**
+    and applied by CSS, so scripting off works and nothing is decided twice:
+
+    | URL | level | what shows |
+    |---|---|---|
+    | `/agents/<slug>` (the landing) | 1 | the header (title line "Agents › <slug>", description, tiles) and the **rail as a list** — every entry a full-width row with its marker and a trailing chevron |
+    | `/agents/<slug>/apps/<app>`, `/grant`, `/credentials`, `/activity`, `/danger` without `sel` | 2 | the **listing** alone (header + groups + foot) |
+    | the same with `sel=` | 3 | the **details** alone |
+
+    The page root carries `data-level="1|2|3"`; the narrow stylesheet shows one of `.rail`,
+    `.listing`, `.details` by that attribute and the wide one ignores it. On wide screens
+    the landing still renders the first app pane (unchanged) — the attribute only matters
+    below the breakpoint, where the landing's listing is hidden and the rail is the screen.
+
+    **The level header** is rendered on every pane and shown only below the breakpoint,
+    above the content: a **back link** on the left naming the level above, the current
+    thing centred.
+
+    | level | back link | title |
+    |---|---|---|
+    | 1 | `‹ Agents` → `/agents` | the slug |
+    | 2 | `‹ <slug>` → `/agents/<slug>` | the app's name, or `Grant another app` / `Credentials` / `Activity` / `Danger zone` |
+    | 3 | `‹ <app name or pane name>` → the pane URL without `sel` (keeping `q`, `show`, `calls`) | the selected row's name |
+
+    Below the breakpoint the wide title line and the rail's `aria-label`ed nav are hidden
+    (the level header replaces them), and the pill row (`PanePills`) is **removed** from
+    this page — the rail-as-list is its replacement; other paned pages keep theirs.
+    **The listing header never repeats what the level header shows**: below the breakpoint
+    the app pane's name is hidden (slug, kind and status badges, the reach line and the
+    filter stay), and the Credentials / Activity / Grant another app / Danger zone titles
+    are hidden (their subtitles stay). Activity's **Open in Audit** button drops under the
+    subtitle, on its own line. **The foot** (Remove from <agent> · Discard · Save) stays
+    one row, Save at the right edge; the change count is script-only and absent. **Rows
+    and controls** are the desktop's, unchanged — the `none` · `ask` · `allow` radios at
+    the right edge — with the "via <roles>" text above the control (`display:block`) and
+    the details pane's key/value pairs stacked, key above value. **Grant another app**:
+    cards one column, the **Grant** button full width beneath the description. Activity's
+    paging is unchanged (links). **Nothing new is linked**: tapping a row is its existing
+    `?sel=` link (level 3), tapping a rail entry its existing link (level 2) — only what
+    shows changes.
   - Mutations follow the pane rule through the generic `/agents/:slug/:op` dispatcher,
     with an op → pane table *(2026-09-16)*:
 
@@ -686,7 +734,12 @@ side**, still one route and one rail entry *(2026-09-16)*:
   markers, active pill highlighted and `aria-current="page"` like the rail's active entry
   *(pinned 2026-09-03)*, same routes. This is a shell rule, so it applies to
   `/apps/<slug>` and `/agents/<slug>` although only `MobileSettings` was drawn (follow-up)
-  *(2026-09-16: the agent page's mobile board is the same recorded follow-up)*.
+  *(2026-09-16: the agent page's mobile board is the same recorded follow-up)*
+  *(2026-09-16, owner-approved — the board is drawn and the rule now has one exception:
+  the pill row stays for `/settings` and `/apps/<slug>`, and **`/agents/<slug>` is the
+  three levels instead** — rail-as-list, listing, details, one screen each behind a level
+  header. `PanePills` is not rendered on the agent page at all. **The three levels**,
+  under `/agents/<slug>` above.)*
 - **Mutations belong to a pane**: a POST target keeps the existing final-segment
   convention (its last segment names the op or the better-auth endpoint it fronts), and
   the redirect-back with its notice lands on the pane that rendered the form, not the
@@ -703,8 +756,30 @@ side**, still one route and one rail entry *(2026-09-16)*:
   Audit, Approvals, Settings) and has no `Agents` entry — 390 px cannot hold five, so the
   deferred agents pages will need a scroller or an overflow menu before they get a slot.~~
   *Closed 2026-09-03:* the top nav holds five (Apps · Agents · Audit · Approvals ·
-  Settings); the narrow nav is a horizontal scroller with its scrollbar hidden, which is
-  the mechanism — no overflow menu.
+  Settings); ~~the narrow nav is a horizontal scroller with its scrollbar hidden, which is
+  the mechanism — no overflow menu.~~ *(2026-09-16: still five and still no overflow menu,
+  but the mechanism is now the sidebar below, not the scroller — 390 px never held five
+  comfortably, it only scrolled.)*
+
+**The narrow shell** *(2026-09-16, owner-approved: `MobileAgentDetailStates`' "Sidebar"
+board; decision 31)*. Below the existing 900 px breakpoint the top bar is the brand mark
+and name on the left and a **hamburger** on the right; the hamburger opens a **sidebar**
+that slides in from the right — the hamburger's own side — over a scrim. At its top the
+brand and a close control at the corner the hamburger occupied; then the five nav entries
+(Apps, Agents, Audit, **Approvals** with its pending count as a pill, Settings), the
+current one `aria-current="page"`; at the foot the username and the **Sign out** form.
+Tapping the scrim or the close control closes it. This replaces the horizontally scrolling
+five-entry nav on narrow screens; **the wide shell is unchanged**. Every page inherits it —
+it is the shell, not a page rule.
+
+**No script.** The sidebar is `:target`-driven: the hamburger is `<a href="#menu"
+class="menu-open" aria-label="Menu">`, the sidebar `<nav id="menu" class="menu">`, the
+close control `<a href="#" aria-label="Close menu">`, the scrim `<a href="#" class="scrim"
+aria-hidden="true">`; CSS shows the menu and the scrim on `#menu:target`. A wide viewport
+never shows the hamburger, the menu or the scrim (`display: none` above the breakpoint).
+The wide nav markup stays in the document and is hidden below the breakpoint, so
+`aria-current` is asserted once, on either. `layout.tsx` owns the markup, `styles.css` the
+rules.
 
 **PWA**: the web surface ships a web-app manifest and a minimal service worker, so
 the dashboard installs to phone and desktop home screens. Pages stay server-rendered —

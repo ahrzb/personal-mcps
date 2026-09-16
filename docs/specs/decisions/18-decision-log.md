@@ -308,3 +308,21 @@
     unrecognised roles; they grant nothing until the parser returns. Renaming the column
     to `entry` was considered and dropped: it buys a word and costs a migration on the one
     table whose primary key it is part of.
+    **The phone rendering** *(owner-approved 2026-09-16, `MobileAgentDetail` /
+    `MobileAgentDetailStates`; no new number — it is how (a) renders below 900 px)*. The
+    three panes become **three levels of navigation**, one screen each — the rail as a
+    list, then the listing, then the details — the level chosen from the URL by the server
+    (`data-level="1|2|3"`, CSS shows one), each headed by a back link naming the level
+    above (`‹ Agents`, `‹ claude`, `‹ News MCP`) with the current thing as the title, so a
+    listing header never repeats what the level header shows. It brought **one shell-wide
+    change**: the narrow top nav is no longer a horizontally scrolling five-entry row but
+    brand + **hamburger** + a `:target`-driven **sidebar** from the hamburger's side, with
+    the five entries, the Approvals pill, the username and Sign out at its foot, a close
+    control and a scrim — no script. The sidebar replaces the scroller **on every page**
+    below 900 px, not only this one; the wide shell is untouched. The alternative rejected:
+    *a drop-down panel under the bar* — a sidebar sliding in from the hamburger's own side
+    is the convention the owner asked for, and the drop-down would have kept the five
+    entries fighting for the same 390 px the scroller already lost on. The agent page also
+    drops `PanePills` entirely (the rail-as-list is its replacement); `/settings` and
+    `/apps/<slug>` keep the pill row, so decision 30's mobile rule now has one exception
+    rather than a rewrite.

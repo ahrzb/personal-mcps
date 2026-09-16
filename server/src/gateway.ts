@@ -706,7 +706,8 @@ const LIST_CATALOG: Record<
  * Scoped listing (§7, widened by §20.2 to every family): the backend's catalog for `kind`,
  * filtered by the caller's grant patterns, names unprefixed and every outputSchema served
  * with its `writeOnly` markers stripped (§7 — the hub's internal result-secret co-opt never
- * reaches the wire). Archived → -32002; an unreachable or needs-reconnect proxied upstream
+ * reaches the wire; the `owner` flag below is the one read that is not a serving).
+ * Archived → -32002; an unreachable or needs-reconnect proxied upstream
  * → -32000 (the backend's own throw) — the scoped endpoint is where the aggregate's silent
  * omissions surface. Never audited (§15).
  */
@@ -716,10 +717,17 @@ async function listScoped(
   slug: string,
   ctx: BackendCtx,
   kind: ListKind,
-  /** The owner's own retained-catalog read (§13's archived page) — the ONE caller that may
-   *  see an archived app's catalog, because it is not a consumer call. Every wire path
-   *  leaves this false and keeps the -32002. */
-  retained = false,
+  /**
+   * The OWNER's own read of their own app (`ownerCatalog`, §13) rather than a consumer
+   * call — one predicate with two consequences, because both follow from the same fact.
+   * It may see an ARCHIVED app's retained catalog, where every wire path keeps the -32002;
+   * and it gets the declaration WHOLE, `writeOnly` markers and all, where every wire path
+   * gets `served`'s stripped outputSchema (§7 — the co-opt never reaches a consumer, but
+   * the Recording pane's "declared writeOnly" rows and the Catalog details' result table
+   * are readings OF the declaration and have nothing else to read). Every wire path leaves
+   * this false.
+   */
+  owner = false,
 ): Promise<ListedItem[]> {
   // deps: registry.getApp · registry.resolveAccess · selectBackend · virtualPmcpApp
   const registry = new Registry(env.DB);
@@ -728,9 +736,10 @@ async function listScoped(
   // the same not-permitted answer every other unresolvable name gets.
   if (app === null) throw notPermitted();
   const filter = await registry.resolveAccess(ctx.principal, app);
-  if (app.archived && !retained) throw archived();
+  if (app.archived && !owner) throw archived();
   const catalog = await LIST_CATALOG[kind](selectBackend(app), app, { ...ctx, roles: filter.roleNames });
-  return filter.filterList(catalog, kind).map(served);
+  const listed = filter.filterList(catalog, kind);
+  return owner ? listed : listed.map(served);
 }
 
 /**
@@ -740,12 +749,16 @@ async function listScoped(
  * "unfiltered by §7 step 2" holds by construction and cannot drift from what the door
  * would answer. Never audited, like every other listing (§15).
  *
- * Two things a page needs that the wire cannot say. First, "unreadable" as distinct from
+ * Three things a page needs that the wire cannot say. First, "unreadable" as distinct from
  * "empty": a needs-reconnect credential (-32000 from the refresh) and an upstream that
  * never answered at all (`dial`'s own catch, which never reaches JSON-RPC) BOTH leave
  * through the failure arm, so the page renders a blank marker — an unread count is not an
  * empty set. Second, an ARCHIVED app's retained catalog, which §13 keeps on the archived
- * page while the wire refuses it -32002 before reading anything.
+ * page while the wire refuses it -32002 before reading anything. Third, the declaration
+ * WHOLE: `served` strips `writeOnly: true` from every outputSchema on its way to a
+ * consumer (§7), and the page is not a consumer — it is the surface that SHOWS the owner
+ * what their app declared, so a stripped schema would leave "declared writeOnly by the
+ * app" unsayable on the Recording pane and unshowable in the Catalog's result table.
  */
 export async function ownerCatalog(
   env: Env,

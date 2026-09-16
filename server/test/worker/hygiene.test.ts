@@ -8,7 +8,8 @@
 // pmcp-specific case (§8, decision 22); (b) that bodies exist in exactly two places —
 // approval `args_json` and the two audit body columns — and nowhere else; (c) that served
 // outputSchemas carry no `writeOnly` (the hub's internal marker never reaches the wire,
-// §7) while input schemas keep theirs; (d) that hashing follows redaction, proven by
+// §7) while input schemas keep theirs — and that the OWNER's own read (`ownerCatalog`,
+// §13) is not a serving and keeps the declaration whole; (d) that hashing follows redaction, proven by
 // recomputation rather than by trusting a code path; (e) a whole-database sentinel
 // sweep for token material; and (f) the one §15 hygiene sink that is not the database —
 // the exception trace. §15's sentence covers "logs, error responses, and exception
@@ -51,6 +52,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalJson } from "../../src/approvals";
 import { beforeSend, query, REDACTED_QUERY } from "../../src/audit";
 import type { AuditConfig, AuditRow, BodyStub } from "../../src/audit";
+import { ownerCatalog } from "../../src/gateway";
 import type { Prompt, Resource, ResourceTemplate, Tool } from "../../src/gateway";
 import worker from "../../src/index";
 import { tokenPattern } from "../../src/principal";
@@ -1404,6 +1406,31 @@ describe("§7 · served outputSchemas carry no writeOnly", () => {
 
     expect(JSON.stringify(listed.outputSchema)).not.toContain("writeOnly");
     expect(JSON.stringify(listed.inputSchema)).toContain("writeOnly");
+  }, CASE_BUDGET_MS);
+
+  it("19a. §7/§13 · the OWNER's own catalog read is not a serving: `gateway.ownerCatalog` returns the declaration WHOLE — the outputSchema keeps its `writeOnly` marks, as the inputSchema always did — because the page is the surface that shows an owner what their app declared, and a stripped schema leaves the Recording pane with no \"declared writeOnly by the app\" to draw · twin: the very same tool through the scoped wire listing, in the same world, is still stripped (case 17's rule, unmoved)", async () => {
+    const world = await seedProxyWorld({
+      kind: "proxy",
+      upstream: {
+        id: uniqueSlug("up"),
+        mode: { kind: "ok" },
+        tools: [toolMarking({ args: ["apiKey"], results: ["issuedKey"] })],
+      },
+      logBodies: true,
+    });
+
+    const answered = await ownerCatalog(env as unknown as Env, world.ns.owner.userId, APP, "tools");
+    expect(answered.ok, "the owner's catalog read failed").toBe(true);
+    const owned = (answered as { ok: true; items: Tool[] }).items.find((tool) => tool.name === TOOL);
+    expect(JSON.stringify(owned?.outputSchema), "the owner cannot see what their own app declared")
+      .toContain("writeOnly");
+    expect(JSON.stringify(owned?.inputSchema)).toContain("writeOnly");
+
+    // THE TWIN, from the same fixture so the difference is the READER and nothing else:
+    // a consumer still gets the stripped copy, which is what §7's co-opt rule is about.
+    const served = await servedTool(world, APP, TOOL);
+    expect(JSON.stringify(served.outputSchema), "the hub's internal marker reached the wire")
+      .not.toContain("writeOnly");
   }, CASE_BUDGET_MS);
 
   it("19. §7 · stripping the served copy does not disarm redaction: the same tool's result is still masked at the marked path", async () => {

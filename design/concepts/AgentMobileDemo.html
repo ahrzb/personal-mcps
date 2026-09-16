@@ -90,6 +90,9 @@
   .toast.show{opacity:1}
   .hint{font-size:11px;color:#a1a1aa}
   .badge.kind{background:#fff;border:1px solid #d4d4d8;color:#71717a;border-radius:999px;height:18px;padding:0 8px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:600}
+  .pre{font-size:15px;color:#71717a;text-decoration:none;cursor:pointer;font-weight:500}
+  .pre:hover{color:#09090b;text-decoration:underline;text-underline-offset:3px}
+  .sep{font-size:18px;color:#a1a1aa;margin:0 -2px}
   #crumb{display:flex;align-items:center;gap:6px;font-size:13px}
   #crumb .back{color:#2563eb;font-weight:500;text-decoration:none;padding:2px 0}
   #crumb .back:hover{text-decoration:underline;text-underline-offset:3px}
@@ -131,7 +134,7 @@
   .tile{flex-wrap:wrap;gap:8px 14px}
   .mh{display:none;align-items:center;gap:8px;height:48px;padding:0 8px;border-bottom:1px solid #e4e4e7;flex-shrink:0;background:#fff}
   .mh{display:flex}
-  .head #crumb,.head .row > .mono{display:none}
+  .head #crumb,.head .row > .mono,.head .row > .pre,.head .row > .sep{display:none}
   .head .row > .cell{font-size:13px}
   .mh .back{border:0;background:none;color:#2563eb;font-size:14px;font-weight:500;display:inline-flex;align-items:center;gap:2px;padding:0 6px;height:36px;border-radius:8px;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .mh .back:hover{background:#eff6ff}
@@ -198,8 +201,7 @@
   <div class="mh" id="mh"></div>
   <div class="head">
     <div style="display:flex;flex-direction:column;gap:4px">
-      <div class="cell" id="crumb"></div>
-      <div class="row" style="gap:10px"><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
+      <div class="row" style="gap:10px"><a class="pre">Agents</a><span class="sep">›</span><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
     </div>
     <div class="tile" id="tiles"></div>
   </div>
@@ -422,8 +424,7 @@ function render() {
   const dirty = isDirty();
 
   // crumb + tiles
-  // the crumb is the whole path on desktop (cheap to scan, cheap to click); the phone hides it and uses its level headers instead
-  document.getElementById("crumb").innerHTML = `<a>Agents</a><span class="dim">/</span><span class="mono">claude</span>${view === "app" ? `<span class="dim">/</span><span class="mono">${current}</span>${selected ? `<span class="dim">/</span><span class="mono">${esc(selected.name)}</span>` : ""}` : `<span class="dim">/</span><span>${view === "grant" ? "grant another app" : view}</span>`}`;
+  // the crumb is folded into the title line (Agents › claude): the rail names the app and the listing the row
   let tt = 0, ta = 0, tp = 0, tr = 0, dormant = 0;
   for (const app of Object.keys(SAVED)) { const rr = reach(app, app === current ? set : SAVED[app]); if (APPS[app].status === "archived") { dormant++; continue; } tt += rr.tools.reached; ta += rr.tools.approval; tp += rr.prompts.reached; tr += rr.resources.reached; }
   document.getElementById("tiles").innerHTML = `<span><b>${Object.keys(SAVED).length}</b> apps</span><span><b>${tt}</b> tools · <b>${tp}</b> prompts · <b>${tr}</b> resources</span><span style="color:#92400e"><b style="color:#92400e">${ta}</b> ask first</span><span><b>${dormant}</b> dormant</span>`;

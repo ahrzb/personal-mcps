@@ -1223,7 +1223,7 @@ export const AgentDetailPage: FC<AgentDetailProps> = (props) => {
     >
       {/* `data-level` is read by the narrow stylesheet ALONE: it shows one of the rail,
           the listing and the details by it, and the wide one never looks. */}
-      <main class="page page--paned" data-level={String(props.level)}>
+      <main class="page page--paned page--fluid" data-level={String(props.level)}>
         <LevelHeader header={props.levelHeader} />
         <div class="page-head">
           <div>

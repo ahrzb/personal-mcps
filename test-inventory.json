@@ -536,7 +536,7 @@
     "§21.2 the re-authorization tick §21.2 · the re-auth tick: a bearer revoked mid-stream closes it within one shrunk LISTEN_KEEPALIVE_MS, an expired one identically — and a deleted agent closes on the principal re-read leg, constructed with its token still resolvable · a live bearer's stream survives the same ticks (the twin)": "passed",
     "§21.2 the re-authorization tick §21.2/§21.3 · a grant added mid-stream is subscribed on the next tick and the Worker rings exactly the family bells its shape serves that the app's stored set contains — a tools-only app rings the tools bell alone · a further tick with no change rings nothing (the twin)": "passed",
     "§21.2/§21.4 what each shape forwards §21.1/§21.4 · subscriptions die with the stream — subscribe on stream A, close A, reopen: the app's next updated for that URI reaches nobody, and the new stream's minted session id inherits nothing": "passed",
-    "§21.2/§21.4 what each shape forwards §21.2/§21.3 · an aggregated stream forwards tools and prompts bells and NEVER the resources bell the DO also rang at it · a scoped stream forwards all three plus updated (the twin)": "failed",
+    "§21.2/§21.4 what each shape forwards §21.2/§21.3 · an aggregated stream forwards tools and prompts bells and NEVER the resources bell the DO also rang at it · a scoped stream forwards all three plus updated (the twin)": "passed",
     "§21.2/§21.4 what each shape forwards §21.4 · principal equality end to end: B's subscribe carrying A's live session id leaves A's stream silent for that URI, and B's own scoped stream receives the updated B subscribed — the sentence §21.1's \"steals nothing\" rests on": "passed"
   },
   "server/test/tunnel/subscriptions.test.ts": {

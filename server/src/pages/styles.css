@@ -271,6 +271,21 @@ p {
   max-width: calc(var(--page-paned) + 2 * var(--space-9));
 }
 
+/* The agent page is the one page that is a workspace rather than a document: three
+   columns that only get more legible with room. It takes the viewport's width (the
+   page's own gutters kept) and its height, so a wide screen is not a 1180px strip
+   down the middle (owner, 2026-09-16). The listing grows with the viewport up to a
+   readable cap; the details column takes the rest. */
+.page--fluid {
+  max-width: none;
+}
+.page--fluid .paned--framed {
+  height: max(560px, calc(100vh - 220px));
+}
+.page--fluid .listing:not(.listing--wide) {
+  width: clamp(520px, 38vw, 760px);
+}
+
 .page-head {
   display: flex;
   justify-content: space-between;

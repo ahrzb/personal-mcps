@@ -2531,7 +2531,96 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     }
   });
 
-  it.todo(`§13 · every shell page carries the narrow shell's sidebar beside that wide nav, in the same document and with no script — the hamburger <a href="#menu" class="menu-open" aria-label="Menu">, the <nav id="menu" class="menu"> holding the same five entries in §13's order with aria-current="page" on the page's own and the Approvals pending count as its pill, the <a href="#" aria-label="Close menu"> and the <a href="#" class="scrim" aria-hidden="true"> that close it, and the username over the Sign out form at its foot — on /apps, /agents, /audit, /approvals, /settings and /agents/<slug> alike · the sign-in pages, which have no shell, render neither nav, no hamburger and no scrim (the twin)`);
+  it(`§13 · every shell page carries the narrow shell's sidebar beside that wide nav, in the same document and with no script — the hamburger <a href="#menu" class="menu-open" aria-label="Menu">, the <nav id="menu" class="menu"> holding the same five entries in §13's order with aria-current="page" on the page's own and the Approvals pending count as its pill, the <a href="#" aria-label="Close menu"> and the <a href="#" class="scrim" aria-hidden="true"> that close it, and the username over the Sign out form at its foot — on /apps, /agents, /audit, /approvals, /settings and /agents/<slug> alike · the sign-in pages, which have no shell, render neither nav, no hamburger and no scrim (the twin)`, async () => {
+    const ORDER: readonly string[] = [paths.apps, paths.agents, paths.audit, paths.approvals, paths.settings];
+    // Its own namespace, with its own pending request: the count in the Approvals pill is
+    // an assertion, and the fixture world's one approval is a row other cases decide.
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel" }],
+      // `agent` by name: `openApproval` opens its request as the namespace's own agent.
+      agents: [{ slug: "agent", grants: { news: [{ role: "all", mode: "approval" }] } }],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    await openApproval(ns, "news");
+
+    /** An anchor that is a CONTROL rather than a destination, found by the class the
+     *  stylesheet shows and hides it by — the two halves of the `:target` mechanism. */
+    const anchorNamed = (html: string, className: string): string => {
+      const found = [...html.matchAll(/<a\b([^>]*)>/g)].find(
+        (anchor) => (attributeOf(anchor[1], "class") ?? "") === className,
+      );
+      return found?.[1] ?? "";
+    };
+    /** The sidebar's own markup: `#menu` is what the hamburger targets, so the id — not a
+     *  class and not an order — is what identifies it. */
+    const menuOf = (html: string): { attributes: string; body: string } | null => {
+      const nav = [...html.matchAll(/<nav\b([^>]*)>([\s\S]*?)<\/nav>/g)].find(
+        (candidate) => attributeOf(candidate[1], "id") === "menu",
+      );
+      return nav === undefined ? null : { attributes: nav[1], body: nav[2] };
+    };
+
+    const pages: [string, string][] = [
+      [paths.apps, paths.apps],
+      [paths.agents, paths.agents],
+      [paths.audit, paths.audit],
+      [paths.approvals, paths.approvals],
+      [paths.settings, paths.settings],
+      [paths.agentDetail("agent"), paths.agents],
+    ];
+    for (const [path, current] of pages) {
+      const html = await page(path, session.cookie);
+
+      // Both navigations, in ONE document: the wide nav stays where it was and the
+      // sidebar is drawn beside it, which is what lets CSS alone choose between them.
+      expect(html, path).toContain(`<nav class="nav">`);
+      const menu = menuOf(html);
+      expect(menu, `${path}: no #menu sidebar`).not.toBeNull();
+      expect(attributeOf(menu?.attributes ?? "", "class"), path).toBe("menu");
+
+      // The three controls, each an ANCHOR carrying a URL — a page whose menu opened by
+      // script would carry buttons here, and would not open with scripting off.
+      const hamburger = anchorNamed(html, "menu-open");
+      expect(attributeOf(hamburger, "href"), `${path}: the hamburger`).toBe("#menu");
+      expect(attributeOf(hamburger, "aria-label"), `${path}: the hamburger`).toBe("Menu");
+      const scrim = anchorNamed(html, "scrim");
+      expect(attributeOf(scrim, "href"), `${path}: the scrim`).toBe("#");
+      expect(attributeOf(scrim, "aria-hidden"), `${path}: the scrim`).toBe("true");
+      const close = [...(menu?.body ?? "").matchAll(/<a\b([^>]*)>/g)].find(
+        (anchor) => attributeOf(anchor[1], "aria-label") === "Close menu",
+      );
+      expect(close, `${path}: no close control`).toBeDefined();
+      expect(attributeOf(close?.[1] ?? "", "href"), `${path}: the close control`).toBe("#");
+
+      // The five entries the wide nav holds, in the same order, with this page's own
+      // marked — read off the sidebar, so `aria-current` is tested on one nav per page.
+      const entries = [...(menu?.body ?? "").matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].map((anchor) => ({
+        href: decodeEntities(attributeOf(anchor[1], "href") ?? ""),
+        current: attributeOf(anchor[1], "aria-current") === "page",
+        parts: topLevelElements(anchor[2]),
+      }));
+      const nav = entries.filter((entry) => ORDER.includes(entry.href));
+      expect(nav.map((entry) => entry.href), path).toEqual(ORDER);
+      expect(nav.filter((entry) => entry.current).map((entry) => entry.href), path).toEqual([current]);
+
+      // The pending count is an element of the Approvals entry rather than words in its
+      // label — the pill the wide nav draws as its badge.
+      const approvals = nav.find((entry) => entry.href === paths.approvals);
+      expect(approvals?.parts.map((part) => textOf(part)), `${path}: the Approvals pill`).toContain("1");
+
+      // The foot: who is signed in, and the one form that signs them out.
+      expect(textOf(menu?.body ?? ""), path).toContain(ns.owner.username);
+      expect(formsPostingTo(menu?.body ?? "", paths.auth.signOut).length, `${path}: Sign out`).toBeGreaterThan(0);
+    }
+
+    // The twin: /login has no shell, so it has neither navigation and none of the three
+    // controls — a sidebar over a page nobody is signed in to is nothing to open.
+    const login = await anonymousPage(paths.login);
+    expect(menuOf(login)).toBeNull();
+    expect(login).not.toContain(`<nav class="nav">`);
+    expect(login).not.toContain("menu-open");
+    expect(login).not.toContain("scrim");
+  });
 
   it(`§13/§8 · /agents/new renders agent_create's three fields — slug, name, description — and nothing else, and a posted create lands on the new agent's page · a slug the op refuses (reserved, taken, illegal) re-renders the form at 400 with the refusal under the field and creates nothing (the twin)`, async () => {
     const html = await page(paths.agentNew);
@@ -2638,9 +2727,88 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(bare).toContain(`href="${paths.agentApp("cron", "brand")}"`);
   });
 
-  it.todo(`§13 · the agent page's root carries data-level chosen from the URL alone — 1 on /agents/<slug>, 2 on /agents/<slug>/apps/<app> and on /grant, /credentials, /activity and /danger, 3 on each of those carrying sel= — and the level header above the content names the level above and the current thing: at 1 the back link "‹ Agents" → /agents titled with the slug, at 2 "‹ <slug>" → /agents/<slug> titled with the app's name or "Grant another app" / "Credentials" / "Activity" / "Danger zone", at 3 "‹ <the app or pane name>" → that pane's own URL with sel dropped and q, show and calls kept, titled with the selected row's name · the wide title row "Agents › <slug>" is still in the document at every one of the three levels (the twin)`);
+  it(`§13 · the agent page's root carries data-level chosen from the URL alone — 1 on /agents/<slug>, 2 on /agents/<slug>/apps/<app> and on /grant, /credentials, /activity and /danger, 3 on a pane URL carrying sel= — and the level header above the content names the level above and the current thing: at 1 the back link "‹ Agents" → /agents titled with the slug, at 2 "‹ <slug>" → /agents/<slug> titled with the app's name or "Grant another app" / "Credentials" / "Activity" / "Danger zone", at 3 "‹ <the app or pane name>" → that pane's own URL with sel dropped and q, show and calls kept, titled with the selected row's name · the wide title row "Agents › <slug>" is still in the document at every one of the three levels (the twin)`, async () => {
+    // Its own world: the three levels need a granted app to open, a key to list and one
+    // call in the trail to select, and every row here READS — nothing the shared agent
+    // world would answer for.
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel", name: "News MCP" }],
+      agents: [{ slug: "claude", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "key" }] }],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    await record(env.DB, {
+      ownerId: ns.owner.userId,
+      principal: "agent:claude",
+      event: "tools/call",
+      app: "news",
+      tool: "get_news",
+      outcome: "ok",
+      durationMs: 7,
+    });
+    const call = (await query(env.DB, ns.owner.userId, { tool: "get_news" })).rows[0];
+    expect(call, "no ledger row for the seeded call").toBeDefined();
 
-  it.todo(`§13 · the agent page renders no pill row — no nav.pill-row on the landing or on any of the five panes, the rail-as-list being its replacement there · /apps/<slug> and /settings still render theirs (the twin)`);
+    const detail = paths.agentDetail("claude");
+    const app = paths.agentApp("claude", "news");
+    const activity = paths.agentPane("claude", "activity");
+    const levels: { url: string; level: string; back: string; to: string; title: string }[] = [
+      { url: detail, level: "1", back: "‹ Agents", to: paths.agents, title: "claude" },
+      { url: app, level: "2", back: "‹ claude", to: detail, title: "News MCP" },
+      { url: paths.agentPane("claude", "grant"), level: "2", back: "‹ claude", to: detail, title: "Grant another app" },
+      { url: paths.agentPane("claude", "credentials"), level: "2", back: "‹ claude", to: detail, title: "Credentials" },
+      { url: activity, level: "2", back: "‹ claude", to: detail, title: "Activity" },
+      { url: paths.agentPane("claude", "danger"), level: "2", back: "‹ claude", to: detail, title: "Danger zone" },
+      // Level 3 twice, so "the pane URL without sel" is read on a pane whose other query
+      // field is `q` and on one whose other field is `calls` — both kept, sel alone gone.
+      { url: `${app}?q=all&sel=role:all`, level: "3", back: "‹ News MCP", to: `${app}?q=all`, title: "all" },
+      {
+        url: `${activity}?calls=40&sel=call:${call.id}`,
+        level: "3",
+        back: "‹ Activity",
+        to: `${activity}?calls=40`,
+        title: "get_news",
+      },
+    ];
+
+    for (const row of levels) {
+      const html = await page(row.url, session.cookie);
+      // The level is the page root's, so it is one attribute on one element — a second
+      // `data-level` anywhere would mean the level was decided twice.
+      expect([...html.matchAll(/\sdata-level="([^"]*)"/g)].map((match) => match[1]), row.url).toEqual([row.level]);
+
+      const header = levelHeader(html);
+      expect(header.back, `${row.url}: the back link`).toBe(row.back);
+      expect(header.href, `${row.url}: the back link`).toBe(row.to);
+      expect(header.title, `${row.url}: the level header's title`).toContain(row.title);
+
+      // The twin: the level header ADDS a navigation below the breakpoint — it does not
+      // replace the wide title row, which is still in the document at every level.
+      expect(textOf(html), row.url).toContain("Agents › claude");
+    }
+  });
+
+  it(`§13 · the agent page renders no pill row — no nav.pill-row on the landing or on any of the five panes, the rail-as-list being its replacement there · /apps/<slug> and /settings still render theirs (the twin)`, async () => {
+    const { cookie } = await withAgentPanes();
+    for (const url of [
+      paths.agentDetail("claude"),
+      paths.agentApp("claude", "news"),
+      ...AGENT_PANES.map((pane) => paths.agentPane("claude", pane)),
+    ]) {
+      const html = await page(url, cookie);
+      expect(html, url).not.toContain("pill-row");
+      const compact = [...html.matchAll(/<nav\b[^>]*aria-label="([^"]*)"[^>]*>/g)]
+        .map((nav) => nav[1])
+        .filter((label) => label.endsWith("compact"));
+      expect(compact, url).toEqual([]);
+      // Non-vacuous on this same render: what the page draws instead is right there.
+      expect(agentRail(html, "claude").length, url).toBeGreaterThan(0);
+    }
+
+    // The twin: the rule is the agent page's alone — the other two paned pages keep the
+    // pill row §13 gave them.
+    expect(navBlock(await page(paths.appDetail("news")), APP_PILL_NAV_LABEL), paths.appDetail("news")).not.toBeNull();
+    expect(navBlock(await page(paths.settings), PILL_NAV_LABEL), paths.settings).not.toBeNull();
+  });
 
   it(`§13 · each pane answers on its own URL — /agents/<slug>/apps/<app>, /grant, /credentials, /activity, /danger — and /apps/<app> for an ACTIVE app the agent holds nothing on renders the new-grant state: an empty set, the header's dashed "new grant · nothing saved yet" badge and the app in the rail · an unknown pane segment, and an unknown, builtin, foreign or ungranted archived app, are noSuchPage (the twin)`, async () => {
     const { cookie } = await withAgentPanes();
@@ -3433,6 +3601,28 @@ function railAnchor(html: string, slug: string, href: string): string {
   );
   if (anchor === undefined) throw new Error(`the agent rail carries no entry for "${href}"`);
   return anchor[0];
+}
+
+/**
+ * The level header the narrow agent page draws above its content (2026-09-16): its back
+ * link — the one anchor whose text opens with §13's `‹` — and the title beside it.
+ *
+ * Read off the anchor and the text that FOLLOWS it rather than off a class, because which
+ * element carries the header and how it is centred are CSS's business; what the brief pins
+ * is where the link goes, what it names, and what the header calls the current thing. The
+ * window is bounded so the title is the header's own and not the page's next sentence.
+ */
+function levelHeader(html: string): { back: string; href: string; title: string } {
+  const back = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].find((anchor) =>
+    textOf(anchor[2]).startsWith("‹"),
+  );
+  if (back === undefined) throw new Error("the page rendered no level header");
+  const after = html.slice((back.index ?? 0) + back[0].length, (back.index ?? 0) + back[0].length + 200);
+  return {
+    back: textOf(back[2]),
+    href: decodeEntities(attributeOf(back[1], "href") ?? ""),
+    title: textOf(after),
+  };
 }
 
 /** One row's control as the browser sees it: the radios named `e.<entry>`, in the order

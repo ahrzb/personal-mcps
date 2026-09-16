@@ -2174,6 +2174,34 @@ export type AgentDetailProps = ShellProps & {
   confirm: AgentConfirm | null;
   /** A key just minted by Issue token, shown in THIS response and never again (§4/§15). */
   reveal: string | null;
+  /**
+   * Which of §13's three narrow levels this URL is — 1 the landing, 2 a pane, 3 a picked
+   * row — decided HERE from the URL and applied by CSS, so the page renders the same three
+   * panes at every width and only which one shows changes. Above the breakpoint the
+   * stylesheet ignores it: the level is never a second spelling of the pane.
+   */
+  level: AgentLevel;
+  levelHeader: AgentLevelHeader;
+};
+
+/** 1 the landing (rail), 2 a pane without `sel` (listing), 3 with it (details). */
+export type AgentLevel = 1 | 2 | 3;
+
+/**
+ * The narrow level header: one way UP and the name of where you are. Rendered on every
+ * pane and shown only below the breakpoint, where it stands in for the title line and the
+ * rail at once — which is why the back link is never merely "back": it names the level
+ * above, so it says the same thing whether it is tapped or read.
+ */
+export type AgentLevelHeader = {
+  /** Where the back link goes — the level above, keeping the reading state (§13's `q`,
+   *  `show` and `calls`) so going up loses the selected row and nothing else. */
+  backHref: string;
+  /** The level above, named: `Agents`, the agent's slug, or the pane's own title. The
+   *  `‹` is the template's, not this string's. */
+  backLabel: string;
+  /** The current level, named: the slug, the pane's title, or the picked row. */
+  title: string;
 };
 
 /* ------------------------------ the loaders ------------------------------ */
@@ -2457,6 +2485,81 @@ export async function agentDetailProps(
     pane,
     confirm: agentConfirm(ctx.query, at, tokens),
     reveal: null,
+    ...agentLevel(slug, pane, ctx.query, target === null),
+  };
+}
+
+/** Each single-segment pane's own name, as the level header and the rail both say it. */
+const AGENT_PANE_TITLE: Record<AgentPane, string> = {
+  grant: "Grant another app",
+  credentials: "Credentials",
+  activity: "Activity",
+  danger: "Danger zone",
+};
+
+/** The pane's own URL — level 3's way back, minus the `sel` that put it there and plus
+ *  the reading state a pane carries, so going up drops the row and keeps the filter. */
+function agentPaneHref(slug: string, pane: AgentPaneView, query: URLSearchParams): string {
+  const base = pane.kind === "app" ? paths.agentApp(slug, pane.app) : paths.agentPane(slug, pane.kind);
+  const kept = new URLSearchParams();
+  for (const key of ["q", "show", "calls"]) {
+    const value = query.get(key);
+    if (value !== null && value !== "") kept.set(key, value);
+  }
+  return kept.toString() === "" ? base : `${base}?${kept}`;
+}
+
+/**
+ * The row the URL picked, as the level header names it — read off the details view rather
+ * than off `sel`, so the header says what the pane actually drew: a `sel` naming nothing
+ * the pane lists draws the pane's own summary, and the header then says the pane's name.
+ */
+function agentSelectedName(pane: AgentPaneView): string | null {
+  if (pane.kind === "app") {
+    const view = pane.details;
+    if (view.kind === "none") return null;
+    return view.kind === "item" ? view.name : view.entry;
+  }
+  if (pane.kind === "credentials") {
+    const view = pane.details;
+    if (view.kind === "none") return null;
+    return view.kind === "token" ? view.row.prefix : view.row.name;
+  }
+  if (pane.kind === "activity") {
+    const view = pane.details;
+    return view.kind === "none" ? null : view.row.tool;
+  }
+  return null;
+}
+
+/**
+ * §13's three narrow levels, from the URL alone: the landing is 1, a pane 2, a pane with
+ * `sel` 3. The level is the URL's, never the viewport's — CSS decides whether it matters,
+ * so one response serves both widths and a bookmark keeps its level.
+ */
+export function agentLevel(
+  slug: string,
+  pane: AgentPaneView,
+  query: URLSearchParams,
+  landing: boolean,
+): { level: AgentLevel; levelHeader: AgentLevelHeader } {
+  if (landing) {
+    return { level: 1, levelHeader: { backHref: paths.agents, backLabel: "Agents", title: slug } };
+  }
+  const paneTitle = pane.kind === "app" ? pane.appName : AGENT_PANE_TITLE[pane.kind];
+  if (!query.has("sel")) {
+    return {
+      level: 2,
+      levelHeader: { backHref: paths.agentDetail(slug), backLabel: slug, title: paneTitle },
+    };
+  }
+  return {
+    level: 3,
+    levelHeader: {
+      backHref: agentPaneHref(slug, pane, query),
+      backLabel: paneTitle,
+      title: agentSelectedName(pane) ?? paneTitle,
+    },
   };
 }
 

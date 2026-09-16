@@ -240,6 +240,15 @@ p {
   font-weight: 600;
 }
 
+/* The narrow shell's hamburger, drawer and scrim: absent above the breakpoint, where the
+   nav row is the navigation and there is nothing to open. The narrow block below gives
+   all three their shape; here they are only switched off. */
+.menu-open,
+.menu,
+.scrim {
+  display: none;
+}
+
 .page {
   width: 100%;
   max-width: var(--page-wide);
@@ -1845,16 +1854,65 @@ dialog .actions {
   color: var(--ring);
 }
 
+/* The narrow level header (§13's level table). In the document on every render; the
+   narrow block at the foot of this file is where it has a shape at all, because above the
+   breakpoint the title line and the rail say everything it would. */
+.level-header {
+  display: none;
+}
+
 /* ------------------------------------------------------------------ *
  * /agents/<slug> — the listing and details columns (AgentDetail.dc.html)
  * ------------------------------------------------------------------ */
 
+/* The agent page's rail, listing and details are ONE framed box (AgentDetail.dc.html) —
+   unlike /settings and /apps/<slug>, whose rail is a list standing beside a card with the
+   page's own gap between them. So the frame is a modifier on `.paned` rather than a rule
+   on it: the same shell, two shapes, and the other two pages are untouched.
+
+   The box has a HEIGHT, which is what makes the listing and the details column scroll
+   inside it instead of growing the page — `.scroll` and `.details` are already the two
+   `overflow: auto` regions, and neither can scroll without an ancestor that stops. */
+.paned--framed {
+  align-items: stretch;
+  gap: 0;
+  height: min(820px, calc(100vh - 220px));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* Inside the frame the rail is a column of the box, not a list beside one: narrower than
+   the free-standing rail, on the sunken ground, with its own rule as the box's divider. */
+.paned--framed .rail {
+  width: 180px;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-4);
+  border-right: 1px solid var(--border);
+  background: var(--sunken);
+  overflow: auto;
+}
+
+/* The current entry lifts off the sunken rail — `--muted` is all but invisible on it. */
+.paned--framed .rail-link[aria-current="page"] {
+  background: var(--bg);
+  box-shadow: var(--shadow);
+}
+
+.paned--framed .pane {
+  min-height: 0;
+}
+
 /* The one pane that is TWO columns: a listing that scrolls and a details column beside
-   it. Below the breakpoint the details column drops under the listing rather than out of
-   the document — it is where a selected row explains itself, and there is no other
-   place to read it. */
+   it. A ROW — `.pane` is a column and this is the one place that flips, which is what
+   puts the details beside the listing rather than under it. Below the breakpoint it goes
+   back to a column: the details column is where a selected row explains itself, and there
+   is no other place to read it. */
 .pane--split {
   display: flex;
+  flex-direction: row;
   align-items: stretch;
   gap: 0;
   padding: 0;
@@ -1865,6 +1923,7 @@ dialog .actions {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   width: 520px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
@@ -1956,6 +2015,15 @@ dialog .actions {
   padding: var(--space-3) var(--space-8);
   font-size: var(--text-sm);
   border-bottom: 1px solid var(--row-border);
+}
+
+/* A grid item refuses to shrink below its content unless told to, and a declared pattern
+   is one unbreakable token — `proton_(?:create_draft|update_draft|…)`. Without these two
+   the row grows past the listing, the listing scrolls sideways and the control at its
+   right edge leaves the screen. The name cell yields instead: it wraps mid-token. */
+.cr > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .cr:hover {
@@ -2151,6 +2219,41 @@ dialog .actions {
   padding: var(--space-7) var(--space-8);
 }
 
+/* The details body's cards are the board's small `.sec` panels, not the page-scale card
+   the class is shared with — a 24px pad inside a 300px column reads as a margin. */
+.db .card--pad {
+  padding: var(--space-6) var(--space-7);
+  gap: var(--space-4);
+}
+
+/* And their pairs are LINES — key of a fixed width, value beside it — rather than the
+   approval page's grey block with the value pushed to the far edge. Same markup, because
+   a pair is a pair; only the ground and the alignment are this column's. */
+.db .kv {
+  gap: var(--space-4);
+  padding: 0;
+  background: none;
+}
+
+.db .kv-row {
+  justify-content: flex-start;
+  align-items: baseline;
+  gap: var(--space-6);
+  font-size: var(--text-xs);
+}
+
+.db .kv-key {
+  width: 110px;
+  flex-shrink: 0;
+}
+
+/* A resource URI or a pattern is one unbreakable token; the value cell wraps it rather
+   than widening the card past the column. */
+.db .kv-row > :last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* The header's four totals, counted over the grant sets. */
 .tiles {
   display: flex;
@@ -2255,14 +2358,9 @@ dialog .actions {
     display: revert;
   }
 
-  .nav-badge {
-    min-width: 16px;
-    height: 16px;
-    padding: 0 4px;
-    font-size: 10px;
-  }
-
-  /* header: brand + sign out on the bar; the tabs drop to their own scrollable row */
+  /* The bar is the brand and the hamburger, and nothing else: the five entries and the
+     owner's own controls are in the drawer, which is what leaves a phone's top row the
+     one thing it can afford to spend on chrome. */
   .app-header {
     display: block;
     height: auto;
@@ -2279,27 +2377,120 @@ dialog .actions {
     border-bottom: 1px solid var(--border);
   }
 
-  .header-user {
+  /* Both stay in the document — the wide nav is where `aria-current` lives at any width,
+     and the drawer repeats it for the width that can see it. */
+  .nav,
+  .app-header-end {
     display: none;
   }
 
-  .nav {
-    width: 100%;
-    padding: var(--space-6) var(--space-9) 0;
-    gap: var(--space-4);
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .nav::-webkit-scrollbar {
-    display: none;
-  }
-
-  .nav-link {
-    height: var(--control-h-touch);
-    padding: 0 var(--space-5);
-    font-size: var(--text-sm);
+  .menu-open {
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
+    width: var(--control-h-touch);
+    height: var(--control-h-touch);
+    margin-right: calc(-1 * var(--space-5));
+    border-radius: var(--radius);
+    color: var(--fg);
+    text-decoration: none;
+  }
+
+  /* The drawer comes in from the hamburger's OWN side, over a scrim that dims the page
+     behind it. Closed it is off-screen and invisible to the keyboard as well as the eye —
+     `visibility` is what takes it out of the tab order, since it is still displayed. */
+  .menu {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    width: 280px;
+    max-width: 85vw;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-4);
+    background: var(--bg);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.18);
+    visibility: hidden;
+    transform: translateX(100%);
+    transition:
+      transform 0.22s ease,
+      visibility 0.22s ease;
+  }
+
+  #menu:target {
+    visibility: visible;
+    transform: none;
+  }
+
+  .menu-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: var(--header-h);
+    padding-left: var(--space-6);
+    margin-bottom: var(--space-3);
+    border-bottom: 1px solid var(--row-border);
+  }
+
+  .menu-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-h-touch);
+    height: var(--control-h-touch);
+    border-radius: var(--radius);
+    color: var(--fg);
+    text-decoration: none;
+  }
+
+  .menu-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: var(--control-h-touch);
+    padding: 0 var(--space-6);
+    border-radius: var(--radius-lg);
+    font-size: var(--text-md);
+    font-weight: 500;
+    color: var(--muted-fg);
+    text-decoration: none;
+  }
+
+  .menu-link[aria-current="page"] {
+    background: var(--muted);
+    color: var(--fg);
+  }
+
+  /* Pushed to the drawer's foot by the auto margin, under the rule that separates who you
+     are from where you can go. */
+  .menu-foot {
+    margin-top: auto;
+    padding: var(--space-5) var(--space-6) var(--space-2);
+    border-top: 1px solid var(--row-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-5);
+  }
+
+  /* One tap target over the whole page: the scrim closes the drawer from anywhere. */
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+    background: rgba(9, 9, 11, 0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease;
+  }
+
+  #menu:target ~ .scrim {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .page {
@@ -2341,8 +2532,8 @@ dialog .actions {
     flex: 1 1 100%;
   }
 
-  /* the header bar keeps 36px controls even at touch widths (Mobile* boards) */
-  .app-header .btn {
+  /* the drawer's Sign out keeps 36px, as the bar's did before it moved (Mobile* boards) */
+  .menu .btn {
     height: var(--control-h);
     font-size: var(--text-sm);
   }
@@ -2593,29 +2784,239 @@ dialog .actions {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * /agents/<slug> on a phone — the three levels (MobileAgentDetail.dc.html,
+ * MobileAgentDetailStates.dc.html, design/concepts/AgentMobileDemo.html)
+ *
+ * The page renders all three panes at every width; here ONE of them shows, chosen by the
+ * `data-level` the server read off the URL. Nothing is injected and nothing is dropped —
+ * which is why a level survives a bookmark and works with scripting off.
+ * ------------------------------------------------------------------ */
+
 @media (max-width: 900px) {
-  /* The two columns stack: the details column is where a selected row explains itself,
-     so it moves under the listing rather than out of the document. */
+  /* The level header, the one row that is only ever a phone's: the way up, then where you
+     are. Full-bleed, because it is this screen's own bar rather than a block inside the
+     page's gutter — hence the negative margins against `.page`'s narrow padding. */
+  .level-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    height: 48px;
+    margin: calc(-1 * var(--space-9)) calc(-1 * var(--space-9)) 0;
+    padding: 0 var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .level-back {
+    display: inline-flex;
+    align-items: center;
+    height: var(--control-h);
+    max-width: 150px;
+    padding: 0 var(--space-3);
+    border-radius: var(--radius);
+    font-weight: 500;
+    color: var(--muted-fg);
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .level-back:hover {
+    background: var(--muted);
+    color: var(--fg);
+  }
+
+  .level-title {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+    font-size: var(--text-md);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* The counterweight the title is centred against: empty, and as wide as a back link. */
+  .level-end {
+    width: 80px;
+    flex-shrink: 0;
+  }
+
+  /* The frame is a desktop object — at this width the screen is the frame. */
+  .paned--framed {
+    height: auto;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    overflow: visible;
+  }
+
+  /* One level at a time, so nothing has to lay out beside anything. */
+  [data-level] .paned {
+    display: block;
+  }
+
+  [data-level] .rail,
+  [data-level] .listing,
+  [data-level] .details {
+    display: none;
+  }
+
+  [data-level="1"] .rail {
+    display: flex;
+    width: auto;
+    padding: var(--space-6) 0;
+    border-right: 0;
+    background: none;
+  }
+
+  [data-level="2"] .listing,
+  [data-level="3"] .details {
+    display: flex;
+  }
+
+  /* Here the rail is a LIST, not a sidebar: full-width rows at the touch height, each
+     ending in the chevron that says it opens a level rather than swapping a column. The
+     chevron is drawn rather than marked up, so the rail every OTHER paned page renders
+     from the same component keeps its own shape. */
+  [data-level] .rail-link {
+    height: var(--control-h-touch);
+    border-radius: var(--radius-lg);
+    font-size: var(--text-md);
+  }
+
+  [data-level] .rail-link::after {
+    content: "›";
+    font-size: 18px;
+    line-height: 1;
+    color: var(--ring);
+  }
+
+  [data-level] .rail-marker {
+    margin-left: auto;
+    padding-right: var(--space-4);
+  }
+
+  /* The entry you are on needs no highlight on a level that IS the list of entries. */
+  [data-level] .rail-link[aria-current="page"] {
+    background: none;
+    box-shadow: none;
+  }
+
+  /* The level header carries the title line, so the title line goes; on the two levels
+     whose header says everything, the whole page header goes with it. */
+  [data-level] .page-head .crumb,
+  [data-level] .page-head .crumb-sep,
+  [data-level] .page-title {
+    display: none;
+  }
+
+  [data-level="2"] .page-head,
+  [data-level="3"] .page-head {
+    display: none;
+  }
+
+  [data-level] .tiles {
+    flex-wrap: wrap;
+    gap: var(--space-4) var(--space-7);
+  }
+
+  /* The listing header never repeats the level header either: the pane's own name goes,
+     and the badges, the reach line, the subtitles and the filter stay. */
+  [data-level] .lh .listing-title {
+    display: none;
+  }
+
+  /* A header whose only content WAS that name has nothing left to draw a bar for (the
+     danger zone). */
+  [data-level] .lh:not(:has(> :not(.listing-title))) {
+    display: none;
+  }
+
+  /* Activity's Open in Audit drops under the subtitle onto a line of its own. */
+  [data-level] .title-row-end {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+
+  /* The foot stays ONE row with Save at the right edge. The saved counts go: three verbs
+     is what a phone's foot can hold, and the counts are also in the header's reach line. */
+  [data-level] .save {
+    position: sticky;
+    bottom: 0;
+    /* over the rows it floats above — `.cr-control` raises itself to sit above the row's
+       stretched link, and would otherwise show through the foot */
+    z-index: 2;
+    flex-wrap: nowrap;
+    padding: var(--space-5) var(--space-6);
+  }
+
+  [data-level] .save-end {
+    margin-left: auto;
+  }
+
+  [data-level] .save-end .muted {
+    display: none;
+  }
+
+  /* `via reader` goes ABOVE the control rather than beside it: the row has one column to
+     spend at this width and the control is what it is spent on. */
+  [data-level] .cr-control {
+    flex-wrap: wrap;
+    max-width: 190px;
+  }
+
+  [data-level] .via {
+    display: block;
+    width: 100%;
+    text-align: right;
+  }
+
+  /* The details cards' pairs stack, key above value — 110px of key is a third of the
+     screen. */
+  [data-level] .db .kv-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+  }
+
+  [data-level] .db .kv-key {
+    width: auto;
+  }
+
+  /* The two columns would stack if both ever showed at once; only one does, and this is
+     what keeps a lone one full-width. `overflow` goes back to visible: it clipped the
+     frame's rounded corners, there is no frame here, and it was the scrollport that kept
+     the sticky foot below from ever sticking. */
   .pane--split {
     flex-direction: column;
+    overflow: visible;
   }
 
   .listing {
     width: auto;
     border-right: none;
-    border-bottom: 1px solid var(--border);
   }
 
   .details {
     overflow: visible;
   }
 
+  /* The grant step's cards go one column, the Grant button full width under what it
+     grants. */
   .appcard {
     grid-template-columns: 1fr;
     row-gap: var(--space-4);
   }
 
   .appcard-end {
-    align-items: flex-start;
+    align-items: stretch;
+  }
+
+  .appcard-end .btn {
+    width: 100%;
   }
 }

@@ -8,7 +8,9 @@
  * from `paths`, never from string concatenation here.
  *
  * Desktop and mobile are this one shell plus styles.css: at the narrow breakpoint the
- * nav drops out of the 56px bar onto its own scrollable row (the Mobile* artboards).
+ * 56px bar keeps the brand and trades the nav for a hamburger, and the five entries move
+ * into the `:target` drawer below (the Mobile* artboards, `AgentMobileDemo`). Both
+ * navigations are in every response; the breakpoint displays one.
  */
 
 import { html } from "hono/html";
@@ -49,6 +51,20 @@ const NAV: { key: NavSection; label: string; href: string }[] = [
   { key: "approvals", label: "Approvals", href: paths.approvals },
   { key: "settings", label: "Settings", href: paths.settings },
 ];
+
+/** The three bars, and the cross that closes what they opened. Decoration beside a label
+ *  that already says what the control does, so neither is read out. */
+const MenuIcon: FC = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  </svg>
+);
+
+const CloseIcon: FC = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+    <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+);
 
 /** The hub mark from the artboards — a node with three spokes. */
 const BrandMark: FC = () => (
@@ -325,6 +341,12 @@ export const Layout: FC<LayoutProps> = ({ title, active, username, pendingApprov
               <BrandMark />
               <span>personal-mcps</span>
             </a>
+            {/* The narrow bar's right-hand control, displayed only below the breakpoint —
+                a LINK, because the drawer below it is `:target`-driven and a link is the
+                only control a browser opens one with when no script runs. */}
+            <a class="menu-open" href="#menu" aria-label="Menu">
+              <MenuIcon />
+            </a>
             <div class="app-header-end">
               <span class="header-user">{username}</span>
               <form method="post" action={paths.auth.signOut}>
@@ -341,6 +363,38 @@ export const Layout: FC<LayoutProps> = ({ title, active, username, pendingApprov
             ))}
           </nav>
         </header>
+        {/* The narrow drawer, the same five entries the bar's nav holds — both are in every
+            response and the breakpoint picks one, so neither is injected or dropped and
+            `aria-current` is on whichever is showing.
+
+            NO SCRIPT: `#menu:target` is what opens it, which is why the drawer and its
+            scrim are siblings HERE rather than children of the header — the scrim's rule
+            is `#menu:target ~ .scrim`, and a sibling combinator cannot leave the header.
+            Both close by going to `#`, the one href that targets nothing. */}
+        <nav id="menu" class="menu">
+          <div class="menu-head">
+            <span class="brand">
+              <BrandMark />
+              <span>personal-mcps</span>
+            </span>
+            <a class="menu-close" href="#" aria-label="Close menu">
+              <CloseIcon />
+            </a>
+          </div>
+          {NAV.map((item) => (
+            <a class="menu-link" href={item.href} aria-current={item.key === active ? "page" : undefined}>
+              <span>{item.label}</span>
+              {item.key === "approvals" && pendingApprovals ? <span class="nav-badge">{pendingApprovals}</span> : null}
+            </a>
+          ))}
+          <div class="menu-foot">
+            <span class="header-user">{username}</span>
+            <form method="post" action={paths.auth.signOut}>
+              <button type="submit" class="btn btn--outline btn--sm">Sign out</button>
+            </form>
+          </div>
+        </nav>
+        <a class="scrim" href="#" aria-hidden="true"></a>
         {children}
         {/* Installability and push only — the worker never intercepts navigation (§13). */}
         <script

@@ -76,7 +76,7 @@ import type {
 // `familyMarker` is §13's three-answer family marker (a count, `—` where the app advertises
 // none, BLANK where a listing could not be read at all) — this IS the shipped rule, not a
 // copy of it, because the preview must demonstrate what the page does.
-import { DIMMED, enrollmentOf, familyMarker } from "../src/pages/model";
+import { DIMMED, agentLevel, enrollmentOf, familyMarker } from "../src/pages/model";
 import { HUB_PRINCIPAL } from "../src/principal";
 
 /* ------------------------------------------------------------------ *
@@ -2782,11 +2782,27 @@ const grantCard = (over: Partial<AgentGrantCard> = {}): AgentGrantCard => ({
   ...over,
 });
 
-/** One fixture's whole props, so each entry below says only what makes it that state. */
+/**
+ * The query the fixture's own URL carried, as far as the three levels care: a details
+ * column showing a picked row is a URL that named one with `sel`. Only its PRESENCE is
+ * read (the name comes off the details view itself), so the value is a placeholder.
+ */
+const agentQuery = (pane: AgentPaneView): URLSearchParams =>
+  new URLSearchParams("details" in pane && pane.details.kind !== "none" ? { sel: "picked" } : {});
+
+/**
+ * One fixture's whole props, so each entry below says only what makes it that state.
+ *
+ * The narrow level is not stated per fixture: it is `agentLevel`'s, off the same URL a
+ * request would carry, so a fixture cannot claim a level the page would not give it.
+ * `landing` is the one bit a fixture has to say, because the landing renders a pane in
+ * place and is otherwise indistinguishable from that pane's own URL.
+ */
 const agentPage = (
   rail: string,
   pane: AgentPaneView,
   over: Partial<AgentDetailProps> = {},
+  landing = false,
 ): AgentDetailProps => ({
   ...shell("agents"),
   csrfToken: CSRF,
@@ -2795,6 +2811,7 @@ const agentPage = (
   pane,
   confirm: null,
   reveal: null,
+  ...agentLevel("claude", pane, agentQuery(pane), landing),
   ...over,
 });
 
@@ -3113,6 +3130,19 @@ const agentDetail = {
 
   /** The danger zone: the delete card, and what deletion removes. */
   danger: agentPage("danger", { kind: "danger", grants: 3, tokens: 2, clients: 1 }),
+
+  /* The three levels below the breakpoint (MobileAgentDetail.dc.html,
+     MobileAgentDetailStates.dc.html) — the SAME props as `default` but for the URL each
+     came from, which is the only thing that decides a level. Wide they are identical: the
+     attribute is read by the narrow stylesheet alone, so seeing the difference means
+     narrowing the window. */
+
+  /** `/agents/claude` — the landing: the tiles and the rail as a full-width list. */
+  narrowLevel1: agentPage("news", appPane({ details: noSelection }), {}, true),
+  /** `/agents/claude/apps/news` — the listing alone, its header without the app's name. */
+  narrowLevel2: agentPage("news", appPane({ details: noSelection })),
+  /** `/agents/claude/apps/news?sel=tool:get_news` — the details alone, `‹ News MCP` up. */
+  narrowLevel3: agentPage("news", appPane()),
 } satisfies Record<string, AgentDetailProps>;
 
 export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsByName[K]> } = {

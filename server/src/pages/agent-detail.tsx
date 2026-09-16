@@ -23,7 +23,7 @@
 // entry; model.ts's `AgentDetailsView` is the home of that decision.
 
 import type { FC } from "hono/jsx";
-import { ConfirmShell, Layout, PaneRail, PanePills, TokenReveal, paneGroups } from "./layout";
+import { ConfirmShell, Layout, PaneRail, TokenReveal, paneGroups } from "./layout";
 import type { PaneEntry } from "./layout";
 import { alertClass, formatLastSeen, formatStamp, formatUntil } from "./format";
 import { DIMMED, entryField, paths } from "./model";
@@ -37,6 +37,7 @@ import type {
   AgentDetailProps,
   AgentDetailsView,
   AgentGrantCard,
+  AgentLevelHeader,
   AgentListGroup,
   AgentListRow,
   AgentPaneView,
@@ -48,10 +49,10 @@ import type {
 import { DELETE_AGENT_TEXT } from "./agents";
 import { NO_BODIES_SENTENCE } from "./audit";
 
-/** The accessible names of this page's two pane navigations — they exist because the rail
- *  and the pill row put the same destinations on the page at every width. */
+/** The accessible name of this page's pane navigation. The pill row every OTHER paned page
+ *  draws below the breakpoint is deliberately absent here: this page's narrow level 1 is
+ *  the rail itself, as a list, which is the same destinations said once. */
 const RAIL_NAV_LABEL = "Agent panes";
-const PILL_NAV_LABEL = "Agent panes, compact";
 
 const DIALOG_ID = "confirm-agent";
 
@@ -1174,6 +1175,24 @@ const AgentDialog: FC<{ confirm: AgentConfirm; props: AgentDetailProps }> = ({ c
 
 /* -------------------------------------------------------------------- page --- */
 
+/**
+ * The narrow level header — one row: the way up on the left, where you are in the middle.
+ * In the document on every render at every width and shown only below the breakpoint,
+ * where it stands in for the title line and the rail at once (§13's level table).
+ *
+ * The trailing span is the counterweight that centres the title against the back link;
+ * it carries nothing, which is why it is hidden from anyone reading the page's contents.
+ */
+const LevelHeader: FC<{ header: AgentLevelHeader }> = ({ header }) => (
+  <div class="level-header">
+    <a class="level-back" href={header.backHref}>
+      ‹ {header.backLabel}
+    </a>
+    <span class="level-title">{header.title}</span>
+    <span class="level-end" aria-hidden="true"></span>
+  </div>
+);
+
 const Pane: FC<{ props: AgentDetailProps }> = ({ props }) => {
   const pane = props.pane;
   if (pane.kind === "app") return <AppPane props={props} pane={pane} />;
@@ -1202,7 +1221,10 @@ export const AgentDetailPage: FC<AgentDetailProps> = (props) => {
       username={props.username}
       pendingApprovals={props.pendingApprovals}
     >
-      <main class="page page--paned">
+      {/* `data-level` is read by the narrow stylesheet ALONE: it shows one of the rail,
+          the listing and the details by it, and the wide one never looks. */}
+      <main class="page page--paned" data-level={String(props.level)}>
+        <LevelHeader header={props.levelHeader} />
         <div class="page-head">
           <div>
             {/* ONE row: where the page sits, what it is, and what it is for. A crumb on a
@@ -1229,8 +1251,6 @@ export const AgentDetailPage: FC<AgentDetailProps> = (props) => {
           </div>
         </div>
 
-        <PanePills label={PILL_NAV_LABEL} entries={entries} />
-
         {props.notice === null ? null : (
           <div class={alertClass(props.notice.tone)} role={props.notice.tone === "danger" ? "alert" : "status"}>
             <div>
@@ -1240,7 +1260,10 @@ export const AgentDetailPage: FC<AgentDetailProps> = (props) => {
           </div>
         )}
 
-        <div class="paned">
+        {/* `--framed`: on THIS page the rail is a column of the three-pane box rather
+            than a list standing beside a card (AgentDetail.dc.html) — /settings and
+            /apps/<slug> keep the unframed shape. */}
+        <div class="paned paned--framed">
           <PaneRail label={RAIL_NAV_LABEL} groups={paneGroups(entries)} />
           <div class="pane pane--split">
             <Pane props={props} />

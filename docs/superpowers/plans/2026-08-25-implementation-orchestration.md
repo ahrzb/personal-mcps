@@ -1557,6 +1557,23 @@ check and (manual, once) a real push notification to a real browser.
   renderer were designed together. `f4bce19` (`design:` — the layout & density guideline,
   `design/layout-and-density.md`, with the audit's inconsistencies mapped to fixes; applying
   it is the next dispatch, visual gate per page).
+- 2026-09-16 — **The layout & density ladder applied to every page and board, shipped.**
+  `1efa731` (`fix:` — the framed rail as the board's dense column, after the owner's "this
+  looks awful" screenshot; deploy `abb4cba8`), then the dispatch: `2764c43` (`spec:` —
+  §13 defers every number to `design/layout-and-density.md`; the three paned pages share
+  the framed workspace; the agent page's levels below 1024 while the shell's hamburger is
+  below 768 — a pinned sentence reinterpreted, flagged to the owner), `0d5c5df` (one row:
+  every `<main>` carries exactly one shape class — authored red, no prior todo, for the
+  owner's review), `1b8466e` (`design:` — 17 boards to the ladder, canvas re-laid out with
+  no overlaps), `2d07e89` (`feat:` — `page--document` / `page--table` / `page--workspace`,
+  Settings and the app page in the framed box, badge 20/11 with a title variant, inline
+  controls 24, headers 12/20, audit rows dense, breakpoints 768 / 1024, no type under 11px,
+  72ch prose, one long-data fixture per listing; a pre-existing bug fixed on the way: the
+  fluid listing rule kept the phone's listing 520px wide). Deploy **`896e0ca6`**, smoke
+  **34/34**; gate 46 files, 1,539 passed. Visual gate by the orchestrator: five pages
+  measured at 1300 (workspace 1285 inside gutters, rail 200, table 1280 with long data,
+  document 760, segments 44×24) before the suite. Cost: 4 Opus agents (pages, boards,
+  tests, spec) + the two earlier researchers; the tests agent found nothing to re-point.
 - 2026-09-03 — **G1 closed ahead of step 10 — the audit chevron is a link.** The user's
   question ("why can none of the audit items be expanded?") diagnosed as the UI half of
   G1: bodies are stored, `?expand=<id>` rendered the open row, but the chevron was a bare

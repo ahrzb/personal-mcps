@@ -2622,6 +2622,43 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(login).not.toContain("scrim");
   });
 
+  it(`§13 · every shell page's <main> carries exactly ONE of the three shape classes §2 of design/layout-and-density.md pins — page--document on /approvals, page--table on /apps, /agents and /audit, page--workspace on /settings, /agents/<slug> and /apps/<slug> — and none of the four the rename retires (page, page--narrow, page--paned, page--fluid), with one <main> per page where /apps and /approvals drew a <div class="page"> · /login, which has no shell, carries no <main class="page…"> at all (the twin)`, async () => {
+    // Markup on purpose, and the second exception to this file's header rule: the shape
+    // class is the CONTRACT between the page and the stylesheet — width cap, gutters and
+    // the pane rules all key off which of the three a page writes — so it is not
+    // incidental HTML. The CSS behind it is the stylesheet's business and is not pinned.
+    const SHAPES: readonly string[] = ["page--document", "page--table", "page--workspace"];
+    const RETIRED: readonly string[] = ["page", "page--narrow", "page--paned", "page--fluid"];
+    /** Every <main> in the document as its class TOKENS — split rather than matched as a
+     *  substring, so `page--document` is never read as the retired bare `page`. */
+    const mainsOf = (html: string): string[][] =>
+      [...html.matchAll(/<main\b([^>]*)>/g)].map((main) =>
+        (attributeOf(main[1], "class") ?? "").split(/\s+/).filter(Boolean),
+      );
+
+    const shells: [string, string][] = [
+      [paths.approvals, "page--document"],
+      [paths.apps, "page--table"],
+      [paths.agents, "page--table"],
+      [paths.audit, "page--table"],
+      [paths.settings, "page--workspace"],
+      [paths.agentDetail("agent"), "page--workspace"],
+      [paths.appDetail("news"), "page--workspace"],
+    ];
+    for (const [path, shape] of shells) {
+      const mains = mainsOf(await page(path));
+      expect(mains.length, `${path}: <main> count`).toBe(1);
+      expect(mains[0].filter((token) => SHAPES.includes(token)), path).toEqual([shape]);
+      expect(mains[0].filter((token) => RETIRED.includes(token)), `${path}: retired classes`).toEqual([]);
+    }
+
+    // The twin: the sign-in family has no shell, so it has no shaped <main> either — the
+    // auth card is its own 400 px rule, not one of the three page shapes.
+    for (const tokens of mainsOf(await anonymousPage(paths.login))) {
+      expect(tokens.filter((token) => [...SHAPES, ...RETIRED].includes(token)), paths.login).toEqual([]);
+    }
+  });
+
   it(`§13/§8 · /agents/new renders agent_create's three fields — slug, name, description — and nothing else, and a posted create lands on the new agent's page · a slug the op refuses (reserved, taken, illegal) re-renders the form at 400 with the refusal under the field and creates nothing (the twin)`, async () => {
     const html = await page(paths.agentNew);
     // The create form by its action — the shell's Sign out form comes first in the document.

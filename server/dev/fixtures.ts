@@ -1592,15 +1592,21 @@ const appDetailFixtures = {
       summary: "0 tools · 0 prompts · 0 resources · reachable by 2 agents",
       groups: [],
       state: { text: "Token refresh failed — calls return errors until you reconnect.", reconnect: true },
+      details: { kind: "none", schemas: "the upstream's live listing, under a 10 s deadline" },
     }),
     {},
-    { catalog: "" },
+    { catalog: "", token: DIMMED },
   ),
 
   /** A headers-mode proxied app: the upstream card without the OAuth controls. */
   catalogProxied: appDetail(
     notionHeaderBase,
-    catalogPane({ subtitle: "fetched live from the upstream" }),
+    catalogPane({
+      subtitle: "fetched live from the upstream",
+      details: { kind: "none", schemas: "the upstream's live listing, under a 10 s deadline" },
+    }),
+    {},
+    { token: DIMMED },
   ),
 
   /** AppDetailPanes "Roles": every source badge at once — `app`, `app · replaced yours`,
@@ -1626,6 +1632,23 @@ const appDetailFixtures = {
       name: "",
       isNew: true,
       holders: [],
+      // Nothing is in it yet, so nothing is ticked and no pattern is listed.
+      groups: [
+        {
+          title: "Tools",
+          count: "0 of 3",
+          state: null,
+          rows: appTools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            via: [],
+            field: `i.tools/${tool.name}`,
+            checked: false,
+            locked: false,
+            lockTitle: "matched by ",
+          })),
+        },
+      ],
       patterns: [],
       keep: [],
       explain:
@@ -1681,7 +1704,7 @@ const appDetailFixtures = {
       details: { kind: "none", appsOwn: "none: a proxied app declares no roles" },
     },
     {},
-    { roles: "2" },
+    { roles: "2", token: DIMMED },
   ),
 
   /** AppRecordingDemo in the three-pane grammar: the by-path editor, one locked path, one
@@ -1719,6 +1742,8 @@ const appDetailFixtures = {
         { title: "Results · 0 masked", rows: [], empty: "nothing masked — results are recorded whole" },
       ],
     }),
+    {},
+    { token: DIMMED },
   ),
 
   /** A refused save, redrawn with the reason above the rows. */
@@ -1819,7 +1844,7 @@ const appDetailFixtures = {
       { key: "Body logging", value: "Off — proxied default", mono: false },
       { key: "Description", value: "Issues and cycles over the Linear MCP.", mono: false },
     ],
-  }),
+  }, {}, { token: DIMMED }),
 
   /** AppDetailPanes "Danger zone", wide: Archive and Delete, each behind its own dialog. */
   danger: appDetail(tunnelHeaderBase, { kind: "danger", archived: false, tokens: 1, agents: 2 }),

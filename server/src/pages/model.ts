@@ -4448,7 +4448,7 @@ function recordingSection(
         path,
         type: entry.type,
         detail: `${entry.tools.length} tool${entry.tools.length === 1 ? "" : "s"}${status === "" ? "" : ` · ${status}`}`,
-        which: which ? { href: whichHref(at.slug, dir, path, open), label: shown ? "hide" : "which" } : null,
+        which: which ? { href: whichHref(at.slug, dir, path, open, q), label: shown ? "hide" : "which" } : null,
         control:
           editable.length === 0
             ? { kind: "locked" as const }
@@ -4492,10 +4492,13 @@ function recordingSection(
 
 /** The `which` link: this pane's URL with one more (or one fewer) `which=` on it, so the
  *  expanded set is addressable and several paths can be open at once. */
-function whichHref(slug: string, dir: "args" | "results", path: string, open: Set<string>): string {
+function whichHref(slug: string, dir: "args" | "results", path: string, open: Set<string>, q: string): string {
   const key = `${dir}:${path}`;
   const kept = [...open].filter((each) => each !== key);
   const params = new URLSearchParams();
+  // The filter rides along: opening a path is a READING step, and losing the filter that
+  // found it would send the owner back through the list to get here again.
+  if (q !== "") params.set("q", q);
   for (const each of open.has(key) ? kept : [...kept, key]) params.append("which", each);
   const rendered = params.toString();
   return `${paths.appPane(slug, "recording")}${rendered === "" ? "" : `?${rendered}`}`;

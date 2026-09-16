@@ -424,7 +424,7 @@ const RoleDetailsView: FC<{ props: AppDetailProps; view: AppRoleDetails }> = ({ 
             // Outside the form below it, and bound to it by `form=`: the filter under this
             // header is a GET form of its own, so the two cannot nest.
             <input
-              class="input input--mono input--auto"
+              class="input role-name"
               type="text"
               name="role"
               form={ROLE_FORM}
@@ -698,10 +698,12 @@ const MaskedCard: FC<{ card: AppRecordingCard }> = ({ card }) => (
     {card.rows.length === 0 ? (
       <p class="note">{card.empty}</p>
     ) : (
+      // A path is long and who masks it is longer: the two stack, as the board draws them,
+      // rather than sitting either side of a 110px key column.
       card.rows.map((row) => (
-        <div class="kv-row">
-          <div class="mono">{row.path}</div>
-          <div class="muted">{row.detail}</div>
+        <div>
+          <span class="mono">{row.path}</span>
+          <div class="cr-detail">{row.detail}</div>
         </div>
       ))
     )}

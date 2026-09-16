@@ -2552,6 +2552,17 @@ dialog .actions {
     display: none !important;
   }
 
+  /* A schema row has three columns and a phone has room for two: the path and its type
+     keep the first line, and whatever the third column has to say drops under them
+     rather than off the card. */
+  .arg {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .arg > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
   .narrow-only {
     display: revert;
   }
@@ -3481,4 +3492,13 @@ dialog .actions {
 
 .listing--wide .db {
   max-width: 640px;
+}
+
+/* The new role's name, typed where a saved role prints its own: as wide as a role name
+   ever is, so the source badge beside it keeps its place on the header's first line. */
+input.role-name {
+  width: 200px;
+  max-width: 100%;
+  height: var(--control-h-sm);
+  font-family: var(--font-mono);
 }

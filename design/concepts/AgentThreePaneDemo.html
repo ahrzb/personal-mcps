@@ -98,6 +98,8 @@
   #crumb > .mono:last-child,#crumb > .mono:last-child:hover{background:#18181b;color:#fafafa;cursor:default}
   #crumb .dim{font-size:0}
   #crumb .dim::before{content:"›";font-size:14px;color:#a1a1aa;line-height:1}
+  .more{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid #f4f4f5}
+  .more .btn{height:30px;padding:0 12px;font-size:12px;flex-shrink:0}
   .tog{background:none;border:0;padding:0;color:#71717a;font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
   .tog:hover{color:#09090b}
 </style>
@@ -114,7 +116,7 @@
   <div style="display:flex;justify-content:space-between;align-items:flex-end">
     <div style="display:flex;flex-direction:column;gap:4px">
       <div class="cell" id="crumb"></div>
-      <div class="row" style="gap:10px"><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="badge kind">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
+      <div class="row" style="gap:10px"><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
     </div>
     <div class="tile" id="tiles"></div>
   </div>
@@ -232,11 +234,23 @@ const CALLS = [
   { id: "e4", when: "yesterday", app: "news", tool: "publish", outcome: "not permitted", ms: 3, args: null, result: null, client: "claude-ai/1.2" },
   { id: "e5", when: "yesterday", app: "linear", tool: "get_issue", outcome: "ok", ms: 377, args: { id: "PM-38" }, result: { issue: { id: "PM-38", title: "Agents list" } }, client: "claude-ai/1.2" },
 ];
+// the rest of the week — the trail keeps seven days, and an active agent makes hundreds of calls
+{
+  const tools = [["linear", "list_issues", "ok", 380], ["news", "get_news", "ok", 61], ["news", "search_items", "ok", 90], ["linear", "get_issue", "ok", 355], ["news", "search_feeds", "ok", 72], ["news", "admin_reindex", "approval required", 5], ["news", "delete_feed", "not permitted", 3], ["linear", "list_projects", "ok", 410]];
+  const whens = ["yesterday", "yesterday", "2 days ago", "2 days ago", "3 days ago", "3 days ago", "4 days ago", "5 days ago", "6 days ago", "6 days ago"];
+  for (let i = 6; i <= 64; i++) {
+    const [app, tool, outcome, ms] = tools[(i * 7) % tools.length];
+    const ok = outcome === "ok";
+    CALLS.push({ id: "e" + i, when: whens[Math.min(whens.length - 1, Math.floor((i - 6) / 6))], app, tool, outcome, ms: ms + ((i * 13) % 40), args: ok ? { page: i } : null, result: ok ? { count: (i * 3) % 17 } : null, client: "claude-ai/1.2" });
+  }
+}
+const PAGE = 20; // rows per page of the trail — the real page's audit_query limit
+let callsShown = PAGE;
 const APP_DESC = { news: "RSS digester on the home server", linear: "Issues and projects over the Linear MCP", home: "Lights, thermostat and sensors", gh: "Repositories, pull requests and issues over the GitHub MCP" };
 function startGrant(app) { view = "app"; current = app; selected = null; filterText = ""; draft = { app, allow: [], approval: [] }; picked = null; render(); }
 function showView(v) {
   if (isDirty() && v !== "app") { pendingSwitch = "view:" + v; render(); return; }
-  view = v; picked = null; confirmRevoke = null; grantQuery = ""; render();
+  view = v; picked = null; confirmRevoke = null; grantQuery = ""; callsShown = PAGE; render();
 }
 function issueToken() {
   const id = "t" + (TOKENS.length + 1);
@@ -454,12 +468,15 @@ function renderAgentView() {
 
   if (view === "activity") {
     const pending = APPROVALS.filter((a) => a.status === "pending");
-    lh.innerHTML = `<div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">Activity</span><span class="cell">the last 7 days, the retention window</span></div><a class="cell">full trail · /audit?principal=agent:claude</a></div><div class="sum">${CALLS.length} calls · ${CALLS.filter((c) => c.outcome === "ok").length} ok · ${CALLS.filter((c) => c.outcome === "not permitted").length} denied · ${pending.length} awaiting approval</div>`;
+    lh.innerHTML = `<div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">Activity</span><span class="cell">the last 7 days, the retention window</span></div><a class="btn" style="height:26px;padding:0 9px;font-size:12px;text-decoration:none;gap:5px;flex-shrink:0" title="/audit?principal=agent:claude">Open in Audit<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"></path></svg></a></div><div class="sum">${CALLS.length} calls · ${CALLS.filter((c) => c.outcome === "ok").length} ok · ${CALLS.filter((c) => c.outcome === "not permitted").length} denied · ${pending.length} awaiting approval</div>`;
     list.innerHTML = `<div class="gh"><span>Awaiting approval · ${pending.length}</span><span style="text-transform:none;letter-spacing:0">each expires an hour after it was asked</span></div>` +
       (pending.length ? pending.map((a) => `<div class="cr${sel("approval", a.id)}" onclick="picked={kind:'approval',id:'${a.id}'};render()"><div><span class="mono cell">${a.app}</span> <span class="mono">${a.tool}</span><div class="d mono">${esc(JSON.stringify(a.args))}</div></div><div class="st" onclick="event.stopPropagation()"><span class="cell" style="font-size:11px">${a.age}</span><button class="mini" onclick="decide('${a.id}','rejected')">Reject</button><button class="mini" style="background:#18181b;color:#fafafa;border-color:#18181b" onclick="decide('${a.id}','approved')">Approve</button></div></div>`).join("") : `<div class="note" style="padding:6px 16px">Nothing waiting.</div>`) +
       APPROVALS.filter((a) => a.status !== "pending").map((a) => `<div class="cr dorm"><div><span class="mono cell">${a.app}</span> <span class="mono">${a.tool}</span><div class="d">${a.status} just now</div></div><div class="st"><span class="badge">${a.status}</span></div></div>`).join("") +
       `<div class="gh"><span>Recent calls · ${CALLS.length}</span><span style="text-transform:none;letter-spacing:0">newest first</span></div>` +
-      CALLS.map((c) => `<div class="cr${sel("call", c.id)}" onclick="picked={kind:'call',id:'${c.id}'};render()"><div><span class="mono cell">${c.app}</span> <span class="mono">${c.tool}</span><div class="d">${c.when} · ${c.ms} ms</div></div><div class="st">${outcomeBadge(c.outcome)}</div></div>`).join("");
+      CALLS.slice(0, callsShown).map((c) => `<div class="cr${sel("call", c.id)}" onclick="picked={kind:'call',id:'${c.id}'};render()"><div><span class="mono cell">${c.app}</span> <span class="mono">${c.tool}</span><div class="d">${c.when} · ${c.ms} ms</div></div><div class="st">${outcomeBadge(c.outcome)}</div></div>`).join("") +
+      (CALLS.length > callsShown
+        ? `<div class="more"><button class="btn" onclick="callsShown+=PAGE;render()">Load ${Math.min(PAGE, CALLS.length - callsShown)} more</button><span class="cell">${CALLS.length - callsShown} older in the last 7 days · everything before that is in <a>Audit</a></span></div>`
+        : `<div class="more"><span class="cell">That is the whole week — older calls are in <a>Audit</a>.</span></div>`);
     if (picked && picked.kind === "approval") {
       const a = APPROVALS.find((a) => a.id === picked.id);
       det.innerHTML = `<div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">${a.tool}</span><span class="badge warn">${a.status}</span></div><div class="cell" style="margin-top:2px">claude wants to call this on <span class="mono">${a.app}</span> · asked ${a.age}${a.status === "pending" ? ` · expires in ${a.expires}` : ""}</div></div><div class="db"><div class="sec"><div class="eyebrow">Arguments · post-redaction</div><div class="mono" style="font-size:12px;white-space:pre">${esc(JSON.stringify(a.args, null, 2))}</div></div><div class="sec"><div class="eyebrow">Why it waits</div>${kv("Grant", `<span class="mono">admin</span> is in Ask first on <span class="mono">${a.app}</span>`)}${kv("Then", "the agent retries the identical call and it runs once; a different call asks again")}</div>${a.status === "pending" ? `<div class="row" style="gap:6px"><button class="mini" onclick="decide('${a.id}','rejected')">Reject</button><button class="mini" style="background:#18181b;color:#fafafa;border-color:#18181b" onclick="decide('${a.id}','approved')">Approve</button></div>` : ""}</div>`;

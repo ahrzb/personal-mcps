@@ -1527,6 +1527,22 @@ check and (manual, once) a real push notification to a real browser.
   2 explorers, all Opus/Sonnet; the orchestrator wrote the brief, the rulings and the specs.
   The phone rendering (three levels, a sidebar) was approved the same day and is the next
   track (`docs/superpowers/plans/2026-09-16-agents-mobile.md`).
+- 2026-09-16 — **The agent page framed as its board, and the phone rendering — three levels
+  and a sidebar — shipped.** The user opened the first ship and saw a page that was not the
+  design (`docs/superpowers/postmortems/2026-09-16-agent-page-layout-not-the-board.md`: the
+  details pane stacked under the listing at every width because the split never set its
+  flex direction, no framed box, long real patterns overflowing sideways). `5635c06`
+  (`spec:` — the narrow shell is brand + hamburger + a `:target` sidebar on every page,
+  the agent page is three levels by URL with a back-plus-title header, decision 31
+  extended), `daa3271` (three rows, one retitle), `b91c058` (`feat:` — the wide fix from
+  the boards' own stylesheet, wrapping for long patterns, the sidebar in `layout.tsx`, the
+  levels and `data-level`, three fixtures), `b82bb32` (gate). Deploy **`1694e6eb`**, smoke
+  **34/34**. The orchestrator did the visual gate this time — the preview beside the board
+  at 1300 px, then the three levels and the open sidebar at 375 px — before the ship. Gate
+  note: two `stream.test.ts` rows failed in the first full run and one in the second while
+  the file passed 13/13 alone each time (the known socket flake under load); a third full
+  run was started to leave the inventory clean. Cost: 1 spec + 1 pages + 1 tests agent
+  (Opus), no verifier round — the user's review and the orchestrator's walk stood in for it.
 - 2026-09-03 — **G1 closed ahead of step 10 — the audit chevron is a link.** The user's
   question ("why can none of the audit items be expanded?") diagnosed as the UI half of
   G1: bodies are stored, `?expand=<id>` rendered the open row, but the chevron was a bare

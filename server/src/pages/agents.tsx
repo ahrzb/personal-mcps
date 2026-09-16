@@ -86,7 +86,7 @@ export function AgentsPage(props: AgentsProps) {
   const { notice, agents, confirm, csrfToken, now } = props;
   return (
     <Layout title="Agents · personal-mcps" active="agents" username={props.username} pendingApprovals={props.pendingApprovals}>
-      <main class="page">
+      <main class="page--table">
         {notice ? (
           <div class={alertClass(notice.tone)}>
             {notice.title ? <div class="alert-title">{notice.title}</div> : null}

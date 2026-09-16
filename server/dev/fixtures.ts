@@ -804,8 +804,10 @@ const apps = {
     confirm: null,
   },
 
-  /** Edge: names, slugs, endpoints, and role lists past every column's comfort. */
-  longNames: {
+  /** Edge: names, slugs, endpoints, and role lists past every column's comfort — /apps's
+   *  own answer to the long-data check every listing page carries
+   *  (docs/superpowers/postmortems/2026-09-16-agent-page-layout-not-the-board.md). */
+  longData: {
     ...shell("apps"),
     csrfToken: CSRF,
     active: [
@@ -836,6 +838,38 @@ const apps = {
     confirm: null,
   },
 } satisfies Record<string, AppsProps>;
+
+/* ---------------------- the long-data strings ---------------------- */
+
+/* One set of oversized strings, shared by the long-data fixture of every listing page
+ * (/apps has its own, spelled inline above). They exist because the agent page shipped
+ * looking nothing like its board and nobody noticed until the owner opened it with real
+ * data in it — docs/superpowers/postmortems/2026-09-16-agent-page-layout-not-the-board.md.
+ * Each is the widest thing its column can be handed, so a layout that only holds for the
+ * board's short names fails visibly here rather than in production. */
+
+/** 300 characters with no space in them: the declared pattern of an app whose tools share
+ *  one flat namespace, and the longest unbreakable token a listing row can carry. */
+const LONG_PATTERN =
+  "incident_(?:timeline|summary|postmortem|rollup|digest|handover|escalation|acknowledge|" +
+  "silence|reopen|annotate|link_change|link_deploy|link_alert|assign_commander|" +
+  "assign_scribe|page_oncall|page_backup|declare|downgrade|upgrade|resolve|verify|" +
+  "publish_status|retract_status|snapshot_states)_(?:v1|v2|v3)";
+
+/** A 40-word description: what an app that documents itself in prose actually publishes,
+ *  against the boards' five-word summaries. */
+const LONG_DESCRIPTION =
+  "Search the incident timeline across every connected service and return the matching " +
+  "events in order, with the deploy, alert and chat messages that surround each one, so " +
+  "an on-call responder can reconstruct what happened without opening four consoles " +
+  "by hand.";
+
+/** 40 characters of slug: the width the framed rail ellipsizes at and the widest name a
+ *  listing row's first column can be handed. */
+const LONG_SLUG = "incident-response-and-postmortem-runners";
+
+/** The same 40 characters as a tool name — one token, so it cannot wrap at a hyphen. */
+const LONG_TOOL = "search_incident_timeline_across_services";
 
 /* ------------------------------------------------------------------ *
  * /apps/<slug>
@@ -1288,6 +1322,37 @@ const appDetailFixtures = {
     ...appDetail(tunnelHeader, "danger", TUNNEL_CATALOG),
     confirm: { kind: "delete" },
   },
+
+  /** The long-data check: a 40-character slug in the title row and the rail, a 40-word
+   *  description where the board draws one line, and a 300-character pattern in the role
+   *  the tool is reached through
+   *  (docs/superpowers/postmortems/2026-09-16-agent-page-layout-not-the-board.md). */
+  longData: appDetail(
+    { ...tunnelHeader, slug: LONG_SLUG, name: "Incident response and postmortem runners (staging)" },
+    "tools",
+    {
+      ...TUNNEL_CATALOG,
+      tools: {
+        state: "listed",
+        rows: [
+          {
+            name: LONG_TOOL,
+            aggregated: `${LONG_SLUG}_${LONG_TOOL}`,
+            summary: LONG_DESCRIPTION,
+            description: LONG_DESCRIPTION,
+            args: [{ name: "since", type: "string", required: false, hasDefault: false }],
+            reach: [{ agent: "claude", mode: "allow", roles: ["incident-responder"] }],
+            approvalAgents: [],
+            redactedArgs: [],
+            redactedResults: [],
+            schemaUnsound: false,
+          },
+          ...mcpToolsCatalog,
+        ],
+      },
+    },
+    { roles: { "incident-responder": { tools: [LONG_PATTERN], prompts: [], resources: [] } } },
+  ),
 } satisfies Record<string, AppDetailProps>;
 
 /* ------------------------------------------------------------------ *
@@ -2310,6 +2375,24 @@ const agents = {
     agents: agentRows,
     confirm: { kind: "delete-agent" as const, row: agentRows[0] as AgentRow },
   },
+  /** The long-data check: a 40-character slug and a 40-word description in the row the
+   *  board draws at six words, beside the short rows they have to stay aligned with. */
+  longData: {
+    ...shell("agents"),
+    csrfToken: CSRF,
+    agents: [
+      {
+        slug: LONG_SLUG,
+        name: "Incident response and postmortem runners (staging)",
+        description: LONG_DESCRIPTION,
+        createdAt: ms("2026-08-12T09:00:00.000Z"),
+        access: { apps: 12, allowed: 31, askFirst: 14, dormant: 6 },
+        tokens: { active: 3, lastUsedAt: ms("2026-08-24T12:47:00.000Z") },
+      },
+      ...agentRows,
+    ],
+    confirm: null,
+  },
 } satisfies Record<string, AgentsProps>;
 
 const agentNew = {
@@ -3154,6 +3237,70 @@ const agentDetail = {
   narrowLevel2: agentPage("news", appPane({ details: noSelection })),
   /** `/agents/claude/apps/news?sel=tool:get_news` — the details alone, `‹ News MCP` up. */
   narrowLevel3: agentPage("news", appPane()),
+
+  /** The long-data check, all three strings at once: a 300-character pattern in a role's
+   *  detail line, a 40-word tool description in a row AND in the details card, and a
+   *  40-character app slug in the framed rail. The page that shipped unlike its board
+   *  did so because every fixture it was read against was short
+   *  (docs/superpowers/postmortems/2026-09-16-agent-page-layout-not-the-board.md). */
+  longData: agentPage(
+    "news",
+    appPane({
+      groups: [
+        {
+          title: "Roles",
+          count: "1",
+          note: "declared by the app at connect",
+          state: null,
+          rows: [
+            {
+              kind: "role",
+              entry: "incident-responder",
+              builtin: false,
+              detail: `tools ${LONG_PATTERN} · matches 12`,
+              sel: "role:incident-responder",
+              control: seg("incident-responder", "allow"),
+            },
+          ],
+        },
+        {
+          title: "Tools",
+          count: "1",
+          note: "1 reached · 0 not",
+          state: null,
+          rows: [
+            {
+              kind: "item",
+              entry: `tool/${LONG_TOOL}`,
+              name: LONG_TOOL,
+              description: LONG_DESCRIPTION,
+              via: ["incident-responder"],
+              alsoVia: false,
+              noEffect: false,
+              sel: `tool:${LONG_TOOL}`,
+              control: seg(`tool/${LONG_TOOL}`, "none", "allow", ["incident-responder"]),
+            },
+          ],
+        },
+      ],
+      details: {
+        kind: "item",
+        entry: `tool/${LONG_TOOL}`,
+        name: LONG_TOOL,
+        family: "tool",
+        description: LONG_DESCRIPTION,
+        standing: "allowed · via incident-responder",
+        approval: "Not asked — allow wins over any ask entry.",
+        args: [{ name: "since", type: "string", required: false, hasDefault: false }],
+        hub: {
+          aggregated: `news_${LONG_TOOL}`,
+          reachableBy: "claude · via incident-responder",
+          redaction: "none",
+        },
+      },
+    }),
+    { rail: agentRail("news").map((entry, index) => (index === 0 ? { ...entry, label: LONG_SLUG } : entry)) },
+  ),
 } satisfies Record<string, AgentDetailProps>;
 
 export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsByName[K]> } = {

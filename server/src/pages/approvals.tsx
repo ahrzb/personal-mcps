@@ -267,7 +267,7 @@ export function ApprovalsPage(props: ApprovalsProps) {
 
   return (
     <Layout title="Approvals" active="approvals" username={props.username} pendingApprovals={props.pendingApprovals}>
-      <div class="page page--narrow">
+      <main class="page--document">
         {notice ? (
           <div class={alertClass(notice.tone)}>
             <NoticeIcon tone={notice.tone} />
@@ -356,7 +356,7 @@ export function ApprovalsPage(props: ApprovalsProps) {
           ) : null}
           <div class="note">History prunes with the audit trail after 7 days. Times are local.</div>
         </section>
-      </div>
+      </main>
 
       <script dangerouslySetInnerHTML={{ __html: PUSH_SCRIPT }} />
     </Layout>

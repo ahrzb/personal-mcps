@@ -278,7 +278,7 @@ export const AppsPage: FC<AppsProps> = ({
 
   return (
     <Layout title="Apps" active="apps" username={username} pendingApprovals={pendingApprovals}>
-      <div class="page">
+      <main class="page--table">
         {notice && <NoticeBanner notice={notice} />}
 
         <div class="page-head">
@@ -333,7 +333,7 @@ export const AppsPage: FC<AppsProps> = ({
             <p class="note narrow-only center">Deleting revokes tokens and removes grants. Archived apps keep everything.</p>
           </>
         )}
-      </div>
+      </main>
 
       {confirm && confirm.kind === "delete-app" && <DeleteConfirmDialog confirm={confirm} csrfToken={csrfToken} />}
     </Layout>

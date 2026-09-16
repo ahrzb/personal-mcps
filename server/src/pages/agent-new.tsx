@@ -40,7 +40,7 @@ export function AgentNewPage(props: AgentNewProps) {
   const { form, errors, csrfToken } = props;
   return (
     <Layout title="New agent · personal-mcps" active="agents" username={props.username} pendingApprovals={props.pendingApprovals}>
-      <main class="page page--narrow">
+      <main class="page--document">
         <div class="page-head">
           <div>
             <p class="page-subtitle">

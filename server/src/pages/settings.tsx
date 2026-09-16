@@ -1070,7 +1070,7 @@ export const SettingsPage: FC<SettingsProps> = (props) => {
       username={props.username}
       pendingApprovals={props.pendingApprovals}
     >
-      <main class="page page--paned">
+      <main class="page--workspace">
         <div class="page-head">
           <div>
             <h1 class="page-title">Settings</h1>
@@ -1082,7 +1082,10 @@ export const SettingsPage: FC<SettingsProps> = (props) => {
 
         {props.notice ? <NoticeBanner notice={props.notice} /> : null}
 
-        <div class="paned">
+        {/* `--framed`: the rail and the pane are ONE box here as they are on the agent
+            page, so the three paned pages read as one family
+            (design/layout-and-density.md §2 "Page width by shape"). */}
+        <div class="paned paned--framed">
           <PaneRail label={RAIL_NAV_LABEL} groups={paneGroups(entries)} />
           {/* Password is the one pane the boards hold narrow — it is a form, and the five
               others are tables that need every pixel the rail leaves (Settings.dc.html at

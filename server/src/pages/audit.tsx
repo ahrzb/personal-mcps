@@ -427,7 +427,7 @@ export const AuditPage: FC<AuditProps> = (props) => {
 
   return (
     <Layout title="Audit log · personal-mcps" active="audit" username={username} pendingApprovals={pendingApprovals}>
-      <main class="page">
+      <main class="page--table">
         <div class="page-head">
           <div>
             <h1 class="page-title">Audit log</h1>
@@ -603,7 +603,9 @@ export const AuditPage: FC<AuditProps> = (props) => {
                 <span class="note">newest first</span>
               </div>
             </div>
-            <table class="table table--fixed">
+            {/* `--dense`: this is a table OF EVENTS, scanned a week at a time rather than
+                read row by row (design/layout-and-density.md §2's dense tier). */}
+            <table class="table table--fixed table--dense">
               <colgroup>
                 <col style="width:150px" />
                 <col style="width:130px" />

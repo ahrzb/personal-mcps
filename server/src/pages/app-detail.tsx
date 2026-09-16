@@ -86,12 +86,14 @@ const STATUS_CLASS: Record<string, string> = {
   archived: "badge badge--warning",
 };
 
+/** `badge--title` is the one place a badge is not 20px: these three stand beside a 24px
+ *  page title rather than in a row (design/layout-and-density.md §2 "Badges"). */
 const HeaderBadges: FC<{ header: AppDetailHeader }> = ({ header }) => (
   <div class="badge-row">
-    <span class="badge badge--mono">{header.slug}</span>
-    <span class="badge badge--mono">{header.kind}</span>
+    <span class="badge badge--title badge--mono">{header.slug}</span>
+    <span class="badge badge--title badge--mono">{header.kind}</span>
     {header.status === null ? null : (
-      <span class={STATUS_CLASS[header.status] ?? "badge badge--muted"}>{header.status}</span>
+      <span class={`${STATUS_CLASS[header.status] ?? "badge badge--muted"} badge--title`}>{header.status}</span>
     )}
   </div>
 );
@@ -990,7 +992,7 @@ export const AppDetailPage: FC<AppDetailProps> = (props) => {
       username={props.username}
       pendingApprovals={props.pendingApprovals}
     >
-      <main class="page page--paned">
+      <main class="page--workspace">
         <p class="note">
           <a href={paths.apps}>Apps</a> / {props.header.slug}
         </p>
@@ -1029,7 +1031,10 @@ export const AppDetailPage: FC<AppDetailProps> = (props) => {
           </div>
         )}
 
-        <div class="paned">
+        {/* `--framed`: the rail and the pane are ONE box here as they are on the agent
+            page, so the three paned pages read as one family
+            (design/layout-and-density.md §2 "Page width by shape"). */}
+        <div class="paned paned--framed">
           <PaneRail label={RAIL_NAV_LABEL} groups={paneGroups(entries)} />
           <div class="pane">
             {props.header.kind === "proxy" ? (

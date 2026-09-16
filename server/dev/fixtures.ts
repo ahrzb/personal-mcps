@@ -1078,7 +1078,7 @@ function appRail(
   ];
   return table.map((entry) => ({
     ...entry,
-    href: entry.pane === "catalog" ? `/apps/${slug}` : `/apps/${slug}/${entry.pane}`,
+    href: `/apps/${slug}/${entry.pane}`,
     marker: marker[entry.pane],
     dot: entry.pane === "recording" ? (marker.recording === "on" ? "on" : "off") : null,
   }));
@@ -1091,10 +1091,14 @@ const appDetail = (
   pane: AppPaneView,
   over: Partial<Omit<AppDetailProps, "pane" | "header">> = {},
   markers: Partial<Record<AppDetailPane, string>> = {},
+  /** The LANDING render, `/apps/<slug>` — the same Catalog the pane's own URL draws, and
+   *  level 1 rather than level 2. Every other fixture is at a pane's own URL. */
+  landing = false,
 ): AppDetailProps => {
   const tiles =
-    `${appTools.length} tools · ${appPrompts.length} prompts · ${appResources.length} resources · ` +
-    `${appAgents.length} agents · body logging ${markers.recording === "off" ? "off" : "on"}` +
+    `${plural(appTools.length, "tool")} · ${plural(appPrompts.length, "prompt")} · ` +
+    `${plural(appResources.length, "resource")} · ${plural(appAgents.length, "agent")} · ` +
+    `body logging ${markers.recording === "off" ? "off" : "on"}` +
     (header.kind === "tunnel" ? " · last seen now" : "");
   const query = new URLSearchParams();
   return {
@@ -1105,10 +1109,13 @@ const appDetail = (
     pane,
     confirm: null,
     reveal: null,
-    ...appLevel(header.slug, pane, query, header.name),
+    ...appLevel(header.slug, pane, query, header.name, landing),
     ...over,
   };
 };
+
+/** `1 tool` / `3 tools`, as the page itself says it. */
+const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
 
 /* ------------------------------------------------------------- Catalog --- */
 
@@ -1139,7 +1146,7 @@ const catalogPane = (
 ): Extract<AppPaneView, { kind: "catalog" }> => ({
   kind: "catalog",
   subtitle: "advertised by the app on its last connect · re-listed on every reconnect",
-  summary: "3 tools · 1 prompts · 2 resources · reachable by 2 agents",
+  summary: "3 tools · 1 prompt · 2 resources · reachable by 2 agents",
   q: "",
   groups: catalogGroups(),
   state: null,
@@ -1508,8 +1515,10 @@ const longCatalogRow: AppCatalogRow = {
 };
 
 const appDetailFixtures = {
-  /** AppDetail.dc.html: a tunneled app online, the Catalog listed, nothing selected. */
-  default: appDetail(tunnelHeaderBase, catalogPane()),
+  /** AppDetail.dc.html: a tunneled app online, the Catalog listed, nothing selected — the
+   *  LANDING `/apps/<slug>`, which draws exactly what `/apps/<slug>/catalog` draws and
+   *  differs from it only in the narrow level. */
+  default: appDetail(tunnelHeaderBase, catalogPane(), {}, {}, true),
 
   /** The Catalog with a tool selected — the Arguments card, the Result card and the four
    *  lines only the hub knows. */
@@ -1881,22 +1890,18 @@ const appDetailFixtures = {
 
   /* ---- the three narrow levels, which are the URL's and not the viewport's ---- */
 
-  /** Level 1: the rail as a list, with the Catalog listing under it — the landing has no
-   *  second URL to be level 2 at (model's `appLevel`). */
-  mobileLevel1: appDetail(tunnelHeaderBase, catalogPane()),
+  /** Level 1, `/apps/<slug>`: the header and the rail as a list, and nothing else — the
+   *  Catalog has a URL of its own to be level 2 at. */
+  mobileLevel1: appDetail(tunnelHeaderBase, catalogPane(), {}, {}, true),
 
-  /** Level 2: a pane's listing, reached from the rail. */
-  mobileLevel2: {
-    ...appDetail(tunnelHeaderBase, recordingPane()),
-    level: 2 as const,
-    levelHeader: { backHref: "/apps/mcp-tools", backLabel: "mcp-tools", title: "Recording" },
-  },
+  /** Level 2, `/apps/<slug>/catalog`: the same render, the pane's own listing. */
+  mobileLevel2: appDetail(tunnelHeaderBase, catalogPane()),
 
   /** Level 3: one row's details, with the way back to the listing that named it. */
   mobileLevel3: {
     ...appDetail(tunnelHeaderBase, catalogPane({ details: catalogToolDetails })),
     level: 3 as const,
-    levelHeader: { backHref: "/apps/mcp-tools", backLabel: "Catalog", title: "secret_push" },
+    levelHeader: { backHref: "/apps/mcp-tools/catalog", backLabel: "Catalog", title: "secret_push" },
   },
 
   /* ---- one long-data fixture per listing ---- */
@@ -1905,7 +1910,7 @@ const appDetailFixtures = {
     longHeader,
     catalogPane({
       groups: catalogGroups([longCatalogRow, ...appTools]),
-      summary: "4 tools · 1 prompts · 2 resources · reachable by 2 agents",
+      summary: "4 tools · 1 prompt · 2 resources · reachable by 2 agents",
     }),
   ),
 

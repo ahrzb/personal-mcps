@@ -540,24 +540,25 @@ export function pageRoutes(): PageRouter {
     );
   });
 
-  // §13's eight panes behind one rail, as two routes: the page root renders the LANDING
-  // pane (Tools) and each of the seven others answers at its own URL. Registered after
-  // the static segments above, which is what keeps `/apps/new` a page rather than a slug
-  // — the same precedence app-routes' RESERVED_APP_SLUGS makes `app_create` refuse. The
-  // pane list is that module's, so a pane added there is mounted here with no second edit,
-  // and `tools` is deliberately not in it: `/apps/<slug>/tools` falls to the 404 below,
-  // because the landing pane has no alias (§13, "one URL per pane").
+  // §2's seven panes behind one rail, as two routes: each pane answers at its own URL, and
+  // the page root RENDERS the Catalog in place — the agent page's shape, where a landing
+  // renders a pane that also has a URL. The two differ only in the narrow level (`null` is
+  // the landing, which is level 1). Registered after the static segments above, which is
+  // what keeps `/apps/new` a page rather than a slug — the same precedence app-routes'
+  // RESERVED_APP_SLUGS makes `app_create` refuse. The pane list is that module's, so a pane
+  // added there is mounted here with no second edit, and `tools` is deliberately not in it:
+  // the families moved into the Catalog, so `/apps/<slug>/tools` falls to the 404 below.
   //
   // The gate is `requireOwnerSession` with no options — §13's "`/apps/<slug>/*` is the
   // ordinary owner session", deliberately NOT /settings's recent-auth prefix rule.
-  app.get("/apps/:slug", async (c) => appDetailPane(c, "catalog"));
+  app.get("/apps/:slug", async (c) => appDetailPane(c, null));
 
   // The two URLs the family panes lived at until 2026-09-17, moved for good: the Catalog
   // holds all three families now, so a bookmark should stop coming back here — 301 rather
   // than 302, and the query is dropped with the pane that read it. Mounted ahead of the
   // pane route so neither segment ever reads as a pane.
-  app.get("/apps/:slug/prompts", (c) => c.redirect(paths.appDetail(c.req.param("slug") ?? ""), 301));
-  app.get("/apps/:slug/resources", (c) => c.redirect(paths.appDetail(c.req.param("slug") ?? ""), 301));
+  app.get("/apps/:slug/prompts", (c) => c.redirect(paths.appPane(c.req.param("slug") ?? "", "catalog"), 301));
+  app.get("/apps/:slug/resources", (c) => c.redirect(paths.appPane(c.req.param("slug") ?? "", "catalog"), 301));
 
   app.get("/apps/:slug/:pane", async (c) => {
     const pane = c.req.param("pane") ?? "";
@@ -566,7 +567,7 @@ export function pageRoutes(): PageRouter {
   });
 
   /** One pane of one app, or the 404 an unknown, reserved or foreign slug shares. */
-  async function appDetailPane(c: Context, pane: AppDetailPane): Promise<Response> {
+  async function appDetailPane(c: Context, pane: AppDetailPane | null): Promise<Response> {
     const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
     const props = await appDetailProps(ctx, c.req.param("slug") ?? "", pane);
     if (props === null) return noSuchPage();

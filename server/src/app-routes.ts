@@ -18,16 +18,20 @@
 import { SLUG_CHARSET } from "./registry";
 
 /**
- * The six non-landing panes `/apps/<slug>/<pane>` serves, in §13's own table order
- * (Catalog is the LANDING pane at `/apps/<slug>` itself and is deliberately absent: a
- * route for `/apps/<slug>/catalog` — or for `/apps/<slug>/tools` — would be the alias §13
- * makes a 404). `access` is the Agents pane — the rail groups it under `Access`, and the
- * URL is the group's. `prompts` and `resources` left this list on 2026-09-17: the Catalog
- * holds all three families, and both old URLs are 301s to the landing.
+ * The seven panes `/apps/<slug>/<pane>` serves, in §2's own table order. Catalog is in the
+ * list and is ALSO what the landing `/apps/<slug>` renders — the agent page's shape, where
+ * the landing renders a pane that has a URL of its own: the two answers are identical
+ * above the breakpoint, and below it the landing is level 1 (the rail as a list) while
+ * `/apps/<slug>/catalog` is level 2 (the listing). `/apps/<slug>/tools` stays a 404: the
+ * families moved INTO the Catalog on 2026-09-17, so it is not an alias of anything, and
+ * `/prompts` and `/resources` 301 to `/apps/<slug>/catalog` for the same reason.
+ *
+ * `access` is the Agents pane — the rail groups it under `Access`, and the URL is the
+ * group's.
  */
-export const APP_PANES = ["roles", "recording", "overview", "access", "token", "danger"] as const;
+export const APP_PANES = ["catalog", "roles", "recording", "overview", "access", "token", "danger"] as const;
 
-/** One of the six pane segments — the type `paths.appPane` and the page take. */
+/** One of the seven pane segments — the type `paths.appPane` and the page take. */
 export type AppPane = (typeof APP_PANES)[number];
 
 /**

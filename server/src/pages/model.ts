@@ -1033,8 +1033,10 @@ export type AppsProps = ShellProps & {
  * /apps/<slug> — the seven panes (the 2026-09-17 dispatch, §2)
  * ------------------------------------------------------------------ */
 
-/** §2's seven panes: the six routed ones plus the landing, which is Catalog. */
-export type AppDetailPane = "catalog" | AppPane;
+/** §2's seven panes. The landing `/apps/<slug>` RENDERS `catalog`, which is also a routed
+ *  pane in its own right at `/apps/<slug>/catalog` (app-routes says why) — so this is
+ *  exactly `AppPane`, and the landing is a null pane rather than an eighth member. */
+export type AppDetailPane = AppPane;
 
 /** The destructive confirmations `/apps/<slug>` raises, each riding the URL of the pane
  *  that draws its control (§13's "confirm-dialog state rides the owning pane's URL"). */
@@ -3714,9 +3716,13 @@ export type AppSubmitted =
 export async function appDetailProps(
   ctx: PageContext,
   slug: string,
-  pane: AppDetailPane,
+  /** `null` is the LANDING — `/apps/<slug>`, which RENDERS the Catalog pane in place, as
+   *  the agent page's landing renders its first app's. The pane has a URL of its own
+   *  (`/apps/<slug>/catalog`); the two answers differ only in the narrow level. */
+  pane: AppDetailPane | null,
   submitted: AppSubmitted | null = null,
 ): Promise<AppDetailProps | null> {
+  const shown: AppDetailPane = pane ?? "catalog";
   // deps: registry.getApp · tunnel.capabilities · tunnel.status · gateway.ownerCatalog ·
   //       catalog-view · registry.effectiveRoles
   //
@@ -3805,7 +3811,7 @@ export async function appDetailProps(
     resources: countOf(views.resources),
   };
 
-  const view = await appPane(ctx, pane, {
+  const view = await appPane(ctx, shown, {
     slug,
     row,
     kind: app.kind,
@@ -3839,15 +3845,15 @@ export async function appDetailProps(
     header: { ...appHeader(row, app.kind, slug), tiles: tilesLine(row, counts, agentRows.length, ctx.now) },
     rail: APP_PANE_TABLE.map((entry) => ({
       ...entry,
-      href: entry.pane === "catalog" ? paths.appDetail(slug) : paths.appPane(slug, entry.pane),
+      href: paths.appPane(slug, entry.pane),
       marker: marker[entry.pane],
       dot: entry.pane === "recording" ? (row.logBodies ? "on" : "off") : null,
     })),
     pane: view,
-    confirm: appConfirm(ctx.query, pane, tokens, agentRows),
+    confirm: appConfirm(ctx.query, shown, tokens, agentRows),
     // Only the Issue route sets this, in the response that mints the key (§4).
     reveal: null,
-    ...appLevel(slug, view, ctx.query, row.name),
+    ...appLevel(slug, view, ctx.query, row.name, pane === null),
   };
 }
 
@@ -4755,25 +4761,25 @@ function appSelectedName(pane: AppPaneView): string | null {
 }
 
 /**
- * §2's three narrow levels, from the URL alone: the landing (`/apps/<slug>` with nothing
- * selected) is 1, a pane 2, a pane with `sel` 3. The level is the URL's, never the
- * viewport's — CSS decides whether it matters, so one response serves both widths.
+ * §2's three narrow levels, from the URL alone: the landing is 1, a pane 2, a pane with
+ * `sel` 3. The level is the URL's, never the viewport's — CSS decides whether it matters,
+ * so one response serves both widths and a bookmark keeps its level.
  *
- * The landing is the ONE place the dispatch's URL table and its level table collide: the
- * Catalog pane has no second URL to be level 2 at, since `/apps/<slug>/catalog` is a 404.
- * Level 1 therefore draws the rail AND the Catalog listing under it (styles.css's
- * `.listing--landing`), so a phone reaches the catalog from the landing in one tap of
- * nothing at all rather than one that cannot exist.
+ * `landing` rather than "the pane is Catalog": `/apps/<slug>` and `/apps/<slug>/catalog`
+ * render the same pane and differ only here, exactly as the agent page's landing and its
+ * first app's own URL do. That is what lets level 1 be the rail alone — the Catalog has a
+ * URL of its own to be level 2 at.
  */
 export function appLevel(
   slug: string,
   pane: AppPaneView,
   query: URLSearchParams,
   name: string,
+  landing: boolean,
 ): { level: AgentLevel; levelHeader: LevelHeader } {
   const label = APP_PANE_TABLE.find((entry) => entry.pane === pane.kind)?.label ?? pane.kind;
   const picked = query.has("sel") && !isWide(pane) ? appSelectedName(pane) : null;
-  if (pane.kind === "catalog" && picked === null) {
+  if (landing) {
     return { level: 1, levelHeader: { backHref: paths.apps, backLabel: "Apps", title: name } };
   }
   if (picked === null) {
@@ -4791,7 +4797,7 @@ export function appLevel(
 /** The pane's own URL — level 3's way back, minus the `sel` that put it there and plus the
  *  reading state a pane carries, so going up drops the row and keeps the filter. */
 function appPaneHref(slug: string, pane: AppDetailPane, query: URLSearchParams): string {
-  const base = pane === "catalog" ? paths.appDetail(slug) : paths.appPane(slug, pane);
+  const base = paths.appPane(slug, pane);
   const kept = new URLSearchParams();
   for (const key of ["q", "new"]) {
     const value = query.get(key);

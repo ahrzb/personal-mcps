@@ -339,7 +339,7 @@ const CatalogPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "cata
     <>
       {/* `--landing`: below the breakpoint this listing shows at level 1 beside the rail,
           because the Catalog has no second URL to be level 2 at (model's `appLevel`). */}
-      <div class="listing listing--landing">
+      <div class="listing">
         <div class="lh">
           <div class="title-row">
             <span class="listing-title">Catalog</span>

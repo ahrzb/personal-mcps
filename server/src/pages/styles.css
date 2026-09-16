@@ -3111,13 +3111,6 @@ dialog .actions {
     display: flex;
   }
 
-  /* The Catalog has no second URL to be level 2 at (`/apps/<slug>/catalog` is a 404), so
-     the app page's level 1 is the rail AND the catalog listing under it — model.ts's
-     `appLevel` states the collision this resolves. */
-  [data-level="1"] .listing--landing {
-    display: flex;
-  }
-
   /* The app page's two levels: its pane is one region, so level 2 is the pane itself
      (the agent page's `.pane--split` holds the listing and details and stays laid out for
      its own levels above). */

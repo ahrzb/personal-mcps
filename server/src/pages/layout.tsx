@@ -15,7 +15,7 @@
 
 import { html } from "hono/html";
 import type { Child, FC } from "hono/jsx";
-import { paths, type NavSection } from "./model";
+import { paths, type LevelHeader as LevelHeaderModel, type NavSection } from "./model";
 
 export type LayoutProps = {
   /** Browser tab title for this page. */
@@ -165,6 +165,25 @@ export const PaneRail: FC<{ label: string; groups: PaneGroup[] }> = ({ label, gr
       </div>
     ))}
   </nav>
+);
+
+/**
+ * The narrow level header the two level pages render (§13's level tables for
+ * /agents/<slug> and /apps/<slug>) — one row: the way up on the left, where you are in the
+ * middle. In the document on every render at every width and shown only below the
+ * breakpoint, where it stands in for the title line and the rail at once.
+ *
+ * The trailing span is the counterweight that centres the title against the back link;
+ * it carries nothing, which is why it is hidden from anyone reading the page's contents.
+ */
+export const LevelHeader: FC<{ header: LevelHeaderModel }> = ({ header }) => (
+  <div class="level-header">
+    <a class="level-back" href={header.backHref}>
+      ‹ {header.backLabel}
+    </a>
+    <span class="level-title">{header.title}</span>
+    <span class="level-end" aria-hidden="true"></span>
+  </div>
 );
 
 /** The same panes below the breakpoint: a horizontally scrolling pill row under the page

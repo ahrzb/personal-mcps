@@ -1918,15 +1918,18 @@ dialog .actions {
  * /agents — the stretched row link (Agents.dc.html)
  * ------------------------------------------------------------------ */
 
-/* The whole row is the link, with no script: the anchor's ::after covers the row, so a
+/* The whole row is the link, with no script (the agents list, and since 2026-09-17 the apps
+   list too): the anchor's ::after covers the row, so a
    click anywhere on it opens the agent page. The Delete cell is raised above that
    overlay, which is what keeps a row control clickable inside a link. */
-.agent-row {
+.agent-row,
+.app-row {
   position: relative;
   cursor: pointer;
 }
 
-.agent-row:hover > td {
+.agent-row:hover > td,
+.app-row:hover > td {
   background: var(--muted);
 }
 
@@ -1936,7 +1939,8 @@ dialog .actions {
   inset: 0;
 }
 
-.agent-row > .cell-actions {
+.agent-row > .cell-actions,
+.app-row > .cell-actions {
   position: relative;
   z-index: 1;
 }
@@ -3094,6 +3098,40 @@ dialog .actions {
   [data-level="2"] .listing,
   [data-level="3"] .details {
     display: flex;
+  }
+
+  /* The app page's two levels: its pane is one region, so level 2 is the pane itself
+     (the agent page's `.pane--split` holds the listing and details and stays laid out for
+     its own levels above). */
+  [data-level] .pane:not(.pane--split) {
+    display: none;
+  }
+
+  [data-level="2"] .pane:not(.pane--split) {
+    display: block;
+  }
+
+  /* The pane's own title repeats the level header, so it goes; the count beside it is
+     the rail marker the list above just showed. Subtitles, tabs and notes stay. */
+  [data-level="2"] .pane:not(.pane--split) > .card h2.card-title {
+    display: none;
+  }
+
+  /* Its key/value pairs stack, key above value, as the details pane's do below — an
+     endpoint URL beside a 180px key has nowhere to go but off the edge at this width. */
+  [data-level="2"] .pane:not(.pane--split) .kv-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+  }
+
+  [data-level="2"] .pane:not(.pane--split) .kv-key {
+    width: auto;
+  }
+
+  [data-level="2"] .pane:not(.pane--split) .kv-row > :last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   /* Here the rail is a LIST, not a sidebar: full-width rows at the touch height, each

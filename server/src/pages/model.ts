@@ -1196,7 +1196,24 @@ export type AppDetailProps = ShellProps & {
    * a plaintext key must never ride a URL.
    */
   reveal: string | null;
+  /**
+   * §13's two narrow levels — 1 the landing (the rail as a list), 2 a pane — decided
+   * from the URL as the agent page's three are, and applied by CSS alone. The landing IS
+   * Tools (no alias exists), so the level is the pane's own name and nothing is decided
+   * twice.
+   */
+  level: 1 | 2;
+  levelHeader: LevelHeader;
 };
+
+/** The app page's level from its pane: the landing is 1, every other pane 2. The level
+ *  header's titles are the header's name and the rail's own label, read from the same
+ *  table the rail is drawn from. */
+export function appLevel(slug: string, pane: AppDetailPane, name: string): Pick<AppDetailProps, "level" | "levelHeader"> {
+  if (pane === "tools") return { level: 1, levelHeader: { backHref: paths.apps, backLabel: "Apps", title: name } };
+  const label = APP_PANE_TABLE.find((entry) => entry.pane === pane)?.label ?? pane;
+  return { level: 2, levelHeader: { backHref: paths.appDetail(slug), backLabel: name, title: label } };
+}
 
 /* ------------------------------------------------------------------ *
  * /apps/new
@@ -2181,7 +2198,7 @@ export type AgentDetailProps = ShellProps & {
    * stylesheet ignores it: the level is never a second spelling of the pane.
    */
   level: AgentLevel;
-  levelHeader: AgentLevelHeader;
+  levelHeader: LevelHeader;
 };
 
 /** 1 the landing (rail), 2 a pane without `sel` (listing), 3 with it (details). */
@@ -2193,7 +2210,7 @@ export type AgentLevel = 1 | 2 | 3;
  * rail at once — which is why the back link is never merely "back": it names the level
  * above, so it says the same thing whether it is tapped or read.
  */
-export type AgentLevelHeader = {
+export type LevelHeader = {
   /** Where the back link goes — the level above, keeping the reading state (§13's `q`,
    *  `show` and `calls`) so going up loses the selected row and nothing else. */
   backHref: string;
@@ -2542,7 +2559,7 @@ export function agentLevel(
   pane: AgentPaneView,
   query: URLSearchParams,
   landing: boolean,
-): { level: AgentLevel; levelHeader: AgentLevelHeader } {
+): { level: AgentLevel; levelHeader: LevelHeader } {
   if (landing) {
     return { level: 1, levelHeader: { backHref: paths.agents, backLabel: "Agents", title: slug } };
   }
@@ -3617,6 +3634,7 @@ export async function appDetailProps(
     csrfToken: ctx.csrfToken,
     pane,
     header: appHeader(row, app.kind, slug),
+    ...appLevel(slug, pane, row.name),
     rail: APP_PANE_TABLE.map((entry) => ({
       ...entry,
       href: entry.pane === "tools" ? paths.appDetail(slug) : paths.appPane(slug, entry.pane),

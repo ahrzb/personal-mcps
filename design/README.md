@@ -78,8 +78,11 @@ Three of those boards (`AppDetail*`, `AuditDetailStates`, `AppNewProxiedStates`)
 drawn as exploration and sit on canvas page 2, re-laid out 2026-09-03; §13 adopted
 `AppDetail*` on 2026-09-02 (decision 30) and the other two on 2026-09-03, so all three
 are contract wherever they sit. `/apps/<slug>` has no mobile
-artboard: the pill row is a shell rule and covers it (§13, *Panes behind a
-rail*), but drawing `MobileAppDetail` stays a recorded follow-up.
+artboard: since 2026-09-17 its phone rendering is the agent page's levels with one region
+per pane (`MobileAgentDetail` levels 1 and 2, the level header, no pill row — §13, *The two
+levels*), and drawing `MobileAppDetail` stays a recorded follow-up. The same day its crumb
+folded into the title line ("Apps › <name>") and every `Apps` row became the link, as the
+agents list's rows are.
 
 `/apps/new` and `/approvals/<id>` are chromeless by design — no nav, so no pending badge
 and no Sign out (`app-new.tsx`, `approval-detail.tsx`); `AppNew`/`MobileAppNew` and

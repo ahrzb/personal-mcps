@@ -25,7 +25,7 @@
 // a URL).
 
 import type { FC } from "hono/jsx";
-import { ConfirmShell, Layout, PaneRail, PanePills, TokenReveal, paneGroups } from "./layout";
+import { ConfirmShell, Layout, LevelHeader, PaneRail, TokenReveal, paneGroups } from "./layout";
 import type { PaneEntry } from "./layout";
 import { alertClass, formatLastSeen, formatStamp } from "./format";
 import { APP_CONFIRM_PANE, DIMMED, paths } from "./model";
@@ -46,23 +46,20 @@ import type { ArgumentRow, Reach } from "../catalog-view";
 import type { FamilyPatterns } from "../registry";
 
 /**
- * The accessible names of this page's two pane navigations. They exist because §13 puts
- * the same eight destinations in both at every width, so nothing else tells the rail from
- * the pill row — not for a reader listing the page's landmarks, and not for the suite.
+ * The accessible name of this page's pane navigation — the rail, which below the
+ * breakpoint is the landing level's list (§13's two levels; the pill row left this page
+ * with them, 2026-09-17).
  */
 const RAIL_NAV_LABEL = "App panes";
-const PILL_NAV_LABEL = "App panes, compact";
 
 /* ------------------------------------------------------------------ rail --- */
 
-/** The eight entries both navigations draw, in §13's table order, each carrying the
- *  marker model.ts computed beside the very list that entry's pane renders. */
+/** The eight entries the rail draws, in §13's table order, each carrying the marker
+ *  model.ts computed beside the very list that entry's pane renders. */
 function paneEntries(props: AppDetailProps): PaneEntry[] {
   return props.rail.map((entry) => ({
     href: entry.href,
     label: entry.label,
-    // §13 shortens exactly one Settings label for the pill row and names none here, so
-    // the app page's pills carry the rail's own words.
     short: entry.label,
     // The em dash is the ONE marker that means "advertises none" (§13), so it is also the
     // one that draws its entry receded — read from model's own constant, never respelled.
@@ -992,15 +989,22 @@ export const AppDetailPage: FC<AppDetailProps> = (props) => {
       username={props.username}
       pendingApprovals={props.pendingApprovals}
     >
-      <main class="page--workspace">
-        <p class="note">
-          <a href={paths.apps}>Apps</a> / {props.header.slug}
-        </p>
+      {/* `data-level` is read by the narrow stylesheet ALONE: 1 shows the rail as a list,
+          2 the pane; the wide one never looks (§13's two levels, as the agent page's three). */}
+      <main class="page--workspace" data-level={String(props.level)}>
+        <LevelHeader header={props.levelHeader} />
 
         <div class="page-head">
-          {/* Name and badges on ONE line (AppDetail.dc.html): the kind and the status read
-              as part of the name, not as a caption under it. */}
+          {/* ONE row (AgentDetail's rule, 2026-09-16): the crumb, the name and the badges
+              together — a crumb on a line of its own spent a whole line saying "Apps" and
+              then the slug the badge beside the name says again. */}
           <div class="title-row">
+            <a class="crumb" href={paths.apps}>
+              Apps
+            </a>
+            <span class="crumb-sep" aria-hidden="true">
+              ›
+            </span>
             <h1 class="page-title">{props.header.name}</h1>
             <HeaderBadges header={props.header} />
           </div>
@@ -1008,8 +1012,6 @@ export const AppDetailPage: FC<AppDetailProps> = (props) => {
             <p class="note">Last seen {formatLastSeen(props.header.lastSeen, props.now)}</p>
           ) : null}
         </div>
-
-        <PanePills label={PILL_NAV_LABEL} entries={entries} />
 
         {/* §13's archived banner, on every pane rather than on the danger zone alone: an
             archived app's page stays reachable and everything on it is still listed, so
@@ -1033,7 +1035,8 @@ export const AppDetailPage: FC<AppDetailProps> = (props) => {
 
         {/* `--framed`: the rail and the pane are ONE box here as they are on the agent
             page, so the three paned pages read as one family
-            (design/layout-and-density.md §2 "Page width by shape"). */}
+            (design/layout-and-density.md §2 "Page width by shape"). Below the split
+            breakpoint the frame goes and `data-level` picks the rail or the pane. */}
         <div class="paned paned--framed">
           <PaneRail label={RAIL_NAV_LABEL} groups={paneGroups(entries)} />
           <div class="pane">

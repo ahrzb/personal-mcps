@@ -354,3 +354,8 @@
     of `design/Main.dc.html`; applying it to the pages and the boards is its own dispatch,
     gated page by page beside its board per
     `docs/superpowers/postmortems/2026-09-16-agent-page-layout-not-the-board.md`.
+    *2026-09-17, owner:* the app page takes what the agent page got — the crumb
+    folded into its title line ("Apps › <name>", the "Apps / <slug>" line gone), the
+    **two levels** below 1024 (rail-as-list, then the pane) behind the same level header,
+    no pill row — and every `/apps` row is the link, stretched as the agents list's. The
+    pill row is now `/settings`'s alone.

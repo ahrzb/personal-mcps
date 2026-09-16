@@ -9,6 +9,7 @@
 <helmet>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
   <style>
+    .stretch::after{content:"";position:absolute;inset:0}
     body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
     a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
     a:hover { color: #52525b; }
@@ -50,45 +51,48 @@
     </div>
 
     <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
-      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #e4e4e7;">
+      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px 24px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #e4e4e7;">
         <div style="font-size: 13px; font-weight: 500; color: #71717a;">App</div>
         <div style="font-size: 13px; font-weight: 500; color: #71717a;">Kind</div>
         <div style="font-size: 13px; font-weight: 500; color: #71717a;">Status</div>
         <div style="font-size: 13px; font-weight: 500; color: #71717a;">Roles</div>
         <div style="font-size: 13px; font-weight: 500; color: #71717a;">Last seen</div>
         <div style="font-size: 13px; font-weight: 500; color: #71717a;"></div>
+        <div></div>
       </div>
-      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px 24px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #f4f4f5; align-items: center; position: relative; cursor: pointer;">
         <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500;"><a href="#">News MCP</a></div>
+          <div style="font-size: 14px; font-weight: 500;"><a href="#" style="text-decoration: none; color: inherit;" class="stretch">News MCP</a></div>
           <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news</div>
         </div>
         <div><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">tunnel</span></div>
         <div><span style="display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #15803d;"></span>online</span></div>
         <div style="font-size: 13px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">reader, admin</div>
         <div style="font-size: 13px; color: #71717a;">now</div>
-        <div style="display: flex; justify-content: flex-end; gap: 4px;">
+        <div style="display: flex; justify-content: flex-end; gap: 4px; position: relative; z-index: 1;">
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: transparent; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Archive</div>
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Delete</div>
         </div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 32px; color: #a1a1aa;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
       </div>
-      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px 24px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #f4f4f5; align-items: center; position: relative; cursor: pointer;">
         <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500;"><a href="#">Notion</a></div>
+          <div style="font-size: 14px; font-weight: 500;"><a href="#" style="text-decoration: none; color: inherit;" class="stretch">Notion</a></div>
           <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">notion</div>
         </div>
         <div><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">proxy</span></div>
         <div style="font-size: 13px; color: #71717a;">—</div>
         <div style="font-size: 13px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">editor, reader</div>
         <div style="font-size: 13px; color: #71717a;">—</div>
-        <div style="display: flex; justify-content: flex-end; gap: 4px;">
+        <div style="display: flex; justify-content: flex-end; gap: 4px; position: relative; z-index: 1;">
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: transparent; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Archive</div>
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Delete</div>
         </div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 32px; color: #a1a1aa;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
       </div>
-      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px 24px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #f4f4f5; align-items: center; position: relative; cursor: pointer;">
         <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500;"><a href="#">Linear</a></div>
+          <div style="font-size: 14px; font-weight: 500;"><a href="#" style="text-decoration: none; color: inherit;" class="stretch">Linear</a></div>
           <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">linear</div>
         </div>
         <div style="display: flex; gap: 4px;">
@@ -96,15 +100,16 @@
         <div><span style="display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #15803d;"></span>connected</span></div>
         <div style="font-size: 13px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">reader</div>
         <div style="font-size: 13px; color: #71717a;">—</div>
-        <div style="display: flex; justify-content: flex-end; gap: 4px;">
+        <div style="display: flex; justify-content: flex-end; gap: 4px; position: relative; z-index: 1;">
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Disconnect</div>
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: transparent; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Archive</div>
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Delete</div>
         </div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 32px; color: #a1a1aa;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
       </div>
-      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
+      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px 24px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #f4f4f5; align-items: center; position: relative; cursor: pointer;">
         <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500;"><a href="#">GitHub</a></div>
+          <div style="font-size: 14px; font-weight: 500;"><a href="#" style="text-decoration: none; color: inherit;" class="stretch">GitHub</a></div>
           <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">github</div>
         </div>
         <div style="display: flex; gap: 4px;">
@@ -112,50 +117,54 @@
         <div><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">needs reconnect</span></div>
         <div style="font-size: 13px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">reader, triage</div>
         <div style="font-size: 13px; color: #71717a;">—</div>
-        <div style="display: flex; justify-content: flex-end; gap: 4px;">
+        <div style="display: flex; justify-content: flex-end; gap: 4px; position: relative; z-index: 1;">
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Reconnect</div>
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: transparent; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Archive</div>
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Delete</div>
         </div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 32px; color: #a1a1aa;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
       </div>
-      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px; gap: 0; padding: 12px 20px; align-items: center;">
+      <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px 24px; gap: 0; padding: 12px 20px; align-items: center; position: relative; cursor: pointer;">
         <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500;"><a href="#">Slack</a></div>
+          <div style="font-size: 14px; font-weight: 500;"><a href="#" style="text-decoration: none; color: inherit;" class="stretch">Slack</a></div>
           <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">slack</div>
         </div>
         <div><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">proxy</span></div>
         <div><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a;">not connected</span></div>
         <div style="font-size: 13px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">reader</div>
         <div style="font-size: 13px; color: #71717a;">—</div>
-        <div style="display: flex; justify-content: flex-end; gap: 4px;">
+        <div style="display: flex; justify-content: flex-end; gap: 4px; position: relative; z-index: 1;">
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Connect</div>
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: transparent; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Archive</div>
           <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Delete</div>
         </div>
+        <div style="display: flex; align-items: center; justify-content: center; height: 32px; color: #a1a1aa;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
       </div>
     </div>
 
     <div style="display: flex; flex-direction: column; gap: 12px;">
       <div style="font-size: 16px; font-weight: 600;">Archived</div>
       <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
-        <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px; gap: 0; padding: 12px 20px; align-items: center;">
+        <div style="display: grid; grid-template-columns: 220px 130px 170px 1fr 100px 240px 24px; gap: 0; padding: 12px 20px; align-items: center; position: relative; cursor: pointer;">
           <div style="display: flex; flex-direction: column; gap: 2px;">
-            <div style="font-size: 14px; font-weight: 500;"><a href="#">Home automation</a></div>
+            <div style="font-size: 14px; font-weight: 500;"><a href="#" style="text-decoration: none; color: inherit;" class="stretch">Home automation</a></div>
             <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">home</div>
           </div>
           <div><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">tunnel</span></div>
           <div><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">archived</span></div>
           <div style="font-size: 13px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">all</div>
           <div style="font-size: 13px; color: #71717a;">Aug 20</div>
-          <div style="display: flex; justify-content: flex-end; gap: 4px;">
+          <div style="display: flex; justify-content: flex-end; gap: 4px; position: relative; z-index: 1;">
             <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Unarchive</div>
             <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Delete</div>
           </div>
+          <div style="display: flex; align-items: center; justify-content: center; height: 32px; color: #a1a1aa;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
         </div>
       </div>
     </div>
 
     <div style="font-size: 12px; color: #71717a;">Deleting an app revokes its tokens and removes its grants. Archived apps keep everything and refuse connections.</div>
+    <div style="font-size: 12px; color: #71717a;">&bull; <b>The row is the link</b> (2026-09-17, as the agents list): the name is an anchor stretched over the whole row (a <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">::after</span>, no script), so any click on the row opens the app page; it highlights on hover, the cursor is a pointer, and a chevron at the row&rsquo;s end says where it goes. The row&rsquo;s own actions sit above the stretched link, so they still act.</div>
 
   </div>
 </div>

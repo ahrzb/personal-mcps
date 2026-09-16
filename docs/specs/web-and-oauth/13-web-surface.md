@@ -237,12 +237,20 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   it requires the owner's session and a live single-use `state` bound to it, per §7 —
   the callback is a mutation (it writes `upstream_auth_json`) and is guarded like one.
   *(Amended 2026-09-02: every app row links to its detail page below; the list's own
-  actions stay.)*
+  actions stay.)* *(2026-09-16: every row **is** the link, as the agents list's — the
+  name an anchor `class="row-link"` stretched over the `class="app-row"` row by a
+  `::after`, no script, with a hover, a pointer and a trailing chevron; the row's own
+  Connect / Archive / Unarchive / Delete sit above the stretched anchor, so they still
+  act.)*
 - `/apps/<slug>` *(added 2026-09-02)* — the app detail page, behind the same rail as
   `/settings` *(2026-09-16: and in the same **framed workspace box** as `/settings` and
   `/agents/<slug>` — a rail beside a card no longer)*. §13 named no such page before this
   date: the page list stopped at `/apps`.
-  Header: name, slug, kind badge (`tunnel` | `proxy`), status (tunneled: online /
+  Header: one title line reading "Apps › <name>" — "Apps" a small muted link to
+  `/apps`, "›" a muted separator, the name the title — then the slug, kind badge
+  (`tunnel` | `proxy`) and status badge on that same line *(2026-09-17: the "Apps /
+  <slug>" crumb line above the header is gone — the crumb folds into the title as the
+  agent page's does, and the slug is said once, by its badge)*; status (tunneled: online /
   offline / archived, with last seen; proxied: the endpoint, the `auth` mode, forward
   identity, and for `auth: oauth` the connection state with Connect / Reconnect /
   Disconnect — the same controls `/apps` has). Eight panes in two groups plus the danger
@@ -262,6 +270,24 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   Tools lands so the app's real tool list is the first thing seen — the question an owner
   opens an app page to answer. The danger zone is a neutral rail entry, not a red one:
   red on a nav item reads as the destructive button itself.
+
+  - **The two levels** — the narrow rendering *(2026-09-17, owner: the app page takes the
+    agent page's levels; no `MobileAppDetail` board — the phone rendering is
+    `MobileAgentDetail`'s with one region per pane)*. At **wide** (≥ 1024) unchanged, the
+    rail beside the pane. Below **1024** one level is visible at a time, chosen from the
+    URL by the server and applied by CSS:
+
+    | URL | level | what shows |
+    |---|---|---|
+    | `/apps/<slug>` (the landing) | 1 | the header (title line "Apps › <name>", the badges, last seen) and the **rail as a list** — every entry a full-width row with its marker and a trailing chevron |
+    | `/apps/<slug>/prompts` … `/danger` | 2 | the **pane** alone, its own card title hidden (the level header names it) |
+
+    The page root carries `data-level="1|2"`. **The level header**, on every render and
+    shown only below the breakpoint: at 1 `‹ Apps` → `/apps`, titled with the name; at 2
+    `‹ <name>` → `/apps/<slug>`, titled with the pane's own rail label. The pill row
+    (`PanePills`) is **not rendered** on this page — the rail-as-list is its replacement,
+    exactly as on the agent page; `/settings` alone keeps the pill row. Nothing new is
+    linked: tapping a rail entry is its existing link.
 
   - **Dimming.** An App-group entry for a §20 family renders dimmed with `—` in place of
     its count when the app advertises none of that family — for tunneled apps the
@@ -781,7 +807,9 @@ value — never a layout one.
   the pill row stays for `/settings` and `/apps/<slug>`, and **`/agents/<slug>` is the
   three levels instead** — rail-as-list, listing, details, one screen each behind a level
   header. `PanePills` is not rendered on the agent page at all. **The three levels**,
-  under `/agents/<slug>` above.)*
+  under `/agents/<slug>` above.)* *(2026-09-17: `/apps/<slug>` takes
+  the levels too — **The two levels** under `/apps/<slug>` — so the pill row is
+  `/settings`'s alone.)*
 - **Mutations belong to a pane**: a POST target keeps the existing final-segment
   convention (its last segment names the op or the better-auth endpoint it fronts), and
   the redirect-back with its notice lands on the pane that rendered the form, not the

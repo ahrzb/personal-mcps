@@ -76,7 +76,7 @@ import type {
 // `familyMarker` is §13's three-answer family marker (a count, `—` where the app advertises
 // none, BLANK where a listing could not be read at all) — this IS the shipped rule, not a
 // copy of it, because the preview must demonstrate what the page does.
-import { DIMMED, agentLevel, enrollmentOf, familyMarker } from "../src/pages/model";
+import { DIMMED, agentLevel, appLevel, enrollmentOf, familyMarker } from "../src/pages/model";
 import { HUB_PRINCIPAL } from "../src/principal";
 
 /* ------------------------------------------------------------------ *
@@ -1068,6 +1068,7 @@ const appDetail = (
     tokens: header.kind === "tunnel" ? [liveAppToken] : [],
     confirm: null,
     reveal: null,
+    ...appLevel(header.slug, pane, header.name),
     ...catalog,
     ...over,
   };

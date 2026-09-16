@@ -107,12 +107,16 @@ const AppTableRow: FC<{ row: AppRow; csrfToken: string; now: string }> = ({ row,
   const badge = statusBadge(row);
   const connect = row.archived ? null : connectAction(row);
   return (
-    <tr>
+    <tr class="app-row">
       <td>
-        {/* Every row links to its detail page, archived rows included — §13's amendment
-            of 2026-09-02; the row's own actions stay beside the link. */}
+        {/* Every row IS the link to its detail page, archived rows included — the anchor
+            stretched over the row by styles.css exactly as the agents list's (2026-09-17,
+            replacing the name-only link of 2026-09-02); the row's own actions sit above
+            it, so they still act. */}
         <div class="cell-name">
-          <a href={paths.appDetail(row.slug)}>{row.name}</a>
+          <a class="row-link" href={paths.appDetail(row.slug)}>
+            {row.name}
+          </a>
         </div>
         <div class="cell-slug wide-only">{row.slug}</div>
         <div class="narrow-only">
@@ -154,10 +158,21 @@ const AppTableRow: FC<{ row: AppRow; csrfToken: string; now: string }> = ({ row,
         <a class="btn btn--danger-outline btn--sm" href={paths.appsConfirmDelete(row.slug)}>
           Delete
         </a>
+        <span class="row-chevron">
+          <Chevron />
+        </span>
       </td>
     </tr>
   );
 };
+
+/** The chevron at the row's end — decoration for where the row goes; the anchor is the
+ *  thing that goes there, so this is hidden from anyone listing the page's links. */
+const Chevron: FC = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="m9 6 6 6-6 6" />
+  </svg>
+);
 
 /* ------------------------------------------------------------------ *
  * Page furniture: the "+" glyph, the notice banner, the empty state, and

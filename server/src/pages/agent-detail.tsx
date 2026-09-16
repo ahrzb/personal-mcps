@@ -23,7 +23,7 @@
 // entry; model.ts's `AgentDetailsView` is the home of that decision.
 
 import type { FC } from "hono/jsx";
-import { ConfirmShell, Layout, PaneRail, TokenReveal, paneGroups } from "./layout";
+import { ConfirmShell, Layout, PaneRail, TokenReveal, paneGroups, LevelHeader } from "./layout";
 import type { PaneEntry } from "./layout";
 import { alertClass, formatLastSeen, formatStamp, formatUntil } from "./format";
 import { DIMMED, entryField, paths } from "./model";
@@ -37,7 +37,6 @@ import type {
   AgentDetailProps,
   AgentDetailsView,
   AgentGrantCard,
-  AgentLevelHeader,
   AgentListGroup,
   AgentListRow,
   AgentPaneView,
@@ -1180,24 +1179,6 @@ const AgentDialog: FC<{ confirm: AgentConfirm; props: AgentDetailProps }> = ({ c
 };
 
 /* -------------------------------------------------------------------- page --- */
-
-/**
- * The narrow level header — one row: the way up on the left, where you are in the middle.
- * In the document on every render at every width and shown only below the breakpoint,
- * where it stands in for the title line and the rail at once (§13's level table).
- *
- * The trailing span is the counterweight that centres the title against the back link;
- * it carries nothing, which is why it is hidden from anyone reading the page's contents.
- */
-const LevelHeader: FC<{ header: AgentLevelHeader }> = ({ header }) => (
-  <div class="level-header">
-    <a class="level-back" href={header.backHref}>
-      ‹ {header.backLabel}
-    </a>
-    <span class="level-title">{header.title}</span>
-    <span class="level-end" aria-hidden="true"></span>
-  </div>
-);
 
 const Pane: FC<{ props: AgentDetailProps }> = ({ props }) => {
   const pane = props.pane;

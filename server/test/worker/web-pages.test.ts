@@ -7748,7 +7748,39 @@ describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
     }
   });
 
-  it.todo(`§13 · the app page's root carries data-level chosen from the URL alone — 1 on /apps/<slug>, 2 on each of the seven other panes — and the level header above the content names the level above and the current thing: at 1 the back link "‹ Apps" → /apps titled with the app's name, at 2 "‹ <name>" → /apps/<slug> titled with the pane's own rail label (Prompts … Danger zone) · the wide title row "Apps › <name>" is in the document at both levels, the "Apps / <slug>" crumb line above it is gone, and no pane renders a pill row — no nav.pill-row and no "App panes, compact" navigation on any of the eight — while /settings still renders its (the twin; 2026-09-16, replacing "gets the pill row too")`);
+  it(`§13 · the app page's root carries data-level chosen from the URL alone — 1 on /apps/<slug>, 2 on each of the seven other panes — and the level header above the content names the level above and the current thing: at 1 the back link "‹ Apps" → /apps titled with the app's name, at 2 "‹ <name>" → /apps/<slug> titled with the pane's own rail label (Prompts … Danger zone) · the wide title row "Apps › <name>" is in the document at both levels, the "Apps / <slug>" crumb line above it is gone, and no pane renders a pill row — no nav.pill-row and no "App panes, compact" navigation on any of the eight — while /settings still renders its (the twin; 2026-09-16, replacing "gets the pill row too")`, async () => {
+    const name = "Catalog app";
+    const landingHref = paths.appDetail(CATALOG);
+    const rail = railEntries(await appPage(landingHref), APP_RAIL_NAV_LABEL);
+    let walked = 0;
+    for (const href of appPaneHrefs(CATALOG)) {
+      const html = await appPage(href);
+      const landing = href === landingHref;
+      // The level is the page root's — one attribute on one element.
+      expect([...html.matchAll(/\sdata-level="([^"]*)"/g)].map((match) => match[1]), href).toEqual([landing ? "1" : "2"]);
+
+      const header = levelHeader(html);
+      expect(header.back, `${href}: the back link`).toBe(landing ? "‹ Apps" : `‹ ${name}`);
+      expect(header.href, `${href}: the back link`).toBe(landing ? paths.apps : landingHref);
+      const label = rail.find((entry) => entry.href === href)?.label ?? "";
+      expect(label, href).not.toBe("");
+      expect(header.title, `${href}: the level header's title`).toContain(landing ? name : label);
+
+      // The wide title row is in the document at both levels; the crumb line is gone.
+      const text = textOf(html);
+      expect(text, href).toContain(`Apps › ${name}`);
+      expect(text, href).not.toContain(`Apps / ${CATALOG}`);
+
+      // No pill row, by class and by landmark name alike.
+      expect(html, href).not.toContain("pill-row");
+      expect(railEntries(html, APP_PILL_NAV_LABEL), href).toEqual([]);
+      walked += 1;
+    }
+    expect(walked).toBe(8);
+
+    // The twin: /settings still renders its pill row under the same session.
+    expect(navBlock(await page(paths.settings, detail.session.cookie), PILL_NAV_LABEL)).not.toBeNull();
+  });
 
   it(`§13 · a tunneled app's Tools pane is the DO's cached catalog: the tools it advertised on its last connect are listed under a numeric Tools marker while its socket is open, and are still listed, unchanged and still counted, after the socket closes and the header reads offline`, async () => {
     const slug = uniqueSlug("cached");
@@ -8695,7 +8727,35 @@ describe(`§13 · /apps/<slug> — Agents, Token and the Danger zone`, () => {
     ).toBe(true);
   });
 
-  it.todo(`§13 · every /apps row IS the link — the name an anchor class="row-link" stretched over a class="app-row" row with the trailing chevron, on the active and the archived rows alike (2026-09-16: as the agents list, replacing the name-only link) — while the row's own Archive / Unarchive / Delete / Connect actions still sit beside it above the stretched anchor, and the builtin pmcp row is still not listed (the twin)`);
+  it(`§13 · every /apps row IS the link — the name an anchor class="row-link" stretched over a class="app-row" row with the trailing chevron, on the active and the archived rows alike (2026-09-16: as the agents list, replacing the name-only link) — while the row's own Archive / Unarchive / Delete / Connect actions still sit beside it above the stretched anchor, and the builtin pmcp row is still not listed (the twin)`, async () => {
+    const listed = (await ops.app_list.handler(world.ns.owner.userId, {})) as {
+      apps: { slug: string; kind: string; archived: boolean }[];
+    };
+    const rows = listed.apps.filter((row) => row.kind !== "builtin");
+    expect(rows.some((row) => row.archived), "the archived section must not be empty").toBe(true);
+    expect(rows.some((row) => !row.archived)).toBe(true);
+
+    const html = await page(paths.apps);
+    // One `app-row` per listed app and no other, each closed by its own </tr>, so every
+    // assertion below is about ONE row's markup and not the page's.
+    const trs = [...html.matchAll(/<tr class="app-row">([\s\S]*?)<\/tr>/g)].map((match) => match[1]);
+    expect(trs.length).toBe(rows.length);
+    for (const row of rows) {
+      const tr = trs.find((markup) => links(markup, paths.appDetail(row.slug)));
+      expect(tr, `no app-row links ${row.slug}`).toBeDefined();
+      // The stretched anchor is the NAME's, and it is the row's only link to the page.
+      const stretched = [...(tr ?? "").matchAll(/<a class="row-link" href="([^"]*)"/g)].map((m) => decodeEntities(m[1]));
+      expect(stretched, row.slug).toEqual([paths.appDetail(row.slug)]);
+      expect(tr, row.slug).toContain('class="row-chevron"');
+      // The twin: the row's own actions are still in the row, above the anchor.
+      expect(links(tr ?? "", paths.appsConfirmDelete(row.slug)), `${row.slug}: Delete`).toBe(true);
+      expect(formsRenderedOn(tr ?? "").map((form) => form.op), row.slug).toContain(
+        row.archived ? "app_unarchive" : "app_archive",
+      );
+    }
+    // The builtin is not a row, so it is not a link either.
+    expect(links(html, paths.appDetail(PMCP_SLUG))).toBe(false);
+  });
 
   it(`§8 · every mutating form the /apps/<slug> panes render fronts a real admin.ops key and submits within that op's schema — every required field, and no field the schema does not declare — so the page that issues and revokes app tokens joins parity direction B instead of standing outside it`, async () => {
     const tunneled = uniqueSlug("paritytun");

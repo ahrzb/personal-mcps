@@ -56,7 +56,14 @@ Per request:
    - owner → all tools (sees everything in their namespace);
    - agent → the union of anchored-regex patterns of its granted roles,
      resolved against the app's `roles_json` **at request time**; the built-in
-     `all` role contributes `.*` without ever appearing in `roles_json`. A granted role no
+     `all` role contributes `.*` without ever appearing in `roles_json`.
+     *(2026-09-16, decision 31: a grant entry may also be an **inline item** —
+     `tool/<pattern>`, `prompt/<pattern>`, `resource/<uri-pattern>` (§8) — which
+     contributes its own pattern to the union **in its own family only**, exactly as one
+     of a role's patterns does and under the same composition rule: the strongest mode a
+     matching entry carries wins, so allow beats approval. There is **no deny mode** —
+     nothing on either side of this union subtracts; a subject nobody's entry matches is
+     simply not reachable.)* A granted role no
      longer present in `roles_json` resolves to the empty pattern set — it still counts
      as a grant (the agent gets an empty `tools/list` and `-32001`, not a 404). On the
      scoped endpoint an agent gets **404** both for a nonexistent slug and for

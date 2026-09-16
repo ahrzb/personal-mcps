@@ -189,6 +189,11 @@ A role's declaration gains a family dimension (§18 decision 9). Wire shape, in
   so no new magic number enters the system.
 - **The built-in `all` role** spans every family, present and future: it contributes
   `.*` in each without appearing in any declaration. Owners keep `["all"]`.
+- **Inline grant entries ride these same three keyspaces** *(2026-09-16, decision 31)*: a
+  grant set's `tool/<pattern>` lands in `tools`, `prompt/<pattern>` in `prompts` and
+  `resource/<uri-pattern>` in `resources` (§8), with that family's pattern grammar and
+  literal fast path below — no fourth keyspace, and no family an inline entry can reach
+  that a role cannot.
 - **Pattern grammar**: the anchored-regex language of §7, with the per-family literal
   fast path §18 decision 9 pins — tool and prompt patterns are literal when they are
   tool-name characters only, resource patterns are literal when they carry no regex

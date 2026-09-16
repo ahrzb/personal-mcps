@@ -65,7 +65,11 @@ CREATE TABLE agent (
 CREATE TABLE grant_ (                   -- "grant" is an SQL keyword
   agent_id TEXT NOT NULL REFERENCES agent(id) ON DELETE CASCADE,
   app_id TEXT NOT NULL REFERENCES app(id) ON DELETE CASCADE,
-  role TEXT NOT NULL,                    -- exact role name, or the built-in 'all' (§9)
+  role TEXT NOT NULL,                    -- an entry: a role name, the built-in 'all', or an
+                                         -- inline item family/pattern (§8) — 'tool/get_news',
+                                         -- 'resource/news://feed/*' (2026-09-16, decision 31:
+                                         -- the column keeps its name; the string is stored and
+                                         -- relayed unchanged, mode lives in `mode`)
   mode TEXT NOT NULL DEFAULT 'allow' CHECK (mode IN ('allow', 'approval')),
   PRIMARY KEY (agent_id, app_id, role)
 );

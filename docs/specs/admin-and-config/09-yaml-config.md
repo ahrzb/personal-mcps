@@ -66,7 +66,11 @@ agents:
   `capabilities` is compared as a **set** with absent ≡ `[tools]` (§20.2's default),
   so spelling out the default, or reordering the list, is never a diff. Listing the same role name in both modes (`[reader,
   "reader:approval"]`) is rejected as a config error — in the YAML and in `grant_set`
-  alike. Grants
+  alike. *(2026-09-16, decision 31: a grant entry is a role name **or an inline item** —
+  `tool/<pattern>`, `prompt/<pattern>`, `resource/<uri-pattern>` (§8) — with the same
+  `:approval` **suffix** rule, read from the end so a resource URI's own colons don't
+  claim it. `apply` takes the grammar unchanged, and an inline entry is never flagged
+  undeclared.)* Grants
   referencing roles a *tunneled* app hasn't declared are applied but flagged with a
   warning (tunneled roles arrive at connect time, so the file can legitimately be ahead
   of the first connection); `all` is exempt, and for proxied apps undeclared roles are

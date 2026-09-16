@@ -343,11 +343,14 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   - **Agents** — the agents holding at least one grant on this app: `Agent` (slug, and
     its description) / `Granted roles` (one `role · mode` chip per grant; the built-in
     `all` is marked `built-in`), from `agent_list`'s inline grants (§8) filtered to this
-    app. The **Edit grants** control targets the (agent × app) grant editor
+    app. The **Edit grants** control targets ~~the (agent × app) grant editor
     (`/agents/<agent>/grants/<slug>`, specced 2026-09-03 — until step 9's code lands the
     control is absent, the pane is read-only, and grants are edited with `grant_set`,
-    `pmcp grant set`, §10). Agent slugs link to `/agents/<slug>` once that page lands;
-    text until then. Footer, true of `grant_set` regardless of the editor: "Grants are
+    `pmcp grant set`, §10)~~ *(2026-09-16, decision 31: the agent page's app pane,
+    `/agents/<agent>/apps/<slug>`; the old URL answers a `301` to it)*. Agent slugs link
+    to `/agents/<slug>` once that page lands;
+    text until then. Footer, true of `grant_set` regardless of where it is edited
+    *(2026-09-16)*: "Grants are
     edited per agent × app pair — saving replaces that pair's whole set."
   - **Token** — tunneled apps only (proxied: the dimmed entry's pane says "Proxied apps
     hold no tokens — the hub dials the upstream; nothing dials in (§2)."). Every live app
@@ -377,81 +380,253 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     fall outside the slug charset already, as `.well-known` falls outside the username
     charset.
 - `/agents` *(added 2026-09-03, roadmap step 9 — the page family decision 30 deferred;
-  the `Agents`, `AgentDetail` and `GrantEditorStates` boards adopted as contract)* —
+  the `Agents`, `AgentDetail` and `GrantEditorStates` boards adopted as contract; redrawn
+  2026-09-16, decision 31 — `Agents` and `AgentDetail` re-adopted, `AgentDetailPanes` and
+  `AgentDetailStates` added, `GrantEditorStates` deleted)* —
   cookie-session-gated. The **fifth top-nav entry**, `Agents`, second after `Apps`
   (Apps · Agents · Audit · Approvals · Settings); the narrow nav is already a horizontal
   scroller with its scrollbar hidden, so the fifth slot needs no overflow menu — the
   follow-up recorded below is closed. Title "Agents", subtitle "Identities that call your
-  apps — each holds grants and tokens." One table, every row from `agent_list` plus
-  `token_list` filtered to `kind = agent` (§8; no second read path): `Agent` (the slug,
-  linking to `/agents/<slug>`, with the description as its second line when set) /
-  `Grants` (per app in slug order, `<app>: role, role` with the roles alphabetical —
-  storage order is not stable; the built-in `all` spelled as
-  `all`; `none` when the agent holds no grant) / `Tokens` (`N active · used <relative>`,
-  or `N active · never used`, or `none`; expired keys are not counted) / `Created`. Row
-  controls: **View** (the same link) and **Delete** (confirm dialog — title "Delete agent
-  “<slug>”?", body "Deleting an agent deletes its tokens and removes its grants
-  everywhere.", the dialog riding `?confirm=delete-agent&slug=` on this page's URL) →
-  `agent_delete`, landing here with the notice. Page control: **New agent** →
+  apps — each holds grants and keys." *(2026-09-16: was "grants and tokens" — a key is
+  not always a token; an OAuth client signs in as the agent too)*. A **plain list**, one
+  row per agent from `agent_list` plus `token_list` filtered to `kind = agent` (§8; no
+  second read path), and **no catalog is read** — every number on the page is counted over
+  the stored grant sets *(2026-09-16)*. Columns: `Agent` — the slug, the description as
+  its second line when set, the anchor **stretched over the whole row**
+  (`class="row-link"` on the anchor, `class="agent-row"` on the row, a trailing chevron; a
+  `::after`, no script), so a click anywhere on the row opens `/agents/<slug>`
+  *(2026-09-16: replaces the slug-only link)* / **Access**, one line — "N apps ·
+  A allowed · K ask first · D dormant", or "no grants" when the agent holds none; dormant
+  counts grants on archived apps and undeclared roles *(2026-09-16: replaces the
+  per-app `<app>: role, role` Grants column — per-app detail lives on the agent page)* /
+  `Tokens` (`N active · used <relative>`, or `N active · never used`, or `none`; expired
+  keys are not counted) / `Created`. Row control: **Delete** alone *(2026-09-16: **View**
+  is gone — the row is the link; Delete sits above the stretched anchor, so it still
+  deletes)* (confirm dialog — title "Delete agent “<slug>”?", body "Deleting an agent
+  deletes its tokens and removes its grants everywhere.", the dialog riding
+  `?confirm=delete-agent&slug=` on this page's URL) → `agent_delete`, landing here with
+  the notice. Granting is not a control here: it lives on the agent page, behind the
+  rail's "+ Grant another app…" *(2026-09-16)*. Page control: **New agent** →
   `/agents/new`, a form page like `/apps/new` (slug, name, description — `agent_create`'s
   own three fields; a refused slug re-renders the form with the refusal, a created one
   lands on `/agents/<slug>`). `new` is therefore reserved from agent slugs the way `new`
   and `connect` are from app slugs (§2's derivation rule). Empty state: "No agents yet.
   Create one to give an AI agent its own grants and keys." with the same control. Footer:
   "Deleting an agent deletes its tokens and removes its grants everywhere."
-- `/agents/<slug>` *(added 2026-09-03)* — the agent page: one scroll of three cards and a
-  danger zone, NOT a paned page — an agent has three holdings and no listing to browse,
-  so a rail would carry nothing. Breadcrumb "Agents / <slug>"; header: the slug, an
-  `agent` badge, the name when it differs from the slug, the description, `Created`. An
-  unknown, foreign or reserved slug is the hub's 404 (`noSuchPage`, as `/apps/<slug>`).
-  - **Grants** — one row per app the agent holds a grant on, in slug order: the app's
-    name and slug (linking to `/apps/<slug>`), then one `role · mode` chip per grant (the
-    built-in `all` marked `built-in`), then **Edit** → `/agents/<slug>/grants/<app>`.
-    Under the rows, **Grant access to another app…**: a select of the namespace's active
-    apps the agent holds nothing on, submitting (GET) to that pair's editor. Empty: "No
-    grants yet — this agent can call nothing until one is set." Footer: "Editing opens
-    the pair's full grant set — saving replaces it entirely."
-  - **Tokens** — every key bound to this agent from `token_list` (`kind = agent`): `Token`
-    (display prefix) / `Created` / `Expires` (the date and `(<N> d)` from issue; `never`)
-    / `Last used` (relative; `never`), an expired key's row marked `expired`; **Revoke**
-    per row (confirm dialog, `token_revoke`) — one verb for live and expired alike; and
-    **Issue token** → `token_issue` with `kind = agent`, answering 200 in place with the
-    one-time reveal exactly as the app page's Issue does (§4/§15: a plaintext key never
-    rides a URL). Footer: "Agent tokens expire after 90 days by default; issuing shows
-    the key once." With this card live, the Tokens pane's intro returns to "Issue new keys
-    from an app or agent page."
-  - **Connected clients** — read-only, from `connection_list` filtered to this agent: the
-    client's name (or id), its redirect origin, `active`/`revoked`, each row linking to
-    `/settings/clients`; heading note "Managed in Settings → Connected clients". Footer:
-    "One OAuth client signs in as this agent, so its calls carry these grants. Read-only
-    here — revoking lives with the other credentials." (§19.6: one place revokes.)
-    Absent entirely when no client is bound — nothing to read.
-  - **Danger zone** — **Delete agent** (the same dialog as the list's), landing on
-    `/agents` with the notice.
-  - Mutations follow the pane rule: `/agents/<slug>/<op>` lands back on `/agents/<slug>`,
-    `/agents/<op>` on `/agents`.
-- `/agents/<slug>/grants/<app>` *(added 2026-09-03)* — the (agent × app) grant editor,
-  its own page rather than a dialog so it is linkable and needs no script. Title "Grants
-  — <agent> on <app name>", subtitle "What this agent may call on this app." One row per
-  role the app declares (`app_get`'s canonical roles, §20.3) plus the built-in `all`
-  last: the role name, its patterns (for `all`: `built-in` and "every tool, present and
-  future — the app can widen what its roles match"), and one three-way choice — `none` /
-  `allow` / `approval` — preset from the agent's current grant on that app. Roles the
-  agent holds that the app does NOT declare are listed too, marked `undeclared`, with the
-  kind's own sentence: tunneled, a warning — "<app> hasn't declared <role>. Tunneled apps
-  declare roles when they connect — this grant stays dormant until then." — and Save is
-  allowed (§9: the file may be ahead of first connect); proxied, an error — "<app> is
-  proxied — its roles are fixed in config, so an undeclared role is an error." — and
-  `grant_set` refuses the save, which redraws this page with the refusal. An app that
-  declares nothing yet reads "<app> hasn't declared any roles yet." above `all` alone.
-  Footer, verbatim: "Saving replaces every grant <agent> holds on <app> — unchecked roles
-  are removed." **Save** → `grant_set` for the pair, the composed `roles` list being each
-  role chosen as `allow` (bare) or `approval` (`role:approval`); a saved set lands on
-  `/agents/<slug>` with the notice, a refused one redraws the editor. **Cancel** is a link
-  back to `/agents/<slug>`. This form is the ONE page form whose fields are not the op's
-  keys verbatim — `roles` is a list the op's `stringList` will only take as an array, so
-  the route composes it from one `role.<name>` choice per row, the way the Issue target
-  is a documented translation rather than the generic dispatch (D15 constraint 35).
+- `/agents/<slug>` *(added 2026-09-03; redrawn 2026-09-16, decision 31)* — the agent page:
+  ~~one scroll of three cards and a danger zone, NOT a paned page — an agent has three
+  holdings and no listing to browse, so a rail would carry nothing~~ *(2026-09-16: it IS a
+  paned page. That reasoning fell the moment the page lists what every granted app
+  advertises: the agent's apps ARE the listing, one rail entry each, and the (agent × app)
+  editor becomes a pane rather than a page of its own)* — **rail · listing · details**,
+  the third page on the shell below (*Panes behind a rail*), and the first whose pane
+  holds a listing and a details pane side by side. Breadcrumb "Agents / <slug>" (plus
+  "/ <app>" on an app pane); header: the slug, an `agent` badge, the name when it differs
+  from the slug, the description, `Created`. An unknown, foreign or reserved slug is the
+  hub's 404 (`noSuchPage`, as `/apps/<slug>`).
+  - **The panes**, one route each *(2026-09-16)*:
+
+    | Pane | URL | Query |
+    |---|---|---|
+    | an app's grants (listing + details) | `/agents/<slug>/apps/<app>` | `sel=<kind>:<name>` selects a row for the details pane (`kind` ∈ `role`, `tool`, `prompt`, `resource`, `pattern`); `q=` the filter text |
+    | Grant another app (wide: the listing alone) | `/agents/<slug>/grant` | `q=` search; `show=<app>` opens that card's endpoint list |
+    | Credentials | `/agents/<slug>/credentials` | `sel=token:<id>` / `sel=client:<id>` |
+    | Activity | `/agents/<slug>/activity` | `sel=approval:<id>` / `sel=call:<id>` |
+    | Danger zone | `/agents/<slug>/danger` | — |
+
+    `/agents/<slug>` itself renders **the first app in slug order the agent holds a grant
+    on**, in place; an agent holding no grants lands on the grant step, in place. There is
+    no alias URL for the landing pane (the pane rule below). `/agents/<slug>/apps/<app>`
+    for an active app the agent holds nothing on renders the **new-grant state** — an
+    empty set, the header's dashed "new grant · nothing saved yet" badge, and the rail
+    showing the app; an unknown, builtin, foreign or (ungranted) archived app is
+    `noSuchPage()`, and so is an unknown pane segment.
+  - **The rail** is the shell's `PaneRail` *(2026-09-16)*, in groups: `Apps · N` — one
+    entry per granted app in slug order, its marker `rail-dot--warn` (amber) when the set
+    holds an approval entry and a `—` dash when the app is archived (dormant)
+    *(2026-09-16: **archived and nothing else** — the rail is drawn on every pane and must
+    read the same on all of them, so no catalog-dependent condition may feed it; "every
+    entry matches nothing today" is knowable only for the app the open pane read)*, then a
+    `+ Grant another app…` entry carrying the count of grantable
+    apps; `Agent` — Credentials with its `live · clients` counts, Activity with the
+    pending-approval count; then the tail group Danger zone. The active entry is
+    `aria-current="page"`; archived apps are `rail-link--dim`. Mobile: `PanePills`, the
+    shell's pill row.
+  - **Header tiles** *(2026-09-16)*: "N apps · A allow · K ask first · D dormant",
+    counted over the grant sets — **no catalog read**. Neither `/agents` nor this header
+    fetches a catalog; only the open app pane does.
+  - **An app's grants** (`/agents/<slug>/apps/<app>`) — the listing and details pane that
+    replaces the grant-editor page *(2026-09-16)*. Reads: `agent_list` (the saved set),
+    `app_list` (kind, status, declared roles), and the catalog of the one open app per
+    advertised family, exactly as `/apps/<slug>`'s panes read theirs — including the
+    `unconnected` / `undeclared` / `unread` family states, each rendered as one note line
+    in its family's group ("<app> has not connected yet — nothing to list until it does.",
+    the family "is not advertised", it "could not be read just now").
+    Listing header: the app's name, slug, kind badge, status badge; the **reach line**
+    "<agent> reaches N of T tools · K ask first · P of PT prompts · R of RT resources",
+    computed over the saved set; then the filter as its own row — a GET form (`q`) with
+    the placeholder "filter, or type a pattern…".
+    **Groups**, in order, each a heading with its count: `Roles · N` ("declared by the app
+    at connect" / "defined in config"), then any held **undeclared** role rows, `Tools ·
+    N` ("R reached · U not"), `Prompts · N`, `Resources · N` ("matched by URI"),
+    `Patterns · N` ("entries that are not one item" — the inline entries whose pattern is
+    not a literal), then the **pattern offer** when `q` is non-empty and is not a literal
+    name: heading "As a pattern", one row `tool/<q>` (or `resource/<q>` when `q` carries
+    `://`) reading "would match N today, and any added later" / "matches nothing today",
+    with two submit buttons **Ask** / **Allow**. With `q` set, rows are filtered by name
+    or description substring, pattern rows stay, and nothing matching renders "Nothing
+    matches “<q>”."
+    **Rows.** A role row: the name (`all` last, with a `built-in` badge), beneath it its
+    patterns per §20.3 family and "matches N"; right, the control. An item row: name,
+    description; right, "via <roles>" / "also via <roles>" when a role matches it, then
+    the control. A pattern row: the entry, "matches N today" / "matches nothing today",
+    the control. An undeclared role row: the name, an `undeclared` badge, "granted, but
+    the app has not declared it — dormant"; right, an `in Allowed` / `in Ask first` badge
+    with a `×` remove button.
+    **The control** is one radio group per row — three `<input type="radio">` in a `.seg`,
+    in this order and with these labels: `none` · `ask` · `allow`; field name `e.<entry>`
+    (the entry string: a role name, or `tool/<name>` / `prompt/<name>` / `resource/<uri>`,
+    §8), values `none` / `approval` / `allow`. An item row's checked value is the
+    **direct** entry's mode (`none` when there is none); where a role implies a higher
+    mode that button is drawn hollow (`.impl`, plus `.warn` for ask) and the buttons
+    *below* the implied mode are `disabled` with `title="<roles> grants <ask|allow> —
+    change the role to lower it"`. A direct entry at ask under a role that allows carries
+    the "ask entry · no effect" badge (title "allow wins over ask") and a `×` remove
+    button. **Highest wins, allow over ask; there is no deny** — nothing granted is simply
+    `none` (§7).
+    **The form.** One `<form method="post">` per app pane,
+    `action="/agents/<slug>/apps/<app>/grant_set"`, carrying the CSRF field; its foot
+    holds **Remove from <agent>** (left), the count text, **Discard** (a link back to the
+    pane) and **Save** (right). Save composes the entry list: every `e.<entry>` at `allow`
+    → `<entry>`, at `approval` → `<entry>:approval`, at `none` → nothing; plus the pattern
+    offer's `add` field (`add=<entry>`, the pressed button's value in
+    `mode=allow|approval`); minus every `drop=<entry>` (the `×` buttons are submit buttons
+    named `drop`). One `grant_set` for the pair, replacing its whole set. A refusal (a
+    proxied undeclared role, an entry whose pattern does not compile — §8) **redraws the
+    pane at 400** with the reason in a danger alert above the listing and the submitted
+    choices preserved, never a redirect; success is a `303` back to the pane with the
+    notice. Like the editor before it, this form's fields are not the op's keys verbatim —
+    `roles` is a list `stringList` will only take as an array, so the route composes it
+    (D15 constraint 35) *(2026-09-16)*.
+    **Remove from <agent>** opens `?confirm=remove-app` on the pane (title "Remove <app>
+    from <agent>?", body "<agent> loses every entry on <app>. History stays; a waiting
+    request expires."), whose form posts `clear=1` to the same action → `grant_set` with
+    `roles: []` → `303` to `/agents/<slug>` with the notice.
+    **The details pane** (from `sel`): nothing selected → the app's name and kind, "Select
+    a role, tool, prompt or resource on the left for its details.", a Catalog card ("Tools
+    T · R reached by <agent>" …) and the "Grant set for <agent>" card ("Allowed: …", "Ask
+    first: …"). A role → a `role` badge, "Declared by <app> at connect." / "Built in:
+    every family, present and future.", a For-agent card (Standing `in Allowed` / `in Ask
+    first` / `not granted`), a Patterns card, a "Matches today" card, and the note "A role
+    widens when the app widens it. To keep a single item regardless, add it directly from
+    its row." A tool → its description, Standing ("allowed · via <roles>" / "allowed ·
+    direct" / "ask · …" / "not reachable"), the approval sentence ("Not asked — allow wins
+    over any ask entry, so adding one here would not gate it while <roles> allows it." /
+    "Asked — each call waits for you." / "—"), an Arguments table, and the "What only the
+    hub knows" card ("Called as <app>_<tool> on the aggregated endpoint", "Reachable by",
+    "Redaction") — the app page's card, computed by the door's own matcher and never a
+    second one. A prompt or a resource: the same without arguments. A pattern → a
+    `pattern` badge, "An entry that is not one item: anchored, * aliases .*.", Standing,
+    and "Matches today · N" with the names.
+    **Script is optional.** A small inline script (the audit expanded row's precedent) may
+    mark rows whose radio differs from its initial value with the `unsaved` badge and
+    count them in the foot, and the rail's blue draft dot is script-only; with scripting
+    off **Save still replaces the set and the page is complete**, and nothing in a test
+    depends on the script *(2026-09-16)*.
+  - **Grant another app** (`/agents/<slug>/grant`) *(2026-09-16)* — the listing alone, at
+    the wide width. Header "Grant another app" · "apps <agent> holds nothing on"; a GET
+    search form (`q`, placeholder "search apps and endpoints…"); the sentence "What each
+    app does; open it to see every endpoint and which roles grant it. Grant opens the app
+    with nothing granted yet."; group `Apps · N` ("active, not archived · nothing is
+    written until you save"); one card per active non-builtin app the agent holds nothing
+    on — name, slug, kind badge, status badge, description, "T tools · P prompts · R
+    resources · roles <names>", a "show all N" link (`?show=<app>`, "hide" when open)
+    revealing the endpoint list (`.eps`, each row: the family label, the name, an info
+    marker whose `title` is the description, and the role badges that grant it, or "only
+    via all or by name"), and a **Grant** link (`btn btn--primary`) to
+    `/agents/<slug>/apps/<app>`. `q` filters cards by app name, slug or description or by
+    any endpoint name, and opens matching cards' lists. Empty: "<agent> already holds a
+    grant on every active app. Archived apps are not listed; unarchive one to grant it."
+    Only an open card reads its app's catalog.
+  - **Credentials** (`/agents/<slug>/credentials`) *(2026-09-16: the 2026-09-03 Tokens and
+    Connected clients cards, now one pane)* — `Tokens · N` (unrevoked, `token_list` kind
+    `agent`), with a group-heading control "expires in" (`<select name="expires_in">`:
+    `30d` → `2592000`, `90d · default` → `7776000`, `1y` → `31536000`, `never` → `never`)
+    beside an **Issue token** button, one form posting to the existing
+    `/agents/<slug>/token_issue` — which answers 200 in place with the once-only reveal
+    (`TokenReveal`) above the list and a `new` badge on the row, exactly as the app page's
+    Issue does (§4/§15: a plaintext key never rides a URL); the pane URL is what
+    re-renders. Rows: the prefix, an `expired` badge when expired, "created … · expires …
+    (N d) · used …"; right, **Revoke** (`?confirm=revoke-token&id=`) or, on an expired
+    row, **Remove** (`?confirm=remove-token&id=`, title "Remove expired token <prefix>?",
+    body "It expired <date>; removing it keeps its history.") — **both post the same
+    `token_revoke`**; only the label differs, because an expired key is nothing but a row
+    to clear *(2026-09-16: 2026-09-03's "one verb for live and expired alike" becomes one
+    op under two verbs)*. `Connected clients · N` from `connection_list` for this agent,
+    read-only, each row linking to `/settings/clients`, with the note "One OAuth client
+    signs in as this agent, so its calls carry these grants. Revoking lives with the other
+    credentials in Settings → Connected clients." (§19.6: one place revokes.) Details: a
+    token → the prefix, a `token` badge, created / expires / last used / "Carries: every
+    grant in the Apps list — a key is the agent, not a subset of it", and Recent use (the
+    last three audit rows for `principal=agent:<slug>` whose token prefix matches where
+    the trail records it, else the agent's last three); a client → name, an `OAuth client`
+    badge, redirect origin, consented, last used, registered ("by you, at consent" /
+    "registered itself — identity unverified"); nothing selected → the Summary card.
+  - **Activity** (`/agents/<slug>/activity`) *(2026-09-16)* — header "Activity" · "the
+    last 7 days, the retention window", and the link "full trail" →
+    `/audit?principal=agent:<slug>`; summary "N calls · ok · denied · awaiting approval".
+    `Awaiting approval · N` ("each expires an hour after it was asked"): rows with the
+    app, the tool, the args (post-redaction, one line) and the age, plus **Reject** /
+    **Approve** buttons — forms posting `approval_decide` to
+    `/agents/<slug>/approval_decide` and landing back on this pane; a decided row is
+    dimmed with its status badge. `Recent calls · N` from `audit_query`
+    (`principal=agent:<slug>`, limit 50): app, tool, when, ms, and the outcome badge (`ok`
+    / `approval required` / `not permitted` / the failure). Details: an approval → the
+    tool, a status badge, "<agent> wants to call this on <app> · asked … · expires in …",
+    an Arguments (post-redaction) card, "Why it waits" ("<role> is in Ask first on <app>"
+    — the entry that matched, with mode approval), and the same two buttons; a call → the
+    audit row's own sentences, the bodies when recorded and otherwise "Refused before the
+    call was made, so there are no bodies to show." or the other two no-bodies sentences
+    pinned above, plus "The same row the audit page shows … Open in the audit trail."
+    linking `/audit?expand=<id>#event-<id>`.
+  - **Danger zone** (`/agents/<slug>/danger`) *(2026-09-16)* — the `Delete agent` card
+    ("Deleting an agent deletes its tokens, revokes its clients and removes its grants
+    everywhere. This cannot be undone.") with **Delete <agent>** → the existing
+    `?confirm=delete-agent` dialog → landing on `/agents` with the notice; details, "What
+    deletion removes": Grants (N apps), Tokens, Clients ("— the binding cascades"),
+    History ("kept — audit rows name the principal, not the row").
+  - Mutations follow the pane rule through the generic `/agents/:slug/:op` dispatcher,
+    with an op → pane table *(2026-09-16)*:
+
+    | Op | Lands on |
+    |---|---|
+    | `token_issue` | `/agents/<slug>/credentials` — 200 in place, the reveal |
+    | `token_revoke` | `/agents/<slug>/credentials` |
+    | `approval_decide` | `/agents/<slug>/activity` |
+    | `agent_delete` | `/agents` |
+
+    `grant_set` has its own route, `/agents/<slug>/apps/<app>/grant_set` (above), because
+    it names the pair and not the agent alone. `/agents/<op>` still lands on `/agents`.
+  - **The old URLs** *(2026-09-16)*: `GET /agents/<slug>/grants/<app>` answers a `301` to
+    `/agents/<slug>/apps/<app>`, and `GET /agents/<slug>/grants` a `301` to
+    `/agents/<slug>/grant`. The app page's Agents pane row action ("Edit grants") links to
+    `/agents/<agent>/apps/<app>`.
+- ~~`/agents/<slug>/grants/<app>` *(added 2026-09-03)* — the (agent × app) grant editor,
+  its own page rather than a dialog so it is linkable and needs no script.~~
+  *(2026-09-16, decision 31: **deleted**. The editor is the app pane of `/agents/<slug>`
+  above; `grant-editor.tsx` goes with it and `PagePropsByName` loses `grant-editor`, the
+  old URL answering the `301` pinned above. What the page pinned and the pane keeps: one
+  row per role the app declares (`app_get`'s canonical roles, §20.3) with the built-in
+  `all` last, the undeclared-role rule in both kinds — tunneled warns and Save is allowed
+  ("<app> hasn't declared <role>. Tunneled apps declare roles when they connect — this
+  grant stays dormant until then.", §9: the file may be ahead of first connect), proxied
+  is an error and `grant_set` refuses the save ("<app> is proxied — its roles are fixed in
+  config, so an undeclared role is an error."), the refusal redrawing the page that
+  submitted it — and the composed `roles` list, still not the op's keys verbatim. What it
+  loses: its own URL, its "Saving replaces every grant <agent> holds on <app> — unchecked
+  roles are removed." footer, which the pane's foot and Discard / Save now say; its
+  `none` / `allow` / `approval` choice, whose labels and order are now `none` · `ask` ·
+  `allow`; and its Cancel link, which is Discard.)*
 - `/oauth/consent` *(added 2026-08-26, §19 — the inbound direction, under the same
   already-reserved `oauth` segment; re-scoped 2026-09-02)*: the consent screen an
   external MCP client's authorization request lands on (what the client is, what it asks
@@ -465,18 +640,25 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   The list of connections it produces, with Revoke, is the Connected clients pane of
   `/settings` above; `/oauth/connections` redirects there.
 
-**Panes behind a rail** *(added 2026-09-02)*. One shell component serves both paned
-pages, and its rules are pinned once:
+**Panes behind a rail** *(added 2026-09-02)*. One shell component serves all three paned
+pages — `/settings`, `/apps/<slug>` and `/agents/<slug>` *(2026-09-16: three, not two;
+the agent page joined on decision 31)* — and its rules are pinned once. A pane is one
+region or two: `/agents/<slug>`'s app pane holds a **listing and a details pane side by
+side**, still one route and one rail entry *(2026-09-16)*:
 
 - **A pane is a route.** Each pane has exactly one URL, `/<page>/<pane>`; the page root
   renders the first rail entry (the *landing* pane — `/settings` → Password,
-  `/apps/<slug>` → Tools) and no alias for it exists (`/settings/password` and
+  `/apps/<slug>` → Tools, `/agents/<slug>` → the first granted app in slug order, or the
+  grant step when the agent holds none *(2026-09-16)*) and no alias for it exists
+  (`/settings/password` and
   `/apps/<slug>/tools` are 404s: one URL per pane). A URL per pane is what lets a link, a
   bookmark, a fixture, and a post-mutation redirect all name one; the rail is navigation,
   never tabs.
-- **The rail** groups entries under headings (`Sign-in` / `Access`; `App` / `Access`,
+- **The rail** groups entries under headings (`Sign-in` / `Access`; `App` / `Access`;
+  `Apps` / `Agent` *(2026-09-16)*,
   then the ungrouped Danger zone) and every entry carries its at-a-glance marker — a
-  count, the Two-factor status dot, `none`, or the dimmed `—` of a family the app does
+  count, the Two-factor status dot, `none`, the amber dot of a pending ask
+  *(2026-09-16)*, or the dimmed `—` of a family the app does
   not advertise — read from the same calls that render the panes, never a second query
   that could disagree with them. Every count is the number of rows its pane lists. The
   active entry is `aria-current="page"`; dimmed entries stay links.
@@ -484,7 +666,8 @@ pages, and its rules are pinned once:
   become a horizontally scrolling **pill row** under the page title — label only, no
   markers, active pill highlighted and `aria-current="page"` like the rail's active entry
   *(pinned 2026-09-03)*, same routes. This is a shell rule, so it applies to
-  `/apps/<slug>` although only `MobileSettings` was drawn (follow-up).
+  `/apps/<slug>` and `/agents/<slug>` although only `MobileSettings` was drawn (follow-up)
+  *(2026-09-16: the agent page's mobile board is the same recorded follow-up)*.
 - **Mutations belong to a pane**: a POST target keeps the existing final-segment
   convention (its last segment names the op or the better-auth endpoint it fronts), and
   the redirect-back with its notice lands on the pane that rendered the form, not the
@@ -495,7 +678,8 @@ pages, and its rules are pinned once:
   land on `/apps` *(2026-09-03, owner question 37(b))*. Confirm-dialog state
   (`?confirm=…`) rides the owning pane's URL for the same reason.
 - **A page's gate is every pane's gate**: `/settings/*` is recent-auth and no-bearer
-  (§4); `/apps/<slug>/*` is the ordinary owner session.
+  (§4); `/apps/<slug>/*` and `/agents/<slug>/*` are the ordinary owner session
+  *(2026-09-16)*.
 - ~~Known follow-up, recorded not solved: the mobile top nav holds four items (Apps,
   Audit, Approvals, Settings) and has no `Agents` entry — 390 px cannot hold five, so the
   deferred agents pages will need a scroller or an overflow menu before they get a slot.~~

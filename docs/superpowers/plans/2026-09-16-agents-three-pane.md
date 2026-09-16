@@ -82,7 +82,7 @@ deleted; `PagePropsByName` loses `grant-editor`. The app page's Agents pane row 
 
 **The rail** is `PaneRail` with groups: `Apps · N` (one entry per granted app in slug
 order — marker: `rail-dot--warn` amber when the set holds an approval entry, a `—` dash
-when the app is archived or every entry matches nothing today; a `+ Grant another app…`
+when the app is archived (the rail never reads a catalog); a `+ Grant another app…`
 entry carrying the count of grantable apps), `Agent` (Credentials with `live · clients`
 counts, Activity with the pending-approval count), then the tail group Danger zone. Active
 entry `aria-current="page"`; archived apps are `rail-link--dim`. Mobile: `PanePills`.

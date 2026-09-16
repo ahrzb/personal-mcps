@@ -260,3 +260,51 @@
     `OauthConnections` boards duplicate pane content the `…Panes` boards now carry, and
     `/apps/<slug>` has no mobile board.
 
+31. **The agent page is three panes; grant sets take inline entries** (2026-09-16,
+    owner-reviewed design; §13, §8, §7, §5, §20.3, §22). Two calls, one redesign.
+    **(a) Three panes.** `/agents/<slug>` becomes a paned page on the same shell as
+    `/settings` and `/apps/<slug>` — **rail · listing · details** — reversing decision
+    30-era §13's "NOT a paned page: an agent has three holdings and no listing to browse".
+    The reasoning fell the moment the page lists what every granted app *advertises*: the
+    agent's apps are the listing, one rail entry each (amber dot for an ask entry, a dash
+    when the app is archived — dormant — and nothing else, since the rail is drawn on
+    every pane and must read the same on all of them, so nothing catalog-dependent may
+    feed it), with `+ Grant another app…` and the agent's own panes — Credentials,
+    Activity, Danger zone — beneath them. The (agent × app) grant set is now the app pane,
+    listing roles, tools, prompts, resources and pattern entries with **one control per
+    row, `none` · `ask` · `allow`**: solid when set on the row, hollow when a role implies
+    it (the role named), the states below a role's disabled. `/agents` drops to a plain
+    list — the whole row a stretched anchor, Delete the only control, Access one line of
+    counts — because every per-app detail and every edit now has somewhere better to live.
+    **(b) Inline entries.** A grant set's entries widen from role names to role names **or
+    items**: `tool/<pattern>`, `prompt/<pattern>`, `resource/<uri-pattern>`, so a single
+    tool can be granted or asked on its own row and a pattern typed into the filter can be
+    added as an entry. Role names never contain `/`, so the two kinds never collide; mode
+    is the `:approval` **suffix**, read from the end, because a resource URI carries colons
+    of its own. `grant_set`, the YAML `apply` grammar (§9) and the provider's `pmcp_grant`
+    (§22) all take the same list; an inline entry needs no declaration and is therefore
+    never "undeclared".
+    **Alternatives the owner rejected across the design rounds.** *A separate grant-editor
+    page* (`/agents/<slug>/grants/<app>`, shipped 2026-09-03): kept as a route it would be
+    a second place to edit the same set, and as a page it could not show the app's catalog
+    beside the choice — which is the whole point of the redraw. It is deleted, its board
+    (`GrantEditorStates`) with it, and the old URLs answer `301`s. *A deny mode* — a fourth
+    control state that subtracts: it was asked for and refused. Grants are a union (§7);
+    the strongest matching entry wins and allow beats approval, so a deny would make the
+    result order-dependent and make "what can this agent reach" unanswerable by reading the
+    set. Nothing granted is simply `none`. *Catalog-driven totals on `/agents`* — reach
+    counts per family on every row: dropped because a proxied app's catalog is a **live
+    read** of the upstream, so the list page would fan out one network read per app per
+    render and would go slow or wrong exactly when an upstream is down. The list and the
+    agent header count over the stored grant sets only; the open app pane is the one place
+    that reads a catalog, and "dormant" on the list means an archived app or an undeclared
+    role, never "matches nothing today".
+    **Irreversibility, pinned.** Entries are stored in `grant_.role` unchanged and the
+    **column keeps its name** (§5 gains a comment, not a migration). That is deliberate and
+    forward-compatible in both directions: an older reader sees strings it does not
+    recognise as role names and resolves them to the empty pattern set, which is the
+    existing behaviour for a role no longer in `roles_json` — an agent gets less, never
+    more. Rolling back the pages leaves inline entries sitting in the table as
+    unrecognised roles; they grant nothing until the parser returns. Renaming the column
+    to `entry` was considered and dropped: it buys a word and costs a migration on the one
+    table whose primary key it is part of.

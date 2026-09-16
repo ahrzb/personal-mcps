@@ -67,6 +67,19 @@ Tools (names final, shapes reviewed at implementation time):
   this; there is no separate grant-read tool.
 - `grant_set` — replaces the full grant set for (agent, app); each entry is a
   role name plus optional mode (`reader` or `reader:approval`, the same syntax as §9).
+  *(2026-09-16, decision 31: an entry is a role name **or an inline item** —
+  `tool/<pattern>`, `prompt/<pattern>` or `resource/<uri-pattern>`, the pattern being §7's
+  language for that family and the family being §20.3's keyspace for it. Role names never
+  contain `/`, so the two kinds never collide. **Mode is read from the `:approval`
+  suffix**, never from the first `:` — a resource URI carries colons of its own, so
+  `resource/news://feed/*:approval` is one approval-mode entry. An inline entry needs no
+  declaration and is never "undeclared": the tunneled warning and the proxied error below
+  stay role-only. An entry whose pattern does not compile is refused — `"roles" entry
+  "tool/(" is not a valid pattern` — and so is an empty pattern (`tool/`); a duplicate
+  entry, or the same entry in both modes, is refused as it always was. The `roles` field
+  description reads, verbatim: `Entries: a role name, or tool/<pattern>, prompt/<pattern>,
+  resource/<uri-pattern>; each optionally suffixed ":approval".` The entry string is
+  stored unchanged in `grant_.role` (§5) and relayed unchanged by `agent_list`.)*
   Applies the same role validation as the YAML layer (§9): undeclared roles warn for
   tunneled apps, hard-error for proxied ones; a role literally named `all` is never
   declarable, only grantable (it's the built-in).

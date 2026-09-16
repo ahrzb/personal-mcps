@@ -547,14 +547,19 @@ costs a fixture regeneration plus a CLI front (§22.6).
 `agent`, `app` (required, `RequiresReplace`); `allow` and `approval` (optional sets of string).
 Separate sets rather than the wire's `role[:approval]` strings: the suffix is an encoding detail,
 and "same role in both modes" becomes a plan-time conflict instead of a server error. At least one
-must be non-empty; `allow ∩ approval = ∅`.
+must be non-empty; `allow ∩ approval = ∅`. *(2026-09-16, decision 31: an **inline entry** —
+`tool/<pattern>`, `prompt/<pattern>`, `resource/<uri-pattern>` (§8) — is a legal string in either
+set, unchanged; the provider passes it through and the split sets keep carrying the mode, so no
+suffix is ever written here.)*
 
 Create and Update are both `grant_set`; Delete is `grant_set {roles: []}`.
 
 **Undeclared roles.** A grant naming a role the app has not declared is a **warning** on a
 tunneled app (roles arrive at connect time, so config may legitimately lead the first connection)
 and an **error** on a proxy app (its roles live in the same config). **`all` is exempt from both**
-— it is the built-in role, never declarable, and the live `mcps.yaml` grants it.
+— it is the built-in role, never declarable, and the live `mcps.yaml` grants it. *(2026-09-16,
+decision 31: the check **skips inline entries** — an entry containing `/` is an item, not a role
+name, so it is never declared and never undeclared.)*
 
 The check runs at **apply** time in Create/Update, after an `app_get` on the referenced app: a
 provider cannot read a sibling resource's configuration during plan, and on first create the app

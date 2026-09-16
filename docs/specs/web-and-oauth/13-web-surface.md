@@ -420,9 +420,13 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   advertises: the agent's apps ARE the listing, one rail entry each, and the (agent × app)
   editor becomes a pane rather than a page of its own)* — **rail · listing · details**,
   the third page on the shell below (*Panes behind a rail*), and the first whose pane
-  holds a listing and a details pane side by side. Breadcrumb "Agents / <slug>" (plus
-  "/ <app>" on an app pane); header: the slug, an `agent` badge, the name when it differs
-  from the slug, the description, `Created`. An unknown, foreign or reserved slug is the
+  holds a listing and a details pane side by side. Header: one title line reading
+  "Agents › <slug>" — "Agents" a small muted link to `/agents`, "›" a muted separator, the
+  slug the title — then the name when it differs from the slug, the description, `Created`
+  *(2026-09-16, owner: the crumb folds into the title so the agent is named once; there is no
+  "/ <app>" or "/ <pane>" suffix and no `agent` badge — the rail names the pane and the
+  listing the row, and under "Agents ›" the badge said nothing the page did not; the app page
+  keeps its kind badge because tunneled / proxied carries information)*. An unknown, foreign or reserved slug is the
   hub's 404 (`noSuchPage`, as `/apps/<slug>`).
   - **The panes**, one route each *(2026-09-16)*:
 
@@ -578,8 +582,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     badge, redirect origin, consented, last used, registered ("by you, at consent" /
     "registered itself — identity unverified"); nothing selected → the Summary card.
   - **Activity** (`/agents/<slug>/activity`) *(2026-09-16)* — header "Activity" · "the
-    last 7 days, the retention window", and the link "full trail" →
-    `/audit?principal=agent:<slug>`; summary "N calls · ok · denied · awaiting approval".
+    last 7 days, the retention window", and at the right of the header row an outlined
+    button-styled link **Open in Audit** (with an arrow-up-right glyph) →
+    `/audit?principal=agent:<slug>` *(2026-09-16: was a bare "full trail" link)*; summary "N calls · ok · denied · awaiting approval".
     `Awaiting approval · N` ("each expires an hour after it was asked"): rows with the
     app, the tool, the args (post-redaction, one line) and the age, plus **Reject** /
     **Approve** buttons — forms posting `approval_decide` to

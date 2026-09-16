@@ -148,9 +148,10 @@ every level headed by a back button naming the level above (`‹ Agents`, `‹ c
 the level header shows; the top bar is the brand and a **hamburger** whose sidebar slides
 in from its own side with the five nav entries, the Approvals count and Sign out; Save
 stays at the bottom right; the Activity trail is **paged** twenty calls at a time behind
-a *Load more* row (a plain link on the real page). Two decisions rode along and apply to
-the desktop too: the breadcrumb is only the way back (`‹ Agents`) since the title names
-the agent and the rail the app, and the `agent` type label is gone (the crumb, the nav and
+a *Load more* row (a plain link on the real page). Two decisions rode along: the phone drops the
+breadcrumb for its level headers (a full path costs width a phone lacks; the desktop keeps
+the crumb `Agents › claude › news › get_news`, slugs as the page's badges with the current
+one dark, since it is cheap to scan and to click), and on both the `agent` type label is gone (the crumb, the nav and
 the menu already say it; the app page keeps its kind label because tunneled / proxied
 carries information). `/agents` has no mobile board yet; `Dialogs` keeps the delete-agent
 confirm. §13 still describes the narrow layout as the pill row with stacked panes and is

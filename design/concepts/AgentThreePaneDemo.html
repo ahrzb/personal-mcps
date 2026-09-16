@@ -340,8 +340,8 @@ function render() {
   const dirty = isDirty();
 
   // crumb + tiles
-  // the crumb is only the way back: the title names the agent, the rail the app, the listing the row
-  document.getElementById("crumb").innerHTML = `<a class="back">‹ Agents</a>`;
+  // the crumb is the whole path on desktop (cheap to scan, cheap to click); the phone hides it and uses its level headers instead
+  document.getElementById("crumb").innerHTML = `<a>Agents</a><span class="dim">/</span><span class="mono">claude</span>${view === "app" ? `<span class="dim">/</span><span class="mono">${current}</span>${selected ? `<span class="dim">/</span><span class="mono">${esc(selected.name)}</span>` : ""}` : `<span class="dim">/</span><span>${view === "grant" ? "grant another app" : view}</span>`}`;
   let tt = 0, ta = 0, tp = 0, tr = 0, dormant = 0;
   for (const app of Object.keys(SAVED)) { const rr = reach(app, app === current ? set : SAVED[app]); if (APPS[app].status === "archived") { dormant++; continue; } tt += rr.tools.reached; ta += rr.tools.approval; tp += rr.prompts.reached; tr += rr.resources.reached; }
   document.getElementById("tiles").innerHTML = `<span><b>${Object.keys(SAVED).length}</b> apps</span><span><b>${tt}</b> tools · <b>${tp}</b> prompts · <b>${tr}</b> resources</span><span style="color:#92400e"><b style="color:#92400e">${ta}</b> ask first</span><span><b>${dormant}</b> dormant</span>`;

@@ -515,14 +515,16 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     **The details pane** (from `sel`): nothing selected → the app's name and kind, "Select
     a role, tool, prompt or resource on the left for its details.", a Catalog card ("Tools
     T · R reached by <agent>" …) and the "Grant set for <agent>" card ("Allowed: …", "Ask
-    first: …"). A role → a `role` badge, "Declared by <app> at connect." / "Built in:
+    first: …"). A role → a `role` badge, "Declared by <app> at connect." (a tunneled app; "Declared by
+    <app> in config." for a proxied one) / "Built in:
     every family, present and future.", a For-agent card (Standing `in Allowed` / `in Ask
     first` / `not granted`), a Patterns card, a "Matches today" card, and the note "A role
     widens when the app widens it. To keep a single item regardless, add it directly from
     its row." A tool → its description, Standing ("allowed · via <roles>" / "allowed ·
     direct" / "ask · …" / "not reachable"), the approval sentence ("Not asked — allow wins
     over any ask entry, so adding one here would not gate it while <roles> allows it." /
-    "Asked — each call waits for you." / "—"), an Arguments table, and the "What only the
+    "Asked — each call waits for you." / "Not asked." for a direct allow no role backs /
+    "—"), an Arguments table, and the "What only the
     hub knows" card ("Called as <app>_<tool> on the aggregated endpoint", "Reachable by",
     "Redaction") — the app page's card, computed by the door's own matcher and never a
     second one. A prompt or a resource: the same without arguments. A pattern → a
@@ -539,15 +541,18 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     app does; open it to see every endpoint and which roles grant it. Grant opens the app
     with nothing granted yet."; group `Apps · N` ("active, not archived · nothing is
     written until you save"); one card per active non-builtin app the agent holds nothing
-    on — name, slug, kind badge, status badge, description, "T tools · P prompts · R
-    resources · roles <names>", a "show all N" link (`?show=<app>`, "hide" when open)
-    revealing the endpoint list (`.eps`, each row: the family label, the name, an info
+    on — name, slug, kind badge, status badge, description, then one line that depends
+    on whether the card is open: closed, "roles <names> · show endpoints" (the link,
+    `?show=<app>`); open, "T tools · P prompts · R resources · roles <names> · hide"
+    *(2026-09-16, verification: a closed card cannot count what it has not read, and the
+    landing pane of a fresh agent must not fan out to every grantable app's catalog)* —
+    the open card revealing the endpoint list (`.eps`, each row: the family label, the name, an info
     marker whose `title` is the description, and the role badges that grant it, or "only
     via all or by name"), and a **Grant** link (`btn btn--primary`) to
     `/agents/<slug>/apps/<app>`. `q` filters cards by app name, slug or description or by
     any endpoint name, and opens matching cards' lists. Empty: "<agent> already holds a
     grant on every active app. Archived apps are not listed; unarchive one to grant it."
-    Only an open card reads its app's catalog.
+    Only an open card reads its app's catalog — the counts on its line are that read.
   - **Credentials** (`/agents/<slug>/credentials`) *(2026-09-16: the 2026-09-03 Tokens and
     Connected clients cards, now one pane)* — `Tokens · N` (unrevoked, `token_list` kind
     `agent`), with a group-heading control "expires in" (`<select name="expires_in">`:

@@ -18,7 +18,14 @@ Tools (names final, shapes reviewed at implementation time):
   `forward_identity`; connection status and last seen apply to tunneled apps only
   (proxied rows report `kind: proxy` in their place). diff/apply depend on kind,
   endpoint, auth, forward_identity, roles, redact, redact_results, log_bodies, and
-  archived all being readable here.
+  archived all being readable here. *(2026-09-17, decision 32: a **tunneled** row
+  additionally carries `ownerRoles` — the owner-defined roles of §20.3's "two sources, one
+  rule", in the same canonical read shape as `roles`, `{}` when none — beside the app's
+  declared `roles`. The two are reported separately and never pre-merged: a reader that saw
+  only the effective map could not tell which source a name came from, and the Roles pane's
+  `app · replaced yours` badge and `pmcp diff`'s comparison both need to. The tunnel row is
+  the only place it appears; a proxied row has no such field, its `roles` being the owner's
+  already.)*
 - `app_create` / `app_update` / `app_delete` — create takes `kind`,
   `redact` / `redact_results` (sensitive-field paths, §7 — either kind),
   `log_bodies` (audit body logging, §15 — either kind; absent defaults by kind,
@@ -29,7 +36,18 @@ Tools (names final, shapes reviewed at implementation time):
   `auth` (`headers` | `oauth`,
   §7), and `forward_identity` (identity headers, §7; default false); update takes the
   same minus `kind`, which is **immutable** (recreate to convert — conversion would
-  orphan app tokens and DO state). Changing `auth` in either direction is accepted
+  orphan app tokens and DO state).
+  *(2026-09-17, decision 32: both ops also take `owner_roles`, optional and `roles`-shaped
+  — described to the model as "Owner-defined roles on a tunneled app — the app's own
+  declaration wins on a name collision." — validated by exactly the same rules as `roles`
+  (`validateRoles`: the reserved `all` refused, every pattern must compile, the same caps),
+  and **refused on a proxied app**, violation field `owner_roles`, reason `owner_roles is
+  for tunneled apps — a proxied app's roles are "roles"`. `roles` on a tunneled app stays
+  what it was: the app's own declaration, written at registration and not writable here.
+  The Roles pane of §13 posts one `app_update` carrying whichever of the two fields the
+  app's kind names, never both. The audit trail is unchanged — the existing
+  `admin.app_update` row's `fields` list names `owner_roles` like any other field, and no
+  new event type exists.)* Changing `auth` in either direction is accepted
   but destructive: any stored `upstream_auth_json` is wiped (audit row
   `upstream.auth_mode_changed`), leaving the app not-connected until the owner
   runs Connect (`auth: oauth`) or `app_set_upstream_auth` (`auth: headers`);

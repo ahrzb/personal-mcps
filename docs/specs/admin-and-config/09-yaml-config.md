@@ -9,6 +9,9 @@ apps:
   news:                     # kind: tunnel is the default; roles come from registration
     name: News MCP
     description: RSS digester on the home server
+    owner_roles:            # roles YOU define on a tunneled app (§20.3, added 2026-09-17)
+      ops: ["refresh_feeds", "purge_.*"]  # same grammar as `roles:`, bare list or per-family
+                            #   the app's own declaration wins a name collision
   notion:
     kind: proxy
     endpoint: https://mcp.notion.com/mcp
@@ -64,7 +67,18 @@ agents:
   `capabilities` are part of the desired state and diffed like any other field (an
   `auth` flip is shown as destructive — it wipes stored upstream credentials, §8).
   `capabilities` is compared as a **set** with absent ≡ `[tools]` (§20.2's default),
-  so spelling out the default, or reordering the list, is never a diff. Listing the same role name in both modes (`[reader,
+  so spelling out the default, or reordering the list, is never a diff.
+  *(2026-09-17, decision 32: a **tunneled** app may carry `owner_roles:` — the `roles:`
+  grammar exactly, bare list or per-family object — and it is desired state like any other
+  field: the file's `owner_roles` is compared to the row's `ownerRoles` (§8) with absent ≡
+  `{}`, and a difference plans `app_update { owner_roles }`. The two keys stay on opposite
+  sides of the kind line, each a **hard error** on the wrong one: `roles:` on a tunneled
+  app is the proxy-only-key error it already was — a tunneled app's roles arrive at connect
+  time and the file can never author them — and `owner_roles:` on a proxied app is the new
+  one, `owner_roles is for tunneled apps`, because a proxied app's roles are already all
+  the owner's and live in `roles:`. Nothing the app declares is ever written back to the
+  file: `owner_roles` diffs against the owner's map alone, so a reconnect that widens the
+  app's own declaration never shows up as drift.)* Listing the same role name in both modes (`[reader,
   "reader:approval"]`) is rejected as a config error — in the YAML and in `grant_set`
   alike. *(2026-09-16, decision 31: a grant entry is a role name **or an inline item** —
   `tool/<pattern>`, `prompt/<pattern>`, `resource/<uri-pattern>` (§8) — with the same

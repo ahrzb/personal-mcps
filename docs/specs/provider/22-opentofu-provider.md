@@ -493,6 +493,7 @@ decision that shapes it, rather than repeated here.
 | `archived` | bool | optional | default `false`; fires `app_archive`/`app_unarchive`, **not** `app_update` |
 | `redact`, `redact_results` | map(list(string)) | optional + computed | anchored regex keys, must compile |
 | `log_bodies` | bool | optional | default **`true`** |
+| `owner_roles` | map(object) | optional + computed | *(2026-09-17, decision 32)* the owner's own roles, the same typed object `pmcp_proxy_app.roles` takes below; the app's declaration wins a name collision (§20.3) and is never an attribute here |
 
 #### `pmcp_proxy_app`
 
@@ -601,7 +602,9 @@ that reference automatically.
 `pmcp_app` and `pmcp_agent`, singular by slug, plus `pmcp_tokens`.
 
 `pmcp_app` returns every `app_get` field — `slug`, `kind`, `name`, `description`, `archived`,
-`log_bodies`, `redact`, `redact_results`, and for proxied apps `endpoint`, `auth`,
+`log_bodies`, `redact`, `redact_results`, for tunneled apps `owner_roles` *(2026-09-17, decision
+32: the owner's own roles, `{}` when none — the app's declaration is not an attribute)*, and for
+proxied apps `endpoint`, `auth`,
 `forward_identity`, `roles`, `capabilities`. It carries **no** header attributes; the hub never
 returns them. Looking up the builtin `pmcp` slug is an error, not an empty result.
 
@@ -751,7 +754,8 @@ a set-equality test would happily bless an unusable or destructive command.
 **Round-trip.** Walking §9's grammar against §22.4: `kind` → two resource types; `name`,
 `description`, `archived`, `redact`, `redact_results`, `log_bodies`, `endpoint`, `auth`,
 `forward_identity`, `capabilities` → attributes; per-family and bare-list `roles` → the typed
-object plus terranix normalization; `role:approval` → the `approval` set; `all` → exempt from the
+object plus terranix normalization, and *(2026-09-17, decision 32)* a tunneled app's
+`owner_roles` → the same typed object on `pmcp_tunnel_app`; `role:approval` → the `approval` set; `all` → exempt from the
 undeclared-role check. No gaps. Upstream credentials, which §9 explicitly excluded, are now
 covered by §22.2.
 
@@ -856,7 +860,8 @@ One module, because apps, agents and grants are one namespace and splitting them
 consumers to wire cross-references by hand. Options:
 
 ```nix
-pmcp.tunnelApps.<slug> = { name, description, archived, redact, redactResults, logBodies };
+pmcp.tunnelApps.<slug> = { name, description, archived, redact, redactResults, logBodies,
+                           ownerRoles };   # ownerRoles: the owner's own roles (2026-09-17)
 pmcp.proxyApps.<slug>  = { …, endpoint, auth, forwardIdentity, roles, capabilities,
                            headersVersion };
 pmcp.grants.<agent>.<app> = { allow = [ … ]; approval = [ … ]; };
@@ -868,7 +873,9 @@ evaluation time the property the two resource types give at plan time: a proxy-o
 tunneled app is unrepresentable rather than rejected later.
 
 `roles` accepts the bare-list sugar and normalizes it to the per-family object the provider
-requires. Grants are keyed agent-then-app, mirroring `mcps.yaml`. Secrets never appear: there is
+requires, and `ownerRoles` — tunnel-only, the option tree keeping a proxy's roles and a tunnel's
+owner roles unrepresentable on the other kind — takes the same sugar through the same
+normalization *(2026-09-17, decision 32)*. Grants are keyed agent-then-app, mirroring `mcps.yaml`. Secrets never appear: there is
 no `headersWo` option — `headers_wo` is supplied through `extraConfig` or a variable, because a
 terranix module renders to JSON on disk.
 

@@ -359,3 +359,74 @@
     **two levels** below 1024 (rail-as-list, then the pane) behind the same level header,
     no pill row — and every `/apps` row is the link, stretched as the agents list's. The
     pill row is now `/settings`'s alone.
+
+32. **The app page is three panes; a tunneled app's owner defines roles of their own**
+    (2026-09-17, owner-reviewed design; §13, §5, §8, §9, §20.3, §22). The owner asked for
+    `design/concepts/AppThreePaneDemo.html` — the clickable prototype drawn 2026-09-16
+    after the agent page landed and refined with the owner through that day — boarded,
+    specced, implemented and deployed **whole**. Three calls came with it.
+    **(a) Three panes, and seven of them.** `/apps/<slug>` stops being a rail beside one
+    region and becomes **rail · listing · details**, the shape decision 31 gave the agent
+    page, in the framed workspace box all three paned pages now share. The eight panes
+    become seven, and the arithmetic is not a tidy-up. **Tools, Prompts and Resources fold
+    into one Catalog** — three rail entries that answered the same question ("what does
+    this app expose?") with three copies of one row grammar, and whose separate counts said
+    less than one summary line does; the families survive as groups inside the listing, each
+    with its own "none advertised" note, so an app that declares no prompts still says so in
+    the place a reader is looking. **Recording is a new pane**, the approved
+    `AppRecordingDemo` redrawn in the three-pane grammar: `log_bodies` as a switch and
+    `redact` / `redact_results` as ticks on schema paths — three `app_update` fields the
+    page had no control for, only Overview's read-only lines, which this entry removes.
+    **Roles becomes editable** (below). **Agents gains the grant editor**: the same rows,
+    the same `none` · `ask` · `allow` controls and the same field names the agent page's app
+    pane has, extracted into one component and rendered by both — never a second editor for
+    one `grant_set`, which is the rule §13 already states for the door's matcher applied to
+    an edit surface. Granting a **new** agent deliberately does not start here (owner,
+    2026-09-16: it complicated the flow); the pane edits and removes the grants that exist
+    and points at the agent's own page for a new one. Overview and Danger zone render the
+    listing alone, as does Token on a proxied app, which holds nothing to select. Two
+    consequences ride along: `/apps/<slug>/prompts` and `/apps/<slug>/resources` answer
+    `301`s to `/apps/<slug>/catalog` — the Catalog holds them and a bookmark should still
+    land; the pane keeps a URL of its own beside the landing that renders it, because below
+    the breakpoint the two are different levels of one page (§13's recorded exception) — and
+    the **two levels** pinned for this page hours earlier become **three**, because a page
+    with a details pane has a third thing to show on a phone; the level header, its back
+    links and the `data-level` attribute are the agent page's, unchanged.
+    Two things the prototype has that the pages do **not**: the unsaved-changes banner
+    ("Save and go / Discard and go / Stay") and the blue draft dots. Both are script-only
+    state, and the pages are server-rendered with scripting off — exactly as the agent page
+    dropped them. A draft here is the form's own unsaved state and leaving the page loses
+    it; every pane's Save replaces what its form owns, whole, in one op.
+    **(b) Owner-defined roles.** A tunneled app declares its own roles at connect and the
+    owner could previously only read them — so the one thing an owner could not do was carve
+    a narrower set out of what an app offers, which is the whole point of a role. The fix is
+    storage beside the declaration, not instead of it: `app.owner_roles_json` (§5) in
+    §20.3's normalized per-family shape, `owner_roles` on `app_create` / `app_update` and in
+    the YAML and the provider, `ownerRoles` on the tunnel row, and one merge rule — **the
+    owner's, then the app's declaration on top; a name the app declares replaces the owner's
+    definition of it, whole**. Every gate-side reader takes that effective map and no other
+    (the door's filter, `setGrants`'s undeclared check, reachability), so a page can never
+    disagree with the door about what a role grants. Resolving the collision at **read**
+    time rather than at write time is the load-bearing half: `hub/register` keeps replacing
+    `roles_json` blindly on every reconnect, the owner's map is untouched by it, and no
+    write can lose either side. The owner sees the collision as one badge, `app · replaced
+    yours`. A **proxied** app is deliberately asymmetric and carries no `owner_roles` at all
+    — its `roles` are config, already all the owner's — and the op refuses the field there
+    rather than storing a map nothing would read. Alternatives rejected: *merging pattern by
+    pattern* on a collision, which would produce a role neither the app nor the owner
+    wrote and could only widen what the app declared; *renaming the owner's role out of the
+    way*, which would silently break the grants naming it; and *one map with a source flag
+    per name*, which buys the same answer and costs a migration on the column the registry
+    writes on every connect.
+    **(c) Three forms, three ops, no new ones.** Roles posts `/apps/<slug>/role_set`,
+    Recording `/apps/<slug>/recording_set`, Agents `/apps/<slug>/grant_set` — each composing
+    **one** existing op (`app_update { owner_roles | roles }`, `app_update { log_bodies,
+    redact, redact_results }`, `grant_set`) from fields that are not the op's keys verbatim,
+    the D15 constraint 35 shape the agent page's editor already has. §8's parity list does
+    not change and no audit event type is added: the existing `admin.app_update` row's
+    `fields` list names `owner_roles` like any other field. The Recording form carries one
+    rule worth restating because it is a data-loss guard rather than a layout choice: a path
+    masked on **some** but not all of its tools renders expanded, with no whole-path
+    checkbox, so no save can silently clear a partial state — and every stored entry the
+    rows cannot represent (a tool or path no schema declares) rides back as a hidden `keep`
+    field, so a save never drops what evidence put there.

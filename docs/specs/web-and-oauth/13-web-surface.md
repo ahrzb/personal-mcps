@@ -102,8 +102,10 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     — a refused code redraws the same enrolment in place with the error under the boxes,
     a verified one lands on the enabled arm); the backup codes revealed exactly once after
     enabling or regenerating; enabled → **Regenerate backup codes**, **Disable
-    two-factor** (confirm dialog). The rail dot is the one marker that is a status, not a
-    count.
+    two-factor** (confirm dialog). ~~The rail dot is the one marker that is a status, not a
+    count.~~ *(2026-09-17, decision 32: the second is the app page's Recording dot, which
+    borrows this one's markup — lit for body logging on, with the same `sr-only` word
+    beside it.)*
   - **Passkeys** — unchanged in substance: one row per passkey (name as the authenticator
     reported it, added, last used), **Remove** (confirm dialog), **Add passkey** (a
     WebAuthn ceremony on better-auth's own mount — the one credential POST that is not a
@@ -253,43 +255,98 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   agent page's does, and the slug is said once, by its badge)*; status (tunneled: online /
   offline / archived, with last seen; proxied: the endpoint, the `auth` mode, forward
   identity, and for `auth: oauth` the connection state with Connect / Reconnect /
-  Disconnect — the same controls `/apps` has). Eight panes in two groups plus the danger
-  zone last:
+  Disconnect — the same controls `/apps` has). ~~Eight panes in two groups plus the danger
+  zone last:~~
 
-  | Group | Pane | Route | Rail marker |
-  |---|---|---|---|
-  | App | Tools | `/apps/<slug>` (landing) | count |
-  | App | Prompts | `/apps/<slug>/prompts` | count, or dimmed `—` |
-  | App | Resources | `/apps/<slug>/resources` | count of resources + templates, or dimmed `—` |
-  | App | Roles | `/apps/<slug>/roles` | count, or `none` |
-  | App | Overview | `/apps/<slug>/overview` | none |
-  | Access | Agents | `/apps/<slug>/access` | count of agents holding ≥ 1 grant on the app |
-  | Access | Token | `/apps/<slug>/token` | count of live app tokens; dimmed `—` for proxied |
-  | — | Danger zone | `/apps/<slug>/danger` | none — a neutral rail item |
+  *(2026-09-17, decision 32 — `design/concepts/AppThreePaneDemo.html`, adopted whole: the
+  page is **rail · listing · details**, the agent page's shape in the same framed workspace
+  box, and the eight panes are **seven**. Tools, Prompts and Resources fold into one
+  **Catalog**; **Recording** is new; Roles becomes editable, and Agents holds the agent
+  page's own grant editor. The table below replaces the one that listed the eight, which
+  read: Tools `/apps/<slug>` (landing, count) · Prompts `/apps/<slug>/prompts` (count, or
+  dimmed `—`) · Resources `/apps/<slug>/resources` (count of resources + templates, or
+  dimmed `—`) · Roles · Overview · Agents · Token · Danger zone.)*
 
-  Tools lands so the app's real tool list is the first thing seen — the question an owner
-  opens an app page to answer. The danger zone is a neutral rail entry, not a red one:
-  red on a nav item reads as the destructive button itself.
+  | Group | Pane | URL | Rail marker | Query |
+  |---|---|---|---|---|
+  | App | Catalog | `/apps/<slug>/catalog`, and `/apps/<slug>` (the landing) renders it *(2026-09-17)* | tools + prompts + resources count; blank when a family could not be read; dimmed `—` when the app never connected | `sel=tool:<name>` / `prompt:<name>` / `resource:<uri>`; `q=` |
+  | App | Roles | `/apps/<slug>/roles` | effective role count, or `none` | `sel=role:<name>`; `new=1` (the new-role editor); `q=` (the editor's filter) |
+  | App | Recording | `/apps/<slug>/recording` | a status dot: `rail-dot--on` when body logging is on, `rail-dot--off` otherwise (the Two-factor dot's markup, `sr-only` text `on` / `off`) | `q=`; `which=args:<path>` / `results:<path>` (expands one path's per-tool rows, repeatable) |
+  | App | Overview | `/apps/<slug>/overview` | none | — |
+  | Access | Agents | `/apps/<slug>/access` | agents holding ≥ 1 grant | `sel=agent:<slug>` |
+  | Access | Token | `/apps/<slug>/token` | live token count; dimmed `—` for proxied | `sel=token:<id>` |
+  | — | Danger zone | `/apps/<slug>/danger` | none | — |
 
-  - **The two levels** — the narrow rendering *(2026-09-17, owner: the app page takes the
-    agent page's levels; no `MobileAppDetail` board — the phone rendering is
-    `MobileAgentDetail`'s with one region per pane)*. At **wide** (≥ 1024) unchanged, the
-    rail beside the pane. Below **1024** one level is visible at a time, chosen from the
-    URL by the server and applied by CSS:
+  `APP_PANES` (`app-routes.ts`) is therefore `["roles", "recording", "overview", "access",
+  "token", "danger"]` *(2026-09-17, from the build: **plus `catalog`** — the Catalog pane
+  has a URL of its own, below)*. ~~Tools lands so the app's real tool list is the first thing seen —
+  the question an owner opens an app page to answer.~~ *(2026-09-17: **Catalog** lands, and
+  for the same reason — what the app exposes is the question an owner opens the page to
+  answer; the three families are one listing rather than three panes because three rail
+  entries answered that one question three times.)* The danger zone is a neutral rail
+  entry, not a red one: red on a nav item reads as the destructive button itself.
+
+  **The Catalog pane has a URL of its own** *(2026-09-17, from the build)*:
+  `/apps/<slug>/catalog` **is the pane**, and `/apps/<slug>` is the **landing**, which
+  renders the same Catalog at wide and is level 1 on the phone (header + rail-as-list). The
+  two are not an alias for one screen but two levels of one page — without the pane URL
+  there is nothing for a phone's level 2 to be, and nothing for a level-3 back link to
+  return to; the recorded exception to the no-alias rule is below. So: the rail's Catalog
+  entry links `/apps/<slug>/catalog` and is `aria-current="page"` on **both** URLs;
+  `/apps/<slug>/catalog?sel=…` is level 3, whose back link is the pane URL; and
+  ~~`/apps/<slug>/catalog` and~~ `/apps/<slug>/tools` alone is a `404` — the old pane's
+  name buys nothing and is not an alias for anything. **The old family URLs**: `GET
+  /apps/<slug>/prompts` and `GET /apps/<slug>/resources` answer a `301` to
+  ~~`/apps/<slug>`~~ `/apps/<slug>/catalog` — the Catalog holds them, and the query is
+  dropped rather than translated (nothing in the old panes' URLs names a row the new one
+  could select). An unknown pane segment is `noSuchPage`.
+
+  **Header** *(2026-09-17)*: the title row is the `Apps ›` crumb, the name, then the slug /
+  kind / status badges (`badge--title`), then the description as the subtitle. One **tiles**
+  line under it — `T tools · P prompts · R resources · A agents · body logging on|off` and,
+  on a tunneled app, ` · last seen <relative>` — which is why the page carries no separate
+  "Last seen" note. The proxied header card (endpoint / auth / forward identity, with
+  Connect / Disconnect) stays above the pane on every pane except Overview, as today. The
+  rail's headings are `App` / `Access`, then the tail group Danger zone; the active entry is
+  `aria-current="page"`.
+
+  **Counts pluralise** *(2026-09-17)*: every count in this page's strings is written for its
+  own number and the verb agrees with it — `1 agent holds a grant` / `2 agents hold a
+  grant`, `1 path` / `4 paths`, `1 tool` / `3 tools` — never the `N agent(s)` shorthand,
+  which §13 uses nowhere a user can read.
+
+  **Wide panes** *(2026-09-17)*: Overview, Danger zone, and Token on a **proxied** app
+  render the listing alone (`listing--wide`, as the agent page's grant step) — each holds
+  nothing to select, and a wide pane therefore has no level 3. Every other pane is listing +
+  details.
+
+  - ~~**The two levels**~~ **The three levels** — the narrow rendering *(2026-09-17, owner:
+    the app page takes the agent page's levels; ~~no `MobileAppDetail` board — the phone
+    rendering is `MobileAgentDetail`'s with one region per pane~~ — **two levels** below,
+    the landing and the pane)* *(2026-09-17, later the same day, decision 32: **three**,
+    and `MobileAppDetail` / `MobileAppDetailStates` are drawn after all. A pane with a
+    details region has a third thing to show, so the ladder is the agent page's whole one
+    rather than its first two rungs; the boards follow from `design/concepts/AppMobileDemo.html`.)*
+    At **wide** (≥ 1024) unchanged, the rail beside the panes. Below **1024** one level is
+    visible at a time, chosen from the URL by the server and applied by CSS:
 
     | URL | level | what shows |
     |---|---|---|
-    | `/apps/<slug>` (the landing) | 1 | the header (title line "Apps › <name>", the badges, last seen) and the **rail as a list** — every entry a full-width row with its marker and a trailing chevron |
-    | `/apps/<slug>/prompts` … `/danger` | 2 | the **pane** alone, its own card title hidden (the level header names it) |
+    | `/apps/<slug>` (the landing) | 1 | the header (title line "Apps › <name>", the badges, the tiles) and the **rail as a list** — every entry a full-width row with its marker and a trailing chevron |
+    | a pane without `sel`, `/apps/<slug>/catalog` among them | 2 | the **listing** alone, its own card title hidden (the level header names it) |
+    | the same with `sel=` | 3 | the **details** alone |
 
-    The page root carries `data-level="1|2"`. **The level header**, on every render and
-    shown only below the breakpoint: at 1 `‹ Apps` → `/apps`, titled with the name; at 2
-    `‹ <name>` → `/apps/<slug>`, titled with the pane's own rail label. The pill row
-    (`PanePills`) is **not rendered** on this page — the rail-as-list is its replacement,
-    exactly as on the agent page; `/settings` alone keeps the pill row. Nothing new is
-    linked: tapping a rail entry is its existing link.
+    The page root carries `data-level="1|2|3"`, and a **wide pane has no level 3**. **The
+    level header**, on every render and shown only below the breakpoint, is the agent
+    page's table exactly: at 1 `‹ Apps` → `/apps`, titled with the name; at 2 `‹ <name>` →
+    `/apps/<slug>`, titled with the pane's own rail label; at 3 `‹ <pane label>` → the pane
+    URL without `sel` (keeping `q`, `new`, `which`), titled with the selected row's name.
+    The pill row (`PanePills`) is **not rendered** on this page — the rail-as-list is its
+    replacement, exactly as on the agent page; `/settings` alone keeps the pill row.
+    Nothing new is linked: tapping a rail entry is its existing link, tapping a row its
+    existing `?sel=` link.
 
-  - **Dimming.** An App-group entry for a §20 family renders dimmed with `—` in place of
+  - **Dimming.** ~~An App-group entry for a §20 family renders dimmed with `—` in place of
     its count when the app advertises none of that family — for tunneled apps the
     capability set learned at registration (§20.5: tools is a family like any other, so
     an app that declared no tools dims Tools too, and one that has never connected dims
@@ -303,13 +360,29 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     your MCP SDK and they appear here after the next reconnect — the client library
     passes the declaration through untouched."; proxied: "The `capabilities` configured
     for this app omit prompts (§20.2) — add it with `app_update` or the YAML." (each with
-    its family's name substituted). The Token entry dims for proxied apps for §2's reason:
-    nothing dials in, so there is nothing to hold a token. Only `—` means "advertises
-    none": when a proxied app's live listing fails (below), the App-group markers are
-    **blank** — an unread count is not an empty set. Roles stays: it counts the owner's
-    own configuration, not the listing *(2026-09-03)*.
-  - **Tools** — the app's catalog as the owner sees it: the scoped endpoint's
-    `tools/list` unfiltered (§7 step 2: owner → all tools) — for a tunneled app the DO's
+    its family's name substituted).~~ *(2026-09-17, decision 32: there is no per-family
+    rail entry left to dim — the three families are groups inside one Catalog listing, and
+    an unadvertised family is said **in its group**, beside its heading, in the strings the
+    Catalog pane pins below. What survives of this rule is the **rail marker**: Catalog
+    carries one combined count, **blank** when a family could not be read, and the dimmed
+    `—` only when the app has never connected, because that is the one case where there is
+    no catalog at all rather than an empty one. The rule that produced the dimming is
+    unchanged and now feeds the groups: for a tunneled app the capability set learned at
+    registration (§20.5 — tools is a family like any other), for a proxied app the
+    owner-declared `capabilities` list (§20.2; absent ≡ `[tools]`).)* The Token entry dims
+    for proxied apps for §2's reason: nothing dials in, so there is nothing to hold a
+    token. Only `—` means "advertises none": when a proxied app's live listing fails
+    (below), the marker is **blank** — an unread count is not an empty set. Roles stays: it
+    counts the owner's own configuration, not the listing *(2026-09-03)*.
+  - ~~**Tools**~~ **Catalog** *(2026-09-17, decision 32: one pane for the three families —
+    the Tools, Prompts and Resources panes below are folded into it, each family a group of
+    this listing. Everything the three pinned that is about the **source** of a listing, the
+    door's matcher, or an app's Markdown survives; what is superseded is the per-pane
+    presentation — the expand-in-place row, the Resources pane's two tabs, and the strings
+    each pane footed with.)* — the app's catalog as the owner sees it: the scoped endpoint's
+    listing per advertised family, unfiltered (§7 step 2: owner → all of it; `ownerCatalog`
+    is the one read, and the `unconnected` / `undeclared` / `unread` family states are the
+    ones the agent page's app pane already renders) — for a tunneled app the DO's
     cached catalog (header line: "Advertised by the app on its last connect. Re-listed on
     every reconnect"), for a proxied app the live fetch under §7's 10 s deadline, with an
     unreachable or needs-reconnect upstream rendering that state in place of the list
@@ -319,31 +392,88 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     return errors until it answers again." naming the configured endpoint, *2026-09-03*)
     rather than an empty one. The page fronts the MCP method exactly as `pmcp tools` /
     `pmcp describe app/<slug>/<tool>` do (§10, §20.6) — not an admin op, so §8's parity
-    list is untouched. A row is name, first line of description, `N args` / `1 arg` /
+    list is untouched. ~~A row is name, first line of description, `N args` / `1 arg` /
     `no args` *(2026-09-03: singular at one, as the board draws it)*;
     expanded in place it shows the full description, an **Arguments** table (name, type,
     `required` or `optional · defaults to <value>`, from the tool's `inputSchema` —
     top-level properties, `required`, `default`; nested schemas print their outer type
     and are not recursed into, a ceiling: the row is a glance, and `pmcp describe` prints
-    the schema whole), and then **what only the hub knows**, in this order:
-    1. "Called by agents as `<slug>_<tool>`" — §7's aggregated name.
-    2. "Reachable by `<agent>`, `<agent>` · via `<role>`" — every agent whose granted
-       roles on this app match the name, computed with the **door's own matcher** (§7's
+    the schema whole), and then **what only the hub knows**, in this order:~~
+    1. ~~"Called by agents as `<slug>_<tool>`" — §7's aggregated name.~~
+    2. ~~"Reachable by `<agent>`, `<agent>` · via `<role>`" — every agent whose granted
+       roles on this app match the name, computed with the~~ **door's own matcher** (§7's
        anchored regex with the literal fast path, over `agent_list`'s inline grants and
        `app_get`'s roles) — never a second implementation: a page matcher that disagreed
-       with the door would be a page that lies about access. Zero agents renders
-       "Reachable by no agent yet".
-    3. Approval posture: "No approval required" when every reaching agent reaches it in
-       allow mode; otherwise "Approval required for `<agent>`, …" — allow wins over
+       with the door would be a page that lies about access. ~~Zero agents renders
+       "Reachable by no agent yet".~~
+    3. ~~Approval posture: "No approval required" when every reaching agent reaches it in
+       allow mode; otherwise "Approval required for `<agent>`, …" —~~ allow wins over
        approval per agent (§2), and owners are never gated.
-    4. Redaction: "No redacted fields", or the redacted argument paths (`writeOnly` plus
+    4. ~~Redaction: "No redacted fields", or~~ the redacted argument paths (`writeOnly` plus
        the config `redact` entries that match, §7) and result paths (`redact_results`). A
        schema-unsound tool (§7, §18 decision 16) says so here: "schema-unsound —
        approval-gated calls refuse, bodies are not recorded".
 
+    *(2026-09-17, decision 32: the row is no longer an expander and the four facts above
+    are no longer its tail — the row is a **link** and the facts are the details pane's
+    cards, below. The matcher rule, the approval rule and the redaction sources are
+    unchanged; only where they render and the words they render in are.)*
+
+    **The listing** (`.lh` header): title **Catalog**; subtitle, tunneled `advertised by
+    the app on its last connect · re-listed on every reconnect` / proxied `fetched live
+    from the upstream`; the summary line `T tools · P prompts · R resources · reachable by
+    N agents`; then the filter, a GET form on `q` with the placeholder
+    `filter tools, prompts, resources…`. Groups `Tools · N`, `Prompts · N`, `Resources · N`
+    — resources and templates in **one** group, a template listed by its raw
+    `uriTemplate`. A group whose family the app does not advertise reads `none advertised`
+    beside its heading and holds one note row: tunneled `This app declared no <family>
+    capability on its last connect.`, proxied `The capabilities configured for this app
+    omit <family>.` An app that has **never connected** renders one note,
+    `This app has never connected, so the hub has no catalog to list yet.`, in place of all
+    three groups. An **unread** listing keeps the two states pinned above —
+    `Couldn't reach <endpoint> — the live listing failed, so nothing is shown; calls return
+    errors until it answers again.` and `Token refresh failed — calls return errors until
+    you reconnect.` with Reconnect. **A row** is the name (mono) with its description
+    beneath (Markdown, inline, one line); at the right, one badge per agent that reaches it
+    — `<agent>` for allow, `<agent> · ask` (`badge--warning`) for approval — or the dim text
+    `no agent`. **The row is the `?sel=` link**, the agent page's row grammar. `q` filters
+    by name or description substring; a group nothing matches reads `no match` under its
+    heading.
+
+    **The details pane.** Nothing selected: the title **Catalog**, `Select a tool, prompt
+    or resource for its details.`, and the card `Where this comes from` — `Schemas` →
+    tunneled `the app's last tools/list — the hub stores them, it does not author them` /
+    proxied `the upstream's live listing, under a 10 s deadline`; `Reach` → `computed with
+    the gate's own matcher over each agent's grant`. Selected: the header is the name, a
+    family badge (`tool` / `prompt` / `resource`) and the full description (Markdown,
+    `.md`); then the cards —
+    **Arguments** (tools and prompts), whose rows come from whichever of the two a family
+    has *(2026-09-17, decision 32: pinned, because a prompt has no JSON Schema to take
+    leaves from — §20.3)*. A **tool**: one row per schema leaf — the path (mono), its type,
+    and a `writeOnly · masked` warning badge where the schema declares it. A **prompt**: one
+    row per **declared argument** — the name in place of the path, the argument's own
+    description in place of a type (`—` when it declares none), `required` / `optional` from
+    the declaration, and **no `writeOnly` badge**, there being no schema to carry one. Either
+    way, `none` when nothing is declared;
+    **Result · outputSchema** (a tool that declares one), the same rows;
+    **Resource** (resources): `URI`, `Type` (the mime type), `Served on` → `the scoped
+    endpoint only — <origin>/<user>/mcp/<slug>` with the hub's own origin and the owner's
+    username substituted, so the endpoint is copyable, and `Matched` → `by URI, never by
+    name`;
+    **What only the hub knows**: `Called as` → `<slug>_<name> on the aggregated endpoint`
+    (absent for a resource, which does not aggregate — §20 decision 26), `Reachable by` →
+    one line per agent, `<agent> · via <entries>`, or `no agent yet`, `Approval` → on a
+    tool `asked for <agents>` or `none required`, on a prompt the fixed `never asked for
+    prompts` (§18 decision 27), absent for a resource, and `Redaction` → `arguments <paths>
+    · results <paths>` (the config entries plus the `writeOnly` leaves) or `no redacted
+    fields`, absent for a resource (a URI is not a body, §20.4).
+    The foot note, verbatim: `The same block the audit row and the agent page show for this
+    <family>. Editing reach happens on Agents, masking on Recording.` — both links.
+
     Every description an app publishes — on a tool, a prompt, a resource or a template — is
-    **Markdown** (CommonMark/GFM) and renders as such wherever the hub shows it: whole in an
-    expanded row and in the agent page's details pane, inline-only on a one-line listing row
+    **Markdown** (CommonMark/GFM) and renders as such wherever the hub shows it: whole in ~~an
+    expanded row and in~~ *(2026-09-17: the app page's rows no longer expand —)* a details
+    pane, either page's, inline-only on a one-line listing row
     or summary line, and stripped to text in an attribute such as the grant step's endpoint
     `title` — always through the one renderer in `server/src/pages/markdown.ts`, whose
     whitelist is the trust boundary, the text being the app's and therefore untrusted: no
@@ -352,14 +482,23 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     with its alt text), headings demoted to `<strong>` so app text cannot out-rank the
     page's own, and no `id`, `class` or `style` attribute *(2026-09-16)*.
 
-    Footer, verbatim: "Schemas come from the app's last `tools/list` — the hub stores
-    them, it does not author them." The page edits nothing here.
-  - **Prompts** — the same shape without a schema table: name, description, the declared
+    ~~Footer, verbatim: "Schemas come from the app's last `tools/list` — the hub stores
+    them, it does not author them."~~ *(2026-09-17: that sentence is the `Where this comes
+    from` card's `Schemas` line above — said once, in the pane that answers "where does
+    this come from".)* The page edits nothing here.
+  - ~~**Prompts** — the same shape without a schema table: name, description, the declared
     `arguments` (name, description, required), then the hub block with `<slug>_<prompt>`,
     reachability over the role's *prompt* patterns, the fixed line "Never
-    approval-gated" (§18 decision 27), and the `redact` entries matching the name (§20.3).
-  - **Resources** — two tabs, **Resources** and **Templates**, each with its count; rows
-    are `URI` (templates: the raw `uriTemplate`) / `Name` / `Type` (`mimeType`); the hub
+    approval-gated" (§18 decision 27), and the `redact` entries matching the name (§20.3).~~
+    *(2026-09-17, decision 32: the Prompts group of Catalog. Everything it pinned survives
+    there — the aggregated name, reachability over the role's prompt patterns, the fixed
+    approval line, now spelled `never asked for prompts`, and the `redact` entries matching
+    the name — and `GET /apps/<slug>/prompts` is a `301` to the landing.)*
+  - ~~**Resources** — two tabs, **Resources** and **Templates**, each with its count; rows
+    are `URI` (templates: the raw `uriTemplate`) / `Name` / `Type` (`mimeType`)~~
+    *(2026-09-17, decision 32: the Resources group of Catalog — **one** group, not two tabs,
+    a template listed by its raw `uriTemplate`; `GET /apps/<slug>/resources` is a `301` to
+    the landing)*; the hub
     block gives reachability over the role's *resource* patterns, matched against the URI
     or the raw template, and the redaction line is absent (URIs are not bodies; §20.4
     pins what the audit row keeps). The pane carries the two §20 rules a reader would
@@ -370,31 +509,217 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     `-32601`, because a URI cannot carry a slug prefix and stay the URI the app knows."
     and "Grants match resources by URI, never by name — a role's resource patterns are
     URI patterns, and templates are matched against their raw `uriTemplate`."
+    *(2026-09-17: both rules are now the selected resource's **Resource** card — `Served
+    on` and `Matched`, the strings above — so the reader meets them on the resource itself
+    rather than on a pane header.)*
     `completion/complete` gets no pane, for the reason it gets no CLI command (§20.1).
-  - **Roles** — the declared roles in §20.3's canonical read shape, read-only. Tunneled:
+  - **Roles** — ~~the declared roles in §20.3's canonical read shape, read-only. Tunneled:
     "Declared by the app at connect time." with the trust-boundary line "Roles are
     self-declared by the tunneled app — granting a role trusts the app's declaration."
     (§2); proxied: "Roles are defined in config (virtual) for proxied apps." (edited
     through `app_update` / the YAML, §8/§9). Empty: "No roles declared" + "Grants fall
-    back to the built-in `all` role — every tool, present and future."
-  - **Overview** — `app_get`'s row as a definition list: slug, created, kind; for proxied
-    apps the endpoint, `auth` mode and forward identity; body logging (`On — tunneled
-    default` / `Off — proxied default` / the explicit setting, §15); redacted arguments
-    and redacted results (the config paths, or `none`).
-  - **Agents** — the agents holding at least one grant on this app: `Agent` (slug, and
+    back to the built-in `all` role — every tool, present and future."~~
+    *(2026-09-17, decision 32: **the pane is editable.** A tunneled app's owner may define
+    roles of their own beside the app's declaration — §20.3's "two sources, one rule", stored
+    in `owner_roles_json` (§5) and written by `app_update { owner_roles }` (§8) — and a
+    proxied app's `roles` were always the owner's and are now edited here too. Read-only is
+    what the app declares, and only that. §2's trust boundary is unchanged and is now said
+    on the role rather than on the pane: `Read-only: the app owns it and may widen it on its
+    next connect.`)*
+
+    **The listing.** Header: **Roles**, subtitle `named sets of what this app exposes`; the
+    summary `D declared by the app · Y yours · plus the built-in all`, with, on a tunneled
+    app, ` · the app's declaration wins when it declares a name you defined` and, on a
+    proxied one, ` · a proxied app declares none, so every role is yours`. No filter on the
+    listing. One row per **effective** role, then `all` last: the name (mono), a small
+    source badge — `built-in` / `app` / `app · replaced yours` (title `the app declares this
+    name — its declaration replaced yours`) / `yours` (`badge--success`) — beneath it
+    `tools a, b · prompts c` (for `all`, `every tool, prompt and resource, present and
+    future`) then ` · matches N`, N being the catalog items any of its patterns match; at
+    the right, one badge per agent holding it (`<agent>` / `<agent> · ask`) or the dim
+    `held by no agent`. The row is the `?sel=role:<name>` link. The foot carries **New
+    role** on the left, a link to `?new=1`.
+    **Which map "yours" means follows the kind, and the page never mixes them**: on a
+    proxied app it is `roles` (config) and there is no `app` source at all; on a tunneled
+    app it is `owner_roles`, and `app` is the declaration.
+
+    **The details pane.** Nothing selected: **Roles**, `Select a role to see what it can
+    do, or add one of your own.`, and the card `Two sources, one rule` — `The app's` →
+    tunneled `declared at connect; read-only here — the app owns them` / proxied `none: a
+    proxied app declares no roles`; `Yours` → `defined here by ticking items or adding
+    patterns; usable in grants like any role`; `Collision` → `if the app later declares a
+    name you defined, its declaration replaces yours — the row says so`.
+    A selected role, or `new=1`: the header is the name (mono; for `new=1` an
+    `<input name="role">` with the placeholder `role name` and `pattern="[a-z0-9_-]+"`),
+    the source badge (`built-in` / `declared by the app` / `yours`) and the holders' badges;
+    then the explanation, one of — `all`: `Every tool, prompt and resource, present and
+    future. Never declarable, only grantable.`; the app's: `Declared by <name> at connect.
+    Read-only: the app owns it and may widen it on its next connect.`, or, where it shadows
+    one of the owner's, `<name> declares this name, so its declaration replaced the one you
+    had defined. Read-only: the app owns it.`; yours on a tunneled app: `Defined by you. If
+    <name> later declares a role named <role>, the app's declaration replaces this one.`;
+    yours on a proxied app: `Defined by you. A proxied app declares no roles, so this is the
+    only kind it has.` An **editable** role also gets the filter (GET, `q`, placeholder
+    `filter, or type a pattern…`, carrying `sel`).
+    Groups `Tools · K of N`, `Prompts · K of N`, `Resources · K of N` — K the count in the
+    role, a family the app has none of omitted. A row is the name, the description, and
+    ` · via <pattern>` when a non-literal pattern is what matches it; at the right, when
+    **editable**, a checkbox `<input type="checkbox" name="i.<family>/<name>" value="1">`,
+    checked when the literal is in the role, or a **locked** check (`.cb.lock`, title
+    `matched by <patterns>`) when a pattern matches it; when **read-only**, a locked check
+    (title `in this role`) or an empty box (`not in this role`). Then `Patterns · N`
+    (`anchored · * aliases .*`), one row per non-literal pattern — the pattern, its family,
+    `matches N today, and any added later` — carrying a remove submit button
+    (`name="drop" value="<family>/<pattern>"`) when editable and a locked check otherwise;
+    and, when editable and `q` is itself non-literal, the offer row: `<q>` · tools ·
+    `would match N today, and any added later` with **Add as pattern**
+    (`name="add" value="<q>"`; the family is `resources` when `q` contains `://`, else
+    `tools`). The foot of an editable, saved role: **Delete role**
+    (`name="delete" value="1"`, a danger button) with the hint `grants naming it keep the
+    name and match nothing until it exists again` — and **no dialog**, because the op is
+    reversible by re-adding the role, which is the test §13 applies everywhere else; at the
+    right, **Discard** (a link to the pane URL) and **Save**.
+
+    **The form** — one `<form method="post" action="/apps/<slug>/role_set">` around the
+    editor, with the CSRF field, hidden `was=<name>` (the role being edited, empty for a
+    new one), `role` (the name: hidden for a saved role, the input for a new one), a hidden
+    `keep=<family>/<pattern>` per existing pattern row so a pattern the form still lists
+    survives the save, the `i.` checkboxes, and the `add` / `drop` / `delete` buttons. The
+    route composes the stored owner map (`ownerRoles` for a tunnel, `roles` for a proxy),
+    minus `was`, plus `role` → { per family: the checked literals + the `keep` patterns −
+    `drop` + `add` }, empty families omitted — or minus `was` alone on `delete` — and posts
+    **one** `app_update { slug, owner_roles | roles }`, whichever the kind names. A refusal
+    (a bad name, `all`, a pattern that does not compile, or a collision with the app's own
+    declaration: `<name> is declared by the app — its declaration would replace yours`)
+    **redraws the pane at 400** with the reason in a danger alert and the submitted choices
+    preserved. Success is a `303` to `/apps/<slug>/roles?sel=role:<name>` — to
+    `/apps/<slug>/roles` after a delete — with the notice.
+  - **Recording** *(2026-09-17, decision 32; the approved `AppRecordingDemo` in the
+    three-pane grammar)* — the three `app_update` fields this page had no control for:
+    `log_bodies` as a switch and `redact` / `redact_results` as ticks on the paths the app's
+    own schemas declare (§7, §15).
+
+    **The listing.** Header: **Recording**, subtitle `what the audit trail keeps, and what
+    it masks`; at the right edge the switch **Record call bodies** — a real
+    `<input type="checkbox" name="log" value="1">` styled as the switch (`.sw`, its label
+    text visible); the summary line `body logging on|off · <kind> default | set explicitly ·
+    M masked paths by config`, plus ` · W declared writeOnly by the app` when any are;
+    then the filter (GET, `q`, placeholder `filter paths…`). A **proxied** app with logging
+    on and nothing masked carries the warning above the sections: `A proxied app's schema is
+    not cached at call time, so nothing is masked automatically. Tick what is secret before
+    you save, or it is stored in the clear for 7 days.`
+    Two sections — `Arguments · N paths` (`from each tool's inputSchema`) and `Results ·
+    N paths` (`from outputSchema, where declared`) — each path appearing **once**, indexed
+    over every tool's schema leaves and sorted by how many tools take it, then by name. A
+    path row is the path (mono), its type, `T tools` and then ` · declared writeOnly[ on
+    K]` or ` · masked on its tool | all T | K of T`, and a **which** link
+    (`?which=<dir>:<path>`, reading `hide` when already open) whenever more than one tool
+    takes the path or any tool declares it `writeOnly`; at the right the control is a
+    checkbox `name="p.<dir>.<path>" value="1"`, checked when every editable tool masks it,
+    and `disabled` + locked when no tool is editable (all of them declare it `writeOnly`).
+    **A path masked on some but not all of its tools renders expanded** — its per-tool rows
+    shown, the path checkbox replaced by the locked-mixed glyph and no `p.` field at all —
+    so no save can silently clear a partial state. That is a data-loss guard, not a layout
+    choice. An expanded path (open by `which=`, or by being mixed) shows one sub-row per
+    tool: the tool's name, then `declared by the app — always masked` with a locked check
+    for a `writeOnly` leaf, else a checkbox `name="m.<dir>.<tool>.<path>" value="1"`. Under
+    Results, when the tools declare no output schema and `q` is empty, the note
+    `<tools or "N tools"> declare no output schema — a result path there can only come from
+    a recorded call (mask from evidence).` An empty section reads `no path matches` or
+    `no schema declares any field`. The foot: on the left `Recorded calls to <slug> →`
+    linking `/audit?app=<slug>`; on the right **Discard** (a link) and **Save**.
+
+    **The details pane** — **Masked before recording**: `These fields are replaced with
+    ‹redacted› before a call is written to the trail. Everything else in the body is kept
+    as sent.`, or, with logging off, `Body logging is off, so no bodies reach the trail; the
+    masks below apply once it is turned on.` Then a card per direction, `Arguments · N
+    masked` / `Results · N masked`, listing each masked path with `on <tools>` (`N tools`
+    past three) and `declared writeOnly by <tools>`, or
+    `nothing masked — arguments|results are recorded whole`. Then the card `What a recorded
+    call keeps`: `Arguments` → `params.arguments, post-redaction`; `Results` →
+    `structuredContent post-redaction; text, image and resource blocks become size stubs,
+    never bytes`; `Cap` → `16 KiB per body — an over-cap body is one oversize stub`;
+    `Kept for` → `7 days, then pruned with the rest of the audit table · Export JSONL to
+    keep longer` (linking the audit export); `Never` → `refused calls, token material,
+    writeOnly and config-masked fields`. And the note: `A tick writes one literal (tool,
+    path) entry per tool; nothing here is a pattern and nothing is typed. Masking applies to
+    the approval record too.`
+
+    **The form** — `<form method="post" action="/apps/<slug>/recording_set">` around the
+    listing, with the CSRF field, `log`, the `p.` and `m.` checkboxes, and a hidden
+    `keep.<dir>=<tool>:<path>` for **every stored entry the rows do not represent** (a tool
+    or a path no schema declares — an entry added from evidence, or a pattern key), so a
+    save never drops what the rows cannot see. The route composes `redact` /
+    `redact_results` as: each `p.` path → every editable tool that takes it; each `m.` →
+    that one tool; plus the `keep` entries — and posts **one**
+    `app_update { slug, log_bodies, redact, redact_results }`. Success is a `303` back to
+    the pane with the notice; a refusal redraws it at 400 with the reason.
+  - **Overview** (wide) — `app_get`'s row as a definition list: `Slug`, `Kind`, `Created`;
+    for proxied
+    apps the endpoint, `auth` mode and forward identity; for tunneled apps `Last seen`;
+    body logging (`On — tunneled
+    default` / `Off — proxied default` / the explicit setting, §15); ~~redacted arguments
+    and redacted results (the config paths, or `none`)~~ *(2026-09-17, decision 32: the
+    redaction lines are the **Recording** pane's, where they are editable — a read-only copy
+    of an editable thing is a second place to read it and a first place to be wrong)*; and
+    the description.
+  - **Agents** — the agents holding at least one grant on this app: ~~`Agent` (slug, and
     its description) / `Granted roles` (one `role · mode` chip per grant; the built-in
     `all` is marked `built-in`), from `agent_list`'s inline grants (§8) filtered to this
-    app. The **Edit grants** control targets ~~the (agent × app) grant editor
+    app. The **Edit grants** control targets~~ ~~the (agent × app) grant editor
     (`/agents/<agent>/grants/<slug>`, specced 2026-09-03 — until step 9's code lands the
     control is absent, the pane is read-only, and grants are edited with `grant_set`,
     `pmcp grant set`, §10)~~ *(2026-09-16, decision 31: the agent page's app pane,
-    `/agents/<agent>/apps/<slug>`; the old URL answers a `301` to it)*. Agent slugs link
-    to `/agents/<slug>` once that page lands;
-    text until then. Footer, true of `grant_set` regardless of where it is edited
+    `/agents/<agent>/apps/<slug>`; the old URL answers a `301` to it)*
+    *(2026-09-17, decision 32: the pane **is** that editor — the same rows rendered by the
+    same component, not a link to it. "Edit grants" as a row control is gone.)* ~~Agent
+    slugs link to `/agents/<slug>` once that page lands; text until then.~~ Footer, true of
+    `grant_set` regardless of where it is edited
     *(2026-09-16)*: "Grants are
     edited per agent × app pair — saving replaces that pair's whole set."
-  - **Token** — tunneled apps only (proxied: the dimmed entry's pane says "Proxied apps
-    hold no tokens — the hub dials the upstream; nothing dials in (§2)."). Every live app
+
+    **The listing** *(2026-09-17)*. Header: **Agents**, subtitle `who can call this app,
+    and how`; the summary `N agents hold a grant · open one to edit its grant on <slug>`
+    (`1 agent holds a grant · …` at one).
+    One row per agent holding ≥ 1 grant: the agent's slug (mono) and its description; then
+    `allowed` with one mono badge per allow entry (or `—`), `ask first` with one warning
+    badge per approval entry (or `—`), and the line `reaches R of T tools · K ask first[ · P
+    of PT prompts][ · Q of QT resources] · C calls · 7 d` — C from
+    `audit_query { principal: agent:<slug>, app, since 7 d }`, counting the `tools/call`
+    rows. No right-hand control: the row is the link. After the rows, the note
+    `Granting a new agent starts from the agent's own page — Agents → the agent → Grant
+    another app.`, linking `/agents`. Starting a **new** grant here was considered and
+    dropped (owner, 2026-09-16: it complicated the flow); this pane edits and removes the
+    grants that exist.
+
+    **The details pane.** Nothing selected: **Agents**, `Select an agent to edit what it may
+    call on <slug>.`, and the card `Per tool` — the first six tools, each with the agents
+    reaching it (`<agent>[ (ask)]`, comma-joined, or `no agent`), then `… N more in the
+    Catalog`. A selected agent: the header is the slug (mono), an `agent` badge, the
+    description and an **open agent page** link to `/agents/<agent>/apps/<slug>`, then
+    `<agent>'s grant on <slug>. Solid: set on the row · hollow: implied by a role · a row
+    cannot lower what a role grants.` Beneath it, **the agent page's grant editor,
+    verbatim**: the reach summary line, the groups `Roles`, `Tools · N`, `Prompts · N`,
+    `Resources · N`, `Patterns · N`, the same rows, the same `none` · `ask` · `allow` radio
+    controls and the same field names (`e.<entry>`, `drop`, `carry`) — one component
+    (`server/src/pages/grant-rows.tsx`), rendered by both pages, with the listing groups
+    built by the same model builder. Two editors for one `grant_set` is exactly the second
+    implementation §13 refuses for the door's matcher, for the same reason. There is **no
+    pattern offer** here, the details pane carrying no filter. The foot: **Remove <agent>**
+    on the left, opening `?confirm=remove-agent&agent=<slug>` on this pane — the dialog
+    `Remove <agent> from <slug>?` / `<agent> loses every entry on <slug>. History stays; a
+    waiting request expires.`, whose form posts `clear=1` — then **Discard** (a link) and
+    **Save**.
+
+    **The form** — `<form method="post" action="/apps/<slug>/grant_set">` with a hidden
+    `agent=<slug>`, composing the same `grant_set` the agent page's route composes, through
+    **one** shared composer. Success is a `303` to `/apps/<slug>/access?sel=agent:<agent>`
+    with the notice; a refusal redraws the pane at 400 with the reason above the editor and
+    the submitted choices preserved.
+  - **Token** — tunneled apps only (proxied: the pane is **wide** and says ~~"Proxied apps
+    hold no tokens — the hub dials the upstream; nothing dials in (§2)."~~ *(2026-09-17:
+    `Proxied apps hold no tokens — the hub dials the upstream; nothing dials in.`)*). Every
+    live app
     token (prefix, issued, last used) with **Revoke** (confirm dialog — "Revoking closes
     the app's live connection.", §8's `4001`), and **Issue new token** (`token_issue`
     `{ kind: "app" }`), which renders the once-only reveal in place — the same reveal the
@@ -402,9 +727,28 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     more than one live app token is legal (§5 has no per-referent uniqueness), and
     rotation is issue-then-revoke, in that order. Agent tokens are not issued here; they
     belong to the agent.
-  - **Danger zone** — **Archive** ("It refuses connections and leaves the list — tokens,
-    grants and history are kept.") and **Delete** ("Revokes its tokens, closes the live
-    connection and removes every grant. This cannot be undone."), each behind a confirm
+
+    **In the pane grammar** *(2026-09-17)*. Listing header: **Token**, subtitle `what the
+    app presents to dial in`, an **Issue new token** button at the right edge (the existing
+    `token_issue` route, 200 in place, the reveal drawn in the **details** of the new token,
+    which is the selected one); the summary `L live · app tokens have no expiry — rotate by
+    issuing, then revoking the old one. Revoking the key a live socket used closes it.` A
+    row: the prefix (mono), `holds the live socket` (a success badge) when it does, `new`
+    when just issued, then `issued <relative> · used <relative> | never used`; at the right
+    **Revoke** → `?confirm=revoke-token&id=` (the existing dialog, its body `Revoking closes
+    the app's live connection.` when the key holds the socket and `The app can no longer
+    connect with it.` otherwise). Empty: `No live token — the app cannot connect until one
+    is issued.` Details: the prefix, an `app token` badge, `Only valid for opening the
+    reverse WebSocket as <slug>.`; the reveal card (`Shown once — copy it now`, the key,
+    `The previous token keeps working until you revoke it.`) when the token was just issued;
+    then `Issued`, `Expires` → `never — revoke on compromise`, `Last used`, and `Connection`
+    → `holds the live socket now` / `none`.
+  - **Danger zone** (wide) — **Archive** ("It refuses connections and leaves the list — tokens,
+    grants and history are kept.") and **Delete** (~~"Revokes its tokens, closes the live
+    connection and removes every grant. This cannot be undone."~~ *(2026-09-17: the two
+    cards are titled **Archive <slug>** / **Unarchive** and **Delete <slug>**, and the
+    delete body counts what goes: `Revokes its N tokens, closes the live connection and
+    removes every grant (A agents). This cannot be undone.`)*), each behind a confirm
     dialog, fronting the same `app_archive` / `app_delete` the list page fronts. An
     **archived** app's page stays reachable (it is in `/apps`'s archived section) under
     an archived banner — "Archived apps refuse connections; everything is kept — tokens,
@@ -721,8 +1065,10 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     it names the pair and not the agent alone. `/agents/<op>` still lands on `/agents`.
   - **The old URLs** *(2026-09-16)*: `GET /agents/<slug>/grants/<app>` answers a `301` to
     `/agents/<slug>/apps/<app>`, and `GET /agents/<slug>/grants` a `301` to
-    `/agents/<slug>/grant`. The app page's Agents pane row action ("Edit grants") links to
-    `/agents/<agent>/apps/<app>`.
+    `/agents/<slug>/grant`. ~~The app page's Agents pane row action ("Edit grants") links to
+    `/agents/<agent>/apps/<app>`.~~ *(2026-09-17, decision 32: that pane holds this editor
+    itself and has no row action; the link survives as the **open agent page** control in
+    its details pane.)*
 - ~~`/agents/<slug>/grants/<app>` *(added 2026-09-03)* — the (agent × app) grant editor,
   its own page rather than a dialog so it is linkable and needs no script.~~
   *(2026-09-16, decision 31: **deleted**. The editor is the app pane of `/agents/<slug>`
@@ -761,7 +1107,10 @@ were a rail beside a free-standing card, at a page width of their own; they join
 the agent page uses, so the three paned pages read as one family)* — and its rules are
 pinned once. A pane is one
 region or two: `/agents/<slug>`'s app pane holds a **listing and a details pane side by
-side**, still one route and one rail entry *(2026-09-16)*:
+side**, still one route and one rail entry *(2026-09-16)* *(2026-09-17, decision 32: and so
+does every pane of `/apps/<slug>` but the three wide ones — Overview, Danger zone, and Token
+on a proxied app — which are the listing alone, `listing--wide`, because they hold nothing
+to select)*:
 
 **Where the numbers live** *(2026-09-16: §13 pinned five page widths, two rail widths and a
 single 900 px breakpoint of its own; the owner found the pages inconsistent and the ladder
@@ -781,18 +1130,30 @@ value — never a layout one.
 
 - **A pane is a route.** Each pane has exactly one URL, `/<page>/<pane>`; the page root
   renders the first rail entry (the *landing* pane — `/settings` → Password,
-  `/apps/<slug>` → Tools, `/agents/<slug>` → the first granted app in slug order, or the
+  `/apps/<slug>` → ~~Tools~~ **Catalog** *(2026-09-17, decision 32)*, `/agents/<slug>` → the
+  first granted app in slug order, or the
   grant step when the agent holds none *(2026-09-16)*) and no alias for it exists
   (`/settings/password` and
-  `/apps/<slug>/tools` are 404s: one URL per pane). A URL per pane is what lets a link, a
+  `/apps/<slug>/tools` are 404s: one URL per pane).
+  **One recorded exception** *(2026-09-17, from the build)*: `/apps/<slug>/catalog` **is**
+  the Catalog pane's URL and `/apps/<slug>` is the landing that renders it. That is not the
+  second name for one screen the rule forbids — below the breakpoint they are two different
+  screens, level 1 (header + rail-as-list) and level 2 (the listing), and a level-3 back
+  link needs a pane URL to return to. The agent page set the precedent: its landing already
+  renders a pane that has its own URL (`/agents/<slug>/apps/<app>`), and only *that* pane's
+  URL is linkable, bookmarkable and redirect-to-able. So the rule reads: a pane has exactly
+  one URL, and a page root may **render** one — never answer at a second name of its own. A URL per pane is what lets a link, a
   bookmark, a fixture, and a post-mutation redirect all name one; the rail is navigation,
   never tabs.
 - **The rail** groups entries under headings (`Sign-in` / `Access`; `App` / `Access`;
   `Apps` / `Agent` *(2026-09-16)*,
   then the ungrouped Danger zone) and every entry carries its at-a-glance marker — a
   count, the Two-factor status dot, `none`, the amber dot of a pending ask
-  *(2026-09-16)*, or the dimmed `—` of a family the app does
-  not advertise — read from the same calls that render the panes, never a second query
+  *(2026-09-16)*, the Recording dot of body logging *(2026-09-17)*, or the dimmed `—` of a
+  pane with nothing to count — a proxied app's Token, an app that has never connected
+  *(2026-09-17: ~~a family the app does not advertise~~ — the app page no longer has a pane
+  per family)* — read from the same calls that render the panes, never a
+  second query
   that could disagree with them. Every count is the number of rows its pane lists. The
   active entry is `aria-current="page"`; dimmed entries stay links.
 - **Mobile** has no room for a rail: below the shell's breakpoint *(2026-09-16: **768**,
@@ -808,7 +1169,8 @@ value — never a layout one.
   three levels instead** — rail-as-list, listing, details, one screen each behind a level
   header. `PanePills` is not rendered on the agent page at all. **The three levels**,
   under `/agents/<slug>` above.)* *(2026-09-17: `/apps/<slug>` takes
-  the levels too — **The two levels** under `/apps/<slug>` — so the pill row is
+  the levels too — ~~**The two levels**~~ **The three levels** under `/apps/<slug>`, three
+  once its panes gained a details region (decision 32) — so the pill row is
   `/settings`'s alone.)*
 - **Mutations belong to a pane**: a POST target keeps the existing final-segment
   convention (its last segment names the op or the better-auth endpoint it fronts), and
@@ -876,9 +1238,11 @@ The dashboard pages `/apps`, `/apps/<slug>`, `/approvals`, `/audit` — and, *(a
 2026-09-02)*, the Tokens and Connected clients panes of `/settings` — and the CLI are all
 fronts over the same server-side handlers as the `pmcp` tools (`token_list` /
 `token_revoke`, `connection_list` / `connection_revoke` among them) — one implementation,
-three surfaces; the Tools, Prompts and Resources panes front MCP listings on the scoped
+three surfaces; the ~~Tools, Prompts and Resources panes~~ **Catalog pane** *(2026-09-17,
+decision 32)* fronts MCP listings on the scoped
 endpoint exactly as `pmcp tools` / `prompts` / `resources` do (§20.6), which is why §8's
-parity list does not change. `/settings`'s **Sign-in group and Sessions pane** are the
+parity list does not change — and the three forms decision 32 adds (`role_set`,
+`recording_set`, `grant_set`) front `app_update` and `grant_set`, ops the CLI has already. `/settings`'s **Sign-in group and Sessions pane** are the
 deliberate exception: credential management (password change, TOTP, passkeys, active
 sessions) rides better-auth's endpoints and is intentionally web-only — §4's
 session-scope guards reject bearer-sourced sessions there precisely so no CLI token or

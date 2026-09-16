@@ -39,6 +39,16 @@ CREATE TABLE app (
                                        -- upstream_auth_mode.
   roles_json TEXT NOT NULL DEFAULT '{}',  -- {"reader": ["get_news","search_.*"], ...}
                                           -- tunnel: written at registration; proxy: via config
+  owner_roles_json TEXT NOT NULL DEFAULT '{}',
+                                          -- the roles the OWNER defined on a TUNNELED app
+                                          -- (2026-09-17, decision 32), same normalized
+                                          -- per-family shape as roles_json (§20.3). A proxied
+                                          -- app keeps its roles in roles_json — they are already
+                                          -- all the owner's — and leaves this '{}'. The door
+                                          -- resolves against the merge of the two, the app's
+                                          -- declaration winning a name collision (§20.3); a
+                                          -- reconnect rewrites roles_json alone, so owner roles
+                                          -- survive it.
   redact_json TEXT NOT NULL DEFAULT '{}', -- config-declared sensitive ARGUMENT paths per
                                           -- tool-or-pattern (§7) — either kind
   redact_results_json TEXT NOT NULL DEFAULT '{}',

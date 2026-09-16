@@ -171,6 +171,20 @@ A role's declaration gains a family dimension (§18 decision 9). Wire shape, in
   filter builder); neither client library gains a rule that could disagree with it.
 - **Storage**: `app.roles_json` holds the normalized per-family object. Existing rows
   hold bare lists and are read as tools-only, so no data migration exists.
+- **Two sources, one rule** *(2026-09-17, decision 32)*: a **tunneled** app's owner may
+  define roles of their own, stored in `app.owner_roles_json` (§5) in this same normalized
+  per-family shape. The roles anything resolves against are the **effective** map — the
+  owner's, then the app's declaration on top: **a name the app declares replaces the
+  owner's definition of it**, whole, never merged pattern-by-pattern. A proxied app
+  declares nothing, so its `roles` (config) are already all the owner's and its
+  `owner_roles_json` stays `{}`. Every gate-side reader takes the effective map and no
+  other: the door's filter, `setGrants`'s undeclared check (an owner role **is** declared
+  for it — the tunneled warning and the proxied error fire only for a name in neither
+  map), and reachability wherever a page or an op computes it. The app's declaration
+  winning is what makes a reconnect safe to be blind: `hub/register` replaces `roles_json`
+  alone, the owner's map is untouched, and a collision is resolved at read time rather than
+  by a write that could lose one side. The consequence an owner sees is one badge on the
+  Roles pane, `app · replaced yours` (§13).
 - **Read shape**, pinned in one canonical wire form, because storage being normalized does
   not by itself say what a *read* returns. `app_list` / `app_get`, the YAML the
   planner diffs against, and anything the CLI prints all render the **canonical** form: a

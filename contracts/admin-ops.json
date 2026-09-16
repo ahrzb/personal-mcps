@@ -422,7 +422,7 @@
           "pattern": "^[a-z0-9-]+$"
         },
         "roles": {
-          "description": "Role names, each optionally suffixed \":approval\".",
+          "description": "Entries: a role name, or tool/<pattern>, prompt/<pattern>, resource/<uri-pattern>; each optionally suffixed \":approval\".",
           "type": "array",
           "items": {
             "type": "string"

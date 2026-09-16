@@ -3233,7 +3233,7 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     }
   });
 
-  it(`§13 · every agent slug the other pages print links to /agents/<slug> — the Tokens pane's Bound to, the Connected clients pane's Acts as, the app page's Agents pane, and the consent screen's empty state, which now reads "Create one under Agents before connecting a client." — and the Tokens intro reads "Issue new keys from an app or agent page." again · app slugs still link to /apps/<slug> (the twin)`, async () => {
+  it(`§13 · every agent slug the other pages print links to /agents/<slug> — the Tokens pane's Bound to, the Connected clients pane's Acts as, the app page's Agents pane (its details' open agent page link, re-pointed 2026-09-17), and the consent screen's empty state, which now reads "Create one under Agents before connecting a client." — and the Tokens intro reads "Issue new keys from an app or agent page." again · app slugs still link to /apps/<slug> (the twin)`, async () => {
     const agentLink = `href="${paths.agentDetail("agent")}"`;
     const tokens = await page(paths.settingsTokens);
     expect(tokens).toContain(agentLink);
@@ -3241,7 +3241,11 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
 
     await consentOnce(world.ns, world.session.cookie, "agent", { client_name: "Pointer Client" });
     expect(await page(paths.settingsClients)).toContain(agentLink);
-    expect(await page(paths.appPane("news", "access"))).toContain(agentLink);
+    // The app page's Agents pane points at the PAIR's pane now that it carries the grant
+    // editor in place (2026-09-17), which is still a link to that agent's own page.
+    expect(await page(`${paths.appPane("news", "access")}?sel=agent:agent`)).toContain(
+      `href="${paths.agentApp("agent", "news")}"`,
+    );
 
     const empty = await seedNamespace(env.DB, {});
     const consent = (
@@ -7708,7 +7712,8 @@ describe(`§3 · /apps/<slug> — the Catalog pane`, () => {
     );
     // The filter is a GET form, so it survives scripting off and lands back on this pane.
     expect(html).toContain('placeholder="filter tools, prompts, resources…"');
-    expect(getFormsOn(html)).toContainEqual({ action: catalogPane(CATALOG), fields: ["q"] });
+    const filter = getFormsOn(html).find((form) => form.fields.includes("q"));
+    expect(filter?.action, "the filter lands back on the pane it filters").toBe(catalogPane(CATALOG));
 
     // THE TWIN: the tunneled kind, same pane, its own sentence and not the other's.
     const tunneled = uniqueSlug("cathead");
@@ -8088,7 +8093,7 @@ describe(`§3 · /apps/<slug> — the Catalog pane`, () => {
     // THE TWIN: the three panes that DO edit, on the same app.
     // The three composed Save targets — op-SHAPED without being ops (§4/§5 compose one
     // app_update each), which is what the parity row's own exemption records.
-    expect(opsOn(await appPage(paths.appPane(CATALOG, "roles")))).toContain("role_set");
+    expect(opsOn(await appPage(`${paths.appPane(CATALOG, "roles")}?sel=role:reader`))).toContain("role_set");
     expect(opsOn(await appPage(paths.appPane(CATALOG, "recording")))).toContain("recording_set");
     expect(opsOn(await appPage(`${paths.appPane(CATALOG, "access")}?sel=agent:reader-agent`))).toContain(
       "grant_set",
@@ -8486,7 +8491,10 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
     const fields = { ...paneSubmission(html, target), "i.tools/jobfeed_crawl": "1" };
     const posted = await formPost(target, fields, detail.session.cookie);
     expect(posted.status).toBe(303);
-    expect(posted.headers.get("Location")).toBe(`${pane}?sel=role:mine&done=role_set`);
+    const landed = new URL(posted.headers.get("Location") ?? "", ORIGIN);
+    expect(landed.pathname).toBe(pane);
+    expect(landed.searchParams.get("sel")).toBe("role:mine");
+    expect(landed.searchParams.get("done")).toBe("role_set");
 
     const saved = await ownerRolesOf(app.slug);
     expect(saved.mine).toEqual(["get_.*", "jobfeed_crawl", "put_paper"]);
@@ -9000,7 +9008,7 @@ describe(`§5/§15 · /apps/<slug> — the Recording pane and recording_set`, ()
     const live = await page(pane, detail.session.cookie);
     const refused = await formPost(
       actionFor(live, "recording_set"),
-      { ...paneSubmission(live, actionFor(live, "recording_set")), "keep.args": ":" },
+      { ...paneSubmission(live, actionFor(live, "recording_set")), "keep.args": "NOT A TOOL:x" },
       detail.session.cookie,
     );
     expect(refused.status).toBe(400);
@@ -9381,7 +9389,7 @@ describe(`§7 · /apps/<slug> — Token, Overview and the Danger zone`, () => {
     expect(text).toContain("Forward identity");
     expect(text).toContain(LOG_BODIES_PROXY);
     // Read-only: no form, so the switch is Recording's and Recording's alone.
-    expect(formsRenderedOn(proxied).map((form) => form.op)).toEqual([]);
+    expect(opsOn(proxied)).toEqual([]);
     expect(checkboxesOn(proxied)).toEqual({});
 
     // The tunneled default, and the explicit setting that replaces both sentences.
@@ -9759,6 +9767,10 @@ describe(`§7 · /apps/<slug> — Token, Overview and the Danger zone`, () => {
       paths.appConfirm(tunneled, "token", "revoke-token", key.id),
       paths.appConfirm(tunneled, "danger", "archive"),
       paths.appConfirm(tunneled, "danger", "delete"),
+      // The two editors that exist only under a selection — the Roles one and, once the
+      // app has a holder, the grant editor the Agents pane draws in place.
+      `${paths.appPane(tunneled, "roles")}?new=1`,
+      `${paths.appPane(tunneled, "access")}?sel=agent:${agent}`,
     ];
     const seen = new Set<string>();
     const walkedOps = new Set<string>();

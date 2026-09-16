@@ -1147,3 +1147,20 @@ agents:
     expect(doc.apps.b.roles).toEqual({ reader: ["get_.*"] });
   });
 });
+
+// D16 (2026-09-17) — rows landed as it.todo from
+// docs/superpowers/plans/2026-09-17-app-three-pane.md §1 (owner-defined roles).
+
+describe("§9/§20.3 · `owner_roles:` — the owner's roles in the file", () => {
+  it.todo(
+    "§9 · `owner_roles:` is the TUNNEL's key and `roles:` is the PROXY's: `owner_roles` on a `kind: proxy` app throws naming the offending path (`owner_roles is for tunneled apps`), and `roles` on a `kind: tunnel` app stays the hard error it already is · twin: each key on its own kind parses, with the `roles:` grammar — a bare list and the per-family object alike",
+  );
+
+  it.todo(
+    "§9/§20.3 · an `owner_roles:` block gets the same declaration validation the proxy `roles:` block gets — `all` never declarable, the role-name charset, the two size caps per family list, an unknown family key and the compile check — each a hard error naming the path under `owner_roles` · twin: a legal block at the caps plans without a problem",
+  );
+
+  it.todo(
+    "§9 · `pmcp diff` compares the file's `owner_roles` to the row's `ownerRoles` with absent ≡ `{}` and plans `app_update { owner_roles }` in the op's own snake_case spelling; a tunneled `app_create` carries the block too · twin: the same declaration spelled as a bare list where the server rendered `{tools: [...]}` plans NOTHING, so a file written before this key existed never diffs against the server (the `roles` equivalence, applied to the same comparison)",
+  );
+});

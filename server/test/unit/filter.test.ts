@@ -813,3 +813,16 @@ describe("§7 step 2 · buildToolFilter — laws", () => {
     }
   });
 });
+
+// D16 (2026-09-17) — rows landed as it.todo from
+// docs/superpowers/plans/2026-09-17-app-three-pane.md §1 (owner-defined roles).
+
+describe("§20.3 · effectiveRoles — the owner's map, with the app's declaration on top", () => {
+  it.todo(
+    "§20.3 · effectiveRoles is the map the door resolves against: a name only the owner defined survives into it, a name only the app declared survives into it, and a name in BOTH resolves to the app's patterns — buildToolFilter over the merged map allows the app's tool and denies the one the owner's shadowed definition named · twin: an app that declares nothing at all leaves every owner role intact, patterns and all",
+  );
+
+  it.todo(
+    "§20.3 · the replacement is per ROLE, never per family: an app declaring `reader` as a tools-only list replaces the owner's three-family `reader` WHOLE, so the merged map grants nothing in prompts or resources under that name · twin: the owner's other role keeps all three of its families, and neither input map is mutated (effectiveRoles is pure, like every seam in this file)",
+  );
+});

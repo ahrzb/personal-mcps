@@ -1627,3 +1627,28 @@ describe("§8 · a refused app_create or app_update reports every violation at o
     expect(after).toEqual(before);
   });
 });
+
+// D16 (2026-09-17) — rows landed as it.todo from
+// docs/superpowers/plans/2026-09-17-app-three-pane.md §1 (owner-defined roles).
+
+describe("§8/§20.3 · owner_roles — the owner's own roles on a tunneled app", () => {
+  it.todo(
+    "§8 · `app_create` and `app_update` take `owner_roles` on a TUNNELED app, validated exactly like `roles`, and `app_get` / `app_list` report it back as `ownerRoles` on the tunnel row in §20.3's canonical read shape · twin: the proxied and builtin rows carry no `ownerRoles` key at all, and the tunnel row's `roles` (the app's own declaration) is untouched by the write",
+  );
+
+  it.todo(
+    "§8 · `owner_roles` on a PROXIED app is refused by both `app_create` and `app_update` with the one violation `owner_roles is for tunneled apps — a proxied app's roles are \"roles\"`, at -32602, and nothing is created or updated · twin: the same declaration sent as `roles` on that same proxied app is accepted, which is what makes the refusal about the FIELD and not about the declaration",
+  );
+
+  it.todo(
+    "§8/§20.3 · `owner_roles` gets `roles`' own `validateRoles` — the reserved name `all`, a role name outside `[a-z0-9_-]`, an uncompilable pattern and an unknown family key are each a violation naming `owner_roles` as its field, reported with every other violation of the same call · twin: a legal per-family declaration at the caps stores and reads back",
+  );
+
+  it.todo(
+    "§20.3 · an owner role IS declared for the undeclared check: `grant_set` naming a role only `owner_roles` defines on a tunneled app returns NO warning, and `resolveAccess` for that agent allows the tools the owner's patterns name · twin: a name in neither map still warns and still matches nothing",
+  );
+
+  it.todo(
+    "§20.3 · the app's declaration wins at the door: with the same role name in both maps, `resolveAccess` answers the APP's patterns — the owner's shadowed definition allows nothing — and a reconnect's `upsertDeclaredRoles` rewrites `roles_json` alone, so the owner's map survives it byte for byte · twin: an owner role the app does not declare keeps resolving across that same reconnect",
+  );
+});

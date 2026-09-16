@@ -177,3 +177,16 @@ describe(`§13 · catalog-view — the Arguments table and reachability are the 
     }
   });
 });
+
+// D16 (2026-09-17) — rows landed as it.todo from
+// docs/superpowers/plans/2026-09-17-app-three-pane.md §1 (catalog schema leaves).
+
+describe("§13 · catalog-view — schemaLeaves, the whole schema as dotted paths", () => {
+  it.todo(
+    "§13 · schemaLeaves walks a schema into dotted leaf paths: a nested object is RECURSED into and contributes `credentials.token` rather than a row named `credentials`, an array contributes one leaf typed `<type>[]` and is never recursed into, and `required` is read from EACH level's own list — a required object holding an optional child yields one required leaf and one optional one · twin: `argumentRows` over the same schema still reads the top level alone, which is why both exports stay",
+  );
+
+  it.todo(
+    "§13 · every leaf carries `writeOnly` as declared and the schema's own default VALUE — `false`, not `\"false\"` — with `hasDefault` telling a declared `default: undefined` from no default at all, exactly as `argumentRows` does · twin: a value that is not a schema, a schema with no `properties`, and an absent schema each yield an empty list rather than a throw inside a page render",
+  );
+});

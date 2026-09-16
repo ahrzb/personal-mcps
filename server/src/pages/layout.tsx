@@ -147,7 +147,7 @@ export const PaneRail: FC<{ label: string; groups: PaneGroup[] }> = ({ label, gr
             href={entry.href}
             aria-current={entry.current ? "page" : undefined}
           >
-            <span>{entry.label}</span>
+            <span title={entry.label}>{entry.label}</span>
             {entry.marker === null ? null : (
               <span class="rail-marker">
                 {entry.marker.dot === undefined ? (

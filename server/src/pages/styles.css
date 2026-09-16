@@ -1959,7 +1959,7 @@ dialog .actions {
 /* Inside the frame the rail is a column of the box, not a list beside one: narrower than
    the free-standing rail, on the sunken ground, with its own rule as the box's divider. */
 .paned--framed .rail {
-  width: 180px;
+  width: var(--rail-w);
   gap: var(--space-5);
   padding: var(--space-6) var(--space-4);
   border-right: 1px solid var(--border);
@@ -1967,10 +1967,57 @@ dialog .actions {
   overflow: auto;
 }
 
+/* Inside the frame the rail is a dense column (design/layout-and-density.md: dense rows,
+   13px), not the shell's free-standing rail: 28px entries one pixel apart, regular weight
+   until current, labels that never wrap — a slug like `proton-mail-read` ellipsizes with
+   its full text in the title, the marker keeping its width. The grant entry is the small
+   one (AgentDetail.dc.html), and the tail group needs no rule: the gap says it. */
+.paned--framed .rail-group {
+  gap: 1px;
+}
+
+.paned--framed .rail-group--tail {
+  padding-top: var(--space-5);
+  border-top: 0;
+}
+
+.paned--framed .rail-heading {
+  margin-bottom: var(--space-2);
+  padding: 0 var(--space-4);
+  font-size: 10px;
+}
+
+.paned--framed .rail-link {
+  height: 28px;
+  padding: 0 var(--space-4);
+  gap: var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+
+.paned--framed .rail-link > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paned--framed .rail-marker {
+  flex-shrink: 0;
+  font-size: var(--text-2xs);
+}
+
+.paned--framed .rail-link[href$="/grant"] {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+}
+
 /* The current entry lifts off the sunken rail — `--muted` is all but invisible on it. */
 .paned--framed .rail-link[aria-current="page"] {
   background: var(--bg);
   box-shadow: var(--shadow);
+  font-weight: 500;
 }
 
 .paned--framed .pane {

@@ -250,10 +250,12 @@ function hasDetail(row: AuditEventRow): boolean {
   return Boolean(row.client || row.detail || row.args || row.result || row.noBodies);
 }
 
-/** §13's one sentence for a call row with no bodies, so no panel is ever blank. Prose,
- *  not a body — hence `.detail-meta` beside the client line rather than the monospace
- *  `.detail-body` the recorded JSON gets. */
-const NO_BODIES_SENTENCE: Record<NonNullable<AuditEventRow["noBodies"]>, string> = {
+/** §13's one sentence per reason a call row carries no bodies, so no panel is ever blank.
+ *  Prose, not a body — hence `.detail-meta` beside the client line rather than the
+ *  monospace `.detail-body` the recorded JSON gets. Exported because the agent page's
+ *  Activity pane draws the same audit row and owes the reader the same three sentences;
+ *  two copies would be two answers to "why is this blank". */
+export const NO_BODIES_SENTENCE: Record<NonNullable<AuditEventRow["noBodies"]>, string> = {
   off: "Call bodies aren't recorded for this app (body logging is off).",
   refused: "Refused before the call was made, so there are no bodies to show.",
   unrecorded: "No bodies were recorded for this call.",

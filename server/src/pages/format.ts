@@ -33,6 +33,24 @@ export function formatLastSeen(lastSeen: number | null, nowIso: string): string 
   return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}`;
 }
 
+/**
+ * "48m" / "3h" / "2d" — how long remains until an instant, which is what a deadline the
+ * reader can still act on is worth saying (an approval expires an hour after it was
+ * asked, §7). The mirror of `formatLastSeen`, and separate from it because the two arms
+ * are read differently: "3h ago" is history, "3h" is a budget.
+ *
+ * An instant already past reads "under a minute" rather than a negative or a dash: expiry
+ * is evaluated lazily at read time (§7), so a row can be rendered a moment past its own
+ * deadline and is still the row the reader is looking at.
+ */
+export function formatUntil(at: number, nowIso: string): string {
+  const diff = at - Date.parse(nowIso);
+  if (diff < MINUTE) return "under a minute";
+  if (diff < HOUR) return `${Math.floor(diff / MINUTE)}m`;
+  if (diff < DAY) return `${Math.floor(diff / HOUR)}h`;
+  return `${Math.floor(diff / DAY)}d`;
+}
+
 /** "Aug 24, 2026" — UTC so a fixture renders identically regardless of host TZ. */
 export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", {

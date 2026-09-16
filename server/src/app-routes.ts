@@ -1,5 +1,6 @@
-// app-routes.ts — what the router mounts under `/apps/`, as data: the seven non-landing
-// panes of `/apps/<slug>` and the slugs an app may therefore never take.
+// app-routes.ts — what the router mounts under `/apps/` and `/agents/`, as data: the seven
+// non-landing panes of `/apps/<slug>`, the four of `/agents/<slug>`, and the slugs an app
+// may therefore never take.
 //
 // Two modules read this and neither may import the other's layer: `web.ts` mounts the panes
 // and the static segments from it, and `admin.ts` refuses `app_create` the segments (§8 —
@@ -26,6 +27,22 @@ export const APP_PANES = ["prompts", "resources", "roles", "overview", "access",
 
 /** One of the seven pane segments — the type `paths.appPane` and the page take. */
 export type AppPane = (typeof APP_PANES)[number];
+
+/**
+ * The single-segment panes `/agents/<slug>/<pane>` serves, in the rail's own order. The
+ * agent page's OTHER pane — one app's grants — is two segments (`apps/<app>`) and is
+ * therefore deliberately absent: it carries an argument, so it is a route of its own
+ * rather than a member of this set, and `/agents/<slug>` renders it for the first granted
+ * app in place (no alias URL for a landing pane, §13).
+ *
+ * No reservation is derived from this list, unlike the app one: these sit one segment
+ * BELOW an agent's slug, so none of them can shadow an agent. `/agents/new` is the only
+ * segment an agent slug could collide with, and `agent_create` refuses it by name.
+ */
+export const AGENT_PANES = ["grant", "credentials", "activity", "danger"] as const;
+
+/** One of the four agent pane segments — `paths.agentPane` and the page take it. */
+export type AgentPane = (typeof AGENT_PANES)[number];
 
 /**
  * The segments the router mounts DIRECTLY under `/apps/`, ahead of the `:slug` route. Both

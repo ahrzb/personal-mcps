@@ -85,7 +85,7 @@ export type PaneEntry = {
  * `dim` is §13's "renders dimmed" — the whole entry recedes, label included
  * (AppDetail.dc.html), and it stays a link.
  */
-export type PaneMarker = { text: string; dot?: "on" | "off"; dim?: boolean } | null;
+export type PaneMarker = { text: string; dot?: "on" | "off" | "warn"; dim?: boolean } | null;
 
 /** A rail group: a heading (§13's `Sign-in` / `Access` / `App`) and its entries, or a
  *  headless run for the ungrouped tail the app page's Danger zone sits in. */

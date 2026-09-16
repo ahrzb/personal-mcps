@@ -56,7 +56,7 @@ import { env } from "cloudflare:workers";
 // a phone camera. Zero-dependency, pure ESM, no Node built-ins — it runs on workerd.
 import { renderSVG } from "uqr";
 import { ops } from "../admin";
-import type { AppPane } from "../app-routes";
+import type { AgentPane, AppPane } from "../app-routes";
 import type { AppRow as OpsAppRow } from "../admin";
 import { config as auditConfig } from "../audit";
 import { DEFAULT_APP_CAPABILITIES } from "../capabilities";
@@ -73,8 +73,26 @@ import {
 } from "../identity";
 import type { TokenInfo } from "../identity";
 import { DEVICE_CODE_TTL_MS } from "../limits";
-import { redactPathsIn, Registry, validateSchemaIndirection, writeOnlyPaths } from "../registry";
-import type { App, AppCapability, AppDetail, AppKind, FamilyPatterns, ListKind, RoleDeclaration } from "../registry";
+import {
+  itemEntry,
+  parseGrantEntry,
+  redactPathsIn,
+  Registry,
+  ROLE_FAMILIES,
+  validateSchemaIndirection,
+  writeOnlyPaths,
+} from "../registry";
+import type {
+  App,
+  AppCapability,
+  AppDetail,
+  AppKind,
+  FamilyPatterns,
+  GrantEntryKind,
+  ListKind,
+  RoleDeclaration,
+  RoleFamily,
+} from "../registry";
 import type { ApprovalListFilters, ApprovalRow, ApprovalStatus } from "../approvals";
 import type { AuditRow, BodyStub, AuditQuery } from "../audit";
 import type { UpstreamConnectionStatus } from "../upstream";
@@ -249,23 +267,24 @@ export const paths = {
   /** agent_create's target: a refused slug re-renders the form, a created one lands on
    *  the agent's page — which is why it is not the generic redirect-back. */
   agentCreate: "/agents/agent_create",
-  /** The agent page: one scroll of Grants, Tokens, Connected clients and a Danger zone. */
+  /** The agent page — the LANDING render, which is the first app in slug order the agent
+   *  holds a grant on (the grant step when it holds none). There is deliberately no
+   *  member for that pane at an alias URL: §13's pane rule makes one a 404. */
   agentDetail(slug: string): string {
     return `/agents/${encodeURIComponent(slug)}`;
   },
-  /** The (agent × app) grant editor — its own page, linkable and script-free (§13). */
-  agentGrants(agent: string, app: string): string {
-    return `${paths.agentDetail(agent)}/grants/${encodeURIComponent(app)}`;
+  /** One (agent × app) pair's grants — the agent page's listing + details pane. */
+  agentApp(agent: string, app: string): string {
+    return `${paths.agentDetail(agent)}/apps/${encodeURIComponent(app)}`;
   },
-  /** The agent page's "Grant access to another app…" — a GET form whose `app` names the
-   *  pair, which this redirects to that pair's editor, so it works with scripting off. */
-  agentGrantsChoose(agent: string): string {
-    return `${paths.agentDetail(agent)}/grants`;
+  /** Any of the four single-segment agent panes (app-routes.AGENT_PANES). */
+  agentPane(slug: string, pane: AgentPane): string {
+    return `${paths.agentDetail(slug)}/${pane}`;
   },
-  /** The editor's Save. The final segment names the op as every other target does, even
+  /** The app pane's Save. The final segment names the op as every other target does, even
    *  though the route composes `roles` itself rather than dispatching generically (§13). */
   agentGrantSet(agent: string, app: string): string {
-    return `${paths.agentGrants(agent, app)}/grant_set`;
+    return `${paths.agentApp(agent, app)}/grant_set`;
   },
   /** An op posted from the agent page, landing back on it (§13's pane rule; the op's
    *  input rides the query like every other target's). */
@@ -280,9 +299,14 @@ export const paths = {
   agentsConfirmDelete(slug: string): string {
     return `/agents${query({ confirm: "delete-agent", slug })}`;
   },
-  /** The agent page with one of its two dialogs open. */
-  agentConfirm(slug: string, kind: "revoke-token" | "delete-agent", id?: string): string {
-    return `${paths.agentDetail(slug)}${query(id === undefined ? { confirm: kind } : { confirm: kind, id })}`;
+  /**
+   * One agent PANE with a dialog open — addressable state (§13), so every confirm step
+   * works with scripting off. `pane` is the pane's own URL (`agentApp` / `agentPane`)
+   * rather than a slug: a dialog belongs to the pane that draws its control, and the
+   * loader drops a `confirm` whose kind does not belong to the pane being rendered.
+   */
+  agentConfirm(pane: string, kind: AgentConfirm["kind"], id?: string): string {
+    return `${pane}${query(id === undefined ? { confirm: kind } : { confirm: kind, id })}`;
   },
   /** Read-only view over audit.query with its exact filters. */
   audit: "/audit",
@@ -1533,7 +1557,6 @@ export type PagePropsByName = {
   agents: AgentsProps;
   "agent-detail": AgentDetailProps;
   "agent-new": AgentNewProps;
-  "grant-editor": GrantEditorProps;
   approvals: ApprovalsProps;
   "approval-detail": ApprovalDetailProps;
   audit: AuditProps;
@@ -1696,16 +1719,39 @@ function liveTokenCounts(tokens: TokenInfo[], now: number): Map<string, number> 
  *  fields the Agents pane never needed. */
 type AgentListing = ListedAgent & { name: string; createdAt: number };
 
-/** A row of /agents (§13): grants summarised per app, keys counted live. */
+/**
+ * A row of /agents (the `Agents` board, 2026-09-16): the slug is an anchor stretched over
+ * the whole row, so what a row carries is the identity, ONE line of totals, the keys and
+ * the creation date. No catalog is read for it, at any size of namespace.
+ */
 export type AgentRow = {
   slug: string;
   name: string;
   description: string;
   createdAt: number;
-  /** Per app in slug order: the role names held (modes are the page's business). */
-  grants: { app: string; roles: string[] }[];
+  /** The Access line's four numbers. */
+  access: AgentAccess;
   /** Live keys (unrevoked, unexpired) and the latest use among them. */
   tokens: { active: number; lastUsedAt: number | null };
+};
+
+/**
+ * `N apps · A allowed · K ask first · D dormant` — the list's Access line and the agent
+ * header's tiles, one definition because they are the same four counts over the same
+ * sets, read from `agent_list` and `app_list` and from nothing else.
+ *
+ * What that budget buys and what it costs: `dormant` here is what a DECLARATION can
+ * prove — an entry on an archived app, or a role name the app does not declare — never
+ * "an item entry that matches nothing today", which would need the app's live catalog and
+ * would make the list's cost the namespace's whole endpoint surface. The open app pane,
+ * which does read one catalog, is where "matches nothing today" is said.
+ */
+export type AgentAccess = {
+  /** Apps the agent holds at least one entry on; `0` is the `no grants` arm. */
+  apps: number;
+  allowed: number;
+  askFirst: number;
+  dormant: number;
 };
 
 export type AgentsConfirm = { kind: "delete-agent"; row: AgentRow };
@@ -1729,9 +1775,178 @@ export type AgentNewProps = ShellProps & {
   errors: AgentNewErrors;
 };
 
-/** One app the agent holds a grant on — the chips are the same shape the app page draws. */
-export type AgentGrantRow = { app: string; appName: string; chips: AppGrantChip[] };
-/** One key bound to the agent: live or expired, never revoked (a revoked key is gone). */
+/* ------------------------- /agents/<slug>, paned ------------------------- */
+
+/** Which pane `/agents/<slug>/…` is rendering. `app` is the two-segment one — the only
+ *  pane carrying an argument, and the one the landing URL renders in place. */
+export type AgentPaneKind = "app" | AgentPane;
+
+/**
+ * The pane the URL asked for, as the loader takes it. `app` names a slug the loader still
+ * has to accept or 404 — an unknown, builtin, foreign or ungranted-archived app is
+ * `noSuchPage()`, and an ACTIVE app the agent holds nothing on is the new-grant state.
+ */
+export type AgentPaneTarget = { pane: "app"; app: string } | { pane: AgentPane };
+
+/** The agent page's header — identity, plus the four tiles counted over the grant sets. */
+export type AgentHeader = {
+  slug: string;
+  name: string;
+  description: string;
+  createdAt: number;
+  tiles: AgentAccess;
+};
+
+/**
+ * One rail entry. The marker is a COUNT or the dimmed dash, exactly as the app page's is;
+ * `warn` is the amber dot that says the set holds an approval entry, which is a status
+ * rather than a count and therefore rides beside the text rather than inside it.
+ */
+export type AgentRailEntry = {
+  href: string;
+  label: string;
+  /** The rail heading this entry sits under; null is the ungrouped tail (Danger zone). */
+  group: string | null;
+  current: boolean;
+  /** `""` draws no marker at all (§13's `none` cell). */
+  marker: string;
+  /** An amber dot beside the label: at least one entry on that app asks first. */
+  warn: boolean;
+  /** The whole entry recedes: an archived app, or one whose every entry is dormant. */
+  dim: boolean;
+};
+
+/** The one three-way choice a row's control carries: `none` is the absence of an entry,
+ *  and the other two are §9's two spellings (`<entry>` and `<entry>:approval`). */
+export type GrantChoice = "none" | "allow" | "approval";
+
+/**
+ * One row's radio group, as both the listing and the details pane draw it. `value` is the
+ * DIRECT entry's mode and is what the row submits; `implied` is what the rest of the set
+ * already grants on this subject, drawn hollow and never submitted — so a row can show
+ * `allow` reached through a role while submitting nothing of its own.
+ */
+export type RowControl = {
+  /** The field name — `e.<entry>`, spelled by `entryField` and read back by
+   *  `grantChoicesOf`, the two halves of the one translation this form makes. */
+  field: string;
+  value: GrantChoice;
+  /** The mode the OTHER entries grant here, or null when they grant nothing. */
+  implied: "allow" | "approval" | null;
+  /** Which entries grant it — the names the disabled buttons' `title` reads. */
+  impliedBy: string[];
+};
+
+/** One listing row. The four kinds differ in what they say, not in what they do: every
+ *  one of them names an entry the set may hold. */
+export type AgentListRow =
+  | {
+      kind: "role";
+      /** The entry string — a role name, so never containing `/`. */
+      entry: string;
+      builtin: boolean;
+      /** `<family> <patterns> · matches N`, or the built-in's own sentence. */
+      detail: string;
+      /** `?sel=` for this row's details. */
+      sel: string;
+      control: RowControl;
+    }
+  | {
+      kind: "undeclared";
+      entry: string;
+      /** Which side the entry sits on — the `in Allowed` / `in Ask first` badge. */
+      standing: "allow" | "approval";
+    }
+  | {
+      kind: "item";
+      /** `tool/<name>` · `prompt/<name>` · `resource/<uri>` — the DIRECT entry. */
+      entry: string;
+      /** The subject itself: a tool or prompt name, or a resource URI. */
+      name: string;
+      description: string;
+      /** The entries that reach it besides the direct one, for the `via` line. */
+      via: string[];
+      /** `also via` rather than `via`: the row also carries a direct entry. */
+      alsoVia: boolean;
+      /** A direct ask under something that allows — kept, badged, removable. */
+      noEffect: boolean;
+      sel: string;
+      control: RowControl;
+    }
+  | {
+      kind: "pattern";
+      entry: string;
+      /** `matches N today` / `matches nothing today`. */
+      detail: string;
+      /** True for the second of those, which the board draws amber. */
+      dormant: boolean;
+      sel: string;
+      control: RowControl;
+    };
+
+/**
+ * One listing group: a heading with its count and, where the family could not be listed,
+ * the ONE note line that stands in for its rows (§13's `unconnected` / `undeclared` /
+ * `unread`, said in the words the app page says them in).
+ */
+export type AgentListGroup = {
+  title: string;
+  /** Empty where the heading carries no count (the pattern offer's `As a pattern`). */
+  count: string;
+  /** The heading's right-hand note (`declared by the app at connect`, `8 reached · 3 not`). */
+  note: string;
+  /** Rendered in place of `rows` when the family could not be listed; null otherwise. */
+  state: string | null;
+  rows: AgentListRow[];
+};
+
+/** The typed text offered as a pattern entry, when it is not one item's name. */
+export type AgentPatternOffer = {
+  /** `tool/<q>`, or `resource/<q>` when the text carries a URI scheme. */
+  entry: string;
+  /** `would match N today, and any added later` / `matches nothing today`. */
+  detail: string;
+};
+
+/** How far the agent reaches into one §20 family, as the listing's reach line reads it. */
+export type FamilyReach = {
+  reached: number;
+  total: number;
+  /** Subjects reached in approval mode — the `K ask first` the tools half prints. */
+  approval: number;
+};
+
+/** A card of the grant step: one active app the agent holds nothing on. */
+export type AgentGrantCard = {
+  slug: string;
+  name: string;
+  kind: AppKind;
+  /** The status word beside the kind badge, or null where nothing connects. */
+  status: string | null;
+  description: string;
+  /** `T tools · P prompts · R resources` — EMPTY on a closed card, which has read no
+   *  catalog and therefore knows no counts to print. */
+  counts: string;
+  roles: string[];
+  /** `?show=<app>` is open (or a search opened it): the endpoint list is drawn. */
+  open: boolean;
+  /** The toggle link's words: `show endpoints` / `hide`. */
+  toggle: string;
+  endpoints: AgentEndpointRow[];
+};
+
+/** One row of an open card's endpoint list. */
+export type AgentEndpointRow = {
+  /** `tool` · `prompt` · `resource` — the family label, singular. */
+  family: string;
+  name: string;
+  /** The info marker's `title`; empty where the app advertises none. */
+  description: string;
+  /** The declared roles that grant it; empty draws `only via all or by name`. */
+  roles: string[];
+};
+
+/** One credentials row for a key bound to the agent: live or expired, never revoked. */
 export type AgentTokenRow = {
   id: string;
   prefix: string;
@@ -1740,41 +1955,242 @@ export type AgentTokenRow = {
   lastUsedAt: number | null;
   expired: boolean;
 };
-/** One client bound to the agent (§19.6), read-only here. */
-export type AgentClientRow = { id: string; name: string; origin: string; revoked: boolean };
-export type AgentConfirm = { kind: "revoke-token"; id: string; prefix: string } | { kind: "delete-agent" };
 
+/** One OAuth client bound to the agent (§19.6), read-only on this page. */
+export type AgentClientRow = {
+  id: string;
+  name: string;
+  origin: string;
+  revoked: boolean;
+  createdAt: number;
+  lastUsedAt: number | null;
+  /** §19.3's DCR marker — `registered itself — identity unverified`. */
+  selfRegistered: boolean;
+};
+
+/** One waiting request on the Activity pane. */
+export type AgentApprovalRow = {
+  id: string;
+  app: string;
+  tool: string;
+  /** The arguments post-redaction, on one line — approvals stores them already masked. */
+  args: string;
+  createdAt: string;
+  expiresAt: string;
+  status: ApprovalStatus;
+  sel: string;
+};
+
+/** One recent call on the Activity pane — `audit_query`'s row, narrowed to the columns. */
+export type AgentCallRow = {
+  id: number;
+  app: string;
+  tool: string;
+  ts: number;
+  durationMs: number | null;
+  /** The outcome word the badge prints (`ok`, `approval required`, `not permitted`, …). */
+  outcome: string;
+  sel: string;
+};
+
+/**
+ * The details pane of the app pane, keyed by what `?sel=` named. It carries no control of
+ * its own: every entry has exactly ONE radio group on the page, in its listing row, so
+ * Save composes an unambiguous set — a second group of the same name in another column
+ * would submit a second value for the same entry. What the details pane says about the
+ * selection is therefore read-only, and the row beside it is where it changes.
+ */
+export type AgentDetailsView =
+  | {
+      kind: "none";
+      appName: string;
+      appKind: AppKind;
+      catalog: { tools: FamilyReach; prompts: FamilyReach; resources: FamilyReach; roles: string[] };
+      /** The saved set, as the `Grant set for <agent>` card lists it. */
+      allowed: string[];
+      askFirst: string[];
+    }
+  | {
+      kind: "role";
+      entry: string;
+      builtin: boolean;
+      /** `Declared by <app> at connect.` / `Built in: every family, present and future.` */
+      source: string;
+      standing: GrantChoice;
+      /** Family → the role's patterns, in §20.3's own order. */
+      patterns: [string, string[]][];
+      /** Family → what those patterns match in the live catalog. */
+      matches: [string, string[]][];
+    }
+  | {
+      kind: "item";
+      entry: string;
+      name: string;
+      /** `tool` · `prompt` · `resource` — the badge beside the name. */
+      family: string;
+      description: string;
+      /** `allowed · via <roles>` / `allowed · direct` / `ask · …` / `not reachable`. */
+      standing: string;
+      /** §7's approval sentence for this subject under this set. */
+      approval: string;
+      /** Tools only; null for a prompt or a resource, which declare no schema (§20.3). */
+      args: ArgumentRow[] | null;
+      /** `What only the hub knows` — absent where the subject is not a tool. */
+      hub: { aggregated: string; reachableBy: string; redaction: string } | null;
+    }
+  | {
+      kind: "pattern";
+      entry: string;
+      standing: "allow" | "approval";
+      /** What it matches in the live catalog, by name. */
+      matches: string[];
+    };
+
+/**
+ * The details pane of the Credentials pane: the two counts when nothing is picked, one
+ * key, or one OAuth client. Both credential arms carry the SAME grants — a key is the
+ * agent, not a subset of it — so what differs between them is provenance and who revokes
+ * them, which is the whole content of the two cards.
+ */
+export type AgentCredentialsDetails =
+  | { kind: "none"; tokens: number; clients: number }
+  | {
+      kind: "token";
+      row: AgentTokenRow;
+      /** The AGENT's last three calls, not this key's — the ledger records a principal,
+       *  never which credential presented it, and the card says so in as many words. */
+      recent: { ts: number; app: string; tool: string }[];
+    }
+  | { kind: "client"; row: AgentClientRow };
+
+/**
+ * The details pane of the Activity pane: the summary when nothing is picked, one waiting
+ * request, or one call off the ledger. The three arms exist because the page ACTS on the
+ * first (the two decision buttons), explains the second (why it waits), and can only
+ * report the third — a call already happened.
+ */
+export type AgentActivityDetails =
+  | { kind: "none"; calls: number; ok: number; denied: number; pending: number }
+  | {
+      kind: "approval";
+      row: AgentApprovalRow;
+      /** The entry that matched in approval mode — `<entry> is in Ask first on <app>`. */
+      why: string | null;
+    }
+  | {
+      kind: "call";
+      row: AgentCallRow;
+      /** WHY the row carries no bodies, as the audit page's own classifier answers it
+       *  (`off` / `refused` / `unrecorded`); null when it carries some. The sentence for
+       *  each lives in audit.tsx, so both pages say the same thing. */
+      noBodies: NonNullable<AuditEventRow["noBodies"]> | null;
+      args: string | null;
+      result: string | null;
+    };
+
+/** One pane's whole content — the discriminant `agent-detail.tsx` switches on. */
+export type AgentPaneView =
+  | {
+      kind: "app";
+      app: string;
+      appName: string;
+      appKind: AppKind;
+      /** The status word beside the kind badge, or null where nothing connects. */
+      status: string | null;
+      /** Nothing is saved on this pair yet: the dashed `new grant` badge. */
+      newGrant: boolean;
+      reach: { tools: FamilyReach; prompts: FamilyReach; resources: FamilyReach };
+      /** The filter's own text, echoed into the GET form. */
+      q: string;
+      groups: AgentListGroup[];
+      offer: AgentPatternOffer | null;
+      /** `q` matched nothing at all — the `Nothing matches “<q>”.` line. */
+      nothingMatches: boolean;
+      /** The saved set's two counts, for the foot's `saved · A allow · K ask`. */
+      saved: { allow: number; approval: number };
+      /**
+       * Hidden fields the form must carry so Save does not silently drop what this render
+       * did not draw a control for: an entry hidden by the filter, and one naming a
+       * subject the live catalog does not list (a disconnected app, a removed endpoint).
+       * `grant_set` replaces the pair's whole set, so an undrawn entry is a deleted one.
+       */
+      carry: { field: string; value: GrantChoice }[];
+      details: AgentDetailsView;
+      /** A refused save, redrawn on the choices that caused it (never a redirect). */
+      error: string | null;
+    }
+  | {
+      kind: "grant";
+      q: string;
+      cards: AgentGrantCard[];
+      /** How many grantable apps there are before `q` narrows them. */
+      total: number;
+    }
+  | {
+      kind: "credentials";
+      tokens: AgentTokenRow[];
+      clients: AgentClientRow[];
+      /** The row just minted, marked `new` beside its prefix; null on every other render. */
+      issuedId: string | null;
+      details: AgentCredentialsDetails;
+    }
+  | {
+      kind: "activity";
+      /** `calls` is what this page DREW, not what the week holds — the summary says
+       *  `last N calls`, because no read op counts and a total would be a guess.
+       *  `pending` is the count the heading and the rail marker both read: requests still
+       *  waiting, not the length of `requests` below. */
+      summary: { calls: number; ok: number; denied: number; pending: number };
+      /** The next page's URL, or null on the last one — the whole of what the page knows
+       *  about what lies beyond it, which is why the sentence beneath says "more" and
+       *  never a number. */
+      moreHref: string | null;
+      /** Every request this agent has made in the window, decided ones included — a row
+       *  decided from this pane stays on it, dimmed and badged, rather than vanishing. */
+      requests: AgentApprovalRow[];
+      calls: AgentCallRow[];
+      details: AgentActivityDetails;
+    }
+  | { kind: "danger"; grants: number; tokens: number; clients: number };
+
+/** Every dialog the agent page draws, each owned by the pane whose control opens it. */
+export type AgentConfirm =
+  | { kind: "revoke-token"; id: string; prefix: string }
+  | { kind: "remove-token"; id: string; prefix: string; expiresAt: number | null }
+  | { kind: "remove-app"; app: string }
+  | { kind: "delete-agent" };
+
+/**
+ * `/agents/<slug>` and each of its panes — ONE page, as `/apps/<slug>` is one: the header
+ * and both navigations are identical on all of them, and the rail is drawn from the same
+ * props the pane is, so a marker and the list under it cannot disagree.
+ */
 export type AgentDetailProps = ShellProps & {
   section: "agents";
   csrfToken: string;
-  slug: string;
-  name: string;
-  description: string;
-  createdAt: number;
-  grants: AgentGrantRow[];
-  /** §13's "Grant access to another app…": the namespace's active apps this agent holds
-   *  nothing on. Empty draws no control — there is no pair left to open. */
-  grantable: { slug: string; name: string }[];
-  tokens: AgentTokenRow[];
-  /** null when no client is bound — §13 draws no card then, not an empty one. */
-  clients: AgentClientRow[] | null;
+  header: AgentHeader;
+  rail: AgentRailEntry[];
+  pane: AgentPaneView;
   confirm: AgentConfirm | null;
   /** A key just minted by Issue token, shown in THIS response and never again (§4/§15). */
   reveal: string | null;
 };
 
+/* ------------------------------ the loaders ------------------------------ */
+
 /**
- * /agents — agent_list plus token_list, the two reads `pmcp agent list` and `pmcp
- * describe agent/<slug>` already make (§8: no second read path). The Delete dialog is
- * the list's own `?confirm=delete-agent&slug=` state, exactly as /apps's is.
+ * /agents — `agent_list`, `app_list` and `token_list`: the same three reads `pmcp agent
+ * list` makes, and no catalog (AgentAccess says why). The Delete dialog is the list's own
+ * `?confirm=delete-agent&slug=` state, exactly as /apps's is.
  */
 export async function agentsProps(ctx: PageContext): Promise<AgentsProps> {
-  const [listed, credentials] = await Promise.all([
+  const [listed, apps, credentials] = await Promise.all([
     read<{ agents: AgentListing[] }>(ctx, "agent_list"),
+    read<{ apps: OpsAppRow[] }>(ctx, "app_list"),
     read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
   ]);
   const now = Date.parse(ctx.now);
-  const rows = listed.agents.map((agent) => agentListRow(agent, credentials.tokens, now));
+  const rows = listed.agents.map((agent) => agentListRow(agent, apps.apps, credentials.tokens, now));
   const confirmSlug = ctx.query.get("confirm") === "delete-agent" ? ctx.query.get("slug") : null;
   const confirmRow = rows.find((row) => row.slug === confirmSlug);
   return {
@@ -1785,17 +2201,14 @@ export async function agentsProps(ctx: PageContext): Promise<AgentsProps> {
   };
 }
 
-function agentListRow(agent: AgentListing, tokens: TokenInfo[], now: number): AgentRow {
+function agentListRow(agent: AgentListing, apps: OpsAppRow[], tokens: TokenInfo[], now: number): AgentRow {
   const live = agentTokens(tokens, agent.slug, now).filter((token) => !token.expired);
   return {
     slug: agent.slug,
     name: agent.name,
     description: agent.description ?? "",
     createdAt: agent.createdAt,
-    grants: Object.entries(agent.grants)
-      .sort(([a], [b]) => a.localeCompare(b))
-      // Roles alphabetically: agent_list relays them in storage order, which is not stable.
-      .map(([app, spelled]) => ({ app, roles: spelled.map((entry) => grantChip(entry).role).sort() })),
+    access: accessOf(agent.grants, apps),
     tokens: {
       active: live.length,
       lastUsedAt: live.reduce<number | null>(
@@ -1806,8 +2219,35 @@ function agentListRow(agent: AgentListing, tokens: TokenInfo[], now: number): Ag
   };
 }
 
+/**
+ * The Access line's four counts over one agent's whole holding. An entry is `dormant`
+ * when nothing it names can run today FOR A REASON A DECLARATION STATES — the app is
+ * archived, or the entry is a role the app does not declare — and it is counted as
+ * dormant INSTEAD of as allowed or ask-first, so the four numbers partition the set.
+ */
+function accessOf(grants: Record<string, string[]>, apps: OpsAppRow[]): AgentAccess {
+  const byslug = new Map(apps.map((app) => [app.slug, app]));
+  const access: AgentAccess = { apps: 0, allowed: 0, askFirst: 0, dormant: 0 };
+  for (const [slug, spelled] of Object.entries(grants)) {
+    if (spelled.length === 0) continue;
+    access.apps += 1;
+    const app = byslug.get(slug);
+    for (const entry of spelled) {
+      const parsed = grantEntryOf(entry);
+      const dormant =
+        app === undefined ||
+        app.archived ||
+        (parsed.kind === "role" && parsed.role !== BUILTIN_ROLE && !(parsed.role in app.roles));
+      if (dormant) access.dormant += 1;
+      else if (parsed.mode === "approval") access.askFirst += 1;
+      else access.allowed += 1;
+    }
+  }
+  return access;
+}
+
 /** The agent's keys as the page lists them: revoked ones are gone, expired ones stay
- *  marked — §13 gives both one Revoke. */
+ *  marked — Credentials gives the first Revoke and the second Remove. */
 function agentTokens(tokens: TokenInfo[], slug: string, now: number): AgentTokenRow[] {
   return tokens
     .filter((token) => token.kind === "agent" && token.refSlug === slug && token.revokedAt === null)
@@ -1838,23 +2278,128 @@ export async function agentNewProps(
   return { ...(await shell(ctx, "agents")), csrfToken: ctx.csrfToken, form, errors };
 }
 
+/* ------------------- the grant set, parsed and composed ------------------- */
+
+/** §2's reserved role: granted like any other, declared by nobody, and the one the
+ *  listing marks `built-in`. */
+const BUILTIN_ROLE = "all";
+
+/** The per-row control's field prefix. Spelled ONCE, here, because this form is the one
+ *  whose fields are not the op's keys (§13) and both halves of that translation — the
+ *  page that writes the control and the route that reads it — must agree. */
+const ENTRY_FIELD_PREFIX = "e.";
+
+/** One row's control name: `e.<entry>`, the entry string spelled exactly as it is stored. */
+export function entryField(entry: string): string {
+  return `${ENTRY_FIELD_PREFIX}${entry}`;
+}
+
 /**
- * /agents/<slug> — four reads, all ops: agent_list (the agent and its grants), app_list
- * (the names the Grants rows print), token_list (its keys) and connection_list (the
- * clients bound to it, §19.6). An unknown, foreign or reserved slug is null, the page's
- * 404 — `agent_list` is owner-scoped, so "foreign" and "unknown" are one answer.
+ * The submitted form as the choice per entry — the inverse of `entryField`, so a field
+ * this page did not draw contributes nothing. Two fields that are not per-row controls
+ * are folded in here rather than in the composer, so a REFUSED save redraws the pattern
+ * the owner just added and the `×` they just pressed rather than losing both: `add`
+ * (the pattern offer, with its pressed button's `mode`) and `drop` (the `×` buttons).
  */
-export async function agentDetailProps(ctx: PageContext, slug: string): Promise<AgentDetailProps | null> {
-  const [listed, apps, credentials, connections] = await Promise.all([
+export function grantChoicesOf(fields: Record<string, string>): Record<string, GrantChoice> {
+  const choices: Record<string, GrantChoice> = {};
+  for (const [name, value] of Object.entries(fields)) {
+    if (!name.startsWith(ENTRY_FIELD_PREFIX)) continue;
+    choices[name.slice(ENTRY_FIELD_PREFIX.length)] = value === "allow" || value === "approval" ? value : "none";
+  }
+  // The offer's entry rides a HIDDEN field, so it is submitted by every button on the
+  // pane — Save and each `×` included. `mode` is the only thing that says the owner
+  // pressed Ask or Allow, so an absent or unrecognised one means no offer was accepted
+  // and the entry must not be added.
+  const added = fields.add ?? "";
+  const mode = fields.mode ?? "";
+  if (added !== "" && (mode === "allow" || mode === "approval")) choices[added] = mode;
+  const dropped = fields.drop ?? "";
+  if (dropped !== "") choices[dropped] = "none";
+  return choices;
+}
+
+/** `grant_set`'s `roles` argument, composed from those choices: §9's bare entry for allow
+ *  and its `:approval` suffix for the other, with `none` contributing nothing at all —
+ *  which is how the pane revokes (the op replaces the pair's whole set). */
+export function composeRoles(choices: Record<string, GrantChoice>): string[] {
+  return Object.entries(choices)
+    .filter(([, choice]) => choice !== "none")
+    .map(([entry, choice]) => (choice === "approval" ? `${entry}:approval` : entry));
+}
+
+/** One stored entry, split into the two things a page asks of it: what it names, and
+ *  which side of the set it sits on. The suffix decides the mode, never the first colon —
+ *  a resource URI carries colons of its own (§1 of the 2026-09-16 dispatch). */
+type ParsedEntry = GrantEntryKind & { entry: string; mode: "allow" | "approval" };
+
+function grantEntryOf(spelled: string): ParsedEntry {
+  const approval = spelled.endsWith(APPROVAL_SUFFIX);
+  const entry = approval ? spelled.slice(0, -APPROVAL_SUFFIX.length) : spelled;
+  return { ...parseGrantEntry(entry), entry, mode: approval ? "approval" : "allow" };
+}
+
+const APPROVAL_SUFFIX = ":approval";
+
+/**
+ * Whether a pattern names exactly ONE item — the test that sorts an inline entry into its
+ * family's own rows rather than into `Patterns`, and decides whether typed filter text is
+ * offered as a pattern at all.
+ *
+ * Cross-module: registry's `isLiteralPattern` is the same rule at the DOOR, and is
+ * deliberately private there (§20.3 owns the grammar). This is the page's reading of it;
+ * the two must move together, and registry's `matchesPattern` comment is the home.
+ */
+function isOneItem(pattern: string, family: RoleFamily): boolean {
+  return family === "resources" ? !/[*+?()[\]{}|^$\\]/.test(pattern) : /^[A-Za-z0-9._-]+$/.test(pattern);
+}
+
+/** §20.3's three keyspaces, as the entry prefix names them and the listing labels them. */
+const FAMILY_OF_KIND: Record<string, RoleFamily> = { tool: "tools", prompt: "prompts", resource: "resources" };
+const KIND_OF_FAMILY: Record<RoleFamily, string> = { tools: "tool", prompts: "prompt", resources: "resource" };
+
+/* ------------------------- /agents/<slug>, the loader ------------------------- */
+
+/** The rail's second heading; the first carries a count, so it is built per render. */
+const AGENT_GROUP = "Agent";
+
+/**
+ * `/agents/<slug>` and every pane of it. Five reads, all ops — `agent_list` (the agent and
+ * its sets), `app_list` (names, kinds, archived, declared roles), `token_list`,
+ * `connection_list` and `approval_list` (the rail's Activity marker, which is the very
+ * list that pane draws). The open APP pane adds the three reads §13 allows a page to make
+ * outside the ops table, exactly as `/apps/<slug>` makes them: `registry.getApp` for the
+ * opaque id a tunnel's declaration is keyed on, `tunnel.capabilities` for that
+ * declaration, and `gateway.ownerCatalog` per advertised family. The rail never reads a
+ * catalog, and the grant step reads one only for a card the owner opened.
+ *
+ * `target` null is the LANDING: the first app in slug order the agent holds a grant on,
+ * rendered in place, or the grant step when it holds none. `null` out is the page's 404 —
+ * an unknown or foreign agent, and, on the app pane, an app that is not this owner's,
+ * is the builtin, or is archived with nothing granted on it.
+ *
+ * `submitted` is a refused save being redrawn: the owner's own choices, so the row that
+ * caused the refusal is still there to fix rather than the stored set they replaced.
+ */
+export async function agentDetailProps(
+  ctx: PageContext,
+  slug: string,
+  target: AgentPaneTarget | null = null,
+  submitted: { choices: Record<string, GrantChoice>; error: string } | null = null,
+): Promise<AgentDetailProps | null> {
+  // deps: registry.getApp · gateway.ownerCatalog · catalog-view · tunnel.capabilities
+  const [listed, apps, credentials, connections, waiting] = await Promise.all([
     read<{ agents: AgentListing[] }>(ctx, "agent_list"),
     read<{ apps: OpsAppRow[] }>(ctx, "app_list"),
     read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
     read<{ connections: ConnectionRow[] }>(ctx, "connection_list"),
+    read<{ approvals: ApprovalRow[] }>(ctx, "approval_list", { status: "pending" }),
   ]);
   const agent = listed.agents.find((row) => row.slug === slug);
   if (agent === undefined) return null;
-  const names = new Map(apps.apps.map((app) => [app.slug, app.name]));
-  const tokens = agentTokens(credentials.tokens, slug, Date.parse(ctx.now));
+
+  const now = Date.parse(ctx.now);
+  const tokens = agentTokens(credentials.tokens, slug, now);
   const clients = connections.connections
     .filter((row) => row.agentSlug === slug)
     .map((row) => ({
@@ -1862,169 +2407,949 @@ export async function agentDetailProps(ctx: PageContext, slug: string): Promise<
       name: row.clientName ?? row.clientId,
       origin: row.redirectOrigin,
       revoked: row.revokedAt !== null,
+      createdAt: row.createdAt,
+      lastUsedAt: row.lastUsedAt,
+      selfRegistered: row.selfRegistered,
     }));
+  const pending = waiting.approvals.filter((row) => row.agentSlug === slug);
+  const held = Object.entries(agent.grants)
+    .filter(([, spelled]) => spelled.length > 0)
+    .map(([app]) => app)
+    .sort((a, b) => a.localeCompare(b));
+  const byslug = new Map(apps.apps.map((app) => [app.slug, app]));
+  const grantable = apps.apps.filter(
+    (row) => row.kind !== "builtin" && !row.archived && (agent.grants[row.slug] ?? []).length === 0,
+  );
+
+  // The landing pane, resolved before anything is built: it is a RENDER of another pane,
+  // not a redirect to it (§13's pane rule — an alias URL would be a second spelling).
+  const at: AgentPaneTarget =
+    target ?? (held.length === 0 ? { pane: "grant" } : { pane: "app", app: held[0] as string });
+
+  const pane =
+    at.pane === "app"
+      ? await appPaneView(ctx, agent, at.app, byslug, listed.agents, submitted)
+      : at.pane === "grant"
+        ? await grantPaneView(ctx, agent, grantable)
+        : at.pane === "credentials"
+          ? await credentialsPaneView(ctx, slug, tokens, clients)
+          : at.pane === "activity"
+            ? await activityPaneView(ctx, agent, byslug)
+            : ({ kind: "danger", grants: held.length, tokens: tokens.length, clients: clients.length } as const);
+  if (pane === null) return null;
+
   return {
-    ...(await shell(ctx, "agents")),
+    ...(await shell(ctx, "agents", waiting.approvals)),
     csrfToken: ctx.csrfToken,
-    slug,
-    name: agent.name,
-    description: agent.description ?? "",
-    createdAt: agent.createdAt,
-    grants: Object.entries(agent.grants)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([app, spelled]) => ({
-        app,
-        appName: names.get(app) ?? app,
-        chips: spelled.map(grantChip).sort((a, b) => a.role.localeCompare(b.role)),
-      })),
-    // Active means what /apps means by it: an archived app refuses connections, and the
-    // builtin is no agent's to hold (§8).
-    grantable: apps.apps
-      .filter((row) => row.kind !== "builtin" && !row.archived && (agent.grants[row.slug] ?? []).length === 0)
-      .map((row) => ({ slug: row.slug, name: row.name })),
-    tokens,
-    clients: clients.length === 0 ? null : clients,
-    confirm: agentConfirm(ctx.query, tokens),
+    header: {
+      slug,
+      name: agent.name,
+      description: agent.description ?? "",
+      createdAt: agent.createdAt,
+      tiles: accessOf(agent.grants, apps.apps),
+    },
+    rail: agentRail(slug, held, byslug, agent.grants, at, {
+      grantable: grantable.length,
+      tokens: tokens.filter((token) => !token.expired).length,
+      clients: clients.length,
+      pending: pending.length,
+    }),
+    pane,
+    confirm: agentConfirm(ctx.query, at, tokens),
     reveal: null,
   };
 }
 
-/* ---------------------- /agents/<slug>/grants/<app> ---------------------- */
-
-/** The one three-way choice §13 gives a role: `none` is the absence of a grant, and the
- *  other two are §9's two spellings. */
-export type GrantChoice = "none" | "allow" | "approval";
-
-/** One row of the editor: a role, what it matches, and the choice its control carries.
- *  `patterns` is null where there are none to show — the built-in, and a role the app
- *  does not declare. */
-export type GrantEditorRow = {
-  role: string;
-  patterns: string[] | FamilyPatterns | null;
-  builtin: boolean;
-  undeclared: boolean;
-  choice: GrantChoice;
-};
-
-export type GrantEditorProps = ShellProps & {
-  section: "agents";
-  csrfToken: string;
-  agent: string;
-  app: string;
-  appName: string;
-  /** Which sentence an undeclared role gets: a tunneled app's is a warning, a proxied
-   *  app's is the error `grant_set` will refuse the save with (§9). */
-  kind: AppKind;
-  rows: GrantEditorRow[];
-  /** §13's own sentence above `all` alone — an app that has declared nothing yet. */
-  declaresNothing: boolean;
-  /** A refused save, redrawn here rather than landed anywhere (§13). */
-  error: string | null;
-};
-
-/** The editor's per-row control name. Spelled ONCE, here, because this form is the one
- *  whose fields are not the op's keys (§13) and both halves of that translation — the
- *  page that writes the control and the route that reads it — must agree. */
-export function roleField(role: string): string {
-  return `${ROLE_FIELD_PREFIX}${role}`;
+/**
+ * The rail, drawn from the same reads every pane is. An app's entry recedes with the `—`
+ * marker when the app is ARCHIVED and for no other reason: the rail is on every pane and
+ * reads no catalog, so "matches nothing today" is not a question it can answer. The amber
+ * dot is the one marker that is a status — at least one entry on that app asks first.
+ *
+ * The OPEN app is listed whether or not the agent holds anything on it: the new-grant
+ * state is an app pane like any other, and a rail that left out the very app being edited
+ * would say the page is somewhere it is not. The heading's count is still the GRANTED
+ * apps, because that is what `Apps · N` counts.
+ */
+function agentRail(
+  slug: string,
+  held: string[],
+  byslug: Map<string, OpsAppRow>,
+  grants: Record<string, string[]>,
+  at: AgentPaneTarget,
+  counts: { grantable: number; tokens: number; clients: number; pending: number },
+): AgentRailEntry[] {
+  const group = `Apps · ${held.length}`;
+  const listed =
+    at.pane === "app" && !held.includes(at.app)
+      ? [...held, at.app].sort((a, b) => a.localeCompare(b))
+      : held;
+  const apps = listed.map((app) => ({
+    href: paths.agentApp(slug, app),
+    label: app,
+    group,
+    current: at.pane === "app" && at.app === app,
+    marker: byslug.get(app)?.archived === true ? DIMMED : "",
+    warn: (grants[app] ?? []).some((entry) => grantEntryOf(entry).mode === "approval"),
+    dim: byslug.get(app)?.archived === true,
+  }));
+  return [
+    ...apps,
+    {
+      href: paths.agentPane(slug, "grant"),
+      label: "+ Grant another app…",
+      group,
+      current: at.pane === "grant",
+      marker: String(counts.grantable),
+      warn: false,
+      dim: false,
+    },
+    {
+      href: paths.agentPane(slug, "credentials"),
+      label: "Credentials",
+      group: AGENT_GROUP,
+      current: at.pane === "credentials",
+      marker: `${counts.tokens} · ${counts.clients}`,
+      warn: false,
+      dim: false,
+    },
+    {
+      href: paths.agentPane(slug, "activity"),
+      label: "Activity",
+      group: AGENT_GROUP,
+      current: at.pane === "activity",
+      marker: counts.pending === 0 ? "" : String(counts.pending),
+      warn: counts.pending > 0,
+      dim: false,
+    },
+    {
+      href: paths.agentPane(slug, "danger"),
+      label: "Danger zone",
+      group: null,
+      current: at.pane === "danger",
+      marker: "",
+      warn: false,
+      dim: false,
+    },
+  ];
 }
-
-/** The submitted form as the choice per role — the inverse of `roleField`, so a field
- *  the editor did not draw contributes nothing. */
-export function grantChoicesOf(fields: Record<string, string>): Record<string, GrantChoice> {
-  const choices: Record<string, GrantChoice> = {};
-  for (const [name, value] of Object.entries(fields)) {
-    if (!name.startsWith(ROLE_FIELD_PREFIX)) continue;
-    if (value === "allow" || value === "approval") choices[name.slice(ROLE_FIELD_PREFIX.length)] = value;
-    else choices[name.slice(ROLE_FIELD_PREFIX.length)] = "none";
-  }
-  return choices;
-}
-
-/** `grant_set`'s `roles` argument, composed from those choices: §9's bare name for allow
- *  and its `:approval` suffix for the other, with `none` contributing nothing at all —
- *  which is how the editor revokes (the op replaces the pair's whole set). */
-export function composeRoles(choices: Record<string, GrantChoice>): string[] {
-  return Object.entries(choices)
-    .filter(([, choice]) => choice !== "none")
-    .map(([role, choice]) => (choice === "approval" ? `${role}:approval` : role));
-}
-
-const ROLE_FIELD_PREFIX = "role.";
 
 /**
- * `/agents/<slug>/grants/<app>` — the (agent × app) editor (§13). Two reads, the same two
- * the agent page makes: `agent_list` for what the pair holds today and `app_list` for the
- * app's name, kind and declared roles (§20.3's canonical shape). `null` is the page's 404
- * — an unknown or foreign agent, an app that is not this owner's, and the builtin, which
- * an agent can never hold a grant on (§8).
- *
- * `submitted` is the refused save being redrawn: the owner's own choices, so the row that
- * caused the refusal is still there to fix, rather than the stored set they replaced.
+ * §13's `?confirm=` state for this page. A dialog belongs to the pane that draws its
+ * control, so the same query carried to another pane opens nothing — and a token dialog
+ * naming no listed key opens nothing either, because a dialog is about a row and a
+ * guessed id names none.
  */
-export async function grantEditorProps(
+function agentConfirm(
+  query: URLSearchParams,
+  at: AgentPaneTarget,
+  tokens: AgentTokenRow[],
+): AgentConfirm | null {
+  const kind = query.get("confirm") ?? "";
+  if (kind === "delete-agent") return at.pane === "danger" ? { kind } : null;
+  if (kind === "remove-app") return at.pane === "app" ? { kind, app: at.app } : null;
+  if (kind !== "revoke-token" && kind !== "remove-token") return null;
+  if (at.pane !== "credentials") return null;
+  const row = tokens.find((token) => token.id === (query.get("id") ?? ""));
+  if (row === undefined) return null;
+  return kind === "revoke-token"
+    ? { kind, id: row.id, prefix: row.prefix }
+    : { kind, id: row.id, prefix: row.prefix, expiresAt: row.expiresAt };
+}
+
+/* -------------------------------- the app pane -------------------------------- */
+
+/** The listing's headings, in the order §13 pins them. */
+const FAMILY_TITLE: Record<RoleFamily, string> = { tools: "Tools", prompts: "Prompts", resources: "Resources" };
+
+/**
+ * One (agent × app) pair's listing and details. `null` is the page's 404: an app that is
+ * not this owner's, the builtin (no agent may hold a grant on it, §8), and an archived app
+ * the agent holds nothing on — an archived app it DOES hold something on stays reachable,
+ * because the set has to remain editable after the app is shelved.
+ */
+async function appPaneView(
   ctx: PageContext,
-  agentSlug: string,
+  agent: AgentListing,
   appSlug: string,
-  submitted: { choices: Record<string, GrantChoice>; error: string } | null = null,
-): Promise<GrantEditorProps | null> {
-  const [listed, apps] = await Promise.all([
-    read<{ agents: AgentListing[] }>(ctx, "agent_list"),
-    read<{ apps: OpsAppRow[] }>(ctx, "app_list"),
-  ]);
-  const agent = listed.agents.find((row) => row.slug === agentSlug);
-  const app = apps.apps.find(
-    (row): row is Exclude<OpsAppRow, { kind: "builtin" }> => row.slug === appSlug && row.kind !== "builtin",
-  );
-  if (agent === undefined || app === undefined) return null;
+  byslug: Map<string, OpsAppRow>,
+  everyAgent: ListedAgent[],
+  submitted: { choices: Record<string, GrantChoice>; error: string } | null,
+): Promise<(AgentPaneView & { kind: "app" }) | null> {
+  const row = byslug.get(appSlug);
+  if (row === undefined || row.kind === "builtin") return null;
+  const savedSpelled = agent.grants[appSlug] ?? [];
+  if (row.archived && savedSpelled.length === 0) return null;
+  // The one read here that is not an ops handler, for `appDetailProps`' own reason: the
+  // opaque id is what a tunnel's declared capability set is keyed on, and no read op
+  // reports one (§3).
+  const app = await new Registry(env.DB).getApp(ctx.ownerId, appSlug);
+  if (app === null) return null;
 
-  const held = new Map<string, GrantChoice>(
-    (agent.grants[appSlug] ?? []).map((spelled) => {
-      const chip = grantChip(spelled);
-      return [chip.role, chip.mode];
-    }),
-  );
-  const choiceOf = (role: string): GrantChoice =>
-    (submitted === null ? held.get(role) : submitted.choices[role]) ?? "none";
+  const saved = savedSpelled.map(grantEntryOf);
+  // The set the pane RENDERS: the stored one, or the refused save's own choices, so the
+  // row that caused a refusal is still on screen to fix.
+  const entries: ParsedEntry[] =
+    submitted === null
+      ? saved
+      : Object.entries(submitted.choices)
+          .filter(([, choice]) => choice !== "none")
+          .map(([entry, choice]) => grantEntryOf(choice === "approval" ? `${entry}${APPROVAL_SUFFIX}` : entry));
 
-  const declared = Object.keys(app.roles);
-  // A role the pair carries that the app does not declare is listed all the same, marked,
-  // and left to §9's kind rule — a tunneled app may simply not have connected yet.
-  const undeclared = [...new Set([...held.keys(), ...Object.keys(submitted?.choices ?? {})])]
-    .filter((role) => role !== BUILTIN_ROLE && !declared.includes(role) && choiceOf(role) !== "none")
-    .sort();
+  const advertised: readonly AppCapability[] =
+    app.kind === "tunnel"
+      ? await tunnelCapabilities(app.id)
+      : (row.kind === "proxy" ? row.capabilities : undefined) ?? DEFAULT_APP_CAPABILITIES;
+  const neverConnected = row.kind === "tunnel" && row.lastSeen === null;
+  const familyOf = async (family: RoleFamily): Promise<AppFamilyView<ListedItem>> => {
+    if (neverConnected) return { state: "unconnected" };
+    if (!advertised.includes(family)) return { state: "undeclared" };
+    const answered = await ownerCatalog(env, ctx.ownerId, appSlug, family);
+    return answered.ok ? { state: "listed", rows: answered.items } : { state: "unread" };
+  };
+  const [tools, prompts, resources] = await Promise.all([familyOf("tools"), familyOf("prompts"), familyOf("resources")]);
+  const views: Record<RoleFamily, AppFamilyView<ListedItem>> = { tools, prompts, resources };
+
+  // ONE door per entry, built once: keyed BY the entry, so `reach(subject, family)` comes
+  // back naming exactly the entries that match that subject and the mode each carries.
+  // Every number on this pane — the reach line, each row's implied mode, `matches N` and
+  // the details pane's "Matches today" — is read off these answers, so the page cannot
+  // disagree with the door about any of them (catalog-view says why the build is hoisted).
+  const doors = reachabilityFor(
+    row.roles,
+    Object.fromEntries(entries.map((entry) => [entry.entry, [spelledOf(entry)]])),
+  );
+  const matchCount = new Map<string, number>();
+  const matchedNames = new Map<string, Record<RoleFamily, string[]>>();
+  const reach: Record<RoleFamily, FamilyReach> = {
+    tools: { reached: 0, total: 0, approval: 0 },
+    prompts: { reached: 0, total: 0, approval: 0 },
+    resources: { reached: 0, total: 0, approval: 0 },
+  };
+  /** Subject → what the whole set grants it and which entries said so, per family. */
+  const standing = new Map<string, { mode: "allow" | "approval" | null; hits: Reach[] }>();
+  for (const family of ROLE_FAMILIES) {
+    const view = views[family];
+    if (view.state !== "listed") continue;
+    for (const item of view.rows) {
+      const subject = subjectOf(item, family);
+      const hits = doors.reach(subject, family);
+      const mode = hits.length === 0 ? null : hits.some((hit) => hit.mode === "allow") ? "allow" : "approval";
+      standing.set(`${family}::${subject}`, { mode, hits });
+      reach[family].total += 1;
+      if (mode !== null) reach[family].reached += 1;
+      if (mode === "approval") reach[family].approval += 1;
+      for (const hit of hits) {
+        matchCount.set(hit.agent, (matchCount.get(hit.agent) ?? 0) + 1);
+        const names = matchedNames.get(hit.agent) ?? { tools: [], prompts: [], resources: [] };
+        names[family].push(subject);
+        matchedNames.set(hit.agent, names);
+      }
+    }
+  }
+
+  const q = (ctx.query.get("q") ?? "").trim();
+  const needle = q.toLowerCase();
+  const hit = (name: string, description: string): boolean =>
+    needle === "" || name.toLowerCase().includes(needle) || description.toLowerCase().includes(needle);
+
+  const modeOf = new Map(entries.map((entry) => [entry.entry, entry.mode]));
+  /** Every entry this render drew a control for; the rest ride hidden so Save keeps them. */
+  const drawn = new Set<string>();
+  const controlFor = (entry: string, hits: Reach[]): RowControl => {
+    const others = hits.filter((each) => each.agent !== entry);
+    drawn.add(entry);
+    return {
+      field: entryField(entry),
+      value: modeOf.get(entry) ?? "none",
+      implied: others.length === 0 ? null : others.some((each) => each.mode === "allow") ? "allow" : "approval",
+      impliedBy: others.map((each) => each.agent),
+    };
+  };
+
+  const groups: AgentListGroup[] = [];
+
+  // Roles, then the held role names the app does not declare — the board keeps those
+  // immediately under the declared ones rather than in a heading of their own, because
+  // they are the same kind of entry in a state the app can end at any connect.
+  const declared = Object.keys(row.roles);
+  const roleNames = [...declared, BUILTIN_ROLE].filter((role) => hit(role, ""));
+  if (roleNames.length > 0) {
+    groups.push({
+      title: "Roles",
+      count: String(roleNames.length),
+      note: row.kind === "tunnel" ? "declared by the app at connect" : "defined in config",
+      state: null,
+      rows: roleNames.map((role) => ({
+        kind: "role" as const,
+        entry: role,
+        builtin: role === BUILTIN_ROLE,
+        detail:
+          role === BUILTIN_ROLE
+            ? `every tool, prompt and resource, present and future · matches ${matchCount.get(role) ?? 0}`
+            : `${patternText(row.roles[role])} · matches ${matchCount.get(role) ?? 0}`,
+        sel: `role:${role}`,
+        // No implied arm on a role: nothing in the set grants a ROLE, so the three
+        // buttons are always live and the checked one is the entry's own mode.
+        control: controlFor(role, []),
+      })),
+    });
+  }
+  const undeclared = entries.filter(
+    (entry) => entry.kind === "role" && entry.role !== BUILTIN_ROLE && !declared.includes(entry.role),
+  );
+  if (undeclared.length > 0) {
+    groups.push({
+      title: "",
+      count: "",
+      note: "",
+      state: null,
+      rows: undeclared.map((entry) => {
+        drawn.add(entry.entry);
+        return { kind: "undeclared" as const, entry: entry.entry, standing: entry.mode };
+      }),
+    });
+  }
+
+  // What the filter hides must still be COUNTED as filterable, because `Nothing matches`
+  // is a statement about the rows a filter can reach — and the Patterns group, which the
+  // filter never touches, must not answer for them.
+  let filterable = roleNames.length;
+  for (const family of ROLE_FAMILIES) {
+    const view = views[family];
+    const state = familyNote(view, appSlug, FAMILY_TITLE[family]);
+    // FILTER, then map: mapping registers each row's control as drawn, and a row the
+    // filter then dropped would be neither submitted nor carried — which `grant_set`,
+    // replacing the pair's whole set, would read as the owner deleting it.
+    const rows =
+      view.state === "listed"
+        ? view.rows
+            .filter((item) => hit(subjectOf(item, family), itemDescription(item, family)))
+            .map((item) => itemRow(item, family, appSlug, standing, modeOf, controlFor))
+        : [];
+    filterable += rows.length;
+    if (state === null && rows.length === 0) continue;
+    groups.push({
+      title: FAMILY_TITLE[family],
+      count: state === null ? String(rows.length) : "",
+      note:
+        state !== null
+          ? ""
+          : family === "tools"
+            ? `${reach.tools.reached} reached · ${reach.tools.total - reach.tools.reached} not`
+            : family === "resources"
+              ? "matched by URI"
+              : "",
+      state,
+      rows,
+    });
+  }
+
+  // The entries that are not one item: their own group, kept whatever the filter says,
+  // because a pattern has no name to filter on and hiding it would hide what it grants.
+  const patterns = entries.filter(
+    (entry) => entry.kind === "item" && !isOneItem(entry.pattern, entry.family),
+  );
+  if (patterns.length > 0) {
+    groups.push({
+      title: "Patterns",
+      count: String(patterns.length),
+      note: "entries that are not one item",
+      state: null,
+      rows: patterns.map((entry) => {
+        const matches = matchCount.get(entry.entry) ?? 0;
+        return {
+          kind: "pattern" as const,
+          entry: entry.entry,
+          detail: matches === 0 ? "matches nothing today" : `matches ${matches} today`,
+          dormant: matches === 0,
+          sel: `pattern:${entry.entry}`,
+          control: controlFor(entry.entry, []),
+        };
+      }),
+    });
+  }
+
+  const offer = patternOffer(q, entries, row.roles, views);
+  const nothingMatches = q !== "" && offer === null && filterable === 0;
 
   return {
-    ...(await shell(ctx, "agents")),
-    csrfToken: ctx.csrfToken,
-    agent: agentSlug,
+    kind: "app",
     app: appSlug,
-    appName: app.name,
-    kind: app.kind,
-    rows: [
-      ...declared.map((role) => ({
-        role,
-        patterns: app.roles[role],
-        builtin: false,
-        undeclared: false,
-        choice: choiceOf(role),
-      })),
-      ...undeclared.map((role) => ({ role, patterns: null, builtin: false, undeclared: true, choice: choiceOf(role) })),
-      // §13: the built-in is never declared and always last.
-      { role: BUILTIN_ROLE, patterns: null, builtin: true, undeclared: false, choice: choiceOf(BUILTIN_ROLE) },
-    ],
-    declaresNothing: declared.length === 0,
+    appName: row.name,
+    appKind: app.kind,
+    status: appHeader(row, app.kind, appSlug).status,
+    newGrant: savedSpelled.length === 0,
+    reach,
+    q,
+    groups,
+    offer,
+    nothingMatches,
+    saved: {
+      allow: saved.filter((entry) => entry.mode === "allow").length,
+      approval: saved.filter((entry) => entry.mode === "approval").length,
+    },
+    carry: entries
+      .filter((entry) => !drawn.has(entry.entry))
+      .map((entry) => ({ field: entryField(entry.entry), value: entry.mode })),
+    details: detailsView(ctx, agent, row, app, appSlug, entries, views, standing, matchedNames, everyAgent),
     error: submitted?.error ?? null,
   };
 }
 
-function agentConfirm(query: URLSearchParams, tokens: AgentTokenRow[]): AgentConfirm | null {
-  const kind = query.get("confirm");
-  if (kind === "delete-agent") return { kind };
-  if (kind !== "revoke-token") return null;
-  const id = query.get("id") ?? "";
-  const row = tokens.find((token) => token.id === id);
-  return row === undefined ? null : { kind, id, prefix: row.prefix };
+/** The stored spelling of a parsed entry — the inverse of `grantEntryOf`. */
+function spelledOf(entry: ParsedEntry): string {
+  return entry.mode === "approval" ? `${entry.entry}${APPROVAL_SUFFIX}` : entry.entry;
+}
+
+/** A catalog item's own subject string: a name in two families, a URI in the third
+ *  (§20.3 — grants match resources by URI, never by name). */
+function subjectOf(item: ListedItem, family: RoleFamily): string {
+  return family === "resources" ? (item.uri ?? item.uriTemplate ?? "") : (item.name ?? "");
+}
+
+/** A catalog item's one-line description — a resource's is its media type, which is what
+ *  the board prints under a URI. */
+function itemDescription(item: ListedItem, family: RoleFamily): string {
+  const described = item as { description?: unknown; mimeType?: unknown };
+  const text = family === "resources" ? described.mimeType : described.description;
+  return typeof text === "string" ? text : "";
+}
+
+function itemRow(
+  item: ListedItem,
+  family: RoleFamily,
+  app: string,
+  standing: Map<string, { mode: "allow" | "approval" | null; hits: Reach[] }>,
+  modeOf: Map<string, "allow" | "approval">,
+  controlFor: (entry: string, hits: Reach[]) => RowControl,
+): AgentListRow & { kind: "item" } {
+  const name = subjectOf(item, family);
+  const kind = KIND_OF_FAMILY[family];
+  const entry = itemEntry(family, name);
+  const hits = standing.get(`${family}::${name}`)?.hits ?? [];
+  const control = controlFor(entry, hits);
+  const direct = modeOf.get(entry);
+  return {
+    kind: "item",
+    entry,
+    name,
+    description: itemDescription(item, family),
+    via: control.impliedBy,
+    alsoVia: direct !== undefined,
+    // A direct ask under something that already allows: allow wins (§7), so the entry is
+    // kept and badged rather than silently dropped — it is the owner's, and only they
+    // should remove it.
+    noEffect: direct === "approval" && control.implied === "allow",
+    sel: `${kind}:${name}`,
+    control,
+  };
+}
+
+/** A role's patterns, per family, as the row prints them — `tools a, b · prompts c`. */
+function patternText(patterns: string[] | FamilyPatterns | undefined): string {
+  if (patterns === undefined) return "no patterns";
+  if (Array.isArray(patterns)) return `tools ${patterns.join(", ")}`;
+  return ROLE_FAMILIES.filter((family) => (patterns[family] ?? []).length > 0)
+    .map((family) => `${family} ${(patterns[family] ?? []).join(", ")}`)
+    .join(" · ");
+}
+
+/** One family's non-list answer as the ONE note line that stands in for its rows — the
+ *  same three states /apps/<slug> distinguishes, said here in one sentence each. */
+function familyNote(view: AppFamilyView<ListedItem>, app: string, title: string): string | null {
+  if (view.state === "unconnected") return `${app} has not connected yet — nothing to list until it does.`;
+  if (view.state === "undeclared") return `${title} is not advertised.`;
+  if (view.state === "unread") return `${title} could not be read just now.`;
+  return null;
+}
+
+/**
+ * The typed filter text offered as a pattern entry. Offered only when the text is not one
+ * item's own name — anything else is a filter over the rows already on screen — and never
+ * when the set already holds the entry it would add.
+ */
+function patternOffer(
+  q: string,
+  entries: ParsedEntry[],
+  declared: RoleDeclaration,
+  views: Record<RoleFamily, AppFamilyView<ListedItem>>,
+): AgentPatternOffer | null {
+  if (q === "") return null;
+  const family: RoleFamily = q.includes("://") ? "resources" : "tools";
+  if (isOneItem(q, family)) return null;
+  const entry = itemEntry(family, q);
+  if (entries.some((held) => held.entry === entry)) return null;
+  const door = reachabilityFor(declared, { offer: [entry] });
+  const view = views[family];
+  const matches =
+    view.state === "listed"
+      ? view.rows.filter((item) => door.reach(subjectOf(item, family), family).length > 0).length
+      : 0;
+  return {
+    entry,
+    detail: matches === 0 ? "matches nothing today" : `would match ${matches} today, and any added later`,
+  };
+}
+
+/**
+ * The details pane of the app pane, from `?sel=<kind>:<name>`. A selection naming nothing
+ * the listing drew falls back to the unselected view rather than 404ing: `sel` is a
+ * pointer INTO a live catalog, and an endpoint can disappear between two renders.
+ */
+function detailsView(
+  ctx: PageContext,
+  agent: AgentListing,
+  row: Exclude<OpsAppRow, { kind: "builtin" }>,
+  app: App,
+  appSlug: string,
+  entries: ParsedEntry[],
+  views: Record<RoleFamily, AppFamilyView<ListedItem>>,
+  standing: Map<string, { mode: "allow" | "approval" | null; hits: Reach[] }>,
+  matchedNames: Map<string, Record<RoleFamily, string[]>>,
+  everyAgent: ListedAgent[],
+): AgentDetailsView {
+  const modeOf = new Map(entries.map((entry) => [entry.entry, entry.mode]));
+  const unselected = (): AgentDetailsView => ({
+    kind: "none",
+    appName: row.name,
+    appKind: app.kind,
+    catalog: {
+      tools: familyCount(views.tools, standing, "tools"),
+      prompts: familyCount(views.prompts, standing, "prompts"),
+      resources: familyCount(views.resources, standing, "resources"),
+      roles: Object.keys(row.roles),
+    },
+    allowed: entries.filter((entry) => entry.mode === "allow").map((entry) => entry.entry),
+    askFirst: entries.filter((entry) => entry.mode === "approval").map((entry) => entry.entry),
+  });
+
+  const sel = ctx.query.get("sel") ?? "";
+  const at = sel.indexOf(":");
+  if (at < 0) return unselected();
+  const kind = sel.slice(0, at);
+  const name = sel.slice(at + 1);
+
+  if (kind === "role") {
+    const builtin = name === BUILTIN_ROLE;
+    if (!builtin && !(name in row.roles)) return unselected();
+    const patterns: [string, string[]][] = builtin
+      ? ROLE_FAMILIES.map((family) => [family, [".*"]])
+      : familyEntries(row.roles[name]);
+    const matched = matchedNames.get(name) ?? { tools: [], prompts: [], resources: [] };
+    return {
+      kind: "role",
+      entry: name,
+      builtin,
+      source: builtin
+        ? "Built in: every family, present and future."
+        : `Declared by ${row.name} ${app.kind === "tunnel" ? "at connect" : "in config"}.`,
+      standing: modeOf.get(name) ?? "none",
+      patterns,
+      matches: ROLE_FAMILIES.map((family) => [family, matched[family]]),
+    };
+  }
+
+  if (kind === "pattern") {
+    const entry = entries.find((held) => held.entry === name);
+    if (entry === undefined) return unselected();
+    const matched = matchedNames.get(name) ?? { tools: [], prompts: [], resources: [] };
+    return {
+      kind: "pattern",
+      entry: name,
+      standing: entry.mode,
+      matches: [...matched.tools, ...matched.prompts, ...matched.resources],
+    };
+  }
+
+  const family = FAMILY_OF_KIND[kind];
+  if (family === undefined) return unselected();
+  const view = views[family];
+  if (view.state !== "listed") return unselected();
+  const item = view.rows.find((each) => subjectOf(each, family) === name);
+  if (item === undefined) return unselected();
+
+  const here = standing.get(`${family}::${name}`) ?? { mode: null, hits: [] };
+  const entry = itemEntry(family, name);
+  const via = here.hits.filter((each) => each.agent !== entry).map((each) => each.agent);
+  const source = via.length > 0 ? `via ${via.join(", ")}` : "direct";
+  return {
+    kind: "item",
+    entry,
+    name,
+    family: kind,
+    description: itemDescription(item, family),
+    standing:
+      here.mode === null ? "not reachable" : here.mode === "allow" ? `allowed · ${source}` : `ask · ${source}`,
+    // §7's three postures, said as the sentence each earns: allow beats ask, so an ask
+    // entry added under an allowing role would change nothing — which is worth saying
+    // where the owner is about to add one.
+    approval:
+      here.mode === "approval"
+        ? "Asked — each call waits for you."
+        : here.mode === "allow"
+          ? via.length > 0
+            ? `Not asked — allow wins over any ask entry, so adding one here would not gate it while ${via.join(", ")} allows it.`
+            : "Not asked."
+          : "—",
+    args: family === "tools" ? argumentRows((item as { inputSchema?: unknown }).inputSchema) : null,
+    hub:
+      family === "tools"
+        ? {
+            aggregated: `${appSlug}_${name}`,
+            reachableBy: reachableBy(row.roles, everyAgent, appSlug, name),
+            redaction: redactionText(row, name),
+          }
+        : null,
+  };
+}
+
+/** One family's `T · R reached by <agent>` pair for the Catalog card. */
+function familyCount(
+  view: AppFamilyView<ListedItem>,
+  standing: Map<string, { mode: "allow" | "approval" | null; hits: Reach[] }>,
+  family: RoleFamily,
+): FamilyReach {
+  if (view.state !== "listed") return { reached: 0, total: 0, approval: 0 };
+  let reached = 0;
+  let approval = 0;
+  for (const item of view.rows) {
+    const mode = standing.get(`${family}::${subjectOf(item, family)}`)?.mode ?? null;
+    if (mode !== null) reached += 1;
+    if (mode === "approval") approval += 1;
+  }
+  return { reached, total: view.rows.length, approval };
+}
+
+/** A role declaration's patterns as `[family, patterns]` pairs — the bare-array spelling
+ *  is §20.3's tools-only shorthand, expanded here so the card has one shape to draw. */
+function familyEntries(patterns: string[] | FamilyPatterns | undefined): [string, string[]][] {
+  if (patterns === undefined) return [];
+  if (Array.isArray(patterns)) return [["tools", patterns]];
+  return ROLE_FAMILIES.filter((family) => (patterns[family] ?? []).length > 0).map((family) => [
+    family,
+    patterns[family] ?? [],
+  ]);
+}
+
+/** §13's "Reachable by" line for one tool: every agent the DOOR lets through, named with
+ *  the entries that did it — the same computation /apps/<slug> prints, over every agent. */
+function reachableBy(declared: RoleDeclaration, agents: ListedAgent[], app: string, tool: string): string {
+  const grants: Record<string, string[]> = {};
+  for (const agent of agents) {
+    const held = agent.grants[app] ?? [];
+    if (held.length > 0) grants[agent.slug] = held;
+  }
+  const reached = reachabilityFor(declared, grants).reach(tool, "tools");
+  if (reached.length === 0) return "nobody";
+  return reached.map((each) => `${each.agent} · via ${each.roles.join(", ")}`).join(", ");
+}
+
+/** §7's configured argument paths for one tool, or `none` — the same map /apps/<slug>
+ *  reads, asked through registry's own matcher so the page invents no second answer. */
+function redactionText(row: Exclude<OpsAppRow, { kind: "builtin" }>, tool: string): string {
+  const paths = redactPathsIn(row.redact, tool);
+  return paths.length === 0 ? "none" : `arguments ${paths.join(", ")}`;
+}
+
+/* ------------------------------ the grant step ------------------------------ */
+
+/**
+ * `/agents/<slug>/grant` — one card per ACTIVE app the agent holds nothing on. A card's
+ * endpoint list is a catalog read, so it happens for OPEN cards only: `?show=<app>`, or a
+ * card a search matched inside (the match is in the endpoints, so hiding them would hide
+ * the reason the card is there).
+ */
+async function grantPaneView(
+  ctx: PageContext,
+  agent: AgentListing,
+  grantable: OpsAppRow[],
+): Promise<AgentPaneView & { kind: "grant" }> {
+  // deps: gateway.ownerCatalog
+  const q = (ctx.query.get("q") ?? "").trim();
+  const needle = q.toLowerCase();
+  const shown = ctx.query.get("show") ?? "";
+  const cards = await Promise.all(
+    grantable.map(async (row) => {
+      if (row.kind === "builtin") return null;
+      // A catalog read is three round trips to a live app, and a card nobody has opened
+      // has nothing to say that needs one — so a CLOSED card reads none (§13, "Grant
+      // another app"). The two that do: the one `show=` opens, and, while a search is
+      // running, the ones being searched, because searching endpoints is what searching
+      // endpoints costs.
+      const searching = needle !== "";
+      const endpoints = shown === row.slug || searching ? await grantEndpoints(ctx, row) : [];
+      const matchedEndpoint =
+        searching &&
+        endpoints.some(
+          (endpoint) =>
+            endpoint.name.toLowerCase().includes(needle) || endpoint.description.toLowerCase().includes(needle),
+        );
+      const matchedApp =
+        !searching ||
+        row.slug.toLowerCase().includes(needle) ||
+        row.name.toLowerCase().includes(needle) ||
+        row.description.toLowerCase().includes(needle);
+      if (!matchedApp && !matchedEndpoint) return null;
+      const open = shown === row.slug || matchedEndpoint;
+      const kept = matchedEndpoint
+        ? endpoints.filter(
+            (endpoint) =>
+              endpoint.name.toLowerCase().includes(needle) || endpoint.description.toLowerCase().includes(needle),
+          )
+        : endpoints;
+      return {
+        slug: row.slug,
+        name: row.name,
+        kind: row.kind,
+        status: appHeader(row, row.kind, row.slug).status,
+        description: row.description,
+        // A closed card has read no catalog, so it has no counts to print — which is why
+        // its line names the roles it already knows and offers to fetch the rest.
+        counts: open ? countsText(endpoints) : "",
+        roles: Object.keys(row.roles),
+        open,
+        toggle: open ? "hide" : "show endpoints",
+        endpoints: open ? kept : [],
+      };
+    }),
+  );
+  return {
+    kind: "grant",
+    q,
+    cards: cards.filter((card): card is AgentGrantCard => card !== null),
+    total: grantable.length,
+  };
+}
+
+/** One grantable app's endpoints, with the declared roles that grant each — the roles are
+ *  read through the door, so `only via all or by name` is what the door actually says. */
+async function grantEndpoints(ctx: PageContext, row: Exclude<OpsAppRow, { kind: "builtin" }>): Promise<AgentEndpointRow[]> {
+  const doors = reachabilityFor(row.roles, Object.fromEntries(Object.keys(row.roles).map((role) => [role, [role]])));
+  const rows: AgentEndpointRow[] = [];
+  for (const family of ROLE_FAMILIES) {
+    const answered = await ownerCatalog(env, ctx.ownerId, row.slug, family);
+    if (!answered.ok) continue;
+    for (const item of answered.items) {
+      const name = subjectOf(item, family);
+      rows.push({
+        family: KIND_OF_FAMILY[family],
+        name,
+        description: itemDescription(item, family),
+        roles: doors.reach(name, family).map((each) => each.agent),
+      });
+    }
+  }
+  return rows;
+}
+
+/** `T tools · P prompts · R resources`, the empty families left out. */
+function countsText(endpoints: AgentEndpointRow[]): string {
+  return ROLE_FAMILIES.map((family) => {
+    const count = endpoints.filter((endpoint) => endpoint.family === KIND_OF_FAMILY[family]).length;
+    return count === 0 ? null : `${count} ${family}`;
+  })
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+}
+
+/* ------------------------------- the credentials ------------------------------- */
+
+/**
+ * `/agents/<slug>/credentials` — the keys and the OAuth clients, both already read for
+ * the rail. The only extra read is the selected key's Recent use, which is the agent's
+ * own last three audit rows: the trail records a principal, not a key, so this is the
+ * agent's recent traffic rather than that one key's, and the card says so.
+ */
+async function credentialsPaneView(
+  ctx: PageContext,
+  slug: string,
+  tokens: AgentTokenRow[],
+  clients: AgentClientRow[],
+): Promise<AgentPaneView & { kind: "credentials" }> {
+  const sel = ctx.query.get("sel") ?? "";
+  const token = sel.startsWith("token:") ? tokens.find((row) => row.id === sel.slice(6)) : undefined;
+  const client = sel.startsWith("client:") ? clients.find((row) => row.id === sel.slice(7)) : undefined;
+  let details: AgentCredentialsDetails = { kind: "none", tokens: tokens.length, clients: clients.length };
+  if (token !== undefined) {
+    const trail = await read<{ rows: AuditRow[] }>(ctx, "audit_query", {
+      principal: `agent:${slug}`,
+      event: "tools/call",
+      limit: 3,
+    });
+    details = {
+      kind: "token",
+      row: token,
+      recent: trail.rows.map((row) => ({ ts: row.ts, app: row.app ?? "", tool: row.tool ?? "" })),
+    };
+  } else if (client !== undefined) {
+    details = { kind: "client", row: client };
+  }
+  return { kind: "credentials", tokens, clients, issuedId: null, details };
+}
+
+/* -------------------------------- the activity -------------------------------- */
+
+/**
+ * One page of Recent calls, and the step **Load 20 more** takes. §15's window is seven
+ * days, so the walk always ends: there is a last page, and the sentence beneath it says
+ * so rather than leaving the reader guessing whether the list simply stopped.
+ */
+const ACTIVITY_PAGE = 20;
+
+/** How many pending-and-decided requests the Activity pane keeps above the calls. Not
+ *  paged: a namespace's approvals expire in an hour, so this list is short by design. */
+const ACTIVITY_REQUESTS = 50;
+
+/**
+ * `?calls=` as a page size: a positive multiple of `ACTIVITY_PAGE`, defaulting to one
+ * page. Anything else — a negative, a half-page, a word — is that default rather than a
+ * refusal: this is a read control on a GET, and an edited URL should show the pane, not
+ * an error page.
+ */
+function callsShown(raw: string | null): number {
+  const asked = Number(raw);
+  return Number.isInteger(asked) && asked > 0 && asked % ACTIVITY_PAGE === 0 ? asked : ACTIVITY_PAGE;
+}
+
+/**
+ * The ledger's outcome as a WORD. A row stores the JSON-RPC code §7 answered with, and a
+ * code is not something a reader is owed — /audit says the same thing in its own shorter
+ * labels (audit.tsx's `outcomeInfo`), and this pane says it in the fuller ones §13 pins
+ * for an agent's own history. Two vocabularies over one stored fact, deliberately: this
+ * one reads beside a tool name, that one beside a whole ledger.
+ */
+const OUTCOME_WORD: Record<string, string> = {
+  ok: "ok",
+  "-32003": "approval required",
+  "-32002": "app archived",
+  "-32001": "not permitted",
+  "-32000": "app unavailable",
+  error: "error",
+};
+
+/**
+ * `/agents/<slug>/activity` — every approval request this agent has made and one
+ * `audit_query` page for its principal. Both are the ops the approvals page and the audit
+ * page read, filtered to this agent (§8: no second read path).
+ *
+ * The request list is NOT the pending one the rail counts: a decision has to stay on
+ * screen after it is made, dimmed and badged, or pressing Approve would look like the
+ * request vanished. `summary.pending` is what the heading counts and what the rail marks.
+ *
+ * Calls are paged by `?calls=`, one page at a time, with NO total: `audit_query` counts
+ * nothing, so the page learns only whether a next row exists — by asking for one more
+ * than it draws — and says "more", never "N more". Paging is a link, so the walk works
+ * with scripting off and every page of it is a URL somebody can come back to.
+ */
+async function activityPaneView(
+  ctx: PageContext,
+  agent: AgentListing,
+  byslug: Map<string, OpsAppRow>,
+): Promise<AgentPaneView & { kind: "activity" }> {
+  const shown = callsShown(ctx.query.get("calls"));
+  const [trail, requests] = await Promise.all([
+    read<{ rows: AuditRow[] }>(ctx, "audit_query", {
+      principal: `agent:${agent.slug}`,
+      event: "tools/call",
+      // The window the header claims, made true at the read: §15 keeps seven days, so
+      // the walk is capped by the week rather than by any number this page picks.
+      since: Date.parse(ctx.now) - auditConfig().retentionDays * 86_400_000,
+      // One more than is drawn: the extra row is never rendered, it only answers "is
+      // there another page" — which is the one thing `audit_query` will not tell us.
+      limit: shown + 1,
+    }),
+    read<{ approvals: ApprovalRow[] }>(ctx, "approval_list", { limit: ACTIVITY_REQUESTS }),
+  ]);
+  const more = trail.rows.length > shown;
+  const page = trail.rows.slice(0, shown);
+  const calls: AgentCallRow[] = page.map((row) => ({
+    id: row.id,
+    app: row.app ?? "",
+    tool: row.tool ?? "",
+    ts: row.ts,
+    durationMs: row.durationMs ?? null,
+    outcome: OUTCOME_WORD[row.outcome] ?? "error",
+    sel: `call:${row.id}`,
+  }));
+  const waiting: AgentApprovalRow[] = requests.approvals
+    .filter((row) => row.agentSlug === agent.slug)
+    .map((row) => ({
+      id: row.id,
+      app: row.appSlug,
+      tool: row.tool,
+      args: JSON.stringify(row.args),
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      status: row.status,
+      sel: `approval:${row.id}`,
+    }));
+  const stillWaiting = waiting.filter((row) => row.status === "pending").length;
+  const sel = ctx.query.get("sel") ?? "";
+  let details: AgentActivityDetails = {
+    kind: "none",
+    calls: calls.length,
+    ok: calls.filter((row) => row.outcome === "ok").length,
+    denied: calls.filter((row) => row.outcome === "not permitted").length,
+    pending: stillWaiting,
+  };
+  const approval = sel.startsWith("approval:") ? waiting.find((row) => row.id === sel.slice(9)) : undefined;
+  // The drawn page, not everything read: the probe row is one past the end and selecting
+  // it would open details for a row the listing never showed.
+  const call = sel.startsWith("call:") ? page.find((row) => String(row.id) === sel.slice(5)) : undefined;
+  if (approval !== undefined) {
+    details = { kind: "approval", row: approval, why: whyItWaits(agent, byslug, approval) };
+  } else if (call !== undefined) {
+    const row = calls.find((each) => each.id === call.id) as AgentCallRow;
+    // The audit page's own classifier, not a second reading of it: "no bodies" has three
+    // causes and only one of them is a refusal, so a successful call on an app with body
+    // logging off must not be told it never ran (§15).
+    const logBodies = new Map([...byslug].map(([slug, app]) => [slug, app.logBodies]));
+    details = {
+      kind: "call",
+      row,
+      noBodies: noBodiesReason(call, logBodies) ?? null,
+      args: call.args === undefined ? null : JSON.stringify(call.args, null, 2),
+      result: call.result === undefined ? null : JSON.stringify(call.result, null, 2),
+    };
+  }
+  return {
+    kind: "activity",
+    summary: {
+      calls: calls.length,
+      ok: calls.filter((row) => row.outcome === "ok").length,
+      denied: calls.filter((row) => row.outcome === "not permitted").length,
+      pending: stillWaiting,
+    },
+    requests: waiting,
+    calls,
+    // `sel` rides along so walking back through the week does not close the row the
+    // reader is reading.
+    moreHref: more
+      ? `${paths.agentPane(agent.slug, "activity")}?${new URLSearchParams(
+          sel === "" ? { calls: String(shown + ACTIVITY_PAGE) } : { calls: String(shown + ACTIVITY_PAGE), sel },
+        )}`
+      : null,
+    details,
+  };
+}
+
+/** Which granted entry put this request in the queue: the one that matches the tool in
+ *  approval mode. Null where the set has since changed and none does. */
+function whyItWaits(
+  agent: AgentListing,
+  byslug: Map<string, OpsAppRow>,
+  approval: AgentApprovalRow,
+): string | null {
+  const app = byslug.get(approval.app);
+  if (app === undefined || app.kind === "builtin") return null;
+  const held = (agent.grants[approval.app] ?? []).map(grantEntryOf);
+  const doors = reachabilityFor(
+    app.roles,
+    Object.fromEntries(held.map((entry) => [entry.entry, [spelledOf(entry)]])),
+  );
+  const matched = doors.reach(approval.tool, "tools").find((each) => each.mode === "approval");
+  return matched === undefined ? null : `${matched.agent} is in Ask first on ${approval.app}`;
 }
 
 /* ------------------------------ /apps/<slug> ------------------------------ */
@@ -2054,11 +3379,6 @@ export const DIMMED = "—";
 /** `agent_list`'s row, narrowed to what this page reads: the slug and description the
  *  Agents pane draws, and the inline grants (§8) keyed by app slug in §9's own spelling. */
 type ListedAgent = { slug: string; description: string; grants: Record<string, string[]> };
-
-/** §2's reserved role: granted like any other, declared by nobody, and the one §13 asks
- *  the Agents pane to mark `built-in`. Spelled here because registry rejects it as a
- *  declared name rather than exporting it. */
-const BUILTIN_ROLE = "all";
 
 /** One catalog entry as a Tools row reads it — `ListedItem` plus the two descriptors the
  *  hub stores untouched and relays (§20.2), which the door itself never looks at. */

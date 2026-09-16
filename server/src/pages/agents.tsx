@@ -1,11 +1,12 @@
 /**
- * /agents — §13's list (2026-09-03, roadmap step 9; the `Agents` board): every agent with
- * its grants per app and its live keys, New agent, and Delete behind the list's own
- * confirm dialog (`?confirm=delete-agent&slug=`), which is addressable state exactly as
- * /apps's is — it works with scripting off and a fixture can render it.
+ * /agents — the list (the `Agents` board, 2026-09-16): one row per agent, the whole row a
+ * link to the agent page, and Delete as the only row control. Granting lives on the agent
+ * page, so nothing here opens an editor and nothing here reads a catalog.
  *
- * Reads through agent_list and token_list only; the one mutation here is agent_delete,
- * through the generic dispatch, landing back on this list with the notice.
+ * The stretched anchor is the row's link with no script: the anchor covers the row through
+ * `::after`, and the Delete cell sits above it so it still deletes (styles.css). Delete is
+ * behind the list's own `?confirm=delete-agent&slug=` dialog, addressable state exactly as
+ * /apps's is — it works with scripting off and a fixture can render it.
  */
 
 import type { FC } from "hono/jsx";
@@ -15,22 +16,16 @@ import { alertClass, formatLastSeen, formatStamp } from "./format";
 
 const DIALOG_ID = "confirm-delete-agent";
 
-/** §13's Delete copy — the same sentence the list's footer and the agent page carry. */
+/** §13's Delete copy — the same sentence the list's footer and the danger zone carry. */
 export const DELETE_AGENT_TEXT = "Deleting an agent deletes its tokens and removes its grants everywhere.";
 
-/** `<app>: role, role` per app, in slug order, or `none` (§13). */
-const GrantsCell: FC<{ row: AgentRow }> = ({ row }) =>
-  row.grants.length === 0 ? (
-    <span class="muted">none</span>
-  ) : (
-    <div class="stack-tight">
-      {row.grants.map((grant) => (
-        <div>
-          <span class="mono">{grant.app}</span>: {grant.roles.join(", ")}
-        </div>
-      ))}
-    </div>
-  );
+/** The Access line: one line of totals over every grant set, or the empty arm. Dormant
+ *  counts what a declaration can prove dead — an archived app, an undeclared role. */
+function accessText(row: AgentRow): string {
+  const { apps, allowed, askFirst, dormant } = row.access;
+  if (apps === 0) return "no grants";
+  return `${apps} apps · ${allowed} allowed · ${askFirst} ask first · ${dormant} dormant`;
+}
 
 /** `N active · used <relative>` / `N active · never used` / `none` (§13). */
 function tokensCell(row: AgentRow, now: string): string {
@@ -39,27 +34,36 @@ function tokensCell(row: AgentRow, now: string): string {
   return `${row.tokens.active} active · ${used}`;
 }
 
+/** The chevron at the row's end — decoration for where the row goes; the anchor is the
+ *  thing that goes there, so this is hidden from anyone listing the page's links. */
+const Chevron: FC = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="m9 6 6 6-6 6" />
+  </svg>
+);
+
 const AgentRowView: FC<{ row: AgentRow; now: string }> = ({ row, now }) => (
-  <tr>
+  <tr class="agent-row">
     <td>
       <div class="cell-name mono">
-        <a href={paths.agentDetail(row.slug)}>{row.slug}</a>
+        {/* The row's link: stretched over the whole row by styles.css, no script. */}
+        <a class="row-link" href={paths.agentDetail(row.slug)}>
+          {row.slug}
+        </a>
       </div>
       {row.description === "" ? null : <div class="list-meta">{row.description}</div>}
     </td>
-    <td>
-      <GrantsCell row={row} />
-    </td>
+    <td class="cell-muted">{accessText(row)}</td>
     <td class="cell-muted">{tokensCell(row, now)}</td>
     <td class="cell-muted">{formatStamp(row.createdAt)}</td>
     <td class="cell-actions">
-      <a class="btn btn--ghost btn--sm" href={paths.agentDetail(row.slug)}>
-        View
-      </a>
       {/* Delete never mutates directly — it opens this page with the confirm dialog. */}
       <a class="btn btn--danger-outline btn--sm" href={paths.agentsConfirmDelete(row.slug)}>
         Delete
       </a>
+      <span class="row-chevron">
+        <Chevron />
+      </span>
     </td>
   </tr>
 );
@@ -92,7 +96,7 @@ export function AgentsPage(props: AgentsProps) {
         <div class="page-head">
           <div>
             <h1 class="page-title">Agents</h1>
-            <p class="page-subtitle">Identities that call your apps — each holds grants and tokens.</p>
+            <p class="page-subtitle">Identities that call your apps — each holds grants and keys.</p>
           </div>
           <a class="btn btn--primary" href={paths.agentNew}>
             New agent
@@ -113,7 +117,7 @@ export function AgentsPage(props: AgentsProps) {
               <thead>
                 <tr>
                   <th>Agent</th>
-                  <th>Grants</th>
+                  <th>Access</th>
                   <th>Tokens</th>
                   <th>Created</th>
                   <th></th>

@@ -43,8 +43,21 @@ import type {
   AgentNewProps,
   AgentRow,
   AgentsProps,
-  GrantEditorProps,
-  GrantEditorRow,
+  AgentActivityDetails,
+  AgentApprovalRow,
+  AgentCallRow,
+  AgentClientRow,
+  AgentCredentialsDetails,
+  AgentDetailsView,
+  AgentEndpointRow,
+  AgentGrantCard,
+  AgentHeader,
+  AgentListGroup,
+  AgentPaneView,
+  AgentRailEntry,
+  AgentTokenRow,
+  GrantChoice,
+  RowControl,
   AppNewProps,
   AppPromptRow,
   AppRailEntry,
@@ -2248,7 +2261,8 @@ const oauthConsent = {
  * PageName set, so a page without fixtures cannot compile.
  */
 /* ------------------------------------------------------------------ *
- * /agents, /agents/new, /agents/<slug> (§13, 2026-09-03 — the Agents / AgentDetail boards)
+ * /agents, /agents/new, /agents/<slug> (the Agents / AgentDetail /
+ * AgentDetailPanes / AgentDetailStates boards, 2026-09-16)
  * ------------------------------------------------------------------ */
 
 const agentRows: AgentRow[] = [
@@ -2257,10 +2271,7 @@ const agentRows: AgentRow[] = [
     name: "Claude",
     description: "Claude sessions",
     createdAt: ms("2026-08-12T09:00:00.000Z"),
-    grants: [
-      { app: "linear", roles: ["reader"] },
-      { app: "news", roles: ["reader", "admin"] },
-    ],
+    access: { apps: 3, allowed: 3, askFirst: 2, dormant: 1 },
     tokens: { active: 1, lastUsedAt: ms("2026-08-24T12:47:00.000Z") },
   },
   {
@@ -2268,13 +2279,21 @@ const agentRows: AgentRow[] = [
     name: "cron",
     description: "Scheduled jobs",
     createdAt: ms("2026-08-20T16:05:00.000Z"),
-    grants: [{ app: "news", roles: ["reader"] }],
+    access: { apps: 1, allowed: 1, askFirst: 0, dormant: 0 },
     tokens: { active: 1, lastUsedAt: null },
+  },
+  {
+    slug: "pi",
+    name: "pi",
+    description: "Raspberry Pi runner",
+    createdAt: ms("2026-09-01T08:00:00.000Z"),
+    access: { apps: 0, allowed: 0, askFirst: 0, dormant: 0 },
+    tokens: { active: 0, lastUsedAt: null },
   },
 ];
 
 const agents = {
-  /** The artboard: two agents, grants and keys. */
+  /** The artboard: three agents — one rich, one narrow, one holding nothing at all. */
   default: { ...shell("agents"), csrfToken: CSRF, agents: agentRows, confirm: null },
   /** A fresh namespace: the empty state and its New agent control. */
   empty: { ...shell("agents", 0), csrfToken: CSRF, agents: [], confirm: null },
@@ -2283,7 +2302,7 @@ const agents = {
     ...shell("agents"),
     csrfToken: CSRF,
     agents: agentRows,
-    confirm: { kind: "delete-agent" as const, row: agentRows[0] },
+    confirm: { kind: "delete-agent" as const, row: agentRows[0] as AgentRow },
   },
 } satisfies Record<string, AgentsProps>;
 
@@ -2298,157 +2317,803 @@ const agentNew = {
   },
 } satisfies Record<string, AgentNewProps>;
 
-const agentDetailBase: Omit<AgentDetailProps, "confirm" | "reveal"> = {
-  ...shell("agents"),
-  csrfToken: CSRF,
+/* ---------------------------- the agent page ---------------------------- */
+
+/** The header every agent-page fixture shares — one row on every pane, so no pane
+ *  contributes anything to it. */
+const agentHeader = (): AgentHeader => ({
   slug: "claude",
   name: "Claude",
   description: "Claude sessions",
   createdAt: ms("2026-08-12T09:00:00.000Z"),
-  grants: [
+  tiles: { apps: 3, allowed: 3, askFirst: 2, dormant: 1 },
+});
+
+/** The rail as every pane draws it: three apps (one archived, one asking first), the
+ *  grant step's count, and the agent's own three entries. `current` is per fixture. */
+const agentRail = (current: string): AgentRailEntry[] => [
+  {
+    href: "/agents/claude/apps/news",
+    label: "news",
+    group: "Apps",
+    current: current === "news",
+    marker: "",
+    warn: true,
+    dim: false,
+  },
+  {
+    href: "/agents/claude/apps/linear",
+    label: "linear",
+    group: "Apps",
+    current: current === "linear",
+    marker: "",
+    warn: false,
+    dim: false,
+  },
+  {
+    href: "/agents/claude/apps/home",
+    label: "home",
+    group: "Apps",
+    current: current === "home",
+    marker: DIMMED,
+    warn: false,
+    dim: true,
+  },
+  {
+    href: "/agents/claude/grant",
+    label: "+ Grant another app…",
+    group: "Apps",
+    current: current === "grant",
+    marker: "1",
+    warn: false,
+    dim: false,
+  },
+  {
+    href: "/agents/claude/credentials",
+    label: "Credentials",
+    group: "Agent",
+    current: current === "credentials",
+    marker: "1 · 1",
+    warn: false,
+    dim: false,
+  },
+  {
+    href: "/agents/claude/activity",
+    label: "Activity",
+    group: "Agent",
+    current: current === "activity",
+    marker: "2",
+    warn: true,
+    dim: false,
+  },
+  {
+    href: "/agents/claude/danger",
+    label: "Danger zone",
+    group: null,
+    current: current === "danger",
+    marker: "",
+    warn: false,
+    dim: false,
+  },
+];
+
+/** A row's control, spelled once: the field name is the page's own `e.<entry>`. */
+const seg = (entry: string, value: GrantChoice, implied: RowControl["implied"] = null, by: string[] = []): RowControl => ({
+  field: `e.${entry}`,
+  value,
+  implied,
+  impliedBy: by,
+});
+
+const rolesGroup: AgentListGroup = {
+  title: "Roles",
+  count: "4",
+  note: "declared by the app at connect",
+  state: null,
+  rows: [
     {
-      app: "linear",
-      appName: "Linear",
-      chips: [{ role: "reader", mode: "allow", builtin: false }],
+      kind: "role",
+      entry: "reader",
+      builtin: false,
+      detail: "tools get_news, search_.* · prompts digest_.* · matches 5",
+      sel: "role:reader",
+      control: seg("reader", "allow"),
     },
     {
-      app: "news",
-      appName: "News MCP",
-      chips: [
-        { role: "reader", mode: "allow", builtin: false },
-        { role: "admin", mode: "approval", builtin: false },
-      ],
+      kind: "role",
+      entry: "admin",
+      builtin: false,
+      detail: "tools admin_.* · matches 3",
+      sel: "role:admin",
+      control: seg("admin", "approval"),
+    },
+    {
+      kind: "role",
+      entry: "publisher",
+      builtin: false,
+      detail: "tools publish, delete_feed · matches 2",
+      sel: "role:publisher",
+      control: seg("publisher", "none"),
+    },
+    {
+      kind: "role",
+      entry: "all",
+      builtin: true,
+      detail: "every tool, prompt and resource, present and future · matches 15",
+      sel: "role:all",
+      control: seg("all", "none"),
     },
   ],
-  tokens: [
-    {
-      id: "tok_4kJk9fQ",
-      prefix: "pmcp_agt_4kJk…9fQ",
-      createdAt: ms("2026-08-12T09:00:00.000Z"),
-      expiresAt: ms("2026-11-10T09:00:00.000Z"),
-      lastUsedAt: ms("2026-08-24T12:47:00.000Z"),
-      expired: false,
-    },
-    {
-      id: "tok_2mQv8xT",
-      prefix: "pmcp_agt_2mQv…8xT",
-      createdAt: ms("2026-05-14T09:00:00.000Z"),
-      expiresAt: ms("2026-08-12T09:00:00.000Z"),
-      lastUsedAt: ms("2026-07-30T18:20:00.000Z"),
-      expired: true,
-    },
-  ],
-  clients: [{ id: "conn_9f2a", name: "Claude", origin: "https://claude.ai", revoked: false }],
-  // The one active app this agent holds nothing on — "Grant access to another app…".
-  grantable: [{ slug: "brand", name: "Brand assets" }],
 };
 
-const agentDetail = {
-  /** The artboard: grants on two apps, a live and an expired key, one bound client. */
-  default: { ...agentDetailBase, confirm: null, reveal: null },
-  /** A new agent: no grants, no keys, no client — the three empty arms and no clients card. */
-  fresh: {
-    ...agentDetailBase,
-    slug: "cron",
-    name: "cron",
-    description: "",
-    grants: [],
-    tokens: [],
-    clients: null,
-    confirm: null,
-    reveal: null,
+const toolsGroup: AgentListGroup = {
+  title: "Tools",
+  count: "5",
+  note: "3 reached · 2 not",
+  state: null,
+  rows: [
+    {
+      kind: "item",
+      entry: "tool/get_news",
+      name: "get_news",
+      description: "Latest items across all feeds",
+      via: ["reader"],
+      alsoVia: true,
+      noEffect: false,
+      sel: "tool:get_news",
+      control: seg("tool/get_news", "allow", "allow", ["reader"]),
+    },
+    {
+      kind: "item",
+      entry: "tool/search_feeds",
+      name: "search_feeds",
+      description: "Find feeds by name or URL",
+      via: ["reader"],
+      alsoVia: false,
+      noEffect: false,
+      sel: "tool:search_feeds",
+      control: seg("tool/search_feeds", "none", "allow", ["reader"]),
+    },
+    {
+      kind: "item",
+      entry: "tool/admin_purge_cache",
+      name: "admin_purge_cache",
+      description: "Drop cached items",
+      via: ["admin"],
+      alsoVia: false,
+      noEffect: false,
+      sel: "tool:admin_purge_cache",
+      control: seg("tool/admin_purge_cache", "none", "approval", ["admin"]),
+    },
+    {
+      kind: "item",
+      entry: "tool/publish",
+      name: "publish",
+      description: "Post an item to a feed",
+      via: [],
+      alsoVia: true,
+      noEffect: false,
+      sel: "tool:publish",
+      control: seg("tool/publish", "approval"),
+    },
+    {
+      kind: "item",
+      entry: "tool/subscribe",
+      name: "subscribe",
+      description: "Subscribe to a feed",
+      via: [],
+      alsoVia: false,
+      noEffect: false,
+      sel: "tool:subscribe",
+      control: seg("tool/subscribe", "none"),
+    },
+  ],
+};
+
+const promptsGroup: AgentListGroup = {
+  title: "Prompts",
+  count: "1",
+  note: "",
+  state: null,
+  rows: [
+    {
+      kind: "item",
+      entry: "prompt/digest_daily",
+      name: "digest_daily",
+      description: "Summarise the last 24 h",
+      via: ["reader"],
+      alsoVia: false,
+      noEffect: false,
+      sel: "prompt:digest_daily",
+      control: seg("prompt/digest_daily", "none", "allow", ["reader"]),
+    },
+  ],
+};
+
+const resourcesGroup: AgentListGroup = {
+  title: "Resources",
+  count: "2",
+  note: "matched by URI",
+  state: null,
+  rows: [
+    {
+      kind: "item",
+      entry: "resource/news://feed/hn",
+      name: "news://feed/hn",
+      description: "text/plain",
+      via: ["resource/news://feed/*"],
+      alsoVia: false,
+      noEffect: false,
+      sel: "resource:news://feed/hn",
+      control: seg("resource/news://feed/hn", "none", "allow", ["resource/news://feed/*"]),
+    },
+    {
+      kind: "item",
+      entry: "resource/news://config",
+      name: "news://config",
+      description: "application/json",
+      via: [],
+      alsoVia: false,
+      noEffect: false,
+      sel: "resource:news://config",
+      control: seg("resource/news://config", "none"),
+    },
+  ],
+};
+
+const patternsGroup: AgentListGroup = {
+  title: "Patterns",
+  count: "1",
+  note: "entries that are not one item",
+  state: null,
+  rows: [
+    {
+      kind: "pattern",
+      entry: "resource/news://feed/*",
+      detail: "matches 2 today",
+      dormant: false,
+      sel: "pattern:resource/news://feed/*",
+      control: seg("resource/news://feed/*", "allow"),
+    },
+  ],
+};
+
+const appGroups: AgentListGroup[] = [rolesGroup, toolsGroup, promptsGroup, resourcesGroup, patternsGroup];
+
+/** The details of `get_news` — the board's own selection, reached through a role. */
+const toolDetails: AgentDetailsView = {
+  kind: "item",
+  entry: "tool/get_news",
+  name: "get_news",
+  family: "tool",
+  description: "Latest items across all feeds",
+  standing: "allowed · via reader",
+  approval:
+    "Not asked — allow wins over any ask entry, so adding one here would not gate it while reader allows it.",
+  args: [{ name: "since", type: "string", required: false, hasDefault: false }],
+  hub: {
+    aggregated: "news_get_news",
+    reachableBy: "claude · via reader, cron · via reader",
+    redaction: "none",
   },
-  /** Right after Issue token: the once-only reveal above the table. */
-  issued: { ...agentDetailBase, confirm: null, reveal: "pmcp_agt_7QmFAKE0000000000000000000000000000" },
-  /** Dialogs "Revoke" and "Delete agent", each on the page's own URL. */
-  confirmRevoke: {
-    ...agentDetailBase,
-    confirm: { kind: "revoke-token" as const, id: "tok_4kJk9fQ", prefix: "pmcp_agt_4kJk…9fQ" },
-    reveal: null,
+};
+
+const noSelection: AgentDetailsView = {
+  kind: "none",
+  appName: "News MCP",
+  appKind: "tunnel",
+  catalog: {
+    tools: { reached: 3, total: 5, approval: 1 },
+    prompts: { reached: 1, total: 1, approval: 0 },
+    resources: { reached: 1, total: 2, approval: 0 },
+    roles: ["reader", "admin", "publisher"],
   },
-  confirmDelete: { ...agentDetailBase, confirm: { kind: "delete-agent" as const }, reveal: null },
-  /** Every active app already granted: the chooser is not drawn at all. */
-  everywhere: { ...agentDetailBase, grantable: [], confirm: null, reveal: null },
-} satisfies Record<string, AgentDetailProps>;
+  allowed: ["reader", "tool/get_news", "resource/news://feed/*"],
+  askFirst: ["admin", "tool/publish"],
+};
 
-/* ------------------------------------------------------------------ *
- * /agents/<slug>/grants/<app> (§13, 2026-09-03 — the GrantEditorStates board)
- * ------------------------------------------------------------------ */
-
-/** The built-in row every editor ends on — never declared, always last (§13). */
-const builtinRow: GrantEditorRow = { role: "all", patterns: null, builtin: true, undeclared: false, choice: "none" };
-
-const grantEditorBase: Omit<GrantEditorProps, "rows" | "kind" | "declaresNothing" | "error"> = {
-  ...shell("agents"),
-  csrfToken: CSRF,
-  agent: "claude",
+/** The app pane, as every one of its states starts from. */
+const appPane = (over: Partial<Extract<AgentPaneView, { kind: "app" }>> = {}): AgentPaneView => ({
+  kind: "app",
   app: "news",
   appName: "News MCP",
-};
+  appKind: "tunnel",
+  status: "online",
+  newGrant: false,
+  reach: {
+    tools: { reached: 3, total: 5, approval: 1 },
+    prompts: { reached: 1, total: 1, approval: 0 },
+    resources: { reached: 1, total: 2, approval: 0 },
+  },
+  q: "",
+  groups: appGroups,
+  offer: null,
+  nothingMatches: false,
+  saved: { allow: 3, approval: 2 },
+  carry: [],
+  details: toolDetails,
+  error: null,
+  ...over,
+});
 
-const grantEditor = {
-  /** The artboard: three declared roles, two of them held, and the built-in. */
-  default: {
-    ...grantEditorBase,
-    kind: "tunnel" as const,
-    rows: [
-      { role: "reader", patterns: ["news_.*", "search"], builtin: false, undeclared: false, choice: "allow" as const },
-      { role: "admin", patterns: ["news_admin_.*"], builtin: false, undeclared: false, choice: "approval" as const },
-      { role: "search", patterns: { tools: ["search"], prompts: ["digest"] }, builtin: false, undeclared: false, choice: "none" as const },
-      builtinRow,
-    ],
-    declaresNothing: false,
-    error: null,
+const agentTokenRows: AgentTokenRow[] = [
+  {
+    id: "tok_4kJk9fQ",
+    prefix: "pmcp_agt_4kJk…9fQ",
+    createdAt: ms("2026-08-12T09:00:00.000Z"),
+    expiresAt: ms("2026-11-10T09:00:00.000Z"),
+    lastUsedAt: ms("2026-08-24T12:47:00.000Z"),
+    expired: false,
   },
-  /** A held role the TUNNELED app has not declared: a warning, and Save still works. */
-  undeclaredTunnel: {
-    ...grantEditorBase,
-    kind: "tunnel" as const,
-    rows: [
-      { role: "reader", patterns: ["news_.*", "search"], builtin: false, undeclared: false, choice: "allow" as const },
-      { role: "triage", patterns: null, builtin: false, undeclared: true, choice: "allow" as const },
-      builtinRow,
-    ],
-    declaresNothing: false,
-    error: null,
+  {
+    id: "tok_2mQv8xT",
+    prefix: "pmcp_agt_2mQv…8xT",
+    createdAt: ms("2026-05-14T09:00:00.000Z"),
+    expiresAt: ms("2026-08-12T09:00:00.000Z"),
+    lastUsedAt: ms("2026-07-30T18:20:00.000Z"),
+    expired: true,
   },
-  /** The same shape on a PROXIED app: an error, and grant_set will refuse the save. */
-  undeclaredProxy: {
-    ...grantEditorBase,
+];
+
+const agentClientRows: AgentClientRow[] = [
+  {
+    id: "conn_9f2a",
+    name: "Claude",
+    origin: "https://claude.ai",
+    revoked: false,
+    createdAt: ms("2026-08-14T10:00:00.000Z"),
+    lastUsedAt: ms("2026-08-24T12:47:00.000Z"),
+    selfRegistered: false,
+  },
+];
+
+const credentialsPane = (details: AgentCredentialsDetails, issuedId: string | null = null): AgentPaneView => ({
+  kind: "credentials",
+  tokens: agentTokenRows,
+  clients: agentClientRows,
+  issuedId,
+  details,
+});
+
+const waitingRows: AgentApprovalRow[] = [
+  {
+    id: "apr_01",
+    app: "news",
+    tool: "admin_purge_cache",
+    args: '{"scope":"feeds","older_than":"7d"}',
+    createdAt: "2026-08-24T14:35:00.000Z",
+    expiresAt: "2026-08-24T15:35:00.000Z",
+    status: "pending",
+    sel: "approval:apr_01",
+  },
+  {
+    id: "apr_02",
+    app: "news",
+    tool: "admin_reindex",
+    args: '{"feed":"hn"}',
+    createdAt: "2026-08-24T14:06:00.000Z",
+    expiresAt: "2026-08-24T15:06:00.000Z",
+    status: "pending",
+    sel: "approval:apr_02",
+  },
+  /** Decided from this pane a moment ago: it stays listed, dimmed, wearing its status —
+   *  the count above it is the two still waiting, not this list's length. */
+  {
+    id: "apr_03",
     app: "linear",
-    appName: "Linear",
-    kind: "proxy" as const,
-    rows: [
-      { role: "reader", patterns: ["linear_.*"], builtin: false, undeclared: false, choice: "allow" as const },
-      { role: "triage", patterns: null, builtin: false, undeclared: true, choice: "allow" as const },
-      builtinRow,
-    ],
-    declaresNothing: false,
-    error: null,
+    tool: "close_issue",
+    args: '{"id":"ENG-41"}',
+    createdAt: "2026-08-24T13:12:00.000Z",
+    expiresAt: "2026-08-24T14:12:00.000Z",
+    status: "approved",
+    sel: "approval:apr_03",
   },
-  /** That save, refused: the editor redrawn on the choices that caused it. */
-  refused: {
-    ...grantEditorBase,
+];
+
+const callRows: AgentCallRow[] = [
+  {
+    id: 4101,
     app: "linear",
-    appName: "Linear",
-    kind: "proxy" as const,
-    rows: [
-      { role: "reader", patterns: ["linear_.*"], builtin: false, undeclared: false, choice: "allow" as const },
-      { role: "triage", patterns: null, builtin: false, undeclared: true, choice: "allow" as const },
-      builtinRow,
-    ],
-    declaresNothing: false,
-    error: 'names "triage", which this app does not declare',
+    tool: "list_issues",
+    ts: ms("2026-08-24T12:47:00.000Z"),
+    durationMs: 412,
+    outcome: "ok",
+    sel: "call:4101",
   },
-  /** An app that has declared nothing yet: the sentence, above `all` alone. */
-  nothingDeclared: {
-    ...grantEditorBase,
-    kind: "tunnel" as const,
-    rows: [builtinRow],
-    declaresNothing: true,
-    error: null,
+  {
+    id: 4102,
+    app: "news",
+    tool: "search_items",
+    ts: ms("2026-08-24T12:40:00.000Z"),
+    durationMs: 88,
+    outcome: "ok",
+    sel: "call:4102",
   },
-} satisfies Record<string, GrantEditorProps>;
+  {
+    id: 4103,
+    app: "news",
+    tool: "admin_purge_cache",
+    ts: ms("2026-08-24T11:47:00.000Z"),
+    durationMs: 6,
+    outcome: "approval required",
+    sel: "call:4103",
+  },
+];
+
+/** A full page of the walk: twenty rows, so the Load-more foot has a page to sit under. */
+const pagedCalls: AgentCallRow[] = Array.from({ length: 20 }, (_unused, index) => ({
+  id: 4200 + index,
+  app: index % 3 === 0 ? "linear" : "news",
+  tool: index % 3 === 0 ? "list_issues" : "search_items",
+  ts: ms("2026-08-24T12:40:00.000Z") - index * HOUR,
+  durationMs: 40 + index,
+  outcome: "ok",
+  sel: `call:${4200 + index}`,
+}));
+
+const activityPane = (details: AgentActivityDetails, over: Partial<Extract<AgentPaneView, { kind: "activity" }>> = {}): AgentPaneView => ({
+  kind: "activity",
+  summary: { calls: 3, ok: 2, denied: 0, pending: 2 },
+  requests: waitingRows,
+  calls: callRows,
+  moreHref: null,
+  details,
+  ...over,
+});
+
+const grantEndpoints = [
+  { family: "tool", name: "list_prs", description: "Open pull requests", roles: ["reader"] },
+  { family: "tool", name: "get_pr", description: "One pull request", roles: ["reader"] },
+  { family: "tool", name: "merge_pr", description: "Merge a pull request", roles: [] },
+  { family: "tool", name: "create_issue", description: "Open an issue", roles: [] },
+];
+
+const grantCard = (over: Partial<AgentGrantCard> = {}): AgentGrantCard => ({
+  slug: "gh",
+  name: "GitHub",
+  kind: "proxy",
+  status: "connected",
+  description: "Repositories, pull requests and issues over the GitHub MCP",
+  counts: "",
+  roles: ["reader"],
+  toggle: "show endpoints",
+  open: false,
+  endpoints: [],
+  ...over,
+});
+
+/** One fixture's whole props, so each entry below says only what makes it that state. */
+const agentPage = (
+  rail: string,
+  pane: AgentPaneView,
+  over: Partial<AgentDetailProps> = {},
+): AgentDetailProps => ({
+  ...shell("agents"),
+  csrfToken: CSRF,
+  header: agentHeader(),
+  rail: agentRail(rail),
+  pane,
+  confirm: null,
+  reveal: null,
+  ...over,
+});
+
+const agentDetail = {
+  /** The artboard: the `news` pane with `get_news` selected, reached through `reader`. */
+  default: agentPage("news", appPane()),
+  /** A role selected: its patterns, what they match today, and the widening note. */
+  roleSelected: agentPage(
+    "news",
+    appPane({
+      details: {
+        kind: "role",
+        entry: "reader",
+        builtin: false,
+        source: "Declared by News MCP at connect.",
+        standing: "allow",
+        patterns: [
+          ["tools", ["get_news", "search_.*"]],
+          ["prompts", ["digest_.*"]],
+        ],
+        matches: [
+          ["tools", ["get_news", "search_feeds"]],
+          ["prompts", ["digest_daily"]],
+          ["resources", []],
+        ],
+      },
+    }),
+  ),
+  /** A pattern entry selected: what it matches today, by name. */
+  patternSelected: agentPage(
+    "news",
+    appPane({
+      details: {
+        kind: "pattern",
+        entry: "resource/news://feed/*",
+        standing: "allow",
+        matches: ["news://feed/hn", "news://feed/lobsters"],
+      },
+    }),
+  ),
+  /** A resource selected: no arguments and no hub block — neither is a resource's. */
+  resourceSelected: agentPage(
+    "news",
+    appPane({
+      details: {
+        kind: "item",
+        entry: "resource/news://config",
+        name: "news://config",
+        family: "resource",
+        description: "application/json",
+        standing: "not reachable",
+        approval: "—",
+        args: null,
+        hub: null,
+      },
+    }),
+  ),
+  /** Typed text that is not one name: offered as a pattern entry, with Ask / Allow. */
+  filterOffer: agentPage(
+    "news",
+    appPane({
+      q: "admin_*",
+      groups: [toolsGroup],
+      offer: { entry: "tool/admin_*", detail: "would match 3 today, and any added later" },
+      details: noSelection,
+    }),
+  ),
+  /** A filter nothing answers: the patterns stay, everything else goes. */
+  filterNothing: agentPage(
+    "news",
+    appPane({
+      q: "zzz",
+      groups: [patternsGroup],
+      nothingMatches: true,
+      details: noSelection,
+    }),
+  ),
+  /** Straight after Grant on the grant step: an empty set, the dashed badge. */
+  newGrant: agentPage(
+    "gh",
+    appPane({
+      app: "gh",
+      appName: "GitHub",
+      appKind: "proxy",
+      status: "connected",
+      newGrant: true,
+      reach: {
+        tools: { reached: 0, total: 4, approval: 0 },
+        prompts: { reached: 0, total: 0, approval: 0 },
+        resources: { reached: 0, total: 0, approval: 0 },
+      },
+      groups: [],
+      saved: { allow: 0, approval: 0 },
+      details: {
+        kind: "none",
+        appName: "GitHub",
+        appKind: "proxy",
+        catalog: {
+          tools: { reached: 0, total: 4, approval: 0 },
+          prompts: { reached: 0, total: 0, approval: 0 },
+          resources: { reached: 0, total: 0, approval: 0 },
+          roles: ["reader"],
+        },
+        allowed: [],
+        askFirst: [],
+      },
+    }),
+  ),
+  /** Remove from claude, confirming: the dialog whose form clears the whole set. */
+  confirmRemove: agentPage("news", appPane(), { confirm: { kind: "remove-app", app: "news" } }),
+  /** A held role the app has not declared: kept, badged, removable by its own ×. */
+  undeclaredRole: agentPage(
+    "news",
+    appPane({
+      groups: [
+        rolesGroup,
+        { title: "", count: "", note: "", state: null, rows: [{ kind: "undeclared", entry: "editor", standing: "allow" }] },
+        toolsGroup,
+      ],
+      details: noSelection,
+    }),
+  ),
+  /** A direct ask under a role that allows: allow wins, so the entry is badged. */
+  noEffect: agentPage(
+    "news",
+    appPane({
+      groups: [
+        {
+          ...toolsGroup,
+          rows: [
+            {
+              kind: "item",
+              entry: "tool/get_news",
+              name: "get_news",
+              description: "Latest items across all feeds",
+              via: ["reader"],
+              alsoVia: true,
+              noEffect: true,
+              sel: "tool:get_news",
+              control: seg("tool/get_news", "approval", "allow", ["reader"]),
+            },
+          ],
+        },
+      ],
+      details: noSelection,
+    }),
+  ),
+  /** A tunneled app that has never connected: one note line in place of every family. */
+  unconnected: agentPage(
+    "home",
+    appPane({
+      app: "home",
+      appName: "Home Assistant",
+      status: "offline",
+      reach: {
+        tools: { reached: 0, total: 0, approval: 0 },
+        prompts: { reached: 0, total: 0, approval: 0 },
+        resources: { reached: 0, total: 0, approval: 0 },
+      },
+      groups: [
+        {
+          title: "Tools",
+          count: "",
+          note: "",
+          state: "home has not connected yet — nothing to list until it does.",
+          rows: [],
+        },
+      ],
+      saved: { allow: 0, approval: 1 },
+      details: {
+        kind: "none",
+        appName: "Home Assistant",
+        appKind: "tunnel",
+        catalog: {
+          tools: { reached: 0, total: 0, approval: 0 },
+          prompts: { reached: 0, total: 0, approval: 0 },
+          resources: { reached: 0, total: 0, approval: 0 },
+          roles: [],
+        },
+        allowed: [],
+        askFirst: ["lights"],
+      },
+    }),
+  ),
+  /** A refused save: the reason above the listing, the submitted choices still there. */
+  refused: agentPage(
+    "news",
+    appPane({
+      error: '"roles" entry "tool/(" is not a valid pattern',
+      details: noSelection,
+    }),
+  ),
+
+  /** The grant step: one card per active app the agent holds nothing on. */
+  grant: agentPage("grant", { kind: "grant", q: "", cards: [grantCard()], total: 1 }),
+  /** `?show=gh`: the endpoint list and the roles that grant each one. */
+  grantShowAll: agentPage("grant", {
+    kind: "grant",
+    q: "",
+    cards: [grantCard({ open: true, toggle: "hide", counts: "4 tools", endpoints: grantEndpoints })],
+    total: 1,
+  }),
+  /** A search that matched inside a card: it opens, showing only what matched. */
+  grantSearch: agentPage("grant", {
+    kind: "grant",
+    q: "merge",
+    cards: [grantCard({ open: true, toggle: "hide", counts: "4 tools", endpoints: [grantEndpoints[2] as AgentEndpointRow] })],
+    total: 1,
+  }),
+  /** Every active app already granted: the sentence, and no card at all. */
+  grantEverywhere: agentPage("grant", { kind: "grant", q: "", cards: [], total: 0 }),
+
+  /** Credentials with nothing selected: the summary card. */
+  credentials: agentPage("credentials", credentialsPane({ kind: "none", tokens: 2, clients: 1 })),
+  /** A live key selected: what it carries, and the agent's own recent calls. */
+  credentialsTokenSelected: agentPage(
+    "credentials",
+    credentialsPane({
+      kind: "token",
+      row: agentTokenRows[0] as AgentTokenRow,
+      recent: [
+        { ts: ms("2026-08-24T12:47:00.000Z"), app: "linear", tool: "list_issues" },
+        { ts: ms("2026-08-24T12:40:00.000Z"), app: "news", tool: "search_items" },
+        { ts: ms("2026-08-24T11:47:00.000Z"), app: "news", tool: "admin_purge_cache" },
+      ],
+    }),
+  ),
+  /** Right after Issue token: the once-only reveal, and the row marked `new`. */
+  credentialsIssued: agentPage(
+    "credentials",
+    credentialsPane({ kind: "none", tokens: 2, clients: 1 }, "tok_4kJk9fQ"),
+    { reveal: "pmcp_agt_7QmFAKE0000000000000000000000000000" },
+  ),
+  /** An expired key selected: the row's verb reads Remove, not Revoke. */
+  credentialsExpiredSelected: agentPage(
+    "credentials",
+    credentialsPane({ kind: "token", row: agentTokenRows[1] as AgentTokenRow, recent: [] }),
+  ),
+  /** Revoke, confirming. */
+  credentialsConfirmRevoke: agentPage(
+    "credentials",
+    credentialsPane({ kind: "none", tokens: 2, clients: 1 }),
+    { confirm: { kind: "revoke-token", id: "tok_4kJk9fQ", prefix: "pmcp_agt_4kJk…9fQ" } },
+  ),
+  /** Remove, on the expired one — the same op, said the way an expired key deserves. */
+  credentialsConfirmRemoveExpired: agentPage(
+    "credentials",
+    credentialsPane({ kind: "none", tokens: 2, clients: 1 }),
+    {
+      confirm: {
+        kind: "remove-token",
+        id: "tok_2mQv8xT",
+        prefix: "pmcp_agt_2mQv…8xT",
+        expiresAt: ms("2026-08-12T09:00:00.000Z"),
+      },
+    },
+  ),
+  /** The OAuth client selected: read-only, pointing at the pane that revokes. */
+  credentialsClientSelected: agentPage(
+    "credentials",
+    credentialsPane({ kind: "client", row: agentClientRows[0] as AgentClientRow }),
+  ),
+
+  /** Activity with nothing selected: the seven-day summary. */
+  activity: agentPage("activity", activityPane({ kind: "none", calls: 3, ok: 2, denied: 0, pending: 2 })),
+  /** A waiting request selected: its arguments, why it waits, and the two buttons. */
+  activityApprovalSelected: agentPage(
+    "activity",
+    activityPane({
+      kind: "approval",
+      row: waitingRows[0] as AgentApprovalRow,
+      why: "admin is in Ask first on news",
+    }),
+  ),
+  /** A refused call: no bodies were ever recorded, and the pane says why. */
+  activityCallRefused: agentPage(
+    "activity",
+    activityPane({
+      kind: "call",
+      row: callRows[2] as AgentCallRow,
+      noBodies: "refused",
+      args: null,
+      result: null,
+    }),
+  ),
+  /** A call that ran: arguments and result, both post-redaction. */
+  activityCallOk: agentPage(
+    "activity",
+    activityPane({
+      kind: "call",
+      row: callRows[1] as AgentCallRow,
+      noBodies: null,
+      args: '{\n  "query": "cloudflare outage",\n  "cookie": "‹redacted›"\n}',
+      result: '{\n  "items": [\n    { "id": "hn-1", "title": "Cloudflare restores service" }\n  ]\n}',
+    }),
+  ),
+
+  /** A full page with more behind it: the Load-more row and what it does not know. */
+  activityPaged: agentPage(
+    "activity",
+    activityPane({ kind: "none", calls: 20, ok: 20, denied: 0, pending: 2 }, {
+      summary: { calls: 20, ok: 20, denied: 0, pending: 2 },
+      calls: pagedCalls,
+      moreHref: "/agents/claude/activity?calls=40",
+    }),
+  ),
+  /** The last page of a walked week: no link, and the sentence that says why. */
+  activityEnd: agentPage(
+    "activity",
+    activityPane({ kind: "none", calls: 23, ok: 22, denied: 0, pending: 2 }, {
+      summary: { calls: 23, ok: 22, denied: 0, pending: 2 },
+      calls: [...pagedCalls, ...callRows],
+      moreHref: null,
+    }),
+  ),
+
+  /** The danger zone: the delete card, and what deletion removes. */
+  danger: agentPage("danger", { kind: "danger", grants: 3, tokens: 2, clients: 1 }),
+} satisfies Record<string, AgentDetailProps>;
 
 export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsByName[K]> } = {
   login,
@@ -2460,7 +3125,6 @@ export const fixtures: { [K in keyof PagePropsByName]: Record<string, PagePropsB
   agents,
   "agent-detail": agentDetail,
   "agent-new": agentNew,
-  "grant-editor": grantEditor,
   approvals,
   "approval-detail": approvalDetail,
   audit,

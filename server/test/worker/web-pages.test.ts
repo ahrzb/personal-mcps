@@ -2603,12 +2603,19 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(textOf(await page(paths.agentDetail(slug)))).toContain(slug);
   });
 
-  it(`§13 · /agents/<slug> renders the FIRST app in slug order the agent holds a grant on, in place and under its own URL — the breadcrumb "Agents / <slug>", the slug, an agent badge, the name when it differs, the description, Created and the tiles "N apps · A allow · K ask first · D dormant" — with no alias URL for that pane · an agent holding no grant lands on the grant step, in place (the twin)`, async () => {
+  it(`§13 · /agents/<slug> renders the FIRST app in slug order the agent holds a grant on, in place and under its own URL — the title row reading "Agents › <slug>", Agents a link to /agents in that same row and no agent badge anywhere in the header, then the name when it differs, the description, Created and the tiles "N apps · A allow · K ask first · D dormant" — with no alias URL for that pane · an agent holding no grant lands on the grant step, in place (the twin)`, async () => {
     const { cookie } = await withAgentPanes();
     const html = await page(paths.agentDetail("claude"), cookie);
     const text = textOf(html);
-    expect(text).toContain("Agents / claude");
-    expect(text).toMatch(/claude\s+agent/);
+
+    // The crumb IS the title row: the link, the ›, and the slug in one row — never a line
+    // of its own above it, and never carrying the app or pane the page happens to render.
+    const header = html.slice(html.indexOf("<main"), html.indexOf("<nav", html.indexOf("<main")));
+    expect(textOf(header)).toContain("Agents › claude");
+    expect(header).toMatch(/<a[^>]*href="\/agents"[^>]*>Agents<\/a>[\s\S]{0,60}›[\s\S]{0,60}<h1[^>]*>claude<\/h1>/);
+    // The badge is gone: `agent` as a word of its own appears nowhere in the header
+    // (`Agents` is the crumb, and the lookahead is what keeps the two apart).
+    expect(textOf(header)).not.toMatch(/(?<!\w)agent(?!\w)/);
     expect(text).toContain("Claude");
     expect(text).toContain("Claude sessions");
     expect(text).toContain("Created");
@@ -2880,7 +2887,51 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(details).toContain(`href="${paths.audit}?expand=${refused.id}#event-${refused.id}"`);
   });
 
-  it.todo(`§13/§15 · /agents/<slug>/activity pages the trail — Recent calls draws the newest twenty over a "Load 20 more" row that is a plain link carrying ?calls=<n+20> and reads "<remaining> older in the last 7 days · everything before that is in Audit" (Audit linking /audit?principal=agent:<slug>), and under ?calls=<n> the list draws n rows with the summary counting over the rows shown, "last N calls · ok · denied · K awaiting approval" · a week the list has exhausted reads "That is the whole week — older calls are in Audit." (the twin)`);
+  it(`§13/§15 · /agents/<slug>/activity pages the trail — Recent calls draws the newest twenty over a "Load 20 more" row that is a plain link carrying ?calls=<n+20> and reads "<remaining> older in the last 7 days · everything before that is in Audit" (Audit linking /audit?principal=agent:<slug>), and under ?calls=<n> the list draws n rows with the summary counting over the rows shown, "last N calls · ok · denied · K awaiting approval" · a week the list has exhausted reads "That is the whole week — older calls are in Audit." (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel" }],
+      agents: [{ slug: "agent", grants: { news: [{ role: "all", mode: "approval" }] } }],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    await openApproval(ns, "news");
+    // Twenty-five calls, oldest first — the two refusals among the OLDEST, so a page that
+    // shows twenty of them counts differently from one that shows all twenty-five, which
+    // is what "counts what is shown" means and what a total over the week would not.
+    for (let at = 0; at < 25; at++) {
+      await record(env.DB, {
+        ownerId: ns.owner.userId,
+        principal: "agent:agent",
+        event: "tools/call",
+        app: "news",
+        tool: `paged-${at}`,
+        outcome: at < 2 ? "-32001" : "ok",
+        durationMs: 5,
+      });
+    }
+    const pane = paths.agentPane("agent", "activity");
+    const html = await page(pane, session.cookie);
+    const text = textOf(html);
+
+    // Twenty rows, newest first: the newest is there, the twentieth is there, the
+    // twenty-first is not — and the summary counts those twenty.
+    expect(text).toContain("paged-24");
+    expect(text).toContain("paged-5");
+    expect(text).not.toContain("paged-4");
+    expect(text).toContain("last 20 calls · 20 ok · 0 denied · 1 awaiting approval");
+
+    // The next page is a plain LINK, so scripting off pages one reload at a time.
+    expect(linkTexts(html, `${pane}?calls=40`)).toContain("Load 20 more");
+    expect(text).toContain("more older calls in the last 7 days · everything before that is in Audit");
+    expect(html).toContain(`href="${paths.audit}?principal=agent:agent"`);
+
+    // The twin: a week the list has exhausted offers no next page, and says so.
+    const all = await page(`${pane}?calls=40`, session.cookie);
+    const shown = textOf(all);
+    expect(shown).toContain("paged-0");
+    expect(shown).toContain("last 25 calls · 23 ok · 2 denied · 1 awaiting approval");
+    expect(shown).toContain("That is the whole week — older calls are in Audit.");
+    expect(links(all, `${pane}?calls=60`)).toBe(false);
+  });
 
   it(`§13 · /agents/<slug>/danger draws the Delete agent card over "Deleting an agent deletes its tokens, revokes its clients and removes its grants everywhere. This cannot be undone.", whose Delete <agent> opens the same ?confirm=delete-agent dialog the list draws and lands on /agents with the notice · every other mutation an agent pane fronts lands back on its own pane (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {

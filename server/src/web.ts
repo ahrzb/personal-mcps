@@ -36,8 +36,8 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { ops } from "./admin";
 import type { AdminOp } from "./admin";
-import { APP_PANES } from "./app-routes";
-import type { AppPane } from "./app-routes";
+import { AGENT_PANES, APP_PANES } from "./app-routes";
+import type { AgentPane, AppPane } from "./app-routes";
 import type { PushSubscriptionJson } from "./approvals";
 import { exportJsonl, record } from "./audit";
 import { HubError } from "./errors";
@@ -61,7 +61,6 @@ import { AppsPage } from "./pages/apps";
 import { AgentsPage } from "./pages/agents";
 import { AgentDetailPage } from "./pages/agent-detail";
 import { AgentNewPage } from "./pages/agent-new";
-import { GrantEditorPage } from "./pages/grant-editor";
 import {
   settingsProps,
   approvalDetailProps,
@@ -89,7 +88,6 @@ import {
   agentDetailProps,
   composeRoles,
   grantChoicesOf,
-  grantEditorProps,
 } from "./pages/model";
 import { ICON_192, ICON_512 } from "./pages/icon";
 import type {
@@ -819,6 +817,9 @@ export function pageRoutes(): PageRouter {
     }),
   );
 
+  // The landing render: `/agents/<slug>` draws the first app in slug order the agent
+  // holds a grant on (the grant step when it holds none), IN PLACE — the loader resolves
+  // which, because no alias URL may exist for a landing pane (§13).
   app.get("/agents/:slug", async (c) => {
     const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
     const props = await agentDetailProps(ctx, c.req.param("slug") ?? "");
@@ -826,8 +827,58 @@ export function pageRoutes(): PageRouter {
     return render(AgentDetailPage(props));
   });
 
-  // Issue token on the agent page: the same 200-in-place reveal the app page's Issue
-  // answers with, for the same reason (§15 — a plaintext key never rides a URL).
+  // The two URLs the 2026-09-03 editor lived at, moved for good: 301 rather than 302,
+  // because the page they named is gone and a bookmark should stop coming back here.
+  // Mounted ahead of the pane route so `grants` never reads as a pane segment.
+  app.get("/agents/:slug/grants", (c) => c.redirect(paths.agentPane(c.req.param("slug") ?? "", "grant"), 301));
+  app.get("/agents/:slug/grants/:app", (c) =>
+    c.redirect(paths.agentApp(c.req.param("slug") ?? "", c.req.param("app") ?? ""), 301),
+  );
+
+  // One (agent × app) pair's pane. Two segments rather than one, because this is the only
+  // pane carrying an argument — which is also why it is not in `AGENT_PANES`.
+  app.get("/agents/:slug/apps/:app", async (c) => {
+    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
+    const props = await agentDetailProps(ctx, c.req.param("slug") ?? "", {
+      pane: "app",
+      app: c.req.param("app") ?? "",
+    });
+    if (props === null) return noSuchPage();
+    return render(AgentDetailPage(props));
+  });
+
+  // Save — the ONE page form whose fields are not the op's keys: `roles` is a list
+  // `stringList` takes only as an array, so this route composes it from the per-row
+  // controls and calls the handler itself, the way the Issue target does rather than the
+  // generic dispatch. A refusal (a proxied app's undeclared role §9, an uncompilable
+  // pattern §1) redraws the pane on the very choices that caused it — never a redirect,
+  // or they would be lost. `clear=1` is Remove from <agent>: the same op with nothing to
+  // compose, which lands on the agent page because the pane it came from is now empty.
+  app.post(
+    `/agents/:slug/apps/:app/${GRANT_SET}`,
+    mutation(async (c, session, form) => {
+      const agent = c.req.param("slug") ?? "";
+      const target = c.req.param("app") ?? "";
+      const fields = formFields(form);
+      const cleared = fields.clear === "1";
+      const choices = cleared ? {} : grantChoicesOf(fields);
+      const saved = await attempt(() =>
+        ops[GRANT_SET].handler(session.user.userId, { agent, app: target, roles: composeRoles(choices) }),
+      );
+      if (!("reason" in saved)) {
+        const back = cleared ? paths.agentDetail(agent) : paths.agentApp(agent, target);
+        return c.redirect(noticeUrl(back, GRANT_SET, saved), 303);
+      }
+      const ctx = await context(c.req.raw, session);
+      const props = await agentDetailProps(ctx, agent, { pane: "app", app: target }, { choices, error: saved.reason });
+      if (props === null) return noSuchPage();
+      return render(AgentDetailPage(props), 400);
+    }),
+  );
+
+  // Issue token on the Credentials pane: the same 200-in-place reveal the app page's
+  // Issue answers with, for the same reason (§15 — a plaintext key never rides a URL).
+  // Mounted ahead of the generic pane route, which would otherwise claim the segment.
   app.post(
     `/agents/:slug/${TOKEN_ISSUE}`,
     mutation(async (c, session, form) => {
@@ -835,67 +886,45 @@ export function pageRoutes(): PageRouter {
       const minted = await attempt(() =>
         ops[TOKEN_ISSUE].handler(session.user.userId, { ...queryFields(c.req.raw), ...formFields(form) }),
       );
-      if ("reason" in minted) return c.redirect(noticeUrl(paths.agentDetail(slug), TOKEN_ISSUE, minted), 303);
+      const back = paths.agentPane(slug, "credentials");
+      if ("reason" in minted) return c.redirect(noticeUrl(back, TOKEN_ISSUE, minted), 303);
       const ctx = await context(c.req.raw, session);
-      const props = await agentDetailProps(ctx, slug);
+      const props = await agentDetailProps(ctx, slug, { pane: "credentials" });
       if (props === null) return noSuchPage();
       return render(AgentDetailPage({ ...props, reveal: tokenOf(minted.value) }));
     }),
   );
 
-  /* ------------------- /agents/<slug>/grants/<app> ------------------------ */
-  //
-  // §13's (agent × app) editor. Mounted ahead of the generic `/agents/:slug/:op`
-  // dispatcher for clarity only — these paths are a segment longer and match nothing it
-  // claims.
-
-  // The agent page's "Grant access to another app…" is a GET form, so the pair it names
-  // arrives as a query; this is what turns that into the pair's own URL, which is what
-  // makes the control work with scripting off. A submission naming no app goes back.
-  app.get("/agents/:slug/grants", async (c) => {
-    await requireOwnerSession(c.req.raw);
-    const slug = c.req.param("slug") ?? "";
-    const chosen = new URL(c.req.url).searchParams.get("app") ?? "";
-    return c.redirect(chosen === "" ? paths.agentDetail(slug) : paths.agentGrants(slug, chosen), 303);
-  });
-
-  app.get("/agents/:slug/grants/:app", async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    const props = await grantEditorProps(ctx, c.req.param("slug") ?? "", c.req.param("app") ?? "");
-    if (props === null) return noSuchPage();
-    return render(GrantEditorPage(props));
-  });
-
-  // Save — §13's ONE page form whose fields are not the op's keys: `roles` is a list
-  // `stringList` takes only as an array, so this route composes it from the per-row
-  // controls and calls the handler itself, the way the Issue target does rather than the
-  // generic dispatch. A refusal (a proxied app's undeclared role, §9) redraws the editor
-  // on the very choices that caused it — never a redirect, or they would be lost.
+  // Every other mutation an agent pane renders, through the same generic dispatch /agents'
+  // own mutations ride — and back to the pane that drew the form. Delete is the one that
+  // cannot go back: the page it came from is the 404 §13 pins, so it lands on the list.
   app.post(
-    `/agents/:slug/grants/:app/${GRANT_SET}`,
-    mutation(async (c, session, form) => {
-      const agent = c.req.param("slug") ?? "";
-      const target = c.req.param("app") ?? "";
-      const choices = grantChoicesOf(formFields(form));
-      const saved = await attempt(() =>
-        ops[GRANT_SET].handler(session.user.userId, { agent, app: target, roles: composeRoles(choices) }),
-      );
-      if (!("reason" in saved)) {
-        return c.redirect(noticeUrl(paths.agentDetail(agent), GRANT_SET, saved), 303);
-      }
-      const ctx = await context(c.req.raw, session);
-      const props = await grantEditorProps(ctx, agent, target, { choices, error: saved.reason });
-      if (props === null) return noSuchPage();
-      return render(GrantEditorPage(props), 400);
+    "/agents/:slug/:op",
+    (c, next) =>
+      // An op with a route of its own must not ALSO be reachable generically: this path
+      // is one segment short of `grant_set`'s, so a post here would hand the op a `roles`
+      // string where its schema wants the list the pane composes, and `token_issue`'s
+      // reveal would ride the redirect §15 forbids. Both spellings mounted is one op with
+      // two contracts, so the generic one answers like any other unknown action.
+      AGENT_OWN_ROUTE.has(c.req.param("op") ?? "")
+        ? new Response("No such action\n", { status: 404, headers: TEXT })
+        : next(),
+    dispatch((c) => {
+      const pane = AGENT_OP_PANE[c.req.param("op") ?? ""];
+      return pane === undefined ? paths.agents : paths.agentPane(c.req.param("slug") ?? "", pane);
     }),
   );
 
-  // Every other mutation the agent page renders lands back on it — except Delete, whose
-  // page is gone, which lands on the list (§13's pane rule, as /apps/<slug>'s).
-  app.post(
-    "/agents/:slug/:op",
-    dispatch((c) => (c.req.param("op") === "agent_delete" ? paths.agents : paths.agentDetail(c.req.param("slug") ?? ""))),
-  );
+  // The four single-segment panes. LAST of the `/agents/:slug/*` GETs, so `new`, `grants`
+  // and the op-named POST targets are all claimed before a segment reaches here.
+  app.get("/agents/:slug/:pane", async (c) => {
+    const pane = c.req.param("pane") ?? "";
+    if (!(AGENT_PANES as readonly string[]).includes(pane)) return noSuchPage();
+    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
+    const props = await agentDetailProps(ctx, c.req.param("slug") ?? "", { pane: pane as AgentPane });
+    if (props === null) return noSuchPage();
+    return render(AgentDetailPage(props));
+  });
 
   app.post("/agents/:op", dispatch(paths.agents));
 
@@ -1244,6 +1273,22 @@ const APP_OP_PANE: Record<string, AppPane> = {
   app_archive: "danger",
   app_unarchive: "danger",
 };
+
+/**
+ * Which `/agents/<slug>` pane owns each mutation its panes render, so the redirect-back
+ * lands where the form was (§13). An op with no entry here has no pane to go back to —
+ * exactly `agent_delete`, whose page is a 404 the moment it succeeds. `grant_set` is
+ * absent for the other reason: it has a route of its own, which knows the app too.
+ */
+const AGENT_OP_PANE: Record<string, AgentPane> = {
+  token_revoke: "credentials",
+  approval_decide: "activity",
+};
+
+/** The agent-page ops that are mounted at a route of their OWN, and are therefore not the
+ *  generic dispatcher's to serve — `grant_set`, whose route composes the `roles` list and
+ *  knows the app, and `token_issue`, whose answer is a 200 carrying the plaintext. */
+const AGENT_OWN_ROUTE: ReadonlySet<string> = new Set([GRANT_SET, TOKEN_ISSUE]);
 
 /**
  * §13's two mapped refusal codes, as the control each is drawn beside. A code that is not

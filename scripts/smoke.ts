@@ -458,12 +458,18 @@ async function main(): Promise<number> {
       expect(list.status === 200, `authenticated /agents → ${list.status}`);
       const listHtml = await list.text();
       expect(listHtml.includes(`href="/agents/${AGENT}"`), `/agents lists no ${AGENT}`);
+      // The landing renders the agent's FIRST granted app pane in place (no redirect), so
+      // one response has to carry both halves: the app in the rail and its declared role
+      // in the listing under it.
       const page = await fetch(`${ORIGIN}/agents/${AGENT}`, withCookie);
       expect(page.status === 200, `authenticated /agents/${AGENT} → ${page.status}`);
       const pageHtml = await page.text();
-      expect(pageHtml.includes(`href="/apps/${APP}"`), `/agents/${AGENT} shows no grant on ${APP}`);
-      expect(pageHtml.includes(ROLE), `/agents/${AGENT} names no ${ROLE} chip`);
-      return `/agents 200 listing ${AGENT}; /agents/${AGENT} 200 with its ${ROLE} grant on ${APP}`;
+      expect(
+        pageHtml.includes(`href="/agents/${AGENT}/apps/${APP}"`),
+        `/agents/${AGENT} rail shows no ${APP} pane`,
+      );
+      expect(pageHtml.includes(`e.${ROLE}`), `/agents/${AGENT} listing has no ${ROLE} row`);
+      return `/agents 200 listing ${AGENT}; /agents/${AGENT} 200 rendering the ${APP} pane with its ${ROLE} row`;
     });
 
     await step("§13 · the install icon the manifest declares is real PNG bytes at its declared size", async () => {

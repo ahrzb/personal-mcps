@@ -2441,43 +2441,10 @@ describe(`§13 · the PWA icons — the install gate's own bytes`, () => {
   });
 });
 
-describe(`§13 · /agents and /agents/<slug> — the list, the page, and what points at them`, () => {
-  // Rows first (§9 rule 1), from §13's sections added 2026-09-03 (roadmap step 9); the
-  // (agent × app) grant editor is its own later ship and has its own rows.
-  it(`§13 · /agents lists every agent agent_list reports under Agent / Grants / Tokens / Created — the slug linking to /agents/<slug> with the description beneath, grants as "<app>: role, role" per app in slug order and none for an empty set, tokens as "N active · used <relative>" or "N active · never used" from token_list's live agent keys — while the empty namespace renders "No agents yet. Create one to give an AI agent its own grants and keys." beside the New agent control (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel" }, { slug: "linear", kind: "tunnel" }],
-      agents: [
-        {
-          slug: "claude",
-          description: "Claude sessions",
-          grants: { news: [{ role: "reader", mode: "allow" }, { role: "admin", mode: "approval" }], linear: [{ role: "reader", mode: "allow" }] },
-          tokens: [{ as: "claude" }],
-        },
-        { slug: "cron", grants: {} },
-      ],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const html = await page(paths.agents, session.cookie);
-    const text = textOf(html);
-    for (const column of ["Agent", "Grants", "Tokens", "Created"]) expect(html).toMatch(new RegExp(`<th>${column}</th>`));
-    expect(html).toContain(`href="${paths.agentDetail("claude")}"`);
-    expect(html).toContain(`href="${paths.agentDetail("cron")}"`);
-    expect(text).toContain("Claude sessions");
-    // Grants per app in slug order, roles alphabetically, names only; none reads none.
-    expect(text).toMatch(/linear: reader[\s\S]*news: admin, reader/);
-    expect(text).toMatch(/cron[\s\S]*none/);
-    // The seeded key was never presented: one live key, never used.
-    expect(text).toContain("1 active · never used");
-    expect(html).toContain(`href="${paths.agentNew}"`);
-
-    // The twin: the empty namespace.
-    const fresh = await seedNamespace(env.DB, {});
-    const empty = await page(paths.agents, (await seedOwnerSession(fresh.owner)).cookie);
-    expect(textOf(empty)).toContain("No agents yet.");
-    expect(textOf(empty)).toContain("Create one to give an AI agent its own grants and keys.");
-    expect(empty).toContain(`href="${paths.agentNew}"`);
-  });
+describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and what points at them`, () => {
+  // Rows first (§9 rule 1), from §13's sections as the 2026-09-16 three-pane brief redraws
+  // them; the app pane — the grant set itself — is its own describe below.
+  it.todo(`§13 · /agents lists one row per agent whose slug is an anchor stretched over the whole row (a class="row-link" inside the class="agent-row", with the trailing chevron), the description beneath, Access in one line as "N apps · A allowed · K ask first · D dormant" counted over the grant sets with no catalog read, Tokens and Created as today, and Delete as the row's only control · an agent holding nothing reads "no grants", and the empty namespace still reads "No agents yet. Create one to give an AI agent its own grants and keys." beside New agent (the twin)`);
 
   it(`§13 · the top nav holds five entries in §13's order — Apps · Agents · Audit · Approvals · Settings — on every shell page, Agents marked aria-current="page" on /agents and on /agents/<slug> and nowhere else · /apps marks Apps alone (the twin)`, async () => {
     const ORDER = [paths.apps, paths.agents, paths.audit, paths.approvals, paths.settings];
@@ -2575,143 +2542,23 @@ describe(`§13 · /agents and /agents/<slug> — the list, the page, and what po
     expect(textOf(await page(paths.agentDetail(slug)))).toContain(slug);
   });
 
-  it(`§13 · /agents/<slug> renders the header — the slug, an agent badge, the name when it differs from the slug, the description, Created — and the Grants card with one row per app in slug order, the app linking to /apps/<slug> and one role · mode chip per grant with all marked built-in · an agent with no grant reads "No grants yet — this agent can call nothing until one is set.", and an unknown, foreign or reserved slug is the hub's 404 (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        { slug: "news", kind: "tunnel", name: "News MCP" },
-        { slug: "linear", kind: "tunnel", name: "Linear" },
-      ],
-      agents: [
-        {
-          slug: "claude",
-          name: "Claude",
-          description: "Claude sessions",
-          grants: { news: [{ role: "reader", mode: "allow" }, { role: "admin", mode: "approval" }], linear: [{ role: "all", mode: "allow" }] },
-        },
-        { slug: "cron", grants: {} },
-      ],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const html = await page(paths.agentDetail("claude"), session.cookie);
-    const text = textOf(html);
-    expect(text).toContain("Agents / claude");
-    expect(text).toMatch(/claude\s+agent/);
-    expect(text).toContain("Claude");
-    expect(text).toContain("Claude sessions");
-    expect(text).toContain("Created");
-    // Grants in app-slug order, the app linked, one chip per grant, the built-in marked.
-    expect(html).toContain(`href="${paths.appDetail("linear")}"`);
-    expect(html).toContain(`href="${paths.appDetail("news")}"`);
-    expect(text.indexOf("Linear")).toBeLessThan(text.indexOf("News MCP"));
-    expect(text).toContain("reader · allow");
-    expect(text).toContain("admin · approval");
-    expect(text).toMatch(/all · allow\s+built-in/);
+  it.todo(`§13 · /agents/<slug> renders the FIRST app in slug order the agent holds a grant on, in place and under its own URL — the breadcrumb "Agents / <slug>", the slug, an agent badge, the name when it differs, the description, Created and the tiles "N apps · A allow · K ask first · D dormant" — with no alias URL for that pane · an agent holding no grant lands on the grant step, in place (the twin)`);
 
-    // The twins: no grants, and no such agent.
-    const bare = await page(paths.agentDetail("cron"), session.cookie);
-    expect(textOf(bare)).toContain("No grants yet — this agent can call nothing until one is set.");
-    for (const slug of ["nobody", uniqueSlug("foreign")]) {
-      const missing = await call(new Request(`${ORIGIN}${paths.agentDetail(slug)}`, { headers: { Cookie: session.cookie } }));
-      expect(missing.status, slug).toBe(404);
-      expect(await missing.text()).toContain("No such page");
-    }
-  });
+  it.todo(`§13 · each pane answers on its own URL — /agents/<slug>/apps/<app>, /grant, /credentials, /activity, /danger — and /apps/<app> for an ACTIVE app the agent holds nothing on renders the new-grant state: an empty set, the header's dashed "new grant · nothing saved yet" badge and the app in the rail · an unknown pane segment, and an unknown, builtin, foreign or ungranted archived app, are noSuchPage (the twin)`);
 
-  it(`§13/§4/§15 · the Tokens card lists every key bound to the agent from token_list — Token / Created / Expires / Last used, an expired row marked expired — and Issue token answers 200 in place with the once-only reveal exactly as the app page's does, the plaintext on no URL · Revoke walks the confirm dialog to token_revoke and the key is gone from the card (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, { agents: [{ slug: "keyed", grants: {} }] });
-    const session = await seedOwnerSession(ns.owner);
-    // One key that is already dead: minted for a second and left to expire.
-    await ops.token_issue.handler(ns.owner.userId, { kind: "agent", slug: "keyed", expires_in: 1 });
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    const listed = () =>
-      (ops.token_list.handler(ns.owner.userId, {}) as Promise<{ tokens: { id: string; kind: string; refSlug: string; prefix: string }[] }>).then((r) =>
-        r.tokens.filter((row) => row.kind === "agent" && row.refSlug === "keyed"),
-      );
-    const [dead] = await listed();
-    const html = await page(paths.agentDetail("keyed"), session.cookie);
-    for (const column of ["Token", "Created", "Expires", "Last used"]) expect(html).toMatch(new RegExp(`<th>${column}</th>`));
-    expect(textOf(html)).toMatch(new RegExp(`${dead.prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+expired`));
+  it.todo(`§13 · the moved editor keeps its old URLs as permanent moves: GET /agents/<slug>/grants/<app> answers 301 to /agents/<slug>/apps/<app> · GET /agents/<slug>/grants answers 301 to /agents/<slug>/grant (the twin)`);
 
-    // Issue: 200 in place, the plaintext in the reveal and on no URL of the response.
-    const issued = await formPost(
-      paths.agentOp("keyed", "token_issue", { kind: "agent", slug: "keyed" }),
-      { csrf: csrfOf(html) },
-      session.cookie,
-    );
-    expect(issued.status).toBe(200);
-    const revealed = await issued.text();
-    const plaintext = /pmcp_agt_[A-Za-z0-9]+/.exec(textOf(revealed))?.[0];
-    expect(plaintext, "no plaintext key in the reveal").toBeDefined();
-    expect(revealed).toMatch(/id="token-value"/);
-    for (const href of revealed.matchAll(/href="([^"]*)"/g)) expect(href[1]).not.toContain(plaintext ?? "!");
-    expect((await listed()).length).toBe(2);
+  it.todo(`§13 · the rail carries "Apps · N" — one entry per granted app in slug order, then "+ Grant another app…" with the count of grantable apps — then the "Agent" group (Credentials with its live · clients counts, Activity with its pending-approval count) and the tail group Danger zone, the open pane's entry marked aria-current="page" · a set holding an approval entry marks its entry rail-dot--warn, and an archived app — and nothing else, the rail never reads a catalog — draws the dash and rail-link--dim (the twin)`);
 
-    // The twin: Revoke walks the dialog to token_revoke, and the key is gone from the card.
-    const live = (await listed()).find((row) => row.id !== dead.id);
-    const confirm = await page(paths.agentConfirm("keyed", "revoke-token", live?.id ?? ""), session.cookie);
-    expect(confirm).toContain("<dialog");
-    expect(formsPostingTo(confirm, paths.agentOp("keyed", "token_revoke", { id: live?.id ?? "" })).length).toBeGreaterThan(0);
-    const revoked = await formPost(paths.agentOp("keyed", "token_revoke", { id: live?.id ?? "" }), { csrf: csrfOf(confirm) }, session.cookie);
-    expect(revoked.status).toBe(303);
-    expect(new URL(revoked.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentDetail("keyed"));
-    expect(textOf(await page(paths.agentDetail("keyed"), session.cookie))).not.toContain(live?.prefix ?? "!");
-  });
+  it.todo(`§13 · /agents/<slug>/grant lists one card per active non-builtin app the agent holds nothing on — name, slug, kind and status badges, description, "T tools · P prompts · R resources · roles <names>", a "show all N" link at ?show=<app> revealing the endpoint list with the role badges that grant each entry or "only via all or by name", and a Grant link to /agents/<slug>/apps/<app> — under "What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing granted yet." · q filters the cards by app name, slug, description or endpoint name and opens the matching cards' lists, and an agent holding every active app reads "<agent> already holds a grant on every active app. Archived apps are not listed; unarchive one to grant it." (the twin)`);
 
-  it(`§13/§19.6 · the Connected clients card lists the clients bound to this agent from connection_list — name or id, origin, active or revoked — each row linking to /settings/clients and drawing no Revoke, and the card is absent when no client is bound (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "news" }] }],
-      agents: [
-        { slug: "bound", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "b" }] },
-        { slug: "loner", grants: {} },
-      ],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const { clientId } = await consentOnce(ns, session.cookie, "bound", { client_name: "Claude Desktop" });
-    expect(clientId).toBeTruthy();
-    const html = await page(paths.agentDetail("bound"), session.cookie);
-    const text = textOf(html);
-    expect(text).toContain("Connected clients");
-    expect(text).toContain("Managed in Settings → Connected clients");
-    expect(text).toContain("Claude Desktop");
-    expect(text).toContain("active");
-    expect(html).toContain(`href="${paths.settingsClients}"`);
-    // Read-only: no form on this page fronts connection_revoke.
-    expect(postTargets(html).some((target) => target.endsWith("connection_revoke"))).toBe(false);
+  it.todo(`§13/§4 · /agents/<slug>/credentials lists the agent's unrevoked keys under "Tokens · N" beside one form whose expires_in select offers 2592000 / 7776000 / 31536000 / never and whose Issue token answers 200 in place — the reveal above the list, the plaintext on no URL of the response · a live row offers Revoke at ?confirm=revoke-token&id= where an expired one offers Remove at ?confirm=remove-token&id= ("Remove expired token <prefix>?" over "It expired <date>; removing it keeps its history."), both dialogs posting token_revoke and landing back on this pane, while "Connected clients · N" is read-only, each row linking to /settings/clients (the twin)`);
 
-    // The twin: no client bound, no card at all.
-    expect(textOf(await page(paths.agentDetail("loner"), session.cookie))).not.toContain("Connected clients");
-  });
+  it.todo(`§13/§15 · /agents/<slug>/activity lists "Awaiting approval · N" rows whose Reject and Approve post approval_decide to /agents/<slug>/approval_decide and land back on this pane, leaving the decided row dimmed with its status badge, above "Recent calls · N" from audit_query with one outcome badge per row (ok / approval required / not permitted / the failure) · sel=call:<id> on a refused call carries "Refused before the call was made, so there are no bodies to show." and the link /audit?expand=<id>#event-<id> (the twin)`);
 
-  it(`§13 · the Danger zone's Delete agent opens the same dialog as the list's, on the agent's own URL, and lands on /agents with the notice · every other mutation an agent page renders lands back on /agents/<slug> (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel" }],
-      agents: [{ slug: "gone", grants: { news: [{ role: "all", mode: "allow" }] } }],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const html = await page(paths.agentConfirm("gone", "delete-agent"), session.cookie);
-    expect(html).toContain("<dialog");
-    expect(textOf(html)).toContain("Delete agent “gone”?");
-    expect(textOf(html)).toContain("Deleting an agent deletes its tokens and removes its grants everywhere.");
-    const target = paths.agentOp("gone", "agent_delete", { slug: "gone" });
-    expect(formsPostingTo(html, target).length).toBeGreaterThan(0);
-    const csrf = csrfOf(html);
+  it.todo(`§13 · /agents/<slug>/danger draws the Delete agent card over "Deleting an agent deletes its tokens, revokes its clients and removes its grants everywhere. This cannot be undone.", whose Delete <agent> opens the same ?confirm=delete-agent dialog the list draws and lands on /agents with the notice · every other mutation an agent pane fronts lands back on its own pane (the twin)`);
 
-    // The twin first, so the page still exists to land on: a refused revoke of a key that
-    // is not there lands back on the agent page with its failure.
-    const other = await formPost(paths.agentOp("gone", "token_revoke", { id: "tok_nope" }), { csrf }, session.cookie);
-    expect(other.status).toBe(303);
-    const back = new URL(other.headers.get("Location") ?? "", ORIGIN);
-    expect(back.pathname).toBe(paths.agentDetail("gone"));
-    expect(back.searchParams.get("failed")).toBe("token_revoke");
-
-    const deleted = await formPost(target, { csrf }, session.cookie);
-    expect(deleted.status).toBe(303);
-    const landing = new URL(deleted.headers.get("Location") ?? "", ORIGIN);
-    expect(landing.pathname).toBe(paths.agents);
-    expect(landing.searchParams.get("done")).toBe("agent_delete");
-    const agents = (await ops.agent_list.handler(ns.owner.userId, {})) as { agents: { slug: string }[] };
-    expect(agents.agents.map((row) => row.slug)).not.toContain("gone");
-  });
+  it.todo(`§13 · the app pane's form is the one form the agent pages render whose fields are not its op's keys verbatim — one e.<entry> radio group per row, plus add / mode / drop / clear, composed by the route — and it is the only one: every other form on the five panes names an op's own fields (the twin, the parity-B sweep extended to /agents)`);
 
   it(`§13 · every agent slug the other pages print links to /agents/<slug> — the Tokens pane's Bound to, the Connected clients pane's Acts as, the app page's Agents pane, and the consent screen's empty state, which now reads "Create one under Agents before connecting a client." — and the Tokens intro reads "Issue new keys from an app or agent page." again · app slugs still link to /apps/<slug> (the twin)`, async () => {
     const agentLink = `href="${paths.agentDetail("agent")}"`;
@@ -2736,299 +2583,36 @@ describe(`§13 · /agents and /agents/<slug> — the list, the page, and what po
     // The twin: app slugs still link to the app page.
     expect(tokens).toContain(`href="${paths.appDetail("news")}"`);
   });
+
+  it.todo(`§13 · the app page's Agents pane carries Edit grants → /agents/<agent>/apps/<slug> per row now that the editor is a pane of the agent page, and its footer still reads "Grants are edited per agent × app pair — saving replaces that pair's whole set." (the twin — re-pointed 2026-09-16)`);
 });
 
-describe(`§13 · /agents/<slug>/grants/<app> — the (agent × app) grant editor`, () => {
-  // Rows first (§9 rule 1), from §13's sections added 2026-09-03 (roadmap step 9); the
-  // (agent × app) grant editor is its own later ship and has its own rows.
-  it(`§13 · the editor renders one row per role the app declares plus the built-in all last — each row the role's name, its patterns (all: built-in, "every tool, present and future — the app can widen what its roles match") and one three-way choice none / allow / approval preset from the agent's current grant on that app — under the title "Grants — <agent> on <app name>" and the subtitle "What this agent may call on this app." · an app that declares nothing reads "<app> hasn't declared any roles yet." above all alone (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        { slug: "news", kind: "tunnel", name: "News MCP" },
-        { slug: "brand", kind: "tunnel", name: "Brand" },
-      ],
-      agents: [
-        {
-          slug: "claude",
-          grants: { news: [{ role: "reader", mode: "allow" }, { role: "admin", mode: "approval" }] },
-        },
-      ],
-    });
-    // A tunneled app's declared roles arrive at registration and nowhere else, so the
-    // registration write is what plants them (harness/seed's FINDINGS 1) — `brand` gets
-    // none, which is the twin's whole state.
-    await new Registry(env.DB).upsertDeclaredRoles(ns.apps.news.id, {
-      reader: ["news_.*", "search"],
-      admin: ["news_admin_.*"],
-      search: ["search"],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const html = await page(paths.agentGrants("claude", "news"), session.cookie);
-    const text = textOf(html);
-    expect(text).toContain("Grants — claude on News MCP");
-    expect(text).toContain("What this agent may call on this app.");
+describe(`§13 · /agents/<slug>/apps/<app> — the (agent × app) grant pane`, () => {
+  // The listing and its details pane: the one page that reads a catalog, and the one form
+  // that writes a grant set.
+  it.todo(`§13 · the listing header carries the app's name, slug, kind badge and status badge, the reach line "<agent> reaches N of T tools · K ask first · P of PT prompts · R of RT resources" computed over the SAVED set, then the filter row (a GET form q, placeholder "filter, or type a pattern…") and the groups Roles · N ("declared by the app at connect" / "defined in config"), Tools · N ("R reached · U not"), Prompts · N, Resources · N ("matched by URI") and Patterns · N ("entries that are not one item") in that order · a family the hub cannot list renders one note line in its group — "<app> has not connected yet — nothing to list until it does." / "is not advertised" / "could not be read just now" (the twin)`);
 
-    // One three-way choice per row, each preset from the grant the agent actually holds:
-    // the held roles at their own mode, every other declared role at none.
-    expect(grantChoices(html)).toEqual({
-      "role.reader": "allow",
-      "role.admin": "approval",
-      "role.search": "none",
-      "role.all": "none",
-    });
-    // `all` LAST, whatever order the declaration arrived in.
-    expect(html.indexOf(`name="role.all"`)).toBeGreaterThan(html.indexOf(`name="role.search"`));
-    expect(html.indexOf(`name="role.all"`)).toBeGreaterThan(html.indexOf(`name="role.reader"`));
+  it.todo(`§13 · one role row per declared role — the name, the patterns per family beneath it and "matches N" — carries one control: three radios in a .seg named e.<role>, in the order none · ask · allow with values none / approval / allow, checked at the mode the saved set holds for that role · the built-in all, badged built-in, is last whatever order the declaration arrived in (the twin)`);
 
-    // Each row says what its role matches; the built-in says what it means instead.
-    expect(text).toContain("news_.*, search");
-    expect(text).toContain("news_admin_.*");
-    expect(text).toMatch(/all\s+built-in/);
-    expect(text).toContain("every tool, present and future — the app can widen what its roles match");
+  it.todo(`§13 · an item row a granted role already reaches draws the implied mode hollow (.impl, and .warn when the role only asks) and marks every button BELOW it disabled with title "<roles> grants <ask|allow> — change the role to lower it", the row reading "via <roles>" · an item no role reaches draws the three buttons plain and enabled, with no via line (the twin)`);
 
-    // The twin: an app that has declared nothing yet — the sentence, above `all` alone.
-    const bare = await page(paths.agentGrants("claude", "brand"), session.cookie);
-    expect(textOf(bare)).toContain("brand hasn't declared any roles yet.");
-    expect(Object.keys(grantChoices(bare))).toEqual(["role.all"]);
-  });
+  it.todo(`§13 · an item row's radio is checked at the DIRECT entry's mode — the set's own tool/<name>, prompt/<name> or resource/<uri> — and at none when the set holds no direct entry for that item, the row reading "also via <roles>" when a role matches it too (the twin)`);
 
-  it(`§13/§8 · Save composes the chosen roles — allow bare, approval as role:approval — into grant_set for the pair, replacing the pair's whole set: a role switched to none is gone afterwards and agent_list reads exactly the chosen set, and the save lands on /agents/<slug> with the notice · Cancel is a plain link back to /agents/<slug> that posts nothing (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel", name: "News MCP" }],
-      agents: [
-        {
-          slug: "claude",
-          grants: { news: [{ role: "reader", mode: "allow" }, { role: "admin", mode: "approval" }] },
-        },
-      ],
-    });
-    await new Registry(env.DB).upsertDeclaredRoles(ns.apps.news.id, {
-      reader: ["news_.*"],
-      admin: ["news_admin_.*"],
-      search: ["search"],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const html = await page(paths.agentGrants("claude", "news"), session.cookie);
+  it.todo(`§13 · a direct entry at ask under a role that allows draws the "ask entry · no effect" badge, titled "allow wins over ask", beside a × button submitting drop=<entry> · the same entry with no role allowing it draws neither the badge nor the × (the twin)`);
 
-    // Filled as a human fills it: one choice changed per arm — a mode flipped, a role
-    // added, a role dropped — and posted to the action the page itself rendered.
-    const saved = await formPost(
-      actionFor(html, "grant_set"),
-      {
-        csrf: csrfOf(html),
-        ...grantChoices(html),
-        "role.reader": "approval",
-        "role.search": "allow",
-        "role.admin": "none",
-      },
-      session.cookie,
-    );
-    expect(saved.status).toBe(303);
-    const landing = new URL(saved.headers.get("Location") ?? "", ORIGIN);
-    expect(landing.pathname).toBe(paths.agentDetail("claude"));
-    expect(landing.searchParams.get("done")).toBe("grant_set");
+  it.todo(`§13 · a held role the app has not declared is its own row — the name, an undeclared badge and "granted, but the app has not declared it — dormant" — whose control is an "in Allowed" / "in Ask first" badge with a × remove button, never a radio group (the twin)`);
 
-    // The pair's WHOLE set, replaced: `admin` is gone, `reader` carries its new mode, and
-    // `search` is there — read back through the op, in §9's own spelling.
-    const listed = (await ops.agent_list.handler(ns.owner.userId, {})) as {
-      agents: { slug: string; grants: Record<string, string[]> }[];
-    };
-    const held = listed.agents.find((agent) => agent.slug === "claude")?.grants.news ?? [];
-    expect([...held].sort()).toEqual(["reader:approval", "search"]);
+  it.todo(`§13 · an inline entry whose pattern is not one literal item is a Patterns · N row reading "matches N today" / "matches nothing today" with a radio group of its own · a q that is not a literal name offers "As a pattern": one row tool/<q> (resource/<q> when q holds "://") over "would match N today, and any added later" / "matches nothing today", with the two submits Ask and Allow carrying add=<entry> and mode=approval | allow (the twin)`);
 
-    // The twin: Cancel is an anchor, and the only mutation this page fronts is the save.
-    expect(linkTexts(html, paths.agentDetail("claude"))).toContain("Cancel");
-    expect(formsRenderedOn(html).map((form) => form.op).filter((op) => !BROWSER_ONLY_TARGETS.has(op))).toEqual([
-      "grant_set",
-    ]);
-  });
+  it.todo(`§13 · with q set the rows are filtered by name or description substring while the pattern rows stay · a q that matches no row at all renders "Nothing matches “<q>”." (the twin)`);
 
-  it(`§13/§9 · a role the agent holds that a TUNNELED app has not declared is listed, marked undeclared, with "<app> hasn't declared <role>. Tunneled apps declare roles when they connect — this grant stays dormant until then." as a warning, and Save keeps it · the same on a PROXIED app is an error — "<app> is proxied — its roles are fixed in config, so an undeclared role is an error." — and grant_set refuses the save, which redraws the editor with the refusal rather than landing anywhere (the twin)`, async () => {
-    const scenario: UpstreamScenario = { id: uniqueSlug("grantup"), mode: { kind: "ok" } };
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        { slug: "news", kind: "tunnel", name: "News MCP" },
-        {
-          slug: "linear",
-          kind: "proxy",
-          name: "Linear",
-          upstreamUrl: upstreamUrlFor(scenario),
-          upstreamAuthMode: "headers",
-          // Declared at seed time so the grant below is legal, then withdrawn — the only
-          // way a proxied app can hold an undeclared grant, and the state §13 draws.
-          roles: { reader: ["get_.*"], triage: ["triage_.*"] },
-        },
-      ],
-      agents: [
-        {
-          slug: "claude",
-          grants: {
-            news: [{ role: "triage", mode: "allow" }],
-            linear: [{ role: "reader", mode: "allow" }, { role: "triage", mode: "allow" }],
-          },
-        },
-      ],
-    });
-    await new Registry(env.DB).upsertDeclaredRoles(ns.apps.news.id, { reader: ["news_.*"] });
-    await ops.app_update.handler(ns.owner.userId, { slug: "linear", roles: { reader: ["get_.*"] } });
-    const session = await seedOwnerSession(ns.owner);
+  it.todo(`§13/§8 · Save composes every e.<entry> radio into ONE grant_set for the pair — allow bare, approval suffixed :approval, none dropped — merging the offer's add=<entry> at its mode and removing every drop=<entry>, replacing the pair's whole set and landing 303 on the pane with the notice (the twin)`);
 
-    const tunneled = await page(paths.agentGrants("claude", "news"), session.cookie);
-    expect(textOf(tunneled)).toMatch(/triage\s+undeclared/);
-    expect(textOf(tunneled)).toContain(
-      "news hasn't declared triage. Tunneled apps declare roles when they connect — this grant stays dormant until then.",
-    );
-    // A warning, not a refusal: the save goes through and the grant survives it.
-    const kept = await formPost(
-      actionFor(tunneled, "grant_set"),
-      { csrf: csrfOf(tunneled), ...grantChoices(tunneled) },
-      session.cookie,
-    );
-    expect(kept.status).toBe(303);
-    expect(new URL(kept.headers.get("Location") ?? "", ORIGIN).searchParams.get("done")).toBe("grant_set");
-    expect(await grantsOn(ns.owner.userId, "claude", "news")).toEqual(["triage"]);
+  it.todo(`§13/§9 · a refused save — a proxied app's undeclared role, or a pattern that compiles to nothing valid — redraws the pane at 400 with the reason in a danger alert above the listing and every submitted choice preserved, never a redirect, leaving the saved set untouched (the twin)`);
 
-    // The twin: the same shape on a proxied app is an error, and the save is refused.
-    const proxied = await page(paths.agentGrants("claude", "linear"), session.cookie);
-    expect(textOf(proxied)).toMatch(/triage\s+undeclared/);
-    expect(textOf(proxied)).toContain(
-      "linear is proxied — its roles are fixed in config, so an undeclared role is an error.",
-    );
-    const refused = await formPost(
-      actionFor(proxied, "grant_set"),
-      { csrf: csrfOf(proxied), ...grantChoices(proxied) },
-      session.cookie,
-    );
-    // Redrawn here rather than landed anywhere: the editor comes back with the refusal on
-    // it, exactly as /agents/new answers a refused slug.
-    expect(refused.status).toBe(400);
-    const again = await refused.text();
-    expect(again).toContain(`action="${actionFor(proxied, "grant_set")}"`);
-    expect(textOf(again)).toContain("triage");
-    expect(await grantsOn(ns.owner.userId, "claude", "linear")).toEqual(["reader", "triage"]);
-  });
+  it.todo(`§13 · Remove from <agent> opens ?confirm=remove-app on the pane — "Remove <app> from <agent>?" over "<agent> loses every entry on <app>. History stays; a waiting request expires." — whose form posts clear=1 to the same action, writing grant_set an empty set and landing 303 on /agents/<slug> with the notice (the twin)`);
 
-  it(`§13 · the editor's form is the one page form whose fields are not the op's keys verbatim — one role.<name> choice per row, composed by the route — and it is the only such form: every other form on the agent pages names an op's own fields (the twin, the parity-B sweep extended to /agents)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel", name: "News MCP" }],
-      agents: [{ slug: "claude", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "key" }] }],
-    });
-    await new Registry(env.DB).upsertDeclaredRoles(ns.apps.news.id, { reader: ["news_.*"] });
-    const session = await seedOwnerSession(ns.owner);
-    const key = ((await ops.token_list.handler(ns.owner.userId, {})) as { tokens: { id: string; refSlug: string }[] }).tokens.find(
-      (token) => token.refSlug === "claude",
-    );
-    if (key === undefined) throw new Error("the seeded agent key vanished");
-
-    // Every agent page, dialogs included — the destructive forms live inside those.
-    const seen = new Set<string>();
-    for (const url of [
-      paths.agents,
-      paths.agentsConfirmDelete("claude"),
-      paths.agentNew,
-      paths.agentDetail("claude"),
-      paths.agentConfirm("claude", "delete-agent"),
-      paths.agentConfirm("claude", "revoke-token", key.id),
-    ]) {
-      for (const form of formsRenderedOn(await page(url, session.cookie))) {
-        if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
-        expect(Object.prototype.hasOwnProperty.call(ops, form.op), `${url} → ${form.op}`).toBe(true);
-        seen.add(form.op);
-        // Both sides derived off admin.ops: every required field, and nothing the schema
-        // does not declare. Not equality — `token_issue`'s optional `expires_in` has no
-        // control here, exactly as on the app page's Token pane.
-        for (const required of requiredKeysOf(ops[form.op])) {
-          expect(form.fields, `${url} → ${form.op} required`).toContain(required);
-        }
-        for (const submitted of form.fields) {
-          expect(schemaKeysOf(ops[form.op]), `${url} → ${form.op} submitted`).toContain(submitted);
-        }
-      }
-    }
-    // Non-vacuity: the sweep really saw the agent pages' own four ops.
-    for (const op of ["agent_create", "agent_delete", "token_issue", "token_revoke"]) {
-      expect([...seen], op).toContain(op);
-    }
-
-    // The one exception, and it is exactly one: the editor's save fronts `grant_set` and
-    // submits no field the op declares — one `role.<name>` per row, which the route
-    // composes into the op's `roles` array (§13; D15 constraint 35).
-    const editor = await page(paths.agentGrants("claude", "news"), session.cookie);
-    const forms = formsRenderedOn(editor).filter((form) => !BROWSER_ONLY_TARGETS.has(form.op));
-    expect(forms.map((form) => form.op)).toEqual(["grant_set"]);
-    expect(forms[0].fields).not.toEqual(schemaKeysOf(ops.grant_set));
-    expect(forms[0].fields).toEqual(Object.keys(grantChoices(editor)).sort());
-    for (const field of forms[0].fields) {
-      expect(schemaKeysOf(ops.grant_set), field).not.toContain(field);
-      expect(field.startsWith("role."), field).toBe(true);
-    }
-  });
-
-  it(`§13 · the agent page's Grants rows carry Edit → /agents/<slug>/grants/<app>, and "Grant access to another app…" offers exactly the namespace's active apps the agent holds nothing on, submitting to that pair's editor · an agent granted on every active app offers no app (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        { slug: "news", kind: "tunnel", name: "News MCP" },
-        { slug: "linear", kind: "tunnel", name: "Linear" },
-        { slug: "parked", kind: "tunnel", archived: true },
-      ],
-      agents: [
-        { slug: "claude", grants: { news: [{ role: "all", mode: "allow" }] } },
-        {
-          slug: "everywhere",
-          grants: { news: [{ role: "all", mode: "allow" }], linear: [{ role: "all", mode: "allow" }] },
-        },
-      ],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const html = await page(paths.agentDetail("claude"), session.cookie);
-    expect(html).toContain(`href="${paths.agentGrants("claude", "news")}"`);
-    expect(linkTexts(html, paths.agentGrants("claude", "news"))).toContain("Edit");
-
-    // The chooser: a GET form, so it works with scripting off and writes nothing.
-    const chooser = [...html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].find((form) =>
-      namedControls(form[2]).includes("app"),
-    );
-    expect(chooser, "the page offered no other app to grant on").toBeDefined();
-    expect((attributeOf(chooser?.[1] ?? "", "method") ?? "get").toLowerCase()).toBe("get");
-    // Exactly the ACTIVE apps this agent holds nothing on: not `news` (held), not
-    // `parked` (archived), and never the builtin (§8 — agents hold no admin grants).
-    expect(optionValues(chooser?.[2] ?? "")).toEqual(["linear"]);
-
-    // Submitted as a browser submits a GET form: the pair's own editor.
-    const chosen = await get(
-      `${decodeEntities(attributeOf(chooser?.[1] ?? "", "action") ?? "")}?app=linear`,
-      session.cookie,
-    );
-    expect(chosen.status).toBe(303);
-    expect(new URL(chosen.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentGrants("claude", "linear"));
-
-    // The twin: an agent already granted on every active app is offered none, so the
-    // control is not drawn at all.
-    const full = await page(paths.agentDetail("everywhere"), session.cookie);
-    expect(full).toContain(`href="${paths.agentGrants("everywhere", "linear")}"`);
-    expect(
-      [...full.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].some((form) => namedControls(form[2]).includes("app")),
-    ).toBe(false);
-  });
-
-  it(`§13 · the app page's Agents pane carries Edit grants → /agents/<agent>/grants/<slug> per row now that the editor exists, and its footer still reads "Grants are edited per agent × app pair — saving replaces that pair's whole set." (the twin — re-pointed 2026-09-03, step 9)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel", name: "News MCP" }],
-      agents: [
-        { slug: "claude", grants: { news: [{ role: "all", mode: "allow" }] } },
-        { slug: "cron", grants: { news: [{ role: "all", mode: "approval" }] } },
-      ],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const html = await page(paths.appPane("news", "access"), session.cookie);
-    for (const agent of ["claude", "cron"]) {
-      expect(linkTexts(html, paths.agentGrants(agent, "news")), agent).toContain("Edit grants");
-    }
-    // The twin: the pane still says what saving does, and still fronts no grant_set form —
-    // the control is a link into the editor, not a second editor here.
-    expect(textOf(html)).toContain(AGENTS_FOOTER);
-    expect(formsRenderedOn(html).map((form) => form.op)).not.toContain("grant_set");
-  });
+  it.todo(`§13 · the details pane answers sel: a role draws the role badge, "Declared by <app> at connect." / "Built in: every family, present and future.", its For-agent, Patterns and "Matches today" cards; a tool draws its Standing, the approval sentence, the Arguments table and "Called as <app>_<tool> on the aggregated endpoint"; a pattern draws the pattern badge, "An entry that is not one item: anchored, * aliases .*." and "Matches today · N" · nothing selected draws "Select a role, tool, prompt or resource on the left for its details." with the Catalog and "Grant set for <agent>" cards (the twin)`);
 });
 
 /** The three-way choice each editor row rendered, by control name: the option a browser

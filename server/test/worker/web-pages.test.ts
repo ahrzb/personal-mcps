@@ -2507,7 +2507,7 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(empty).toContain(`href="${paths.agentNew}"`);
   });
 
-  it(`§13 · the top nav holds five entries in §13's order — Apps · Agents · Audit · Approvals · Settings — on every shell page, Agents marked aria-current="page" on /agents and on /agents/<slug> and nowhere else · /apps marks Apps alone (the twin)`, async () => {
+  it(`§13 · the wide top nav holds five entries in §13's order — Apps · Agents · Audit · Approvals · Settings — on every shell page, Agents marked aria-current="page" on /agents and on /agents/<slug> and nowhere else · /apps marks Apps alone (the twin)`, async () => {
     const ORDER = [paths.apps, paths.agents, paths.audit, paths.approvals, paths.settings];
     const navOf = (html: string): { href: string; current: boolean }[] => {
       const nav = /<nav class="nav">([\s\S]*?)<\/nav>/.exec(html)?.[1] ?? "";
@@ -2530,6 +2530,8 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
       expect(nav.filter((entry) => entry.current).map((entry) => entry.href), path).toEqual([current]);
     }
   });
+
+  it.todo(`§13 · every shell page carries the narrow shell's sidebar beside that wide nav, in the same document and with no script — the hamburger <a href="#menu" class="menu-open" aria-label="Menu">, the <nav id="menu" class="menu"> holding the same five entries in §13's order with aria-current="page" on the page's own and the Approvals pending count as its pill, the <a href="#" aria-label="Close menu"> and the <a href="#" class="scrim" aria-hidden="true"> that close it, and the username over the Sign out form at its foot — on /apps, /agents, /audit, /approvals, /settings and /agents/<slug> alike · the sign-in pages, which have no shell, render neither nav, no hamburger and no scrim (the twin)`);
 
   it(`§13/§8 · /agents/new renders agent_create's three fields — slug, name, description — and nothing else, and a posted create lands on the new agent's page · a slug the op refuses (reserved, taken, illegal) re-renders the form at 400 with the refusal under the field and creates nothing (the twin)`, async () => {
     const html = await page(paths.agentNew);
@@ -2635,6 +2637,10 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     );
     expect(bare).toContain(`href="${paths.agentApp("cron", "brand")}"`);
   });
+
+  it.todo(`§13 · the agent page's root carries data-level chosen from the URL alone — 1 on /agents/<slug>, 2 on /agents/<slug>/apps/<app> and on /grant, /credentials, /activity and /danger, 3 on each of those carrying sel= — and the level header above the content names the level above and the current thing: at 1 the back link "‹ Agents" → /agents titled with the slug, at 2 "‹ <slug>" → /agents/<slug> titled with the app's name or "Grant another app" / "Credentials" / "Activity" / "Danger zone", at 3 "‹ <the app or pane name>" → that pane's own URL with sel dropped and q, show and calls kept, titled with the selected row's name · the wide title row "Agents › <slug>" is still in the document at every one of the three levels (the twin)`);
+
+  it.todo(`§13 · the agent page renders no pill row — no nav.pill-row on the landing or on any of the five panes, the rail-as-list being its replacement there · /apps/<slug> and /settings still render theirs (the twin)`);
 
   it(`§13 · each pane answers on its own URL — /agents/<slug>/apps/<app>, /grant, /credentials, /activity, /danger — and /apps/<app> for an ACTIVE app the agent holds nothing on renders the new-grant state: an empty set, the header's dashed "new grant · nothing saved yet" badge and the app in the rail · an unknown pane segment, and an unknown, builtin, foreign or ungranted archived app, are noSuchPage (the twin)`, async () => {
     const { cookie } = await withAgentPanes();

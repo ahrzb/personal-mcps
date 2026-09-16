@@ -39,7 +39,7 @@ directly in §13 and rendered by the artboards below.
 | Audit | `Audit` | `MobileAudit` | `AuditDetailStates` |
 | Settings — panes behind a left rail | `Settings` (password, full shell + rail), `SettingsPanes` (the other five panes, at pane width — the shell and rail live on `Settings`) | `MobileSettings` | `SettingsStates` |
 | App detail (`/apps/<slug>`) — panes behind the same rail | `AppDetail` (tools), `AppDetailPanes` (the other seven) | — (follow-up) | `AppDetailStates` |
-| Agents + agent page (`/agents`, `/agents/<slug>`) — three panes behind a rail | `Agents` (the list), `AgentDetail` (an app's grants: rail · listing · details), `AgentDetailPanes` (Credentials, Activity, Grant another app, Danger zone) | — (follow-up) | `AgentDetailStates` |
+| Agents + agent page (`/agents`, `/agents/<slug>`) — three panes behind a rail | `Agents` (the list), `AgentDetail` (an app's grants: rail · listing · details), `AgentDetailPanes` (Credentials, Activity, Grant another app, Danger zone) | `MobileAgentDetail` (the three panes as three levels with back buttons), `MobileAgentDetailStates` (sidebar, draft, grant step, credentials, paged activity, a request) — the list has none yet | `AgentDetailStates` |
 | Cross-cutting | — | — | `Dialogs` (destructive confirms), `EmptyStates` |
 
 Settings' six panes, one contract board and width each:
@@ -140,7 +140,21 @@ the spec until then — nothing here is contract yet):
   nothing on, its endpoints and the roles that grant each behind **show all N**, a search
   over apps and endpoints, and **Grant** opening the app with an empty draft.
 
-Mobile variants are still to draw; `Dialogs` keeps the delete-agent confirm.
+The phone rendering (owner-approved 2026-09-16, `MobileAgentDetail`, from
+`design/concepts/AgentMobileDemo.html`): the three panes become **three levels of
+navigation**, one screen each — the rail as a list, then the listing, then the details —
+every level headed by a back button naming the level above (`‹ Agents`, `‹ claude`,
+`‹ News MCP`) and the current thing as the title, so a listing header never repeats what
+the level header shows; the top bar is the brand and a **hamburger** whose sidebar slides
+in from its own side with the five nav entries, the Approvals count and Sign out; Save
+stays at the bottom right; the Activity trail is **paged** twenty calls at a time behind
+a *Load more* row (a plain link on the real page). Two decisions rode along and apply to
+the desktop too: the breadcrumb is only the way back (`‹ Agents`) since the title names
+the agent and the rail the app, and the `agent` type label is gone (the crumb, the nav and
+the menu already say it; the app page keeps its kind label because tunneled / proxied
+carries information). `/agents` has no mobile board yet; `Dialogs` keeps the delete-agent
+confirm. §13 still describes the narrow layout as the pill row with stacked panes and is
+to be amended with the implementation.
 
 ## Settings, split into panes (2026-09-02)
 

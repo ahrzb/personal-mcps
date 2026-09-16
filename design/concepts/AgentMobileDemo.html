@@ -91,6 +91,8 @@
   .hint{font-size:11px;color:#a1a1aa}
   .badge.kind{background:#fff;border:1px solid #d4d4d8;color:#71717a;border-radius:999px;height:18px;padding:0 8px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:600}
   #crumb{display:flex;align-items:center;gap:6px;font-size:13px}
+  #crumb .back{color:#2563eb;font-weight:500;text-decoration:none;padding:2px 0}
+  #crumb .back:hover{text-decoration:underline;text-underline-offset:3px}
   #crumb a{color:#71717a;text-decoration:none;cursor:pointer}
   #crumb a:hover{color:#09090b}
   #crumb .mono{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#52525b;cursor:pointer}
@@ -99,7 +101,6 @@
   #crumb .dim{font-size:0}
   #crumb .dim::before{content:"›";font-size:14px;color:#a1a1aa;line-height:1}
   .more{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid #f4f4f5}
-  .phone .more{flex-wrap:wrap;gap:8px 12px}
   .more .btn{height:30px;padding:0 12px;font-size:12px;flex-shrink:0}
   .tog{background:none;border:0;padding:0;color:#71717a;font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
   .tog:hover{color:#09090b}
@@ -421,7 +422,8 @@ function render() {
   const dirty = isDirty();
 
   // crumb + tiles
-  document.getElementById("crumb").innerHTML = `<a onclick="">Agents</a> <span class="dim">/</span> <span class="mono">claude</span> <span class="dim">/</span> ${view === "app" ? `<span class="mono">${current}</span>${selected ? ` <span class="dim">/</span> <span class="mono">${esc(selected.name)}</span>` : ""}` : view}`;
+  // the crumb is only the way back: the title names the agent, the rail the app, the listing the row
+  document.getElementById("crumb").innerHTML = `<a class="back">‹ Agents</a>`;
   let tt = 0, ta = 0, tp = 0, tr = 0, dormant = 0;
   for (const app of Object.keys(SAVED)) { const rr = reach(app, app === current ? set : SAVED[app]); if (APPS[app].status === "archived") { dormant++; continue; } tt += rr.tools.reached; ta += rr.tools.approval; tp += rr.prompts.reached; tr += rr.resources.reached; }
   document.getElementById("tiles").innerHTML = `<span><b>${Object.keys(SAVED).length}</b> apps</span><span><b>${tt}</b> tools · <b>${tp}</b> prompts · <b>${tr}</b> resources</span><span style="color:#92400e"><b style="color:#92400e">${ta}</b> ask first</span><span><b>${dormant}</b> dormant</span>`;

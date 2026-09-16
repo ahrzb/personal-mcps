@@ -1,0 +1,317 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px;background:.id-fff}
+  a{color:#09090b;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  button{font:inherit;cursor:pointer}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .muted{color:#71717a}.dim{color:.id-a1a1aa}
+  .badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:.id-f4f4f5;color:#71717a;white-space:nowrap}
+  .badge.warn{background:.id-fffbeb;color:#92400e;border:1px solid .id-fde68a}
+  .badge.ok{background:.id-f0fdf4;color:#15803d;border:1px solid .id-bbf7d0}
+  .badge.new{border-style:dashed}
+  .badge .x{width:14px;height:14px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;color:.id-a1a1aa;font-size:12px;margin-left:2px;cursor:pointer;border:0;background:none;padding:0}
+  .badge .x:hover{background:.id-e4e4e7;color:#09090b}
+  .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid .id-e4e4e7;background:.id-fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+  .btn.primary{background:#18181b;color:.id-fafafa;border-color:#18181b}
+  .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+  .btn:disabled{opacity:.45;cursor:default}
+  .nav{height:56px;box-sizing:border-box;border-bottom:1px solid .id-e4e4e7;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+  .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:#71717a}
+  .navitem.on{background:.id-f4f4f5;color:#09090b}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cell{font-size:13px;color:#71717a}
+  .note{font-size:12px;color:#71717a;line-height:1.5}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+  .wrap{width:1176px;margin:0 auto;padding:24px 0 40px;display:flex;flex-direction:column;gap:16px}
+  .panes{display:flex;border:1px solid .id-e4e4e7;border-radius:12px;overflow:hidden;background:.id-fff;box-shadow:0 1px 2px rgba(0,0,0,.05);height:820px}
+  .rail{width:180px;flex-shrink:0;border-right:1px solid .id-e4e4e7;padding:12px 8px;display:flex;flex-direction:column;gap:1px;background:.id-fafafa;overflow:auto}
+  .rh{font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;padding:8px 8px 4px}
+  .ri{display:flex;justify-content:space-between;align-items:center;height:28px;padding:0 8px;border-radius:6px;font-size:13px;color:#71717a;cursor:pointer;border:0;background:none;width:100%;text-align:left}
+  .ri:hover{background:.id-f4f4f5}
+  .ri.on{background:.id-fff;color:#09090b;font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .ri.dorm{opacity:.55}
+  .rm{font-size:11px;color:.id-a1a1aa;display:flex;gap:4px;align-items:center}
+  .listing{width:520px;flex-shrink:0;border-right:1px solid .id-e4e4e7;display:flex;flex-direction:column;min-height:0}
+  .panes.wide .listing{width:auto;flex:1;border-right:none}
+  .panes.wide .details{display:none}
+  .appcard{display:grid;grid-template-columns:1fr 110px;column-gap:16px;padding:14px 16px;border-bottom:1px solid .id-f4f4f5}
+  .eps{max-height:260px;overflow:auto;border:1px solid .id-e4e4e7;border-radius:8px;margin-top:8px}
+  .ep{display:grid;grid-template-columns:1fr auto;column-gap:10px;align-items:center;padding:5px 10px;font-size:12px;border-bottom:1px solid .id-f8f8f8}
+  .ep:last-child{border-bottom:none}
+  .ep .fam{font-size:10px;color:.id-a1a1aa;margin-right:6px;text-transform:uppercase;letter-spacing:.04em}
+  .ep .roles{display:inline-flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+  .info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid .id-a1a1aa;color:#71717a;font-size:9px;font-weight:600;margin-left:6px;cursor:help;vertical-align:middle}
+  .info .tip{display:none;position:absolute;left:18px;top:-6px;z-index:5;width:260px;background:#18181b;color:.id-fafafa;border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.45;font-weight:400;box-shadow:0 4px 12px rgba(0,0,0,.2);white-space:normal;text-align:left}
+  .info:hover .tip{display:block}
+  .tip .a{color:.id-a1a1aa}
+  .appcard .kv{padding:2px 0}
+  .appcard .kv .k{width:90px}
+  .lh{padding:14px 16px;border-bottom:1px solid .id-e4e4e7;display:flex;flex-direction:column;gap:8px}
+  .sum{font-size:12px;color:#71717a;line-height:1.5}
+  .filter{height:30px;box-sizing:border-box;border:1px solid .id-e4e4e7;border-radius:8px;padding:0 10px;font-size:12px;background:.id-fff;width:220px;outline:none}
+  .filter:focus{box-shadow:0 0 0 3px rgba(161,161,170,.35)}
+  .scroll{overflow:auto;flex:1;min-height:0}
+  .gh{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:.id-a1a1aa;padding:12px 16px 4px;display:flex;justify-content:space-between}
+  .cr{display:grid;grid-template-columns:1fr auto;column-gap:10px;align-items:center;padding:6px 16px;font-size:13px;border-bottom:1px solid .id-f8f8f8;cursor:pointer}
+  .cr:hover{background:.id-f4f4f5}
+  .cr.cur{background:.id-f4f4f5;box-shadow:inset 3px 0 0 #18181b}
+  .cr .d{font-size:11px;color:#71717a;margin-top:1px}
+  .st{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+  .acts{display:inline-flex;gap:4px;visibility:hidden}
+  .cr:hover .acts,.cr.cur .acts{visibility:visible}
+  .mini{height:22px;padding:0 8px;border-radius:6px;border:1px solid .id-e4e4e7;background:.id-fff;font-size:11px;font-weight:500;display:inline-flex;align-items:center}
+  .mini.warn{border-color:.id-fde68a;color:#92400e;background:.id-fffbeb}
+  .mini:hover{background:.id-f4f4f5}
+  .seg{display:inline-flex;flex-shrink:0}
+  .seg button{height:22px;padding:0;width:44px;justify-content:center;display:inline-flex;align-items:center;font-size:11px;font-weight:500;border:1px solid .id-e4e4e7;background:.id-fff;color:#71717a}
+  .seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}.seg button+button{border-left:none}
+  .seg button.on{background:#18181b;color:.id-fafafa;border-color:#18181b}
+  .seg button.on.warn{background:#92400e;border-color:#92400e}
+  .seg button.impl{background:.id-fff;color:#09090b;border-color:#18181b;box-shadow:inset 0 0 0 1px #18181b}
+  .seg button.impl.warn{color:#92400e;border-color:#92400e;box-shadow:inset 0 0 0 1px #92400e}
+  .seg button:disabled{color:.id-d4d4d8;cursor:default;background:.id-fafafa}
+  .via{font-size:11px;color:#71717a;white-space:nowrap}
+  .save{padding:12px 16px;border-top:1px solid .id-e4e4e7;display:flex;justify-content:space-between;align-items:center;background:.id-fafafa}
+  .details{flex:1;min-width:0;display:flex;flex-direction:column;background:.id-fafafa;overflow:auto}
+  .dh{padding:14px 16px;border-bottom:1px solid .id-e4e4e7;background:.id-fff}
+  .db{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+  .sec{background:.id-fff;border:1px solid .id-e4e4e7;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .kv{display:flex;gap:12px;font-size:12px;line-height:1.5}.kv .k{width:110px;flex-shrink:0;color:#71717a}
+  .arg{display:grid;grid-template-columns:110px 60px 1fr;column-gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid .id-f4f4f5}.arg:last-child{border-bottom:none}
+  .tile{display:flex;gap:16px;font-size:12px;color:#71717a}.tile b{color:#09090b;font-weight:600;font-size:14px}
+  .banner{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:.id-fffbeb;border:1px solid .id-fde68a;color:#92400e;font-size:13px}
+  .hint{font-size:11px;color:.id-a1a1aa}
+  .badge.kind{background:.id-fff;border:1px solid .id-d4d4d8;color:#71717a;border-radius:999px;height:18px;padding:0 8px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:600}
+  .id-crumb{display:flex;align-items:center;gap:6px;font-size:13px}
+  .id-crumb .back{color:#2563eb;font-weight:500;text-decoration:none;padding:2px 0}
+  .id-crumb .back:hover{text-decoration:underline;text-underline-offset:3px}
+  .id-crumb a{color:#71717a;text-decoration:none;cursor:pointer}
+  .id-crumb a:hover{color:#09090b}
+  .id-crumb .mono{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:.id-f4f4f5;color:#52525b;cursor:pointer}
+  .id-crumb .mono:hover{background:.id-e4e4e7;color:#09090b}
+  .id-crumb > .mono:last-child,.id-crumb > .mono:last-child:hover{background:#18181b;color:.id-fafafa;cursor:default}
+  .id-crumb .dim{font-size:0}
+  .id-crumb .dim::before{content:"›";font-size:14px;color:.id-a1a1aa;line-height:1}
+  .more{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid .id-f4f4f5}
+  .more .btn{height:30px;padding:0 12px;font-size:12px;flex-shrink:0}
+  .tog{background:none;border:0;padding:0;color:#71717a;font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  .tog:hover{color:#09090b}
+
+  /* ---- mobile: three levels, one visible at a time ---- */
+  body{background:.id-e4e4e7}
+  .phone{width:390px;height:844px;margin:24px auto;background:.id-fff;border-radius:36px;box-shadow:0 20px 60px rgba(0,0,0,.25);overflow:hidden;display:flex;flex-direction:column;position:relative}
+  .nav{height:52px;padding:0 8px 0 16px;flex-shrink:0;position:relative;z-index:3}
+  .nav .brand{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600}
+  .burger{width:40px;height:40px;border:0;background:none;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;color:#09090b;cursor:pointer}
+  .burger:hover,.phone.menu-open .burger{background:.id-f4f4f5}
+  .menu{position:absolute;top:0;bottom:0;right:0;width:280px;background:.id-fff;box-shadow:0 0 40px rgba(0,0,0,.18);padding:8px;z-index:5;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s ease;box-sizing:border-box}
+  .phone.menu-open .menu{transform:none}
+  .scrim{position:absolute;inset:0;background:rgba(9,9,11,.35);z-index:4;opacity:0;pointer-events:none;transition:opacity .22s ease}
+  .phone.menu-open .scrim{opacity:1;pointer-events:auto}
+  .menu .dh2{display:flex;align-items:center;justify-content:space-between;height:52px;padding:0 0 0 12px;margin-bottom:6px;border-bottom:1px solid .id-f4f4f5}
+  .menu .dh2 .brand{font-size:15px}
+  .menu .who{margin-top:auto;border-top:1px solid .id-f4f4f5;padding-top:10px}
+  .menu .mi{display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 12px;border-radius:10px;font-size:15px;font-weight:500;color:#71717a;cursor:pointer}
+  .menu .mi:hover{background:.id-f4f4f5}
+  .menu .mi.on{background:.id-f4f4f5;color:#09090b}
+  .menu .sep{height:1px;background:.id-f4f4f5;margin:6px 4px}
+  .menu .who{display:flex;align-items:center;justify-content:space-between;padding:6px 12px 4px;font-size:13px;color:#71717a}
+  .pill{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:.id-dc2626;color:.id-fff;font-size:11px;font-weight:600}
+  .wrap{width:auto;margin:0;padding:0;flex:1;min-height:0;display:flex;flex-direction:column;gap:0}
+  .head{padding:12px 16px 8px;border-bottom:1px solid .id-e4e4e7;display:none;flex-direction:column;gap:6px}
+  .phone[data-level="1"] .head{display:flex}
+  .tile{flex-wrap:wrap;gap:8px 14px}
+  .mh{display:none;align-items:center;gap:8px;height:48px;padding:0 8px;border-bottom:1px solid .id-e4e4e7;flex-shrink:0;background:.id-fff}
+  .mh{display:flex}
+  .head .id-crumb,.head .row > .mono{display:none}
+  .head .row > .cell{font-size:13px}
+  .mh .back{border:0;background:none;color:#2563eb;font-size:14px;font-weight:500;display:inline-flex;align-items:center;gap:2px;padding:0 6px;height:36px;border-radius:8px;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mh .back:hover{background:.id-eff6ff}
+  .mh .mt{font-weight:600;font-size:15px;flex:1;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mh .sp{width:80px;flex-shrink:0;text-align:right}
+  .id-banner{padding:8px 12px 0}
+  .id-banner:empty{padding:0}
+  .banner{font-size:12px;flex-wrap:wrap}
+  .panes{border:0;border-radius:0;box-shadow:none;height:auto;flex:1;min-height:0;flex-direction:column}
+  .rail,.listing,.details{display:none;width:100%;box-sizing:border-box;flex:1;min-height:0;border-right:0}
+  .ri{box-sizing:border-box}
+  .phone[data-level="1"] .rail{display:flex;padding:12px 12px 24px;background:.id-fff}
+  .phone[data-level="2"] .listing{display:flex}
+  .phone[data-level="3"] .details{display:flex}
+  .panes.wide .details{display:none}
+  .panes.wide .listing{width:100%}
+  .rh{padding:10px 8px 4px}
+  .ri{height:44px;font-size:15px;padding:0 10px;border-radius:10px}
+  .ri.on{background:none;box-shadow:none;font-weight:400}
+  .ri .rm::after{content:"›";font-size:18px;color:.id-a1a1aa;margin-left:8px}
+  .ri.dorm .rm::after{color:.id-d4d4d8}
+  .lh{padding:12px 14px}
+  /* the level header already names the pane or app: the listing header keeps only what it adds */
+  .phone[data-level="2"] .lh .row > span:first-child[style*="font-weight:600"]{display:none}
+  .phone[data-level="2"] .lh .cell:first-child,.phone[data-level="2"] .lh .row > .cell:nth-child(2){font-size:13px;color:#52525b}
+  .sum{font-size:12px}
+  .filter{width:100%!important}
+  .cr{padding:10px 14px;grid-template-columns:1fr auto}
+  .cr .st{flex-wrap:wrap;justify-content:flex-end;gap:4px 6px;max-width:190px}
+  .via{display:block;width:100%;text-align:right;font-size:10px}
+  .save{padding:10px 12px;flex-wrap:nowrap;gap:8px;position:sticky;bottom:0}
+  .save > .row{flex-wrap:nowrap}
+  .save > .row:first-child{min-width:0}
+  .save > .row:first-child > .row{flex-wrap:wrap;font-size:11px}
+  .save > .row:last-child{flex-shrink:0;margin-left:auto}
+  .save .cell{display:none}
+  .save .btn{height:32px;padding:0 10px;font-size:12px}
+  .dh{padding:12px 14px}
+  .db{padding:12px 14px}
+  .appcard{grid-template-columns:1fr;row-gap:10px;padding:14px}
+  .appcard > div:last-child{align-items:stretch}
+  .appcard .btn{width:100%}
+  .eps{max-height:220px}
+  .details .kv{flex-direction:column;gap:2px}.details .kv .k{width:auto}
+  .note.hint{display:none}
+  .home{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:#09090b;opacity:.9;pointer-events:none}
+  body{background:#fafafa}
+  .phone{margin:0;height:auto;min-height:844px;box-shadow:0 8px 30px rgba(0,0,0,.14);border:1px solid #d4d4d8}
+  .phone .scroll{overflow:visible}
+  .phone .listing,.phone .details,.phone .rail{overflow:visible}
+  .phone .menu{transition:none}.phone .scrim{transition:none}
+  .board{display:flex;gap:40px;padding:32px;align-items:flex-start}
+  .slot{display:flex;flex-direction:column;gap:10px;width:390px;flex-shrink:0}
+  .lab{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a}
+  .lab span{text-transform:none;letter-spacing:0;font-weight:400;color:#a1a1aa}
+  </style>
+</helmet>
+<div class="board" style="width:1330px;box-sizing:border-box">
+<div class="slot"><div class="lab">Level 1 — the agent <span>— the rail as a list: apps, grant another, the agent's panes; ‹ Agents goes back to the list</span></div><div class="phone" data-level="1">
+<div class="nav">
+  <div class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>personal-mcps</div>
+  <button class="burger" aria-label="Menu" aria-expanded="false"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>
+</div>
+<div class="scrim"></div>
+<div class="menu" role="menu">
+  <div class="dh2"><div class="brand"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>personal-mcps</div><button class="burger" aria-label="Close menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+  <div class="mi">Apps</div><div class="mi on">Agents</div><div class="mi">Audit</div><div class="mi">Approvals<span class="pill">2</span></div><div class="mi">Settings</div>
+  <div class="sep"></div>
+  <div class="who"><span>ahrzb</span><span class="btn" style="height:28px;padding:0 10px;font-size:12px">Sign out</span></div>
+</div>
+<div class="wrap">
+  <div class="mh id-mh"><button class="back">‹ Agents</button><span class="mt mono">claude</span><span class="sp"></span></div>
+  <div class="head">
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div class="cell id-crumb"><a class="back">‹ Agents</a></div>
+      <div class="row" style="gap:10px"><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
+    </div>
+    <div class="tile id-tiles"><span><b>3</b> apps</span><span><b>11</b> tools · <b>1</b> prompts · <b>2</b> resources</span><span style="color:#92400e"><b style="color:#92400e">4</b> ask first</span><span><b>1</b> dormant</span></div>
+  </div>
+  <div class="id-banner"></div>
+  <div class="panes">
+    <div class="rail id-rail"><div class="rh">Apps · 3</div><button class="ri on"><span class="mono">news</span><span class="rm"><span style="color:#92400e">●</span></span></button><button class="ri"><span class="mono">linear</span><span class="rm"></span></button><button class="ri dorm"><span class="mono">home</span><span class="rm">—</span></button><button class="ri" style="margin-top:2px;font-size:12px"><span>+ Grant another app…</span><span class="rm">1</span></button><div class="rh" style="margin-top:10px">Agent</div><button class="ri"><span>Credentials</span><span class="rm">1 · 1</span></button><button class="ri"><span>Activity</span><span class="rm" style="color:#92400e">2</span></button><button class="ri"><span>Danger zone</span></button></div>
+    <div class="listing">
+      <div class="lh id-lh"><div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">News MCP</span><span class="mono cell">news</span><span class="badge">tunneled</span><span class="badge ok"><span class="dot"></span>online</span></div></div>
+    <div class="sum">claude reaches <b style="color:#09090b">8</b> of 11 tools <span class="dim">·</span> 4 ask first <span class="dim">·</span> <b style="color:#09090b">1</b> of 1 prompts <span class="dim">·</span> <b style="color:#09090b">2</b> of 3 resources</div>
+    <input class="filter" style="width:100%" placeholder="filter, or type a pattern…" value=""></div>
+      <div class="scroll id-list"><div class="gh"><span>Roles · 4</span><span style="text-transform:none;letter-spacing:0">declared by the app at connect</span></div><div class="cr"><div><span class="mono">reader</span><div class="d">tools get_news, search_.* · prompts digest_.* · matches 5</div></div><div class="st"><span class="seg"><button class="">none</button><button class="">ask</button><button class="on">allow</button></span></div></div><div class="cr"><div><span class="mono">admin</span><div class="d">tools admin_.* · matches 3</div></div><div class="st"><span class="seg"><button class="">none</button><button class="on warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">publisher</span><div class="d">tools publish, delete_feed · matches 2</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">all</span> <span class="badge" style="height:16px;font-size:10px">built-in</span><div class="d">every tool, prompt and resource, present and future · matches 15</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="gh"><span>Tools · 11</span><span style="text-transform:none;letter-spacing:0">8 reached · 3 not</span></div><div class="cr"><div><span class="mono">get_news</span><div class="d">Latest items across all feeds</div></div><div class="st"><span class="via">also via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="on">allow</button></span></div></div><div class="cr"><div><span class="mono">search_feeds</span><div class="d">Find feeds by name or URL</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">search_items</span><div class="d">Search items across feeds</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">search_archive</span><div class="d">Search the archive</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">admin_purge_cache</span><div class="d">Drop cached items</div></div><div class="st"><span class="via">via admin</span><span class="seg"><button class="" disabled="" title="admin grants ask — change the role to lower it">none</button><button class="impl warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">admin_reindex</span><div class="d">Rebuild the search index</div></div><div class="st"><span class="via">via admin</span><span class="seg"><button class="" disabled="" title="admin grants ask — change the role to lower it">none</button><button class="impl warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">admin_export</span><div class="d">Export everything as JSON</div></div><div class="st"><span class="via">via admin</span><span class="seg"><button class="" disabled="" title="admin grants ask — change the role to lower it">none</button><button class="impl warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">publish</span><div class="d">Post an item to a feed</div></div><div class="st"><span class="seg"><button class="">none</button><button class="on warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">delete_feed</span><div class="d">Remove a feed and its items</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">subscribe</span><div class="d">Subscribe to a feed</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">unsubscribe</span><div class="d">Unsubscribe from a feed</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="gh"><span>Prompts · 1</span></div><div class="cr"><div><span class="mono">digest_daily</span><div class="d">Summarise the last 24 h</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="gh"><span>Resources · 3</span><span style="text-transform:none;letter-spacing:0">matched by URI</span></div><div class="cr"><div><span class="mono">news://feed/hn</span><div class="d">text/plain</div></div><div class="st"><span class="via">via resource/news://feed/*</span><span class="seg"><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">none</button><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">news://feed/lobsters</span><div class="d">text/plain</div></div><div class="st"><span class="via">via resource/news://feed/*</span><span class="seg"><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">none</button><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">news://config</span><div class="d">application/json</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="gh"><span>Patterns · 1</span><span style="text-transform:none;letter-spacing:0">entries that are not one item</span></div><div class="cr"><div><span class="mono">resource/news://feed/*</span><div class="d">matches 2 today</div></div><div class="st"><span class="seg"><button class="">none</button><button class="">ask</button><button class="on">allow</button></span></div></div></div>
+      <div class="save id-save"><span class="row" style="gap:10px"><button class="btn" style="height:28px;color:#dc2626;border-color:#fecaca">Remove from claude</button></span><span class="row" style="gap:10px"><span class="cell" style="font-size:12px"><span class="dim">saved · 3 allow · 2 ask</span></span><button class="btn ghost" disabled="">Discard</button><button class="btn primary" disabled="">Save</button></span></div>
+    </div>
+    <div class="details id-details"><div class="dh"><div class="row" style="gap:8px"><span style="font-size:15px;font-weight:600">News MCP</span><span class="badge">tunneled</span></div><div class="cell" style="margin-top:2px">Select a role, tool, prompt or resource on the left for its details.</div></div>
+      <div class="db"><div class="sec"><div class="eyebrow">Catalog</div><div class="kv"><div class="k">Tools</div><div>11 · 8 reached by claude</div></div><div class="kv"><div class="k">Prompts</div><div>1 · 1 reached</div></div><div class="kv"><div class="k">Resources</div><div>3 · 2 reached</div></div><div class="kv"><div class="k">Roles</div><div>reader, admin, publisher</div></div></div>
+      <div class="sec"><div class="eyebrow">Grant set for claude</div><div class="kv"><div class="k">Allowed</div><div><span class="mono">reader</span>, <span class="mono">tool/get_news</span>, <span class="mono">resource/news://feed/*</span></div></div><div class="kv"><div class="k">Ask first</div><div><span class="mono">admin</span>, <span class="mono">tool/publish</span></div></div></div></div></div>
+  </div>
+  </div>
+<div class="home"></div>
+</div></div>
+<div class="slot"><div class="lab">Level 2 — the listing <span>— what was tapped; the same rows and controls as the desktop listing; Save at the bottom right</span></div><div class="phone" data-level="2">
+<div class="nav">
+  <div class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>personal-mcps</div>
+  <button class="burger" aria-label="Menu" aria-expanded="false"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>
+</div>
+<div class="scrim"></div>
+<div class="menu" role="menu">
+  <div class="dh2"><div class="brand"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>personal-mcps</div><button class="burger" aria-label="Close menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+  <div class="mi">Apps</div><div class="mi on">Agents</div><div class="mi">Audit</div><div class="mi">Approvals<span class="pill">2</span></div><div class="mi">Settings</div>
+  <div class="sep"></div>
+  <div class="who"><span>ahrzb</span><span class="btn" style="height:28px;padding:0 10px;font-size:12px">Sign out</span></div>
+</div>
+<div class="wrap">
+  <div class="mh id-mh"><button class="back">‹ claude</button><span class="mt">News MCP</span><span class="sp cell" style="font-size:11px"></span></div>
+  <div class="head">
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div class="cell id-crumb"><a class="back">‹ Agents</a></div>
+      <div class="row" style="gap:10px"><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
+    </div>
+    <div class="tile id-tiles"><span><b>3</b> apps</span><span><b>11</b> tools · <b>1</b> prompts · <b>2</b> resources</span><span style="color:#92400e"><b style="color:#92400e">4</b> ask first</span><span><b>1</b> dormant</span></div>
+  </div>
+  <div class="id-banner"></div>
+  <div class="panes">
+    <div class="rail id-rail"><div class="rh">Apps · 3</div><button class="ri on"><span class="mono">news</span><span class="rm"><span style="color:#92400e">●</span></span></button><button class="ri"><span class="mono">linear</span><span class="rm"></span></button><button class="ri dorm"><span class="mono">home</span><span class="rm">—</span></button><button class="ri" style="margin-top:2px;font-size:12px"><span>+ Grant another app…</span><span class="rm">1</span></button><div class="rh" style="margin-top:10px">Agent</div><button class="ri"><span>Credentials</span><span class="rm">1 · 1</span></button><button class="ri"><span>Activity</span><span class="rm" style="color:#92400e">2</span></button><button class="ri"><span>Danger zone</span></button></div>
+    <div class="listing">
+      <div class="lh id-lh"><div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">News MCP</span><span class="mono cell">news</span><span class="badge">tunneled</span><span class="badge ok"><span class="dot"></span>online</span></div></div>
+    <div class="sum">claude reaches <b style="color:#09090b">8</b> of 11 tools <span class="dim">·</span> 4 ask first <span class="dim">·</span> <b style="color:#09090b">1</b> of 1 prompts <span class="dim">·</span> <b style="color:#09090b">2</b> of 3 resources</div>
+    <input class="filter" style="width:100%" placeholder="filter, or type a pattern…" value=""></div>
+      <div class="scroll id-list"><div class="gh"><span>Roles · 4</span><span style="text-transform:none;letter-spacing:0">declared by the app at connect</span></div><div class="cr"><div><span class="mono">reader</span><div class="d">tools get_news, search_.* · prompts digest_.* · matches 5</div></div><div class="st"><span class="seg"><button class="">none</button><button class="">ask</button><button class="on">allow</button></span></div></div><div class="cr"><div><span class="mono">admin</span><div class="d">tools admin_.* · matches 3</div></div><div class="st"><span class="seg"><button class="">none</button><button class="on warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">publisher</span><div class="d">tools publish, delete_feed · matches 2</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">all</span> <span class="badge" style="height:16px;font-size:10px">built-in</span><div class="d">every tool, prompt and resource, present and future · matches 15</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="gh"><span>Tools · 11</span><span style="text-transform:none;letter-spacing:0">8 reached · 3 not</span></div><div class="cr"><div><span class="mono">get_news</span><div class="d">Latest items across all feeds</div></div><div class="st"><span class="via">also via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="on">allow</button></span></div></div><div class="cr"><div><span class="mono">search_feeds</span><div class="d">Find feeds by name or URL</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">search_items</span><div class="d">Search items across feeds</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">search_archive</span><div class="d">Search the archive</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">admin_purge_cache</span><div class="d">Drop cached items</div></div><div class="st"><span class="via">via admin</span><span class="seg"><button class="" disabled="" title="admin grants ask — change the role to lower it">none</button><button class="impl warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">admin_reindex</span><div class="d">Rebuild the search index</div></div><div class="st"><span class="via">via admin</span><span class="seg"><button class="" disabled="" title="admin grants ask — change the role to lower it">none</button><button class="impl warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">admin_export</span><div class="d">Export everything as JSON</div></div><div class="st"><span class="via">via admin</span><span class="seg"><button class="" disabled="" title="admin grants ask — change the role to lower it">none</button><button class="impl warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">publish</span><div class="d">Post an item to a feed</div></div><div class="st"><span class="seg"><button class="">none</button><button class="on warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">delete_feed</span><div class="d">Remove a feed and its items</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">subscribe</span><div class="d">Subscribe to a feed</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">unsubscribe</span><div class="d">Unsubscribe from a feed</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="gh"><span>Prompts · 1</span></div><div class="cr"><div><span class="mono">digest_daily</span><div class="d">Summarise the last 24 h</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="gh"><span>Resources · 3</span><span style="text-transform:none;letter-spacing:0">matched by URI</span></div><div class="cr"><div><span class="mono">news://feed/hn</span><div class="d">text/plain</div></div><div class="st"><span class="via">via resource/news://feed/*</span><span class="seg"><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">none</button><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">news://feed/lobsters</span><div class="d">text/plain</div></div><div class="st"><span class="via">via resource/news://feed/*</span><span class="seg"><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">none</button><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">news://config</span><div class="d">application/json</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="gh"><span>Patterns · 1</span><span style="text-transform:none;letter-spacing:0">entries that are not one item</span></div><div class="cr"><div><span class="mono">resource/news://feed/*</span><div class="d">matches 2 today</div></div><div class="st"><span class="seg"><button class="">none</button><button class="">ask</button><button class="on">allow</button></span></div></div></div>
+      <div class="save id-save"><span class="row" style="gap:10px"><button class="btn" style="height:28px;color:#dc2626;border-color:#fecaca">Remove from claude</button></span><span class="row" style="gap:10px"><span class="cell" style="font-size:12px"><span class="dim">saved · 3 allow · 2 ask</span></span><button class="btn ghost" disabled="">Discard</button><button class="btn primary" disabled="">Save</button></span></div>
+    </div>
+    <div class="details id-details"><div class="dh"><div class="row" style="gap:8px"><span style="font-size:15px;font-weight:600">News MCP</span><span class="badge">tunneled</span></div><div class="cell" style="margin-top:2px">Select a role, tool, prompt or resource on the left for its details.</div></div>
+      <div class="db"><div class="sec"><div class="eyebrow">Catalog</div><div class="kv"><div class="k">Tools</div><div>11 · 8 reached by claude</div></div><div class="kv"><div class="k">Prompts</div><div>1 · 1 reached</div></div><div class="kv"><div class="k">Resources</div><div>3 · 2 reached</div></div><div class="kv"><div class="k">Roles</div><div>reader, admin, publisher</div></div></div>
+      <div class="sec"><div class="eyebrow">Grant set for claude</div><div class="kv"><div class="k">Allowed</div><div><span class="mono">reader</span>, <span class="mono">tool/get_news</span>, <span class="mono">resource/news://feed/*</span></div></div><div class="kv"><div class="k">Ask first</div><div><span class="mono">admin</span>, <span class="mono">tool/publish</span></div></div></div></div></div>
+  </div>
+  </div>
+<div class="home"></div>
+</div></div>
+<div class="slot"><div class="lab">Level 3 — the details <span>— the row tapped there; ‹ names the listing</span></div><div class="phone" data-level="3">
+<div class="nav">
+  <div class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>personal-mcps</div>
+  <button class="burger" aria-label="Menu" aria-expanded="false"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>
+</div>
+<div class="scrim"></div>
+<div class="menu" role="menu">
+  <div class="dh2"><div class="brand"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>personal-mcps</div><button class="burger" aria-label="Close menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+  <div class="mi">Apps</div><div class="mi on">Agents</div><div class="mi">Audit</div><div class="mi">Approvals<span class="pill">2</span></div><div class="mi">Settings</div>
+  <div class="sep"></div>
+  <div class="who"><span>ahrzb</span><span class="btn" style="height:28px;padding:0 10px;font-size:12px">Sign out</span></div>
+</div>
+<div class="wrap">
+  <div class="mh id-mh"><button class="back">‹ News MCP</button><span class="mt mono">get_news</span><span class="sp"></span></div>
+  <div class="head">
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div class="cell id-crumb"><a class="back">‹ Agents</a></div>
+      <div class="row" style="gap:10px"><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
+    </div>
+    <div class="tile id-tiles"><span><b>3</b> apps</span><span><b>11</b> tools · <b>1</b> prompts · <b>2</b> resources</span><span style="color:#92400e"><b style="color:#92400e">4</b> ask first</span><span><b>1</b> dormant</span></div>
+  </div>
+  <div class="id-banner"></div>
+  <div class="panes">
+    <div class="rail id-rail"><div class="rh">Apps · 3</div><button class="ri on"><span class="mono">news</span><span class="rm"><span style="color:#92400e">●</span></span></button><button class="ri"><span class="mono">linear</span><span class="rm"></span></button><button class="ri dorm"><span class="mono">home</span><span class="rm">—</span></button><button class="ri" style="margin-top:2px;font-size:12px"><span>+ Grant another app…</span><span class="rm">1</span></button><div class="rh" style="margin-top:10px">Agent</div><button class="ri"><span>Credentials</span><span class="rm">1 · 1</span></button><button class="ri"><span>Activity</span><span class="rm" style="color:#92400e">2</span></button><button class="ri"><span>Danger zone</span></button></div>
+    <div class="listing">
+      <div class="lh id-lh"><div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">News MCP</span><span class="mono cell">news</span><span class="badge">tunneled</span><span class="badge ok"><span class="dot"></span>online</span></div></div>
+    <div class="sum">claude reaches <b style="color:#09090b">8</b> of 11 tools <span class="dim">·</span> 4 ask first <span class="dim">·</span> <b style="color:#09090b">1</b> of 1 prompts <span class="dim">·</span> <b style="color:#09090b">2</b> of 3 resources</div>
+    <input class="filter" style="width:100%" placeholder="filter, or type a pattern…" value=""></div>
+      <div class="scroll id-list"><div class="gh"><span>Roles · 4</span><span style="text-transform:none;letter-spacing:0">declared by the app at connect</span></div><div class="cr"><div><span class="mono">reader</span><div class="d">tools get_news, search_.* · prompts digest_.* · matches 5</div></div><div class="st"><span class="seg"><button class="">none</button><button class="">ask</button><button class="on">allow</button></span></div></div><div class="cr"><div><span class="mono">admin</span><div class="d">tools admin_.* · matches 3</div></div><div class="st"><span class="seg"><button class="">none</button><button class="on warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">publisher</span><div class="d">tools publish, delete_feed · matches 2</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">all</span> <span class="badge" style="height:16px;font-size:10px">built-in</span><div class="d">every tool, prompt and resource, present and future · matches 15</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="gh"><span>Tools · 11</span><span style="text-transform:none;letter-spacing:0">8 reached · 3 not</span></div><div class="cr cur"><div><span class="mono">get_news</span><div class="d">Latest items across all feeds</div></div><div class="st"><span class="via">also via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="on">allow</button></span></div></div><div class="cr"><div><span class="mono">search_feeds</span><div class="d">Find feeds by name or URL</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">search_items</span><div class="d">Search items across feeds</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">search_archive</span><div class="d">Search the archive</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">admin_purge_cache</span><div class="d">Drop cached items</div></div><div class="st"><span class="via">via admin</span><span class="seg"><button class="" disabled="" title="admin grants ask — change the role to lower it">none</button><button class="impl warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">admin_reindex</span><div class="d">Rebuild the search index</div></div><div class="st"><span class="via">via admin</span><span class="seg"><button class="" disabled="" title="admin grants ask — change the role to lower it">none</button><button class="impl warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">admin_export</span><div class="d">Export everything as JSON</div></div><div class="st"><span class="via">via admin</span><span class="seg"><button class="" disabled="" title="admin grants ask — change the role to lower it">none</button><button class="impl warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">publish</span><div class="d">Post an item to a feed</div></div><div class="st"><span class="seg"><button class="">none</button><button class="on warn">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">delete_feed</span><div class="d">Remove a feed and its items</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">subscribe</span><div class="d">Subscribe to a feed</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="cr"><div><span class="mono">unsubscribe</span><div class="d">Unsubscribe from a feed</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="gh"><span>Prompts · 1</span></div><div class="cr"><div><span class="mono">digest_daily</span><div class="d">Summarise the last 24 h</div></div><div class="st"><span class="via">via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="gh"><span>Resources · 3</span><span style="text-transform:none;letter-spacing:0">matched by URI</span></div><div class="cr"><div><span class="mono">news://feed/hn</span><div class="d">text/plain</div></div><div class="st"><span class="via">via resource/news://feed/*</span><span class="seg"><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">none</button><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">news://feed/lobsters</span><div class="d">text/plain</div></div><div class="st"><span class="via">via resource/news://feed/*</span><span class="seg"><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">none</button><button class="" disabled="" title="resource/news://feed/* grants allow — change the role to lower it">ask</button><button class="impl">allow</button></span></div></div><div class="cr"><div><span class="mono">news://config</span><div class="d">application/json</div></div><div class="st"><span class="seg"><button class="on">none</button><button class="">ask</button><button class="">allow</button></span></div></div><div class="gh"><span>Patterns · 1</span><span style="text-transform:none;letter-spacing:0">entries that are not one item</span></div><div class="cr"><div><span class="mono">resource/news://feed/*</span><div class="d">matches 2 today</div></div><div class="st"><span class="seg"><button class="">none</button><button class="">ask</button><button class="on">allow</button></span></div></div></div>
+      <div class="save id-save"><span class="row" style="gap:10px"><button class="btn" style="height:28px;color:#dc2626;border-color:#fecaca">Remove from claude</button></span><span class="row" style="gap:10px"><span class="cell" style="font-size:12px"><span class="dim">saved · 3 allow · 2 ask</span></span><button class="btn ghost" disabled="">Discard</button><button class="btn primary" disabled="">Save</button></span></div>
+    </div>
+    <div class="details id-details"><div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">get_news</span><span class="badge">tool</span></div><div class="cell" style="margin-top:2px">Latest items across all feeds</div></div>
+    <div class="db"><div class="sec"><div class="eyebrow">For claude</div><div class="kv"><div class="k">Standing</div><div><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed · via reader</span></div></div><div class="kv"><div class="k">Approval</div><div>Not asked — allow wins over any ask entry, so adding one here would not gate it while <span class="mono">reader</span> allows it.</div></div><div class="kv"><div class="k">Last called</div><div>2 h ago · 31 calls in 7 d · <a>see them</a></div></div><div class="row" style="gap:8px;padding-top:2px"><span class="via">also via reader</span><span class="seg"><button class="" disabled="" title="reader grants allow — change the role to lower it">none</button><button class="" disabled="" title="reader grants allow — change the role to lower it">ask</button><button class="on">allow</button></span><span class="hint">solid: set on this item · hollow: implied by a role · a direct entry survives the app changing what a role matches</span></div></div><div class="sec"><div class="eyebrow">Arguments</div><div class="arg"><div class="mono">since</div><div class="muted">string</div><div>optional</div></div></div><div class="sec"><div class="eyebrow">What only the hub knows</div><div class="kv"><div class="k">Called as</div><div><span class="mono">news_get_news</span> on the aggregated endpoint</div></div><div class="kv"><div class="k">Reachable by</div><div><span class="mono">claude</span>, <span class="mono">cron</span> · via reader</div></div><div class="kv"><div class="k">Redaction</div><div>none</div></div></div></div></div>
+  </div>
+  </div>
+<div class="home"></div>
+</div></div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1330,"height":1700}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

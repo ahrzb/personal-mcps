@@ -91,6 +91,19 @@
   .arg{display:grid;grid-template-columns:110px 60px 1fr;column-gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid #f4f4f5}.arg:last-child{border-bottom:none}
   .tile{display:flex;gap:16px;font-size:12px;color:#71717a}.tile b{color:#09090b;font-weight:600;font-size:14px}
   .banner{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px}
+  .badge.kind{background:#fff;border:1px solid #d4d4d8;color:#71717a;border-radius:999px;height:18px;padding:0 8px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:600}
+  #crumb{display:flex;align-items:center;gap:6px;font-size:13px}
+  #crumb .back{color:#2563eb;font-weight:500;text-decoration:none;padding:2px 0}
+  #crumb .back:hover{text-decoration:underline;text-underline-offset:3px}
+  #crumb a{color:#71717a;text-decoration:none;cursor:pointer}
+  #crumb a:hover{color:#09090b}
+  #crumb .mono{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#52525b;cursor:pointer}
+  #crumb .mono:hover{background:#e4e4e7;color:#09090b}
+  #crumb > .mono:last-child,#crumb > .mono:last-child:hover{background:#18181b;color:#fafafa;cursor:default}
+  #crumb .dim{font-size:0}
+  #crumb .dim::before{content:"›";font-size:14px;color:#a1a1aa;line-height:1}
+  .more{display:flex;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid #f4f4f5}
+  .more .btn{height:30px;padding:0 12px;font-size:12px;flex-shrink:0}
   .tog{background:none;border:0;padding:0;color:#71717a;font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
   .tog:hover{color:#09090b}
   .panes{height:auto}
@@ -116,8 +129,8 @@
 <div class="wrap">
   <div style="display:flex;justify-content:space-between;align-items:flex-end">
     <div style="display:flex;flex-direction:column;gap:4px">
-      <div class="cell"><a>Agents</a> <span class="dim">/</span> <span class="mono">claude</span> <span class="dim">/</span> <span class="mono">news</span> <span class="dim">/</span> <span class="mono">get_news</span></div>
-      <div class="row" style="gap:10px"><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
+      <div class="cell"><a class="back">‹ Agents</a></div>
+      <div class="row" style="gap:10px"><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
     </div>
     <div class="tile"><span><b>3</b> apps</span><span><b>11</b> tools · <b>1</b> prompts · <b>2</b> resources</span><span style="color:#92400e"><b style="color:#92400e">4</b> ask first</span><span><b>1</b> dormant</span></div>
   </div>

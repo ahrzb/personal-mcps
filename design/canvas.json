@@ -293,6 +293,22 @@
       "w": 1240,
       "h": 3880,
       "title": "Agent page · States"
+    },
+    {
+      "file": "MobileAgentDetail.dc.html",
+      "x": 0,
+      "y": 11830,
+      "w": 1330,
+      "h": 1720,
+      "title": "Agent page · mobile, three levels"
+    },
+    {
+      "file": "MobileAgentDetailStates.dc.html",
+      "x": 1410,
+      "y": 11830,
+      "w": 2620,
+      "h": 1740,
+      "title": "Agent page · mobile · States"
     }
   ],
   "annotations": [

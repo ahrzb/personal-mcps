@@ -48,6 +48,8 @@ import type {
 } from "./model";
 import { DELETE_AGENT_TEXT } from "./agents";
 import { NO_BODIES_SENTENCE } from "./audit";
+import { inlineMarkdown, plainText, renderMarkdown } from "./markdown";
+import { raw } from "hono/html";
 
 /** The accessible name of this page's pane navigation. The pill row every OTHER paned page
  *  draws below the breakpoint is deliberately absent here: this page's narrow level 1 is
@@ -217,7 +219,9 @@ const Row: FC<{ row: AgentListRow; href: (sel: string) => string }> = ({ row, hr
         <a class="row-link mono" href={href(row.sel)}>
           {row.name}
         </a>
-        <div class="cr-detail">{row.description}</div>
+        {/* The app's own Markdown, inline only: a row is one line high, and a fence or a
+            list in a description must not be allowed to make it three (markdown.ts). */}
+        <div class="cr-detail md">{raw(inlineMarkdown(row.description))}</div>
       </div>
       <div class="cr-control">
         {row.noEffect ? (
@@ -474,7 +478,7 @@ const Details: FC<{ view: AgentDetailsView; agent: string }> = ({ view, agent })
           <span class="listing-title mono">{view.name}</span>
           <span class="badge badge--muted">{view.family}</span>
         </div>
-        {view.description === "" ? null : <p class="note">{view.description}</p>}
+        {view.description === "" ? null : <div class="note md">{raw(renderMarkdown(view.description))}</div>}
       </div>
       <div class="db">
         <section class="card card--pad">
@@ -547,7 +551,9 @@ const GrantCard: FC<{ card: AgentGrantCard; agent: string; q: string }> = ({ car
                   <span class="ep-family">{endpoint.family}</span>
                   <span class="mono">{endpoint.name}</span>
                   {endpoint.description === "" ? null : (
-                    <span class="ep-info" title={endpoint.description} aria-label={endpoint.description}>
+                    // An attribute holds text and nothing else, so the Markdown comes OFF
+                    // here rather than rendering — a `title` cannot carry a fence.
+                    <span class="ep-info" title={plainText(endpoint.description)} aria-label={plainText(endpoint.description)}>
                       i
                     </span>
                   )}

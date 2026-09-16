@@ -311,6 +311,17 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
        schema-unsound tool (§7, §18 decision 16) says so here: "schema-unsound —
        approval-gated calls refuse, bodies are not recorded".
 
+    Every description an app publishes — on a tool, a prompt, a resource or a template — is
+    **Markdown** (CommonMark/GFM) and renders as such wherever the hub shows it: whole in an
+    expanded row and in the agent page's details pane, inline-only on a one-line listing row
+    or summary line, and stripped to text in an attribute such as the grant step's endpoint
+    `title` — always through the one renderer in `server/src/pages/markdown.ts`, whose
+    whitelist is the trust boundary, the text being the app's and therefore untrusted: no
+    raw HTML from the source (it is escaped), links only `http:`/`https:`/`mailto:` and
+    carrying `rel="noopener noreferrer" target="_blank"`, no images (a link to the image URL
+    with its alt text), headings demoted to `<strong>` so app text cannot out-rank the
+    page's own, and no `id`, `class` or `style` attribute *(2026-09-16)*.
+
     Footer, verbatim: "Schemas come from the app's last `tools/list` — the hub stores
     them, it does not author them." The page edits nothing here.
   - **Prompts** — the same shape without a schema table: name, description, the declared

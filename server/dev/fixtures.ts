@@ -847,9 +847,15 @@ const mcpToolsCatalog: AppToolRow[] = [
   {
     name: "paper_fetch",
     aggregated: "mcp-tools_paper_fetch",
-    summary: "Fetch the paper identified by a DOI and return its text as Markdown.",
+    // The one Markdown description of the preview: descriptions are Markdown by
+    // convention, so a board that renders none would not show what this pane really looks
+    // like (server/src/pages/markdown.ts).
+    summary: "Fetch the paper identified by a **DOI** and return its text as Markdown.",
     description:
-      "Fetch the paper identified by a DOI and return its text as Markdown.\ndoi must be the exact DOI string, not a URL or a padded value.",
+      "Fetch the paper identified by a **DOI** and return its text as Markdown.\n\n" +
+      "`doi` must be the exact DOI string, not a URL or a padded value — see the " +
+      "[DOI handbook](https://www.doi.org/the-identifier/resources/handbook/).\n\n" +
+      "```\npaper_fetch doi=10.1000/182\n```",
     args: [
       { name: "doi", type: "string", required: true, hasDefault: false },
       { name: "force_refresh", type: "boolean", required: false, hasDefault: true, default: false },
@@ -2456,7 +2462,9 @@ const toolsGroup: AgentListGroup = {
       kind: "item",
       entry: "tool/get_news",
       name: "get_news",
-      description: "Latest items across all feeds",
+      // Markdown, like every description an app publishes — the row renders its first
+      // paragraph inline, the details pane renders it whole (server/src/pages/markdown.ts).
+      description: "Latest items across **all** feeds",
       via: ["reader"],
       alsoVia: true,
       noEffect: false,
@@ -2586,7 +2594,10 @@ const toolDetails: AgentDetailsView = {
   entry: "tool/get_news",
   name: "get_news",
   family: "tool",
-  description: "Latest items across all feeds",
+  description:
+    "Latest items across **all** feeds.\n\n" +
+    "Pass `since` to window it; the ordering rules are in the [feed docs](https://example.com/feeds).\n\n" +
+    "- newest first\n- capped at 50 items",
   standing: "allowed · via reader",
   approval:
     "Not asked — allow wins over any ask entry, so adding one here would not gate it while reader allows it.",

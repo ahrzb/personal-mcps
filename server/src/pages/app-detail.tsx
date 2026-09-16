@@ -40,6 +40,8 @@ import type {
   AppResourceRow,
   AppToolRow,
 } from "./model";
+import { inlineMarkdown, renderMarkdown } from "./markdown";
+import { raw } from "hono/html";
 import type { ArgumentRow, Reach } from "../catalog-view";
 import type { FamilyPatterns } from "../registry";
 
@@ -341,11 +343,13 @@ const ToolRow: FC<{ tool: AppToolRow }> = ({ tool }) => (
   <details class="disclosure tool">
     <summary>
       <span class="tool-name mono">{tool.name}</span>
-      <span class="tool-summary">{tool.summary}</span>
+      {/* The description's own Markdown, twice: inline for the summary line, which is one
+          line by construction, and whole under it (markdown.ts owns the whitelist). */}
+      <span class="tool-summary md">{raw(inlineMarkdown(tool.summary))}</span>
       <span class="tool-args">{argCount(tool.args)}</span>
     </summary>
     <div class="detail tool-detail">
-      <p class="tool-description">{tool.description}</p>
+      <div class="tool-description md">{raw(renderMarkdown(tool.description))}</div>
       {tool.args.length === 0 ? null : (
         <>
           <div class="eyebrow">Arguments</div>
@@ -412,7 +416,7 @@ const PromptRow: FC<{ prompt: AppPromptRow }> = ({ prompt }) => (
   <details class="disclosure tool">
     <summary>
       <span class="tool-name mono">{prompt.name}</span>
-      <span class="tool-summary">{prompt.description}</span>
+      <span class="tool-summary md">{raw(inlineMarkdown(prompt.description))}</span>
     </summary>
     <div class="detail tool-detail">
       {prompt.args.length === 0 ? null : (
@@ -423,7 +427,8 @@ const PromptRow: FC<{ prompt: AppPromptRow }> = ({ prompt }) => (
               <div class="kv-row">
                 <div class="kv-key mono">{argument.name}</div>
                 <div>
-                  {argument.description} <span class="muted">{argument.required ? "required" : "optional"}</span>
+                  <span class="md">{raw(inlineMarkdown(argument.description))}</span>{" "}
+                  <span class="muted">{argument.required ? "required" : "optional"}</span>
                 </div>
               </div>
             ))}

@@ -3562,6 +3562,40 @@ describe(`§13 · /agents/<slug>/apps/<app> — the (agent × app) grant pane`, 
     expect(nothing).toContain("Select a role, tool, prompt or resource on the left for its details.");
     expect(nothing).toContain("Grant set for viarole");
   });
+
+  it(`§13 · a description is the Markdown an app wrote it in (2026-09-16): the listing row renders its FIRST paragraph inline and stays one line, the details pane renders it whole — a fence as <pre><code>, a list as <ul>, and an http link carrying rel="noopener noreferrer" target="_blank" — while the app's own markup never becomes markup: a javascript: link renders as its text and a literal <script> arrives escaped · the grant step's endpoint title, which can hold text alone, carries the same description with the Markdown taken off (the twin)`, async () => {
+    // Its own namespace: the shared pane world's counts ("reaches 2 of 3 tools") are read
+    // by the rows above, and a fourth tool would move every one of them.
+    const { cookie, pane, grant } = await seedMarkdownPane();
+    const html = await page(`${pane}?sel=tool:md_notes`, cookie);
+
+    // The ROW, whole and exact: the inline marks render, and nothing the description's
+    // later blocks contain can make a one-line row taller.
+    expect(html).toContain(
+      '<div class="cr-detail md">Draft the <strong>weekly</strong> note from <code>notes://inbox</code>.</div>',
+    );
+
+    // The details pane, the same description whole.
+    expect(html).toContain("<pre><code>");
+    expect(html).toContain("<ul>");
+    expect(html).toContain('<a href="https://example.com/docs" rel="noopener noreferrer" target="_blank">handbook</a>');
+
+    // Neutralised, both ways: the refused scheme survives as words with no anchor around
+    // them, and the app's tag arrives as the four characters it is.
+    expect(html).not.toContain("javascript:");
+    expect(textOf(html)).toContain("run it");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>alert(1)</script>");
+
+    // The twin: an attribute holds text alone, so the grant step's info marker carries the
+    // description with the Markdown off — no marks, no markup, one line.
+    const step = await page(`${grant}?show=mdfeed`, cookie);
+    const title = /<span class="ep-info" title="([^"]*)"/.exec(step)?.[1] ?? "";
+    expect(title).toContain("Draft the weekly note from notes://inbox.");
+    expect(title).not.toContain("**");
+    expect(title).not.toContain("<strong>");
+    expect(step).not.toContain("<script>alert(1)</script>");
+  });
 });
 
 /* ------------------------------------------------------------------ *
@@ -3739,6 +3773,64 @@ async function paneScenario(): Promise<UpstreamScenario> {
   const scenario: UpstreamScenario = { id: uniqueSlug("paneup"), mode: { kind: "ok" } };
   await registerOverride(scenario.id, { tools: PANE_TOOLS, prompts: PANE_PROMPTS, resources: PANE_RESOURCES });
   return scenario;
+}
+
+/**
+ * §13's Markdown rule (2026-09-16) as an app would actually write a description: inline
+ * marks, a fence, a list, a link the whitelist admits, one it must refuse, and a raw tag.
+ * ONE source for both pages' rows, because it is one renderer (server/src/pages/markdown.ts)
+ * — a description that rendered one way on the app page and another on the agent page would
+ * be two whitelists, which is the shape this whole seam exists to prevent.
+ *
+ * The fence names no tool on purpose: the app page's own row counts how often each tool
+ * name is NAMED, and a name inside a description would be a second mention of it.
+ */
+const MARKDOWN_DESCRIPTION = [
+  "Draft the **weekly** note from `notes://inbox`.",
+  "",
+  "```sh",
+  "notes --since 7d",
+  "```",
+  "",
+  "- newest first",
+  "- capped at 50",
+  "",
+  "See the [handbook](https://example.com/docs), or [run it](javascript:alert(1)).",
+  "",
+  "<script>alert(1)</script>",
+].join("\n");
+
+const MARKDOWN_TOOL = { name: "md_notes", description: MARKDOWN_DESCRIPTION, inputSchema: { type: "object" } };
+
+/** A namespace of its own for the Markdown row: one proxied app advertising that one tool,
+ *  the agent holding it (the listing and its details pane) and one holding nothing at all
+ *  (the grant step, the one place the description becomes an attribute). Its own rather
+ *  than the shared pane world's, whose counts every row above reads. */
+async function seedMarkdownPane(): Promise<{ cookie: string; pane: string; grant: string }> {
+  const scenario: UpstreamScenario = { id: uniqueSlug("mdup"), mode: { kind: "ok" } };
+  await registerOverride(scenario.id, { tools: [MARKDOWN_TOOL] });
+  const ns = await seedNamespace(env.DB, {
+    apps: [
+      {
+        slug: "mdfeed",
+        kind: "proxy",
+        name: "Markdown MCP",
+        upstreamUrl: upstreamUrlFor(scenario),
+        upstreamAuthMode: "headers",
+        capabilities: ["tools"],
+        roles: { reader: { tools: ["md_.*"] } },
+      },
+    ],
+    agents: [
+      { slug: "claude", grants: { mdfeed: [{ role: "reader", mode: "allow" }] } },
+      { slug: "fresh", grants: {} },
+    ],
+  });
+  return {
+    cookie: (await seedOwnerSession(ns.owner)).cookie,
+    pane: paths.agentApp("claude", "mdfeed"),
+    grant: paths.agentPane("fresh", "grant"),
+  };
 }
 
 type AgentWorld = { ns: SeededNamespace; cookie: string };
@@ -7002,6 +7094,8 @@ const CATALOG_TOOLS = [
   },
   { name: "secret_push", description: "Push a secret to the configured store.", inputSchema: SECRET_SCHEMA },
   { name: "bad_schema", description: "A tool the hub will not walk.", inputSchema: BAD_SCHEMA },
+  // §13's Markdown rule (2026-09-16) — the same description the agent page's row reads.
+  MARKDOWN_TOOL,
 ];
 const CATALOG_TOOL_NAMES = CATALOG_TOOLS.map((tool) => tool.name);
 
@@ -7745,6 +7839,32 @@ describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
     );
     expect(textOf(catalogHtml)).toContain("paper_fetch");
     expect(textOf(catalogHtml)).toContain(`${CATALOG}_paper_fetch`);
+  });
+
+  it(`§13 · a tool's description is the Markdown an app wrote it in (2026-09-16): the expanded row renders **bold** as <strong>, a fence as <pre><code> and a list as <ul>, and an http link carries rel="noopener noreferrer" target="_blank" — while the app's own markup never becomes markup: a javascript: link renders as its own text with no anchor, and a literal <script> arrives escaped · the summary line above it is the same first paragraph inline, with every block wrapper dropped so the row stays one line (the twin)`, async () => {
+    const html = await appPage(paths.appDetail(CATALOG));
+
+    expect(html).toContain("<strong>weekly</strong>");
+    expect(html).toContain("<code>notes://inbox</code>");
+    expect(html).toContain("<pre><code>");
+    expect(html).toContain("<li>newest first</li>");
+    expect(html).toContain('<a href="https://example.com/docs" rel="noopener noreferrer" target="_blank">handbook</a>');
+
+    // The refused scheme survives as WORDS — no href, no anchor — and the app's tag as the
+    // four characters it is. Neither is ever an element.
+    expect(html).not.toContain("javascript:");
+    expect(textOf(html)).toContain("run it");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>alert(1)</script>");
+
+    // No `class`, `id` or `style` rides in on app prose: the renderer's own fence would
+    // otherwise carry `class="language-sh"` into the hub's one stylesheet.
+    expect(html).not.toContain("language-sh");
+
+    // The twin: the summary line is the first paragraph INLINE — its marks render, and the
+    // blocks below it do not, which is what keeps a `<summary>` one line high.
+    const summary = /<span class="tool-summary md">([\s\S]*?)<\/span>/.exec(html.slice(html.indexOf("md_notes")))?.[1] ?? "";
+    expect(summary).toBe("Draft the <strong>weekly</strong> note from <code>notes://inbox</code>.");
   });
 });
 

@@ -1557,6 +1557,36 @@ check and (manual, once) a real push notification to a real browser.
   renderer were designed together. `f4bce19` (`design:` — the layout & density guideline,
   `design/layout-and-density.md`, with the audit's inconsistencies mapped to fixes; applying
   it is the next dispatch, visual gate per page).
+- 2026-09-17 — **The app page takes the agent page's shape; every /apps row is the link,
+  shipped.** The owner's ask after the ladder ("do the changes to the app page, also fix
+  the listing page for apps so that the row is clickable"). `48d412b` (two `it.todo` rows
+  and one retitled twin — the agent page's no-pill-row row no longer names `/apps/<slug>`),
+  `1b3cee5` (`feat:` — `/apps/<slug>`'s "Apps / <slug>" line folded into the title row as
+  "Apps › <name>" beside the badges; `data-level` 1|2 from the pane (`appLevel`, the
+  landing being Tools); the level header moved from `agent-detail.tsx` into `layout.tsx`
+  as the shared `LevelHeader` (the model type `AgentLevelHeader` renamed `LevelHeader`)
+  and rendered on both level pages; `PanePills` gone from the app page; the narrow
+  stylesheet shows the app page's pane on level 2 alone with its card title hidden and
+  its key/value pairs stacked — the stacking found at the visual gate, where a proxied
+  endpoint clipped at 375; `.app-row` joins `.agent-row`'s stretched-anchor rules and
+  every `/apps` row carries `row-link` + chevron with its actions above the anchor; §13
+  amended in four places (the /apps row, the header, **The two levels**, the Mobile rule
+  — the pill row is now `/settings`'s alone), decision 31 appended, `design/README`,
+  the `Apps` and `AppDetail` boards redrawn to match; fixtures carry the level).
+  Deploy **`041b2ac9`**, smoke green (exit 0, every leg `ok`; the first `pnpm ship`
+  died on the transient D1 API error before deploying and was re-run). Gate: `tsc` 0;
+  46 files / **1,540 passed / 0** on the second run — the first recorded the three
+  `tunnel/stream.test.ts` socket rows red under load, green alone (13/13), the known
+  flake. Visual gate by the orchestrator in the states preview: the app page at 1300
+  beside `AppDetail` (crumb in the title line), at 375 on levels 1 and 2 (rail-as-list;
+  Prompts and Overview with the stacked pairs, no horizontal scroll) and at 900 (levels
+  on, wide nav, no hamburger); `/apps` at 1300 with a row hovered and at 375. Cost: 0
+  agents — the model, template, stylesheet and rows were the orchestrator's own, the
+  pattern being the agent page's already-landed one. For the owner: no
+  `MobileAppDetail` board was drawn (the README records it as the standing follow-up;
+  the phone rendering is `MobileAgentDetail`'s levels with one region per pane), and
+  the two new test titles say 2026-09-16 while the work landed after midnight on the
+  17th — left as titled to avoid a retitle churn in the inventory.
 - 2026-09-16 — **The layout & density ladder applied to every page and board, shipped.**
   `1efa731` (`fix:` — the framed rail as the board's dense column, after the owner's "this
   looks awful" screenshot; deploy `abb4cba8`), then the dispatch: `2764c43` (`spec:` —

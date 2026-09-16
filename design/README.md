@@ -249,7 +249,10 @@ demo and the brief differed, the brief won):
   complicated the flow); a note points at the agent's own page.
 - Three forms, three ops, one each: `app_update { owner_roles | roles }`,
   `app_update { log_bodies, redact, redact_results }`, `grant_set` — the same composer the
-  agent page's route uses. Each pane's foot carries Discard and Save.
+  agent page's route uses. Each pane's foot carries Discard and Save — on Roles they sit
+  in the **editor's** foot, beside Delete role and its hint, because the listing foot
+  carries **New role** alone (owner's ruling, 2026-09-17); a new role gets that foot too,
+  without the Delete a saved one carries.
 - The unsaved language is the agent page's — the amber dashed **unsaved** badge on every
   changed row whatever the change, a counted "N unsaved changes" in the foot, a blue dot on
   the rail entry and the row that hold a draft, and one save-or-discard banner guarding a

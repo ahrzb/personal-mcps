@@ -10,6 +10,9 @@ owner walks in their browser. Rules: §7 (Upstream OAuth), §13 (`/apps`,
 |---|---|
 | Add form, kind/auth pickers | `AppNew` / `MobileAppNew` |
 | Row with connection state, Reconnect / Disconnect | `Apps` |
+| The app's own page (the endpoint card stays above every pane but Overview) | `AppDetail` / `MobileAppDetail` |
+| Its roles, all the owner's | `AppDetailStates · ROLES — A PROXIED APP` |
+| Turning body logging on with nothing masked | `AppDetailStates · RECORDING — A PROXIED APP, LOGGING JUST TURNED ON` |
 
 The provider's consent screen is theirs, not ours. `AppNewStates` renders only the
 tunneled branch; the proxied states live on `AppNewProxiedStates` (adopted roadmap step

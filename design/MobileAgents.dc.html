@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px}
+    a{color:#09090b;text-decoration:underline;text-underline-offset:2px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .muted{color:#71717a}.dim{color:#a1a1aa}
+    .card{background:#fff;border:1px solid #e4e4e7;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.05);overflow:hidden;display:flex;flex-direction:column}
+    .badge{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 8px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+    .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:44px;padding:0 16px;border-radius:8px;font-size:14px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+    .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+    .btn.dangerout{color:#dc2626;border-color:#fecaca}
+    .nav{height:56px;box-sizing:border-box;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;justify-content:space-between;padding:0 20px}
+    .pills{display:flex;align-items:center;gap:8px;width:100%}
+    .pill{display:flex;align-items:center;justify-content:center;gap:5px;height:44px;padding:0 10px;border-radius:8px;font-size:13px;font-weight:500;color:#71717a}
+    .pill.on{background:#f4f4f5;color:#09090b}
+    .count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 4px;border-radius:999px;background:#dc2626;color:#fff;font-size:11px;font-weight:600;flex-shrink:0}
+    .row{display:flex;align-items:center;gap:8px}
+    .cell{font-size:12px;color:#71717a;line-height:1.5}
+    .note{font-size:12px;color:#71717a;line-height:1.5}
+    .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+    /* the row is the link: a stretched anchor over the whole card section, no script */
+    .ar{position:relative;display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-bottom:1px solid #f4f4f5;cursor:pointer}
+    .ar:last-child{border-bottom:none}
+    .ar.hover{background:#fafafa}
+    .ar .stretch::after{content:"";position:absolute;inset:0}
+    .ar .above{position:relative;z-index:1}
+    .chev{display:flex;align-items:center;color:#a1a1aa;flex-shrink:0}
+    .ar.hover .chev{color:#09090b}
+    .lines{display:flex;flex-direction:column;gap:3px}
+  </style>
+</helmet>
+<div style="width:390px;box-sizing:border-box;background:#fff;display:flex;flex-direction:column">
+
+  <div class="nav">
+    <div style="display:flex;align-items:center;gap:8px">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>
+      <div style="font-size:15px;font-weight:600">personal-mcps</div>
+    </div>
+    <div class="btn" style="height:36px;padding:0 12px;font-size:13px">Sign out</div>
+  </div>
+
+  <div style="display:flex;padding:12px 20px 0;overflow:hidden">
+    <div class="pills">
+      <div class="pill">Apps</div>
+      <div class="pill on">Agents</div>
+      <div class="pill">Audit</div>
+      <div class="pill">Approvals<span class="count">2</span></div>
+      <div class="pill">Settings</div>
+    </div>
+  </div>
+
+  <div style="box-sizing:border-box;padding:20px;display:flex;flex-direction:column;gap:16px">
+
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <div style="font-size:20px;font-weight:600">Agents</div>
+      <div class="muted" style="font-size:14px">Identities that call your apps &mdash; what each can reach, and what it presents to get in.</div>
+    </div>
+
+    <div class="btn primary">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fafafa" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+      <span>New agent</span>
+    </div>
+
+    <div class="card">
+
+      <!-- claude — drawn in its pressed / hover state -->
+      <div class="ar hover">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+            <div class="mono" style="font-weight:500;font-size:15px"><a href="#" class="stretch" style="text-decoration:none">claude</a></div>
+            <div class="cell">Claude sessions</div>
+          </div>
+          <div class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
+        </div>
+        <div class="lines cell">
+          <div><span class="mono" style="color:#09090b">news, linear</span> <span class="dim">&middot;</span> <span class="mono dim">home</span></div>
+          <div>16 tools &middot; 1 prompt &middot; 2 resources <span class="dim">&middot;</span> <span style="color:#92400e">4 need approval</span> <span class="dim">&middot;</span> 1 dormant</div>
+          <div>1 token &middot; used 2 h ago <span class="dim">&middot;</span> 1 client &middot; Claude</div>
+          <div>144 calls &middot; 4 denied <span class="dim">&middot;</span> 7 d <span class="dim">&middot;</span> created Aug 12</div>
+        </div>
+        <div class="row" style="justify-content:space-between" >
+          <span class="badge warn">2 awaiting approval</span>
+          <div class="btn dangerout above" style="height:36px;padding:0 12px;font-size:13px">Delete</div>
+        </div>
+      </div>
+
+      <!-- cron -->
+      <div class="ar">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+            <div class="mono" style="font-weight:500;font-size:15px"><a href="#" class="stretch" style="text-decoration:none">cron</a></div>
+            <div class="cell">Nightly jobs</div>
+          </div>
+          <div class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
+        </div>
+        <div class="lines cell">
+          <div><span class="mono" style="color:#09090b">news</span></div>
+          <div>4 tools &middot; 1 prompt <span class="dim">&middot;</span> <span style="color:#92400e">2 entries match nothing</span></div>
+          <div>1 token &middot; never used <span class="dim">&middot;</span> <span class="dim">no clients</span></div>
+          <div><span class="dim">no calls</span> <span class="dim">&middot;</span> 7 d <span class="dim">&middot;</span> created Aug 20</div>
+        </div>
+        <div class="row" style="justify-content:flex-end">
+          <div class="btn dangerout above" style="height:36px;padding:0 12px;font-size:13px">Delete</div>
+        </div>
+      </div>
+
+      <!-- pi -->
+      <div class="ar">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0">
+            <div class="mono" style="font-weight:500;font-size:15px"><a href="#" class="stretch" style="text-decoration:none">pi</a></div>
+            <div class="cell">Raspberry Pi runner</div>
+          </div>
+          <div class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
+        </div>
+        <div class="lines cell">
+          <div><span class="badge">no grants &mdash; can call nothing</span></div>
+          <div><span class="dim">no token</span> <span class="dim">&middot;</span> <span class="dim">no clients</span></div>
+          <div><span class="dim">&mdash;</span> <span class="dim">&middot;</span> 7 d <span class="dim">&middot;</span> created Sep 1</div>
+        </div>
+        <div class="row" style="justify-content:flex-end">
+          <div class="btn dangerout above" style="height:36px;padding:0 12px;font-size:13px">Delete</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="note" style="text-align:center">Deleting an agent deletes its tokens and removes its grants everywhere.</div>
+
+    <div class="card" style="padding:14px 16px;background:#fafafa;border-style:dashed;box-shadow:none">
+      <div class="eyebrow" style="margin-bottom:8px">Board notes</div>
+      <div class="note" style="display:flex;flex-direction:column;gap:4px">
+        <div>&bull; The phone rendering of <span class="mono">/agents</span>, drawn as <span class="mono">MobileApps</span> draws <span class="mono">/apps</span>: one card, one section per agent, each section a tap target.</div>
+        <div>&bull; <b>The row is the link.</b> The slug is an anchor stretched over the whole section (a <span class="mono">::after</span> covering it, no script), the section highlights on press and a chevron says where it goes; Delete sits above the stretched link, so it still deletes. The <span class="mono">claude</span> section is drawn in that pressed state.</div>
+        <div>&bull; The desktop's six columns become four stacked lines &mdash; apps, reach, credentials, activity &mdash; with the created date folded onto the activity line, because a phone has no room for a header row to name them.</div>
+        <div>&bull; Row actions are Delete alone; granting lives on the agent page, which the row opens (<span class="mono">MobileAgentDetail</span>).</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":390,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

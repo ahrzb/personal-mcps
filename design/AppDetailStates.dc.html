@@ -9,101 +9,126 @@
 <helmet>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
   <style>
-    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
-    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
-    a:hover { color: #52525b; }
+
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px;background:#fff}
+  a{color:#09090b;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  button{font:inherit;cursor:pointer}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .muted{color:#71717a}.dim{color:#a1a1aa}
+  .badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+  .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+  .badge.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+  .badge.new{border-style:dashed}
+  .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+  .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+  .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+  .btn.danger{color:#dc2626;border-color:#fecaca}
+  .btn:disabled{opacity:.45;cursor:default}
+  .nav{height:56px;box-sizing:border-box;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;justify-content:space-between;padding:0 24px}
+  .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:#71717a}
+  .navitem.on{background:#f4f4f5;color:#09090b}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cell{font-size:13px;color:#71717a}
+  .note{font-size:12px;color:#71717a;line-height:1.5}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+  .wrap{width:1332px;margin:0 auto;padding:24px 0 40px;display:flex;flex-direction:column;gap:16px}
+  .panes{display:flex;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);height:820px}
+  .rail{width:200px;flex-shrink:0;border-right:1px solid #e4e4e7;padding:12px 8px;display:flex;flex-direction:column;gap:1px;background:#fafafa;overflow:auto}
+  .rh{font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;padding:8px 8px 4px}
+  .ri{display:flex;justify-content:space-between;align-items:center;height:28px;padding:0 8px;border-radius:6px;font-size:13px;color:#71717a;cursor:pointer;border:0;background:none;width:100%;text-align:left}
+  .ri:hover{background:#f4f4f5}
+  .ri.on{background:#fff;color:#09090b;font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .rm{font-size:11px;color:#a1a1aa;display:flex;gap:4px;align-items:center}
+  .ldot{width:7px;height:7px;border-radius:50%;background:#15803d}.ldot.off{background:#d4d4d8}
+  .listing{width:520px;flex-shrink:0;border-right:1px solid #e4e4e7;display:flex;flex-direction:column;min-height:0}
+  .panes.wide .listing{width:auto;flex:1;border-right:none}
+  .panes.wide .details{display:none}
+  .lh{padding:14px 16px;border-bottom:1px solid #e4e4e7;display:flex;flex-direction:column;gap:8px}
+  .sum{font-size:12px;color:#71717a;line-height:1.5}
+  .filter{height:30px;box-sizing:border-box;border:1px solid #e4e4e7;border-radius:8px;padding:0 10px;font-size:12px;background:#fff;width:100%;outline:none}
+  .filter:focus{box-shadow:0 0 0 3px rgba(161,161,170,.35)}
+  .scroll{overflow:auto;flex:1;min-height:0}
+  .gh{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa;padding:12px 16px 4px;display:flex;justify-content:space-between}
+  .cr{display:grid;grid-template-columns:1fr auto;column-gap:10px;align-items:center;padding:6px 16px;font-size:13px;border-bottom:1px solid #f8f8f8;cursor:pointer}
+  .cr:hover{background:#f4f4f5}
+  .cr.cur{background:#f4f4f5;box-shadow:inset 3px 0 0 #18181b}
+  .cr .d{font-size:11px;color:#71717a;margin-top:1px}
+  .st{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+  .seg{display:inline-flex;flex-shrink:0}
+  .seg button{height:22px;padding:0;width:44px;justify-content:center;display:inline-flex;align-items:center;font-size:11px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#71717a}
+  .seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}.seg button+button{border-left:none}
+  .seg button.on{background:#18181b;color:#fafafa;border-color:#18181b}
+  .seg button.on.warn{background:#92400e;border-color:#92400e}
+  .seg button.impl{background:#fff;color:#09090b;border-color:#18181b;box-shadow:inset 0 0 0 1px #18181b}
+  .seg button.impl.warn{color:#92400e;border-color:#92400e;box-shadow:inset 0 0 0 1px #92400e}
+  .seg button:disabled{color:#d4d4d8;cursor:default;background:#fafafa}
+  .via{font-size:11px;color:#71717a;white-space:nowrap}
+  .foot{padding:12px 16px;border-top:1px solid #e4e4e7;display:flex;justify-content:space-between;align-items:center;background:#fafafa}
+  .details{flex:1;min-width:0;display:flex;flex-direction:column;background:#fafafa;overflow:auto}
+  .dh{padding:14px 16px;border-bottom:1px solid #e4e4e7;background:#fff}
+  .db{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+  .sec{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .kv{display:flex;gap:12px;font-size:12px;line-height:1.5}.kv .k{width:120px;flex-shrink:0;color:#71717a}
+  .arg{display:grid;grid-template-columns:120px 60px 1fr;column-gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid #f4f4f5}.arg:last-child{border-bottom:none}
+  .tile{display:flex;gap:16px;font-size:12px;color:#71717a}.tile b{color:#09090b;font-weight:600;font-size:14px}
+  .banner{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px}
+  .hint{font-size:11px;color:#a1a1aa}
+  .mini{height:22px;padding:0 8px;border-radius:6px;border:1px solid #e4e4e7;background:#fff;font-size:11px;font-weight:500;display:inline-flex;align-items:center}
+  .mini:hover{background:#f4f4f5}
+  .sw{width:36px;height:20px;border-radius:999px;background:#e4e4e7;position:relative;flex-shrink:0;border:0;padding:0}
+  .sw.on{background:#18181b}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:left .15s}
+  .sw.on::after{left:18px}
+  .cb{width:14px;height:14px;box-sizing:border-box;border-radius:3px;border:1.5px solid #a1a1aa;background:#fff;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
+  .cb.on,.cb.mixed{background:#18181b;border-color:#18181b}
+  .cb.lock{background:#a1a1aa;border-color:#a1a1aa;cursor:default}
+  .pr{display:grid;grid-template-columns:1fr auto;column-gap:12px;align-items:center;padding:7px 16px;border-bottom:1px solid #f4f4f5;font-size:13px}
+  .pr>div:first-child{display:flex;align-items:center;gap:8px}
+  .pr .ty{font-size:11px;color:#a1a1aa}
+  .pr .r{font-size:12px;color:#71717a;display:flex;align-items:center;gap:8px}
+  .sub{background:#fafafa;border-bottom:1px solid #f4f4f5;padding:2px 0}
+  .fld{display:flex;align-items:center;gap:8px;padding:5px 16px 5px 44px;font-size:12px}
+  .tog{background:none;border:0;padding:0;color:#71717a;font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  .tog:hover{color:#09090b}
+  .gh.sticky{position:sticky;top:0;background:#fff;z-index:1}
+  .code{background:#f4f4f5;border-radius:8px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.6;white-space:pre;color:#09090b;overflow:auto}
+  .card{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:14px 16px}
+  select.pick{font:inherit;font-size:13px;height:32px;border:1px solid #e4e4e7;border-radius:8px;padding:0 8px;background:#fff}
+  .pre{font-size:15px;color:#71717a;text-decoration:none;cursor:pointer;font-weight:500}
+  .pre:hover{color:#09090b;text-decoration:underline;text-underline-offset:3px}
+  .sep{font-size:18px;color:#a1a1aa;margin:0 -2px}
+  .panes{height:auto}
+  .scroll,.details{overflow:visible}
+  .lh .filter{cursor:text}
+  .notes{display:flex;flex-direction:column;gap:4px}
+  .notes .note b{color:#09090b;font-weight:500}
+  .frame{width:520px;border:1px solid #e4e4e7;border-radius:10px;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .frame .listing{width:auto;border-right:none}
+  .frame .details{background:#fafafa}
+  .panel{display:flex;flex-direction:column;gap:8px}
   </style>
 </helmet>
-<div style="width: 480px; min-height: 1240px; box-sizing: border-box; background: #fafafa; display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 32px;">
-
-  <div style="width: 400px; display: flex; flex-direction: column; gap: 8px;">
-    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">PROXIED · OAUTH</div>
-    <div style="width: 400px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
-      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
-        <div style="font-size: 16px; font-weight: 600;">Linear</div>
-        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">linear</span>
-        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">proxy</span>
-        <span style="display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #15803d;"></span>connected</span>
-      </div>
-      <div style="display: flex; flex-direction: column;">
-        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="width: 120px; flex-shrink: 0; font-size: 13px; color: #71717a;">Endpoint</div>
-          <div style="font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">https://mcp.linear.app/mcp</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-          <div style="width: 120px; flex-shrink: 0; font-size: 13px; color: #71717a;">Auth</div>
-          <div style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">oauth</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
-          <div style="width: 120px; flex-shrink: 0; font-size: 13px; color: #71717a;">Forward identity</div>
-          <div style="font-size: 14px;">On</div>
-        </div>
-      </div>
-      <div style="display: flex; justify-content: flex-end;">
-        <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Disconnect</div>
-      </div>
-      <div style="font-size: 12px; color: #71717a;">Roles are defined in config (virtual) for proxied apps.</div>
-    </div>
-  </div>
-
-  <div style="width: 400px; display: flex; flex-direction: column; gap: 8px;">
-    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">NEEDS RECONNECT</div>
-    <div style="width: 400px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
-      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
-        <div style="font-size: 16px; font-weight: 600;">GitHub</div>
-        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">github</span>
-        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">proxy</span>
-        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">needs reconnect</span>
-      </div>
-      <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #92400e; line-height: 1.5;">Token refresh failed — calls return errors until you reconnect.</div>
-      <div style="display: flex; justify-content: flex-end;">
-        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Reconnect</div>
-      </div>
-    </div>
-  </div>
-
-  <div style="width: 400px; display: flex; flex-direction: column; gap: 8px;">
-    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">APP TOKEN REVEAL</div>
-    <div style="width: 400px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 20px;">
-      <div style="display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 16px; font-weight: 600;">New app token</div>
-        <div style="font-size: 13px; color: #71717a;">Issued for <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news</span> just now.</div>
-      </div>
-
-      <div style="display: flex; gap: 8px; align-items: center;">
-        <div style="flex-grow: 1; min-width: 0; height: 36px; box-sizing: border-box; padding: 0 12px; background: #f4f4f5; border-radius: 8px; font-size: 12px; color: #09090b; display: flex; align-items: center; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pmcp_app_9f3kQmWnR7vTzYxLpB2cXd41…</div>
-        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05); flex-shrink: 0;">Copy</div>
-      </div>
-
-      <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #92400e; line-height: 1.5;">This token is shown only once. Store it in your bot's secret store.</div>
-
-      <div style="font-size: 12px; color: #71717a;">The previous token keeps working until you revoke it.</div>
-
-      <div style="display: flex; justify-content: flex-end;">
-        <div style="display: flex; align-items: center; justify-content: center; height: 36px; padding: 0 16px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">Done</div>
-      </div>
-    </div>
-  </div>
-
-  <div style="width: 400px; display: flex; flex-direction: column; gap: 8px;">
-    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">ARCHIVED</div>
-    <div style="width: 400px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
-      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
-        <div style="font-size: 16px; font-weight: 600;">News MCP</div>
-        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news</span>
-        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">tunnel</span>
-        <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">archived</span>
-      </div>
-      <div style="font-size: 13px; color: #71717a; line-height: 1.5;">Archived apps refuse connections; everything is kept — tokens, grants and audit history.</div>
-      <div style="display: flex; justify-content: flex-end;">
-        <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Unarchive</div>
-      </div>
-    </div>
-  </div>
-
+<div style="width:1240px;box-sizing:border-box;background:#fafafa;padding:32px;display:grid;grid-template-columns:1fr 1fr;column-gap:32px;row-gap:28px;align-items:start">
+  <div class="note" style="grid-column:1/-1">States of <span class="mono">/apps/&lt;slug&gt;</span> (<span class="mono">AppDetail</span>, <span class="mono">AppDetailPanes</span>), each at its own width. Rows are the listing's; details are the right pane's. <span class="mono">news</span> is the tunneled fixture, <span class="mono">notion</span> the proxied one.</div>
+  <div style="display:flex;flex-direction:column;gap:28px"><div class="panel"><div class="eyebrow">ROLES &mdash; New role</div><div class="note"><span class="mono">?new=1</span>: the name is an input (<span class="mono">[a-z0-9_-]+</span>, <span class="mono">all</span> reserved), the row reads <i>new role</i> with the blue dot, and the editor is a tick per item plus whatever the filter offers as a pattern. Save is one <span class="mono">app_update { owner_roles }</span> &mdash; <span class="mono">roles</span> on a proxied app; the page never mixes them.</div><div class="frame"><div class="listing"><div class="lh"><div class="row" style="gap:6px"><span style="font-weight:600">Roles</span><span class="cell">named sets of what this app exposes</span></div><div class="sum">3 declared by the app · 1 yours · plus the built-in <span class="mono">all</span> <span class="dim">·</span> the app's declaration wins when it declares a name you defined</div></div><div class="scroll"><div class="cr"><div><span class="mono">triage</span> <span class="badge ok" style="height:16px;font-size:10px">yours</span><div class="d">tools subscribe, unsubscribe · matches 2</div></div><div class="st"><span class="dim" style="font-size:11px">held by no agent</span></div></div><div class="cr"><div><span class="mono">publisher</span> <span class="badge" style="height:16px;font-size:10px" title="the app declares this name — its declaration replaced yours">app · replaced yours</span><div class="d">tools publish, delete_feed · matches 2</div></div><div class="st"><span class="dim" style="font-size:11px">held by no agent</span></div></div><div class="cr"><div><span class="mono">reader</span> <span class="badge" style="height:16px;font-size:10px" title="declared by the app at connect">app</span><div class="d">tools get_news, search_.* · prompts digest_.* · matches 5</div></div><div class="st"><span class="badge">claude</span><span class="badge">cron</span></div></div><div class="cr"><div><span class="mono">admin</span> <span class="badge" style="height:16px;font-size:10px" title="declared by the app at connect">app</span><div class="d">tools admin_.* · matches 3</div></div><div class="st"><span class="badge warn">claude · ask</span></div></div><div class="cr cur"><div><span class="mono"><span class="dim">new role</span></span> <span class="badge ok" style="height:16px;font-size:10px">yours</span> <span title="unsaved" style="color:#2563eb">●</span><div class="d"><span class="dim">nothing yet</span> · matches 0</div></div><div class="st"><span class="dim" style="font-size:11px">held by no agent</span></div></div><div class="cr"><div><span class="mono">all</span> <span class="badge" style="height:16px;font-size:10px">built-in</span><div class="d">every tool, prompt and resource, present and future · matches 15</div></div><div class="st"><span class="dim" style="font-size:11px">held by no agent</span></div></div></div><div class="foot"><span class="row" style="gap:10px"><button class="btn">New role</button></span><span class="row" style="gap:10px"><span class="cell" style="font-size:12px">1 unsaved role</span><button class="btn ghost">Discard</button><button class="btn primary">Save</button></span></div></div></div><div class="frame" style="width:560px;display:flex"><div class="details" style="flex:1"><div class="dh"><div class="row" style="gap:8px"><input class="filter" style="width:200px;height:28px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" placeholder="role name" value=""><span class="badge ok">yours</span><span title="unsaved" style="color:#2563eb">●</span><span style="flex:1"></span></div><div class="cell" style="margin-top:4px">Defined by you. If News MCP later declares a role named <span class="mono">…</span>, the app's declaration replaces this one.</div><input class="filter" style="margin-top:8px" placeholder="filter, or type a pattern…" value=""></div>
+    <div style="flex:1;overflow:auto"><div class="gh sticky"><span>Tools · 0 of 11</span></div><div class="cr" style="cursor:default"><div><span class="mono">get_news</span><div class="d">Latest items across all feeds</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">search_feeds</span><div class="d">Find feeds by name or URL</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">search_items</span><div class="d">Search items across feeds</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">search_archive</span><div class="d">Search the archive</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">admin_purge_cache</span><div class="d">Drop cached items</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">admin_reindex</span><div class="d">Rebuild the search index</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">admin_export</span><div class="d">Export everything as JSON</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">publish</span><div class="d">Post an item to a feed</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">delete_feed</span><div class="d">Remove a feed and its items</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">subscribe</span><div class="d">Subscribe to a feed</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">unsubscribe</span><div class="d">Unsubscribe from a feed</div></div><div class="st"><button class="cb"></button></div></div><div class="gh sticky"><span>Prompts · 0 of 1</span></div><div class="cr" style="cursor:default"><div><span class="mono">digest_daily</span><div class="d">Summarise the last 24 h</div></div><div class="st"><button class="cb"></button></div></div><div class="gh sticky"><span>Resources · 0 of 3</span></div><div class="cr" style="cursor:default"><div><span class="mono">news://feed/hn</span><div class="d">text/plain</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">news://feed/lobsters</span><div class="d">text/plain</div></div><div class="st"><button class="cb"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">news://config</span><div class="d">application/json</div></div><div class="st"><button class="cb"></button></div></div></div>
+    </div></div></div>
+<div class="panel"><div class="eyebrow">ROLES &mdash; the app declared a name you defined</div><div class="note"><span class="mono">triage</span> is yours. <span class="mono">publisher</span> you defined too, and the app now declares it: the effective map takes the app's, the badge reads <b>app &middot; replaced yours</b> and the row is read-only. Nothing is lost &mdash; <span class="mono">owner_roles</span> still holds yours, and it returns if the app stops declaring it.</div><div class="frame"><div class="listing"><div class="cr"><div><span class="mono">triage</span> <span class="badge ok" style="height:16px;font-size:10px">yours</span><div class="d">tools subscribe, unsubscribe · matches 2</div></div><div class="st"><span class="dim" style="font-size:11px">held by no agent</span></div></div><div class="cr"><div><span class="mono">publisher</span> <span class="badge" style="height:16px;font-size:10px" title="the app declares this name — its declaration replaced yours">app · replaced yours</span><div class="d">tools publish, delete_feed · matches 2</div></div><div class="st"><span class="dim" style="font-size:11px">held by no agent</span></div></div></div></div></div>
+<div class="panel"><div class="eyebrow">ROLES &mdash; a proxied app</div><div class="note">A proxied app declares none, so <b>every role is yours</b> and every row is editable; &ldquo;yours&rdquo; is the <span class="mono">roles</span> config field, not <span class="mono">owner_roles</span>.</div><div class="frame"><div class="listing"><div class="lh"><div class="row" style="gap:6px"><span style="font-weight:600">Roles</span><span class="cell">named sets of what this app exposes</span></div><div class="sum">0 declared by the app · 2 yours · plus the built-in <span class="mono">all</span> <span class="dim">·</span> a proxied app declares none, so every role is yours</div></div><div class="scroll"><div class="cr"><div><span class="mono">editor</span> <span class="badge ok" style="height:16px;font-size:10px">yours</span><div class="d">tools create_page, update_.* · matches 2</div></div><div class="st"><span class="badge warn">claude · ask</span></div></div><div class="cr"><div><span class="mono">reader</span> <span class="badge ok" style="height:16px;font-size:10px">yours</span><div class="d">tools search, fetch_.* · matches 2</div></div><div class="st"><span class="badge">claude</span></div></div><div class="cr"><div><span class="mono">all</span> <span class="badge" style="height:16px;font-size:10px">built-in</span><div class="d">every tool, prompt and resource, present and future · matches 5</div></div><div class="st"><span class="dim" style="font-size:11px">held by no agent</span></div></div></div><div class="foot"><span class="row" style="gap:10px"><button class="btn">New role</button></span><span class="row" style="gap:10px"><span class="cell" style="font-size:12px"><span class="dim">saved</span></span><button class="btn ghost" disabled="">Discard</button><button class="btn primary" disabled="">Save</button></span></div></div></div></div>
+<div class="panel"><div class="eyebrow">CATALOG &mdash; the filter matches nothing</div><div class="note">Each group keeps its heading and its real count; <i>no match</i> sits under the heading that has none.</div><div class="frame"><div class="listing"><div class="lh"><div class="row" style="gap:6px"><span style="font-weight:600">Catalog</span><span class="cell">advertised by the app on its last connect · re-listed on every reconnect</span></div><div class="sum">11 tools · 1 prompts · 3 resources · reachable by 2 agents</div><input class="filter" placeholder="filter tools, prompts, resources…" value="zzz"></div><div class="scroll"><div class="gh"><span>Tools · 11</span><span style="text-transform:none;letter-spacing:0"></span></div><div class="note" style="padding:4px 16px 8px">no match</div><div class="gh"><span>Prompts · 1</span><span style="text-transform:none;letter-spacing:0"></span></div><div class="note" style="padding:4px 16px 8px">no match</div><div class="gh"><span>Resources · 3</span><span style="text-transform:none;letter-spacing:0"></span></div><div class="note" style="padding:4px 16px 8px">no match</div></div></div></div></div></div>
+  <div style="display:flex;flex-direction:column;gap:28px"><div class="panel"><div class="eyebrow">ROLES &mdash; the shadowed role's details</div><div class="note">The explanation names it: the app's declaration replaced the one you had defined, read-only because the app owns it.</div><div class="frame" style="width:560px;display:flex"><div class="details" style="flex:1"><div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">publisher</span><span class="badge">declared by the app</span><span style="flex:1"></span><span class="dim" style="font-size:11px">held by no agent</span></div><div class="cell" style="margin-top:4px">News MCP declares this name, so its declaration replaced the one you had defined. Read-only: the app owns it.</div></div>
+    <div style="flex:1;overflow:auto"><div class="gh sticky"><span>Tools · 2 of 11</span></div><div class="cr" style="cursor:default"><div><span class="mono">get_news</span><div class="d">Latest items across all feeds</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">search_feeds</span><div class="d">Find feeds by name or URL</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">search_items</span><div class="d">Search items across feeds</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">search_archive</span><div class="d">Search the archive</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">admin_purge_cache</span><div class="d">Drop cached items</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">admin_reindex</span><div class="d">Rebuild the search index</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">admin_export</span><div class="d">Export everything as JSON</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">publish</span><div class="d">Post an item to a feed</div></div><div class="st"><span class="cb lock" style="" title="in this role"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">delete_feed</span><div class="d">Remove a feed and its items</div></div><div class="st"><span class="cb lock" style="" title="in this role"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">subscribe</span><div class="d">Subscribe to a feed</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">unsubscribe</span><div class="d">Unsubscribe from a feed</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="gh sticky"><span>Prompts · 0 of 1</span></div><div class="cr" style="cursor:default"><div><span class="mono">digest_daily</span><div class="d">Summarise the last 24 h</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="gh sticky"><span>Resources · 0 of 3</span></div><div class="cr" style="cursor:default"><div><span class="mono">news://feed/hn</span><div class="d">text/plain</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">news://feed/lobsters</span><div class="d">text/plain</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div><div class="cr" style="cursor:default"><div><span class="mono">news://config</span><div class="d">application/json</div></div><div class="st"><span class="cb" style="border-color:#e4e4e7" title="not in this role"></span></div></div></div>
+    </div></div></div>
+<div class="panel"><div class="eyebrow">RECORDING &mdash; a proxied app, logging just turned on</div><div class="note">The warning only a proxied app gets: its schema is not cached at call time, so nothing is masked automatically. Turning the switch on with nothing ticked stores the bodies in the clear for seven days.</div><div class="frame"><div class="listing"><div class="lh"><div class="row" style="justify-content:space-between;flex-wrap:nowrap"><div class="row" style="gap:6px;flex-wrap:nowrap;min-width:0"><span style="font-weight:600">Recording</span><span class="cell">what the audit trail keeps, and what it masks</span></div><span class="row" style="gap:8px;flex-shrink:0"><span class="cell" style="font-size:12px">Record call bodies</span><button class="sw on" aria-label="body logging"></button></span></div>
+    <div class="sum">body logging <b style="color:#09090b">on</b> · set explicitly <span class="badge new warn">unsaved</span> <span class="dim">·</span> <b style="color:#09090b">0</b> masked paths by config</div>
+    <input class="filter" placeholder="filter paths…" value=""></div><div class="scroll"><div class="banner" style="margin:10px 16px 0">A proxied app's schema is not cached at call time, so nothing is masked automatically. Tick what is secret before you save, or it is stored in the clear for 7 days.</div><div class="gh sticky"><span>Arguments · 6 paths</span><span style="text-transform:none;letter-spacing:0">from each tool's inputSchema</span></div><div class="cr" style="cursor:default"><div><span class="mono">credentials.token</span> <span class="ty">string</span><div class="d">3 tools <button class="tog">which</button></div></div><div class="st"><button class="cb" title="mask on every tool that takes it"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">page_id</span> <span class="ty">string</span><div class="d">3 tools <button class="tog">which</button></div></div><div class="st"><button class="cb" title="mask on every tool that takes it"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">credentials.user</span> <span class="ty">string</span><div class="d">1 tool </div></div><div class="st"><button class="cb" title="mask on every tool that takes it"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">parent.database_id</span> <span class="ty">string</span><div class="d">1 tool </div></div><div class="st"><button class="cb" title="mask on every tool that takes it"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">query</span> <span class="ty">string</span><div class="d">1 tool </div></div><div class="st"><button class="cb" title="mask on every tool that takes it"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">title</span> <span class="ty">string</span><div class="d">1 tool </div></div><div class="st"><button class="cb" title="mask on every tool that takes it"></button></div></div><div class="gh sticky"><span>Results · 3 paths</span><span style="text-transform:none;letter-spacing:0">from outputSchema, where declared</span></div><div class="cr" style="cursor:default"><div><span class="mono">page.id</span> <span class="ty">string</span><div class="d">1 tool </div></div><div class="st"><button class="cb" title="mask on every tool that takes it"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">page.share_token</span> <span class="ty">string</span><div class="d">1 tool </div></div><div class="st"><button class="cb" title="mask on every tool that takes it"></button></div></div><div class="cr" style="cursor:default"><div><span class="mono">page.url</span> <span class="ty">string</span><div class="d">1 tool </div></div><div class="st"><button class="cb" title="mask on every tool that takes it"></button></div></div><div class="note" style="padding:8px 16px 4px"><span class="mono">update_page, search, fetch_page, archive_page</span> declare no output schema — a result path there can only come from a recorded call (mask from evidence).</div></div></div></div></div>
+<div class="panel"><div class="eyebrow">TOKEN &mdash; revoking</div><div class="note">Inline confirm on the row; the sentence changes when the key holds the live socket (<i>Revoking closes the app's live connection.</i>).</div><div class="frame"><div class="listing"><div class="scroll"><div class="cr"><div><span class="mono">pmcp_app_7Qw2…kL9</span> <span class="badge ok"><span class="dot"></span>holds the live socket</span><div class="d">issued Aug 12 · used 2 min ago</div></div><div class="st"><span class="cell" style="font-size:12px">Revoking closes the app's live connection.</span><button class="mini">Keep</button><button class="mini" style="color:#dc2626;border-color:#fecaca">Revoke</button></div></div></div></div></div></div>
+<div class="panel"><div class="eyebrow">TOKEN &mdash; the key, shown once</div><div class="note"><span class="mono">token_issue</span> answers 200 in place, the new token is selected and the reveal card lives in its details; the plaintext never rides a URL. App tokens have no expiry &mdash; rotate by issuing, then revoking the old one.</div><div class="frame"><div class="listing"><div class="scroll"><div class="cr cur"><div><span class="mono">pmcp_app_5bxj…epu</span> <span class="badge ok new">new</span><div class="d">issued just now · never used</div></div><div class="st"><button class="mini">Revoke</button></div></div><div class="cr"><div><span class="mono">pmcp_app_7Qw2…kL9</span> <span class="badge ok"><span class="dot"></span>holds the live socket</span><div class="d">issued Aug 12 · used 2 min ago</div></div><div class="st"><button class="mini">Revoke</button></div></div></div></div></div><div class="frame" style="width:560px;display:flex"><div class="details" style="flex:1"><div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">pmcp_app_5bxj…epu</span><span class="badge">app token</span></div><div class="cell" style="margin-top:2px">Only valid for opening the reverse WebSocket as news.</div></div><div class="db"><div class="sec" style="border-color:#bbf7d0;background:#f0fdf4"><div class="eyebrow" style="color:#15803d">Shown once — copy it now</div><div class="mono" style="font-size:12px;word-break:break-all">pmcp_app_bfhsm62735ved5svg4mv1</div><div class="hint">The previous token keeps working until you revoke it.</div></div><div class="sec"><div class="kv"><div class="k">Issued</div><div>just now</div></div><div class="kv"><div class="k">Expires</div><div>never — revoke on compromise</div></div><div class="kv"><div class="k">Last used</div><div>never</div></div><div class="kv"><div class="k">Connection</div><div>none</div></div></div></div></div></div></div>
+<div class="panel"><div class="eyebrow">AGENTS &mdash; removing an agent</div><div class="note">The foot's <b>Remove claude</b>, confirming: <span class="mono">grant_set</span> with an empty set. History stays; a waiting request expires.</div><div class="frame" style="width:560px"><div class="foot"><span class="row" style="gap:10px"><span class="row" style="gap:8px;font-size:12px;color:#71717a"><span>claude loses every entry on news. History stays.</span><button class="btn ghost" style="height:28px">Keep</button><button class="btn danger" style="height:28px">Remove</button></span></span><span class="row" style="gap:10px"><span class="cell" style="font-size:12px"><span class="dim">saved</span></span><button class="btn ghost" disabled="">Discard</button><button class="btn primary" disabled="">Save</button></span></div></div></div></div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":480,"height":1240}}'>
+<script data-dc-script data-props='{"$preview":{"width":1240,"height":2780}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

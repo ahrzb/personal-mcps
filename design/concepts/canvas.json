@@ -103,6 +103,14 @@
       "w": 440,
       "h": 900,
       "title": "Agent page · mobile, three levels (demo)"
+    },
+    {
+      "file": "AppMobileDemo.html",
+      "x": 7520,
+      "y": 5300,
+      "w": 440,
+      "h": 900,
+      "title": "App page · mobile, three levels (demo)"
     }
   ],
   "annotations": [],

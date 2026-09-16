@@ -161,6 +161,14 @@
       "title": "Add app · Mobile"
     },
     {
+      "file": "MobileAgents.dc.html",
+      "x": 4050,
+      "y": 2900,
+      "w": 390,
+      "h": 1320,
+      "title": "Agents · Mobile"
+    },
+    {
       "file": "AuthStates.dc.html",
       "x": 0,
       "y": 4720,
@@ -213,32 +221,50 @@
       "x": 0,
       "y": 0,
       "w": 1380,
-      "h": 840,
-      "title": "App detail · tools",
+      "h": 1440,
+      "title": "App page · Catalog",
       "page": "page-2"
     },
     {
       "file": "AppDetailPanes.dc.html",
       "x": 1480,
       "y": 0,
-      "w": 1012,
-      "h": 2230,
-      "title": "App detail · other panes",
+      "w": 1380,
+      "h": 4540,
+      "title": "App page · other panes",
       "page": "page-2"
     },
     {
       "file": "AppDetailStates.dc.html",
-      "x": 2592,
+      "x": 2960,
       "y": 0,
-      "w": 480,
-      "h": 1240,
-      "title": "App detail · States",
+      "w": 1240,
+      "h": 2780,
+      "title": "App page · States",
+      "page": "page-2"
+    },
+    {
+      "file": "MobileAppDetail.dc.html",
+      "x": 0,
+      "y": 1540,
+      "w": 1330,
+      "h": 1280,
+      "title": "App page · mobile, three levels",
+      "page": "page-2"
+    },
+    {
+      "file": "MobileAppDetailStates.dc.html",
+      "x": 2960,
+      "y": 2880,
+      "w": 2180,
+      "h": 1800,
+      "title": "App page · mobile · States",
       "page": "page-2"
     },
     {
       "file": "OauthConsent.dc.html",
       "x": 0,
-      "y": 2390,
+      "y": 4780,
       "w": 480,
       "h": 600,
       "title": "OAuth consent",
@@ -247,7 +273,7 @@
     {
       "file": "AuditDetailStates.dc.html",
       "x": 580,
-      "y": 2390,
+      "y": 4780,
       "w": 560,
       "h": 880,
       "title": "Audit detail · States",
@@ -256,7 +282,7 @@
     {
       "file": "AppNewProxiedStates.dc.html",
       "x": 1240,
-      "y": 2390,
+      "y": 4780,
       "w": 480,
       "h": 2243,
       "title": "Add app · Proxied states",
@@ -299,7 +325,7 @@
       "x": 0,
       "y": 11830,
       "w": 1330,
-      "h": 1720,
+      "h": 1740,
       "title": "Agent page · mobile, three levels"
     },
     {
@@ -307,7 +333,7 @@
       "x": 1410,
       "y": 11830,
       "w": 2620,
-      "h": 1740,
+      "h": 1760,
       "title": "Agent page · mobile · States"
     }
   ],

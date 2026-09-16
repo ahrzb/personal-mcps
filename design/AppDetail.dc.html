@@ -9,183 +9,134 @@
 <helmet>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
   <style>
-    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
-    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
-    a:hover { color: #52525b; }
+
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px;background:#fff}
+  a{color:#09090b;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  button{font:inherit;cursor:pointer}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .muted{color:#71717a}.dim{color:#a1a1aa}
+  .badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+  .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+  .badge.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+  .badge.new{border-style:dashed}
+  .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+  .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+  .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+  .btn.danger{color:#dc2626;border-color:#fecaca}
+  .btn:disabled{opacity:.45;cursor:default}
+  .nav{height:56px;box-sizing:border-box;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;justify-content:space-between;padding:0 24px}
+  .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:#71717a}
+  .navitem.on{background:#f4f4f5;color:#09090b}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cell{font-size:13px;color:#71717a}
+  .note{font-size:12px;color:#71717a;line-height:1.5}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+  .wrap{width:1332px;margin:0 auto;padding:24px 0 40px;display:flex;flex-direction:column;gap:16px}
+  .panes{display:flex;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);height:820px}
+  .rail{width:200px;flex-shrink:0;border-right:1px solid #e4e4e7;padding:12px 8px;display:flex;flex-direction:column;gap:1px;background:#fafafa;overflow:auto}
+  .rh{font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;padding:8px 8px 4px}
+  .ri{display:flex;justify-content:space-between;align-items:center;height:28px;padding:0 8px;border-radius:6px;font-size:13px;color:#71717a;cursor:pointer;border:0;background:none;width:100%;text-align:left}
+  .ri:hover{background:#f4f4f5}
+  .ri.on{background:#fff;color:#09090b;font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .rm{font-size:11px;color:#a1a1aa;display:flex;gap:4px;align-items:center}
+  .ldot{width:7px;height:7px;border-radius:50%;background:#15803d}.ldot.off{background:#d4d4d8}
+  .listing{width:520px;flex-shrink:0;border-right:1px solid #e4e4e7;display:flex;flex-direction:column;min-height:0}
+  .panes.wide .listing{width:auto;flex:1;border-right:none}
+  .panes.wide .details{display:none}
+  .lh{padding:14px 16px;border-bottom:1px solid #e4e4e7;display:flex;flex-direction:column;gap:8px}
+  .sum{font-size:12px;color:#71717a;line-height:1.5}
+  .filter{height:30px;box-sizing:border-box;border:1px solid #e4e4e7;border-radius:8px;padding:0 10px;font-size:12px;background:#fff;width:100%;outline:none}
+  .filter:focus{box-shadow:0 0 0 3px rgba(161,161,170,.35)}
+  .scroll{overflow:auto;flex:1;min-height:0}
+  .gh{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa;padding:12px 16px 4px;display:flex;justify-content:space-between}
+  .cr{display:grid;grid-template-columns:1fr auto;column-gap:10px;align-items:center;padding:6px 16px;font-size:13px;border-bottom:1px solid #f8f8f8;cursor:pointer}
+  .cr:hover{background:#f4f4f5}
+  .cr.cur{background:#f4f4f5;box-shadow:inset 3px 0 0 #18181b}
+  .cr .d{font-size:11px;color:#71717a;margin-top:1px}
+  .st{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+  .seg{display:inline-flex;flex-shrink:0}
+  .seg button{height:22px;padding:0;width:44px;justify-content:center;display:inline-flex;align-items:center;font-size:11px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#71717a}
+  .seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}.seg button+button{border-left:none}
+  .seg button.on{background:#18181b;color:#fafafa;border-color:#18181b}
+  .seg button.on.warn{background:#92400e;border-color:#92400e}
+  .seg button.impl{background:#fff;color:#09090b;border-color:#18181b;box-shadow:inset 0 0 0 1px #18181b}
+  .seg button.impl.warn{color:#92400e;border-color:#92400e;box-shadow:inset 0 0 0 1px #92400e}
+  .seg button:disabled{color:#d4d4d8;cursor:default;background:#fafafa}
+  .via{font-size:11px;color:#71717a;white-space:nowrap}
+  .foot{padding:12px 16px;border-top:1px solid #e4e4e7;display:flex;justify-content:space-between;align-items:center;background:#fafafa}
+  .details{flex:1;min-width:0;display:flex;flex-direction:column;background:#fafafa;overflow:auto}
+  .dh{padding:14px 16px;border-bottom:1px solid #e4e4e7;background:#fff}
+  .db{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+  .sec{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .kv{display:flex;gap:12px;font-size:12px;line-height:1.5}.kv .k{width:120px;flex-shrink:0;color:#71717a}
+  .arg{display:grid;grid-template-columns:120px 60px 1fr;column-gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid #f4f4f5}.arg:last-child{border-bottom:none}
+  .tile{display:flex;gap:16px;font-size:12px;color:#71717a}.tile b{color:#09090b;font-weight:600;font-size:14px}
+  .banner{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px}
+  .hint{font-size:11px;color:#a1a1aa}
+  .mini{height:22px;padding:0 8px;border-radius:6px;border:1px solid #e4e4e7;background:#fff;font-size:11px;font-weight:500;display:inline-flex;align-items:center}
+  .mini:hover{background:#f4f4f5}
+  .sw{width:36px;height:20px;border-radius:999px;background:#e4e4e7;position:relative;flex-shrink:0;border:0;padding:0}
+  .sw.on{background:#18181b}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:left .15s}
+  .sw.on::after{left:18px}
+  .cb{width:14px;height:14px;box-sizing:border-box;border-radius:3px;border:1.5px solid #a1a1aa;background:#fff;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
+  .cb.on,.cb.mixed{background:#18181b;border-color:#18181b}
+  .cb.lock{background:#a1a1aa;border-color:#a1a1aa;cursor:default}
+  .pr{display:grid;grid-template-columns:1fr auto;column-gap:12px;align-items:center;padding:7px 16px;border-bottom:1px solid #f4f4f5;font-size:13px}
+  .pr>div:first-child{display:flex;align-items:center;gap:8px}
+  .pr .ty{font-size:11px;color:#a1a1aa}
+  .pr .r{font-size:12px;color:#71717a;display:flex;align-items:center;gap:8px}
+  .sub{background:#fafafa;border-bottom:1px solid #f4f4f5;padding:2px 0}
+  .fld{display:flex;align-items:center;gap:8px;padding:5px 16px 5px 44px;font-size:12px}
+  .tog{background:none;border:0;padding:0;color:#71717a;font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  .tog:hover{color:#09090b}
+  .gh.sticky{position:sticky;top:0;background:#fff;z-index:1}
+  .code{background:#f4f4f5;border-radius:8px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.6;white-space:pre;color:#09090b;overflow:auto}
+  .card{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:14px 16px}
+  select.pick{font:inherit;font-size:13px;height:32px;border:1px solid #e4e4e7;border-radius:8px;padding:0 8px;background:#fff}
+  .pre{font-size:15px;color:#71717a;text-decoration:none;cursor:pointer;font-weight:500}
+  .pre:hover{color:#09090b;text-decoration:underline;text-underline-offset:3px}
+  .sep{font-size:18px;color:#a1a1aa;margin:0 -2px}
+  .panes{height:auto}
+  .scroll,.details{overflow:visible}
+  .lh .filter{cursor:text}
+  .notes{display:flex;flex-direction:column;gap:4px}
+  .notes .note b{color:#09090b;font-weight:500}
+  .frame{width:520px;border:1px solid #e4e4e7;border-radius:10px;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .frame .listing{width:auto;border-right:none}
+  .frame .details{background:#fafafa}
+  .panel{display:flex;flex-direction:column;gap:8px}
   </style>
 </helmet>
-<div style="width: 1380px; min-height: 840px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
-
-  <div style="height: 56px; box-sizing: border-box; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; padding: 0 24px;">
-    <div style="display: flex; align-items: center; gap: 24px;">
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>
-        <div style="font-size: 15px; font-weight: 600;">personal-mcps</div>
-      </div>
-      <div style="display: flex; align-items: center; gap: 4px;">
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: #f4f4f5; color: #09090b;">Apps</div>
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Agents</div>
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Audit</div>
-        <div style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Approvals<span style="display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #dc2626; color: #ffffff; font-size: 11px; font-weight: 600;">2</span></div>
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Settings</div>
-      </div>
-    </div>
-    <div style="display: flex; align-items: center; gap: 12px;">
-      <div style="font-size: 14px; color: #71717a;">ahrzb</div>
-      <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Sign out</div>
-    </div>
+<div style="width:1380px;box-sizing:border-box;background:#fff;display:flex;flex-direction:column">
+<div class="nav">
+  <div style="display:flex;align-items:center;gap:24px">
+    <div style="display:flex;align-items:center;gap:8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg><div style="font-size:15px;font-weight:600">personal-mcps</div></div>
+    <div style="display:flex;gap:4px"><div class="navitem on">Apps</div><div class="navitem">Agents</div><div class="navitem">Audit</div><div class="navitem">Approvals</div><div class="navitem">Settings</div></div>
   </div>
-
-  <div style="width: 1332px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 24px;">
-
-    <div style="display: flex; flex-direction: column; gap: 8px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <a href="#" style="font-size: 13px; color: #71717a; text-decoration: none;">Apps</a><span style="font-size: 13px; color: #a1a1aa;">›</span>
-          <div style="font-size: 24px; font-weight: 600;">mcp-tools</div>
-          <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">mcp-tools</span>
-          <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f4f4f5; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">tunnel</span>
-          <span style="display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;"><span style="width: 6px; height: 6px; border-radius: 50%; background: #15803d;"></span>online</span>
-        </div>
-        <div style="font-size: 13px; color: #71717a;">Last seen now</div>
-      </div>
-    </div>
-
-    <div style="display: flex; align-items: stretch; border: 1px solid #e4e4e7; border-radius: 12px; overflow: hidden; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-
-      <div style="width: 200px; flex-shrink: 0; box-sizing: border-box; border-right: 1px solid #e4e4e7; background: #fafafa; padding: 16px 8px; display: flex; flex-direction: column; gap: 20px;">
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-          <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa; padding: 0 10px;">App</div>
-          <div style="display: flex; flex-direction: column; gap: 2px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; background: #f4f4f5; color: #09090b;">
-              <span>Tools</span>
-              <span style="font-size: 13px; color: #71717a;">5</span>
-            </div>
-            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #a1a1aa;">
-              <span>Prompts</span>
-              <span style="font-size: 13px; color: #d4d4d8;">—</span>
-            </div>
-            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #a1a1aa;">
-              <span>Resources</span>
-              <span style="font-size: 13px; color: #d4d4d8;">—</span>
-            </div>
-            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
-              <span>Roles</span>
-              <span style="font-size: 13px; color: #a1a1aa;">none</span>
-            </div>
-            <div style="display: flex; align-items: center; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Overview</div>
-          </div>
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-          <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa; padding: 0 10px;">Access</div>
-          <div style="display: flex; flex-direction: column; gap: 2px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
-              <span>Agents</span>
-              <span style="font-size: 13px; color: #a1a1aa;">2</span>
-            </div>
-            <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">
-              <span>Token</span>
-              <span style="font-size: 13px; color: #a1a1aa;">1</span>
-            </div>
-          </div>
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 2px; padding-top: 16px; border-top: 1px solid #f4f4f5;">
-          <div style="display: flex; align-items: center; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Danger zone</div>
-        </div>
-      </div>
-
-      <div style="flex: 1; min-width: 0; box-sizing: border-box; padding: 24px; display: flex; flex-direction: column; gap: 16px;">
-
-        <div style="display: flex; flex-direction: column; gap: 12px;">
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
-            <div style="display: flex; flex-direction: column; gap: 4px;">
-              <div style="font-size: 16px; font-weight: 600;">Tools <span style="font-weight: 400; color: #71717a;">5</span></div>
-              <div style="font-size: 13px; color: #71717a;">Advertised by the app on its last connect.</div>
-            </div>
-            <div style="font-size: 13px; color: #71717a; flex-shrink: 0;">Re-listed on every reconnect</div>
-          </div>
-          <div style="display: flex; flex-direction: column;">
-
-            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="m9 18 6-6-6-6"></path></svg>
-              <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">duocards_query</div>
-              <div style="font-size: 13px; color: #71717a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Run an arbitrary GraphQL query or mutation against the DuoCards API as the logged-in user.</div>
-              <div style="font-size: 12px; color: #a1a1aa; flex-shrink: 0;">2 args</div>
-            </div>
-
-            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="m9 18 6-6-6-6"></path></svg>
-              <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">duocards_schema</div>
-              <div style="font-size: 13px; color: #71717a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">The full DuoCards GraphQL schema as SDL — read this before writing a query.</div>
-              <div style="font-size: 12px; color: #a1a1aa; flex-shrink: 0;">no args</div>
-            </div>
-
-            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="m9 18 6-6-6-6"></path></svg>
-              <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">jobfeed_crawl</div>
-              <div style="font-size: 13px; color: #71717a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Trigger a crawl of the configured job boards.</div>
-              <div style="font-size: 12px; color: #a1a1aa; flex-shrink: 0;">1 arg</div>
-            </div>
-
-            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f4f4f5;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="m9 18 6-6-6-6"></path></svg>
-              <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">jobfeed_feed</div>
-              <div style="font-size: 13px; color: #71717a; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Query crawled job postings, newest first.</div>
-              <div style="font-size: 12px; color: #a1a1aa; flex-shrink: 0;">5 args</div>
-            </div>
-
-            <div style="display: flex; flex-direction: column; border-bottom: 1px solid #f4f4f5;">
-              <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;"><path d="m6 9 6 6 6-6"></path></svg>
-                <div style="width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">paper_fetch</div>
-                <div style="font-size: 13px; color: #71717a; flex: 1; min-width: 0;">Fetch the paper identified by a DOI and return its text as Markdown.</div>
-                <div style="font-size: 12px; color: #a1a1aa; flex-shrink: 0;">2 args</div>
-              </div>
-
-              <div style="margin: 0 0 16px 26px; background: #fafafa; border: 1px solid #f4f4f5; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
-
-                <div style="font-size: 13px; color: #52525b; line-height: 1.6;">Fetch the paper identified by <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">doi</span> and return its text as Markdown. <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">doi</span> must be the exact DOI string, not a URL or padded value — <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">10.48550/arXiv.1706.03762</span> (arXiv) or <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">10.1038/s41586-021-03819-2</span> (Nature). Returns <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">{markdown, metadata: {doi, title, cached}}</span> — the body separate from the metadata.</div>
-
-                <div style="display: flex; flex-direction: column; gap: 6px;">
-                  <div style="font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa;">Arguments</div>
-                  <div style="display: grid; grid-template-columns: 180px 110px 1fr; gap: 0; padding: 6px 0; border-bottom: 1px solid #e4e4e7;">
-                    <div style="font-size: 12px; font-weight: 500; color: #71717a;">Name</div>
-                    <div style="font-size: 12px; font-weight: 500; color: #71717a;">Type</div>
-                    <div style="font-size: 12px; font-weight: 500; color: #71717a;">Required</div>
-                  </div>
-                  <div style="display: grid; grid-template-columns: 180px 110px 1fr; gap: 0; padding: 7px 0; border-bottom: 1px solid #f4f4f5; align-items: center;">
-                    <div style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">doi</div>
-                    <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">string</div>
-                    <div><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">required</span></div>
-                  </div>
-                  <div style="display: grid; grid-template-columns: 180px 110px 1fr; gap: 0; padding: 7px 0; align-items: center;">
-                    <div style="font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">force_refresh</div>
-                    <div style="font-size: 12px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">boolean</div>
-                    <div style="font-size: 12px; color: #a1a1aa;">optional · defaults to <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">false</span></div>
-                  </div>
-                </div>
-
-                <div style="display: flex; flex-wrap: wrap; column-gap: 20px; row-gap: 6px; padding-top: 12px; border-top: 1px solid #e4e4e7;">
-                  <div style="font-size: 12px; color: #71717a;">Called by agents as <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #09090b;">mcp-tools_paper_fetch</span></div>
-                  <div style="font-size: 12px; color: #71717a;">Reachable by <a href="#" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</a>, <a href="#" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">pi</a> · via <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">all</span></div>
-                  <div style="font-size: 12px; color: #71717a;">No approval required</div>
-                  <div style="font-size: 12px; color: #71717a;">No redacted fields</div>
-                </div>
-
-              </div>
-            </div>
-
-          </div>
-          <div style="font-size: 12px; color: #71717a;">Schemas come from the app's last <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">tools/list</span> — the hub stores them, it does not author them.</div>
-        </div>
-
-      </div>
-    </div>
-
+  <div class="row"><div class="muted">ahrzb</div><div class="btn">Sign out</div></div>
+</div>
+<div class="wrap">
+<div style="display:flex;flex-direction:column;gap:6px">
+  <div class="row" style="gap:10px"><a class="pre">Apps</a><span class="sep">&rsaquo;</span><span style="font-size:22px;font-weight:600">News MCP</span><span class="badge mono">news</span><span class="badge">tunneled</span><span class="badge ok"><span class="dot"></span>online</span></div>
+  <div class="cell">RSS digester on the home server</div>
+  <div class="tile"><span><b>11</b> tools <span class="dim">&middot;</span> <b>1</b> prompts <span class="dim">&middot;</span> <b>3</b> resources <span class="dim">&middot;</span> <b>2</b> agents <span class="dim">&middot;</span> body logging <b>on</b> <span class="dim">&middot;</span> last seen <b>2 min ago</b></span></div>
+</div>
+<div class="panes">
+    <div class="rail"><div class="rh">App</div><button class="ri on"><span>Catalog</span><span class="rm">15</span></button><button class="ri"><span>Roles</span><span class="rm">4</span></button><button class="ri"><span>Recording</span><span class="rm"><span class="ldot"></span></span></button><button class="ri"><span>Overview</span><span class="rm"></span></button><div class="rh" style="margin-top:10px">Access</div><button class="ri"><span>Agents</span><span class="rm">2</span></button><button class="ri"><span>Token</span><span class="rm">1</span></button><div style="height:8px"></div><button class="ri"><span>Danger zone</span><span class="rm"></span></button></div>
+    <div class="listing"><div class="lh"><div class="row" style="gap:6px"><span style="font-weight:600">Catalog</span><span class="cell">advertised by the app on its last connect · re-listed on every reconnect</span></div><div class="sum">11 tools · 1 prompts · 3 resources · reachable by 2 agents</div><input class="filter" placeholder="filter tools, prompts, resources…" value=""></div><div class="scroll"><div class="gh"><span>Tools · 11</span><span style="text-transform:none;letter-spacing:0"></span></div><div class="cr cur"><div><span class="mono">get_news</span><div class="d">Latest items across all feeds</div></div><div class="st"><span class="badge ">claude</span><span class="badge ">cron</span></div></div><div class="cr"><div><span class="mono">search_feeds</span><div class="d">Find feeds by name or URL</div></div><div class="st"><span class="badge ">claude</span><span class="badge ">cron</span></div></div><div class="cr"><div><span class="mono">search_items</span><div class="d">Search items across feeds</div></div><div class="st"><span class="badge ">claude</span><span class="badge ">cron</span></div></div><div class="cr"><div><span class="mono">search_archive</span><div class="d">Search the archive</div></div><div class="st"><span class="badge ">claude</span><span class="badge ">cron</span></div></div><div class="cr"><div><span class="mono">admin_purge_cache</span><div class="d">Drop cached items</div></div><div class="st"><span class="badge warn">claude · ask</span></div></div><div class="cr"><div><span class="mono">admin_reindex</span><div class="d">Rebuild the search index</div></div><div class="st"><span class="badge warn">claude · ask</span></div></div><div class="cr"><div><span class="mono">admin_export</span><div class="d">Export everything as JSON</div></div><div class="st"><span class="badge warn">claude · ask</span></div></div><div class="cr"><div><span class="mono">publish</span><div class="d">Post an item to a feed</div></div><div class="st"><span class="badge warn">claude · ask</span></div></div><div class="cr"><div><span class="mono">delete_feed</span><div class="d">Remove a feed and its items</div></div><div class="st"><span class="dim" style="font-size:11px">no agent</span></div></div><div class="cr"><div><span class="mono">subscribe</span><div class="d">Subscribe to a feed</div></div><div class="st"><span class="dim" style="font-size:11px">no agent</span></div></div><div class="cr"><div><span class="mono">unsubscribe</span><div class="d">Unsubscribe from a feed</div></div><div class="st"><span class="dim" style="font-size:11px">no agent</span></div></div><div class="gh"><span>Prompts · 1</span><span style="text-transform:none;letter-spacing:0"></span></div><div class="cr"><div><span class="mono">digest_daily</span><div class="d">Summarise the last 24 h</div></div><div class="st"><span class="badge ">claude</span><span class="badge ">cron</span></div></div><div class="gh"><span>Resources · 3</span><span style="text-transform:none;letter-spacing:0"></span></div><div class="cr"><div><span class="mono">news://feed/hn</span><div class="d">text/plain</div></div><div class="st"><span class="badge ">claude</span></div></div><div class="cr"><div><span class="mono">news://feed/lobsters</span><div class="d">text/plain</div></div><div class="st"><span class="badge ">claude</span></div></div><div class="cr"><div><span class="mono">news://config</span><div class="d">application/json</div></div><div class="st"><span class="dim" style="font-size:11px">no agent</span></div></div></div><div class="foot"></div></div>
+    <div class="details"><div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">get_news</span><span class="badge">tool</span></div><div class="cell" style="margin-top:2px">Latest items across all feeds</div></div><div class="db">
+    <div class="sec"><div class="eyebrow">Arguments</div><div class="arg"><div class="mono">since</div><div class="muted">string</div><div></div></div></div>
+    <div class="sec"><div class="eyebrow">Result · outputSchema</div><div class="arg"><div class="mono">items.id</div><div class="muted">string</div><div></div></div><div class="arg"><div class="mono">items.title</div><div class="muted">string</div><div></div></div></div>
+    <div class="sec"><div class="eyebrow">What only the hub knows</div><div class="kv"><div class="k">Called as</div><div><span class="mono">news_get_news</span> on the aggregated endpoint</div></div><div class="kv"><div class="k">Reachable by</div><div><span class="mono">claude</span> · via reader, tool/get_news<br><span class="mono">cron</span> · via reader</div></div><div class="kv"><div class="k">Approval</div><div>none required</div></div><div class="kv"><div class="k">Redaction</div><div>no redacted fields</div></div></div>
+    <div class="note">The same block the audit row and the agent page show for this tool. Editing reach happens on <a>Agents</a>, masking on <a>Recording</a>.</div></div></div>
   </div>
+<div class="panel" style="padding-top:8px"><div class="eyebrow">Board notes</div><div class="notes"><div class="note">&bull; <b>Seven panes behind one rail.</b> <b>App</b> &mdash; Catalog (<span class="mono">/apps/news</span>, the landing), Roles, Recording, Overview; <b>Access</b> &mdash; Agents, Token; then the tail entry Danger zone. Each rail marker is the pane's own count: the catalog total, the effective role count (or <span class="mono">none</span>), a status dot for body logging, the agents holding a grant, the live tokens (a dimmed <span class="mono">&mdash;</span> for a proxied app). Overview, Danger zone and a proxied Token render the listing alone, wide.</div><div class="note">&bull; <b>The header names the app once.</b> The crumb is folded into the title line &mdash; <span class="mono">Apps &rsaquo; News MCP</span>, the ancestor small and the page big &mdash; then the slug, kind and status badges, the description as the subtitle, and one tiles line of totals. The kind badge stays (tunneled / proxied carries information); no separate &ldquo;Last seen&rdquo; note. A proxied app keeps its endpoint / auth / forward-identity card above the pane on every pane but Overview.</div><div class="note">&bull; <b>Catalog folds the three families into one listing.</b> Tools, Prompts and Resources as groups with their counts; an unadvertised family reads <i>none advertised</i> beside its heading with one note row beneath. A row is the name, its description, and one badge per agent that reaches it &mdash; <span class="mono">claude</span> for allow, <span class="mono">claude &middot; ask</span> in amber &mdash; or the dim <i>no agent</i>. The row IS the <span class="mono">?sel=</span> link; the filter matches name or description.</div><div class="note">&bull; <b>Details answer &ldquo;what would a call to this look like?&rdquo;</b> Arguments and Result are the schema's <i>leaves</i> as dotted paths (<span class="mono">auth.api_key</span>), not top-level fields, each with its type and a <span class="mono">writeOnly &middot; masked</span> badge where the app declares one. <b>What only the hub knows</b> carries the four lines the audit row and the agent page show for the same endpoint: what it is called as on the aggregated endpoint, who reaches it and via what, what asks first, and what is redacted.</div><div class="note">&bull; <b>Editing is where the thing edited lives.</b> Reach on Agents, masking on Recording, definitions on Roles &mdash; the Catalog details link to both rather than duplicating a control. Granting a <i>new</i> agent is not started here: a note points at the agent's own page.</div><div class="note">&bull; <b>Three forms, three ops.</b> Roles posts one <span class="mono">app_update { owner_roles | roles }</span>, Recording one <span class="mono">app_update { log_bodies, redact, redact_results }</span>, Agents one <span class="mono">grant_set</span> &mdash; the same composer the agent page's route uses. Each pane's foot carries Discard and Save; every changed row wears the amber dashed <b>unsaved</b> badge and the rail entry a blue dot. Both are script-only, so the server-rendered page drops them, as the agent page did.</div><div class="note">&bull; Every column reads from ops that exist: <span class="mono">app_get</span> (catalog, roles, redaction), <span class="mono">agent_list</span> (grants), <span class="mono">audit_query</span> (calls per agent), <span class="mono">token_list</span>.</div></div></div>
+</div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":1380,"height":840}}'>
+<script data-dc-script data-props='{"$preview":{"width":1380,"height":1440}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

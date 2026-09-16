@@ -42,7 +42,7 @@ gutters:
 
 `SettingsPanes`, `AppDetailPanes` and `AgentDetailPanes` are gallery boards, not pages:
 they draw one pane each at the width that pane has inside the frame, so their artboards
-(1012, 1012, 1380) follow the pane, not the shape.
+(1012, 1380, 1380) follow the pane, not the shape.
 
 | Screen | Desktop | Mobile | States / extras |
 |---|---|---|---|
@@ -52,8 +52,8 @@ they draw one pane each at the width that pane has inside the frame, so their ar
 | Apps + add-app | `Apps`, `AppNew` | `MobileApps`, `MobileAppNew` | `AppNewStates`, `AppNewProxiedStates` |
 | Audit | `Audit` | `MobileAudit` | `AuditDetailStates` |
 | Settings — panes behind a left rail | `Settings` (password, the workspace shell: rail 200 in the framed box), `SettingsPanes` (the other five panes, at pane width — the shell and rail live on `Settings`) | `MobileSettings` | `SettingsStates` |
-| App detail (`/apps/<slug>`) — panes behind the same rail | `AppDetail` (tools), `AppDetailPanes` (the other seven) | — (follow-up) | `AppDetailStates` |
-| Agents + agent page (`/agents`, `/agents/<slug>`) — three panes behind a rail | `Agents` (the list), `AgentDetail` (an app's grants: rail · listing · details), `AgentDetailPanes` (Credentials, Activity, Grant another app, Danger zone) | `MobileAgentDetail` (the three panes as three levels with back buttons), `MobileAgentDetailStates` (sidebar, draft, grant step, credentials, paged activity, a request) — the list has none yet | `AgentDetailStates` |
+| App detail (`/apps/<slug>`) — three panes behind a rail | `AppDetail` (Catalog: rail · listing · details), `AppDetailPanes` (Roles, Recording, Agents, Token, Overview, Danger zone) | `MobileAppDetail` (the three panes as three levels), `MobileAppDetailStates` (sidebar, Roles editor, Recording, the grant editor, Token) | `AppDetailStates` |
+| Agents + agent page (`/agents`, `/agents/<slug>`) — three panes behind a rail | `Agents` (the list), `AgentDetail` (an app's grants: rail · listing · details), `AgentDetailPanes` (Credentials, Activity, Grant another app, Danger zone) | `MobileAgents` (the list as cards, the row the link), `MobileAgentDetail` (the three panes as three levels with back buttons), `MobileAgentDetailStates` (sidebar, draft, grant step, credentials, paged activity, a request) | `AgentDetailStates` |
 | Cross-cutting | — | — | `Dialogs` (destructive confirms), `EmptyStates` |
 
 Settings' six panes, one contract board and width each:
@@ -77,12 +77,12 @@ of the five non-Password panes was an asymmetry with no content behind it.
 Three of those boards (`AppDetail*`, `AuditDetailStates`, `AppNewProxiedStates`) were
 drawn as exploration and sit on canvas page 2, re-laid out 2026-09-03; §13 adopted
 `AppDetail*` on 2026-09-02 (decision 30) and the other two on 2026-09-03, so all three
-are contract wherever they sit. `/apps/<slug>` has no mobile
-artboard: since 2026-09-17 its phone rendering is the agent page's levels with one region
-per pane (`MobileAgentDetail` levels 1 and 2, the level header, no pill row — §13, *The two
-levels*), and drawing `MobileAppDetail` stays a recorded follow-up. The same day its crumb
-folded into the title line ("Apps › <name>") and every `Apps` row became the link, as the
-agents list's rows are.
+are contract wherever they sit. The three `AppDetail*` boards were **redrawn on
+2026-09-17** — the eight-pane drawing became the three-pane capture below — and page 2
+gained the two phone boards beside them (`MobileAppDetail`, `MobileAppDetailStates`), so
+`/apps/<slug>` no longer lacks a mobile artboard. The same day the app page's crumb folded
+into the title line ("Apps › <name>") and every `Apps` row became the link, as the agents
+list's rows are.
 
 `/apps/new` and `/approvals/<id>` are chromeless by design — no nav, so no pending badge
 and no Sign out (`app-new.tsx`, `approval-detail.tsx`); `AppNew`/`MobileAppNew` and
@@ -190,9 +190,82 @@ a crumb but folds it into the title line — `Agents › claude`, the ancestor s
 page itself big — so the agent is named once; the rail names the app and the listing the
 row, which is where the deeper path already lives), and on both the `agent` type label is gone (the crumb, the nav and
 the menu already say it; the app page keeps its kind label because tunneled / proxied
-carries information). `/agents` has no mobile board yet; `Dialogs` keeps the delete-agent
-confirm. §13 still describes the narrow layout as the pill row with stacked panes and is
-to be amended with the implementation.
+carries information). `MobileAgents` (2026-09-17) draws `/agents` on the phone the way
+`MobileApps` draws `/apps` — one card, one section per agent, the section the link with a
+chevron, Delete above the stretched anchor, and the desktop's six columns folded into four
+stacked lines because a phone has no room for a header row to name them. `Dialogs` keeps
+the delete-agent confirm. §13 still describes the narrow layout as the pill row with
+stacked panes and is to be amended with the implementation.
+
+## The app page, redrawn as three panes (2026-09-17)
+
+The owner asked for the app page to follow the agent page, and chose the direction from
+`design/concepts/AppThreePaneDemo.html` (the clickable prototype, drawn 2026-09-16 and
+refined with the owner through that day; it stays there as the reference the boards were
+captured from, as `AgentThreePaneDemo.html` does). `AppDetail`, `AppDetailPanes` and
+`AppDetailStates` replace the 2026-09-02 eight-pane boards; `MobileAppDetail` and
+`MobileAppDetailStates` are new, captured from `design/concepts/AppMobileDemo.html` — the
+same demo transformed to 390 px.
+
+What the boards pin (the dispatch brief
+`docs/superpowers/plans/2026-09-17-app-three-pane.md` is what the code follows; where the
+demo and the brief differed, the brief won):
+
+- `/apps/<slug>` is the workspace shape: a **rail**, a **listing** and a **details** pane
+  in one framed box. Seven panes — **App**: Catalog (the landing), Roles, Recording,
+  Overview; **Access**: Agents, Token; then the tail entry Danger zone. Each rail marker is
+  that pane's own count; Recording's is the Two-factor status dot, lit when body logging is
+  on. Overview, Danger zone and a **proxied** Token render the listing alone, wide.
+- The header is the agent page's: the crumb folded into the title line (`Apps › News MCP`,
+  the ancestor small and the page big), then the slug, kind and status badges, the
+  description as the subtitle, and **one tiles line** of totals ending in `last seen` for a
+  tunneled app — so the old separate "Last seen" note is gone. The kind badge stays:
+  tunneled / proxied carries information the nav does not.
+- **Catalog** folds Tools, Prompts and Resources into one listing with family groups and
+  `none advertised` headers; the row is the `?sel=` link and carries one badge per agent
+  that reaches it (`claude`, or `claude · ask` in amber) or the dim `no agent`. Its details
+  read the schema's *leaves* as dotted paths (`auth.api_key`), not top-level fields, and
+  end in the four lines the audit row and the agent page show for the same endpoint.
+- **Roles** is a data-model extension, not a re-render: an app's declaration and the
+  owner's definitions are two sources merged at read time, the app's winning by name. A row
+  carries its source badge — `built-in` / `app` / `app · replaced yours` / `yours` — and a
+  shadowed role stays read-only while saying so; nothing the owner defined is lost, and it
+  returns if the app stops declaring the name. **New role** adds one by ticking items or
+  adding a pattern from the filter. Which op field the save writes follows the kind
+  (`owner_roles` tunneled, `roles` proxied) and the page never mixes them — a proxied app
+  declares none, so every role there is the owner's.
+- **Recording** is the approved `AppRecordingDemo` in this grammar: one row per *path*
+  across every tool's schema, a tick masking it on every editable tool as one literal
+  (tool, path) entry — never a pattern, nothing typed. `writeOnly` fields are locked (the
+  app declared them); a path masked on some tools but not all renders expanded with a mixed
+  glyph and no path-level field, so no save can silently clear a partial state. A proxied
+  app with logging on and nothing masked gets the warning that its schema is not cached at
+  call time. The details pane says what ends up masked and what a recorded call keeps; the
+  raw `app_update` JSON an earlier draft showed is gone — it read as the opposite of a mask
+  in a pane about recording.
+- **Agents** edits existing grants with **the agent page's grant editor, verbatim** — the
+  same rows, the same `none · ask · allow` control, the same field names, one shared
+  component rendered by both pages. Granting a *new* agent is not started here (it
+  complicated the flow); a note points at the agent's own page.
+- Three forms, three ops, one each: `app_update { owner_roles | roles }`,
+  `app_update { log_bodies, redact, redact_results }`, `grant_set` — the same composer the
+  agent page's route uses. Each pane's foot carries Discard and Save.
+- The unsaved language is the agent page's — the amber dashed **unsaved** badge on every
+  changed row whatever the change, a counted "N unsaved changes" in the foot, a blue dot on
+  the rail entry and the row that hold a draft, and one save-or-discard banner guarding a
+  switch. Both the banner and the dots are **script-only**: the shipped pages are
+  server-rendered with scripting off and drop them, exactly as the agent page did.
+
+The phone rendering (`MobileAppDetail`, from `design/concepts/AppMobileDemo.html`): the
+three panes become **three levels** — 1 the header and the rail as a list, 2 a pane's
+listing, 3 a row's details — each headed by a back button naming the level above
+(`‹ Apps`, `‹ News MCP`, `‹ Catalog`) and the current thing as the title, so a listing
+header never repeats what the level header shows; a wide pane has no level 3. The top bar
+is the brand and the same **hamburger** sidebar. `AppDetailStates` and
+`MobileAppDetailStates` carry what is not a pane: the new-role editor, the shadowed
+`publisher` row and its details, a proxied app's Roles and its Recording warning, a filter
+that matches nothing, the revoke confirm, the once-only token reveal, and the remove-agent
+confirm in the Agents foot.
 
 ## Settings, split into panes (2026-09-02)
 

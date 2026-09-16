@@ -12,6 +12,8 @@ reverse connection), §2 (the two kinds).
 | Add form, tunneled branch | `AppNew` / `MobileAppNew`, `AppNewStates · TUNNELED` |
 | Slug rejected | `AppNewStates · SLUG ERROR` |
 | Token shown once | `AppNewStates · TOKEN REVEAL` |
+| The app's own page, once it has connected | `AppDetail` (Catalog) / `MobileAppDetail` |
+| Rotating the app token | `AppDetailStates · TOKEN — THE KEY, SHOWN ONCE` |
 | Delete confirm | `Dialogs · Delete app` |
 
 ## The journey

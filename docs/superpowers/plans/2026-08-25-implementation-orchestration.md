@@ -1502,6 +1502,31 @@ check and (manual, once) a real push notification to a real browser.
   grants per row, its earlier "renders no Edit grants control" row re-pointed (enumerated).
   Fixtures for the five board states plus `everywhere`. Gate: 45 / 1477 / 0, exactly six
   `todo → passed` plus the one re-point; `tsc` 0. Cost: 1 agent (Opus 5).
+- 2026-09-16 — **The agents pages redrawn as three panes, shipped; grant sets take inline
+  entries.** Design first: a day of concept boards in `design/concepts/` (the owner choosing
+  at each round — plain list, three panes, none · ask · allow on every row, inline entries,
+  the grant step, Credentials / Activity / Danger zone, the unsaved language), the approved
+  prototype captured headless into `design/Agents`, `AgentDetail`, `AgentDetailPanes`,
+  `AgentDetailStates` (`8240f09`); then `9184135` (`spec:` — §13 rewritten, §8/§7/§5/§9/
+  §20.3/§22 admit inline entries, decision 31), `ba4616a` (28 rows, 23 todo; the nine
+  2026-09-03 titles retired: the list's Grants column, the one-scroll page, the Tokens and
+  Connected-clients cards, the old Danger-zone landing, the editor's four — each re-pointed
+  to the pane that replaced it), `8afd17e` (`feat:` core — `parseGrantEntry`, suffix mode
+  parsing, item entries never undeclared; 11 rows in filter/registry/admin-ops/CLI), shipped
+  alone from a clean worktree while the pages were in flight (smoke 34/34); `0f79052`
+  (contracts), `4996658` + `d350569` + `1dd49cf` + `7d9222c` (rows and spec for the
+  verifiers' rulings: a closed grant card reads no catalog, the paged Activity trail, the
+  title line `Agents › <slug>` with no agent badge, Open in Audit as a button), `77ad97f`
+  (`feat:` pages), `8056d1b` (gate). Deploy **`85464d2c`** after one transient D1 7403 on
+  the first `pnpm ship`, smoke **34/34**. Built by four Opus subagents from a written brief
+  (spec, core, pages, web tests — the tests authored concurrently against the brief, rows
+  first), verified by two (correctness hand-trace; board fidelity + scripting-off), which
+  found three Saves that would silently drop entries (a hidden row, a disabled-but-checked
+  radio, the pattern offer's hidden field) — all fixed before the ship. Gate: 45 files
+  green, inventory the enumerated rows only, `tsc` 0. Cost: 4 builders + 2 verifiers +
+  2 explorers, all Opus/Sonnet; the orchestrator wrote the brief, the rulings and the specs.
+  The phone rendering (three levels, a sidebar) was approved the same day and is the next
+  track (`docs/superpowers/plans/2026-09-16-agents-mobile.md`).
 - 2026-09-03 — **G1 closed ahead of step 10 — the audit chevron is a link.** The user's
   question ("why can none of the audit items be expanded?") diagnosed as the UI half of
   G1: bodies are stored, `?expand=<id>` rendered the open row, but the chevron was a bare

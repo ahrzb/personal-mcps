@@ -1,0 +1,500 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>App page · three panes · clickable demo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap">
+<style>
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px;background:#fff}
+  a{color:#09090b;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  button{font:inherit;cursor:pointer}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .muted{color:#71717a}.dim{color:#a1a1aa}
+  .badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+  .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+  .badge.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+  .badge.new{border-style:dashed}
+  .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+  .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+  .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+  .btn.danger{color:#dc2626;border-color:#fecaca}
+  .btn:disabled{opacity:.45;cursor:default}
+  .nav{height:56px;box-sizing:border-box;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+  .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:#71717a}
+  .navitem.on{background:#f4f4f5;color:#09090b}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cell{font-size:13px;color:#71717a}
+  .note{font-size:12px;color:#71717a;line-height:1.5}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+  .wrap{width:1176px;margin:0 auto;padding:24px 0 40px;display:flex;flex-direction:column;gap:16px}
+  .panes{display:flex;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);height:820px}
+  .rail{width:180px;flex-shrink:0;border-right:1px solid #e4e4e7;padding:12px 8px;display:flex;flex-direction:column;gap:1px;background:#fafafa;overflow:auto}
+  .rh{font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;padding:8px 8px 4px}
+  .ri{display:flex;justify-content:space-between;align-items:center;height:28px;padding:0 8px;border-radius:6px;font-size:13px;color:#71717a;cursor:pointer;border:0;background:none;width:100%;text-align:left}
+  .ri:hover{background:#f4f4f5}
+  .ri.on{background:#fff;color:#09090b;font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .rm{font-size:11px;color:#a1a1aa;display:flex;gap:4px;align-items:center}
+  .ldot{width:7px;height:7px;border-radius:50%;background:#15803d}.ldot.off{background:#d4d4d8}
+  .listing{width:520px;flex-shrink:0;border-right:1px solid #e4e4e7;display:flex;flex-direction:column;min-height:0}
+  .panes.wide .listing{width:auto;flex:1;border-right:none}
+  .panes.wide .details{display:none}
+  .lh{padding:14px 16px;border-bottom:1px solid #e4e4e7;display:flex;flex-direction:column;gap:8px}
+  .sum{font-size:12px;color:#71717a;line-height:1.5}
+  .filter{height:30px;box-sizing:border-box;border:1px solid #e4e4e7;border-radius:8px;padding:0 10px;font-size:12px;background:#fff;width:100%;outline:none}
+  .filter:focus{box-shadow:0 0 0 3px rgba(161,161,170,.35)}
+  .scroll{overflow:auto;flex:1;min-height:0}
+  .gh{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa;padding:12px 16px 4px;display:flex;justify-content:space-between}
+  .cr{display:grid;grid-template-columns:1fr auto;column-gap:10px;align-items:center;padding:6px 16px;font-size:13px;border-bottom:1px solid #f8f8f8;cursor:pointer}
+  .cr:hover{background:#f4f4f5}
+  .cr.cur{background:#f4f4f5;box-shadow:inset 3px 0 0 #18181b}
+  .cr .d{font-size:11px;color:#71717a;margin-top:1px}
+  .st{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+  .seg{display:inline-flex;flex-shrink:0}
+  .seg button{height:22px;padding:0;width:44px;justify-content:center;display:inline-flex;align-items:center;font-size:11px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#71717a}
+  .seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}.seg button+button{border-left:none}
+  .seg button.on{background:#18181b;color:#fafafa;border-color:#18181b}
+  .seg button.on.warn{background:#92400e;border-color:#92400e}
+  .seg button.impl{background:#fff;color:#09090b;border-color:#18181b;box-shadow:inset 0 0 0 1px #18181b}
+  .seg button.impl.warn{color:#92400e;border-color:#92400e;box-shadow:inset 0 0 0 1px #92400e}
+  .seg button:disabled{color:#d4d4d8;cursor:default;background:#fafafa}
+  .via{font-size:11px;color:#71717a;white-space:nowrap}
+  .foot{padding:12px 16px;border-top:1px solid #e4e4e7;display:flex;justify-content:space-between;align-items:center;background:#fafafa}
+  .details{flex:1;min-width:0;display:flex;flex-direction:column;background:#fafafa;overflow:auto}
+  .dh{padding:14px 16px;border-bottom:1px solid #e4e4e7;background:#fff}
+  .db{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+  .sec{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .kv{display:flex;gap:12px;font-size:12px;line-height:1.5}.kv .k{width:120px;flex-shrink:0;color:#71717a}
+  .arg{display:grid;grid-template-columns:120px 60px 1fr;column-gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid #f4f4f5}.arg:last-child{border-bottom:none}
+  .tile{display:flex;gap:16px;font-size:12px;color:#71717a}.tile b{color:#09090b;font-weight:600;font-size:14px}
+  .banner{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18181b;color:#fafafa;padding:10px 14px;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.15);opacity:0;transition:opacity .2s}
+  .toast.show{opacity:1}
+  .hint{font-size:11px;color:#a1a1aa}
+  .mini{height:22px;padding:0 8px;border-radius:6px;border:1px solid #e4e4e7;background:#fff;font-size:11px;font-weight:500;display:inline-flex;align-items:center}
+  .mini:hover{background:#f4f4f5}
+  .sw{width:36px;height:20px;border-radius:999px;background:#e4e4e7;position:relative;flex-shrink:0;border:0;padding:0}
+  .sw.on{background:#18181b}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:left .15s}
+  .sw.on::after{left:18px}
+  .cb{width:14px;height:14px;box-sizing:border-box;border-radius:3px;border:1.5px solid #a1a1aa;background:#fff;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
+  .cb.on,.cb.mixed{background:#18181b;border-color:#18181b}
+  .cb.lock{background:#a1a1aa;border-color:#a1a1aa;cursor:default}
+  .pr{display:grid;grid-template-columns:1fr auto;column-gap:12px;align-items:center;padding:7px 16px;border-bottom:1px solid #f4f4f5;font-size:13px}
+  .pr>div:first-child{display:flex;align-items:center;gap:8px}
+  .pr .ty{font-size:11px;color:#a1a1aa}
+  .pr .r{font-size:12px;color:#71717a;display:flex;align-items:center;gap:8px}
+  .sub{background:#fafafa;border-bottom:1px solid #f4f4f5;padding:2px 0}
+  .fld{display:flex;align-items:center;gap:8px;padding:5px 16px 5px 44px;font-size:12px}
+  .tog{background:none;border:0;padding:0;color:#71717a;font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  .tog:hover{color:#09090b}
+  .gh.sticky{position:sticky;top:0;background:#fff;z-index:1}
+  .code{background:#f4f4f5;border-radius:8px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.6;white-space:pre;color:#09090b;overflow:auto}
+  .card{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:14px 16px}
+  select.pick{font:inherit;font-size:13px;height:32px;border:1px solid #e4e4e7;border-radius:8px;padding:0 8px;background:#fff}
+</style>
+</head>
+<body>
+<div class="nav">
+  <div style="display:flex;align-items:center;gap:24px">
+    <div style="display:flex;align-items:center;gap:8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg><div style="font-size:15px;font-weight:600">personal-mcps</div><span class="badge">clickable demo</span></div>
+    <div style="display:flex;gap:4px"><div class="navitem on">Apps</div><div class="navitem">Agents</div><div class="navitem">Audit</div><div class="navitem">Approvals</div><div class="navitem">Settings</div></div>
+  </div>
+  <div class="row"><span class="cell">demo app</span><select class="pick" id="pick" onchange="switchApp(this.value)"><option value="news">news · tunneled</option><option value="notion">notion · proxied</option></select><div class="muted">ahrzb</div><div class="btn">Sign out</div></div>
+</div>
+<div class="wrap">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end">
+    <div style="display:flex;flex-direction:column;gap:4px"><div class="cell" id="crumb"></div><div class="row" style="gap:10px" id="title"></div></div>
+    <div class="tile" id="tiles"></div>
+  </div>
+  <div id="banner"></div>
+  <div class="panes" id="panes">
+    <div class="rail" id="rail"></div>
+    <div class="listing"><div class="lh" id="lh"></div><div class="scroll" id="list"></div><div class="foot" id="foot"></div></div>
+    <div class="details" id="details"></div>
+  </div>
+  <div class="note">Try: <b>Catalog</b> — filter, open a tool for its arguments and the hub's four lines · <b>Roles</b> — open one to see what it can do, tick by tick; the app's are read-only, yours are editable, New role adds one; <span class="mono">publisher</span> shows a name the app declared over yours · <b>Agents</b> — open claude and edit its grant on this app with the same none · ask · allow rows the agent page has, Save; <b>Recording</b> — the by-path editor, with what ends up masked on the right · <b>Token</b> — issue and revoke · switch the demo app to notion for the proxied shapes.</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ---------------------------------------------------------------- fixtures
+// tool: [name, desc, args:[[name,type,note,writeOnly?]...]]
+const APPS = {
+  news: { name: "News MCP", kind: "tunneled", status: "online", desc: "RSS digester on the home server", log: true, logDefault: true, lastSeen: "2 min ago", created: "Aug 12",
+    roles: { reader: { tools: ["get_news", "search_.*"], prompts: ["digest_.*"] }, admin: { tools: ["admin_.*"] }, publisher: { tools: ["publish", "delete_feed"] } },
+    ownerRoles: { triage: { tools: ["subscribe", "unsubscribe"] }, publisher: { tools: ["publish"] } },
+    tools: [["get_news","Latest items across all feeds",[["since","string","optional"]],[["items","object[]",[["id","string"],["title","string"]]]]],["search_feeds","Find feeds by name or URL",[["query","string","required"]]],["search_items","Search items across feeds",[["query","string","required"],["feed","string","optional"],["limit","integer","optional · defaults to 20"],["cookie","string","optional"]]],["search_archive","Search the archive",[["query","string","required"]]],["admin_purge_cache","Drop cached items",[["scope","string","required"]]],["admin_reindex","Rebuild the search index",[]],["admin_export","Export everything as JSON",[]],["publish","Post an item to a feed",[["feed","string","required"],["title","string","required"],["auth","object","",null,[["api_key","string","required",true]]]],[["item","object",[["id","string"],["share_url","string",null,true]]]]],["delete_feed","Remove a feed and its items",[["feed","string","required"]]],["subscribe","Subscribe to a feed",[["url","string","required"]]],["unsubscribe","Unsubscribe from a feed",[["feed","string","required"]]]],
+    prompts: [["digest_daily","Summarise the last 24 h",[["hours","integer","optional"]]]],
+    resources: [["news://feed/hn","text/plain"],["news://feed/lobsters","text/plain"],["news://config","application/json"]],
+    redact: { args: { search_items: ["cookie"] }, results: {} },
+    tokens: [{ id: "a1", prefix: "pmcp_app_7Qw2…kL9", created: "Aug 12", lastUsed: "2 min ago", live: true, revoked: false }] },
+  notion: { name: "Notion", kind: "proxied", status: "connected", desc: "Pages and databases over the Notion MCP", log: false, logDefault: false, endpoint: "https://mcp.notion.com/mcp", auth: "headers", created: "Aug 20",
+    roles: {},
+    ownerRoles: { editor: { tools: ["create_page", "update_.*"] }, reader: { tools: ["search", "fetch_.*"] } },
+    tools: [["create_page","Create a page in a database",[["title","string","required"],["parent","object","",null,[["database_id","string","required"]]],["credentials","object","",null,[["user","string","optional"],["token","string","required"]]]],[["page","object",[["id","string"],["url","string"],["share_token","string"]]]]],["update_page","Update a page's properties",[["page_id","string","required"],["credentials","object","",null,[["token","string","required"]]]]],["search","Search pages and databases",[["query","string","required"],["credentials","object","",null,[["token","string","required"]]]]],["fetch_page","Fetch one page",[["page_id","string","required"]]],["archive_page","Archive a page",[["page_id","string","required"]]]],
+    prompts: [], resources: [],
+    redact: { args: { create_page: ["credentials.token"], update_page: ["credentials.token"] }, results: { create_page: ["page.share_token"] } },
+    tokens: [] },
+};
+const AGENTS = { claude: "Claude sessions", cron: "Nightly jobs", pi: "Raspberry Pi runner" };
+// grant sets per (agent, app)
+let GRANTS = {
+  news: { claude: { allow: ["reader", "tool/get_news", "resource/news://feed/*"], approval: ["admin", "tool/publish"] }, cron: { allow: ["reader"], approval: [] } },
+  notion: { claude: { allow: ["reader"], approval: ["editor"] } },
+};
+const CALLS = { news: { claude: 144, cron: 0 }, notion: { claude: 12 } };
+
+// ---------------------------------------------------------------- matcher (§7)
+const LITERAL = /^[A-Za-z0-9._-]+$/;
+function matches(pattern, name) {
+  if (LITERAL.test(pattern)) return pattern === name;
+  try { return new RegExp("^(?:" + pattern.replace(/(?<![.\]])\*/g, ".*") + ")$").test(name); } catch { return false; }
+}
+function parseEntry(e) { const m = e.match(/^(tool|prompt|resource)\/(.*)$/); return m ? { kind: "item", family: m[1] + "s", pattern: m[2] } : { kind: "role", role: e }; }
+/** Every role the gate would use: the owner's, then the app's on top — a name the app
+ *  declares replaces the owner's definition of it. */
+function effectiveRoles(app) { return { ...(APPS[app].ownerRoles || {}), ...APPS[app].roles }; }
+function roleSource(app, role) { return APPS[app].roles[role] ? "app" : (APPS[app].ownerRoles || {})[role] ? "owner" : null; }
+function patternsOf(app, entry, family) {
+  const p = parseEntry(entry);
+  if (p.kind === "item") return p.family === family ? [p.pattern] : [];
+  if (p.role === "all") return [".*"];
+  const r = effectiveRoles(app)[p.role];
+  return r && r[family] ? r[family] : [];
+}
+function standing(app, set, family, name) {
+  const via = { allow: [], approval: [] };
+  for (const mode of ["allow", "approval"]) for (const e of set[mode]) if (patternsOf(app, e, family).some((p) => matches(p, name))) via[mode].push(e);
+  if (via.allow.length) return { mode: "allow", via: via.allow };
+  if (via.approval.length) return { mode: "approval", via: via.approval };
+  return { mode: "", via: [] };
+}
+function reach(app, set) {
+  const out = {};
+  for (const fam of ["tools", "prompts", "resources"]) {
+    const r = APPS[app][fam].map((x) => standing(app, set, fam, x[0]));
+    out[fam] = { total: r.length, reached: r.filter((s) => s.mode).length, approval: r.filter((s) => s.mode === "approval").length };
+  }
+  return out;
+}
+const RANK = { "": 0, approval: 1, allow: 2 };
+
+// ---------------------------------------------------------------- state
+let app = "news";
+let view = "catalog"; // catalog | roles | recording | overview | agents | token | danger
+let picked = null; // { kind, name }
+let filterText = "";
+let draft = null; // grant draft: { agent, allow, approval }
+let recDraft = null; // recording draft: { log, args, results }
+let roleDraft = null; // proxied role editor: { role, tools, prompts, resources } as text
+let expanded = { args: new Set(), results: new Set() };
+let pendingSwitch = null, confirmRemove = false, confirmRevoke = null, reveal = null;
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const chk = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>`;
+const kv = (k, v) => `<div class="kv"><div class="k">${k}</div><div>${v}</div></div>`;
+function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 2400); }
+const DRAFT_DOT = `<span title="unsaved" style="color:#2563eb">●</span>`;
+function unsavedBadge() { return `<span class="badge new warn">unsaved</span>`; }
+function grantChanges() { if (!draft) return 0; const sv = (GRANTS[app] || {})[draft.agent] || { allow: [], approval: [] }; let n = 0; for (const m of ["allow", "approval"]) { for (const e of draft[m]) if (!sv[m].includes(e)) n++; for (const e of sv[m]) if (!draft[m].includes(e)) n++; } return n; }
+function recChanges() { if (!recDraft) return 0; const sv = { log: APPS[app].log, ...APPS[app].redact }; let n = recDraft.log !== sv.log ? 1 : 0; for (const dir of ["args", "results"]) { const a = new Set(Object.entries(recDraft[dir]).flatMap(([t, ps]) => ps.map((x) => t + ":" + x))), b = new Set(Object.entries(sv[dir]).flatMap(([t, ps]) => ps.map((x) => t + ":" + x))); for (const x of a) if (!b.has(x)) n++; for (const x of b) if (!a.has(x)) n++; } return n; }
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+function anyDirty() { return grantDirty() || recDirty() || roleDirty(); }
+function grantDirty() { if (!draft) return false; const s = (GRANTS[app] || {})[draft.agent] || { allow: [], approval: [] }; return JSON.stringify({ a: [...draft.allow].sort(), b: [...draft.approval].sort() }) !== JSON.stringify({ a: [...s.allow].sort(), b: [...s.approval].sort() }); }
+function recDirty() { return !!recDraft && JSON.stringify(recDraft) !== JSON.stringify({ log: APPS[app].log, ...APPS[app].redact }); }
+function roleDirty() { if (!roleDraft) return false; if (roleDraft.isNew) return true; return JSON.stringify(roleDraft.fam) !== JSON.stringify((APPS[app].ownerRoles || {})[roleDraft.role]); }
+function roleFam(role) { return roleDraft && roleDraft.role === role ? roleDraft.fam : effectiveRoles(app)[role]; }
+function ensureRoleDraft(role) { if (!roleDraft || roleDraft.role !== role) roleDraft = { role, fam: clone((APPS[app].ownerRoles || {})[role] || {}), isNew: false }; return roleDraft; }
+function newRole() { roleDraft = { role: "", fam: {}, isNew: true }; picked = { kind: "role", name: "" }; render(); setTimeout(() => document.getElementById("role-name")?.focus(), 0); }
+function setRoleItem(role, fam, name, on) { const d = ensureRoleDraft(role); const list = d.fam[fam] || []; d.fam[fam] = on ? [...list.filter((p) => p !== name), name] : list.filter((p) => p !== name); if (!d.fam[fam].length) delete d.fam[fam]; render(); }
+function addRolePattern(role, fam, pattern) { const d = ensureRoleDraft(role); d.fam[fam] = [...(d.fam[fam] || []).filter((p) => p !== pattern), pattern]; filterText = ""; render(); }
+function removeRolePattern(role, fam, pattern) { const d = ensureRoleDraft(role); d.fam[fam] = (d.fam[fam] || []).filter((p) => p !== pattern); if (!d.fam[fam].length) delete d.fam[fam]; render(); }
+function deleteOwnerRole(role) { delete APPS[app].ownerRoles[role]; roleDraft = null; picked = null; toast(`app_update ${app} · owner role ${role} removed`); render(); }
+function showView(v) {
+  if (anyDirty() && v !== view) { pendingSwitch = "view:" + v; render(); return; }
+  view = v; picked = null; filterText = ""; draft = null; recDraft = null; roleDraft = null; confirmRemove = false; confirmRevoke = null; render();
+}
+function switchApp(a) {
+  if (anyDirty()) { pendingSwitch = "app:" + a; render(); return; }
+  app = a; view = "catalog"; picked = null; filterText = ""; draft = null; recDraft = null; roleDraft = null; document.getElementById("pick").value = a; render();
+}
+function afterBanner(t) { draft = null; recDraft = null; roleDraft = null; if (t.startsWith("view:")) { view = t.slice(5); picked = null; render(); } else switchApp(t.slice(4)); }
+function saveAll() { if (grantDirty()) saveGrant(); if (recDirty()) saveRec(); if (roleDirty()) saveRole(); }
+
+// ---------------------------------------------------------------- grant editor (shared with the agent page)
+function grantSet(agent) { return draft && draft.agent === agent ? draft : (GRANTS[app] || {})[agent] || { allow: [], approval: [] }; }
+function ensureDraft(agent) { if (!draft || draft.agent !== agent) { const s = (GRANTS[app] || {})[agent] || { allow: [], approval: [] }; draft = { agent, allow: [...s.allow], approval: [...s.approval] }; } return draft; }
+function setEntry(agent, entry, mode) { const d = ensureDraft(agent); d.allow = d.allow.filter((e) => e !== entry); d.approval = d.approval.filter((e) => e !== entry); if (mode) d[mode].push(entry); render(); }
+function saveGrant() {
+  if (!draft) return;
+  GRANTS[app] = GRANTS[app] || {};
+  if (draft.allow.length + draft.approval.length === 0) { delete GRANTS[app][draft.agent]; toast(`grant_set ${draft.agent} ${app} · roles: [] — access removed`); draft = null; picked = null; render(); return; }
+  GRANTS[app][draft.agent] = { allow: [...draft.allow], approval: [...draft.approval] };
+  toast(`grant_set ${draft.agent} ${app} · ${draft.allow.length} allow · ${draft.approval.length} ask`);
+  draft = null; render();
+}
+function itemSeg(agent, direct, roleOnly) {
+  const roleMax = roleOnly.mode;
+  const st = grantSet(agent);
+  const directMode = st.allow.includes(direct) ? "allow" : st.approval.includes(direct) ? "approval" : "";
+  const eff = RANK[directMode] >= RANK[roleMax] ? directMode : roleMax;
+  const implied = eff !== "" && eff === roleMax && RANK[directMode] < RANK[roleMax];
+  const btn = (mode, label) => {
+    const below = RANK[mode] < RANK[roleMax];
+    const on = eff === mode;
+    const cls = on ? (implied ? "impl" : "on") + (mode === "approval" ? " warn" : "") : "";
+    const action = mode === roleMax ? `setEntry('${agent}','${direct}',null)` : `setEntry('${agent}','${direct}',${mode ? `'${mode}'` : "null"})`;
+    return `<button class="${cls}" ${below ? `disabled title="${roleOnly.via.join(", ")} grants ${roleMax === "allow" ? "allow" : "ask"} — change the role to lower it"` : `onclick="${action}"`}>${label}</button>`;
+  };
+  const via = roleMax ? `<span class="via">${implied ? "via" : "also via"} ${roleOnly.via.join(", ")}</span>` : "";
+  return `${via}<span class="seg">${btn("", "none")}${btn("approval", "ask")}${btn("allow", "allow")}</span>`;
+}
+function roleSeg(agent, role) {
+  const st = grantSet(agent);
+  const mode = st.allow.includes(role) ? "allow" : st.approval.includes(role) ? "approval" : "";
+  return `<span class="seg"><button class="${mode === "" ? "on" : ""}" onclick="setEntry('${agent}','${role}',null)">none</button><button class="${mode === "approval" ? "on warn" : ""}" onclick="setEntry('${agent}','${role}','approval')">ask</button><button class="${mode === "allow" ? "on" : ""}" onclick="setEntry('${agent}','${role}','allow')">allow</button></span>`;
+}
+/** The editor body for (agent, this app): the same rows the agent page's listing draws. */
+function grantEditor(agent) {
+  const A = APPS[app], st = grantSet(agent), r = reach(app, st);
+  const savedSet = (GRANTS[app] || {})[agent] || { allow: [], approval: [] };
+  const modeOf = (entry) => (st.allow.includes(entry) ? "allow" : st.approval.includes(entry) ? "approval" : "");
+  const isNew = (entry) => modeOf(entry) !== (savedSet.allow.includes(entry) ? "allow" : savedSet.approval.includes(entry) ? "approval" : "");
+  const savedR = reach(app, savedSet);
+  const delta = draft && draft.agent === agent && grantDirty() && savedR.tools.reached !== r.tools.reached ? ` <span class="dim">· was ${savedR.tools.reached} of ${savedR.tools.total} tools</span>` : "";
+  const roleRow = (role) => `<div class="cr" style="cursor:default"><div><span class="mono">${role}</span>${role === "all" ? ` <span class="badge" style="height:16px;font-size:10px">built-in</span>` : ""}<div class="d">${role === "all" ? "every tool, prompt and resource, present and future" : esc(Object.entries(effectiveRoles(app)[role]).map(([f, p]) => `${f} ${p.join(", ")}`).join(" · "))}</div></div><div class="st">${isNew(role) ? unsavedBadge(modeOf(role)) : ""}${roleSeg(agent, role)}</div></div>`;
+  const itemRow = (fam, [name, desc]) => {
+    const direct = `${fam.slice(0, -1)}/${name}`;
+    const roleOnly = standing(app, { allow: st.allow.filter((e) => e !== direct), approval: st.approval.filter((e) => e !== direct) }, fam, name);
+    return `<div class="cr" style="cursor:default"><div><span class="mono">${esc(name)}</span><div class="d">${esc(desc || "")}</div></div><div class="st">${isNew(direct) ? unsavedBadge(modeOf(direct)) : ""}${itemSeg(agent, direct, roleOnly)}</div></div>`;
+  };
+  const patterns = [...st.allow, ...st.approval].filter((e) => parseEntry(e).kind === "item" && !LITERAL.test(parseEntry(e).pattern));
+  return `<div class="sum" style="padding:10px 16px;border-bottom:1px solid #f4f4f5">${agent} reaches <b style="color:#09090b">${r.tools.reached}</b> of ${r.tools.total} tools <span class="dim">·</span> ${r.tools.approval} ask first <span class="dim">·</span> <b style="color:#09090b">${r.prompts.reached}</b> of ${r.prompts.total} prompts <span class="dim">·</span> <b style="color:#09090b">${r.resources.reached}</b> of ${r.resources.total} resources${delta}</div>
+    <div class="gh"><span>Roles</span></div>${Object.keys(effectiveRoles(app)).concat("all").map(roleRow).join("")}
+    ${A.tools.length ? `<div class="gh"><span>Tools · ${A.tools.length}</span></div>` + A.tools.map((t) => itemRow("tools", t)).join("") : ""}
+    ${A.prompts.length ? `<div class="gh"><span>Prompts · ${A.prompts.length}</span></div>` + A.prompts.map((t) => itemRow("prompts", t)).join("") : ""}
+    ${A.resources.length ? `<div class="gh"><span>Resources · ${A.resources.length}</span></div>` + A.resources.map((t) => itemRow("resources", t)).join("") : ""}
+    ${patterns.length ? `<div class="gh"><span>Patterns · ${patterns.length}</span></div>` + patterns.map((e) => `<div class="cr" style="cursor:default"><div><span class="mono">${esc(e)}</span></div><div class="st">${itemSeg(agent, e, { mode: "", via: [] })}</div></div>`).join("") : ""}`;
+}
+
+// ---------------------------------------------------------------- recording (by path, from the schemas)
+function leaves(fields, prefix = "") { const out = []; for (const f of fields || []) { const [name, type, , wo, kids] = f; const path = prefix ? `${prefix}.${name}` : name; if (kids) out.push(...leaves(kids, path)); else out.push({ path, type, writeOnly: !!wo }); } return out; }
+function outLeaves(fields, prefix = "") { const out = []; for (const [name, type, kids, wo] of fields || []) { const path = prefix ? `${prefix}.${name}` : name; if (Array.isArray(kids)) out.push(...outLeaves(kids, path)); else out.push({ path, type, writeOnly: !!wo }); } return out; }
+function pathIndex(dir) {
+  const idx = new Map();
+  for (const t of APPS[app].tools) {
+    const ls = dir === "args" ? leaves(t[2]) : outLeaves(t[3]);
+    for (const l of ls) { if (!idx.has(l.path)) idx.set(l.path, { type: l.type, tools: [] }); idx.get(l.path).tools.push({ tool: t[0], writeOnly: l.writeOnly }); }
+  }
+  return idx;
+}
+function recState() { return recDraft || { log: APPS[app].log, ...clone(APPS[app].redact) }; }
+function ensureRec() { if (!recDraft) recDraft = { log: APPS[app].log, ...clone(APPS[app].redact) }; return recDraft; }
+function recHas(dir, tool, path) { return (recState()[dir][tool] || []).includes(path); }
+function setMask(dir, tool, path, on) { const d = ensureRec(); const list = d[dir][tool] || (d[dir][tool] = []); if (on && !list.includes(path)) list.push(path); if (!on) d[dir][tool] = list.filter((p) => p !== path); if (!d[dir][tool].length) delete d[dir][tool]; render(); }
+function setPath(dir, path, on) { for (const t of pathIndex(dir).get(path).tools) if (!t.writeOnly) setMask(dir, t.tool, path, on); }
+function toggleLog() { ensureRec().log = !recState().log; render(); }
+function saveRec() { const d = recDraft; APPS[app].log = d.log; APPS[app].redact = { args: clone(d.args), results: clone(d.results) }; toast(`app_update ${app} · log_bodies: ${d.log} · redact: ${Object.values(d.args).flat().length} · redact_results: ${Object.values(d.results).flat().length}`); recDraft = null; render(); }
+
+// ---------------------------------------------------------------- roles (proxied: editable)
+function saveRole() {
+  const name = roleDraft.role.trim();
+  if (!/^[a-z0-9_-]+$/.test(name) || name === "all") { toast("a role name is [a-z0-9_-], and all is reserved"); return; }
+  APPS[app].ownerRoles = APPS[app].ownerRoles || {};
+  APPS[app].ownerRoles[name] = clone(roleDraft.fam);
+  toast(`app_update ${app} · owner role ${name} = ${JSON.stringify(roleDraft.fam)}`);
+  roleDraft = null; picked = { kind: "role", name }; render();
+}
+
+// ---------------------------------------------------------------- tokens
+function issueToken() { const t = { id: "a" + Date.now(), prefix: "pmcp_app_" + Math.random().toString(36).slice(2, 6) + "…" + Math.random().toString(36).slice(2, 5), created: "just now", lastUsed: null, live: false, revoked: false }; APPS[app].tokens.unshift(t); reveal = { id: t.id, key: "pmcp_app_" + Math.random().toString(36).slice(2, 14) + Math.random().toString(36).slice(2, 14) }; picked = { kind: "token", name: t.id }; toast("token_issue app " + app + " · no expiry"); render(); }
+function revoke(id) { const t = APPS[app].tokens.find((t) => t.id === id); t.revoked = true; confirmRevoke = null; toast("token_revoke " + t.prefix + (t.live ? " · live socket closed (4001)" : "")); render(); }
+
+// ---------------------------------------------------------------- render
+function render() {
+  const A = APPS[app];
+  const agentsHere = Object.keys(GRANTS[app] || {});
+  const status = A.status === "archived" ? `<span class="badge">archived</span>` : `<span class="badge ok"><span class="dot"></span>${A.status}</span>`;
+  document.getElementById("crumb").innerHTML = `<a>Apps</a> <span class="dim">/</span> <span class="mono">${app}</span> <span class="dim">/</span> ${view}${picked && view !== "agents" ? ` <span class="dim">/</span> <span class="mono">${esc(picked.name)}</span>` : picked && view === "agents" ? ` <span class="dim">/</span> <span class="mono">${esc(picked.name)}</span>` : ""}`;
+  document.getElementById("title").innerHTML = `<span style="font-size:22px;font-weight:600">${A.name}</span><span class="mono cell">${app}</span><span class="badge">${A.kind}</span>${status}<span class="cell">${A.desc}</span>`;
+  document.getElementById("tiles").innerHTML = `<span><b>${A.tools.length}</b> tools · <b>${A.prompts.length}</b> prompts · <b>${A.resources.length}</b> resources</span><span><b>${agentsHere.length}</b> agents</span><span>body logging <b>${A.log ? "on" : "off"}</b></span>${A.kind === "tunneled" ? `<span>last seen <b>${A.lastSeen}</b></span>` : ""}`;
+  document.getElementById("banner").innerHTML = pendingSwitch ? `<div class="banner">Unsaved changes here. <button class="btn" style="height:28px" onclick="saveAll();const t=pendingSwitch;pendingSwitch=null;afterBanner(t)">Save and go</button><button class="btn" style="height:28px" onclick="const t=pendingSwitch;pendingSwitch=null;afterBanner(t)">Discard and go</button><button class="btn ghost" style="height:28px" onclick="pendingSwitch=null;render()">Stay</button></div>` : "";
+
+  const draftOn = { agents: grantDirty(), recording: recDirty(), roles: roleDirty() };
+  const ri = (v, label, marker) => `<button class="ri${view === v ? " on" : ""}" onclick="showView('${v}')"><span>${label}</span><span class="rm">${draftOn[v] ? DRAFT_DOT : ""}${marker}</span></button>`;
+  const catalogN = A.tools.length + A.prompts.length + A.resources.length;
+  document.getElementById("rail").innerHTML = `<div class="rh">App</div>${ri("catalog", "Catalog", catalogN)}${ri("roles", "Roles", Object.keys(effectiveRoles(app)).length || "none")}${ri("recording", "Recording", `<span class="ldot${A.log ? "" : " off"}"></span>`)}${ri("overview", "Overview", "")}<div class="rh" style="margin-top:10px">Access</div>${ri("agents", "Agents", agentsHere.length)}${ri("token", "Token", A.kind === "proxied" ? "<span style='color:#d4d4d8'>—</span>" : A.tokens.filter((t) => !t.revoked).length)}<div style="height:8px"></div>${ri("danger", "Danger zone", "")}`;
+
+  document.getElementById("panes").classList.toggle("wide", ["overview", "danger"].includes(view));
+  const lh = document.getElementById("lh"), list = document.getElementById("list"), foot = document.getElementById("foot"), det = document.getElementById("details");
+  foot.innerHTML = "";
+  const q = filterText.trim().toLowerCase();
+  const hit = (n, d) => !q || n.toLowerCase().includes(q) || (d || "").toLowerCase().includes(q);
+  const sel = (kind, name) => (picked && picked.kind === kind && picked.name === name ? " cur" : "");
+  const filterBox = (ph) => `<input class="filter" placeholder="${ph}" value="${esc(filterText)}" oninput="filterText=this.value;render();document.querySelector('.filter').focus()">`;
+  const reachers = (fam, name) => agentsHere.map((ag) => ({ ag, s: standing(app, GRANTS[app][ag], fam, name) })).filter((x) => x.s.mode);
+
+  if (view === "catalog") {
+    lh.innerHTML = `<div class="row" style="gap:6px"><span style="font-weight:600">Catalog</span><span class="cell">${A.kind === "tunneled" ? "advertised by the app on its last connect · re-listed on every reconnect" : "fetched live from the upstream"}</span></div><div class="sum">${A.tools.length} tools · ${A.prompts.length} prompts · ${A.resources.length} resources · reachable by ${agentsHere.length} agent${agentsHere.length === 1 ? "" : "s"}</div>${filterBox("filter tools, prompts, resources…")}`;
+    const row = (fam, [name, desc]) => { const rs = reachers(fam, name); const badge = rs.length ? rs.map((x) => `<span class="badge ${x.s.mode === "allow" ? "" : "warn"}">${x.ag}${x.s.mode === "approval" ? " · ask" : ""}</span>`).join("") : `<span class="dim" style="font-size:11px">no agent</span>`; return `<div class="cr${sel(fam, name)}" onclick="picked={kind:'${fam}',name:'${esc(name)}'};render()"><div><span class="mono">${esc(name)}</span><div class="d">${esc(desc || "")}</div></div><div class="st">${badge}</div></div>`; };
+    const grp = (fam, label) => { const items = A[fam].filter(([n, d]) => hit(n, d)); return `<div class="gh"><span>${label} · ${A[fam].length}</span><span style="text-transform:none;letter-spacing:0">${A[fam].length ? "" : "none advertised"}</span></div>` + (items.length ? items.map((t) => row(fam, t)).join("") : `<div class="note" style="padding:4px 16px 8px">${A[fam].length ? "no match" : A.kind === "tunneled" ? `This app declared no ${fam} capability on its last connect.` : `The capabilities configured for this app omit ${fam}.`}</div>`); };
+    list.innerHTML = grp("tools", "Tools") + grp("prompts", "Prompts") + grp("resources", "Resources");
+    det.innerHTML = catalogDetails(A, reachers);
+    return;
+  }
+  if (view === "roles") {
+    lh.innerHTML = `<div class="row" style="gap:6px"><span style="font-weight:600">Roles</span><span class="cell">named sets of what this app exposes</span></div><div class="sum">${Object.keys(A.roles).length} declared by the app · ${Object.keys(A.ownerRoles || {}).filter((r) => !A.roles[r]).length} yours · plus the built-in <span class="mono">all</span>${A.kind === "tunneled" ? " <span class='dim'>·</span> the app's declaration wins when it declares a name you defined" : " <span class='dim'>·</span> a proxied app declares none, so every role is yours"}</div>`;
+    const held = (role) => agentsHere.map((ag) => { const s = GRANTS[app][ag]; return s.allow.includes(role) ? `<span class="badge">${ag}</span>` : s.approval.includes(role) ? `<span class="badge warn">${ag} · ask</span>` : ""; }).join("");
+    const src = (role) => { const so = roleSource(app, role); const shadowed = so === "app" && (A.ownerRoles || {})[role]; return role === "all" ? `<span class="badge" style="height:16px;font-size:10px">built-in</span>` : so === "app" ? `<span class="badge" style="height:16px;font-size:10px" title="${shadowed ? "the app declares this name — its declaration replaced yours" : "declared by the app at connect"}">app${shadowed ? " · replaced yours" : ""}</span>` : `<span class="badge ok" style="height:16px;font-size:10px">yours</span>`; };
+    const rowR = (role) => { const fam = role === "all" ? { tools: [".*"], prompts: [".*"], resources: [".*"] } : roleFam(role); const n = ["tools", "prompts", "resources"].reduce((acc, f) => acc + A[f].filter(([nm]) => (fam[f] || []).some((p) => matches(p, nm))).length, 0); return `<div class="cr${sel("role", role)}" onclick="picked={kind:'role',name:'${role}'};render()"><div><span class="mono">${role || "<span class='dim'>new role</span>"}</span> ${src(role)}${roleDraft && roleDraft.role === role && roleDirty() ? " " + DRAFT_DOT : ""}<div class="d">${role === "all" ? "every tool, prompt and resource, present and future" : esc(Object.entries(fam).map(([f, p]) => `${f} ${p.join(", ")}`).join(" · ")) || "<span class='dim'>nothing yet</span>"} · matches ${n}</div></div><div class="st">${held(role) || `<span class="dim" style="font-size:11px">held by no agent</span>`}</div></div>`; };
+    const names = Object.keys(effectiveRoles(app)).concat(roleDraft && roleDraft.isNew ? [roleDraft.role] : []).concat("all");
+    list.innerHTML = names.map(rowR).join("");
+    foot.innerHTML = `<span class="row" style="gap:10px"><button class="btn" onclick="newRole()">New role</button></span><span class="row" style="gap:10px"><span class="cell" style="font-size:12px">${roleDirty() ? "1 unsaved role" : "<span class='dim'>saved</span>"}</span><button class="btn ghost" ${roleDirty() ? "" : "disabled"} onclick="roleDraft=null;if(picked&&picked.name==='')picked=null;render()">Discard</button><button class="btn primary" ${roleDirty() ? "" : "disabled"} onclick="saveRole()">Save</button></span>`;
+    det.innerHTML = roleDetails(A);
+    return;
+  }
+  if (view === "agents") {
+    lh.innerHTML = `<div class="row" style="gap:6px"><span style="font-weight:600">Agents</span><span class="cell">who can call this app, and how</span></div><div class="sum">${agentsHere.length} agent${agentsHere.length === 1 ? "" : "s"} hold a grant · open one to edit its grant on ${app}</div>`;
+    const chips = (set, warn) => set.length ? set.map((e) => `<span class="badge ${warn ? "warn" : ""} mono">${esc(e)}</span>`).join("") : `<span class="dim" style="font-size:11px">—</span>`;
+    const rowA = (ag) => { const s = grantSet(ag), r = reach(app, s); return `<div class="cr${sel("agent", ag)}" onclick="picked={kind:'agent',name:'${ag}'};render()"><div><span class="mono">${ag}</span> <span class="cell">${AGENTS[ag]}</span>${draft && draft.agent === ag && grantDirty() ? ` ${DRAFT_DOT}` : ""}<div class="d" style="display:flex;flex-direction:column;gap:3px;margin-top:3px"><span><span class="dim">allowed</span> ${chips(s.allow)}</span><span><span class="dim">ask first</span> ${chips(s.approval, true)}</span><span>reaches ${r.tools.reached} of ${r.tools.total} tools · ${r.tools.approval} ask first${r.prompts.total ? ` · ${r.prompts.reached} of ${r.prompts.total} prompts` : ""}${r.resources.total ? ` · ${r.resources.reached} of ${r.resources.total} resources` : ""} · ${CALLS[app]?.[ag] ?? 0} calls · 7 d</span></div></div><div class="st"></div></div>`; };
+    list.innerHTML = agentsHere.map(rowA).join("") + `<div class="note" style="padding:12px 16px">Granting a new agent starts from the agent&rsquo;s own page — <a>Agents</a> → the agent → Grant another app.</div>`;
+    if (picked && picked.kind === "agent") {
+      const ag = picked.name, isNewPair = !(GRANTS[app] || {})[ag];
+      det.innerHTML = `<div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">${ag}</span><span class="badge">agent</span><span class="cell">${AGENTS[ag]}</span>${isNewPair ? `<span class="badge new warn">new grant · nothing saved yet</span>` : ""}<span style="flex:1"></span><a style="font-size:12px">open agent page</a></div><div class="cell" style="margin-top:2px">${ag}'s grant on ${app}. Solid: set on the row · hollow: implied by a role · a row cannot lower what a role grants.</div></div>
+        <div style="flex:1;overflow:auto">${grantEditor(ag)}</div>
+        <div class="foot"><span class="row" style="gap:10px">${!isNewPair ? (confirmRemove ? `<span class="row" style="gap:8px;font-size:12px;color:#71717a"><span>${ag} loses every entry on ${app}. History stays.</span><button class="btn ghost" style="height:28px" onclick="confirmRemove=false;render()">Keep</button><button class="btn danger" style="height:28px" onclick="ensureDraft('${ag}');draft.allow=[];draft.approval=[];confirmRemove=false;saveGrant()">Remove</button></span>` : `<button class="btn danger" style="height:28px" onclick="confirmRemove=true;render()">Remove ${ag}</button>`) : ""}</span><span class="row" style="gap:10px"><span class="cell" style="font-size:12px">${grantDirty() ? plural(grantChanges(), "unsaved change") : "<span class='dim'>saved</span>"}</span><button class="btn ghost" ${grantDirty() ? "" : "disabled"} onclick="draft=null;render()">Discard</button><button class="btn primary" ${grantDirty() ? "" : "disabled"} onclick="saveGrant()">Save</button></span></div>`;
+    } else {
+      det.innerHTML = `<div class="dh"><div style="font-size:15px;font-weight:600">Agents</div><div class="cell" style="margin-top:2px">Select an agent to edit what it may call on ${app}.</div></div><div class="db"><div class="sec"><div class="eyebrow">Per tool</div>${A.tools.slice(0, 6).map(([n]) => kv(`<span class="mono">${n}</span>`, reachers("tools", n).map((x) => `${x.ag}${x.s.mode === "approval" ? " (ask)" : ""}`).join(", ") || "<span class='dim'>no agent</span>")).join("")}${A.tools.length > 6 ? `<div class="hint">… ${A.tools.length - 6} more in the Catalog</div>` : ""}</div></div>`;
+    }
+    return;
+  }
+  if (view === "token") {
+    if (A.kind === "proxied") { document.getElementById("panes").classList.add("wide"); lh.innerHTML = `<div class="row" style="gap:6px"><span style="font-weight:600">Token</span></div>`; list.innerHTML = `<div class="note" style="padding:16px">Proxied apps hold no tokens — the hub dials the upstream; nothing dials in.</div>`; det.innerHTML = ""; return; }
+    const live = A.tokens.filter((t) => !t.revoked);
+    lh.innerHTML = `<div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">Token</span><span class="cell">what the app presents to dial in</span></div><button class="mini" onclick="issueToken()">Issue new token</button></div><div class="sum">${live.length} live · app tokens have no expiry — rotate by issuing, then revoking the old one. Revoking the key a live socket used closes it.</div>`;
+    list.innerHTML = live.map((t) => `<div class="cr${sel("token", t.id)}" onclick="picked={kind:'token',name:'${t.id}'};render()"><div><span class="mono">${t.prefix}</span>${t.live ? ` <span class="badge ok"><span class="dot"></span>holds the live socket</span>` : ""}${reveal && reveal.id === t.id ? ` <span class="badge ok new">new</span>` : ""}<div class="d">issued ${t.created} · ${t.lastUsed ? "used " + t.lastUsed : "never used"}</div></div><div class="st" onclick="event.stopPropagation()">${confirmRevoke === t.id ? `<span class="cell" style="font-size:12px">${t.live ? "Revoking closes the app's live connection." : "The app can no longer connect with it."}</span><button class="mini" onclick="confirmRevoke=null;render()">Keep</button><button class="mini" style="color:#dc2626;border-color:#fecaca" onclick="revoke('${t.id}')">Revoke</button>` : `<button class="mini" onclick="confirmRevoke='${t.id}';render()">Revoke</button>`}</div></div>`).join("") || `<div class="note" style="padding:16px">No live token — the app cannot connect until one is issued.</div>`;
+    const t = picked && picked.kind === "token" ? A.tokens.find((t) => t.id === picked.name) : null;
+    det.innerHTML = t ? `<div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">${t.prefix}</span><span class="badge">app token</span></div><div class="cell" style="margin-top:2px">Only valid for opening the reverse WebSocket as ${app}.</div></div><div class="db">${reveal && reveal.id === t.id ? `<div class="sec" style="border-color:#bbf7d0;background:#f0fdf4"><div class="eyebrow" style="color:#15803d">Shown once — copy it now</div><div class="mono" style="font-size:12px;word-break:break-all">${reveal.key}</div><div class="hint">The previous token keeps working until you revoke it.</div></div>` : ""}<div class="sec">${kv("Issued", t.created)}${kv("Expires", "never — the telegram-bot model, revoke on compromise")}${kv("Last used", t.lastUsed || "never")}${kv("Connection", t.live ? "holds the live socket now" : "none")}</div></div>` : `<div class="dh"><div style="font-size:15px;font-weight:600">Token</div><div class="cell" style="margin-top:2px">Select a token for its details.</div></div>`;
+    return;
+  }
+  if (view === "recording") { renderRecording(A, lh, list, foot, det); return; }
+  if (view === "overview") {
+    lh.innerHTML = `<div class="row" style="gap:6px"><span style="font-weight:600">Overview</span></div>`;
+    list.innerHTML = `<div style="padding:16px;max-width:640px">${kv("Slug", `<span class="mono">${app}</span>`)}${kv("Kind", A.kind)}${kv("Created", A.created)}${A.kind === "proxied" ? kv("Endpoint", `<span class="mono">${A.endpoint}</span>`) + kv("Auth", A.auth) + kv("Forward identity", "off") : kv("Last seen", A.lastSeen)}${kv("Body logging", (A.log ? "On" : "Off") + (A.log === A.logDefault ? ` — ${A.kind} default` : ""))}${kv("Description", A.desc)}</div>`;
+    det.innerHTML = ""; return;
+  }
+  // danger
+  lh.innerHTML = `<div class="row" style="gap:6px"><span style="font-weight:600">Danger zone</span></div>`;
+  list.innerHTML = `<div style="padding:16px;display:flex;flex-direction:column;gap:12px;max-width:640px"><div class="card"><div style="font-weight:500">Archive</div><div class="cell">It refuses connections and leaves the list — tokens, grants and history are kept.</div><div style="padding-top:8px"><button class="btn" onclick="toast('app_archive ${app} — not in the demo')">Archive ${app}</button></div></div><div class="card" style="border-color:#fecaca"><div style="font-weight:500">Delete</div><div class="cell">Revokes its ${A.tokens.filter((t) => !t.revoked).length} token${A.tokens.filter((t) => !t.revoked).length === 1 ? "" : "s"}, closes the live connection and removes every grant (${agentsHere.length} agent${agentsHere.length === 1 ? "" : "s"}). This cannot be undone.</div><div style="padding-top:8px"><button class="btn danger" onclick="toast('app_delete ${app} — not in the demo')">Delete ${app}</button></div></div></div>`;
+  det.innerHTML = "";
+}
+
+function catalogDetails(A, reachers) {
+  if (!picked || !["tools", "prompts", "resources"].includes(picked.kind)) return `<div class="dh"><div style="font-size:15px;font-weight:600">Catalog</div><div class="cell" style="margin-top:2px">Select a tool, prompt or resource for its details.</div></div><div class="db"><div class="sec"><div class="eyebrow">Where this comes from</div>${kv("Schemas", A.kind === "tunneled" ? "the app's last <span class='mono'>tools/list</span> — the hub stores them, it does not author them" : "the upstream's live listing, under a 10 s deadline")}${kv("Reach", "computed with the gate's own matcher over each agent's grant")}</div></div>`;
+  const fam = picked.kind, item = A[fam].find(([n]) => n === picked.name);
+  if (!item) return "";
+  const [name, desc, args, out] = item;
+  const rs = reachers(fam, name);
+  const redArgs = (A.redact.args[name] || []).concat(fam === "tools" ? leaves(args).filter((l) => l.writeOnly).map((l) => l.path) : []);
+  const redRes = (A.redact.results[name] || []).concat(fam === "tools" && out ? outLeaves(out).filter((l) => l.writeOnly).map((l) => l.path) : []);
+  const argRows = (rows) => rows.length ? rows.map((l) => `<div class="arg"><div class="mono">${l.path}</div><div class="muted">${l.type}</div><div>${l.writeOnly ? `<span class="badge warn" style="height:18px">writeOnly · masked</span>` : ""}</div></div>`).join("") : "<span class='dim' style='font-size:12px'>none</span>";
+  return `<div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">${esc(name)}</span><span class="badge">${fam.slice(0, -1)}</span></div><div class="cell" style="margin-top:2px">${esc(desc || "")}</div></div><div class="db">
+    ${fam === "resources" ? `<div class="sec"><div class="eyebrow">Resource</div>${kv("URI", `<span class="mono">${esc(name)}</span>`)}${kv("Type", desc)}${kv("Served on", `the scoped endpoint only — <span class="mono">/ahrzb/mcp/${app}</span>`)}${kv("Matched", "by URI, never by name")}</div>` : `<div class="sec"><div class="eyebrow">Arguments</div>${argRows(leaves(args))}</div>`}
+    ${fam === "tools" && out ? `<div class="sec"><div class="eyebrow">Result · outputSchema</div>${argRows(outLeaves(out))}</div>` : ""}
+    <div class="sec"><div class="eyebrow">What only the hub knows</div>${fam !== "resources" ? kv("Called as", `<span class="mono">${app}_${esc(name)}</span> on the aggregated endpoint`) : ""}${kv("Reachable by", rs.length ? rs.map((x) => `<span class="mono">${x.ag}</span> · via ${x.s.via.join(", ")}`).join("<br>") : "no agent yet")}${fam === "tools" ? kv("Approval", rs.some((x) => x.s.mode === "approval") ? `asked for ${rs.filter((x) => x.s.mode === "approval").map((x) => x.ag).join(", ")}` : "none required") : fam === "prompts" ? kv("Approval", "never asked for prompts") : ""}${fam !== "resources" ? kv("Redaction", (redArgs.length ? `arguments <span class="mono">${redArgs.join(", ")}</span>` : "") + (redRes.length ? ` · results <span class="mono">${redRes.join(", ")}</span>` : "") || "no redacted fields") : ""}</div>
+    <div class="note">The same block the audit row and the agent page show for this ${fam.slice(0, -1)}. Editing reach happens on <a onclick="showView('agents')">Agents</a>, masking on <a onclick="showView('recording')">Recording</a>.</div></div>`;
+}
+function roleDetails(A) {
+  if (!picked || picked.kind !== "role") return `<div class="dh"><div style="font-size:15px;font-weight:600">Roles</div><div class="cell" style="margin-top:2px">Select a role to see what it can do, or add one of your own.</div></div><div class="db"><div class="sec"><div class="eyebrow">Two sources, one rule</div>${kv("The app's", A.kind === "tunneled" ? "declared at connect; read-only here — the app owns them" : "none: a proxied app declares no roles")}${kv("Yours", "defined here by ticking items or adding patterns; usable in grants like any role")}${kv("Collision", "if the app later declares a name you defined, its declaration replaces yours — the row says so")}</div></div>`;
+  const role = picked.name, isAll = role === "all", isNew = roleDraft && roleDraft.isNew && roleDraft.role === role;
+  const source = isAll ? "builtin" : isNew ? "owner" : roleSource(app, role);
+  const editable = source === "owner";
+  const fam = isAll ? { tools: [".*"], prompts: [".*"], resources: [".*"] } : roleFam(role) || {};
+  const shadowed = source === "app" && (A.ownerRoles || {})[role];
+  const holders = Object.keys(GRANTS[app] || {}).map((ag) => { const g = GRANTS[app][ag]; return g.allow.includes(role) ? `<span class="badge">${ag}</span>` : g.approval.includes(role) ? `<span class="badge warn">${ag} · ask</span>` : ""; }).join("");
+  const q = filterText.trim().toLowerCase();
+  const hit = (n, d) => !q || n.toLowerCase().includes(q) || (d || "").toLowerCase().includes(q);
+  const chkIcon = chk;
+  const row = (f, [name, desc]) => {
+    const pats = fam[f] || [];
+    const on = pats.some((p) => matches(p, name)), literal = pats.includes(name);
+    const viaPattern = on && !literal ? pats.filter((p) => !LITERAL.test(p) && matches(p, name)) : [];
+    const savedFam = (isNew ? {} : source === "owner" ? (A.ownerRoles[role] || {}) : fam)[f] || [];
+    const changed = editable && (savedFam.includes(name) !== literal);
+    const control = editable
+      ? (viaPattern.length ? `<span class="cb lock" title="matched by ${viaPattern.join(", ")}">${chkIcon}</span>` : `<button class="cb${literal ? " on" : ""}" onclick="setRoleItem('${role}','${f}','${esc(name)}',${!literal})">${literal ? chkIcon : ""}</button>`)
+      : `<span class="cb${on ? " lock" : ""}" style="${on ? "" : "border-color:#e4e4e7"}" title="${on ? "in this role" : "not in this role"}">${on ? chkIcon : ""}</span>`;
+    return `<div class="cr" style="cursor:default"><div><span class="mono">${esc(name)}</span><div class="d">${esc(desc || "")}${viaPattern.length ? ` · via <span class="mono">${esc(viaPattern.join(", "))}</span>` : ""}</div></div><div class="st">${changed ? unsavedBadge() : ""}${control}</div></div>`;
+  };
+  const grp = (f, label) => { const items = A[f].filter(([n, d]) => hit(n, d)); const inRole = A[f].filter(([n]) => (fam[f] || []).some((p) => matches(p, n))).length; return A[f].length ? `<div class="gh sticky"><span>${label} · ${inRole} of ${A[f].length}</span></div>` + (items.length ? items.map((t) => row(f, t)).join("") : `<div class="note" style="padding:4px 16px 8px">no match</div>`) : ""; };
+  const patterns = ["tools", "prompts", "resources"].flatMap((f) => (fam[f] || []).filter((p) => !LITERAL.test(p)).map((p) => [f, p]));
+  const patternRows = patterns.length || (editable && q && !LITERAL.test(q)) ? `<div class="gh sticky"><span>Patterns · ${patterns.length}</span><span style="text-transform:none;letter-spacing:0">anchored · * aliases .*</span></div>` +
+    patterns.map(([f, p]) => { const n = A[f].filter(([nm]) => matches(p, nm)).length; return `<div class="cr" style="cursor:default"><div><span class="mono">${esc(p)}</span> <span class="ty">${f}</span><div class="d">matches ${n} today, and any added later</div></div><div class="st">${editable ? `<button class="cb on" title="remove this pattern" onclick="removeRolePattern('${role}','${f}','${esc(p)}')">${chkIcon}</button>` : `<span class="cb lock">${chkIcon}</span>`}</div></div>`; }).join("") +
+    (editable && q && !LITERAL.test(q) ? `<div class="cr" style="cursor:default"><div><span class="mono">${esc(filterText.trim())}</span> <span class="ty">tools</span><div class="d">would match ${A.tools.filter(([nm]) => matches(filterText.trim(), nm)).length} today, and any added later</div></div><div class="st"><button class="mini" onclick="addRolePattern('${role}','tools','${esc(filterText.trim())}')">Add as pattern</button></div></div>` : "") : "";
+  const nameCell = isNew ? `<input id="role-name" class="filter" style="width:200px;height:28px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" placeholder="role name" value="${esc(role)}" oninput="const v=this.value;roleDraft.role=v;picked.name=v;render();const el=document.getElementById('role-name');el.focus();el.setSelectionRange(v.length,v.length)">` : `<span class="mono" style="font-size:15px;font-weight:600">${role}</span>`;
+  const srcBadge = isAll ? `<span class="badge">built-in</span>` : source === "app" ? `<span class="badge">declared by the app</span>` : `<span class="badge ok">yours</span>`;
+  const explain = isAll ? "Every tool, prompt and resource, present and future. Never declarable, only grantable."
+    : source === "app" ? (shadowed ? `${A.name} declares this name, so its declaration replaced the one you had defined. Read-only: the app owns it.` : `Declared by ${A.name} at connect. Read-only: the app owns it and may widen it on its next connect.`)
+    : A.kind === "tunneled" ? `Defined by you. If ${A.name} later declares a role named <span class="mono">${esc(role) || "…"}</span>, the app's declaration replaces this one.` : "Defined by you. A proxied app declares no roles, so this is the only kind it has.";
+  return `<div class="dh"><div class="row" style="gap:8px">${nameCell}${srcBadge}${roleDraft && roleDraft.role === role && roleDirty() ? DRAFT_DOT : ""}<span style="flex:1"></span>${holders || (isNew ? "" : `<span class="dim" style="font-size:11px">held by no agent</span>`)}</div><div class="cell" style="margin-top:4px">${explain}</div>${editable ? `<input class="filter" style="margin-top:8px" placeholder="filter, or type a pattern…" value="${esc(filterText)}" oninput="filterText=this.value;render();document.querySelectorAll('.filter')[document.querySelectorAll('.filter').length-1].focus()">` : ""}</div>
+    <div style="flex:1;overflow:auto">${grp("tools", "Tools")}${grp("prompts", "Prompts")}${grp("resources", "Resources")}${patternRows}</div>
+    ${editable && !isNew ? `<div class="foot"><span class="row"><button class="btn danger" style="height:28px" onclick="deleteOwnerRole('${role}')">Delete role</button></span><span class="hint">grants naming it keep the name and match nothing until it exists again</span></div>` : ""}`;
+}
+function renderRecording(A, lh, list, foot, det) {
+  const s = recState(), dirty = recDirty();
+  const masked = Object.values(s.args).flat().length + Object.values(s.results).flat().length;
+  const locked = [...pathIndex("args").values(), ...pathIndex("results").values()].flatMap((v) => v.tools).filter((t) => t.writeOnly).length;
+  const logChanged = recDraft && recDraft.log !== A.log;
+  lh.innerHTML = `<div class="row" style="justify-content:space-between;flex-wrap:nowrap"><div class="row" style="gap:6px;flex-wrap:nowrap;min-width:0"><span style="font-weight:600">Recording</span><span class="cell">what the audit trail keeps, and what it masks</span></div><span class="row" style="gap:8px;flex-shrink:0"><span class="cell" style="font-size:12px">Record call bodies</span><button class="sw${s.log ? " on" : ""}" onclick="toggleLog()" aria-label="body logging"></button></span></div>
+    <div class="sum">body logging <b style="color:#09090b">${s.log ? "on" : "off"}</b> · ${s.log === A.logDefault ? A.kind + " default" : "set explicitly"}${logChanged ? " " + unsavedBadge(s.log ? "allow" : "") : ""} <span class="dim">·</span> <b style="color:#09090b">${masked}</b> masked path${masked === 1 ? "" : "s"} by config${locked ? ` <span class="dim">·</span> ${locked} declared writeOnly by the app` : ""}</div>
+    <input class="filter" placeholder="filter paths…" value="${esc(filterText)}" oninput="filterText=this.value;render();document.querySelector('.filter').focus()">`;
+  const q = filterText.trim().toLowerCase();
+  const warn = A.kind === "proxied" && s.log && masked === 0 ? `<div class="banner" style="margin:10px 16px 0">A proxied app's schema is not cached at call time, so nothing is masked automatically. Tick what is secret before you save, or it is stored in the clear for 7 days.</div>` : "";
+  const logRow = warn;
+  const section = (dir, title, sub) => {
+    const idx = pathIndex(dir);
+    const rows = [...idx.entries()].filter(([p]) => !q || p.toLowerCase().includes(q)).sort((a, b) => b[1].tools.length - a[1].tools.length || a[0].localeCompare(b[0]));
+    const noSchema = dir === "results" ? A.tools.filter((t) => !t[3]).map((t) => t[0]) : [];
+    const body = rows.map(([path, v]) => {
+      const editable = v.tools.filter((t) => !t.writeOnly), lockedT = v.tools.filter((t) => t.writeOnly);
+      const on = editable.filter((t) => recHas(dir, t.tool, path)).length, all = editable.length > 0 && on === editable.length, some = on > 0 && !all;
+      const savedOn = editable.filter((t) => (A.redact[dir][t.tool] || []).includes(path)).length;
+      const isOpen = expanded[dir].has(path);
+      const cbClass = editable.length === 0 ? "cb lock" : all ? "cb on" : some ? "cb mixed" : "cb";
+      const inner = editable.length === 0 || all ? chk : some ? `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><path d="M5 12h14"></path></svg>` : "";
+      const st = [];
+      if (false) st.push(`<span class="badge">declared writeOnly${lockedT.length < v.tools.length ? ` on ${lockedT.length}` : ""}</span>`);
+      if (on) st.push(`<span class="badge warn">masked on ${all && !lockedT.length ? (editable.length === 1 ? "its tool" : "all " + editable.length) : on}</span>`);
+      if (on !== savedOn) st.push(unsavedBadge(on > savedOn ? "approval" : ""));
+      const status = lockedT.length ? `declared writeOnly${lockedT.length < v.tools.length ? ` on ${lockedT.length}` : ""}` : on ? `masked on ${all ? (editable.length === 1 ? "its tool" : "all " + editable.length) : on + " of " + editable.length}` : "";
+      const which = v.tools.length > 1 || lockedT.length ? `<button class="tog" onclick="expanded['${dir}'].has('${esc(path)}')?expanded['${dir}'].delete('${esc(path)}'):expanded['${dir}'].add('${esc(path)}');render()">${isOpen ? "hide" : "which"}</button>` : "";
+      return `<div class="cr" style="cursor:default"><div><span class="mono">${esc(path)}</span> <span class="ty">${v.type}</span><div class="d">${v.tools.length} tool${v.tools.length === 1 ? "" : "s"}${status ? " · " + status : ""} ${which}</div></div><div class="st">${on !== savedOn ? unsavedBadge(on > savedOn ? "approval" : "") : ""}<button class="${cbClass}" ${editable.length === 0 ? "disabled" : ""} onclick="setPath('${dir}','${esc(path)}',${!all})" title="${editable.length === 0 ? "declared writeOnly by the app — always masked" : all ? "masked on every tool that takes it" : "mask on every tool that takes it"}">${inner}</button></div></div>` +
+        (isOpen ? `<div class="sub">${v.tools.map((t) => { const has = recHas(dir, t.tool, path), had = (A.redact[dir][t.tool] || []).includes(path); return `<div class="cr" style="cursor:default;padding-left:32px;background:#fafafa"><div><span class="mono">${t.tool}</span>${t.writeOnly ? `<div class="d">declared by the app — always masked</div>` : ""}</div><div class="st">${!t.writeOnly && has !== had ? unsavedBadge(has ? "approval" : "") : ""}${t.writeOnly ? `<span class="cb lock">${chk}</span>` : `<button class="cb${has ? " on" : ""}" onclick="setMask('${dir}','${t.tool}','${esc(path)}',${!has})">${has ? chk : ""}</button>`}</div></div>`; }).join("")}</div>` : "");
+    }).join("");
+    return `<div class="gh sticky"><span>${title} · ${rows.length} path${rows.length === 1 ? "" : "s"}</span><span style="text-transform:none;letter-spacing:0">${sub}</span></div>${body || `<div class="note" style="padding:6px 16px">${q ? "no path matches" : "no schema declares any field"}</div>`}${noSchema.length && !q ? `<div class="note" style="padding:8px 16px 4px"><span class="mono">${noSchema.length > 6 ? noSchema.length + " tools" : noSchema.join(", ")}</span> declare no output schema — a result path there can only come from a recorded call (mask from evidence).</div>` : ""}`;
+  };
+  list.innerHTML = logRow + section("args", "Arguments", "from each tool's inputSchema") + section("results", "Results", "from outputSchema, where declared");
+  foot.innerHTML = `<span class="cell" style="font-size:12px"><a>Recorded calls to ${app} →</a></span><span class="row" style="gap:10px"><span class="cell" style="font-size:12px">${dirty ? plural(recChanges(), "unsaved change") : "<span class='dim'>saved</span>"}</span><button class="btn ghost" ${dirty ? "" : "disabled"} onclick="recDraft=null;render()">Discard</button><button class="btn primary" ${dirty ? "" : "disabled"} onclick="saveRec()">Save</button></span>`;
+  const maskedList = (dir) => {
+    const byPath = new Map();
+    for (const [tool, paths] of Object.entries(s[dir])) for (const path of paths) (byPath.get(path) || byPath.set(path, []).get(path)).push(tool);
+    for (const [path, v] of pathIndex(dir)) for (const t of v.tools) if (t.writeOnly) (byPath.get(path) || byPath.set(path, []).get(path)).push(t.tool + "†");
+    const savedFor = (path) => Object.entries(A.redact[dir]).filter(([, ps]) => ps.includes(path)).map(([t]) => t).sort().join();
+    const rows = [...byPath.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([path, tools]) => {
+      const cfg = tools.filter((t) => !t.endsWith("†")).sort(), decl = tools.filter((t) => t.endsWith("†")).map((t) => t.slice(0, -1));
+      const changed = cfg.join() !== savedFor(path);
+      const who = [cfg.length ? `on ${cfg.length > 3 ? cfg.length + " tools" : cfg.join(", ")}` : "", decl.length ? `declared writeOnly by ${decl.length > 3 ? decl.length + " tools" : decl.join(", ")}` : ""].filter(Boolean).join(" · ");
+      return `<div class="cr" style="cursor:default;padding:6px 0"><div><span class="mono">${esc(path)}</span><div class="d">${who}</div></div><div class="st">${changed ? unsavedBadge(cfg.length ? "approval" : "") : ""}</div></div>`;
+    });
+    return `<div class="sec" style="gap:0"><div class="eyebrow" style="padding-bottom:6px">${dir === "args" ? "Arguments" : "Results"} · ${rows.length} masked</div>${rows.join("") || `<div class="note" style="padding:6px 0">nothing masked — ${dir === "args" ? "arguments" : "results"} are recorded whole</div>`}</div>`;
+  };
+  det.innerHTML = `<div class="dh"><div class="row" style="gap:8px"><span style="font-size:15px;font-weight:600">Masked before recording</span>${dirty ? DRAFT_DOT : ""}</div><div class="cell" style="margin-top:2px">${s.log ? "These fields are replaced with <span class='mono'>‹redacted›</span> before a call is written to the trail. Everything else in the body is kept as sent." : "Body logging is off, so no bodies reach the trail; the masks below apply once it is turned on."}</div></div>
+    <div class="db">${maskedList("args")}${maskedList("results")}
+    <div class="sec"><div class="eyebrow">What a recorded call keeps</div>${kv("Arguments", "<span class='mono'>params.arguments</span>, post-redaction")}${kv("Results", "<span class='mono'>structuredContent</span> post-redaction; text, image and resource blocks become size stubs, never bytes")}${kv("Cap", "16 KiB per body — an over-cap body is one <span class='mono'>oversize</span> stub")}${kv("Kept for", "7 days, then pruned with the rest of the audit table · <a>Export JSONL</a> to keep longer")}${kv("Never", "refused calls, token material, <span class='mono'>writeOnly</span> and config-masked fields")}</div>
+    <div class="note">A tick writes one literal (tool, path) entry per tool; nothing here is a pattern and nothing is typed. Masking applies to the approval record too.</div></div>`;
+}
+render();
+</script>
+</body>
+</html>

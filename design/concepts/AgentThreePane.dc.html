@@ -1,0 +1,204 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px}
+    a{color:#09090b;text-decoration:underline;text-underline-offset:2px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .muted{color:#71717a}.dim{color:#a1a1aa}
+    .badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 4px 0 7px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+    .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+    .badge.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+    .badge .x{width:14px;height:14px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;color:#a1a1aa;font-size:12px;margin-left:2px}
+    .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+    .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+    .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+    .btn.warn{border-color:#fde68a;color:#92400e;background:#fffbeb}
+    .nav{height:56px;box-sizing:border-box;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+    .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:#71717a}
+    .navitem.on{background:#f4f4f5;color:#09090b}
+    .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .cell{font-size:13px;color:#71717a}
+    .note{font-size:12px;color:#71717a;line-height:1.5}
+    .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+    .panes{display:flex;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);min-height:860px}
+    .rail{width:180px;flex-shrink:0;border-right:1px solid #e4e4e7;padding:12px 8px;display:flex;flex-direction:column;gap:1px;background:#fafafa}
+    .rh{font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;padding:8px 8px 4px}
+    .ri{display:flex;justify-content:space-between;align-items:center;height:28px;padding:0 8px;border-radius:6px;font-size:13px;color:#71717a}
+    .ri.on{background:#fff;color:#09090b;font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+    .ri.dorm{opacity:.55}
+    .rm{font-size:11px;color:#a1a1aa}
+    .listing{width:520px;flex-shrink:0;border-right:1px solid #e4e4e7;display:flex;flex-direction:column}
+    .lh{padding:14px 16px;border-bottom:1px solid #e4e4e7;display:flex;flex-direction:column;gap:8px}
+    .sum{font-size:12px;color:#71717a;line-height:1.5}
+    .sel{height:30px;box-sizing:border-box;border:1px solid #e4e4e7;border-radius:8px;padding:0 10px;font-size:12px;display:inline-flex;align-items:center;gap:6px;background:#fff;color:#a1a1aa;width:200px}
+    .gh{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa;padding:12px 16px 4px;display:flex;justify-content:space-between}
+    .cr{display:grid;grid-template-columns:1fr auto;column-gap:10px;align-items:center;padding:6px 16px;font-size:13px;border-bottom:1px solid #f8f8f8}
+    .cr.hot{background:#f4f4f5}
+    .cr.cur{background:#f4f4f5;box-shadow:inset 3px 0 0 #18181b}
+    .cr .d{font-size:11px;color:#71717a;margin-top:1px}
+    .st{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+    .acts{display:inline-flex;gap:4px;visibility:hidden}
+    .acts.show{visibility:visible}
+    .mini{height:22px;padding:0 8px;border-radius:6px;border:1px solid #e4e4e7;background:#fff;font-size:11px;font-weight:500;display:inline-flex;align-items:center}
+    .mini.warn{border-color:#fde68a;color:#92400e;background:#fffbeb}
+    .save{margin-top:auto;padding:12px 16px;border-top:1px solid #e4e4e7;display:flex;justify-content:space-between;align-items:center;background:#fafafa}
+    .details{flex:1;min-width:0;display:flex;flex-direction:column;background:#fafafa}
+    .dh{padding:14px 16px;border-bottom:1px solid #e4e4e7;background:#fff}
+    .db{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+    .sec{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+    .kv{display:flex;gap:12px;font-size:12px;line-height:1.5}
+    .kv .k{width:110px;flex-shrink:0;color:#71717a}
+    .arg{display:grid;grid-template-columns:110px 60px 1fr;column-gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid #f4f4f5}
+    .arg:last-child{border-bottom:none}
+    .tile{display:flex;gap:16px;font-size:12px;color:#71717a}
+    .tile b{color:#09090b;font-weight:600;font-size:14px}
+  </style>
+</helmet>
+<div style="width:1240px;min-height:1260px;box-sizing:border-box;background:#fff;display:flex;flex-direction:column">
+
+  <div class="nav">
+    <div style="display:flex;align-items:center;gap:24px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>
+        <div style="font-size:15px;font-weight:600">personal-mcps</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <div class="navitem">Apps</div><div class="navitem on">Agents</div><div class="navitem">Audit</div>
+        <div class="navitem">Approvals<span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#dc2626;color:#fff;font-size:11px;font-weight:600">2</span></div>
+        <div class="navitem">Settings</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px"><div class="muted">ahrzb</div><div class="btn">Sign out</div></div>
+  </div>
+
+  <div style="width:1176px;box-sizing:border-box;margin:0 auto;padding:24px 0 40px;display:flex;flex-direction:column;gap:16px">
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-end">
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="cell"><a href="#">Agents</a> <span class="dim">/</span> <span class="mono">claude</span> <span class="dim">/</span> <span class="mono">news</span> <span class="dim">/</span> <span class="mono">search_items</span></div>
+        <div class="row" style="gap:10px"><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
+      </div>
+      <div class="tile"><span><b>20</b> apps</span><span><b>103</b> tools · <b>3</b> prompts · <b>164</b> resources</span><span style="color:#92400e"><b style="color:#92400e">8</b> need approval</span><span><b>1</b> dormant</span><span><b>2</b> awaiting approval</span></div>
+    </div>
+
+    <div class="panes">
+
+      <!-- rail -->
+      <div class="rail">
+        <div class="rh">Apps · 20</div>
+        <div class="ri dorm"><span class="mono">home</span><span class="rm">—</span></div><div class="ri"><span class="mono">gh</span><span class="rm"><span style="color:#92400e">●</span></span></div><div class="ri on"><span class="mono">news</span><span class="rm"><span style="color:#92400e">●</span></span></div><div class="ri"><span class="mono">mail</span><span class="rm"><span style="color:#92400e">●</span></span></div><div class="ri"><span class="mono">shell</span><span class="rm"><span style="color:#92400e">●</span></span></div><div class="ri"><span class="mono">linear</span><span class="rm"></span></div><div class="ri"><span class="mono">notion</span><span class="rm"></span></div><div class="ri"><span class="mono">cal</span><span class="rm"></span></div><div class="ri"><span class="mono">slack</span><span class="rm"></span></div><div class="ri"><span class="mono">drive</span><span class="rm"></span></div><div class="ri"><span class="mono">sentry</span><span class="rm"></span></div>
+        <div class="ri" style="color:#a1a1aa;font-size:12px">… 9 more</div>
+        <div class="ri" style="color:#71717a;font-size:12px;margin-top:2px">+ Grant another app…</div>
+        <div class="rh" style="margin-top:10px">Agent</div>
+        <div class="ri"><span>Credentials</span><span class="rm">1 · 1</span></div>
+        <div class="ri"><span>Activity</span><span class="rm" style="color:#92400e">2</span></div>
+        <div class="ri"><span>Danger zone</span></div>
+      </div>
+
+      <!-- listing: the catalog, with the grant state inline -->
+      <div class="listing">
+        <div class="lh">
+          <div class="row" style="justify-content:space-between">
+            <div class="row" style="gap:6px"><span style="font-weight:600">News MCP</span><span class="mono cell">news</span><span class="badge">tunneled</span><span class="badge ok"><span class="dot"></span>online</span></div>
+            <span class="sel"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>filter, or type a pattern…</span>
+          </div>
+          <div class="sum">claude reaches <b style="color:#09090b">9</b> of 11 tools <span class="dim">·</span> 4 via approval <span class="dim">·</span> <b style="color:#09090b">1</b> of 1 prompt <span class="dim">·</span> <b style="color:#09090b">2</b> of 3 resources <span class="dim">·</span> <span class="dim">was 8 of 11 tools</span></div>
+        </div>
+
+        <div class="gh"><span>Roles · 4</span><span style="text-transform:none;letter-spacing:0">declared by the app at connect</span></div>
+        <div class="cr"><div><span class="mono">reader</span><div class="d">get_news, search_* · prompts digest_*</div></div><div class="st"><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> in Allowed<span class="x">×</span></span></div></div>
+        <div class="cr"><div><span class="mono">admin</span><div class="d">admin_*</div></div><div class="st"><span class="badge warn">in Needs approval<span class="x">×</span></span></div></div>
+        <div class="cr"><div><span class="mono">publisher</span><div class="d">publish, delete_feed</div></div><div class="st"><span class="dim" style="font-size:12px">—</span><span class="acts"><span class="mini">Allow</span><span class="mini warn">Approval</span></span></div></div>
+        <div class="cr"><div><span class="mono">all</span><div class="d">every tool, prompt and resource, present and future</div></div><div class="st"><span class="dim" style="font-size:12px">—</span><span class="acts"><span class="mini">Allow</span><span class="mini warn">Approval</span></span></div></div>
+        <div class="gh"><span>Tools · 11</span><span style="text-transform:none;letter-spacing:0">9 reached · 2 not</span></div>
+        <div class="cr"><div><span class="mono">get_news</span><div class="d">Latest items across all feeds</div></div><div class="st"><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed · via reader</span><span class="badge ok">direct<span class="x">×</span></span></div></div>
+        <div class="cr"><div><span class="mono">search_feeds</span><div class="d">Find feeds by name or URL</div></div><div class="st"><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed · via reader</span></div></div>
+        <div class="cr cur"><div><span class="mono">search_items</span><div class="d">Search items across feeds</div></div><div class="st"><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed · via reader</span></div></div>
+        <div class="cr"><div><span class="mono">search_archive</span><div class="d">Search the archive</div></div><div class="st"><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed · via reader</span></div></div>
+        <div class="cr"><div><span class="mono">admin_purge_cache</span><div class="d">Drop cached items</div></div><div class="st"><span class="badge warn">approval · via admin</span></div></div>
+        <div class="cr"><div><span class="mono">admin_reindex</span><div class="d">Rebuild the search index</div></div><div class="st"><span class="badge warn">approval · via admin</span></div></div>
+        <div class="cr"><div><span class="mono">admin_export</span><div class="d">Export everything as JSON</div></div><div class="st"><span class="badge warn">approval · via admin</span></div></div>
+        <div class="cr"><div><span class="mono">publish</span><div class="d">Post an item to a feed</div></div><div class="st"><span class="badge warn">approval · direct<span class="x">×</span></span></div></div>
+        <div class="cr"><div><span class="mono">subscribe</span><div class="d">Subscribe to a feed</div></div><div class="st"><span class="badge ok" style="border-style:dashed"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed · unsaved<span class="x">×</span></span></div></div>
+        <div class="cr hot"><div><span class="mono">unsubscribe</span><div class="d">Unsubscribe from a feed</div></div><div class="st"><span class="dim" style="font-size:12px">—</span><span class="acts show"><span class="mini">Allow</span><span class="mini warn">Approval</span></span></div></div>
+        <div class="cr"><div><span class="mono">delete_feed</span><div class="d">Remove a feed and its items</div></div><div class="st"><span class="dim" style="font-size:12px">—</span><span class="acts"><span class="mini">Allow</span><span class="mini warn">Approval</span></span></div></div>
+        <div class="gh"><span>Prompts · 1</span></div>
+        <div class="cr"><div><span class="mono">digest_daily</span><div class="d">Summarise the last 24 h</div></div><div class="st"><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed · via reader</span></div></div>
+        <div class="gh"><span>Resources · 3</span><span style="text-transform:none;letter-spacing:0">matched by URI</span></div>
+        <div class="cr"><div><span class="mono">news://feed/hn</span><div class="d">text/plain</div></div><div class="st"><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed · via news://feed/*</span></div></div>
+        <div class="cr"><div><span class="mono">news://feed/lobsters</span><div class="d">text/plain</div></div><div class="st"><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed · via news://feed/*</span></div></div>
+        <div class="cr"><div><span class="mono">news://config</span><div class="d">application/json</div></div><div class="st"><span class="dim" style="font-size:12px">—</span><span class="acts"><span class="mini">Allow</span><span class="mini warn">Approval</span></span></div></div>
+        <div class="gh"><span>Patterns · 1</span><span style="text-transform:none;letter-spacing:0">entries that are not one item</span></div>
+        <div class="cr"><div><span class="mono">resource/news://feed/*</span><div class="d">matches 2 resources today</div></div><div class="st"><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> in Allowed<span class="x">×</span></span></div></div>
+
+        <div class="save">
+          <span class="cell" style="font-size:12px">1 unsaved change</span>
+          <span class="row" style="gap:6px"><span class="btn ghost">Discard</span><span class="btn primary">Save</span></span>
+        </div>
+      </div>
+
+      <!-- details -->
+      <div class="details">
+        <div class="dh">
+          <div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">search_items</span><span class="badge">tool</span></div>
+          <div class="cell" style="margin-top:2px">Search items across feeds by keyword, optionally within one feed.</div>
+        </div>
+        <div class="db">
+          <div class="sec">
+            <div class="eyebrow">For claude</div>
+            <div class="kv"><div class="k">Standing</div><div><span class="badge ok"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed · via reader</span></div></div>
+            <div class="kv"><div class="k">Approval</div><div>Not required — allow wins over any approval entry, so adding one here would not gate it.</div></div>
+            <div class="kv"><div class="k">Last called</div><div>2 h ago · 31 calls in 7 d · <a href='#'>see them</a></div></div>
+            <div class="row" style="gap:6px;padding-top:2px"><span class="mini">Allow directly</span><span class="mini warn">Needs approval</span><span class="cell" style="font-size:11px">a direct entry survives the app changing what <span class="mono">reader</span> matches</span></div>
+          </div>
+          <div class="sec">
+            <div class="eyebrow">Arguments</div>
+            <div class="arg" style="color:#71717a"><div>name</div><div>type</div><div></div></div>
+            <div class="arg"><div class="mono">query</div><div class="muted">string</div><div>required</div></div>
+            <div class="arg"><div class="mono">feed</div><div class="muted">string</div><div>optional · a feed id from <span class="mono">search_feeds</span></div></div>
+            <div class="arg"><div class="mono">limit</div><div class="muted">integer</div><div>optional · defaults to 20</div></div>
+            <div class="arg"><div class="mono">cookie</div><div class="muted">string</div><div>optional · <span class="badge warn" style="height:18px">redacted · config</span></div></div>
+          </div>
+          <div class="sec">
+            <div class="eyebrow">What only the hub knows</div>
+            <div class="kv"><div class="k">Called as</div><div><span class="mono">news_search_items</span> on the aggregated endpoint</div></div>
+            <div class="kv"><div class="k">Reachable by</div><div><span class="mono">claude</span>, <span class="mono">cron</span> · via <span class="mono">reader</span></div></div>
+            <div class="kv"><div class="k">Approval</div><div>No approval required</div></div>
+            <div class="kv"><div class="k">Redaction</div><div>arguments <span class="mono">cookie</span> (config) · results none</div></div>
+            <div class="kv"><div class="k">Schema</div><div>from the app's last <span class='mono'>tools/list</span> · <a href='#'>full schema</a></div></div>
+          </div>
+          <div class="note">Same detail the app page's tool row expands to, plus the standing for this one agent. A role selected here shows its patterns per family and every item it matches; a resource shows URI, type and which pattern matched it; a prompt its arguments.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="background:#fafafa;border:1px dashed #e4e4e7;border-radius:12px;padding:14px 16px">
+      <div class="eyebrow" style="margin-bottom:8px">Board notes — listing + details</div>
+      <div class="note" style="display:flex;flex-direction:column;gap:6px">
+        <div>• <b>The grant set has no pane of its own.</b> It is read off the listing: a role row says "in Allowed" or "in Needs approval" with an × to remove; an item row says how it is reached and, when there is a direct entry, "direct ×". A separate Patterns group at the end holds the entries that are not one item, so nothing stored is invisible.</div>
+        <div>• <b>Adding</b> is Allow / Approval on a row (hover), or typing a pattern into the filter, which offers it as a row with its match count. <b>Removing</b> is the ×. The unsaved bar sits at the foot of the listing; Save posts the whole set as <span class="mono">grant_set</span>.</div>
+        <div>• <b>The details pane</b> is the app page's expanded tool row (description, arguments, the four hub lines) plus a "For claude" block: standing, whether approval would even apply, recent calls by this agent to this tool, and the two actions again. The URL carries the selection (<span class="mono">/agents/claude/apps/news/tools/search_items</span>) so a row is linkable and scripting-off works by reload.</div>
+        <div>• <b>Nothing selected</b>: the details pane shows the app's summary — kind, status, catalog counts, roles, body logging — so the pane is never blank.</div>
+        <div>• <b>Reads</b>: the catalog and roles the reach needs, plus <span class="mono">audit_query { principal, app, tool }</span> for the selected item only. Everything else is already on the page.</div>
+        <div>• <b>Width</b>: 180 + 520 + the rest at 1240. Narrow: rail becomes the pill row; details opens as its own screen from a row tap, back returns to the listing.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1240,"height":1260}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

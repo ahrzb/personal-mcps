@@ -39,6 +39,7 @@ directly in §13 and rendered by the artboards below.
 | Audit | `Audit` | `MobileAudit` | `AuditDetailStates` |
 | Settings — panes behind a left rail | `Settings` (password, full shell + rail), `SettingsPanes` (the other five panes, at pane width — the shell and rail live on `Settings`) | `MobileSettings` | `SettingsStates` |
 | App detail (`/apps/<slug>`) — panes behind the same rail | `AppDetail` (tools), `AppDetailPanes` (the other seven) | — (follow-up) | `AppDetailStates` |
+| Agents + agent page (`/agents`, `/agents/<slug>`) — three panes behind a rail | `Agents` (the list), `AgentDetail` (an app's grants: rail · listing · details), `AgentDetailPanes` (Credentials, Activity, Grant another app, Danger zone) | — (follow-up) | `AgentDetailStates` |
 | Cross-cutting | — | — | `Dialogs` (destructive confirms), `EmptyStates` |
 
 Settings' six panes, one contract board and width each:
@@ -95,6 +96,51 @@ which draws the live §19.5 page, `AuditDetailStates` and `AppNewProxiedStates`.
 `SettingsTokens` and `OauthConnections` — the exploration-era full-shell duplicates of
 `SettingsPanes`'s Tokens and Connected-clients sections — were deleted the same day rather
 than re-laid out; see the pane table above.
+
+## Agents, redrawn as three panes (2026-09-16)
+
+The owner chose the agent page's direction from the exploration in `design/concepts/`
+(`AgentThreePaneDemo.html`, the clickable prototype, stays there as the reference the
+boards were rendered from). `Agents`, `AgentDetail` and the new `AgentDetailPanes` /
+`AgentDetailStates` replace the 2026-09-03 boards; `GrantEditorStates` is **deleted**:
+the (agent × app) editor is no longer its own page but the listing pane of
+`/agents/<slug>`, so a separate editor board would draw a page the design no longer has.
+
+What the boards pin, and what §13 still has to be amended to say (the boards are ahead of
+the spec until then — nothing here is contract yet):
+
+- `/agents` is a plain list, one row per agent with one line of totals (apps, reach per
+  family, how much asks first, how much is dormant); the whole row is the link to the agent
+  page (a stretched anchor, no script) with a hover and a trailing chevron; the only row
+  control is Delete. Granting lives on the agent page.
+- `/agents/<slug>` is a paned page after all — the earlier "an agent has three holdings
+  and no listing to browse" reasoning fell once the page lists what every granted app
+  advertises. A **rail** of the agent's apps (amber dot: an ask entry; dash: dormant; blue
+  dot: unsaved draft) plus **+ Grant another app…** and the agent's own panes —
+  Credentials, Activity, Danger zone; a **listing** of the selected app's roles, tools,
+  prompts, resources and pattern entries; a **details** pane for the selected row.
+- One control on every row, **none · ask · allow** in that order: solid when set on that
+  row, hollow when a role implies it (the role named), the states below a role's disabled.
+  Highest wins, allow over ask; there is no deny (§7).
+- The grant set gains **inline entries** beside role names — `tool/<pattern>`,
+  `prompt/<pattern>`, `resource/<uri-pattern>` — so a single item can be granted or
+  asked on its own row, and a pattern typed into the filter can be added as an entry. Role
+  names never contain `/`, so the two kinds never collide. `grant_set` and the provider's
+  `pmcp_grant` (§22) take the same list; §8 and §22 need the sentence.
+- One draft per app: changed rows carry the amber dashed **unsaved** badge, the rail entry
+  the blue dot, the foot counts changes with Discard / Save (one `grant_set` per pair);
+  switching with a draft shows the save-or-discard banner. **Remove from <agent>** at the
+  foot is `grant_set` with the empty set.
+- Credentials: Issue with an expiry select, the once-only reveal in place, Revoke on live
+  tokens and **Remove** on expired ones (the same `token_revoke`, relabelled — an expired
+  key is only a row to clear). The OAuth client is read-only, as before.
+- Activity: waiting requests with Approve / Reject on the row, then the last seven days of
+  the agent's calls with the audit row's bodies post-redaction.
+- Grant another app: the listing alone, wide — one card per active app the agent holds
+  nothing on, its endpoints and the roles that grant each behind **show all N**, a search
+  over apps and endpoints, and **Grant** opening the app with an empty draft.
+
+Mobile variants are still to draw; `Dialogs` keeps the delete-agent confirm.
 
 ## Settings, split into panes (2026-09-02)
 

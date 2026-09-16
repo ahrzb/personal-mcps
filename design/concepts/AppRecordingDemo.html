@@ -1,0 +1,275 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>App page · Recording pane · clickable demo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap">
+<style>
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px;background:#fff}
+  a{color:#09090b;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  button{font:inherit;cursor:pointer}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .muted{color:#71717a}.dim{color:#a1a1aa}
+  .badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+  .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+  .badge.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+  .badge.new{border-style:dashed}
+  .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+  .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+  .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+  .btn:disabled{opacity:.45;cursor:default}
+  .nav{height:56px;box-sizing:border-box;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+  .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:#71717a}
+  .navitem.on{background:#f4f4f5;color:#09090b}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cell{font-size:13px;color:#71717a;line-height:1.5}
+  .note{font-size:12px;color:#71717a;line-height:1.5}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+  .wrap{width:1176px;margin:0 auto;padding:24px 0 40px;display:flex;flex-direction:column;gap:16px}
+  .rail{width:200px;flex-shrink:0;display:flex;flex-direction:column;gap:2px}
+  .railh{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;padding:10px 12px 4px}
+  .raili{display:flex;justify-content:space-between;align-items:center;height:32px;padding:0 12px;border-radius:8px;font-size:14px;color:#71717a}
+  .raili.on{background:#f4f4f5;color:#09090b;font-weight:500}
+  .railm{font-size:12px;color:#71717a}
+  .ldot{width:8px;height:8px;border-radius:50%;background:#15803d}.ldot.off{background:#d4d4d8}
+  .card{background:#fff;border:1px solid #e4e4e7;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .sw{width:36px;height:20px;border-radius:999px;background:#e4e4e7;position:relative;flex-shrink:0;border:0;padding:0}
+  .sw.on{background:#18181b}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:left .15s}
+  .sw.on::after{left:18px}
+  .callout{background:#f4f4f5;border-radius:8px;padding:12px 14px;font-size:13px;color:#71717a;line-height:1.5;display:flex;gap:10px}
+  .callout.warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+  .kv{display:flex;gap:16px;padding:8px 0;border-bottom:1px solid #f4f4f5;font-size:13px;line-height:1.5}.kv .k{width:170px;flex-shrink:0;color:#71717a}
+  .filter{height:30px;box-sizing:border-box;border:1px solid #e4e4e7;border-radius:8px;padding:0 10px;font-size:12px;background:#fff;width:220px;outline:none}
+  .cb{width:14px;height:14px;box-sizing:border-box;border-radius:3px;border:1.5px solid #a1a1aa;background:#fff;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
+  .cb.on{background:#18181b;border-color:#18181b}
+  .cb.mixed{background:#18181b;border-color:#18181b}
+  .cb.lock{background:#a1a1aa;border-color:#a1a1aa;cursor:default}
+  .pr{display:grid;grid-template-columns:1fr auto;column-gap:12px;align-items:center;padding:7px 4px;border-bottom:1px solid #f4f4f5;font-size:13px}
+  .pr>div:first-child{display:flex;align-items:center;gap:8px}
+  .pr .ty{font-size:11px;color:#a1a1aa}
+  .pr .r{font-size:12px;color:#71717a;display:flex;align-items:center;gap:8px}
+  .sub{background:#fafafa;border-bottom:1px solid #f4f4f5;padding:2px 0}
+  .fld{display:flex;align-items:center;gap:8px;padding:5px 4px 5px 32px;font-size:12px}
+  .gh{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa;padding:12px 4px 4px;display:flex;justify-content:space-between}
+  .sect{position:relative}
+  .sect.scroll .body{max-height:300px;overflow:auto;border:1px solid #e4e4e7;border-radius:8px;padding:0 8px}
+  .sect.scroll .body .pr:last-child{border-bottom:none}
+  .sect.scroll .wrapb{position:relative}
+  .sect.scroll .wrapb::after{content:"";position:absolute;left:1px;right:1px;bottom:1px;height:28px;border-radius:0 0 8px 8px;background:linear-gradient(rgba(255,255,255,0),#fff);pointer-events:none}
+  .sect.scroll .wrapb.atend::after{display:none}
+  .sect .gh{position:sticky;top:0;background:#fff;z-index:1}
+  .cnt{font-size:11px;color:#a1a1aa;text-transform:none;letter-spacing:0}
+  .tog{background:none;border:0;padding:0;color:#71717a;font-size:12px;text-decoration:underline;text-underline-offset:2px}
+  .code{background:#f4f4f5;border-radius:8px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.6;white-space:pre;color:#09090b;overflow:auto}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18181b;color:#fafafa;padding:10px 14px;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.15);opacity:0;transition:opacity .2s}
+  .toast.show{opacity:1}
+  select.pick{font:inherit;font-size:13px;height:32px;border:1px solid #e4e4e7;border-radius:8px;padding:0 8px;background:#fff}
+</style>
+</head>
+<body>
+<div class="nav">
+  <div style="display:flex;align-items:center;gap:24px">
+    <div style="display:flex;align-items:center;gap:8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg><div style="font-size:15px;font-weight:600">personal-mcps</div><span class="badge">clickable demo</span></div>
+    <div style="display:flex;gap:4px"><div class="navitem on">Apps</div><div class="navitem">Agents</div><div class="navitem">Audit</div><div class="navitem">Approvals</div><div class="navitem">Settings</div></div>
+  </div>
+  <div class="row"><span class="cell">demo app</span><select class="pick" id="pick" onchange="switchApp(this.value)"><option value="notion">notion · proxied</option><option value="news">news · tunneled</option><option value="gh">gh · proxied, 38 tools</option></select><div class="muted">ahrzb</div><div class="btn">Sign out</div></div>
+</div>
+<div class="wrap">
+  <div id="head"></div>
+  <div style="display:flex;gap:24px;align-items:flex-start">
+    <div class="rail" id="rail"></div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:16px" id="pane"></div>
+  </div>
+  <div class="note">Try: tick <span class="mono">credentials.user</span> (masks it on every tool that takes it) · open <span class="mono">credentials.token</span> and untick one tool (the path row goes indeterminate) · switch to <span class="mono">news</span>: <span class="mono">auth.api_key</span> is locked because the app declared it <span class="mono">writeOnly</span> · turn body logging on for notion with nothing masked · watch the map at the bottom, then Save · switch to <span class="mono">gh</span> to see the sections scroll (38 tools) and filter them.</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ---------------------------------------------------------------- fixture: schemas the page already holds
+// field: [name, type, children?, writeOnly?]
+const APPS = {
+  notion: { name: "Notion", kind: "proxied", status: "connected", logDefault: false,
+    tools: {
+      create_page: { args: [["title","string"],["parent","object",[["database_id","string"]]],["credentials","object",[["user","string"],["token","string"]]],["content","object[]",[["text","string"]]]], out: [["page","object",[["id","string"],["url","string"],["share_token","string"]]]] },
+      update_page: { args: [["page_id","string"],["properties","object"],["credentials","object",[["user","string"],["token","string"]]]], out: null },
+      append_block: { args: [["block_id","string"],["children","object[]"],["credentials","object",[["user","string"],["token","string"]]]], out: null },
+      search: { args: [["query","string"],["filter","object",[["property","string"]]],["credentials","object",[["token","string"]]]], out: null },
+      archive_page: { args: [["page_id","string"],["credentials","object",[["token","string"]]]], out: null },
+    } },
+  news: { name: "News MCP", kind: "tunneled", status: "online", logDefault: true,
+    tools: {
+      get_news: { args: [["since","string"]], out: [["items","object[]",[["id","string"],["title","string"]]]] },
+      search_items: { args: [["query","string"],["feed","string"],["limit","integer"],["cookie","string"]], out: null },
+      publish: { args: [["feed","string"],["title","string"],["auth","object",[["api_key","string",null,true]]]], out: [["item","object",[["id","string"],["share_url","string",null,true]]]] },
+      delete_feed: { args: [["feed","string"],["auth","object",[["api_key","string",null,true]]]], out: null },
+    } },
+};
+// a large proxied fixture: 38 tools, generated — enough paths to need the scroll region
+(() => {
+  const ents = ["repo", "issue", "pr", "release", "branch", "label", "milestone", "comment", "review", "workflow", "secret", "deploy_key", "webhook"];
+  const verbs = ["list", "get", "create"];
+  const tools = {};
+  for (const e of ents) for (const v of verbs) {
+    const args = [["owner", "string"], ["repo", "string"]];
+    if (v !== "list") args.push([e + "_id", "string"]);
+    if (v === "create") args.push(["body", "object", [["title", "string"], ["description", "string"], [e + "_config", "object", [["visibility", "string"], ["token", "string"]]]]]);
+    if (v === "list") args.push(["page", "integer"], ["per_page", "integer"], ["filter", "object", [["state", "string"], ["author", "string"]]]);
+    args.push(["auth", "object", [["token", "string"]]]);
+    const out = v === "get" ? [[e, "object", [["id", "string"], ["url", "string"], ["html_url", "string"], [e === "secret" || e === "deploy_key" || e === "webhook" ? "secret_value" : "node_id", "string"]]]] : null;
+    tools[v + "_" + e] = { args, out };
+  }
+  APPS.gh = { name: "GitHub", kind: "proxied", status: "connected", logDefault: false, tools };
+})();
+// saved app rows: log_bodies, redact (args), redact_results
+let SAVED = {
+  notion: { log: false, args: { create_page: ["credentials.token"], update_page: ["credentials.token"] }, results: { create_page: ["page.share_token"] } },
+  news: { log: true, args: { search_items: ["cookie"] }, results: {} },
+  gh: { log: true, args: { create_secret: ["body.secret_config.token"] }, results: { get_secret: ["secret.secret_value"] } },
+};
+
+// ---------------------------------------------------------------- schema walk → paths
+function leaves(fields, prefix = "") {
+  const out = [];
+  for (const [name, type, kids, wo] of fields || []) {
+    const path = prefix ? `${prefix}.${name}` : name;
+    if (kids) out.push(...leaves(kids, path));
+    else out.push({ path, type, writeOnly: !!wo });
+  }
+  return out;
+}
+// dir: 'args' | 'results' → Map path → { type, tools:[{tool, writeOnly}] }
+function pathIndex(app, dir) {
+  const idx = new Map();
+  for (const [tool, t] of Object.entries(APPS[app].tools)) {
+    const fields = dir === "args" ? t.args : t.out;
+    if (!fields) continue;
+    for (const l of leaves(fields)) {
+      if (!idx.has(l.path)) idx.set(l.path, { type: l.type, tools: [] });
+      idx.get(l.path).tools.push({ tool, writeOnly: l.writeOnly });
+    }
+  }
+  return idx;
+}
+
+// ---------------------------------------------------------------- state
+let current = "notion";
+let draft = null; // { log, args:{tool:[...]}, results:{tool:[...]} }
+let expanded = { args: new Set(["credentials.token"]), results: new Set() };
+let filterText = "";
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const state = () => draft || SAVED[current];
+function ensureDraft() { if (!draft) draft = clone(SAVED[current]); return draft; }
+function dirty() { return !!draft && JSON.stringify(draft) !== JSON.stringify(SAVED[current]); }
+function has(s, dir, tool, path) { return (s[dir][tool] || []).includes(path); }
+function setMask(dir, tool, path, on) {
+  const d = ensureDraft();
+  const list = d[dir][tool] || (d[dir][tool] = []);
+  if (on && !list.includes(path)) list.push(path);
+  if (!on) d[dir][tool] = list.filter((p) => p !== path);
+  if (!d[dir][tool].length) delete d[dir][tool];
+  render();
+}
+function setPath(dir, path, on) {
+  const idx = pathIndex(current, dir).get(path);
+  for (const t of idx.tools) if (!t.writeOnly) setMask(dir, t.tool, path, on);
+}
+function toggleLog() { const d = ensureDraft(); d.log = !d.log; render(); }
+function save() {
+  SAVED[current] = clone(draft);
+  const a = Object.values(draft.args).flat().length, r = Object.values(draft.results).flat().length;
+  toast(`app_update ${current} · log_bodies: ${draft.log} · redact: ${a} path${a === 1 ? "" : "s"} · redact_results: ${r}`);
+  draft = null; render();
+}
+function discard() { draft = null; render(); }
+function switchApp(app) { current = app; draft = null; filterText = ""; expanded = { args: new Set(), results: new Set() }; document.getElementById("pick").value = app; render(); }
+function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 2600); }
+const chk = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>`;
+const dash = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><path d="M5 12h14"></path></svg>`;
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ---------------------------------------------------------------- render
+function render() {
+  const A = APPS[current], s = state(), isDirty = dirty();
+  const maskedCount = (dir) => Object.values(s[dir]).flat().length;
+  const lockedCount = [...pathIndex(current, "args").values(), ...pathIndex(current, "results").values()].flatMap((v) => v.tools).filter((t) => t.writeOnly).length;
+  const totalMasked = maskedCount("args") + maskedCount("results") + lockedCount;
+
+  document.getElementById("head").innerHTML = `<div style="display:flex;flex-direction:column;gap:4px"><div class="cell"><a>Apps</a> <span class="dim">/</span> <span class="mono">${current}</span> <span class="dim">/</span> recording</div><div class="row" style="gap:10px"><span style="font-size:22px;font-weight:600">${A.name}</span><span class="mono cell">${current}</span><span class="badge">${A.kind}</span><span class="badge ok"><span class="dot"></span>${A.status}</span></div></div>`;
+
+  const nTools = Object.keys(A.tools).length;
+  document.getElementById("rail").innerHTML = `<div class="railh">App</div><div class="raili"><span>Tools</span><span class="railm">${nTools}</span></div><div class="raili"><span>Prompts</span><span class="railm" style="color:#d4d4d8">—</span></div><div class="raili"><span>Resources</span><span class="railm" style="color:#d4d4d8">—</span></div><div class="raili"><span>Roles</span><span class="railm">2</span></div><div class="raili on"><span>Recording</span><span class="ldot${s.log ? "" : " off"}"></span></div><div class="raili"><span>Overview</span></div><div class="railh">Access</div><div class="raili"><span>Agents</span><span class="railm">1</span></div><div class="raili"><span>Token</span><span class="railm"${A.kind === "proxied" ? ' style="color:#d4d4d8"' : ""}>${A.kind === "proxied" ? "—" : "1"}</span></div><div style="height:8px"></div><div class="raili"><span>Danger zone</span></div>`;
+
+  const logDefaultText = s.log === A.logDefault ? `${A.kind} default` : "set explicitly";
+  const warn = A.kind === "proxied" && s.log && totalMasked === 0
+    ? `<div class="callout warn"><span>⚠</span><div>A proxied app's schema is not cached at call time, so nothing is masked automatically. Anything a tool takes or returns that is secret must be ticked below before you save, or it is stored in the clear for 7 days.</div></div>` : "";
+
+  const q = filterText.trim().toLowerCase();
+  const section = (dir, title, sub) => {
+    const idx = pathIndex(current, dir);
+    const rows = [...idx.entries()].filter(([p]) => !q || p.toLowerCase().includes(q)).sort((a, b) => b[1].tools.length - a[1].tools.length || a[0].localeCompare(b[0]));
+    const noSchema = dir === "results" ? Object.entries(A.tools).filter(([, t]) => !t.out).map(([n]) => n) : [];
+    const body = rows.map(([path, v]) => {
+      const editable = v.tools.filter((t) => !t.writeOnly), locked = v.tools.filter((t) => t.writeOnly);
+      const on = editable.filter((t) => has(s, dir, t.tool, path)).length;
+      const all = editable.length > 0 && on === editable.length, some = on > 0 && !all;
+      const savedOn = editable.filter((t) => has(SAVED[current], dir, t.tool, path)).length;
+      const changed = on !== savedOn;
+      const isOpen = expanded[dir].has(path);
+      const cbClass = editable.length === 0 ? "cb lock" : all ? "cb on" : some ? "cb mixed" : "cb";
+      const cbInner = editable.length === 0 ? chk : all ? chk : some ? dash : "";
+      const status = [];
+      if (locked.length) status.push(`<span class="badge">declared writeOnly${locked.length < v.tools.length ? ` on ${locked.length}` : ""}</span>`);
+      if (on) status.push(`<span class="badge warn">masked on ${on === editable.length && !locked.length ? (editable.length === 1 ? "its tool" : "all " + editable.length) : on}</span>`);
+      if (changed) status.push(`<span class="badge new ${on > savedOn ? "warn" : ""}">unsaved</span>`);
+      const toolsWord = `${v.tools.length} tool${v.tools.length === 1 ? "" : "s"}`;
+      return `<div class="pr"><div><button class="${cbClass}" ${editable.length === 0 ? "disabled" : ""} onclick="setPath('${dir}','${esc(path)}',${!all})">${cbInner}</button><span class="mono">${esc(path)}</span><span class="ty">${v.type}</span></div><div class="r">${status.join("")}<span>${toolsWord}</span>${v.tools.length > 1 || locked.length ? `<button class="tog" onclick="expanded['${dir}'].has('${esc(path)}')?expanded['${dir}'].delete('${esc(path)}'):expanded['${dir}'].add('${esc(path)}');render()">${isOpen ? "hide" : "which"}</button>` : ""}</div></div>` +
+        (isOpen ? `<div class="sub">${v.tools.map((t) => `<div class="fld">${t.writeOnly ? `<span class="cb lock">${chk}</span>` : `<button class="cb${has(s, dir, t.tool, path) ? " on" : ""}" onclick="setMask('${dir}','${t.tool}','${esc(path)}',${!has(s, dir, t.tool, path)})">${has(s, dir, t.tool, path) ? chk : ""}</button>`}<span class="mono">${t.tool}</span>${t.writeOnly ? `<span class="dim">declared by the app — always masked</span>` : ""}</div>`).join("")}</div>` : "");
+    }).join("");
+    const big = rows.length > 8;
+    const masked = rows.filter(([path, v]) => v.tools.some((t) => t.writeOnly || has(s, dir, t.tool, path))).length;
+    const head = `<div class="gh"><span>${title} · ${rows.length} path${rows.length === 1 ? "" : "s"}${masked ? ` <span class="cnt">· ${masked} masked</span>` : ""}</span><span style="text-transform:none;letter-spacing:0">${big ? `scrolls · ${sub}` : sub}</span></div>`;
+    const empty = `<div class="note" style="padding:6px 4px">${q ? "no path matches" : "no schema declares any field"}</div>`;
+    const foot = noSchema.length && !q ? `<div class="note" style="padding:8px 4px 0"><span class="mono">${noSchema.length > 6 ? noSchema.length + " tools" : noSchema.join(", ")}</span> declare no output schema — a result path there can only come from a recorded call (mask from evidence).</div>` : "";
+    return `<div class="sect${big ? " scroll" : ""}">${head}<div class="wrapb"><div class="body" onscroll="this.parentNode.classList.toggle('atend', this.scrollTop + this.clientHeight >= this.scrollHeight - 4)">${body || empty}</div></div>${foot}</div>`;
+  };
+
+  const map = { redact: s.args, redact_results: s.results };
+  document.getElementById("pane").innerHTML = `
+    <div class="card" style="padding:20px;display:flex;flex-direction:column;gap:18px">
+      <div style="display:flex;flex-direction:column;gap:2px"><div style="font-size:16px;font-weight:600">Recording</div><div class="cell">What the audit trail keeps of each call to this app, and what it masks first.</div></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 16px;border:1px solid #e4e4e7;border-radius:8px">
+        <div style="display:flex;flex-direction:column;gap:2px"><div class="row"><div style="font-weight:500">Body logging</div><span class="badge">${logDefaultText}</span>${draft && draft.log !== SAVED[current].log ? `<span class="badge new warn">unsaved</span>` : ""}</div><div class="cell">${s.log ? "Arguments and structured results are recorded with each dispatched call. Refusals never carry bodies." : "Off — only the call's tool, outcome and timing are recorded."}</div></div>
+        <div class="row" style="gap:10px"><span class="cell">${s.log ? "On" : "Off"}</span><button class="sw${s.log ? " on" : ""}" onclick="toggleLog()" aria-label="body logging"></button></div>
+      </div>
+      ${warn}
+
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;flex-direction:column;gap:2px"><div style="font-weight:500">Masked fields</div><div class="cell">Every path the app's schemas declare, with the tools that take it. Tick a path to mask it on all of them; open a row to choose.</div></div><input class="filter" placeholder="filter paths…" value="${esc(filterText)}" oninput="filterText=this.value;render();document.querySelector('.filter').focus()"></div>
+        ${section("args", "Arguments", "from each tool's inputSchema")}
+        ${section("results", "Results", "from outputSchema, where declared")}
+      </div>
+
+      <details ${isDirty ? "open" : ""}><summary class="cell" style="cursor:pointer">What will be saved · <span class="mono">app_update</span></summary><div class="code" style="margin-top:8px">${esc(JSON.stringify({ log_bodies: s.log, ...map }, null, 2))}</div></details>
+
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div class="eyebrow">What a recorded call keeps</div>
+        <div class="kv"><div class="k">Arguments</div><div><span class="mono">params.arguments</span>, post-redaction</div></div>
+        <div class="kv"><div class="k">Results</div><div><span class="mono">structuredContent</span> post-redaction; text, image and resource blocks become size stubs, never bytes</div></div>
+        <div class="kv"><div class="k">Cap</div><div>16 KiB per body — an over-cap body is one <span class="mono">oversize</span> stub</div></div>
+        <div class="kv" style="border-bottom:none"><div class="k">Kept for</div><div>7 days, then pruned with the rest of the audit table · <a>Export JSONL</a> to keep longer</div></div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="cell"><a>Recorded calls to ${current} →</a>${isDirty ? ` <span class="dim">· unsaved changes</span>` : ""}</div>
+        <div class="row"><button class="btn ghost" ${isDirty ? "" : "disabled"} onclick="discard()">Discard</button><button class="btn primary" ${isDirty ? "" : "disabled"} onclick="save()">Save</button></div>
+      </div>
+    </div>
+    <div class="note">A tick writes one literal (tool, path) entry per tool; nothing here is a pattern and nothing is typed. Schema-declared <span class="mono">writeOnly</span> fields are shown locked: the app owns them, the hub masks them regardless. Masking applies to the approval record too.</div>`;
+}
+render();
+</script>
+</body>
+</html>

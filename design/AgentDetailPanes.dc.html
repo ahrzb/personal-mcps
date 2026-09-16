@@ -1,0 +1,164 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px;background:#fff}
+  a{color:#09090b;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  button{font:inherit;cursor:pointer}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .muted{color:#71717a}.dim{color:#a1a1aa}
+  .badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+  .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+  .badge.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+  .badge.new{border-style:dashed}
+  .badge .x{width:14px;height:14px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;color:#a1a1aa;font-size:12px;margin-left:2px;cursor:pointer;border:0;background:none;padding:0}
+  .badge .x:hover{background:#e4e4e7;color:#09090b}
+  .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+  .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+  .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+  .btn:disabled{opacity:.45;cursor:default}
+  .nav{height:56px;box-sizing:border-box;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+  .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:#71717a}
+  .navitem.on{background:#f4f4f5;color:#09090b}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cell{font-size:13px;color:#71717a}
+  .note{font-size:12px;color:#71717a;line-height:1.5}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+  .wrap{width:1176px;margin:0 auto;padding:24px 0 40px;display:flex;flex-direction:column;gap:16px}
+  .panes{display:flex;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);height:820px}
+  .rail{width:180px;flex-shrink:0;border-right:1px solid #e4e4e7;padding:12px 8px;display:flex;flex-direction:column;gap:1px;background:#fafafa;overflow:auto}
+  .rh{font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;padding:8px 8px 4px}
+  .ri{display:flex;justify-content:space-between;align-items:center;height:28px;padding:0 8px;border-radius:6px;font-size:13px;color:#71717a;cursor:pointer;border:0;background:none;width:100%;text-align:left}
+  .ri:hover{background:#f4f4f5}
+  .ri.on{background:#fff;color:#09090b;font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .ri.dorm{opacity:.55}
+  .rm{font-size:11px;color:#a1a1aa;display:flex;gap:4px;align-items:center}
+  .listing{width:520px;flex-shrink:0;border-right:1px solid #e4e4e7;display:flex;flex-direction:column;min-height:0}
+  .panes.wide .listing{width:auto;flex:1;border-right:none}
+  .panes.wide .details{display:none}
+  .appcard{display:grid;grid-template-columns:1fr 110px;column-gap:16px;padding:14px 16px;border-bottom:1px solid #f4f4f5}
+  .eps{max-height:260px;overflow:auto;border:1px solid #e4e4e7;border-radius:8px;margin-top:8px}
+  .ep{display:grid;grid-template-columns:1fr auto;column-gap:10px;align-items:center;padding:5px 10px;font-size:12px;border-bottom:1px solid #f8f8f8}
+  .ep:last-child{border-bottom:none}
+  .ep .fam{font-size:10px;color:#a1a1aa;margin-right:6px;text-transform:uppercase;letter-spacing:.04em}
+  .ep .roles{display:inline-flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+  .info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid #a1a1aa;color:#71717a;font-size:9px;font-weight:600;margin-left:6px;cursor:help;vertical-align:middle}
+  .info .tip{display:none;position:absolute;left:18px;top:-6px;z-index:5;width:260px;background:#18181b;color:#fafafa;border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.45;font-weight:400;box-shadow:0 4px 12px rgba(0,0,0,.2);white-space:normal;text-align:left}
+  .info:hover .tip{display:block}
+  .tip .a{color:#a1a1aa}
+  .appcard .kv{padding:2px 0}
+  .appcard .kv .k{width:90px}
+  .lh{padding:14px 16px;border-bottom:1px solid #e4e4e7;display:flex;flex-direction:column;gap:8px}
+  .sum{font-size:12px;color:#71717a;line-height:1.5}
+  .filter{height:30px;box-sizing:border-box;border:1px solid #e4e4e7;border-radius:8px;padding:0 10px;font-size:12px;background:#fff;width:220px;outline:none}
+  .filter:focus{box-shadow:0 0 0 3px rgba(161,161,170,.35)}
+  .scroll{overflow:auto;flex:1;min-height:0}
+  .gh{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa;padding:12px 16px 4px;display:flex;justify-content:space-between}
+  .cr{display:grid;grid-template-columns:1fr auto;column-gap:10px;align-items:center;padding:6px 16px;font-size:13px;border-bottom:1px solid #f8f8f8;cursor:pointer}
+  .cr:hover{background:#f4f4f5}
+  .cr.cur{background:#f4f4f5;box-shadow:inset 3px 0 0 #18181b}
+  .cr .d{font-size:11px;color:#71717a;margin-top:1px}
+  .st{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+  .acts{display:inline-flex;gap:4px;visibility:hidden}
+  .cr:hover .acts,.cr.cur .acts{visibility:visible}
+  .mini{height:22px;padding:0 8px;border-radius:6px;border:1px solid #e4e4e7;background:#fff;font-size:11px;font-weight:500;display:inline-flex;align-items:center}
+  .mini.warn{border-color:#fde68a;color:#92400e;background:#fffbeb}
+  .mini:hover{background:#f4f4f5}
+  .seg{display:inline-flex;flex-shrink:0}
+  .seg button{height:22px;padding:0;width:44px;justify-content:center;display:inline-flex;align-items:center;font-size:11px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#71717a}
+  .seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}.seg button+button{border-left:none}
+  .seg button.on{background:#18181b;color:#fafafa;border-color:#18181b}
+  .seg button.on.warn{background:#92400e;border-color:#92400e}
+  .seg button.impl{background:#fff;color:#09090b;border-color:#18181b;box-shadow:inset 0 0 0 1px #18181b}
+  .seg button.impl.warn{color:#92400e;border-color:#92400e;box-shadow:inset 0 0 0 1px #92400e}
+  .seg button:disabled{color:#d4d4d8;cursor:default;background:#fafafa}
+  .via{font-size:11px;color:#71717a;white-space:nowrap}
+  .save{padding:12px 16px;border-top:1px solid #e4e4e7;display:flex;justify-content:space-between;align-items:center;background:#fafafa}
+  .details{flex:1;min-width:0;display:flex;flex-direction:column;background:#fafafa;overflow:auto}
+  .dh{padding:14px 16px;border-bottom:1px solid #e4e4e7;background:#fff}
+  .db{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+  .sec{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .kv{display:flex;gap:12px;font-size:12px;line-height:1.5}.kv .k{width:110px;flex-shrink:0;color:#71717a}
+  .arg{display:grid;grid-template-columns:110px 60px 1fr;column-gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid #f4f4f5}.arg:last-child{border-bottom:none}
+  .tile{display:flex;gap:16px;font-size:12px;color:#71717a}.tile b{color:#09090b;font-weight:600;font-size:14px}
+  .banner{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px}
+  .tog{background:none;border:0;padding:0;color:#71717a;font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  .tog:hover{color:#09090b}
+  .panes{height:auto}
+  .scroll,.details{overflow:visible}
+  .lh .filter{cursor:text}
+  .notes{display:flex;flex-direction:column;gap:4px}
+  .notes .note b{color:#09090b;font-weight:500}
+  .frame{width:520px;border:1px solid #e4e4e7;border-radius:10px;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .frame .listing{width:auto;border-right:none}
+  .frame .rail{width:180px;border-right:none}
+  .frame .details{background:#fafafa}
+  .panel{display:flex;flex-direction:column;gap:8px}
+  </style>
+</helmet>
+<div style="width:1060px;box-sizing:border-box;background:#fafafa;padding:32px;display:flex;flex-direction:column;gap:28px">
+  <div class="note">The other panes of <span class="mono">/agents/claude</span>, at pane width &mdash; the shell, header and rail are on <span class="mono">AgentDetail</span>. Each rail entry under <b>Agent</b> opens one of these in the same listing + details frame; <b>+ Grant another app&hellip;</b> takes the listing alone, wide.</div>
+<div class="panel"><div class="eyebrow">Credentials &mdash; a token selected</div><div class="note">Tokens from <span class="mono">token_list</span> (<span class="mono">kind = agent</span>), the expiry for the next issue chosen beside <b>Issue</b>; the agent&rsquo;s OAuth client from <span class="mono">connection_list</span>, read-only here &mdash; revoking a client lives in Settings &rarr; Connected clients (§19.6). Issue answers in place with the once-only key (<span class="mono">AgentDetailStates</span>); an expired token&rsquo;s verb reads <b>Remove</b> and is the same <span class="mono">token_revoke</span>.</div><div class="panes">
+    
+    <div class="listing">
+      <div class="lh"><div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">Credentials</span><span class="cell">what claude presents to get in</span></div></div><div class="sum">Any of these carries the grants in the Apps list. A token expires on its date; a client stays in until revoked in Settings.</div></div>
+      <div class="scroll"><div class="gh"><span>Tokens · 2</span><span style="text-transform:none;letter-spacing:0;display:flex;gap:6px;align-items:center">expires in <select style="font:inherit;font-size:11px;height:22px;border:1px solid #e4e4e7;border-radius:6px"><option value="30d">30 d</option><option value="90d" selected="">90 d · default</option><option value="1y">1 year</option><option value="never">never</option></select><button class="mini">Issue token</button></span></div><div class="cr cur"><div><span class="mono">pmcp_agt_4kJk…9fQ</span><div class="d">created Aug 12 · expires Nov 10 (90 d) · used 2 h ago</div></div><div class="st"><button class="mini">Revoke</button></div></div><div class="cr dorm"><div><span class="mono">pmcp_agt_2mQv…8xT</span> <span class="badge warn">expired</span><div class="d">created May 14 · expires Aug 12 (90 d) · used Jul 30</div></div><div class="st"><button class="mini">Remove</button></div></div><div class="gh"><span>Connected clients · 1</span><span style="text-transform:none;letter-spacing:0">OAuth · managed in Settings</span></div><div class="cr"><div><span>Claude</span> <span class="mono cell">https://claude.ai</span><div class="d">consented Aug 14 · used 2 h ago</div></div><div class="st"><span class="badge ok"><span class="dot"></span>active</span></div></div><div class="note" style="padding:12px 16px">One OAuth client signs in as this agent, so its calls carry these grants. Revoking lives with the other credentials in Settings → Connected clients.</div></div>
+      <div class="save"></div>
+    </div>
+    <div class="details"><div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">pmcp_agt_4kJk…9fQ</span><span class="badge">token</span></div><div class="cell" style="margin-top:2px">A bearer key an agent config pastes in. Resolved on every request; revocation is immediate.</div></div><div class="db"><div class="sec"><div class="eyebrow">This key</div><div class="kv"><div class="k">Created</div><div>Aug 12</div></div><div class="kv"><div class="k">Expires</div><div>Nov 10 · 90 d from issue</div></div><div class="kv"><div class="k">Last used</div><div>2 h ago</div></div><div class="kv"><div class="k">Carries</div><div>every grant in the Apps list — a key is the agent, not a subset of it</div></div></div><div class="sec"><div class="eyebrow">Recent use</div><div class="kv"><div class="k">2 h ago</div><div><span class="mono">linear</span> · <span class="mono">list_issues</span></div></div><div class="kv"><div class="k">2 h ago</div><div><span class="mono">news</span> · <span class="mono">search_items</span></div></div><div class="kv"><div class="k">3 h ago</div><div><span class="mono">news</span> · <span class="mono">admin_purge_cache</span></div></div></div><div class="row" style="gap:6px"><button class="mini" style="color:#dc2626;border-color:#fecaca">Revoke</button></div></div></div>
+  </div></div>
+<div class="panel"><div class="eyebrow">Activity &mdash; a waiting request selected</div><div class="note"><span class="mono">approval_list</span> for this agent, Approve / Reject on the row (<span class="mono">approval_decide</span>), then the last seven days of <span class="mono">audit_query?principal=agent:claude</span>; a refused call has no bodies to show, a recorded one shows arguments and result post-redaction.</div><div class="panes">
+    
+    <div class="listing">
+      <div class="lh"><div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">Activity</span><span class="cell">the last 7 days, the retention window</span></div><a class="cell">full trail · /audit?principal=agent:claude</a></div><div class="sum">5 calls · 3 ok · 1 denied · 2 awaiting approval</div></div>
+      <div class="scroll"><div class="gh"><span>Awaiting approval · 2</span><span style="text-transform:none;letter-spacing:0">each expires an hour after it was asked</span></div><div class="cr cur"><div><span class="mono cell">news</span> <span class="mono">admin_purge_cache</span><div class="d mono">{"scope":"feeds","older_than":"7d"}</div></div><div class="st"><span class="cell" style="font-size:11px">12 min ago</span><button class="mini">Reject</button><button class="mini" style="background:#18181b;color:#fafafa;border-color:#18181b">Approve</button></div></div><div class="cr"><div><span class="mono cell">news</span> <span class="mono">admin_reindex</span><div class="d mono">{"feed":"hn"}</div></div><div class="st"><span class="cell" style="font-size:11px">41 min ago</span><button class="mini">Reject</button><button class="mini" style="background:#18181b;color:#fafafa;border-color:#18181b">Approve</button></div></div><div class="gh"><span>Recent calls · 5</span><span style="text-transform:none;letter-spacing:0">newest first</span></div><div class="cr"><div><span class="mono cell">linear</span> <span class="mono">list_issues</span><div class="d">2 h ago · 412 ms</div></div><div class="st"><span class="badge ok">ok</span></div></div><div class="cr"><div><span class="mono cell">news</span> <span class="mono">search_items</span><div class="d">2 h ago · 88 ms</div></div><div class="st"><span class="badge ok">ok</span></div></div><div class="cr"><div><span class="mono cell">news</span> <span class="mono">admin_purge_cache</span><div class="d">3 h ago · 6 ms</div></div><div class="st"><span class="badge warn">approval required</span></div></div><div class="cr"><div><span class="mono cell">news</span> <span class="mono">publish</span><div class="d">yesterday · 3 ms</div></div><div class="st"><span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca">not permitted</span></div></div><div class="cr"><div><span class="mono cell">linear</span> <span class="mono">get_issue</span><div class="d">yesterday · 377 ms</div></div><div class="st"><span class="badge ok">ok</span></div></div></div>
+      <div class="save"></div>
+    </div>
+    <div class="details"><div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">admin_purge_cache</span><span class="badge warn">pending</span></div><div class="cell" style="margin-top:2px">claude wants to call this on <span class="mono">news</span> · asked 12 min ago · expires in 48 min</div></div><div class="db"><div class="sec"><div class="eyebrow">Arguments · post-redaction</div><div class="mono" style="font-size:12px;white-space:pre">{
+  "scope": "feeds",
+  "older_than": "7d"
+}</div></div><div class="sec"><div class="eyebrow">Why it waits</div><div class="kv"><div class="k">Grant</div><div><span class="mono">admin</span> is in Ask first on <span class="mono">news</span></div></div><div class="kv"><div class="k">Then</div><div>the agent retries the identical call and it runs once; a different call asks again</div></div></div><div class="row" style="gap:6px"><button class="mini">Reject</button><button class="mini" style="background:#18181b;color:#fafafa;border-color:#18181b">Approve</button></div></div></div>
+  </div></div>
+<div class="panel"><div class="eyebrow">Grant another app &mdash; wide, the listing alone</div><div class="note">Active apps <span class="mono">claude</span> holds nothing on, one card each: what the app does, its counts and roles, <b>show all N</b> opening a scrollable endpoint list with the roles that grant each one and an info hover, and a search over apps and endpoints. <b>Grant</b> opens the app in the listing with an empty draft &mdash; nothing is written until Save.</div><div class="panes wide">
+    
+    <div class="listing">
+      <div class="lh"><div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">Grant another app</span><span class="cell">apps claude holds nothing on</span></div><input class="filter" placeholder="search apps and endpoints…" value=""></div><div class="sum">What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing granted yet.</div></div>
+      <div class="scroll"><div class="gh"><span>Apps · 1</span><span style="text-transform:none;letter-spacing:0">active, not archived · nothing is written until you save</span></div><div class="appcard"><div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+        <div class="row" style="gap:8px"><span style="font-weight:600">GitHub</span><span class="mono cell">gh</span><span class="badge">proxied</span><span class="badge ok"><span class="dot"></span>connected</span></div>
+        <div style="font-size:13px">Repositories, pull requests and issues over the GitHub MCP</div>
+        <div class="cell" style="font-size:12px">4 tools · roles <span class="mono">reader</span> <button class="tog">hide</button></div>
+        <div class="eps"><div class="ep"><div><span class="fam">tool</span><span class="mono">list_prs</span><span class="info">i<span class="tip">Open pull requests</span></span></div><div class="roles"><span class="badge mono">reader</span></div></div><div class="ep"><div><span class="fam">tool</span><span class="mono">get_pr</span><span class="info">i<span class="tip">One pull request</span></span></div><div class="roles"><span class="badge mono">reader</span></div></div><div class="ep"><div><span class="fam">tool</span><span class="mono">merge_pr</span><span class="info">i<span class="tip">Merge a pull request</span></span></div><div class="roles"><span class="dim" style="font-size:11px">only via <span class="mono">all</span> or by name</span></div></div><div class="ep"><div><span class="fam">tool</span><span class="mono">create_issue</span><span class="info">i<span class="tip">Open an issue</span></span></div><div class="roles"><span class="dim" style="font-size:11px">only via <span class="mono">all</span> or by name</span></div></div></div>
+      </div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><button class="btn primary">Grant</button></div></div></div>
+      <div class="save"></div>
+    </div>
+    <div class="details"><div class="dh"><div class="row" style="gap:8px"><span style="font-size:15px;font-weight:600">News MCP</span><span class="badge">tunneled</span></div><div class="cell" style="margin-top:2px">Select a role, tool, prompt or resource on the left for its details.</div></div>
+      <div class="db"><div class="sec"><div class="eyebrow">Catalog</div><div class="kv"><div class="k">Tools</div><div>11 · 8 reached by claude</div></div><div class="kv"><div class="k">Prompts</div><div>1 · 1 reached</div></div><div class="kv"><div class="k">Resources</div><div>3 · 2 reached</div></div><div class="kv"><div class="k">Roles</div><div>reader, admin, publisher</div></div></div>
+      <div class="sec"><div class="eyebrow">Grant set for claude</div><div class="kv"><div class="k">Allowed</div><div><span class="mono">reader</span>, <span class="mono">tool/get_news</span>, <span class="mono">resource/news://feed/*</span></div></div><div class="kv"><div class="k">Ask first</div><div><span class="mono">admin</span>, <span class="mono">tool/publish</span></div></div></div></div></div>
+  </div></div>
+<div class="panel"><div class="eyebrow">Danger zone</div><div class="note"><b>Delete agent</b> &mdash; the same dialog as the list&rsquo;s (<span class="mono">Dialogs</span>); the details pane says what the delete removes and that audit rows stay.</div><div class="panes">
+    
+    <div class="listing">
+      <div class="lh"><div class="row" style="gap:6px"><span style="font-weight:600">Danger zone</span></div></div>
+      <div class="scroll"><div style="padding:16px"><div class="sec" style="border-color:#fecaca"><div style="font-weight:500">Delete agent</div><div class="cell">Deleting an agent deletes its tokens, revokes its clients and removes its grants everywhere. This cannot be undone.</div><div class="row" style="gap:6px;padding-top:6px"><button class="mini" style="color:#dc2626;border-color:#fecaca">Delete claude</button></div></div></div></div>
+      <div class="save"></div>
+    </div>
+    <div class="details"><div class="dh"><div style="font-size:15px;font-weight:600">What deletion removes</div></div><div class="db"><div class="sec"><div class="kv"><div class="k">Grants</div><div>3 apps</div></div><div class="kv"><div class="k">Tokens</div><div>2</div></div><div class="kv"><div class="k">Clients</div><div>1 — the binding cascades</div></div><div class="kv"><div class="k">History</div><div>kept — audit rows name the principal, not the row</div></div></div></div></div>
+  </div></div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1060,"height":2020}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

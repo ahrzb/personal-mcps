@@ -1,0 +1,252 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px}
+    a{color:#09090b;text-decoration:underline;text-underline-offset:2px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .muted{color:#71717a}.dim{color:#a1a1aa}
+    .card{background:#fff;border:1px solid #e4e4e7;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+    .badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:6px;font-size:12px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+    .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+    .badge.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+    .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 16px;border-radius:8px;font-size:14px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+    .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+    .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+    .panel{display:flex;flex-direction:column;gap:8px}
+    .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+    .col{display:flex;flex-direction:column;gap:4px}
+    .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .cell{font-size:13px;color:#71717a;line-height:1.5}
+    .note{font-size:12px;color:#71717a;line-height:1.5}
+    .list{border:1px solid #e4e4e7;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;flex:1;min-width:0}
+    .list.approval{border-color:#fde68a;background:#fffdf5}
+    .chip{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 10px;border-radius:8px;background:#fff;border:1px solid #e4e4e7;font-size:13px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+    .chip .k{font-size:11px;color:#a1a1aa;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .chip .c{font-size:11px;color:#71717a}
+    .chip .x{width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#a1a1aa}
+    .chip.role{background:#f4f4f5}
+    .chips{display:flex;flex-wrap:wrap;gap:6px}
+    .input{height:34px;box-sizing:border-box;border:1px solid #e4e4e7;border-radius:8px;padding:0 10px;font-size:13px;display:flex;align-items:center;gap:8px;background:#fff;color:#a1a1aa;position:relative}
+    .sugg{position:absolute;left:0;right:0;top:38px;z-index:2;background:#fff;border:1px solid #e4e4e7;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,.15);padding:6px;display:flex;flex-direction:column;font-size:13px;color:#09090b}
+    .sugg .h{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa;padding:6px 8px 2px}
+    .sugg .i{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-radius:6px}
+    .sugg .i.on{background:#f4f4f5}
+    .fam{display:grid;grid-template-columns:24px 100px 1fr;column-gap:12px;align-items:center;padding:8px 0;border-top:1px solid #f4f4f5;font-size:13px}
+    .tool{display:grid;grid-template-columns:200px 140px 1fr;column-gap:12px;align-items:center;padding:4px 0 4px 36px;font-size:13px}
+    .callout{background:#f4f4f5;border-radius:8px;padding:12px 14px;font-size:13px;color:#71717a;line-height:1.5;display:flex;gap:10px}
+    .pal{width:400px;box-sizing:border-box;background:#fff;border:1px solid #e4e4e7;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.15);display:flex;flex-direction:column;overflow:hidden}
+    .pal .q{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #e4e4e7;font-size:14px}
+    .pal .h{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa;padding:10px 14px 4px}
+    .pal .i{display:grid;grid-template-columns:1fr auto;column-gap:12px;align-items:center;padding:7px 14px;font-size:13px}
+    .pal .i.on{background:#f4f4f5}
+    .pal .i .d{font-size:12px;color:#71717a;margin-top:1px}
+    .pal .f{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-top:1px solid #e4e4e7;font-size:11px;color:#a1a1aa}
+    kbd{display:inline-block;padding:0 5px;border:1px solid #e4e4e7;border-radius:4px;font-size:10px;font-family:inherit;color:#71717a;background:#fafafa}
+    .code{background:#f4f4f5;border-radius:8px;padding:12px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.7;white-space:pre;color:#09090b}
+  </style>
+</helmet>
+<div style="width:1240px;min-height:2350px;box-sizing:border-box;background:#fff;padding:32px;display:flex;flex-direction:column;gap:32px">
+
+  <div style="display:flex;gap:32px;align-items:flex-start">
+
+    <!-- the editor -->
+    <div class="panel" style="width:760px">
+      <div class="eyebrow">/agents/claude/grants/news &mdash; two lists, entries are roles or single items, effective access beneath</div>
+      <div class="card" style="padding:24px;display:flex;flex-direction:column;gap:20px">
+
+        <div class="col" style="gap:6px">
+          <div class="cell"><a href="#">Agents</a> <span class="dim">/</span> <a href="#" class="mono">claude</a> <span class="dim">/</span> grants</div>
+          <div style="font-size:18px;font-weight:600">Grants &mdash; <span class="mono">claude</span> on News MCP</div>
+          <div class="row"><span class="badge">tunneled</span><span class="badge ok"><span class="dot"></span>online</span><span class="cell">catalog 11 tools &middot; 1 prompt &middot; 3 resources &middot; roles reader, admin, publisher</span></div>
+        </div>
+
+        <div style="display:flex;gap:16px;align-items:stretch">
+          <div class="list">
+            <div class="row" style="justify-content:space-between"><div style="font-weight:500">Allowed</div><span class="cell">runs without asking</span></div>
+            <div class="chips">
+              <span class="chip role"><span class="mono">reader</span><span class="c">4 tools &middot; 1 prompt</span><span class="x">&times;</span></span>
+              <span class="chip"><span class="k">tool/</span><span class="mono">get_news</span><span class="c">already via reader</span><span class="x">&times;</span></span>
+              <span class="chip"><span class="k">resource/</span><span class="mono">news://feed/*</span><span class="c">2 of 3</span><span class="x">&times;</span></span>
+            </div>
+            <div class="input" style="color:#09090b;width:max-content;padding-right:12px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add&hellip;<span class="dim" style="margin-left:6px">a role, tool, prompt or resource</span></div>
+          </div>
+
+          <div class="list approval">
+            <div class="row" style="justify-content:space-between"><div style="font-weight:500">Needs approval</div><span class="cell">each call waits for you</span></div>
+            <div class="chips">
+              <span class="chip role"><span class="mono">admin</span><span class="c">3 tools</span><span class="x">&times;</span></span>
+              <span class="chip"><span class="k">tool/</span><span class="mono">publish</span><span class="x">&times;</span></span>
+            </div>
+            <div class="input" style="margin-top:auto;color:#09090b;width:max-content;padding-right:12px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add&hellip;</div>
+          </div>
+        </div>
+
+        <div class="card" style="padding:14px 16px;background:#fafafa;box-shadow:none;display:flex;flex-direction:column">
+          <div class="row" style="justify-content:space-between;padding-bottom:6px">
+            <div class="eyebrow">Effective access &mdash; what the gate will answer</div>
+            <div class="cell">allow wins where both lists match</div>
+          </div>
+          <div class="fam">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+            <div class="muted">Tools</div>
+            <div><b>8</b> of 11 <span class="muted">&middot; 4 via approval &middot; 3 out of reach</span></div>
+          </div>
+          <div class="tool"><span class="mono">get_news</span><span class="badge">allow</span><span class="cell">via <span class="mono">reader</span>, <span class="mono">tool/get_news</span></span></div>
+          <div class="tool"><span class="mono">search_feeds</span><span class="badge">allow</span><span class="cell">via <span class="mono">reader</span></span></div>
+          <div class="tool"><span class="mono">search_items</span><span class="badge">allow</span><span class="cell">via <span class="mono">reader</span></span></div>
+          <div class="tool"><span class="mono">search_archive</span><span class="badge">allow</span><span class="cell">via <span class="mono">reader</span></span></div>
+          <div class="tool"><span class="mono">admin_purge_cache</span><span class="badge warn">approval</span><span class="cell">via <span class="mono">admin</span></span></div>
+          <div class="tool"><span class="mono">admin_reindex</span><span class="badge warn">approval</span><span class="cell">via <span class="mono">admin</span></span></div>
+          <div class="tool"><span class="mono">admin_export</span><span class="badge warn">approval</span><span class="cell">via <span class="mono">admin</span></span></div>
+          <div class="tool"><span class="mono">publish</span><span class="badge warn">approval</span><span class="cell">via <span class="mono">tool/publish</span></span></div>
+          <div class="tool" style="padding-bottom:8px"><span class="dim mono">delete_feed, subscribe, unsubscribe</span><span class="dim">not reachable</span><span></span></div>
+          <div class="fam">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg>
+            <div class="muted">Prompts</div>
+            <div><b>1</b> of 1 <span class="muted">&middot; via <span class="mono">reader</span> &middot; never approval-gated</span></div>
+          </div>
+          <div class="fam">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg>
+            <div class="muted">Resources</div>
+            <div><b>2</b> of 3 <span class="muted">&middot; via <span class="mono">resource/news://feed/*</span> &middot; <span class="mono">news://config</span> out of reach</span></div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+          <div>Saving replaces every grant <span class="mono">claude</span> holds on <span class="mono">news</span> with these two lists. A role widens when the app widens it; a single item is exactly that item.</div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:8px"><div class="btn ghost">Cancel</div><div class="btn primary">Save</div></div>
+      </div>
+    </div>
+
+    <!-- the same thing in the file and the CLI -->
+    <div class="panel" style="width:416px">
+      <div class="eyebrow">The same set, everywhere else it has to be spellable</div>
+      <div class="card" style="padding:20px;display:flex;flex-direction:column;gap:14px">
+        <div class="col" style="gap:6px">
+          <div style="font-weight:500">OpenTofu &mdash; <span class="mono">pmcp_grant</span>, the two sets it already has</div>
+<div class="code">resource "pmcp_grant" "claude_news" {
+  agent = pmcp_agent.claude.slug
+  app   = pmcp_app.news.slug
+  allow = [
+    "reader",
+    "tool/get_news",
+    "resource/news://feed/*",
+  ]
+  approval = ["admin", "tool/publish"]
+}</div>
+        </div>
+        <div class="col" style="gap:6px">
+          <div style="font-weight:500">CLI</div>
+<div class="code">pmcp grant set claude news \
+  --allow reader --allow tool/get_news \
+  --allow 'resource/news://feed/*' \
+  --approval admin --approval tool/publish</div>
+        </div>
+        <div class="col" style="gap:6px">
+          <div style="font-weight:500">Stored &mdash; <span class="mono">grant_</span>, one row per entry</div>
+<div class="code">agent   app   role                    mode
+claude  news  reader                  allow
+claude  news  tool/get_news           allow
+claude  news  resource/news://feed/*  allow
+claude  news  admin                   approval
+claude  news  tool/publish            approval</div>
+        </div>
+      </div>
+      <div class="note">The <span class="mono">role</span> column keeps its name and its primary key; an entry containing <span class="mono">/</span> is an inline pattern, since a role name never can. The gate reads both kinds into the same per-family union.</div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:32px;align-items:flex-start">
+
+    <div class="panel">
+      <div class="eyebrow">Add&hellip; pressed on Allowed &mdash; everything, grouped, with where it already stands</div>
+      <div class="pal">
+        <div class="q"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg><span class="dim">Search roles, tools, prompts, resources&hellip;</span></div>
+        <div class="h">Roles</div>
+        <div class="i on"><div><span class="mono">reader</span><div class="d">get_news, search_* &middot; prompts digest_*</div></div><span class="badge ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> allowed</span></div>
+        <div class="i"><div><span class="mono">admin</span><div class="d">admin_*</div></div><span class="badge warn">approval</span></div>
+        <div class="i"><div><span class="mono">publisher</span><div class="d">publish, delete_feed</div></div><span class="cell">2 tools</span></div>
+        <div class="i"><div><span class="mono">all</span> <span class="badge" style="height:18px;font-size:11px">built-in</span><div class="d">every tool, prompt and resource, present and future</div></div><span></span></div>
+        <div class="h">Tools &middot; 11</div>
+        <div class="i"><div><span class="mono">get_news</span><div class="d">Latest items across all feeds</div></div><span class="badge ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> via reader</span></div>
+        <div class="i"><div><span class="mono">search_feeds</span><div class="d">Find feeds by name or URL</div></div><span class="badge ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> via reader</span></div>
+        <div class="i"><div><span class="mono">admin_purge_cache</span><div class="d">Drop cached items</div></div><span class="badge warn">approval via admin</span></div>
+        <div class="i"><div><span class="mono">publish</span><div class="d">Post an item to a feed</div></div><span class="badge warn">approval</span></div>
+        <div class="i"><div><span class="mono">delete_feed</span><div class="d">Remove a feed and its items</div></div><span></span></div>
+        <div class="i"><div><span class="mono">subscribe</span><div class="d">Subscribe to a feed</div></div><span></span></div>
+        <div class="i" style="color:#a1a1aa">&hellip; 5 more</div>
+        <div class="h">Prompts &middot; 1</div>
+        <div class="i"><div><span class="mono">digest_daily</span><div class="d">Summarise the last 24 h</div></div><span class="badge ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> via reader</span></div>
+        <div class="h">Resources &middot; 3</div>
+        <div class="i"><div><span class="mono">news://feed/hn</span><div class="d">text/plain</div></div><span class="badge ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> via news://feed/*</span></div>
+        <div class="i"><div><span class="mono">news://feed/lobsters</span><div class="d">text/plain</div></div><span class="badge ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> via news://feed/*</span></div>
+        <div class="i"><div><span class="mono">news://config</span><div class="d">application/json</div></div><span></span></div>
+        <div class="f"><span><kbd>&uarr;</kbd> <kbd>&darr;</kbd> move &nbsp; <kbd>&#9166;</kbd> add &nbsp; <kbd>esc</kbd> close</span><span>stays open after adding</span></div>
+      </div>
+      <div class="note" style="width:400px">Opened with an empty query it is a browse list: the catalog the page already holds, grouped by kind, each row saying whether it is already granted and through what. Picking a row that is already covered adds it anyway and the chip says &ldquo;already via reader&rdquo;.</div>
+    </div>
+
+    <div class="panel">
+      <div class="eyebrow">Typing filters; one just added, ready for the next</div>
+      <div class="pal">
+        <div class="q"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg><span>sub</span><span style="width:1px;height:16px;background:#09090b"></span></div>
+        <div class="h">Tools</div>
+        <div class="i"><div><span class="mono"><b>sub</b>scribe</span><div class="d">Subscribe to a feed</div></div><span class="badge ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> added</span></div>
+        <div class="i on"><div><span class="mono">un<b>sub</b>scribe</span><div class="d">Unsubscribe from a feed</div></div><span class="cell">&#9166; add</span></div>
+        <div class="h">Resources</div>
+        <div class="i"><div><span class="mono">news://feed/<b>sub</b>stack</span><div class="d">text/plain</div></div><span class="badge ok"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg> via news://feed/*</span></div>
+        <div class="h">As a pattern</div>
+        <div class="i"><div><span class="mono">tool/<b>sub</b>.*</span><div class="d">matches 2 tools today, and any added later</div></div><span class="cell">&#9166; add</span></div>
+        <div class="i"><div><span class="mono">resource/news://feed/<b>sub</b>*</span><div class="d">matches 1 resource today</div></div><span class="cell">&#9166; add</span></div>
+        <div class="f"><span>4 matches</span><span>2 added this session</span></div>
+      </div>
+      <div class="note" style="width:400px">Enter adds the highlighted row, marks it added, keeps the query and the palette so the next one is one keystroke away. Filtering is a substring over names and descriptions; the pattern rows are the typed text as an anchored pattern, offered last and never pre-selected.</div>
+    </div>
+
+    <div class="panel" style="width:344px">
+      <div class="eyebrow">Scripting off</div>
+      <div class="card" style="padding:16px;display:flex;flex-direction:column;gap:10px">
+        <div class="input" style="color:#09090b"><span>sub</span><span style="flex:1"></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></div>
+        <div class="card" style="box-shadow:none;padding:6px 0;font-size:13px">
+          <div style="padding:5px 12px;background:#f4f4f5" class="mono">tool/subscribe</div>
+          <div style="padding:5px 12px" class="mono">tool/unsubscribe</div>
+          <div style="padding:5px 12px" class="mono">resource/news://feed/substack</div>
+        </div>
+        <div class="row" style="justify-content:flex-end"><div class="btn" style="height:32px;font-size:13px">Add to Allowed</div></div>
+      </div>
+      <div class="note" style="width:344px">The same input carries a native <span class="mono">&lt;datalist&gt;</span> of every role and every prefixed name, so the browser completes it with no script; Add is a plain submit that redraws the page with the chip in place. Names only &mdash; the status column is the scripted palette&rsquo;s.</div>
+    </div>
+  </div>
+
+  <div class="card" style="padding:14px 16px;background:#fafafa;border-style:dashed;box-shadow:none;width:1176px;box-sizing:border-box">
+    <div class="eyebrow" style="margin-bottom:8px">Board notes &mdash; what this costs the data model</div>
+    <div class="note" style="display:flex;flex-direction:column;gap:6px">
+      <div>&bull; <b>One extension:</b> a grant entry is a role name <i>or</i> <span class="mono">&lt;family&gt;/&lt;pattern&gt;</span> with family in tools, prompts, resources. Same pattern grammar as roles (anchored regex, literal fast path, <span class="mono">*</span> aliases <span class="mono">.*</span>; resource patterns match the URI). Validation: family known, pattern compiles, the same two length caps. No declaration needed, so the undeclared-role warning and the proxied hard error do not apply to inline entries.</div>
+      <div>&bull; <b>The gate changes one line:</b> the per-family union takes an inline entry as one pattern in its family. <span class="mono">all</span>, allow-wins, approval, reach on every page &mdash; unchanged, because they all consume the union.</div>
+      <div>&bull; <b>Wire, provider, CLI:</b> nothing new in shape. <span class="mono">pmcp_grant</span> already carries <span class="mono">allow</span> and <span class="mono">approval</span> as sets and <span class="mono">pmcp grant set</span> already takes <span class="mono">--allow</span> / <span class="mono">--approval</span> (&sect;22); an inline entry is one more string in those sets. <span class="mono">grant_set</span> and <span class="mono">agent_list</span> keep the <span class="mono">role[:approval]</span> strings as the wire encoding, with <span class="mono">family/pattern</span> allowed where a role name was. The YAML file is retired with the planner (&sect;22), so it gets no spelling.</div>
+      <div>&bull; <b>Add&hellip; is a picker, not a text box.</b> It opens a searchable palette over the catalog and the roles the page already holds (the same reads the reach card needs), so no request is made while typing. Rows show where each item already stands so the owner is not guessing; adding keeps the palette open for the next one. Without script the input is a native <span class="mono">&lt;datalist&gt;</span> and Add is a submit.</div>
+      <div>&bull; <b>Versus the per-role editor:</b> that one can only choose among the app&rsquo;s roles; this one can also name a single item, which is the difference the owner asked for. Both compute the same effective access; if this one is chosen, the per-role board is retired.</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1240,"height":2350}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,148 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px}
+    a{color:#09090b;text-decoration:underline;text-underline-offset:2px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .muted{color:#71717a}.dim{color:#a1a1aa}
+    .card{background:#fff;border:1px solid #e4e4e7;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+    .badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:6px;font-size:12px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+    .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 16px;border-radius:8px;font-size:14px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+    .btn.sm{height:32px;padding:0 12px;font-size:13px}
+    .h2{font-size:16px;font-weight:600}
+    .col{display:flex;flex-direction:column;gap:4px}
+    .row{display:flex;align-items:center;gap:8px}
+    .cell{font-size:13px;color:#71717a;line-height:1.5}
+    .note{font-size:12px;color:#71717a;line-height:1.5}
+    .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+    .th{font-size:13px;font-weight:500;color:#71717a}
+    .sw{width:36px;height:20px;border-radius:999px;background:#e4e4e7;position:relative;flex-shrink:0}
+    .sw.on{background:#18181b}
+    .sw.fixed{background:#a1a1aa}
+    .sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+    .sw.on::after,.sw.fixed::after{left:18px}
+    .grid{display:grid;grid-template-columns:220px 100px 180px 200px 1fr 60px;column-gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid #f4f4f5;font-size:13px}
+    .grid.head{padding:10px 20px;border-bottom:1px solid #e4e4e7}
+    .kv{display:flex;gap:16px;padding:8px 0;border-bottom:1px solid #f4f4f5;font-size:13px;line-height:1.5}
+    .kv .k{width:170px;flex-shrink:0;color:#71717a}
+    .rail{width:200px;flex-shrink:0;display:flex;flex-direction:column;gap:2px}
+    .railh{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;padding:10px 12px 4px}
+    .raili{display:flex;justify-content:space-between;align-items:center;height:32px;padding:0 12px;border-radius:8px;font-size:14px;color:#71717a}
+    .raili.on{background:#f4f4f5;color:#09090b;font-weight:500}
+    .railm{font-size:12px;color:#71717a}
+    .dot{width:8px;height:8px;border-radius:50%;background:#15803d}
+  </style>
+</helmet>
+<div style="width:1240px;min-height:900px;box-sizing:border-box;background:#fff;padding:32px;display:flex;flex-direction:column;gap:24px">
+
+  <div class="eyebrow">Settings &mdash; /settings/recording &middot; new group &ldquo;Records&rdquo;, one pane</div>
+  <div style="display:flex;gap:24px;align-items:flex-start">
+
+    <div class="rail">
+      <div class="railh">Sign-in</div>
+      <div class="raili"><span>Password</span></div>
+      <div class="raili"><span>Two-factor</span><span class="dot"></span></div>
+      <div class="raili"><span>Passkeys</span><span class="railm">2</span></div>
+      <div class="railh">Access</div>
+      <div class="raili"><span>Sessions</span><span class="railm">3</span></div>
+      <div class="raili"><span>Tokens</span><span class="railm">4</span></div>
+      <div class="raili"><span>Connected clients</span><span class="railm">1</span></div>
+      <div class="railh">Records</div>
+      <div class="raili on"><span>Body logging</span><span class="railm">3 of 5</span></div>
+    </div>
+
+    <div style="flex:1;display:flex;flex-direction:column;gap:16px">
+      <div class="card" style="overflow:hidden">
+        <div style="padding:20px;border-bottom:1px solid #e4e4e7;display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
+          <div class="col" style="gap:2px">
+            <div class="h2">Body logging</div>
+            <div class="cell">Which apps&rsquo; calls are kept with their arguments and results. Everything else about a call &mdash; who, what tool, outcome, timing &mdash; is always recorded.</div>
+          </div>
+          <div class="btn sm">Export JSONL</div>
+        </div>
+        <div class="grid head">
+          <div class="th">App</div><div class="th">Kind</div><div class="th">Body logging</div><div class="th">Masked paths</div><div class="th">Recorded &middot; 7 d</div><div></div>
+        </div>
+        <div class="grid">
+          <div class="col" style="gap:2px"><div class="row"><span style="font-weight:500">Admin</span><span class="mono muted">pmcp</span></div><div class="cell">built-in</div></div>
+          <div class="muted">virtual</div>
+          <div class="row" style="gap:10px"><div class="sw fixed"></div><span class="cell">always on</span></div>
+          <div class="muted">hub schemas mark their own secrets</div>
+          <div class="muted">31 calls &middot; 31 with bodies</div>
+          <div></div>
+        </div>
+        <div class="grid">
+          <div class="col" style="gap:2px"><div class="row"><span style="font-weight:500">News MCP</span><span class="mono muted">news</span></div></div>
+          <div class="muted">tunneled</div>
+          <div class="row" style="gap:10px"><div class="sw on"></div><span class="cell">on &middot; default</span></div>
+          <div class="muted">1 argument path &middot; schema masks 3 tools</div>
+          <div class="muted">102 calls &middot; 98 with bodies</div>
+          <div style="text-align:right"><a href="#" class="cell">Edit</a></div>
+        </div>
+        <div class="grid">
+          <div class="col" style="gap:2px"><div class="row"><span style="font-weight:500">Linear</span><span class="mono muted">linear</span></div></div>
+          <div class="muted">proxied</div>
+          <div class="row" style="gap:10px"><div class="sw"></div><span class="cell">off &middot; default</span></div>
+          <div class="dim">none</div>
+          <div class="muted">40 calls &middot; no bodies</div>
+          <div style="text-align:right"><a href="#" class="cell">Edit</a></div>
+        </div>
+        <div class="grid">
+          <div class="col" style="gap:2px"><div class="row"><span style="font-weight:500">Notion</span><span class="mono muted">notion</span></div></div>
+          <div class="muted">proxied</div>
+          <div class="row" style="gap:10px"><div class="sw on"></div><span class="cell">on</span></div>
+          <div class="muted">2 argument &middot; 1 result</div>
+          <div class="muted">12 calls &middot; 12 with bodies</div>
+          <div style="text-align:right"><a href="#" class="cell">Edit</a></div>
+        </div>
+        <div class="grid" style="border-bottom:none">
+          <div class="col" style="gap:2px"><div class="row"><span style="font-weight:500;color:#a1a1aa">Home automation</span><span class="mono dim">home</span><span class="badge">archived</span></div></div>
+          <div class="dim">tunneled</div>
+          <div class="row" style="gap:10px"><div class="sw on" style="opacity:.5"></div><span class="cell dim">on &middot; default</span></div>
+          <div class="dim">none</div>
+          <div class="dim">no calls</div>
+          <div style="text-align:right"><a href="#" class="cell">Edit</a></div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:20px;display:flex;flex-direction:column;gap:10px">
+        <div class="eyebrow">Limits &mdash; set on the deployment, shown here so the table reads right</div>
+        <div class="kv"><div class="k">Retention</div><div>7 days &mdash; audit and approval rows past it are pruned nightly. <span class="muted mono">AUDIT_RETENTION_DAYS</span></div></div>
+        <div class="kv"><div class="k">Body cap</div><div>16 KiB per body; larger bodies are kept as a size stub. <span class="muted mono">AUDIT_BODY_CAP_BYTES</span></div></div>
+        <div class="kv"><div class="k">Never recorded</div><div>Refused calls, unstructured content blocks, token material, <span class="mono">writeOnly</span> and config-masked fields.</div></div>
+        <div class="kv" style="border-bottom:none"><div class="k">Where bodies show</div><div>The expanded row on <a href="#">/audit</a>, the approval detail, and the JSONL export &mdash; all post-redaction.</div></div>
+      </div>
+
+      <div class="note">A switch here is the app&rsquo;s own setting &mdash; the same one on <span class="mono">/apps/&lt;slug&gt;/recording</span>, where its redaction paths are edited. Turning a proxied app on without masked paths records whatever its tools take, in the clear, for the retention window.</div>
+    </div>
+  </div>
+
+  <div class="card" style="padding:14px 16px;background:#fafafa;border-style:dashed;box-shadow:none">
+    <div class="eyebrow" style="margin-bottom:8px">Board notes</div>
+    <div class="note" style="display:flex;flex-direction:column;gap:4px">
+      <div>&bull; Settings is the owner&rsquo;s view of what holds a way in; this pane is the owner&rsquo;s view of what is kept about them. A third rail group, <b>Records</b>, keeps it out of Sign-in and Access. Marker: apps on of apps total, the builtin excluded.</div>
+      <div>&bull; Each switch is one <span class="mono">app_update { log_bodies }</span> posted from this pane and landing back on it &mdash; a per-row form, like Revoke on Tokens. No bulk action: there is no bulk op, and five apps do not need one.</div>
+      <div>&bull; The row&rsquo;s counts are <span class="mono">audit_query { app }</span> totals; &ldquo;with bodies&rdquo; is the rows carrying the body columns. Masked paths are <span class="mono">app_get</span>&rsquo;s redact maps counted, plus the tunneled schema&rsquo;s <span class="mono">writeOnly</span> tools.</div>
+      <div>&bull; The Limits card is read-only: retention and the cap are env settings, and pretending otherwise would draw a control that does nothing.</div>
+      <div>&bull; The builtin row has a fixed switch rather than none, so the column never reads as &ldquo;unknown&rdquo; for the one app whose bodies are always kept.</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1240,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

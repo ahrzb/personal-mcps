@@ -263,16 +263,8 @@
       "page": "page-2"
     },
     {
-      "file": "GrantEditorStates.dc.html",
-      "x": 0,
-      "y": 7850,
-      "w": 520,
-      "h": 1800,
-      "title": "Grant editor · States"
-    },
-    {
       "file": "Agents.dc.html",
-      "x": 640,
+      "x": 0,
       "y": 7850,
       "w": 1240,
       "h": 720,
@@ -280,11 +272,27 @@
     },
     {
       "file": "AgentDetail.dc.html",
-      "x": 2000,
+      "x": 1320,
       "y": 7850,
       "w": 1240,
-      "h": 1020,
-      "title": "Agent detail"
+      "h": 1760,
+      "title": "Agent page"
+    },
+    {
+      "file": "AgentDetailPanes.dc.html",
+      "x": 2640,
+      "y": 7850,
+      "w": 1060,
+      "h": 2020,
+      "title": "Agent page · other panes"
+    },
+    {
+      "file": "AgentDetailStates.dc.html",
+      "x": 3780,
+      "y": 7850,
+      "w": 1240,
+      "h": 3880,
+      "title": "Agent page · States"
     }
   ],
   "annotations": [

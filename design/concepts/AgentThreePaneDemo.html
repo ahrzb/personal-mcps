@@ -1,0 +1,548 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Agent page · three panes · clickable demo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap">
+<style>
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px;background:#fff}
+  a{color:#09090b;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  button{font:inherit;cursor:pointer}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .muted{color:#71717a}.dim{color:#a1a1aa}
+  .badge{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+  .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+  .badge.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+  .badge.new{border-style:dashed}
+  .badge .x{width:14px;height:14px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;color:#a1a1aa;font-size:12px;margin-left:2px;cursor:pointer;border:0;background:none;padding:0}
+  .badge .x:hover{background:#e4e4e7;color:#09090b}
+  .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+  .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+  .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+  .btn:disabled{opacity:.45;cursor:default}
+  .nav{height:56px;box-sizing:border-box;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+  .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:#71717a}
+  .navitem.on{background:#f4f4f5;color:#09090b}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cell{font-size:13px;color:#71717a}
+  .note{font-size:12px;color:#71717a;line-height:1.5}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+  .wrap{width:1176px;margin:0 auto;padding:24px 0 40px;display:flex;flex-direction:column;gap:16px}
+  .panes{display:flex;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);height:820px}
+  .rail{width:180px;flex-shrink:0;border-right:1px solid #e4e4e7;padding:12px 8px;display:flex;flex-direction:column;gap:1px;background:#fafafa;overflow:auto}
+  .rh{font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;padding:8px 8px 4px}
+  .ri{display:flex;justify-content:space-between;align-items:center;height:28px;padding:0 8px;border-radius:6px;font-size:13px;color:#71717a;cursor:pointer;border:0;background:none;width:100%;text-align:left}
+  .ri:hover{background:#f4f4f5}
+  .ri.on{background:#fff;color:#09090b;font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .ri.dorm{opacity:.55}
+  .rm{font-size:11px;color:#a1a1aa;display:flex;gap:4px;align-items:center}
+  .listing{width:520px;flex-shrink:0;border-right:1px solid #e4e4e7;display:flex;flex-direction:column;min-height:0}
+  .panes.wide .listing{width:auto;flex:1;border-right:none}
+  .panes.wide .details{display:none}
+  .appcard{display:grid;grid-template-columns:1fr 110px;column-gap:16px;padding:14px 16px;border-bottom:1px solid #f4f4f5}
+  .eps{max-height:260px;overflow:auto;border:1px solid #e4e4e7;border-radius:8px;margin-top:8px}
+  .ep{display:grid;grid-template-columns:1fr auto;column-gap:10px;align-items:center;padding:5px 10px;font-size:12px;border-bottom:1px solid #f8f8f8}
+  .ep:last-child{border-bottom:none}
+  .ep .fam{font-size:10px;color:#a1a1aa;margin-right:6px;text-transform:uppercase;letter-spacing:.04em}
+  .ep .roles{display:inline-flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+  .info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid #a1a1aa;color:#71717a;font-size:9px;font-weight:600;margin-left:6px;cursor:help;vertical-align:middle}
+  .info .tip{display:none;position:absolute;left:18px;top:-6px;z-index:5;width:260px;background:#18181b;color:#fafafa;border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.45;font-weight:400;box-shadow:0 4px 12px rgba(0,0,0,.2);white-space:normal;text-align:left}
+  .info:hover .tip{display:block}
+  .tip .a{color:#a1a1aa}
+  .appcard .kv{padding:2px 0}
+  .appcard .kv .k{width:90px}
+  .lh{padding:14px 16px;border-bottom:1px solid #e4e4e7;display:flex;flex-direction:column;gap:8px}
+  .sum{font-size:12px;color:#71717a;line-height:1.5}
+  .filter{height:30px;box-sizing:border-box;border:1px solid #e4e4e7;border-radius:8px;padding:0 10px;font-size:12px;background:#fff;width:220px;outline:none}
+  .filter:focus{box-shadow:0 0 0 3px rgba(161,161,170,.35)}
+  .scroll{overflow:auto;flex:1;min-height:0}
+  .gh{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#a1a1aa;padding:12px 16px 4px;display:flex;justify-content:space-between}
+  .cr{display:grid;grid-template-columns:1fr auto;column-gap:10px;align-items:center;padding:6px 16px;font-size:13px;border-bottom:1px solid #f8f8f8;cursor:pointer}
+  .cr:hover{background:#f4f4f5}
+  .cr.cur{background:#f4f4f5;box-shadow:inset 3px 0 0 #18181b}
+  .cr .d{font-size:11px;color:#71717a;margin-top:1px}
+  .st{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+  .acts{display:inline-flex;gap:4px;visibility:hidden}
+  .cr:hover .acts,.cr.cur .acts{visibility:visible}
+  .mini{height:22px;padding:0 8px;border-radius:6px;border:1px solid #e4e4e7;background:#fff;font-size:11px;font-weight:500;display:inline-flex;align-items:center}
+  .mini.warn{border-color:#fde68a;color:#92400e;background:#fffbeb}
+  .mini:hover{background:#f4f4f5}
+  .seg{display:inline-flex;flex-shrink:0}
+  .seg button{height:22px;padding:0;width:44px;justify-content:center;display:inline-flex;align-items:center;font-size:11px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#71717a}
+  .seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}.seg button+button{border-left:none}
+  .seg button.on{background:#18181b;color:#fafafa;border-color:#18181b}
+  .seg button.on.warn{background:#92400e;border-color:#92400e}
+  .seg button.impl{background:#fff;color:#09090b;border-color:#18181b;box-shadow:inset 0 0 0 1px #18181b}
+  .seg button.impl.warn{color:#92400e;border-color:#92400e;box-shadow:inset 0 0 0 1px #92400e}
+  .seg button:disabled{color:#d4d4d8;cursor:default;background:#fafafa}
+  .via{font-size:11px;color:#71717a;white-space:nowrap}
+  .save{padding:12px 16px;border-top:1px solid #e4e4e7;display:flex;justify-content:space-between;align-items:center;background:#fafafa}
+  .details{flex:1;min-width:0;display:flex;flex-direction:column;background:#fafafa;overflow:auto}
+  .dh{padding:14px 16px;border-bottom:1px solid #e4e4e7;background:#fff}
+  .db{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+  .sec{background:#fff;border:1px solid #e4e4e7;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .kv{display:flex;gap:12px;font-size:12px;line-height:1.5}.kv .k{width:110px;flex-shrink:0;color:#71717a}
+  .arg{display:grid;grid-template-columns:110px 60px 1fr;column-gap:10px;font-size:12px;padding:4px 0;border-bottom:1px solid #f4f4f5}.arg:last-child{border-bottom:none}
+  .tile{display:flex;gap:16px;font-size:12px;color:#71717a}.tile b{color:#09090b;font-weight:600;font-size:14px}
+  .banner{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18181b;color:#fafafa;padding:10px 14px;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.15);opacity:0;transition:opacity .2s}
+  .toast.show{opacity:1}
+  .hint{font-size:11px;color:#a1a1aa}
+  .tog{background:none;border:0;padding:0;color:#71717a;font-size:12px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  .tog:hover{color:#09090b}
+</style>
+</head>
+<body>
+<div class="nav">
+  <div style="display:flex;align-items:center;gap:24px">
+    <div style="display:flex;align-items:center;gap:8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg><div style="font-size:15px;font-weight:600">personal-mcps</div><span class="badge">clickable demo</span></div>
+    <div style="display:flex;gap:4px"><div class="navitem">Apps</div><div class="navitem on">Agents</div><div class="navitem">Audit</div><div class="navitem">Approvals</div><div class="navitem">Settings</div></div>
+  </div>
+  <div class="row"><div class="muted">ahrzb</div><div class="btn">Sign out</div></div>
+</div>
+<div class="wrap">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end">
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <div class="cell" id="crumb"></div>
+      <div class="row" style="gap:10px"><span class="mono" style="font-size:22px;font-weight:600">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div>
+    </div>
+    <div class="tile" id="tiles"></div>
+  </div>
+  <div id="banner"></div>
+  <div class="panes">
+    <div class="rail" id="rail"></div>
+    <div class="listing">
+      <div class="lh" id="lh"></div>
+      <div class="scroll" id="list"></div>
+      <div class="save" id="save"></div>
+    </div>
+    <div class="details" id="details"></div>
+  </div>
+  <div class="note">Try: every row has the same none · ask · allow control — solid when set on that row, hollow when a role implies it (the role is named). On <span class="mono">get_news</span> the hollow allow comes from reader, so ask and none are disabled: a row cannot lower what a role grants. Set <span class="mono">admin</span> to ask and <span class="mono">admin_export</span> shows a hollow ask; click its allow to raise just that tool · change <span class="mono">admin</span> between allow and ask · type <span class="mono">sub.*</span> or <span class="mono">news://feed/*</span> in the filter and add it as a pattern · switch to another app with a draft pending · Save. Removing every entry and saving deletes the pair. Rail → <b>Credentials</b>: issue a token with an expiry, see the once-only reveal, revoke with an inline confirm. <b>Activity</b>: approve or reject a waiting request, open a call to see its recorded bodies. <b>+ Grant another app…</b>: GitHub's card says what it does; show all lists its endpoints with the roles that grant each and an i to hover; Grant opens it with nothing granted yet.</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ---------------------------------------------------------------- fixture
+const APPS = {
+  news: { name: "News MCP", kind: "tunneled", status: "online",
+    roles: { reader: { tools: ["get_news", "search_.*"], prompts: ["digest_.*"] }, admin: { tools: ["admin_.*"] }, publisher: { tools: ["publish", "delete_feed"] } },
+    tools: [["get_news","Latest items across all feeds",[["since","string","optional"]]],["search_feeds","Find feeds by name or URL",[["query","string","required"]]],["search_items","Search items across feeds",[["query","string","required"],["feed","string","optional"],["limit","integer","optional · defaults to 20"],["cookie","string","optional · redacted (config)"]]],["search_archive","Search the archive",[["query","string","required"]]],["admin_purge_cache","Drop cached items",[["scope","string","required"]]],["admin_reindex","Rebuild the search index",[]],["admin_export","Export everything as JSON",[]],["publish","Post an item to a feed",[["feed","string","required"],["title","string","required"]]],["delete_feed","Remove a feed and its items",[["feed","string","required"]]],["subscribe","Subscribe to a feed",[["url","string","required"]]],["unsubscribe","Unsubscribe from a feed",[["feed","string","required"]]]],
+    prompts: [["digest_daily","Summarise the last 24 h"]],
+    resources: [["news://feed/hn","text/plain"],["news://feed/lobsters","text/plain"],["news://config","application/json"]] },
+  linear: { name: "Linear", kind: "proxied", status: "connected",
+    roles: { reader: { tools: ["list_.*", "get_.*"] }, docs: { resources: ["linear://docs/.*"] } },
+    tools: [["list_issues","Issues in a project",[]],["get_issue","One issue by id",[]],["list_projects","Projects in the workspace",[]],["create_issue","Create an issue",[]],["update_issue","Update an issue",[]],["delete_issue","Delete an issue",[]]],
+    prompts: [],
+    resources: [["linear://docs/roadmap","text/markdown"],["linear://docs/process","text/markdown"]] },
+  home: { name: "Home automation", kind: "tunneled", status: "archived",
+    roles: { control: { tools: ["set_.*", "toggle_.*"] } },
+    tools: [["set_thermostat","Set a temperature",[]],["toggle_light","Toggle a light",[]],["status","Read every sensor",[]]], prompts: [], resources: [] },
+  gh: { name: "GitHub", kind: "proxied", status: "connected",
+    roles: { reader: { tools: ["list_.*", "get_.*"] } },
+    tools: [["list_prs","Open pull requests",[]],["get_pr","One pull request",[]],["merge_pr","Merge a pull request",[]],["create_issue","Open an issue",[]]], prompts: [], resources: [] },
+};
+// saved grant sets: entries are role names or family/pattern
+let SAVED = {
+  news: { allow: ["reader", "tool/get_news", "resource/news://feed/*"], approval: ["admin", "tool/publish"] },
+  linear: { allow: ["reader"], approval: [] },
+  home: { allow: [], approval: ["control"] },
+};
+const UNGRANTED = () => Object.keys(APPS).filter((a) => !SAVED[a] && !(draft && draft.app === a));
+
+// ---------------------------------------------------------------- matcher (§7: anchored, literal fast path, * aliases .*)
+const LITERAL = /^[A-Za-z0-9._-]+$/;
+function matches(pattern, name) {
+  if (LITERAL.test(pattern)) return pattern === name;
+  try { return new RegExp("^(?:" + pattern.replace(/(?<![.\]])\*/g, ".*") + ")$").test(name); } catch { return false; }
+}
+function parseEntry(e) {
+  const m = e.match(/^(tool|prompt|resource)\/(.*)$/);
+  return m ? { kind: "item", family: m[1] + "s", pattern: m[2] } : { kind: "role", role: e };
+}
+function patternsOf(app, entry, family) {
+  const p = parseEntry(entry);
+  if (p.kind === "item") return p.family === family ? [p.pattern] : [];
+  if (p.role === "all") return [".*"];
+  const r = APPS[app].roles[p.role];
+  return r && r[family] ? r[family] : [];
+}
+// returns {mode, via[]} for one item
+function standing(app, set, family, name) {
+  const via = { allow: [], approval: [] };
+  for (const mode of ["allow", "approval"]) for (const e of set[mode]) if (patternsOf(app, e, family).some((p) => matches(p, name))) via[mode].push(e);
+  if (via.allow.length) return { mode: "allow", via: via.allow, shadowed: via.approval };
+  if (via.approval.length) return { mode: "approval", via: via.approval, shadowed: [] };
+  return { mode: "", via: [], shadowed: [] };
+}
+function reach(app, set) {
+  const A = APPS[app], out = {};
+  for (const [fam, key] of [["tools", 0], ["prompts", 0], ["resources", 0]]) {
+    const items = A[fam].map((x) => x[0]);
+    const r = items.map((n) => standing(app, set, fam, n));
+    out[fam] = { total: items.length, reached: r.filter((s) => s.mode).length, approval: r.filter((s) => s.mode === "approval").length };
+  }
+  return out;
+}
+function entryMatchCount(app, entry) {
+  let n = 0;
+  for (const fam of ["tools", "prompts", "resources"]) for (const [name] of APPS[app][fam]) if (patternsOf(app, entry, fam).some((p) => matches(p, name))) n++;
+  return n;
+}
+
+// ---------------------------------------------------------------- state
+let current = "news";
+let view = "app"; // 'app' | 'credentials' | 'activity' | 'danger'
+let picked = null; // selection inside credentials / activity: { kind, id }
+let reveal = null; // a just-issued key, shown once
+let expiresIn = "90d";
+let openApps = new Set();
+let grantQuery = "";
+let confirmRemove = false;
+function removeApp(app) {
+  const pending = APPROVALS.filter((a) => a.app === app && a.status === "pending").length;
+  delete SAVED[app]; draft = null; selected = null; confirmRemove = false;
+  toast(`grant_set claude ${app} · roles: [] — access removed${pending ? ` · ${pending} waiting request${pending === 1 ? "" : "s"} will expire` : ""}`);
+  view = "grant"; picked = null; render();
+}
+let confirmRevoke = null;
+const TOKENS = [
+  { id: "t1", prefix: "pmcp_agt_4kJk…9fQ", created: "Aug 12", expires: "Nov 10", days: 90, lastUsed: "2 h ago", expired: false, revoked: false },
+  { id: "t2", prefix: "pmcp_agt_2mQv…8xT", created: "May 14", expires: "Aug 12", days: 90, lastUsed: "Jul 30", expired: true, revoked: false },
+];
+const CLIENTS = [{ id: "c1", name: "Claude", origin: "https://claude.ai", consented: "Aug 14", lastUsed: "2 h ago", selfRegistered: false }];
+let APPROVALS = [
+  { id: "a1", app: "news", tool: "admin_purge_cache", args: { scope: "feeds", older_than: "7d" }, age: "12 min ago", expires: "48 min", status: "pending" },
+  { id: "a2", app: "news", tool: "admin_reindex", args: { feed: "hn" }, age: "41 min ago", expires: "19 min", status: "pending" },
+];
+const CALLS = [
+  { id: "e1", when: "2 h ago", app: "linear", tool: "list_issues", outcome: "ok", ms: 412, args: { project: "PMCP", state: "open" }, result: { issues: [{ id: "PM-41", title: "Recording pane" }] }, client: "claude-ai/1.2" },
+  { id: "e2", when: "2 h ago", app: "news", tool: "search_items", outcome: "ok", ms: 88, args: { query: "cloudflare outage", cookie: "‹redacted›" }, result: { items: [{ id: "hn-1", title: "Cloudflare restores service" }] }, client: "claude-ai/1.2" },
+  { id: "e3", when: "3 h ago", app: "news", tool: "admin_purge_cache", outcome: "approval required", ms: 6, args: null, result: null, client: "claude-ai/1.2" },
+  { id: "e4", when: "yesterday", app: "news", tool: "publish", outcome: "not permitted", ms: 3, args: null, result: null, client: "claude-ai/1.2" },
+  { id: "e5", when: "yesterday", app: "linear", tool: "get_issue", outcome: "ok", ms: 377, args: { id: "PM-38" }, result: { issue: { id: "PM-38", title: "Agents list" } }, client: "claude-ai/1.2" },
+];
+const APP_DESC = { news: "RSS digester on the home server", linear: "Issues and projects over the Linear MCP", home: "Lights, thermostat and sensors", gh: "Repositories, pull requests and issues over the GitHub MCP" };
+function startGrant(app) { view = "app"; current = app; selected = null; filterText = ""; draft = { app, allow: [], approval: [] }; picked = null; render(); }
+function showView(v) {
+  if (isDirty() && v !== "app") { pendingSwitch = "view:" + v; render(); return; }
+  view = v; picked = null; confirmRevoke = null; grantQuery = ""; render();
+}
+function issueToken() {
+  const id = "t" + (TOKENS.length + 1);
+  const exp = expiresIn === "never" ? "never" : expiresIn === "30d" ? "Oct 16" : expiresIn === "1y" ? "Sep 16, 2027" : "Dec 15";
+  TOKENS.unshift({ id, prefix: "pmcp_agt_" + Math.random().toString(36).slice(2, 6) + "…" + Math.random().toString(36).slice(2, 5), created: "just now", expires: exp, days: expiresIn === "never" ? null : expiresIn === "30d" ? 30 : expiresIn === "1y" ? 365 : 90, lastUsed: null, expired: false, revoked: false });
+  reveal = { id, key: "pmcp_agt_" + Math.random().toString(36).slice(2, 14) + Math.random().toString(36).slice(2, 14) + Math.random().toString(36).slice(2, 10) };
+  picked = { kind: "token", id };
+  toast("token_issue claude · " + (expiresIn === "never" ? "no expiry" : "expires in " + expiresIn));
+  render();
+}
+function revoke(id) { const t = TOKENS.find((t) => t.id === id); t.revoked = true; confirmRevoke = null; if (reveal && reveal.id === id) reveal = null; toast("token_revoke " + t.prefix + (t.expired ? " (expired — removed from the list)" : "")); render(); }
+function decide(id, d) { const a = APPROVALS.find((a) => a.id === id); a.status = d; toast("approval_decide " + id + " · " + d); render(); }
+let draft = null; // { app, allow:[], approval:[] }
+let selected = null; // { kind:'tool'|'prompt'|'resource'|'role'|'pattern', name }
+let filterText = "";
+let pendingSwitch = null;
+
+const setOf = (app) => (draft && draft.app === app ? draft : SAVED[app] || { allow: [], approval: [] });
+function ensureDraft() {
+  if (!draft || draft.app !== current) { const s = SAVED[current] || { allow: [], approval: [] }; draft = { app: current, allow: [...s.allow], approval: [...s.approval] }; }
+  return draft;
+}
+function isDirty() {
+  if (!draft) return false;
+  const s = SAVED[draft.app] || { allow: [], approval: [] };
+  const same = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+  return !(same(s.allow, draft.allow) && same(s.approval, draft.approval));
+}
+function changeCount() {
+  if (!draft) return 0;
+  const s = SAVED[draft.app] || { allow: [], approval: [] };
+  let n = 0;
+  for (const m of ["allow", "approval"]) { for (const e of draft[m]) if (!s[m].includes(e)) n++; for (const e of s[m]) if (!draft[m].includes(e)) n++; }
+  return n;
+}
+function setEntry(entry, mode) { // mode: 'allow' | 'approval' | null
+  const d = ensureDraft();
+  d.allow = d.allow.filter((e) => e !== entry); d.approval = d.approval.filter((e) => e !== entry);
+  if (mode) d[mode].push(entry);
+  render();
+}
+function save() {
+  if (!draft) return;
+  const empty = draft.allow.length + draft.approval.length === 0;
+  if (empty) { const wasNew = !SAVED[draft.app]; if (!wasNew) toast(`grant_set ${draft.app} · roles: [] — pair removed`); delete SAVED[draft.app]; draft = null; selected = null; if (wasNew) { view = "grant"; picked = null; } else current = Object.keys(SAVED)[0]; }
+  else { SAVED[draft.app] = { allow: [...draft.allow], approval: [...draft.approval] }; toast(`grant_set claude ${draft.app} · ${draft.allow.length} allow · ${draft.approval.length} ask`); draft = null; }
+  render();
+}
+function discard() { draft = null; render(); }
+function switchApp(app) {
+  if (isDirty() && draft.app !== app) { pendingSwitch = app; render(); return; }
+  draft = null; current = app; selected = null; filterText = ""; view = "app"; confirmRemove = false; render();
+}
+function afterBanner(target) { if (target.startsWith("view:")) { view = target.slice(5); picked = null; render(); } else switchApp(target); }
+function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 2200); }
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const famOf = { tool: "tools", prompt: "prompts", resource: "resources" };
+const RANK = { "": 0, approval: 1, allow: 2 };
+/** The three-way control for an item: effective = highest of the direct entry and the roles.
+ *  Solid when a direct entry sets it, hollow when a role implies it (the role named beside);
+ *  a state below what roles imply is disabled — there is no deny. */
+function itemSeg(direct, s, viaRoles) {
+  const roleMax = s.mode && viaRoles.length ? s.mode : "";
+  const dset = draftHas(direct);
+  const directMode = dset.allow ? "allow" : dset.approval ? "approval" : "";
+  const eff = RANK[directMode] >= RANK[roleMax] ? directMode : roleMax;
+  const implied = eff !== "" && eff === roleMax && RANK[directMode] < RANK[roleMax];
+  const btn = (mode, label) => {
+    const below = RANK[mode] < RANK[roleMax];
+    const on = eff === mode;
+    const cls = on ? (implied ? "impl" : "on") + (mode === "approval" ? " warn" : "") : "";
+    // clicking the implied state removes the direct entry; clicking above it sets one; below is impossible
+    const action = below ? "" : mode === roleMax ? `setEntry('${direct}',null)` : `setEntry('${direct}','${mode || "x"}')`.replace("'x'", "null");
+    return `<button class="${cls}" ${below ? `disabled title="${viaRoles.join(", ")} grants ${roleMax === "allow" ? "allow" : "ask"} — change the role to lower it"` : `onclick="${action}"`}>${label}</button>`;
+  };
+  const via = roleMax ? `<span class="via">${implied ? "via" : "also via"} ${viaRoles.join(", ")}</span>` : "";
+  return `${via}<span class="seg">${btn("", "none")}${btn("approval", "ask")}${btn("allow", "allow")}</span>`;
+}
+function draftHas(entry) { const st = setOf(current); return { allow: st.allow.includes(entry), approval: st.approval.includes(entry) }; }
+const chk = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>`;
+
+// ---------------------------------------------------------------- render
+function render() {
+  const A = APPS[current], set = setOf(current), r = reach(current, set), savedR = reach(current, SAVED[current] || { allow: [], approval: [] });
+  const dirty = isDirty();
+
+  // crumb + tiles
+  document.getElementById("crumb").innerHTML = `<a onclick="">Agents</a> <span class="dim">/</span> <span class="mono">claude</span> <span class="dim">/</span> ${view === "app" ? `<span class="mono">${current}</span>${selected ? ` <span class="dim">/</span> <span class="mono">${esc(selected.name)}</span>` : ""}` : view}`;
+  let tt = 0, ta = 0, tp = 0, tr = 0, dormant = 0;
+  for (const app of Object.keys(SAVED)) { const rr = reach(app, app === current ? set : SAVED[app]); if (APPS[app].status === "archived") { dormant++; continue; } tt += rr.tools.reached; ta += rr.tools.approval; tp += rr.prompts.reached; tr += rr.resources.reached; }
+  document.getElementById("tiles").innerHTML = `<span><b>${Object.keys(SAVED).length}</b> apps</span><span><b>${tt}</b> tools · <b>${tp}</b> prompts · <b>${tr}</b> resources</span><span style="color:#92400e"><b style="color:#92400e">${ta}</b> ask first</span><span><b>${dormant}</b> dormant</span>`;
+
+  // banner (switch with draft)
+  document.getElementById("banner").innerHTML = pendingSwitch
+    ? `<div class="banner">Unsaved changes on <span class="mono">${draft.app}</span>. <button class="btn" style="height:28px" onclick="save();const a=pendingSwitch;pendingSwitch=null;afterBanner(a)">Save and switch</button><button class="btn" style="height:28px" onclick="draft=null;const a=pendingSwitch;pendingSwitch=null;afterBanner(a)">Discard and switch</button><button class="btn ghost" style="height:28px" onclick="pendingSwitch=null;render()">Stay</button></div>`
+    : "";
+
+  // rail
+  const marker = (app) => {
+    const s = app === current ? set : SAVED[app];
+    const parts = [];
+    if (draft && draft.app === app && dirty) parts.push(`<span title="unsaved" style="color:#2563eb">●</span>`);
+    if (APPS[app].status === "archived") parts.push("—");
+    else if (s.approval.length) parts.push(`<span style="color:#92400e">●</span>`);
+    return parts.join("");
+  };
+  const apps = Object.keys(SAVED).concat(draft && !SAVED[draft.app] ? [draft.app] : []);
+  document.getElementById("rail").innerHTML = `<div class="rh">Apps · ${apps.length}</div>` +
+    apps.map((app) => `<button class="ri${app === current && view === "app" ? " on" : ""}${APPS[app].status === "archived" ? " dorm" : ""}" onclick="switchApp('${app}')"><span class="mono">${app}</span><span class="rm">${marker(app)}</span></button>`).join("") +
+    `<button class="ri${view === "grant" ? " on" : ""}" style="margin-top:2px;font-size:12px" onclick="showView('grant')"><span>+ Grant another app…</span><span class="rm">${UNGRANTED().length || ""}</span></button>` +
+    `<div class="rh" style="margin-top:10px">Agent</div><button class="ri${view === "credentials" ? " on" : ""}" onclick="showView('credentials')"><span>Credentials</span><span class="rm">${TOKENS.filter((t) => !t.expired && !t.revoked).length} · ${CLIENTS.length}</span></button><button class="ri${view === "activity" ? " on" : ""}" onclick="showView('activity')"><span>Activity</span><span class="rm" style="color:#92400e">${APPROVALS.filter((a) => a.status === "pending").length || ""}</span></button><button class="ri${view === "danger" ? " on" : ""}" onclick="showView('danger')"><span>Danger zone</span></button>`;
+  if (view !== "app") { renderAgentView(); return; }
+  document.querySelector(".panes").classList.remove("wide");
+
+  // listing header
+  const status = A.status === "archived" ? `<span class="badge">archived</span>` : `<span class="badge ok"><span class="dot"></span>${A.status}</span>`;
+  const delta = dirty && savedR.tools.reached !== r.tools.reached ? ` <span class="dim">· was ${savedR.tools.reached} of ${savedR.tools.total} tools</span>` : "";
+  const removeUi = !SAVED[current] ? "" : confirmRemove
+    ? `<span class="row" style="gap:8px;font-size:12px;color:#71717a"><span>claude loses every entry on <span class="mono">${current}</span>. History stays; a waiting request expires.</span><button class="btn ghost" style="height:28px" onclick="confirmRemove=false;render()">Keep</button><button class="btn" style="height:28px;color:#dc2626;border-color:#fecaca" onclick="removeApp('${current}')">Remove</button></span>`
+    : `<button class="btn" style="height:28px;color:#dc2626;border-color:#fecaca" onclick="confirmRemove=true;render()">Remove from claude</button>`;
+  document.getElementById("lh").innerHTML = `<div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">${A.name}</span><span class="mono cell">${current}</span><span class="badge">${A.kind}</span>${status}</div></div>
+    <div class="sum">${!SAVED[current] ? `<span class="badge warn" style="border-style:dashed;margin-right:6px">new grant · nothing saved yet</span>` : ""}claude reaches <b style="color:#09090b">${r.tools.reached}</b> of ${r.tools.total} tools <span class="dim">·</span> ${r.tools.approval} ask first <span class="dim">·</span> <b style="color:#09090b">${r.prompts.reached}</b> of ${r.prompts.total} prompts <span class="dim">·</span> <b style="color:#09090b">${r.resources.reached}</b> of ${r.resources.total} resources${delta}${A.status === "archived" ? ` <span class="dim">· archived: every call answers -32002 until unarchived</span>` : ""}</div>
+    <input class="filter" style="width:100%" placeholder="filter, or type a pattern…" value="${esc(filterText)}" oninput="filterText=this.value;render();document.querySelector('.filter').focus()">`;
+
+  // listing body
+  const q = filterText.trim().toLowerCase();
+  const hit = (name, desc) => !q || name.toLowerCase().includes(q) || (desc || "").toLowerCase().includes(q);
+  const roleRow = (role) => {
+    const mode = set.allow.includes(role) ? "allow" : set.approval.includes(role) ? "approval" : "";
+    const pats = role === "all" ? "every tool, prompt and resource, present and future" : Object.entries(A.roles[role]).map(([f, p]) => `${f} ${p.join(", ")}`).join(" · ");
+    const n = entryMatchCount(current, role);
+    const savedRole = SAVED[current] || { allow: [], approval: [] }; const isNew = mode !== (savedRole.allow.includes(role) ? "allow" : savedRole.approval.includes(role) ? "approval" : "");
+    return `<div class="cr${sel("role", role)}" onclick="selected={kind:'role',name:'${role}'};render()"><div><span class="mono">${role}</span>${role === "all" ? ` <span class="badge" style="height:16px;font-size:10px">built-in</span>` : ""}<div class="d">${esc(pats)} · matches ${n}</div></div><div class="st" onclick="event.stopPropagation()">${isNew ? `<span class="badge new warn">unsaved</span>` : ""}<span class="seg"><button class="${mode === "" ? "on" : ""}" onclick="setEntry('${role}',null)">none</button><button class="${mode === "approval" ? "on warn" : ""}" onclick="setEntry('${role}','approval')">ask</button><button class="${mode === "allow" ? "on" : ""}" onclick="setEntry('${role}','allow')">allow</button></span></div></div>`;
+  };
+  const itemRow = (family, name, desc) => {
+    const kind = family.slice(0, -1);
+    const direct = `${kind}/${name}`;
+    const st = standing(current, set, family, name);
+    const viaRoles = st.via.filter((e) => e !== direct);
+    const roleOnly = standing(current, { allow: set.allow.filter((e) => e !== direct), approval: set.approval.filter((e) => e !== direct) }, family, name);
+    const savedSet = SAVED[current] || { allow: [], approval: [] };
+    const directMode = set.allow.includes(direct) ? "allow" : set.approval.includes(direct) ? "approval" : "";
+    const isNew = directMode !== (savedSet.allow.includes(direct) ? "allow" : savedSet.approval.includes(direct) ? "approval" : "");
+    const noEffect = directMode === "approval" && roleOnly.mode === "allow";
+    const extras = (noEffect ? `<span class="badge warn" title="allow wins over ask">ask entry · no effect${xBtn(direct)}</span>` : "") + (isNew ? `<span class="badge new warn">unsaved</span>` : "");
+    return `<div class="cr${sel(kind, name)}" onclick="selected={kind:'${kind}',name:'${esc(name)}'};render()"><div><span class="mono">${esc(name)}</span><div class="d">${esc(desc)}</div></div><div class="st" onclick="event.stopPropagation()">${extras}${itemSeg(direct, roleOnly, roleOnly.via)}</div></div>`;
+  };
+  const xBtn = (entry) => `<button class="x" title="remove this entry" onclick="setEntry('${entry}',null)">×</button>`;
+  const sel = (kind, name) => (selected && selected.kind === kind && selected.name === name ? " cur" : "");
+
+  const roles = Object.keys(A.roles).concat("all").filter((r) => hit(r));
+  const tools = A.tools.filter(([n, d]) => hit(n, d)), prompts = A.prompts.filter(([n, d]) => hit(n, d)), resources = A.resources.filter(([n, d]) => hit(n, d));
+  const patterns = [...set.allow, ...set.approval].filter((e) => parseEntry(e).kind === "item" && !LITERAL.test(parseEntry(e).pattern));
+  const savedAll = SAVED[current] || { allow: [], approval: [] };
+  const patternRow = (e) => {
+    const mode = set.allow.includes(e) ? "allow" : "approval";
+    const n = entryMatchCount(current, e);
+    const isNew = !savedAll[mode].includes(e);
+    return `<div class="cr${sel("pattern", e)}" onclick="selected={kind:'pattern',name:'${esc(e)}'};render()"><div><span class="mono">${esc(e)}</span><div class="d">${n ? `matches ${n} today` : `<span style="color:#92400e">matches nothing today</span>`}</div></div><div class="st" onclick="event.stopPropagation()">${isNew ? `<span class="badge new warn">unsaved</span>` : ""}${itemSeg(e, { mode: "", via: [] }, [])}</div></div>`;
+  };
+  // offer the typed text as a pattern when it is not an exact name
+  let offer = "";
+  const raw = filterText.trim();
+  if (raw && !LITERAL.test(raw)) {
+    const fam = raw.includes("://") ? "resource" : "tool";
+    const entry = `${fam}/${raw}`;
+    if (![...set.allow, ...set.approval].includes(entry)) {
+      const n = entryMatchCount(current, entry);
+      offer = `<div class="gh"><span>As a pattern</span></div><div class="cr"><div><span class="mono">${esc(entry)}</span><div class="d">${n ? `would match ${n} today, and any added later` : "matches nothing today"}</div></div><div class="st"><span class="acts" style="visibility:visible"><button class="mini warn" onclick="setEntry('${esc(entry)}','approval');filterText='';render()">Ask</button><button class="mini" onclick="setEntry('${esc(entry)}','allow');filterText='';render()">Allow</button></span></div></div>`;
+    }
+  }
+  const undeclared = [...set.allow, ...set.approval].filter((e) => parseEntry(e).kind === "role" && e !== "all" && !A.roles[e]);
+  document.getElementById("list").innerHTML =
+    (roles.length ? `<div class="gh"><span>Roles · ${roles.length}</span><span style="text-transform:none;letter-spacing:0">${A.kind === "tunneled" ? "declared by the app at connect" : "defined in config"}</span></div>` + roles.map(roleRow).join("") : "") +
+    (undeclared.length ? undeclared.map((e) => `<div class="cr"><div><span class="mono">${e}</span> <span class="badge warn" style="height:16px;font-size:10px">undeclared</span><div class="d">granted, but the app has not declared it — dormant</div></div><div class="st"><span class="badge ${set.allow.includes(e) ? "ok" : "warn"}">${set.allow.includes(e) ? "in Allowed" : "in Ask first"}${xBtn(e)}</span></div></div>`).join("") : "") +
+    (tools.length ? `<div class="gh"><span>Tools · ${tools.length}</span><span style="text-transform:none;letter-spacing:0">${r.tools.reached} reached · ${r.tools.total - r.tools.reached} not</span></div>` + tools.map(([n, d]) => itemRow("tools", n, d)).join("") : "") +
+    (prompts.length ? `<div class="gh"><span>Prompts · ${prompts.length}</span></div>` + prompts.map(([n, d]) => itemRow("prompts", n, d)).join("") : "") +
+    (resources.length ? `<div class="gh"><span>Resources · ${resources.length}</span><span style="text-transform:none;letter-spacing:0">matched by URI</span></div>` + resources.map(([n, d]) => itemRow("resources", n, d)).join("") : "") +
+    (patterns.length ? `<div class="gh"><span>Patterns · ${patterns.length}</span><span style="text-transform:none;letter-spacing:0">entries that are not one item</span></div>` + patterns.map(patternRow).join("") : "") +
+    offer +
+    (!roles.length && !tools.length && !prompts.length && !resources.length && !offer ? `<div class="note" style="padding:16px">Nothing matches “${esc(raw)}”.</div>` : "");
+
+  // save bar
+  const n = changeCount();
+  document.getElementById("save").innerHTML = `<span class="row" style="gap:10px">${removeUi}</span><span class="row" style="gap:10px"><span class="cell" style="font-size:12px">${dirty ? `${n} unsaved change${n === 1 ? "" : "s"}` : `<span class="dim">saved · ${set.allow.length} allow · ${set.approval.length} ask</span>`}</span><button class="btn ghost" ${dirty ? "" : "disabled"} onclick="discard()">Discard</button><button class="btn primary" ${dirty ? "" : "disabled"} onclick="save()">Save</button></span>`;
+
+  // details
+  document.getElementById("details").innerHTML = renderDetails(set);
+}
+
+function renderAgentView() {
+  const lh = document.getElementById("lh"), list = document.getElementById("list"), save = document.getElementById("save"), det = document.getElementById("details");
+  save.innerHTML = "";
+  const sel = (kind, id) => (picked && picked.kind === kind && picked.id === id ? " cur" : "");
+  const outcomeBadge = (o) => o === "ok" ? `<span class="badge ok">ok</span>` : o === "approval required" ? `<span class="badge warn">approval required</span>` : `<span class="badge" style="background:#fef2f2;color:#b91c1c;border:1px solid #fecaca">${o}</span>`;
+
+  if (view === "credentials") {
+    lh.innerHTML = `<div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">Credentials</span><span class="cell">what claude presents to get in</span></div></div><div class="sum">Any of these carries the grants in the Apps list. A token expires on its date; a client stays in until revoked in Settings.</div>`;
+    list.innerHTML = `<div class="gh"><span>Tokens · ${TOKENS.filter((t) => !t.revoked).length}</span><span style="text-transform:none;letter-spacing:0;display:flex;gap:6px;align-items:center">expires in <select style="font:inherit;font-size:11px;height:22px;border:1px solid #e4e4e7;border-radius:6px" onchange="expiresIn=this.value">${["30d", "90d", "1y", "never"].map((v) => `<option value="${v}"${v === expiresIn ? " selected" : ""}>${v === "90d" ? "90 d · default" : v === "1y" ? "1 year" : v === "30d" ? "30 d" : "never"}</option>`).join("")}</select><button class="mini" onclick="issueToken()">Issue token</button></span></div>` +
+      TOKENS.filter((t) => !t.revoked).map((t) => `<div class="cr${sel("token", t.id)}${t.expired ? " dorm" : ""}" onclick="picked={kind:'token',id:'${t.id}'};render()"><div><span class="mono">${t.prefix}</span>${t.expired ? ` <span class="badge warn">expired</span>` : ""}${reveal && reveal.id === t.id ? ` <span class="badge ok" style="border-style:dashed">new</span>` : ""}<div class="d">created ${t.created} · expires ${t.expires}${t.days ? ` (${t.days} d)` : ""} · ${t.lastUsed ? "used " + t.lastUsed : "never used"}</div></div><div class="st" onclick="event.stopPropagation()">${confirmRevoke === t.id ? `<span class="cell" style="font-size:12px">${t.expired ? "It expired " + t.expires + "; removing it keeps its history." : "Calls with this key fail from now on."}</span><button class="mini" onclick="confirmRevoke=null;render()">Keep</button><button class="mini" style="color:#dc2626;border-color:#fecaca" onclick="revoke('${t.id}')">${t.expired ? "Remove" : "Revoke"}</button>` : `<button class="mini" onclick="confirmRevoke='${t.id}';render()">${t.expired ? "Remove" : "Revoke"}</button>`}</div></div>`).join("") +
+      `<div class="gh"><span>Connected clients · ${CLIENTS.length}</span><span style="text-transform:none;letter-spacing:0">OAuth · managed in Settings</span></div>` +
+      CLIENTS.map((c) => `<div class="cr${sel("client", c.id)}" onclick="picked={kind:'client',id:'${c.id}'};render()"><div><span>${c.name}</span> <span class="mono cell">${c.origin}</span><div class="d">consented ${c.consented} · used ${c.lastUsed}</div></div><div class="st"><span class="badge ok"><span class="dot"></span>active</span></div></div>`).join("") +
+      `<div class="note" style="padding:12px 16px">One OAuth client signs in as this agent, so its calls carry these grants. Revoking lives with the other credentials in Settings → Connected clients.</div>`;
+    if (picked && picked.kind === "token") {
+      const t = TOKENS.find((t) => t.id === picked.id);
+      det.innerHTML = `<div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">${t.prefix}</span><span class="badge">token</span>${t.expired ? `<span class="badge warn">expired</span>` : ""}</div><div class="cell" style="margin-top:2px">A bearer key an agent config pastes in. Resolved on every request; revocation is immediate.</div></div><div class="db">${reveal && reveal.id === t.id ? `<div class="sec" style="border-color:#bbf7d0;background:#f0fdf4"><div class="eyebrow" style="color:#15803d">Shown once — copy it now</div><div class="mono" style="font-size:12px;word-break:break-all">${reveal.key}</div><div class="row" style="gap:6px"><button class="mini" onclick="toast('copied');">Copy</button><span class="cell" style="font-size:11px">Any earlier key keeps working until you revoke it.</span></div></div>` : ""}<div class="sec"><div class="eyebrow">This key</div>${kv("Created", t.created)}${kv("Expires", t.expires + (t.days ? ` · ${t.days} d from issue` : " · no expiry"))}${kv("Last used", t.lastUsed || "never")}${kv("Carries", "every grant in the Apps list — a key is the agent, not a subset of it")}</div><div class="sec"><div class="eyebrow">Recent use</div>${t.lastUsed ? CALLS.slice(0, 3).map((c) => `<div class="kv"><div class="k">${c.when}</div><div><span class="mono">${c.app}</span> · <span class="mono">${c.tool}</span></div></div>`).join("") : "<span class='dim' style='font-size:12px'>no calls yet</span>"}</div><div class="row" style="gap:6px"><button class="mini" style="color:#dc2626;border-color:#fecaca" onclick="confirmRevoke='${t.id}';render()">${t.expired ? "Remove" : "Revoke"}</button>${t.expired ? `<span class="hint">the same revoke underneath — the row is kept as history, just no longer listed</span>` : ""}</div></div>`;
+    } else if (picked && picked.kind === "client") {
+      const c = CLIENTS.find((c) => c.id === picked.id);
+      det.innerHTML = `<div class="dh"><div class="row" style="gap:8px"><span style="font-size:15px;font-weight:600">${c.name}</span><span class="badge">OAuth client</span></div><div class="cell" style="margin-top:2px">Signed in through the hub's consent screen and bound to claude.</div></div><div class="db"><div class="sec"><div class="eyebrow">This client</div>${kv("Redirect origin", `<span class="mono">${c.origin}</span>`)}${kv("Consented", c.consented)}${kv("Last used", c.lastUsed)}${kv("Registered", c.selfRegistered ? "self-registered (unverified)" : "by you, at consent")}${kv("Carries", "every grant in the Apps list, like a token")}</div><div class="note">Revoke lives in <a>Settings → Connected clients</a> — one place revokes (§19.6). Deleting the agent revokes it too.</div></div>`;
+    } else {
+      det.innerHTML = `<div class="dh"><div style="font-size:15px;font-weight:600">Credentials</div><div class="cell" style="margin-top:2px">Select a token or client for its details.</div></div><div class="db"><div class="sec"><div class="eyebrow">Summary</div>${kv("Tokens", `${TOKENS.filter((t) => !t.expired && !t.revoked).length} live · ${TOKENS.filter((t) => t.expired && !t.revoked).length} expired`)}${kv("Clients", `${CLIENTS.length} active`)}${kv("Default expiry", "90 days for agent tokens; override at issue")}</div></div>`;
+    }
+    return;
+  }
+
+  if (view === "activity") {
+    const pending = APPROVALS.filter((a) => a.status === "pending");
+    lh.innerHTML = `<div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">Activity</span><span class="cell">the last 7 days, the retention window</span></div><a class="cell">full trail · /audit?principal=agent:claude</a></div><div class="sum">${CALLS.length} calls · ${CALLS.filter((c) => c.outcome === "ok").length} ok · ${CALLS.filter((c) => c.outcome === "not permitted").length} denied · ${pending.length} awaiting approval</div>`;
+    list.innerHTML = `<div class="gh"><span>Awaiting approval · ${pending.length}</span><span style="text-transform:none;letter-spacing:0">each expires an hour after it was asked</span></div>` +
+      (pending.length ? pending.map((a) => `<div class="cr${sel("approval", a.id)}" onclick="picked={kind:'approval',id:'${a.id}'};render()"><div><span class="mono cell">${a.app}</span> <span class="mono">${a.tool}</span><div class="d mono">${esc(JSON.stringify(a.args))}</div></div><div class="st" onclick="event.stopPropagation()"><span class="cell" style="font-size:11px">${a.age}</span><button class="mini" onclick="decide('${a.id}','rejected')">Reject</button><button class="mini" style="background:#18181b;color:#fafafa;border-color:#18181b" onclick="decide('${a.id}','approved')">Approve</button></div></div>`).join("") : `<div class="note" style="padding:6px 16px">Nothing waiting.</div>`) +
+      APPROVALS.filter((a) => a.status !== "pending").map((a) => `<div class="cr dorm"><div><span class="mono cell">${a.app}</span> <span class="mono">${a.tool}</span><div class="d">${a.status} just now</div></div><div class="st"><span class="badge">${a.status}</span></div></div>`).join("") +
+      `<div class="gh"><span>Recent calls · ${CALLS.length}</span><span style="text-transform:none;letter-spacing:0">newest first</span></div>` +
+      CALLS.map((c) => `<div class="cr${sel("call", c.id)}" onclick="picked={kind:'call',id:'${c.id}'};render()"><div><span class="mono cell">${c.app}</span> <span class="mono">${c.tool}</span><div class="d">${c.when} · ${c.ms} ms</div></div><div class="st">${outcomeBadge(c.outcome)}</div></div>`).join("");
+    if (picked && picked.kind === "approval") {
+      const a = APPROVALS.find((a) => a.id === picked.id);
+      det.innerHTML = `<div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">${a.tool}</span><span class="badge warn">${a.status}</span></div><div class="cell" style="margin-top:2px">claude wants to call this on <span class="mono">${a.app}</span> · asked ${a.age}${a.status === "pending" ? ` · expires in ${a.expires}` : ""}</div></div><div class="db"><div class="sec"><div class="eyebrow">Arguments · post-redaction</div><div class="mono" style="font-size:12px;white-space:pre">${esc(JSON.stringify(a.args, null, 2))}</div></div><div class="sec"><div class="eyebrow">Why it waits</div>${kv("Grant", `<span class="mono">admin</span> is in Ask first on <span class="mono">${a.app}</span>`)}${kv("Then", "the agent retries the identical call and it runs once; a different call asks again")}</div>${a.status === "pending" ? `<div class="row" style="gap:6px"><button class="mini" onclick="decide('${a.id}','rejected')">Reject</button><button class="mini" style="background:#18181b;color:#fafafa;border-color:#18181b" onclick="decide('${a.id}','approved')">Approve</button></div>` : ""}</div>`;
+    } else if (picked && picked.kind === "call") {
+      const c = CALLS.find((c) => c.id === picked.id);
+      const why = c.outcome === "ok" ? null : "Refused before the call was made, so there are no bodies to show.";
+      det.innerHTML = `<div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">${c.tool}</span>${outcomeBadge(c.outcome)}</div><div class="cell" style="margin-top:2px"><span class="mono">${c.app}</span> · ${c.when} · ${c.ms} ms · client ${c.client}</div></div><div class="db">${why ? `<div class="sec"><div class="cell">${why}</div></div>` : `<div class="sec"><div class="eyebrow">Arguments</div><div class="mono" style="font-size:12px;white-space:pre">${esc(JSON.stringify(c.args, null, 2))}</div></div><div class="sec"><div class="eyebrow">Result · structuredContent</div><div class="mono" style="font-size:12px;white-space:pre">${esc(JSON.stringify(c.result, null, 2))}</div></div>`}<div class="note">The same row the audit page shows, with its keys clickable there to mask a path from evidence. <a>Open in the audit trail</a>.</div></div>`;
+    } else {
+      det.innerHTML = `<div class="dh"><div style="font-size:15px;font-weight:600">Activity</div><div class="cell" style="margin-top:2px">Select a request or a call for its details.</div></div><div class="db"><div class="sec"><div class="eyebrow">7 days</div>${kv("Calls", `${CALLS.length} · ${CALLS.filter((c) => c.outcome === "ok").length} ok`)}${kv("Denied", `${CALLS.filter((c) => c.outcome === "not permitted").length} — the agent probing past its grants`)}${kv("Gated", `${CALLS.filter((c) => c.outcome === "approval required").length}`)}${kv("Most called", "<span class='mono'>news</span> · <span class='mono'>search_items</span>")}</div></div>`;
+    }
+    return;
+  }
+
+  document.querySelector(".panes").classList.toggle("wide", view === "grant");
+  if (view === "grant") {
+    const apps = UNGRANTED();
+    lh.innerHTML = `<div class="row" style="justify-content:space-between"><div class="row" style="gap:6px"><span style="font-weight:600">Grant another app</span><span class="cell">apps claude holds nothing on</span></div><input class="filter" placeholder="search apps and endpoints…" value="${esc(grantQuery)}" oninput="grantQuery=this.value;render();document.querySelector('.filter').focus()"></div><div class="sum">What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing granted yet.</div>`;
+    const rolesFor = (app, fam, name) => Object.keys(APPS[app].roles).filter((r) => (APPS[app].roles[r][fam] || []).some((pt) => matches(pt, name)));
+    const info = (desc, args) => `<span class="info">i<span class="tip">${esc(desc)}${args && args.length ? `<div class="a" style="margin-top:4px">args: ${args.map(([n, t, d]) => `${n} <span style="opacity:.7">${t}${d && d.startsWith("required") ? "" : "?"}</span>`).join(", ")}</div>` : ""}</span></span>`;
+    const ep = (app, fam, [name, desc, args]) => {
+      const rs = rolesFor(app, fam, name);
+      return `<div class="ep"><div><span class="fam">${fam.slice(0, -1)}</span><span class="mono">${esc(name)}</span>${info(desc || (fam === "resources" ? "resource · " + (desc || "") : ""), args)}</div><div class="roles">${rs.length ? rs.map((r) => `<span class="badge mono">${r}</span>`).join("") : `<span class="dim" style="font-size:11px">only via <span class="mono">all</span> or by name</span>`}</div></div>`;
+    };
+    const gq = grantQuery.trim().toLowerCase();
+    const epHit = ([name, desc]) => !gq || name.toLowerCase().includes(gq) || (desc || "").toLowerCase().includes(gq);
+    const appHit = (a) => !gq || a.includes(gq) || APPS[a].name.toLowerCase().includes(gq) || (APP_DESC[a] || "").toLowerCase().includes(gq) || [...APPS[a].tools, ...APPS[a].prompts, ...APPS[a].resources].some(epHit);
+    const card = (a) => {
+      const A = APPS[a];
+      const n = A.tools.length + A.prompts.length + A.resources.length;
+      const epMatch = gq && [...A.tools, ...A.prompts, ...A.resources].some(epHit);
+      const isOpen = openApps.has(a) || epMatch;
+      const counts = [`${A.tools.length} tools`, A.prompts.length ? `${A.prompts.length} prompts` : null, A.resources.length ? `${A.resources.length} resources` : null].filter(Boolean).join(" · ");
+      return `<div class="appcard"><div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+        <div class="row" style="gap:8px"><span style="font-weight:600">${A.name}</span><span class="mono cell">${a}</span><span class="badge">${A.kind}</span><span class="badge ok"><span class="dot"></span>${A.status}</span></div>
+        <div style="font-size:13px">${APP_DESC[a] || ""}</div>
+        <div class="cell" style="font-size:12px">${counts} · roles ${Object.keys(A.roles).map((r) => `<span class="mono">${r}</span>`).join(", ") || "none"} <button class="tog" onclick="openApps.has('${a}') ? openApps.delete('${a}') : openApps.add('${a}'); render()">${isOpen ? "hide" : "show all " + n}</button></div>
+        ${isOpen ? `<div class="eps">${A.tools.filter(epHit).map((t) => ep(a, "tools", t)).join("")}${A.prompts.filter(epHit).map((t) => ep(a, "prompts", t)).join("")}${A.resources.filter(epHit).map((t) => ep(a, "resources", t)).join("")}</div>` : ""}
+      </div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><button class="btn primary" onclick="startGrant('${a}')">Grant</button></div></div>`;
+    };
+    list.innerHTML = apps.length
+      ? (apps.filter(appHit).length ? `<div class="gh"><span>Apps · ${apps.filter(appHit).length}${gq ? " of " + apps.length : ""}</span><span style="text-transform:none;letter-spacing:0">active, not archived · nothing is written until you save</span></div>` + apps.filter(appHit).map(card).join("") : `<div class="note" style="padding:16px">No app or endpoint matches “${esc(grantQuery)}”.</div>`)
+      : `<div class="note" style="padding:16px">claude already holds a grant on every active app. Archived apps are not listed; unarchive one to grant it.</div>`;
+    return;
+  }
+
+  // danger
+  lh.innerHTML = `<div class="row" style="gap:6px"><span style="font-weight:600">Danger zone</span></div>`;
+  list.innerHTML = `<div style="padding:16px"><div class="sec" style="border-color:#fecaca"><div style="font-weight:500">Delete agent</div><div class="cell">Deleting an agent deletes its tokens, revokes its clients and removes its grants everywhere. This cannot be undone.</div><div class="row" style="gap:6px;padding-top:6px"><button class="mini" style="color:#dc2626;border-color:#fecaca" onclick="toast('agent_delete claude — not in the demo')">Delete claude</button></div></div></div>`;
+  det.innerHTML = `<div class="dh"><div style="font-size:15px;font-weight:600">What deletion removes</div></div><div class="db"><div class="sec">${kv("Grants", `${Object.keys(SAVED).length} apps`)}${kv("Tokens", `${TOKENS.filter((t) => !t.revoked).length}`)}${kv("Clients", `${CLIENTS.length} — the binding cascades`)}${kv("History", "kept — audit rows name the principal, not the row")}</div></div>`;
+}
+
+function renderDetails(set) {
+  const A = APPS[current];
+  if (!selected) {
+    const r = reach(current, set);
+    return `<div class="dh"><div class="row" style="gap:8px"><span style="font-size:15px;font-weight:600">${A.name}</span><span class="badge">${A.kind}</span></div><div class="cell" style="margin-top:2px">Select a role, tool, prompt or resource on the left for its details.</div></div>
+      <div class="db"><div class="sec"><div class="eyebrow">Catalog</div>${kv("Tools", `${A.tools.length} · ${r.tools.reached} reached by claude`)}${kv("Prompts", `${A.prompts.length} · ${r.prompts.reached} reached`)}${kv("Resources", `${A.resources.length} · ${r.resources.reached} reached`)}${kv("Roles", Object.keys(A.roles).join(", ") || "none declared")}</div>
+      <div class="sec"><div class="eyebrow">Grant set for claude</div>${kv("Allowed", set.allow.map((e) => `<span class="mono">${esc(e)}</span>`).join(", ") || "<span class='dim'>nothing</span>")}${kv("Ask first", set.approval.map((e) => `<span class="mono">${esc(e)}</span>`).join(", ") || "<span class='dim'>nothing</span>")}</div></div>`;
+  }
+  const { kind, name } = selected;
+  if (kind === "role") {
+    const role = name, mode = set.allow.includes(role) ? "allow" : set.approval.includes(role) ? "approval" : "";
+    const fams = role === "all" ? { tools: [".*"], prompts: [".*"], resources: [".*"] } : A.roles[role];
+    const matched = ["tools", "prompts", "resources"].map((f) => [f, A[f].filter(([n]) => (fams[f] || []).some((p) => matches(p, n))).map(([n]) => n)]);
+    return `<div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">${role}</span><span class="badge">role</span></div><div class="cell" style="margin-top:2px">${role === "all" ? "Built in: every family, present and future." : `Declared by ${A.name}${A.kind === "tunneled" ? " at connect" : " in config"}.`}</div></div>
+      <div class="db"><div class="sec"><div class="eyebrow">For claude</div>${kv("Standing", mode ? `<span class="badge ${mode === "allow" ? "ok" : "warn"}">${mode === "allow" ? chk + " in Allowed" : "in Ask first"}</span>` : "<span class='dim'>not granted</span>")}<div class="row" style="gap:6px"><span class="seg"><button class="${mode === "" ? "on" : ""}" onclick="setEntry('${role}',null)">none</button><button class="${mode === "approval" ? "on warn" : ""}" onclick="setEntry('${role}','approval')">ask</button><button class="${mode === "allow" ? "on" : ""}" onclick="setEntry('${role}','allow')">allow</button></span></div></div>
+      <div class="sec"><div class="eyebrow">Patterns</div>${Object.entries(fams).map(([f, p]) => kv(f, `<span class="mono">${esc(p.join(", "))}</span>`)).join("")}</div>
+      <div class="sec"><div class="eyebrow">Matches today</div>${matched.map(([f, ns]) => kv(f, ns.length ? ns.map((n) => `<span class="mono">${esc(n)}</span>`).join(", ") : "<span class='dim'>none</span>")).join("")}</div>
+      <div class="note">A role widens when the app widens it. To keep a single item regardless, add it directly from its row.</div></div>`;
+  }
+  if (kind === "pattern") {
+    const mode = set.allow.includes(name) ? "allow" : "approval";
+    const p = parseEntry(name);
+    const ns = A[p.family].filter(([n]) => matches(p.pattern, n)).map(([n]) => n);
+    return `<div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">${esc(name)}</span><span class="badge">pattern</span></div><div class="cell" style="margin-top:2px">An entry that is not one item: anchored, <span class="mono">*</span> aliases <span class="mono">.*</span>.</div></div>
+      <div class="db"><div class="sec"><div class="eyebrow">For claude</div>${kv("Standing", `<span class="badge ${mode === "allow" ? "ok" : "warn"}">${mode === "allow" ? chk + " in Allowed" : "in Ask first"}</span>`)}<div class="row" style="gap:6px"><button class="mini" onclick="setEntry('${esc(name)}','${mode === "allow" ? "approval" : "allow"}')">Move to ${mode === "allow" ? "Ask first" : "Allowed"}</button><button class="mini" onclick="setEntry('${esc(name)}',null);selected=null;render()">Remove</button></div></div>
+      <div class="sec"><div class="eyebrow">Matches today · ${ns.length}</div>${ns.length ? ns.map((n) => `<div class="mono" style="font-size:12px">${esc(n)}</div>`).join("") : "<span class='dim' style='font-size:12px'>nothing — kept, dormant</span>"}</div></div>`;
+  }
+  const family = famOf[kind];
+  const item = A[family].find(([n]) => n === name);
+  const s = standing(current, set, family, name);
+  const direct = `${kind}/${name}`;
+  const viaRoles = s.via.filter((e) => e !== direct);
+  const stand = s.mode === "allow" ? `<span class="badge ok">${chk} allowed${viaRoles.length ? " · via " + viaRoles.join(", ") : " · direct"}</span>` : s.mode === "approval" ? `<span class="badge warn">ask${viaRoles.length ? " · via " + viaRoles.join(", ") : " · direct"}</span>` : `<span class="dim">not reachable</span>`;
+  const approvalNote = s.mode === "allow" && viaRoles.length ? `Not asked — allow wins over any ask entry, so adding one here would not gate it while <span class="mono">${viaRoles.join(", ")}</span> allows it.` : s.mode === "approval" ? "Asked — each call waits for you." : s.mode === "allow" ? "Not asked." : "—";
+  const args = kind === "tool" ? `<div class="sec"><div class="eyebrow">Arguments</div>${item[2].length ? item[2].map(([n, t, d]) => `<div class="arg"><div class="mono">${n}</div><div class="muted">${t}</div><div>${d.includes("redacted") ? d.replace("redacted (config)", `<span class="badge warn" style="height:18px">redacted · config</span>`) : d}</div></div>`).join("") : "<span class='dim' style='font-size:12px'>none</span>"}</div>` : "";
+  const hub = kind === "tool" ? `<div class="sec"><div class="eyebrow">What only the hub knows</div>${kv("Called as", `<span class="mono">${current}_${esc(name)}</span> on the aggregated endpoint`)}${kv("Reachable by", `<span class="mono">claude</span>${s.mode ? "" : " — not with this set"}${current === "news" ? ", <span class='mono'>cron</span> · via reader" : ""}`)}${kv("Redaction", name === "search_items" ? "arguments <span class='mono'>cookie</span> (config)" : "none")}</div>` : kind === "resource" ? `<div class="sec"><div class="eyebrow">Resource</div>${kv("URI", `<span class="mono">${esc(name)}</span>`)}${kv("Type", item[1])}${kv("Served on", `the scoped endpoint only — <span class="mono">/ahrzb/mcp/${current}</span>`)}</div>` : "";
+  return `<div class="dh"><div class="row" style="gap:8px"><span class="mono" style="font-size:15px;font-weight:600">${esc(name)}</span><span class="badge">${kind}</span></div><div class="cell" style="margin-top:2px">${esc(item[1])}</div></div>
+    <div class="db"><div class="sec"><div class="eyebrow">For claude</div>${kv("Standing", stand)}${kv("Approval", approvalNote)}${kv("Last called", s.mode ? "2 h ago · 31 calls in 7 d · <a>see them</a>" : "<span class='dim'>never — not reachable</span>")}<div class="row" style="gap:8px;padding-top:2px">${itemSeg(direct, standing(current, { allow: set.allow.filter((e) => e !== direct), approval: set.approval.filter((e) => e !== direct) }, family, name), viaRoles)}<span class="hint">solid: set on this item · hollow: implied by a role · a direct entry survives the app changing what a role matches</span></div></div>${args}${hub}</div>`;
+}
+const kv = (k, v) => `<div class="kv"><div class="k">${k}</div><div>${v}</div></div>`;
+render();
+</script>
+</body>
+</html>

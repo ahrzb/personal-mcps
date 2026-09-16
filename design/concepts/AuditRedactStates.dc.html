@@ -1,0 +1,299 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
+  <style>
+    body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px}
+    a{color:#09090b;text-decoration:underline;text-underline-offset:2px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .muted{color:#71717a}.dim{color:#a1a1aa}
+    .card{background:#fff;border:1px solid #e4e4e7;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.05);overflow:hidden}
+    .badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:6px;font-size:12px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+    .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+    .badge.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+    .badge.outline{background:#fff;border:1px solid #e4e4e7;color:#52525b;height:18px;padding:0 6px;font-size:11px;vertical-align:-4px}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+    .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+    .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+    .btn.dangerout{color:#dc2626;border-color:#fecaca}
+    .panel{width:560px;display:flex;flex-direction:column;gap:8px}
+    .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
+    .rowhead{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #f4f4f5;font-size:13px}
+    .body{background:#fafafa;padding:16px;display:flex;flex-direction:column;gap:14px}
+    .chips{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:6px;background:#f4f4f5;font-size:12px;font-weight:500;color:#71717a}
+    .sect{display:flex;flex-direction:column;gap:6px}
+    .label{font-size:12px;font-weight:500;color:#71717a;letter-spacing:.06em;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+    .json{background:#f4f4f5;border-radius:8px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.8;color:#09090b;white-space:pre;position:relative}
+    .key{text-decoration:underline dotted #a1a1aa;text-underline-offset:3px;cursor:pointer}
+    .key.hot{background:#fff;outline:1px solid #a1a1aa;border-radius:3px;padding:0 2px;text-decoration:none}
+    .key.done{text-decoration:none}
+    .red{color:#71717a}
+    .red.hot{background:#fff;outline:1px solid #a1a1aa;border-radius:3px;padding:0 2px}
+    .pop{position:absolute;z-index:2;width:330px;background:#fff;border:1px solid #e4e4e7;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.15);padding:14px 16px;display:flex;flex-direction:column;gap:12px;font-family:'Geist',system-ui,sans-serif;white-space:normal;line-height:1.5}
+    .pop .t{font-size:14px;font-weight:600}
+    .pop .s{font-size:12px;color:#71717a}
+    .opt{display:flex;align-items:flex-start;gap:8px;font-size:13px}
+    .radio{width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:1.5px solid #a1a1aa;background:#fff;flex-shrink:0;margin-top:2px}
+    .radio.on{border:4.5px solid #18181b}
+    .cb{width:14px;height:14px;box-sizing:border-box;border-radius:3px;border:1.5px solid #a1a1aa;background:#fff;flex-shrink:0;margin-top:2px;display:flex;align-items:center;justify-content:center}
+    .cb.on{background:#18181b;border-color:#18181b}
+    .cb.fixed{background:#a1a1aa;border-color:#a1a1aa}
+    .cb.off{background:#f4f4f5;border-color:#e4e4e7}
+    .callout{background:#f4f4f5;border-radius:8px;padding:10px 12px;font-size:12px;color:#71717a;line-height:1.5}
+    .alert{background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.5;margin:16px 16px 0}
+    .note{font-size:12px;color:#71717a;line-height:1.5}
+  </style>
+</helmet>
+<div style="width:1240px;min-height:1900px;box-sizing:border-box;background:#fff;padding:32px;display:flex;flex-direction:column;gap:32px">
+
+  <div style="display:flex;gap:40px;align-items:flex-start">
+
+    <!-- 1. hover -->
+    <div class="panel">
+      <div class="eyebrow">Expanded row &mdash; keys are targets</div>
+      <div class="card">
+        <div class="rowhead">
+          <div class="mono muted" style="font-size:12px">14:02:11</div>
+          <div class="mono" style="font-size:12px">agent:claude</div>
+          <div>tool.call</div>
+          <div class="muted">notion</div>
+          <div class="mono" style="font-size:12px">create_page</div>
+          <div style="flex-grow:1"></div>
+          <span class="badge ok">ok</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
+        </div>
+        <div class="body">
+          <div class="chips">
+            <span class="chip">client<span class="mono" style="color:#52525b">claude-ai/1.2</span></span>
+            <span class="chip">session<a href="#" class="mono">s_8fk2&hellip;</a></span>
+            <span class="muted" style="font-size:12px">filter to session</span>
+          </div>
+          <div class="sect">
+            <div class="label"><span>Arguments</span><span style="text-transform:none;letter-spacing:0;font-weight:400">click a key to mask it in future calls</span></div>
+<div class="json">{
+  <span class="key">"title"</span>: "Q3 retro",
+  <span class="key">"parent"</span>: { <span class="key">"database_id"</span>: "b2f1&hellip;" },
+  <span class="key">"credentials"</span>: {
+    <span class="key">"user"</span>: "ahrzb",
+    <span class="key hot">"api_key"</span>: "ntn_51ab9f&hellip;"
+  }
+}</div>
+          </div>
+          <div class="sect">
+            <div class="label"><span>Result</span></div>
+<div class="json">{
+  "structuredContent": {
+    <span class="key">"page"</span>: {
+      <span class="key">"id"</span>: "7c0e&hellip;",
+      <span class="key">"share_token"</span>: <span class="red">&lsaquo;redacted&rsaquo;</span>
+    }
+  },
+  "content": [ <span class="badge outline">&lsaquo;text &middot; 1.1 KB&rsaquo;</span> ]
+}</div>
+          </div>
+        </div>
+      </div>
+      <div class="note">Every key in a recorded body carries its dotted path; the dotted underline is the affordance, on hover it firms up. Stubs and the sentinel are values, not keys, but the sentinel is a target too (panel 3).</div>
+    </div>
+
+    <!-- 2. popover on an argument key -->
+    <div class="panel">
+      <div class="eyebrow">Popover &mdash; an argument key</div>
+      <div class="card">
+        <div class="rowhead">
+          <div class="mono muted" style="font-size:12px">14:02:11</div>
+          <div class="mono" style="font-size:12px">agent:claude</div>
+          <div>tool.call</div>
+          <div class="muted">notion</div>
+          <div class="mono" style="font-size:12px">create_page</div>
+          <div style="flex-grow:1"></div>
+          <span class="badge ok">ok</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
+        </div>
+        <div class="body">
+          <div class="chips">
+            <span class="chip">client<span class="mono" style="color:#52525b">claude-ai/1.2</span></span>
+            <span class="chip">session<a href="#" class="mono">s_8fk2&hellip;</a></span>
+          </div>
+          <div class="sect">
+            <div class="label"><span>Arguments</span></div>
+<div class="json" style="padding-bottom:300px">{
+  <span class="key">"title"</span>: "Q3 retro",
+  <span class="key">"parent"</span>: { <span class="key">"database_id"</span>: "b2f1&hellip;" },
+  <span class="key">"credentials"</span>: {
+    <span class="key">"user"</span>: "ahrzb",
+    <span class="key hot">"api_key"</span>: "ntn_51ab9f&hellip;"
+  }
+}<div class="pop" style="left:150px;top:118px">
+  <div>
+    <div class="t">Mask <span class="mono">credentials.api_key</span></div>
+    <div class="s">in arguments to <span class="mono">notion</span> &middot; the map <span class="mono">redact</span></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <div class="opt"><div class="cb fixed"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div><div><span class="mono">create_page</span> <span class="muted">&middot; this call</span></div></div>
+    <div class="opt"><div class="cb on"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div><div>Also on the <b>3</b> other tools that take it <a href="#" style="font-size:12px;margin-left:4px">show</a></div></div>
+    <div class="s">13 tools don&rsquo;t take it and aren&rsquo;t offered.</div>
+  </div>
+  <div class="callout">Applies from the next call. This row and the 11 others already recorded keep the value until they are pruned, in 6 days.</div>
+  <div style="display:flex;justify-content:flex-end;gap:6px"><div class="btn ghost">Cancel</div><div class="btn primary">Mask on 4 tools</div></div>
+</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="note">The popover is a form: it posts the app&rsquo;s existing update op with the current map plus one literal-keyed entry per checked tool, and lands back on this row (<span class="mono">?expand=&lt;id&gt;</span>). The group row is the catalog walked for this one path, collapsed whatever its length (<span class="mono">AuditRedactLongList</span> opens it); a tool that doesn&rsquo;t carry it is not offered. The <span class="mono">.*</span> spelling is not here &mdash; it lives on the Recording pane for &ldquo;and any tool added later&rdquo;.</div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:40px;align-items:flex-start">
+
+    <!-- 3. popover on a redacted node -->
+    <div class="panel">
+      <div class="eyebrow">Popover &mdash; an already-masked value</div>
+      <div class="card">
+        <div class="rowhead">
+          <div class="mono muted" style="font-size:12px">14:02:11</div>
+          <div class="mono" style="font-size:12px">agent:claude</div>
+          <div>tool.call</div>
+          <div class="muted">notion</div>
+          <div class="mono" style="font-size:12px">create_page</div>
+          <div style="flex-grow:1"></div>
+          <span class="badge ok">ok</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
+        </div>
+        <div class="body">
+          <div class="sect">
+            <div class="label"><span>Result</span></div>
+<div class="json" style="padding-bottom:170px">{
+  "structuredContent": {
+    <span class="key">"page"</span>: {
+      <span class="key">"id"</span>: "7c0e&hellip;",
+      <span class="key">"share_token"</span>: <span class="red hot">&lsaquo;redacted&rsaquo;</span>
+    }
+  }
+}<div class="pop" style="left:120px;top:96px">
+  <div>
+    <div class="t">Masked: <span class="mono">page.share_token</span></div>
+    <div class="s">by the config path on <span class="mono">create_page</span> in <span class="mono">redact_results</span> &middot; added Sep 3</div>
+  </div>
+  <div class="callout">Removing stops masking future calls. Values already replaced stay replaced.</div>
+  <div style="display:flex;justify-content:space-between;align-items:center"><a href="#" style="font-size:12px">All rules for notion</a><div style="display:flex;gap:6px"><div class="btn ghost">Close</div><div class="btn dangerout">Remove rule</div></div></div>
+</div></div>
+          </div>
+          <div class="sect">
+            <div class="label"><span>Same node, on a tunneled app</span></div>
+<div class="json" style="padding-bottom:110px">{
+  <span class="key">"query"</span>: "cloudflare outage",
+  <span class="key">"password"</span>: <span class="red hot">&lsaquo;redacted&rsaquo;</span>
+}<div class="pop" style="left:120px;top:44px">
+  <div>
+    <div class="t">Masked: <span class="mono">password</span></div>
+    <div class="s">declared <span class="mono">writeOnly</span> by <span class="mono">news</span> in its own schema &middot; nothing here to remove</div>
+  </div>
+  <div style="display:flex;justify-content:flex-end"><div class="btn ghost">Close</div></div>
+</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="note">The inverse answers &ldquo;why is this hidden&rdquo; without leaving the row. A schema-declared mask names its source and offers nothing, since the app owns it; a config mask offers Remove, the one edit the map allows here.</div>
+    </div>
+
+    <!-- 4. after save -->
+    <div class="panel">
+      <div class="eyebrow">Landed back on the row &mdash; forward-only, said plainly</div>
+      <div class="card">
+        <div class="alert">Masking <span class="mono">credentials.api_key</span> in arguments to <span class="mono">create_page</span> from now on. The map lives on <a href="#">notion &rarr; Recording</a>.</div>
+        <div class="rowhead" style="margin-top:12px">
+          <div class="mono muted" style="font-size:12px">14:02:11</div>
+          <div class="mono" style="font-size:12px">agent:claude</div>
+          <div>tool.call</div>
+          <div class="muted">notion</div>
+          <div class="mono" style="font-size:12px">create_page</div>
+          <div style="flex-grow:1"></div>
+          <span class="badge ok">ok</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
+        </div>
+        <div class="body">
+          <div class="sect">
+            <div class="label"><span>Arguments</span></div>
+<div class="json">{
+  <span class="key">"title"</span>: "Q3 retro",
+  <span class="key">"parent"</span>: { <span class="key">"database_id"</span>: "b2f1&hellip;" },
+  <span class="key">"credentials"</span>: {
+    <span class="key">"user"</span>: "ahrzb",
+    <span class="key done">"api_key"</span>: "ntn_51ab9f&hellip;" <span class="badge warn" style="height:18px;font-size:11px;vertical-align:-4px">masked from the next call</span>
+  }
+}</div>
+          </div>
+        </div>
+      </div>
+      <div class="note">The recorded value is still there and the page does not pretend otherwise: the badge marks a key the map now covers, on every recorded row that carries it, for the rest of the retention window.</div>
+    </div>
+  </div>
+
+  <!-- 5. approval detail -->
+  <div style="display:flex;gap:40px;align-items:flex-start">
+    <div class="panel" style="width:480px">
+      <div class="eyebrow">Approval detail &mdash; the same affordance before the call runs</div>
+      <div class="card" style="padding:20px;display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div class="muted" style="font-size:12px">agent:claude wants to call</div>
+          <div class="mono" style="font-size:15px;font-weight:600">notion &middot; create_page</div>
+          <div class="muted" style="font-size:12px">requested 2 min ago &middot; expires in 58 min</div>
+        </div>
+        <div class="sect">
+          <div class="label"><span>Arguments</span></div>
+<div class="json" style="padding-bottom:270px">{
+  <span class="key">"title"</span>: "Q3 retro",
+  <span class="key">"credentials"</span>: {
+    <span class="key hot">"api_key"</span>: "ntn_51ab9f&hellip;"
+  }
+}<div class="pop" style="left:90px;top:70px;width:300px">
+  <div>
+    <div class="t">Mask <span class="mono">credentials.api_key</span></div>
+    <div class="s">in arguments to <span class="mono">notion</span></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <div class="opt"><div class="cb fixed"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div><div><span class="mono">create_page</span> <span class="muted">&middot; this request</span></div></div>
+    <div class="opt"><div class="cb on"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></div><div>Also on the <b>3</b> other tools that take it <a href="#" style="font-size:12px;margin-left:4px">show</a></div></div>
+  </div>
+  <div class="callout">This request keeps the value it was recorded with; its approval hash is already bound to it. The next request is masked.</div>
+  <div style="display:flex;justify-content:flex-end;gap:6px"><div class="btn ghost">Cancel</div><div class="btn primary">Mask on 4 tools</div></div>
+</div></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px"><div class="btn dangerout">Reject</div><div class="btn primary">Approve</div></div>
+      </div>
+      <div class="note">The approval page is where a request is read before it runs, so it is the earlier of the two moments to notice a secret. Same popover, same op; the decision buttons are untouched.</div>
+    </div>
+
+    <div class="panel" style="width:640px">
+      <div class="eyebrow">Board notes</div>
+      <div class="card" style="padding:14px 16px;background:#fafafa;border-style:dashed;box-shadow:none">
+        <div class="note" style="display:flex;flex-direction:column;gap:6px">
+          <div>&bull; <b>Path from a click.</b> Each rendered key carries its dotted path; an array index is dropped on the way (<span class="mono">items.3.token</span> &rarr; <span class="mono">items.token</span>), which is what the masker already does &mdash; a path meeting an array applies to every element.</div>
+          <div>&bull; <b>One op, no new op.</b> The popover posts <span class="mono">app_update</span> with <span class="mono">redact</span> or <span class="mono">redact_results</span> equal to the current map plus one literal-keyed entry per checked tool (or minus one, for Remove). The route reads the map, merges, writes &mdash; the same merge the Recording pane does.</div>
+          <div>&bull; <b>Named tools, never &ldquo;every&rdquo;.</b> The &ldquo;also takes this path&rdquo; list is the catalog walked for the clicked path: each tool&rsquo;s input schema, <span class="mono">$ref</span>s resolved the way the <span class="mono">writeOnly</span> walk resolves them. Only tools that carry the path are offered, pre-checked, as one collapsed group row at any length &mdash; one popover shape, no threshold. Limits, shown not hidden: a result key on a proxied app offers this tool only (no cached output schema to walk); a schema-unsound tool is listed as &ldquo;unknown&rdquo; and unchecked.</div>
+          <div>&bull; <b>Forward-only, stated.</b> Scrubbing recorded rows would rewrite audit and approval bodies: a new op, a CLI command, and a claim the record of record has been edited. Left out; the badge in panel 4 keeps the exposure visible instead.</div>
+          <div>&bull; <b>/audit gains one mutation.</b> It has none today (&sect;13: no CSRF surface). The popover&rsquo;s form carries the token and a return target; the alternative is a link into the Recording pane prefilled, which is also the scripting-off path &mdash; every key is that link, and the popover intercepts the click when script is on.</div>
+          <div>&bull; <b>Both directions.</b> Keys under Arguments write to <span class="mono">redact</span>; keys under <span class="mono">structuredContent</span> write to <span class="mono">redact_results</span>. Keys inside stubbed content blocks do not exist &mdash; blocks are never stored.</div>
+          <div>&bull; <b>Recording pane shrinks.</b> With this in place the pane&rsquo;s editor is a list with Remove and one Add row; adding from evidence is the primary path. The Add row stays for the proxied case, where nothing is recorded to click on until you have masked what you already know is secret.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1240,"height":1900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

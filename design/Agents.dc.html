@@ -9,83 +9,173 @@
 <helmet>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
   <style>
-    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
-    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
-    a:hover { color: #52525b; }
+    body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px}
+    a{color:#09090b;text-decoration:underline;text-underline-offset:2px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .muted{color:#71717a}.dim{color:#a1a1aa}
+    .card{background:#fff;border:1px solid #e4e4e7;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+    .badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:6px;font-size:12px;font-weight:500;background:#f4f4f5;color:#71717a;white-space:nowrap}
+    .badge.warn{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+    .badge.ok{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
+    .badge.danger{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+    .badge .k{color:#a1a1aa;font-size:11px}
+    .lbl{font-size:11px;color:#a1a1aa;width:56px;flex-shrink:0;text-align:right}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 16px;border-radius:8px;font-size:14px;font-weight:500;border:1px solid #e4e4e7;background:#fff;color:#09090b;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+    .btn.sm{height:32px;padding:0 12px;font-size:13px}
+    .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+    .btn.ghost{background:transparent;border-color:transparent;box-shadow:none}
+    .btn.dangerout{color:#dc2626;border-color:#fecaca}
+    .nav{height:56px;box-sizing:border-box;border-bottom:1px solid #e4e4e7;display:flex;align-items:center;justify-content:space-between;padding:0 32px}
+    .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:#71717a}
+    .navitem.on{background:#f4f4f5;color:#09090b}
+    .th{font-size:13px;font-weight:500;color:#71717a}
+    .grid{display:grid;grid-template-columns:170px 1fr 165px 150px 60px 100px 24px;column-gap:12px;align-items:start;padding:12px 20px;border-bottom:1px solid #f4f4f5}
+    .grid.link{position:relative;cursor:pointer}
+    .grid.link:hover,.grid.link.hover{background:#fafafa}
+    .grid.link .stretch::after{content:"";position:absolute;inset:0}
+    .grid.link .above{position:relative;z-index:1}
+    .chev{display:flex;align-items:center;justify-content:center;height:32px;color:#a1a1aa}
+    .grid.link:hover .chev,.grid.link.hover .chev{color:#09090b}
+    .grid.head{padding:10px 20px;border-bottom:1px solid #e4e4e7;align-items:center}
+    .col{display:flex;flex-direction:column;gap:4px}
+    .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .cell{font-size:13px;color:#71717a;line-height:1.5}
+    .expand{background:#fafafa;border-bottom:1px solid #f4f4f5;padding:14px 20px 16px 56px;display:flex;flex-direction:column;gap:10px}
+    .app{display:grid;grid-template-columns:150px 1fr 110px;column-gap:16px;align-items:start;padding:10px 0;border-bottom:1px solid #f4f4f5;font-size:13px}
+    .app:last-child{border-bottom:none}
+    .lists{display:grid;grid-template-columns:96px 1fr;row-gap:5px;column-gap:8px;align-items:center}
+    .lists .l{font-size:11px;color:#a1a1aa}
+    .lists .r{font-size:12px;color:#71717a}
+    .note{font-size:12px;color:#71717a;line-height:1.5}
+    .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;line-height:1.2}
   </style>
 </helmet>
-<div style="width: 1240px; min-height: 720px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
+<div style="width:1240px;min-height:720px;box-sizing:border-box;background:#fff;display:flex;flex-direction:column">
 
-  <div style="height: 56px; box-sizing: border-box; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; padding: 0 32px;">
-    <div style="display: flex; align-items: center; gap: 24px;">
-      <div style="display: flex; align-items: center; gap: 8px;">
+  <div class="nav">
+    <div style="display:flex;align-items:center;gap:24px">
+      <div style="display:flex;align-items:center;gap:8px">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>
-        <div style="font-size: 15px; font-weight: 600;">personal-mcps</div>
+        <div style="font-size:15px;font-weight:600">personal-mcps</div>
       </div>
-      <div style="display: flex; align-items: center; gap: 4px;">
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Apps</div>
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: #f4f4f5; color: #09090b;">Agents</div>
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Audit</div>
-        <div style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Approvals<span style="display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #dc2626; color: #ffffff; font-size: 11px; font-weight: 600;">2</span></div>
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Settings</div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <div class="navitem">Apps</div>
+        <div class="navitem on">Agents</div>
+        <div class="navitem">Audit</div>
+        <div class="navitem">Approvals<span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#dc2626;color:#fff;font-size:11px;font-weight:600">2</span></div>
+        <div class="navitem">Settings</div>
       </div>
     </div>
-    <div style="display: flex; align-items: center; gap: 12px;">
-      <div style="font-size: 14px; color: #71717a;">ahrzb</div>
-      <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Sign out</div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <div class="muted">ahrzb</div>
+      <div class="btn sm">Sign out</div>
     </div>
   </div>
 
-  <div style="width: 1140px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 20px;">
+  <div style="width:1140px;box-sizing:border-box;margin:0 auto;padding:32px 0 48px;display:flex;flex-direction:column;gap:20px">
 
-    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-      <div style="display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 24px; font-weight: 600;">Agents</div>
-        <div style="font-size: 14px; color: #71717a;">Identities that call your apps — each holds grants and tokens.</div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div class="col">
+        <div style="font-size:24px;font-weight:600">Agents</div>
+        <div class="muted">Identities that call your apps &mdash; what each can reach, and what it presents to get in.</div>
       </div>
-      <div style="display: flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 16px; background: #18181b; color: #fafafa; font-size: 14px; font-weight: 500; border-radius: 8px; border: 1px solid #18181b;">
+      <div class="btn primary">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fafafa" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
         <span>New agent</span>
       </div>
     </div>
 
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
-      <div style="display: grid; grid-template-columns: 220px 1fr 200px 90px 170px; gap: 0; padding: 10px 20px; border-bottom: 1px solid #e4e4e7;">
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Agent</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Grants</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Tokens</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Created</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;"></div>
+    <div class="card" style="overflow:hidden">
+      <div class="grid head">
+        <div class="th">Agent</div>
+        <div class="th">Access</div>
+        <div class="th">Credentials</div>
+        <div class="th">Activity &middot; 7 d</div>
+        <div class="th">Created</div>
+        <div></div>
+        <div></div>
       </div>
-      <div style="display: grid; grid-template-columns: 220px 1fr 200px 90px 170px; gap: 0; padding: 12px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">claude</div>
-          <div style="font-size: 12px; color: #71717a;">Claude sessions</div>
+
+      <!-- claude — hover state -->
+      <div class="grid link hover">
+        <div class="col" style="gap:2px">
+          <div class="mono" style="font-weight:500"><a href="#" class="stretch">claude</a></div>
+          <div style="font-size:12px;color:#71717a">Claude sessions</div>
         </div>
-        <div style="font-size: 13px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news: reader, admin · linear: reader</div>
-        <div style="font-size: 13px; color: #71717a;">1 active · used 2 h ago</div>
-        <div style="font-size: 13px; color: #71717a;">Aug 12</div>
-        <div style="display: flex; justify-content: flex-end; gap: 4px;">
-          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: transparent; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">View</div>
-          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Delete</div>
+        <div class="col cell" style="gap:2px">
+          <div><span class="mono" style="color:#09090b">news, linear</span> <span class="dim">&middot;</span> <span class="mono dim">home</span></div>
+          <div>16 tools &middot; 1 prompt &middot; 2 resources <span class="dim">&middot;</span> <span style="color:#92400e">4 need approval</span> <span class="dim">&middot;</span> 1 dormant</div>
         </div>
+        <div class="col cell" style="gap:2px">
+          <div>1 token &middot; used 2 h ago</div>
+          <div>1 client &middot; Claude</div>
+        </div>
+        <div class="col cell" style="gap:4px">
+          <div>144 calls &middot; 4 denied</div>
+          <div><span class="badge warn">2 awaiting approval</span></div>
+        </div>
+        <div class="cell">Aug 12</div>
+        <div style="display:flex;justify-content:flex-end;gap:4px" class="above">
+          <div class="btn dangerout sm">Delete</div>
+        </div>
+        <div class="chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
       </div>
-      <div style="display: grid; grid-template-columns: 220px 1fr 200px 90px 170px; gap: 0; padding: 12px 20px; align-items: center;">
-        <div style="display: flex; flex-direction: column; gap: 2px;">
-          <div style="font-size: 14px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">cron</div>
-          <div style="font-size: 12px; color: #71717a;">Scheduled jobs</div>
+      <!-- cron -->
+      <div class="grid link">
+        <div class="col" style="gap:2px">
+          <div class="mono" style="font-weight:500"><a href="#" class="stretch">cron</a></div>
+          <div style="font-size:12px;color:#71717a">Nightly jobs</div>
         </div>
-        <div style="font-size: 13px; color: #71717a; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">news: reader</div>
-        <div style="font-size: 13px; color: #71717a;">1 active · never used</div>
-        <div style="font-size: 13px; color: #71717a;">Aug 20</div>
-        <div style="display: flex; justify-content: flex-end; gap: 4px;">
-          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: transparent; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">View</div>
-          <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 10px; background: #ffffff; color: #dc2626; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #fecaca;">Delete</div>
+        <div class="col cell" style="gap:2px">
+          <div><span class="mono" style="color:#09090b">news</span></div>
+          <div>4 tools &middot; 1 prompt <span class="dim">&middot;</span> <span style="color:#92400e">2 entries match nothing</span></div>
         </div>
+        <div class="col cell" style="gap:2px">
+          <div>1 token &middot; never used</div>
+          <div class="dim">no clients</div>
+        </div>
+        <div class="col cell"><div class="dim">no calls</div></div>
+        <div class="cell">Aug 20</div>
+        <div style="display:flex;justify-content:flex-end;gap:4px" class="above">
+          <div class="btn dangerout sm">Delete</div>
+        </div>
+        <div class="chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
+      </div>
+
+      <!-- pi -->
+      <div class="grid link" style="border-bottom:none">
+        <div class="col" style="gap:2px">
+          <div class="mono" style="font-weight:500"><a href="#" class="stretch">pi</a></div>
+          <div style="font-size:12px;color:#71717a">Raspberry Pi runner</div>
+        </div>
+        <div class="col" style="gap:6px">
+          <div class="row"><span class="badge">no grants &mdash; can call nothing</span></div>
+        </div>
+        <div class="col cell" style="gap:2px">
+          <div class="dim">no token</div>
+          <div class="dim">no clients</div>
+        </div>
+        <div class="col cell"><div class="dim">&mdash;</div></div>
+        <div class="cell">Sep 1</div>
+        <div style="display:flex;justify-content:flex-end;gap:4px" class="above">
+          <div class="btn dangerout sm">Delete</div>
+        </div>
+        <div class="chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"></path></svg></div>
       </div>
     </div>
 
-    <div style="font-size: 12px; color: #71717a;">Deleting an agent deletes its tokens and removes its grants everywhere.</div>
+    <div class="note">Deleting an agent deletes its tokens and removes its grants everywhere.</div>
+
+    <div class="card" style="padding:14px 16px;background:#fafafa;border-style:dashed;box-shadow:none">
+      <div class="eyebrow" style="margin-bottom:8px">Board notes</div>
+      <div class="note" style="display:flex;flex-direction:column;gap:4px">
+        <div>&bull; Every column reads from tools that exist: <span class="mono">agent_list</span> (grants with modes), <span class="mono">token_list</span>, <span class="mono">connection_list</span>, <span class="mono">approval_list</span>, <span class="mono">audit_query { principal }</span>.</div>
+        <div>&bull; A plain list, one row per agent, no expansion: the Access column is one line of totals (which apps, what is reached, how much needs approval, how much is dormant) and the slug leads to the three-pane agent page, which is where every per-app detail and every edit lives (<span class="mono">AgentThreePane</span>).</div>
+        <div>&bull; <b>The row is the link.</b> The slug is an anchor stretched over the whole row (a <span class="mono">::after</span> covering it, no script), so any click on the row opens the agent page; the row highlights on hover, the cursor is a pointer, and a chevron at the row&rsquo;s end says where it goes. Delete sits above the stretched link, so it still deletes. The claude row is drawn in its hover state.</div>
+        <div>&bull; Row actions are Delete alone. Granting lives on the agent page: the rail&rsquo;s &ldquo;Grant another app&hellip;&rdquo; and the listing pane.</div>
+        <div>&bull; The row counts dormant entries (archived app, undeclared role, item matching nothing today); the agent page shows which.</div>
+      </div>
+    </div>
 
   </div>
 </div>

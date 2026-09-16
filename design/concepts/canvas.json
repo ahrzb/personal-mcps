@@ -15,6 +15,86 @@
       "w": 440,
       "h": 560,
       "title": "Re-auth gate"
+    },
+    {
+      "file": "AgentDetailV2.dc.html",
+      "x": 5640,
+      "y": 3620,
+      "w": 1240,
+      "h": 2300,
+      "title": "Agent detail · v2 (reach, credentials, activity)"
+    },
+    {
+      "file": "AppRecordingPane.dc.html",
+      "x": 4320,
+      "y": 4780,
+      "w": 1240,
+      "h": 1700,
+      "title": "App · Recording pane (body logging + redaction)"
+    },
+    {
+      "file": "SettingsRecording.dc.html",
+      "x": 4320,
+      "y": 6560,
+      "w": 1240,
+      "h": 900,
+      "title": "Settings · Body logging pane"
+    },
+    {
+      "file": "AuditRedactStates.dc.html",
+      "x": 5640,
+      "y": 6000,
+      "w": 1240,
+      "h": 1900,
+      "title": "Audit · mask-from-evidence states"
+    },
+    {
+      "file": "AuditRedactLongList.dc.html",
+      "x": 5640,
+      "y": 7980,
+      "w": 1240,
+      "h": 1120,
+      "title": "Audit · mask-from-evidence, long lists"
+    },
+    {
+      "file": "GrantEditorV2.dc.html",
+      "x": 7000,
+      "y": 3620,
+      "w": 1240,
+      "h": 1560,
+      "title": "Grant editor · v2 (patterns per family, live reach)"
+    },
+    {
+      "file": "GrantEditorLists.dc.html",
+      "x": 8320,
+      "y": 3620,
+      "w": 1240,
+      "h": 2350,
+      "title": "Grant editor · two lists + inline items"
+    },
+    {
+      "file": "AgentsScaleOptions.dc.html",
+      "x": 4320,
+      "y": 7540,
+      "w": 1240,
+      "h": 2400,
+      "title": "Agents · 20 apps, the options"
+    },
+    {
+      "file": "AgentThreePane.dc.html",
+      "x": 5640,
+      "y": 9180,
+      "w": 1240,
+      "h": 1260,
+      "title": "Agent page · three panes (rail · listing · details)"
+    },
+    {
+      "file": "RedactionEditorOptions.dc.html",
+      "x": 4320,
+      "y": 10020,
+      "w": 1240,
+      "h": 1500,
+      "title": "Recording · redaction from the schema, four ways"
     }
   ],
   "annotations": [],

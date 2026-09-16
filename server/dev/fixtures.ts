@@ -35,10 +35,18 @@ import type {
   Notice,
   PagePropsByName,
   PasskeyRow,
+  AppAccessDetails,
   AppAgentRow,
+  AppCatalogDetails,
+  AppCatalogGroup,
+  AppCatalogRow,
   AppDetailHeader,
   AppDetailPane,
   AppDetailProps,
+  AppPaneView,
+  AppRecordingSection,
+  AppRoleDetails,
+  AppRoleRow,
   AgentDetailProps,
   AgentNewProps,
   AgentRow,
@@ -59,13 +67,10 @@ import type {
   GrantChoice,
   RowControl,
   AppNewProps,
-  AppPromptRow,
   AppRailEntry,
-  AppResourceRow,
   AppRow,
   AppsProps,
   AppTokenRow,
-  AppToolRow,
   SessionRow,
 } from "../src/pages/model";
 // The dimmed marker is a VALUE, not a spelling: model.ts owns the glyph so nothing can
@@ -76,7 +81,7 @@ import type {
 // `familyMarker` is §13's three-answer family marker (a count, `—` where the app advertises
 // none, BLANK where a listing could not be read at all) — this IS the shipped rule, not a
 // copy of it, because the preview must demonstrate what the page does.
-import { DIMMED, agentLevel, appLevel, enrollmentOf, familyMarker } from "../src/pages/model";
+import { DIMMED, agentLevel, appLevel, enrollmentOf } from "../src/pages/model";
 import { HUB_PRINCIPAL } from "../src/principal";
 
 /* ------------------------------------------------------------------ *
@@ -872,221 +877,161 @@ const LONG_SLUG = "incident-response-and-postmortem-runners";
 const LONG_TOOL = "search_incident_timeline_across_services";
 
 /* ------------------------------------------------------------------ *
- * /apps/<slug>
+ * /apps/<slug> — the seven panes (2026-09-17)
  * ------------------------------------------------------------------ */
 
-/** The tunneled app's own catalog, as the AppDetail board draws it: four collapsed rows
- *  and one expanded, so every branch of the Tools row is on screen at once. */
-const mcpToolsCatalog: AppToolRow[] = [
-  {
-    name: "paper_fetch",
-    aggregated: "mcp-tools_paper_fetch",
-    // The one Markdown description of the preview: descriptions are Markdown by
-    // convention, so a board that renders none would not show what this pane really looks
-    // like (server/src/pages/markdown.ts).
-    summary: "Fetch the paper identified by a **DOI** and return its text as Markdown.",
-    description:
-      "Fetch the paper identified by a **DOI** and return its text as Markdown.\n\n" +
-      "`doi` must be the exact DOI string, not a URL or a padded value — see the " +
-      "[DOI handbook](https://www.doi.org/the-identifier/resources/handbook/).\n\n" +
-      "```\npaper_fetch doi=10.1000/182\n```",
-    args: [
-      { name: "doi", type: "string", required: true, hasDefault: false },
-      { name: "force_refresh", type: "boolean", required: false, hasDefault: true, default: false },
-    ],
-    reach: [{ agent: "claude", mode: "allow", roles: ["all"] }],
-    approvalAgents: [],
-    redactedArgs: [],
-    redactedResults: [],
-    schemaUnsound: false,
-  },
-  {
-    name: "jobfeed_crawl",
-    aggregated: "mcp-tools_jobfeed_crawl",
-    summary: "Trigger a crawl of the configured job boards.",
-    description: "Trigger a crawl of the configured job boards.",
-    args: [{ name: "board", type: "string", required: false, hasDefault: false }],
-    reach: [
-      { agent: "claude", mode: "approval", roles: ["crawler"] },
-      { agent: "pi", mode: "allow", roles: ["crawler", "both"] },
-    ],
-    approvalAgents: ["claude"],
-    redactedArgs: [],
-    redactedResults: [],
-    schemaUnsound: false,
-  },
-  {
-    name: "secret_push",
-    aggregated: "mcp-tools_secret_push",
-    summary: "Push a secret to the configured store.",
-    description: "Push a secret to the configured store.",
-    args: [
-      { name: "credentials", type: "object", required: true, hasDefault: false },
-      { name: "payload", type: "object", required: true, hasDefault: false },
-    ],
-    reach: [],
-    approvalAgents: [],
-    redactedArgs: ["credentials.token", "payload.key"],
-    redactedResults: ["out.token"],
-    schemaUnsound: false,
-  },
-  {
-    name: "bad_schema",
-    aggregated: "mcp-tools_bad_schema",
-    summary: "A tool whose schema the hub will not resolve.",
-    description: "A tool whose schema the hub will not resolve.",
-    args: [],
-    reach: [],
-    approvalAgents: [],
-    redactedArgs: [],
-    redactedResults: [],
-    schemaUnsound: true,
-  },
-];
-
-const tunnelHeader: AppDetailHeader = {
+const tunnelHeaderBase = {
   name: "mcp-tools",
   slug: "mcp-tools",
   kind: "tunnel",
   archived: false,
+  description: "The house tools — papers, job feeds and the odd secret push.",
   status: "online",
-  lastSeen: ms(NOW),
   endpoint: null,
   authMode: null,
   forwardIdentity: null,
   connect: null,
   disconnect: null,
-};
+} as const;
 
 /** AppDetailStates "PROXIED · OAUTH": connected, so Reconnect sits beside Disconnect. */
-const proxiedHeader: AppDetailHeader = {
+const proxiedHeaderBase = {
   name: "Linear",
   slug: "linear",
   kind: "proxy",
   archived: false,
+  description: "Issues and cycles over the Linear MCP.",
   status: "connected",
-  lastSeen: null,
   endpoint: "https://mcp.linear.app/mcp",
   authMode: "oauth",
   forwardIdentity: true,
   connect: { label: "Reconnect", href: "/apps/connect?slug=linear" },
   disconnect: "/apps/app_disconnect?slug=linear",
-};
+} as const;
 
 /** The proxied app's other half: headers-mode, so there is no OAuth dance to be connected
  *  by and no status word the header could say — and no Connect control either. */
-const notionHeader: AppDetailHeader = {
-  ...proxiedHeader,
+const notionHeaderBase = {
+  ...proxiedHeaderBase,
   name: "Notion",
   slug: "notion",
+  description: "Pages and databases over the Notion MCP.",
   authMode: "headers",
   status: null,
   connect: null,
   disconnect: null,
-};
+} as const;
 
-/** The four §20 families one render carries: what the panes list, and what the rail counts. */
-type AppCatalog = Pick<AppDetailProps, "tools" | "prompts" | "resources" | "templates">;
+/* ---- the one cast every pane below counts, so the rail cannot disagree with it ---- */
 
-/**
- * The rail, DERIVED from the very props the panes beside it render — §13's shell rule
- * ("markers read from the same calls that render the panes, never a second query that
- * could disagree with them") holds for the preview only if the fixture derives them too.
- * A hand-typed count here would draw the one state the rule forbids, on the reference
- * a reviewer reads to judge every other page.
- */
-function appRail(props: Omit<AppDetailProps, "rail">): AppRailEntry[] {
-  const roleNames = Object.keys(props.roles);
-  const marker: Record<AppDetailPane, string> = {
-    tools: familyMarker(props.tools),
-    prompts: familyMarker(props.prompts),
-    // One marker, one pane, two lists: the Resources pane draws both tabs (§13).
-    resources: familyMarker(props.resources, props.templates),
-    roles: roleNames.length === 0 ? "none" : String(roleNames.length),
-    overview: "",
-    access: String(props.agents.length),
-    // §2's reason, not a missing feature: nothing dials in to a proxied app, so it holds
-    // no key and its entry dims like a family it does not advertise.
-    token: props.header.kind === "proxy" ? DIMMED : String(props.tokens.length),
-    danger: "",
-  };
-  const table: { pane: AppDetailPane; label: string; group: AppRailEntry["group"] }[] = [
-    { pane: "tools", label: "Tools", group: "App" },
-    { pane: "prompts", label: "Prompts", group: "App" },
-    { pane: "resources", label: "Resources", group: "App" },
-    { pane: "roles", label: "Roles", group: "App" },
-    { pane: "overview", label: "Overview", group: "App" },
-    { pane: "access", label: "Agents", group: "Access" },
-    { pane: "token", label: "Token", group: "Access" },
-    { pane: "danger", label: "Danger zone", group: null },
-  ];
-  const slug = props.header.slug;
-  return table.map((entry) => ({
-    ...entry,
-    href: entry.pane === "tools" ? `/apps/${slug}` : `/apps/${slug}/${entry.pane}`,
-    marker: marker[entry.pane],
-  }));
-}
+const appTools: AppCatalogRow[] = [
+  {
+    family: "tool",
+    name: "paper_fetch",
+    // The one Markdown description of the preview: descriptions are Markdown by
+    // convention, so a board that renders none would not show what this pane really looks
+    // like (server/src/pages/markdown.ts).
+    description: "Fetch the paper identified by a **DOI** and return its text as Markdown.",
+    sel: "tool:paper_fetch",
+    reach: [{ agent: "claude", ask: false }],
+  },
+  {
+    family: "tool",
+    name: "jobfeed_crawl",
+    description: "Trigger a crawl of the configured job boards.",
+    sel: "tool:jobfeed_crawl",
+    reach: [
+      { agent: "claude", ask: true },
+      { agent: "pi", ask: false },
+    ],
+  },
+  {
+    family: "tool",
+    name: "secret_push",
+    description: "Push a secret to the configured store.",
+    sel: "tool:secret_push",
+    reach: [],
+  },
+];
 
-/** Everything a pane render shares, so each fixture below says only what makes it that
- *  state — the paned page's own version of the `shell` helper above. `over` carries the
- *  three lists the rail counts, so a fixture that changes one changes its marker with it;
- *  anything the rail does not read (the Resources tab, a dialog, a reveal) is spread over
- *  the result at the call site. */
-const appDetail = (
-  header: AppDetailHeader,
-  pane: AppDetailPane,
-  catalog: AppCatalog,
-  over: Partial<Pick<AppDetailProps, "roles" | "agents" | "tokens">> = {},
-): AppDetailProps => {
-  const props: Omit<AppDetailProps, "rail"> = {
-    ...shell("apps"),
-    csrfToken: CSRF,
-    pane,
-    header,
-    tab: "resources",
-    hubOrigin: "https://hub.example",
-    // §20.3's canonical read shape, in both of its directions: `reader` carries three
-    // families and prints the object, `crawler` is tools-only and prints a bare list.
-    roles:
-      header.kind === "tunnel"
-        ? {}
-        : {
-            reader: { tools: ["issue_.*"], prompts: ["digest_.*"], resources: ["news://feed/*"] },
-            crawler: ["jobfeed_.*"],
-          },
-    overview: {
-      createdAt: ms("2026-08-12T09:00:00.000Z"),
-      logBodies: header.kind === "tunnel",
-      logBodiesIsDefault: true,
-      redactedArgs: [],
-      redactedResults: [],
-    },
-    // The board's two Agents rows, and the tunneled app's one live key. A proxied app
-    // holds no key at all (§2).
-    agents: appAgents,
-    tokens: header.kind === "tunnel" ? [liveAppToken] : [],
-    confirm: null,
-    reveal: null,
-    ...appLevel(header.slug, pane, header.name),
-    ...catalog,
-    ...over,
-  };
-  return { ...props, rail: appRail(props) };
-};
+const appPrompts: AppCatalogRow[] = [
+  {
+    family: "prompt",
+    name: "digest_daily",
+    description: "Summarise the last 24 h.",
+    sel: "prompt:digest_daily",
+    reach: [{ agent: "claude", ask: false }],
+  },
+];
 
-/** AppDetailPanes "Agents": the built-in `all` beside a declared role, so both chip
- *  spellings — and the `built-in` marking — are drawn at once. */
+const appResources: AppCatalogRow[] = [
+  {
+    family: "resource",
+    name: "news://feed/hn",
+    description: "text/plain",
+    sel: "resource:news://feed/hn",
+    reach: [{ agent: "claude", ask: false }],
+  },
+  {
+    family: "resource",
+    name: "news://config",
+    description: "application/json",
+    sel: "resource:news://config",
+    reach: [],
+  },
+];
+
+const appRoles: AppRoleRow[] = [
+  {
+    name: "reader",
+    source: "app",
+    sourceTitle: "declared by the app at connect",
+    detail: "tools paper_fetch, search_.* · prompts digest_.* · matches 2",
+    holders: [{ agent: "claude", ask: false }],
+    sel: "role:reader",
+  },
+  {
+    name: "publisher",
+    source: "app · replaced yours",
+    sourceTitle: "the app declares this name — its declaration replaced yours",
+    detail: "tools publish, delete_feed · matches 0",
+    holders: [],
+    sel: "role:publisher",
+  },
+  {
+    name: "triage",
+    source: "yours",
+    sourceTitle: null,
+    detail: "tools jobfeed_crawl · matches 1",
+    holders: [{ agent: "pi", ask: true }],
+    sel: "role:triage",
+  },
+  {
+    name: "all",
+    source: "built-in",
+    sourceTitle: null,
+    detail: "every tool, prompt and resource, present and future · matches 6",
+    holders: [{ agent: "claude", ask: false }],
+    sel: "role:all",
+  },
+];
+
 const appAgents: AppAgentRow[] = [
   {
     slug: "claude",
     description: "the main agent",
-    chips: [{ role: "all", mode: "allow", builtin: true }],
+    allowed: ["reader", "tool/paper_fetch"],
+    askFirst: ["tool/jobfeed_crawl"],
+    reach: "reaches 2 of 3 tools · 1 ask first · 1 of 1 prompts · 1 of 2 resources · 144 calls · 7 d",
+    sel: "agent:claude",
   },
   {
     slug: "pi",
     description: "the home Raspberry Pi",
-    chips: [{ role: "reader", mode: "approval", builtin: false }],
+    allowed: [],
+    askFirst: ["triage"],
+    reach: "reaches 1 of 3 tools · 1 ask first · 0 of 1 prompts · 0 of 2 resources · 0 calls · 7 d",
+    sel: "agent:pi",
   },
 ];
 
@@ -1095,264 +1040,933 @@ const liveAppToken: AppTokenRow = {
   prefix: "pmcp_app_9f3k",
   createdAt: ms("2026-08-12T09:00:00.000Z"),
   lastUsedAt: ms(NOW),
+  live: true,
 };
 
-const UNDECLARED = { state: "undeclared" } as const;
-const UNREAD = { state: "unread" } as const;
+const appTokens: AppTokenRow[] = [liveAppToken];
 
-/** The tools-only catalog: the tunneled app's own, and what every fixture below whose
- *  subject is elsewhere (grants, keys, the danger zone) carries unchanged — the rail
- *  beside those panes is still counted from it. */
-const TUNNEL_CATALOG = {
-  tools: { state: "listed", rows: mcpToolsCatalog },
-  prompts: UNDECLARED,
-  resources: UNDECLARED,
-  templates: UNDECLARED,
-} as const;
+/**
+ * The rail, DERIVED from the very lists the panes beside it render — §13's shell rule
+ * ("markers read from the same calls that render the panes") holds for the preview only if
+ * the fixture derives them too. The props now carry ONE pane rather than every list, so
+ * the derivation is over the shared cast above; anything a fixture changes about a listing
+ * it changes here with `over`, which is the same discipline said in one more word.
+ */
+function appRail(
+  slug: string,
+  over: Partial<Record<AppDetailPane, string>> = {},
+  log = true,
+): AppRailEntry[] {
+  const marker: Record<AppDetailPane, string> = {
+    catalog: String(appTools.length + appPrompts.length + appResources.length),
+    roles: String(appRoles.length),
+    recording: log ? "on" : "off",
+    overview: "",
+    access: String(appAgents.length),
+    token: String(appTokens.length),
+    danger: "",
+    ...over,
+  };
+  const table: { pane: AppDetailPane; label: string; group: AppRailEntry["group"] }[] = [
+    { pane: "catalog", label: "Catalog", group: "App" },
+    { pane: "roles", label: "Roles", group: "App" },
+    { pane: "recording", label: "Recording", group: "App" },
+    { pane: "overview", label: "Overview", group: "App" },
+    { pane: "access", label: "Agents", group: "Access" },
+    { pane: "token", label: "Token", group: "Access" },
+    { pane: "danger", label: "Danger zone", group: null },
+  ];
+  return table.map((entry) => ({
+    ...entry,
+    href: entry.pane === "catalog" ? `/apps/${slug}` : `/apps/${slug}/${entry.pane}`,
+    marker: marker[entry.pane],
+    dot: entry.pane === "recording" ? (marker.recording === "on" ? "on" : "off") : null,
+  }));
+}
 
-/** Nothing could be listed at all — the state whose every App-group marker is blank. */
-const UNREAD_CATALOG = {
-  tools: UNREAD,
-  prompts: UNREAD,
-  resources: UNREAD,
-  templates: UNREAD,
-} as const;
+/** Everything a pane render shares, so each fixture below says only what makes it that
+ *  state — the paned page's own version of the `shell` helper above. */
+const appDetail = (
+  header: Omit<AppDetailHeader, "tiles">,
+  pane: AppPaneView,
+  over: Partial<Omit<AppDetailProps, "pane" | "header">> = {},
+  markers: Partial<Record<AppDetailPane, string>> = {},
+): AppDetailProps => {
+  const tiles =
+    `${appTools.length} tools · ${appPrompts.length} prompts · ${appResources.length} resources · ` +
+    `${appAgents.length} agents · body logging ${markers.recording === "off" ? "off" : "on"}` +
+    (header.kind === "tunnel" ? " · last seen now" : "");
+  const query = new URLSearchParams();
+  return {
+    ...shell("apps"),
+    csrfToken: CSRF,
+    header: { ...header, tiles },
+    rail: appRail(header.slug, markers, markers.recording !== "off"),
+    pane,
+    confirm: null,
+    reveal: null,
+    ...appLevel(header.slug, pane, query, header.name),
+    ...over,
+  };
+};
 
-const linearPrompts: AppPromptRow[] = [
+/* ------------------------------------------------------------- Catalog --- */
+
+const catalogGroups = (
+  tools: AppCatalogRow[] = appTools,
+  prompts: AppCatalogRow[] = appPrompts,
+  resources: AppCatalogRow[] = appResources,
+): AppCatalogGroup[] => [
+  { title: "Tools", count: tools.length, note: "", rows: tools, state: tools.length === 0 ? "no match" : null },
   {
-    name: "digest_daily",
-    aggregated: "linear_digest_daily",
-    description: "Summarize today's issues.",
-    args: [{ name: "day", description: "Which day.", required: true }],
-    reach: [{ agent: "claude", mode: "allow", roles: ["reader"] }],
-    redacted: ["audience"],
+    title: "Prompts",
+    count: prompts.length,
+    note: "",
+    rows: prompts,
+    state: prompts.length === 0 ? "no match" : null,
   },
   {
-    name: "weekly_note",
-    aggregated: "linear_weekly_note",
-    description: "Draft the weekly note.",
-    args: [],
-    reach: [],
-    redacted: [],
+    title: "Resources",
+    count: resources.length,
+    note: "",
+    rows: resources,
+    state: resources.length === 0 ? "no match" : null,
   },
 ];
 
-const linearResources: AppResourceRow[] = [
+const catalogPane = (
+  over: Partial<Extract<AppPaneView, { kind: "catalog" }>> = {},
+): Extract<AppPaneView, { kind: "catalog" }> => ({
+  kind: "catalog",
+  subtitle: "advertised by the app on its last connect · re-listed on every reconnect",
+  summary: "3 tools · 1 prompts · 2 resources · reachable by 2 agents",
+  q: "",
+  groups: catalogGroups(),
+  state: null,
+  details: { kind: "none", schemas: "the app's last tools/list — the hub stores them, it does not author them" },
+  ...over,
+});
+
+const catalogToolDetails: AppCatalogDetails = {
+  kind: "item",
+  name: "secret_push",
+  family: "tool",
+  description:
+    "Push a secret to the configured store.\n\n" +
+    "`credentials.token` is never recorded — it is declared `writeOnly` and masked before the call reaches the trail.",
+  args: [
+    { kind: "leaf", path: "credentials.user", type: "string", writeOnly: false },
+    { kind: "leaf", path: "credentials.token", type: "string", writeOnly: true },
+    { kind: "leaf", path: "payload.key", type: "string", writeOnly: false },
+  ],
+  results: [{ kind: "leaf", path: "out.stored", type: "boolean", writeOnly: false }],
+  resource: null,
+  calledAs: "mcp-tools_secret_push on the aggregated endpoint",
+  reachableBy: [],
+  approval: "none required",
+  redaction: "arguments payload.key, credentials.token",
+};
+
+/* --------------------------------------------------------------- Roles --- */
+
+/** The Roles listing summary, shared by every fixture that does not change it. */
+const ROLES_SUMMARY =
+  "2 declared by the app · 1 yours · plus the built-in all · the app’s declaration wins when it declares a name you defined";
+
+const roleEditor = (
+  over: Partial<Extract<AppRoleDetails, { kind: "role" }>> = {},
+): Extract<AppRoleDetails, { kind: "role" }> => ({
+  kind: "role",
+  name: "triage",
+  isNew: false,
+  source: "yours",
+  badge: "yours",
+  explain: "Defined by you. If mcp-tools later declares a role named triage, the app's declaration replaces this one.",
+  holders: [{ agent: "pi", ask: true }],
+  editable: true,
+  q: "",
+  groups: [
+    {
+      title: "Tools",
+      count: "2 of 3",
+      state: null,
+      rows: [
+        {
+          name: "paper_fetch",
+          description: "Fetch the paper identified by a **DOI**.",
+          via: [],
+          field: "i.tools/paper_fetch",
+          checked: false,
+          locked: false,
+          lockTitle: "matched by ",
+        },
+        {
+          name: "jobfeed_crawl",
+          description: "Trigger a crawl of the configured job boards.",
+          via: [],
+          field: "i.tools/jobfeed_crawl",
+          checked: true,
+          locked: false,
+          lockTitle: "matched by ",
+        },
+        {
+          name: "secret_push",
+          description: "Push a secret to the configured store.",
+          via: ["secret_.*"],
+          field: "",
+          checked: true,
+          locked: true,
+          lockTitle: "matched by secret_.*",
+        },
+      ],
+    },
+    {
+      title: "Prompts",
+      count: "0 of 1",
+      state: null,
+      rows: [
+        {
+          name: "digest_daily",
+          description: "Summarise the last 24 h.",
+          via: [],
+          field: "i.prompts/digest_daily",
+          checked: false,
+          locked: false,
+          lockTitle: "matched by ",
+        },
+      ],
+    },
+  ],
+  patterns: [
+    {
+      pattern: "secret_.*",
+      family: "tools",
+      detail: "matches 1 today, and any added later",
+      entry: "tools/secret_.*",
+      editable: true,
+    },
+  ],
+  offer: null,
+  keep: ["tools/secret_.*"],
+  error: null,
+  ...over,
+});
+
+/* ----------------------------------------------------------- Recording --- */
+
+const recordingSections = (expanded: boolean): AppRecordingSection[] => [
   {
-    uri: "news://feed/latest",
-    name: "Latest headlines",
-    mimeType: "text/plain",
-    reach: [{ agent: "claude", mode: "allow", roles: ["reader"] }],
+    dir: "args",
+    title: "Arguments",
+    count: 3,
+    note: "from each tool's inputSchema",
+    state: null,
+    noSchema: null,
+    rows: [
+      {
+        path: "credentials.token",
+        type: "string",
+        detail: "2 tools · declared writeOnly",
+        which: { href: "/apps/mcp-tools/recording?which=args%3Acredentials.token", label: "which" },
+        control: { kind: "locked" },
+        tools: expanded
+          ? [
+              { tool: "secret_push", writeOnly: true },
+              { tool: "jobfeed_crawl", writeOnly: true },
+            ]
+          : [],
+      },
+      {
+        // The MIXED state §5 pins: masked on one of its two tools, so it renders expanded
+        // and submits no `p.` field at all — no save can flatten it.
+        path: "payload.key",
+        type: "string",
+        detail: "2 tools · masked on 1 of 2",
+        which: { href: "/apps/mcp-tools/recording?which=args%3Apayload.key", label: "which" },
+        control: { kind: "mixed" },
+        tools: [
+          { tool: "secret_push", writeOnly: false, field: "m.args.secret_push.payload.key", checked: true },
+          { tool: "jobfeed_crawl", writeOnly: false, field: "m.args.jobfeed_crawl.payload.key", checked: false },
+        ],
+      },
+      {
+        path: "doi",
+        type: "string",
+        detail: "1 tool",
+        which: null,
+        control: { kind: "box", field: "p.args.doi", checked: false },
+        tools: [],
+      },
+    ],
   },
-  { uri: "news://sources", name: "Configured sources", mimeType: "application/json", reach: [] },
+  {
+    dir: "results",
+    title: "Results",
+    count: 1,
+    note: "from outputSchema, where declared",
+    state: null,
+    noSchema:
+      "jobfeed_crawl, paper_fetch declare no output schema — a result path there can only come from a recorded call (mask from evidence).",
+    rows: [
+      {
+        path: "out.stored",
+        type: "boolean",
+        detail: "1 tool · masked on its tool",
+        which: null,
+        control: { kind: "box", field: "p.results.out.stored", checked: true },
+        tools: [],
+      },
+    ],
+  },
 ];
 
-const linearTemplates: AppResourceRow[] = [
+const recordingPane = (
+  over: Partial<Extract<AppPaneView, { kind: "recording" }>> = {},
+): Extract<AppPaneView, { kind: "recording" }> => ({
+  kind: "recording",
+  log: true,
+  summary: "body logging on · tunneled default · 2 masked paths by config · 2 declared writeOnly by the app",
+  q: "",
+  warning: null,
+  sections: recordingSections(false),
+  // The entry no row represents: a tool the catalog no longer lists, added from evidence.
+  keep: [{ field: "keep.args", value: "legacy_push:payload.key" }],
+  auditHref: "/audit?app=mcp-tools",
+  intro:
+    "These fields are replaced with ‹redacted› before a call is written to the trail. Everything else in the body is kept as sent.",
+  cards: [
+    {
+      title: "Arguments · 2 masked",
+      rows: [
+        { path: "credentials.token", detail: "declared writeOnly by jobfeed_crawl, secret_push" },
+        { path: "payload.key", detail: "on secret_push" },
+      ],
+      empty: "nothing masked — arguments are recorded whole",
+    },
+    {
+      title: "Results · 1 masked",
+      rows: [{ path: "out.stored", detail: "on secret_push" }],
+      empty: "nothing masked — results are recorded whole",
+    },
+  ],
+  error: null,
+  ...over,
+});
+
+/* ------------------------------------------------- Agents · Token · rest --- */
+
+const grantControl = (field: string, value: GrantChoice): RowControl => ({
+  field,
+  value,
+  implied: null,
+  impliedBy: [],
+});
+
+/** The agent page's own editor, rendered here by the SAME component — one group per
+ *  family, the roles above them, and the three-way control on every row. */
+const grantGroups: AgentListGroup[] = [
   {
-    uri: "news://feed/{id}",
-    name: "One story by id",
-    mimeType: "text/plain",
-    reach: [{ agent: "claude", mode: "allow", roles: ["reader"] }],
+    title: "Roles",
+    count: "4",
+    note: "declared by the app at connect",
+    state: null,
+    rows: [
+      {
+        kind: "role",
+        entry: "reader",
+        builtin: false,
+        detail: "tools paper_fetch, search_.* · prompts digest_.* · matches 2",
+        sel: "role:reader",
+        control: grantControl("e.reader", "allow"),
+      },
+      {
+        kind: "role",
+        entry: "all",
+        builtin: true,
+        detail: "every tool, prompt and resource, present and future · matches 0",
+        sel: "role:all",
+        control: grantControl("e.all", "none"),
+      },
+    ],
+  },
+  {
+    title: "Tools",
+    count: "3",
+    note: "2 reached · 1 not",
+    state: null,
+    rows: [
+      {
+        kind: "item",
+        entry: "tool/paper_fetch",
+        name: "paper_fetch",
+        description: "Fetch the paper identified by a **DOI**.",
+        via: ["reader"],
+        alsoVia: true,
+        noEffect: false,
+        sel: "tool:paper_fetch",
+        control: { field: "e.tool/paper_fetch", value: "allow", implied: "allow", impliedBy: ["reader"] },
+      },
+      {
+        kind: "item",
+        entry: "tool/jobfeed_crawl",
+        name: "jobfeed_crawl",
+        description: "Trigger a crawl of the configured job boards.",
+        via: [],
+        alsoVia: false,
+        noEffect: false,
+        sel: "tool:jobfeed_crawl",
+        control: grantControl("e.tool/jobfeed_crawl", "approval"),
+      },
+      {
+        kind: "item",
+        entry: "tool/secret_push",
+        name: "secret_push",
+        description: "Push a secret to the configured store.",
+        via: [],
+        alsoVia: false,
+        noEffect: false,
+        sel: "tool:secret_push",
+        control: grantControl("e.tool/secret_push", "none"),
+      },
+    ],
   },
 ];
 
-/** TUNNEL_CATALOG's counterpart for the proxied app: all four families listed, which is
- *  what every `linear` fixture below carries — the rail's App-group markers are the
- *  lengths of these very lists, so a fixture that spelled them per pane could disagree
- *  with itself between panes. */
-const PROXY_CATALOG = {
-  tools: { state: "listed", rows: mcpToolsCatalog },
-  prompts: { state: "listed", rows: linearPrompts },
-  resources: { state: "listed", rows: linearResources },
-  templates: { state: "listed", rows: linearTemplates },
+const agentEditor: AppAccessDetails = {
+  kind: "agent",
+  slug: "claude",
+  description: "the main agent",
+  agentHref: "/agents/claude/apps/mcp-tools",
+  newGrant: false,
+  reach: {
+    tools: { reached: 2, total: 3, approval: 1 },
+    prompts: { reached: 1, total: 1, approval: 0 },
+    resources: { reached: 1, total: 2, approval: 0 },
+  },
+  groups: grantGroups,
+  carry: [{ field: "e.resource/news://feed/*", value: "allow" }],
+  error: null,
+};
+
+const accessPane = (
+  over: Partial<Extract<AppPaneView, { kind: "access" }>> = {},
+): Extract<AppPaneView, { kind: "access" }> => ({
+  kind: "access",
+  summary: "2 agents hold a grant · open one to edit its grant on mcp-tools",
+  rows: appAgents,
+  details: {
+    kind: "none",
+    perTool: [
+      { name: "paper_fetch", agents: "claude" },
+      { name: "jobfeed_crawl", agents: "claude (ask), pi" },
+      { name: "secret_push", agents: "no agent" },
+    ],
+    more: 0,
+  },
+  ...over,
+});
+
+const tokenPane = (
+  over: Partial<Extract<AppPaneView, { kind: "token" }>> = {},
+): Extract<AppPaneView, { kind: "token" }> => ({
+  kind: "token",
+  proxied: false,
+  summary:
+    "1 live · app tokens have no expiry — rotate by issuing, then revoking the old one. Revoking the key a live socket used closes it.",
+  rows: appTokens,
+  details: { kind: "none" },
+  ...over,
+});
+
+const overviewRows = [
+  { key: "Slug", value: "mcp-tools", mono: true },
+  { key: "Kind", value: "tunnel", mono: true },
+  { key: "Created", value: "12 Aug 2026", mono: false },
+  { key: "Last seen", value: "now", mono: false },
+  { key: "Body logging", value: "On — tunneled default", mono: false },
+  { key: "Description", value: "The house tools — papers, job feeds and the odd secret push.", mono: false },
+];
+
+/* ------------------------------------------------------ the long-data set --- */
+
+/** The long-data check, per listing: a 40-character slug in the title row and the rail, a
+ *  40-word description where the board draws one line, and a 300-character pattern
+ *  (docs/superpowers/postmortems/2026-09-16-agent-page-layout-not-the-board.md). */
+const longHeader = {
+  ...tunnelHeaderBase,
+  slug: LONG_SLUG,
+  name: "Incident response and postmortem runners (staging)",
+  description: LONG_DESCRIPTION,
 } as const;
+
+const longCatalogRow: AppCatalogRow = {
+  family: "tool",
+  name: LONG_TOOL,
+  description: LONG_DESCRIPTION,
+  sel: `tool:${LONG_TOOL}`,
+  reach: [{ agent: "incident-responder-oncall", ask: true }],
+};
 
 const appDetailFixtures = {
-  /** AppDetail.dc.html: a tunneled app online, Tools listed, prompts and resources dimmed. */
-  default: appDetail(tunnelHeader, "tools", TUNNEL_CATALOG),
+  /** AppDetail.dc.html: a tunneled app online, the Catalog listed, nothing selected. */
+  default: appDetail(tunnelHeaderBase, catalogPane()),
 
-  /** The same app offline and never re-listed — the header's other tunneled state, with
-   *  the DO's cached catalog still listed under its own count (§13). */
-  offline: appDetail(
-    { ...tunnelHeader, status: "offline", lastSeen: ms("2026-08-24T13:20:00.000Z") },
-    "tools",
-    TUNNEL_CATALOG,
+  /** The Catalog with a tool selected — the Arguments card, the Result card and the four
+   *  lines only the hub knows. */
+  catalogTool: appDetail(tunnelHeaderBase, catalogPane({ details: catalogToolDetails })),
+
+  /** The prompt arm of the same card: a prompt declares ARGUMENTS, not a schema (§20.3),
+   *  so its rows carry a description and `required` where a tool's carry a type. */
+  catalogPrompt: appDetail(
+    tunnelHeaderBase,
+    catalogPane({
+      details: {
+        kind: "item",
+        name: "digest_daily",
+        family: "prompt",
+        description: "Summarise the last 24 h.",
+        args: [
+          { kind: "argument", path: "hours", description: "How far back to read.", required: false },
+          { kind: "argument", path: "audience", description: "", required: true },
+        ],
+        results: null,
+        resource: null,
+        calledAs: "mcp-tools_digest_daily on the aggregated endpoint",
+        reachableBy: ["claude · via reader"],
+        approval: "never asked for prompts",
+        redaction: "arguments audience",
+      },
+    }),
   ),
 
-  /** Provisioned and never connected: no catalog, no last seen, §20.5's empty state. */
-  /** §13 (2026-09-03): never connected means no catalog at all — every family dims and the
-   *  pane says so, rather than an empty tools list that would claim a declaration. */
-  neverConnected: appDetail(
-    { ...tunnelHeader, name: "Weather bot", slug: "weather", status: "offline", lastSeen: null },
-    "tools",
-    {
-      tools: { state: "unconnected" },
-      prompts: { state: "unconnected" },
-      resources: { state: "unconnected" },
-      templates: { state: "unconnected" },
-    },
+  /** And the resource arm: no schema, no aggregated name, no redaction — a URI is not a
+   *  body, and the scoped endpoint is the only one that serves it. */
+  catalogResource: appDetail(
+    tunnelHeaderBase,
+    catalogPane({
+      details: {
+        kind: "item",
+        name: "news://feed/hn",
+        family: "resource",
+        description: "",
+        args: null,
+        results: null,
+        resource: {
+          uri: "news://feed/hn",
+          type: "text/plain",
+          servedOn: "the scoped endpoint only — https://hub.example/ahrzb/mcp/mcp-tools",
+        },
+        calledAs: null,
+        reachableBy: ["claude · via reader"],
+        approval: null,
+        redaction: null,
+      },
+    }),
   ),
 
-  /** AppDetailStates "ARCHIVED": refuses connections, keeps its retained catalog. */
-  archived: appDetail(
-    { ...tunnelHeader, archived: true, status: "archived" },
-    "tools",
-    TUNNEL_CATALOG,
+  /** The filter with nothing matching: `no match` under each heading, the counts intact. */
+  catalogNoMatch: appDetail(
+    tunnelHeaderBase,
+    catalogPane({ q: "zzz", groups: catalogGroups([], [], []) }),
   ),
 
-  /** AppDetailStates "PROXIED · OAUTH": the upstream card, connected. */
-  proxied: appDetail(proxiedHeader, "tools", PROXY_CATALOG),
-
-  /** AppDetailStates "NEEDS RECONNECT": the listing failed, so every App-group marker is
-   *  BLANK — never `—`, which would say the app advertises none, and never 0. */
-  needsReconnect: appDetail(
-    { ...proxiedHeader, name: "GitHub", slug: "github", status: "needs reconnect", connect: { label: "Reconnect", href: "/apps/connect?slug=github" } },
-    "tools",
-    UNREAD_CATALOG,
+  /** Provisioned and never connected: no catalog at all, so the whole pane says so and
+   *  the rail's Catalog marker dims. */
+  catalogUnconnected: appDetail(
+    { ...tunnelHeaderBase, name: "Weather bot", slug: "weather", status: "offline" },
+    catalogPane({
+      summary: "0 tools · 0 prompts · 0 resources · reachable by 0 agents",
+      groups: [],
+      state: { text: "This app has never connected, so the hub has no catalog to list yet.", reconnect: false },
+    }),
+    {},
+    { catalog: DIMMED },
   ),
 
-  /** The other half of §13's "unreachable or needs-reconnect": a headers-mode app the hub
-   *  could not reach at all. Same blank markers, and a state SAID rather than an empty
-   *  card — but no Reconnect, because no credential exists to have failed. */
-  unreachable: appDetail(notionHeader, "tools", UNREAD_CATALOG),
+  /** The listing failed: the state SAID in place of an empty set, with the Reconnect that
+   *  fixes it, and a BLANK marker — an unread count is not an empty set. */
+  catalogUnread: appDetail(
+    proxiedHeaderBase,
+    catalogPane({
+      subtitle: "fetched live from the upstream",
+      summary: "0 tools · 0 prompts · 0 resources · reachable by 2 agents",
+      groups: [],
+      state: { text: "Token refresh failed — calls return errors until you reconnect.", reconnect: true },
+    }),
+    {},
+    { catalog: "" },
+  ),
 
-  /** A proxied app whose owner declared tools only (§20.2's "absent ≡ [tools]") — the
-   *  tools-only catalog carried by the other kind, so a dimmed entry is drawn on both. */
-  dimmedProxy: appDetail(notionHeader, "prompts", TUNNEL_CATALOG),
+  /** A headers-mode proxied app: the upstream card without the OAuth controls. */
+  catalogProxied: appDetail(
+    notionHeaderBase,
+    catalogPane({ subtitle: "fetched live from the upstream" }),
+  ),
 
-  /** AppDetailPanes "Prompts" and "Resources", at their own URLs. */
-  prompts: appDetail(proxiedHeader, "prompts", PROXY_CATALOG),
+  /** AppDetailPanes "Roles": every source badge at once — `app`, `app · replaced yours`,
+   *  `yours` and the built-in. */
+  roles: appDetail(tunnelHeaderBase, { kind: "roles", summary: ROLES_SUMMARY, rows: appRoles, details: { kind: "none", appsOwn: "declared at connect; read-only here — the app owns them" } }),
 
-  /** The dimmed entry's own pane for a TUNNELED app — the other half of `dimmedProxy`,
-   *  and the only state that draws §13's two §20.5 sentences (the kind that says "declare
-   *  it with your SDK", where the proxied one says "add it to `capabilities`"). */
-  promptsUndeclared: appDetail(tunnelHeader, "prompts", TUNNEL_CATALOG),
-
-  resources: appDetail(proxiedHeader, "resources", PROXY_CATALOG),
-
-  templates: {
-    ...appDetail(proxiedHeader, "resources", PROXY_CATALOG),
-    tab: "templates",
-  },
-
-  /** AppDetailPanes "Roles", proxied: the config sentence, and the canonical read shape
-   *  in both of its directions (one per-family object, one bare list). */
-  roles: appDetail(proxiedHeader, "roles", PROXY_CATALOG),
-
-  /** The tunneled half of the same pane: §2's trust-boundary line, which a proxied app
-   *  never draws because nobody declared its roles about itself. */
-  rolesTunneled: appDetail(tunnelHeader, "roles", TUNNEL_CATALOG, {
-    roles: { reader: ["get_.*"] },
+  /** One of the owner's own roles open: ticks, a locked tick under a pattern, the pattern
+   *  row with its remove control, and the foot that can delete the role. */
+  rolesEditing: appDetail(tunnelHeaderBase, {
+    kind: "roles",
+    summary: ROLES_SUMMARY,
+    rows: appRoles,
+    details: roleEditor(),
   }),
 
-  /** The board's own Roles drawing: an app that declared none, and the built-in `all`
-   *  fallback that stands in for them. */
-  rolesEmpty: appDetail(tunnelHeader, "roles", TUNNEL_CATALOG),
-
-  /** AppDetailPanes "Overview", tunneled: body logging at its kind's §15 default and no
-   *  redaction configured, which is the state the board draws. */
-  overview: appDetail(tunnelHeader, "overview", TUNNEL_CATALOG),
-
-  /** The proxied Overview: three more rows (endpoint, auth, forward identity), the other
-   *  kind's default, and configured redaction paths in place of `none`. */
-  overviewProxied: {
-    ...appDetail(proxiedHeader, "overview", PROXY_CATALOG),
-    overview: {
-      createdAt: ms("2026-08-12T09:00:00.000Z"),
-      logBodies: true,
-      // The owner turned it ON against the proxied default, so no default is named.
-      logBodiesIsDefault: false,
-      redactedArgs: ["payload.key", "audience"],
-      redactedResults: ["out.token"],
-    },
-  },
-
-  /** §15's third body-logging arm: a proxied app left at its own default, where the value
-   *  names that default. `overview` above draws the tunneled default and `overviewProxied`
-   *  the explicitly-set value, which names no default because naming one would be false. */
-  overviewProxiedDefault: appDetail(proxiedHeader, "overview", PROXY_CATALOG),
-
-  /** AppDetailPanes "Agents": both chip spellings, and no Edit grants control anywhere —
-   *  the board draws one three times and §13 removes it until the editor lands. */
-  agents: appDetail(tunnelHeader, "access", TUNNEL_CATALOG),
-
-  /** The same pane with nothing granted yet: the marker reads 0 and the footer still says
-   *  where grants are edited, because that is true of `grant_set` regardless. */
-  agentsEmpty: appDetail(tunnelHeader, "access", TUNNEL_CATALOG, { agents: [] }),
-
-  /** AppDetailPanes "Token": one live key, Revoke behind its dialog, Issue beside it. */
-  token: appDetail(tunnelHeader, "token", TUNNEL_CATALOG),
-
-  /** The state only the Issue POST can produce: the plaintext, in the one response that
-   *  will ever carry it (§4/§15). */
-  tokenRevealed: {
-    ...appDetail(tunnelHeader, "token", TUNNEL_CATALOG, {
-      tokens: [liveAppToken, { id: "tok_2b8x", prefix: "pmcp_app_2b8x", createdAt: ms(NOW), lastUsedAt: null }],
+  /** `?new=1`: the name is an input, nothing is saved yet, and the foot still carries
+   *  Discard and Save — a new role must be saveable from the pane that draws it. */
+  rolesNew: appDetail(tunnelHeaderBase, {
+    kind: "roles",
+    summary: ROLES_SUMMARY,
+    rows: appRoles,
+    details: roleEditor({
+      name: "",
+      isNew: true,
+      holders: [],
+      patterns: [],
+      keep: [],
+      explain:
+        "Defined by you. If mcp-tools later declares a role named …, the app's declaration replaces this one.",
     }),
+  }),
+
+  /** The shadowed role: the app declares a name the owner had defined, so the app's
+   *  declaration replaced it and the editor is read-only. */
+  rolesShadowed: appDetail(tunnelHeaderBase, {
+    kind: "roles",
+    summary: ROLES_SUMMARY,
+    rows: appRoles,
+    details: roleEditor({
+      name: "publisher",
+      source: "app · replaced yours",
+      badge: "declared by the app",
+      editable: false,
+      holders: [],
+      explain:
+        "mcp-tools declares this name, so its declaration replaced the one you had defined. Read-only: the app owns it.",
+      patterns: [
+        {
+          pattern: "publish_.*",
+          family: "tools",
+          detail: "matches 0 today, and any added later",
+          entry: "tools/publish_.*",
+          editable: false,
+        },
+      ],
+      keep: [],
+    }),
+  }),
+
+  /** A refused save, redrawn at 400 on the very choices that caused it. */
+  rolesRefused: appDetail(tunnelHeaderBase, {
+    kind: "roles",
+    summary: ROLES_SUMMARY,
+    rows: appRoles,
+    details: roleEditor({
+      error: "publisher is declared by the app — its declaration would replace yours",
+    }),
+  }),
+
+  /** The proxied half: a proxied app declares no roles, so every role is the owner's. */
+  rolesProxied: appDetail(
+    proxiedHeaderBase,
+    {
+      kind: "roles",
+      summary:
+        "0 declared by the app · 2 yours · plus the built-in all · a proxied app declares none, so every role is yours",
+      rows: appRoles.filter((role) => role.source !== "app" && role.source !== "app · replaced yours"),
+      details: { kind: "none", appsOwn: "none: a proxied app declares no roles" },
+    },
+    {},
+    { roles: "2" },
+  ),
+
+  /** AppRecordingDemo in the three-pane grammar: the by-path editor, one locked path, one
+   *  MIXED path rendered expanded, and the masked list beside it. */
+  recording: appDetail(tunnelHeaderBase, recordingPane()),
+
+  /** `?which=` open on a path every tool declares `writeOnly`: the per-tool rows, all
+   *  locked, and no control that could clear them. */
+  recordingExpanded: appDetail(tunnelHeaderBase, recordingPane({ sections: recordingSections(true) })),
+
+  /** Body logging off: the switch is off, the rail's dot is off, and the details say the
+   *  masks apply once it is turned on. */
+  recordingOff: appDetail(
+    tunnelHeaderBase,
+    recordingPane({
+      log: false,
+      summary: "body logging off · set explicitly · 2 masked paths by config · 2 declared writeOnly by the app",
+      intro: "Body logging is off, so no bodies reach the trail; the masks below apply once it is turned on.",
+    }),
+    {},
+    { recording: "off" },
+  ),
+
+  /** The proxied warning: nothing is cached at call time, so nothing is masked
+   *  automatically and the owner is told before they save. */
+  recordingProxiedWarning: appDetail(
+    proxiedHeaderBase,
+    recordingPane({
+      summary: "body logging on · set explicitly · 0 masked paths by config",
+      warning:
+        "A proxied app's schema is not cached at call time, so nothing is masked automatically. Tick what is secret before you save, or it is stored in the clear for 7 days.",
+      keep: [],
+      cards: [
+        { title: "Arguments · 0 masked", rows: [], empty: "nothing masked — arguments are recorded whole" },
+        { title: "Results · 0 masked", rows: [], empty: "nothing masked — results are recorded whole" },
+      ],
+    }),
+  ),
+
+  /** A refused save, redrawn with the reason above the rows. */
+  recordingRefused: appDetail(
+    tunnelHeaderBase,
+    recordingPane({ error: "\"redact\" paths must be dotted JSON paths" }),
+  ),
+
+  /** AppDetailPanes "Agents": who holds a grant, what it holds and how far it reaches. */
+  agents: appDetail(tunnelHeaderBase, accessPane()),
+
+  /** An agent selected: the agent page's grant editor, verbatim, drawn by the same
+   *  component over the same groups. */
+  agentsEditing: appDetail(tunnelHeaderBase, accessPane({ details: agentEditor })),
+
+  /** A refused save, redrawn on the submitted choices. */
+  agentsRefused: appDetail(
+    tunnelHeaderBase,
+    accessPane({ details: { ...agentEditor, error: "role \"editor\" is not declared by mcp-tools" } }),
+  ),
+
+  /** Nothing granted yet: the note still says where a grant starts, because that is true
+   *  of `grant_set` regardless. */
+  agentsEmpty: appDetail(
+    tunnelHeaderBase,
+    accessPane({
+      summary: "0 agents hold a grant · open one to edit its grant on mcp-tools",
+      rows: [],
+      details: { kind: "none", perTool: [], more: 0 },
+    }),
+    {},
+    { access: "0" },
+  ),
+
+  /** AppDetailPanes "Token": the live key, Issue beside the title, Revoke behind its
+   *  dialog. */
+  token: appDetail(tunnelHeaderBase, tokenPane()),
+
+  /** One selected: the reveal is absent, so this is the ordinary details. */
+  tokenSelected: appDetail(
+    tunnelHeaderBase,
+    tokenPane({ details: { kind: "token", row: liveAppToken, isNew: false } }),
+  ),
+
+  /** The state only the Issue POST can produce: the plaintext, in the details of the key
+   *  it just minted, in the one response that will ever carry it (§4/§15). */
+  tokenRevealed: {
+    ...appDetail(
+      tunnelHeaderBase,
+      tokenPane({
+        rows: [
+          { id: "tok_2b8x", prefix: "pmcp_app_2b8x", createdAt: ms(NOW), lastUsedAt: null, live: false },
+          liveAppToken,
+        ],
+        summary:
+          "2 live · app tokens have no expiry — rotate by issuing, then revoking the old one. Revoking the key a live socket used closes it.",
+        details: {
+          kind: "token",
+          row: { id: "tok_2b8x", prefix: "pmcp_app_2b8x", createdAt: ms(NOW), lastUsedAt: null, live: false },
+          isNew: true,
+        },
+      }),
+      {},
+      { token: "2" },
+    ),
     reveal: "pmcp_app_2b8xQv7Ld0Rk4Ht1Zc6Ns9Wj3Fy",
   },
 
-  /** The proxied half: the dimmed entry's own pane, which explains §2 and draws no
-   *  control at all — `token_issue` refuses `kind: "app"` on this app for that reason. */
-  tokenProxied: appDetail(proxiedHeader, "token", PROXY_CATALOG),
+  /** No key at all — the app cannot dial in until one is issued. */
+  tokenEmpty: appDetail(
+    tunnelHeaderBase,
+    tokenPane({ rows: [], summary: "0 live · app tokens have no expiry — rotate by issuing, then revoking the old one. Revoking the key a live socket used closes it." }),
+    {},
+    { token: "0" },
+  ),
 
-  /** AppDetailPanes "Danger zone": Archive and Delete, each a link to its own dialog. */
-  danger: appDetail(tunnelHeader, "danger", TUNNEL_CATALOG),
+  /** The proxied half: a wide pane, §2's reason and no control at all. */
+  tokenProxied: appDetail(
+    proxiedHeaderBase,
+    tokenPane({ proxied: true, rows: [], summary: "" }),
+    {},
+    { token: DIMMED },
+  ),
+
+  /** AppDetailPanes "Overview", wide: the facts, and nothing to edit. */
+  overview: appDetail(tunnelHeaderBase, { kind: "overview", rows: overviewRows }),
+
+  /** The proxied Overview: three more rows, and the header card above it without them. */
+  overviewProxied: appDetail(proxiedHeaderBase, {
+    kind: "overview",
+    rows: [
+      { key: "Slug", value: "linear", mono: true },
+      { key: "Kind", value: "proxy", mono: true },
+      { key: "Created", value: "12 Aug 2026", mono: false },
+      { key: "Endpoint", value: "https://mcp.linear.app/mcp", mono: true },
+      { key: "Auth", value: "oauth", mono: true },
+      { key: "Forward identity", value: "On", mono: false },
+      { key: "Body logging", value: "Off — proxied default", mono: false },
+      { key: "Description", value: "Issues and cycles over the Linear MCP.", mono: false },
+    ],
+  }),
+
+  /** AppDetailPanes "Danger zone", wide: Archive and Delete, each behind its own dialog. */
+  danger: appDetail(tunnelHeaderBase, { kind: "danger", archived: false, tokens: 1, agents: 2 }),
 
   /** The archived app's danger zone: the banner above it, and Unarchive in Archive's
    *  place — the one control here that destroys nothing and needs no dialog. */
-  dangerArchived: appDetail(
-    { ...tunnelHeader, archived: true, status: "archived" },
-    "danger",
-    TUNNEL_CATALOG,
-  ),
+  dangerArchived: appDetail({ ...tunnelHeaderBase, archived: true, status: "archived" }, {
+    kind: "danger",
+    archived: true,
+    tokens: 1,
+    agents: 2,
+  }),
 
-  /** Dialogs.dc.html, this page's three: the Token pane's Revoke, and the danger zone's
-   *  Archive and Delete, each rendered open on the pane that owns it. */
+  /** Dialogs.dc.html, this page's four, each rendered open on the pane that owns it. */
   confirmRevokeToken: {
-    ...appDetail(tunnelHeader, "token", TUNNEL_CATALOG),
-    confirm: { kind: "revoke-token", id: liveAppToken.id, prefix: liveAppToken.prefix },
+    ...appDetail(tunnelHeaderBase, tokenPane()),
+    confirm: { kind: "revoke-token", id: liveAppToken.id, prefix: liveAppToken.prefix, live: true },
+  },
+
+  confirmRemoveAgent: {
+    ...appDetail(tunnelHeaderBase, accessPane({ details: agentEditor })),
+    confirm: { kind: "remove-agent", agent: "claude" },
   },
 
   confirmArchive: {
-    ...appDetail(tunnelHeader, "danger", TUNNEL_CATALOG),
+    ...appDetail(tunnelHeaderBase, { kind: "danger", archived: false, tokens: 1, agents: 2 }),
     confirm: { kind: "archive" },
   },
 
   confirmDelete: {
-    ...appDetail(tunnelHeader, "danger", TUNNEL_CATALOG),
+    ...appDetail(tunnelHeaderBase, { kind: "danger", archived: false, tokens: 1, agents: 2 }),
     confirm: { kind: "delete" },
   },
 
-  /** The long-data check: a 40-character slug in the title row and the rail, a 40-word
-   *  description where the board draws one line, and a 300-character pattern in the role
-   *  the tool is reached through
-   *  (docs/superpowers/postmortems/2026-09-16-agent-page-layout-not-the-board.md). */
-  longData: appDetail(
-    { ...tunnelHeader, slug: LONG_SLUG, name: "Incident response and postmortem runners (staging)" },
-    "tools",
-    {
-      ...TUNNEL_CATALOG,
-      tools: {
-        state: "listed",
-        rows: [
-          {
-            name: LONG_TOOL,
-            aggregated: `${LONG_SLUG}_${LONG_TOOL}`,
-            summary: LONG_DESCRIPTION,
-            description: LONG_DESCRIPTION,
-            args: [{ name: "since", type: "string", required: false, hasDefault: false }],
-            reach: [{ agent: "claude", mode: "allow", roles: ["incident-responder"] }],
-            approvalAgents: [],
-            redactedArgs: [],
-            redactedResults: [],
-            schemaUnsound: false,
-          },
-          ...mcpToolsCatalog,
-        ],
+  /* ---- the three narrow levels, which are the URL's and not the viewport's ---- */
+
+  /** Level 1: the rail as a list, with the Catalog listing under it — the landing has no
+   *  second URL to be level 2 at (model's `appLevel`). */
+  mobileLevel1: appDetail(tunnelHeaderBase, catalogPane()),
+
+  /** Level 2: a pane's listing, reached from the rail. */
+  mobileLevel2: {
+    ...appDetail(tunnelHeaderBase, recordingPane()),
+    level: 2 as const,
+    levelHeader: { backHref: "/apps/mcp-tools", backLabel: "mcp-tools", title: "Recording" },
+  },
+
+  /** Level 3: one row's details, with the way back to the listing that named it. */
+  mobileLevel3: {
+    ...appDetail(tunnelHeaderBase, catalogPane({ details: catalogToolDetails })),
+    level: 3 as const,
+    levelHeader: { backHref: "/apps/mcp-tools", backLabel: "Catalog", title: "secret_push" },
+  },
+
+  /* ---- one long-data fixture per listing ---- */
+
+  longCatalog: appDetail(
+    longHeader,
+    catalogPane({
+      groups: catalogGroups([longCatalogRow, ...appTools]),
+      summary: "4 tools · 1 prompts · 2 resources · reachable by 2 agents",
+    }),
+  ),
+
+  longRoles: appDetail(longHeader, {
+    kind: "roles",
+    summary: ROLES_SUMMARY,
+    rows: [
+      {
+        name: "incident-responder-oncall-primary",
+        source: "yours",
+        sourceTitle: null,
+        detail: `tools ${LONG_PATTERN} · matches 1`,
+        holders: [{ agent: "incident-responder-oncall", ask: true }],
+        sel: "role:incident-responder-oncall-primary",
       },
-    },
-    { roles: { "incident-responder": { tools: [LONG_PATTERN], prompts: [], resources: [] } } },
+      ...appRoles,
+    ],
+    details: roleEditor({
+      name: "incident-responder-oncall-primary",
+      explain: `Defined by you. If ${longHeader.name} later declares a role named incident-responder-oncall-primary, the app's declaration replaces this one.`,
+      patterns: [
+        {
+          pattern: LONG_PATTERN,
+          family: "tools",
+          detail: "matches 1 today, and any added later",
+          entry: `tools/${LONG_PATTERN}`,
+          editable: true,
+        },
+      ],
+      keep: [`tools/${LONG_PATTERN}`],
+    }),
+  }),
+
+  longRecording: appDetail(
+    longHeader,
+    recordingPane({
+      sections: [
+        {
+          dir: "args",
+          title: "Arguments",
+          count: 1,
+          note: "from each tool's inputSchema",
+          state: null,
+          noSchema: null,
+          rows: [
+            {
+              path: "incident.timeline.window.starting_at_iso_8601_timestamp",
+              type: "string",
+              detail: "4 tools · masked on 2 of 4",
+              which: { href: "/apps/x/recording?which=args%3Aincident", label: "which" },
+              control: { kind: "mixed" },
+              tools: [
+                { tool: LONG_TOOL, writeOnly: false, field: `m.args.${LONG_TOOL}.incident`, checked: true },
+                { tool: "paper_fetch", writeOnly: false, field: "m.args.paper_fetch.incident", checked: false },
+              ],
+            },
+          ],
+        },
+        {
+          dir: "results",
+          title: "Results",
+          count: 0,
+          note: "from outputSchema, where declared",
+          state: "no schema declares any field",
+          noSchema: null,
+          rows: [],
+        },
+      ],
+    }),
+  ),
+
+  longAgents: appDetail(
+    longHeader,
+    accessPane({
+      rows: [
+        {
+          slug: "incident-responder-oncall",
+          description: LONG_DESCRIPTION,
+          allowed: [`tools/${LONG_PATTERN}`],
+          askFirst: [`tool/${LONG_TOOL}`],
+          reach: "reaches 1 of 4 tools · 1 ask first · 0 of 1 prompts · 0 of 2 resources · 512 calls · 7 d",
+          sel: "agent:incident-responder-oncall",
+        },
+        ...appAgents,
+      ],
+    }),
   ),
 } satisfies Record<string, AppDetailProps>;
 

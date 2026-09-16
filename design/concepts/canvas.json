@@ -95,6 +95,14 @@
       "w": 1240,
       "h": 1500,
       "title": "Recording · redaction from the schema, four ways"
+    },
+    {
+      "file": "AgentMobileDemo.html",
+      "x": 7000,
+      "y": 5300,
+      "w": 440,
+      "h": 900,
+      "title": "Agent page · mobile, three levels (demo)"
     }
   ],
   "annotations": [],

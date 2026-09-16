@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Breadcrumb options</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap">
+<style>
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:#09090b;font-size:14px;background:#fafafa;padding:32px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .opt{background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:20px 24px;margin-bottom:20px;max-width:760px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .lab{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a;margin-bottom:12px;display:flex;justify-content:space-between}
+  .lab span{text-transform:none;letter-spacing:0;font-weight:400}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+  .pair > div > .cap{font-size:11px;color:#a1a1aa;margin-bottom:8px}
+  .head{display:flex;flex-direction:column;gap:6px}
+  .title{display:flex;align-items:center;gap:10px}
+  .title .mono{font-size:22px;font-weight:600}
+  .badge{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:#f4f4f5;color:#71717a}
+  .cell{font-size:13px;color:#71717a}
+  nav{display:flex;align-items:center;font-size:13px;gap:6px}
+  nav .sep{color:#a1a1aa}
+  nav .cur{color:#09090b;font-weight:500}
+  nav a{cursor:pointer}
+
+  /* A — muted text, chevrons, hover darkens and underlines (shadcn / Linear) */
+  .a a{color:#71717a;text-decoration:none}
+  .a a:hover,.a a.hov{color:#09090b;text-decoration:underline;text-underline-offset:3px}
+
+  /* B — the page's link colour: underlined ancestors, current plain */
+  .b a{color:#09090b;text-decoration:underline;text-underline-offset:3px;text-decoration-color:#d4d4d8}
+  .b a:hover,.b a.hov{text-decoration-color:#09090b}
+
+  /* C — blue links, slashes (GitHub) */
+  .c a{color:#2563eb;text-decoration:none}
+  .c a:hover,.c a.hov{text-decoration:underline;text-underline-offset:3px}
+  .c .sep{color:#a1a1aa}
+
+  /* D — ancestors as quiet pills that fill on hover, no border (Vercel) */
+  .d{gap:2px}
+  .d a{color:#71717a;text-decoration:none;padding:4px 8px;border-radius:6px}
+  .d a:hover,.d a.hov{background:#f4f4f5;color:#09090b}
+  .d .cur{padding:4px 8px}
+
+  /* E — the slug ancestors as the page's own badges, muted until hover */
+  .e a{color:#71717a;text-decoration:none;display:inline-flex;align-items:center;gap:4px}
+  .e a .badge{background:#f4f4f5;color:#52525b}
+  .e a:hover .badge,.e a.hov .badge{background:#e4e4e7;color:#09090b}
+</style>
+</head>
+<body>
+
+<div class="opt"><div class="lab">A — muted, chevrons, darken + underline on hover <span>shadcn, Linear</span></div>
+  <div class="pair"><div><div class="cap">rest</div><div class="head"><nav class="a"><a>Agents</a><span class="sep">›</span><a class="mono">claude</a><span class="sep">›</span><span class="cur mono">news</span></nav>
+    <div class="title"><span class="mono">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div></div></div>
+  <div><div class="cap">hovering claude</div><div class="head"><nav class="a"><a>Agents</a><span class="sep">›</span><a class="mono hov">claude</a><span class="sep">›</span><span class="cur mono">news</span></nav>
+    <div class="title"><span class="mono">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div></div></div></div></div>
+
+<div class="opt"><div class="lab">B — underlined ancestors in the page's own link style, current plain <span>the app's anchors already look like this</span></div>
+  <div class="pair"><div><div class="cap">rest</div><div class="head"><nav class="b"><a>Agents</a><span class="sep">›</span><a class="mono">claude</a><span class="sep">›</span><span class="cur mono">news</span></nav>
+    <div class="title"><span class="mono">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div></div></div>
+  <div><div class="cap">hovering claude</div><div class="head"><nav class="b"><a>Agents</a><span class="sep">›</span><a class="mono hov">claude</a><span class="sep">›</span><span class="cur mono">news</span></nav>
+    <div class="title"><span class="mono">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div></div></div></div></div>
+
+<div class="opt"><div class="lab">C — blue links, slashes <span>GitHub</span></div>
+  <div class="pair"><div><div class="cap">rest</div><div class="head"><nav class="c"><a>Agents</a><span class="sep">/</span><a class="mono">claude</a><span class="sep">/</span><span class="cur mono">news</span></nav>
+    <div class="title"><span class="mono">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div></div></div>
+  <div><div class="cap">hovering claude</div><div class="head"><nav class="c"><a>Agents</a><span class="sep">/</span><a class="mono hov">claude</a><span class="sep">/</span><span class="cur mono">news</span></nav>
+    <div class="title"><span class="mono">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div></div></div></div></div>
+
+<div class="opt"><div class="lab">D — quiet pills, fill on hover, no border <span>Vercel</span></div>
+  <div class="pair"><div><div class="cap">rest</div><div class="head"><nav class="d"><a>Agents</a><span class="sep">›</span><a class="mono">claude</a><span class="sep">›</span><span class="cur mono">news</span></nav>
+    <div class="title"><span class="mono">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div></div></div>
+  <div><div class="cap">hovering claude</div><div class="head"><nav class="d"><a>Agents</a><span class="sep">›</span><a class="mono hov">claude</a><span class="sep">›</span><span class="cur mono">news</span></nav>
+    <div class="title"><span class="mono">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div></div></div></div></div>
+
+<div class="opt"><div class="lab">E — slugs as the page's own badges, muted until hover <span>the slug chip the rows already use</span></div>
+  <div class="pair"><div><div class="cap">rest</div><div class="head"><nav class="e"><a>Agents</a><span class="sep">›</span><a><span class="badge mono">claude</span></a><span class="sep">›</span><span class="cur"><span class="badge mono" style="background:#18181b;color:#fafafa">news</span></span></nav>
+    <div class="title"><span class="mono">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div></div></div>
+  <div><div class="cap">hovering claude</div><div class="head"><nav class="e"><a>Agents</a><span class="sep">›</span><a class="hov"><span class="badge mono">claude</span></a><span class="sep">›</span><span class="cur"><span class="badge mono" style="background:#18181b;color:#fafafa">news</span></span></nav>
+    <div class="title"><span class="mono">claude</span><span class="badge">agent</span><span class="cell">Claude sessions · last active 2 h ago</span></div></div></div></div></div>
+
+</body>
+</html>

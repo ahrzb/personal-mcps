@@ -42,7 +42,7 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ops } from "../../src/admin";
 import type { AdminOp } from "../../src/admin";
-import { APP_PANES, RESERVED_APP_SLUGS } from "../../src/app-routes";
+import { AGENT_PANES, APP_PANES, RESERVED_APP_SLUGS } from "../../src/app-routes";
 import { Approvals } from "../../src/approvals";
 import { query, record } from "../../src/audit";
 import type { AuditQuery, AuditRow } from "../../src/audit";
@@ -2444,7 +2444,68 @@ describe(`§13 · the PWA icons — the install gate's own bytes`, () => {
 describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and what points at them`, () => {
   // Rows first (§9 rule 1), from §13's sections as the 2026-09-16 three-pane brief redraws
   // them; the app pane — the grant set itself — is its own describe below.
-  it.todo(`§13 · /agents lists one row per agent whose slug is an anchor stretched over the whole row (a class="row-link" inside the class="agent-row", with the trailing chevron), the description beneath, Access in one line as "N apps · A allowed · K ask first · D dormant" counted over the grant sets with no catalog read, Tokens and Created as today, and Delete as the row's only control · an agent holding nothing reads "no grants", and the empty namespace still reads "No agents yet. Create one to give an AI agent its own grants and keys." beside New agent (the twin)`);
+
+  it(`§13 · /agents lists one row per agent whose slug is an anchor stretched over the whole row (a class="row-link" inside the class="agent-row", with the trailing chevron), the description beneath, Access in one line as "N apps · A allowed · K ask first · D dormant" counted over the grant sets with no catalog read, Tokens and Created as today, and Delete as the row's only control · an agent holding nothing reads "no grants", and the empty namespace still reads "No agents yet. Create one to give an AI agent its own grants and keys." beside New agent (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        { slug: "linear", kind: "tunnel", name: "Linear" },
+        { slug: "news", kind: "tunnel" },
+        { slug: "parked", kind: "tunnel", archived: true },
+      ],
+      agents: [
+        {
+          slug: "claude",
+          description: "Claude sessions",
+          grants: {
+            // One of each bucket the Access line counts: an allow, an ask, a role the app
+            // has never declared, and a grant on an app that is archived.
+            linear: [{ role: "reader", mode: "allow" }, { role: "admin", mode: "approval" }],
+            news: [{ role: "ghost", mode: "allow" }],
+            parked: [{ role: "all", mode: "allow" }],
+          },
+          tokens: [{ as: "claude" }],
+        },
+        { slug: "cron", grants: {} },
+      ],
+    });
+    // `reader` and `admin` are declared, so only `ghost` is dormant for want of a
+    // declaration (a tunneled app's roles arrive at registration — seed FINDINGS 1).
+    await new Registry(env.DB).upsertDeclaredRoles(ns.apps.linear.id, { reader: ["get_.*"], admin: ["admin_.*"] });
+    const session = await seedOwnerSession(ns.owner);
+    const html = await page(paths.agents, session.cookie);
+    const text = textOf(html);
+
+    // The row's link is the slug, stretched: the classes are the contract here, because
+    // "the whole row is the link" exists nowhere else in the markup.
+    const rowLink = [...html.matchAll(/<a\b([^>]*)>/g)].find(
+      (anchor) => decodeEntities(attributeOf(anchor[1], "href") ?? "") === paths.agentDetail("claude"),
+    );
+    expect(rowLink, "no anchor to the agent page").toBeDefined();
+    expect(attributeOf(rowLink?.[1] ?? "", "class") ?? "").toContain("row-link");
+    expect(html).toContain("agent-row");
+    expect(text).toContain("Claude sessions");
+
+    // Access, in one line, over the grant sets: three apps, one allow, one ask, and two
+    // dormant — the archived app's grant and the undeclared role.
+    expect(text).toContain("3 apps · 1 allowed · 1 ask first · 2 dormant");
+    expect(text).toContain("no grants");
+    expect(text).toContain("1 active · never used");
+    expect(html).toContain(`href="${paths.agentNew}"`);
+
+    // Delete is the row's ONLY control: the list points at the agent page and at the
+    // delete dialog, and never into a pane.
+    expect(linkTexts(html, paths.agentsConfirmDelete("claude"))).toContain("Delete");
+    for (const href of html.matchAll(/href="([^"]*)"/g)) {
+      expect(decodeEntities(href[1]).startsWith(`${paths.agentDetail("claude")}/`), href[1]).toBe(false);
+    }
+
+    // The twin: the empty namespace.
+    const fresh = await seedNamespace(env.DB, {});
+    const empty = await page(paths.agents, (await seedOwnerSession(fresh.owner)).cookie);
+    expect(textOf(empty)).toContain("No agents yet.");
+    expect(textOf(empty)).toContain("Create one to give an AI agent its own grants and keys.");
+    expect(empty).toContain(`href="${paths.agentNew}"`);
+  });
 
   it(`§13 · the top nav holds five entries in §13's order — Apps · Agents · Audit · Approvals · Settings — on every shell page, Agents marked aria-current="page" on /agents and on /agents/<slug> and nowhere else · /apps marks Apps alone (the twin)`, async () => {
     const ORDER = [paths.apps, paths.agents, paths.audit, paths.approvals, paths.settings];
@@ -2542,23 +2603,373 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(textOf(await page(paths.agentDetail(slug)))).toContain(slug);
   });
 
-  it.todo(`§13 · /agents/<slug> renders the FIRST app in slug order the agent holds a grant on, in place and under its own URL — the breadcrumb "Agents / <slug>", the slug, an agent badge, the name when it differs, the description, Created and the tiles "N apps · A allow · K ask first · D dormant" — with no alias URL for that pane · an agent holding no grant lands on the grant step, in place (the twin)`);
+  it(`§13 · /agents/<slug> renders the FIRST app in slug order the agent holds a grant on, in place and under its own URL — the breadcrumb "Agents / <slug>", the slug, an agent badge, the name when it differs, the description, Created and the tiles "N apps · A allow · K ask first · D dormant" — with no alias URL for that pane · an agent holding no grant lands on the grant step, in place (the twin)`, async () => {
+    const { cookie } = await withAgentPanes();
+    const html = await page(paths.agentDetail("claude"), cookie);
+    const text = textOf(html);
+    expect(text).toContain("Agents / claude");
+    expect(text).toMatch(/claude\s+agent/);
+    expect(text).toContain("Claude");
+    expect(text).toContain("Claude sessions");
+    expect(text).toContain("Created");
+    // Tiles, one per count — the header's own row, not one sentence.
+    for (const tile of ["3 apps", "1 allow", "1 ask first", "1 dormant"]) expect(text, tile).toContain(tile);
 
-  it.todo(`§13 · each pane answers on its own URL — /agents/<slug>/apps/<app>, /grant, /credentials, /activity, /danger — and /apps/<app> for an ACTIVE app the agent holds nothing on renders the new-grant state: an empty set, the header's dashed "new grant · nothing saved yet" badge and the app in the rail · an unknown pane segment, and an unknown, builtin, foreign or ungranted archived app, are noSuchPage (the twin)`);
+    // The landing IS an app pane, and the app it renders is the first granted slug —
+    // `linear`, not `news`, and not `brand`, which this agent holds nothing on. What
+    // proves WHICH pane was rendered is the form only that pair's pane carries.
+    expect(html).toContain(`action="${paths.agentGrantSet("claude", "linear")}"`);
+    expect(html).not.toContain(`action="${paths.agentGrantSet("claude", "news")}"`);
 
-  it.todo(`§13 · the moved editor keeps its old URLs as permanent moves: GET /agents/<slug>/grants/<app> answers 301 to /agents/<slug>/apps/<app> · GET /agents/<slug>/grants answers 301 to /agents/<slug>/grant (the twin)`);
+    // The twin: an agent holding no grant lands on the grant step, in place.
+    const bare = await page(paths.agentDetail("cron"), cookie);
+    expect(textOf(bare)).toContain(
+      "What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing granted yet.",
+    );
+    expect(bare).toContain(`href="${paths.agentApp("cron", "brand")}"`);
+  });
 
-  it.todo(`§13 · the rail carries "Apps · N" — one entry per granted app in slug order, then "+ Grant another app…" with the count of grantable apps — then the "Agent" group (Credentials with its live · clients counts, Activity with its pending-approval count) and the tail group Danger zone, the open pane's entry marked aria-current="page" · a set holding an approval entry marks its entry rail-dot--warn, and an archived app — and nothing else, the rail never reads a catalog — draws the dash and rail-link--dim (the twin)`);
+  it(`§13 · each pane answers on its own URL — /agents/<slug>/apps/<app>, /grant, /credentials, /activity, /danger — and /apps/<app> for an ACTIVE app the agent holds nothing on renders the new-grant state: an empty set, the header's dashed "new grant · nothing saved yet" badge and the app in the rail · an unknown pane segment, and an unknown, builtin, foreign or ungranted archived app, are noSuchPage (the twin)`, async () => {
+    const { cookie } = await withAgentPanes();
+    for (const pane of AGENT_PANES) {
+      expect((await get(paths.agentPane("claude", pane), cookie)).status, pane).toBe(200);
+    }
+    expect((await get(paths.agentApp("claude", "news"), cookie)).status).toBe(200);
 
-  it.todo(`§13 · /agents/<slug>/grant lists one card per active non-builtin app the agent holds nothing on — name, slug, kind and status badges, description, "T tools · P prompts · R resources · roles <names>", a "show all N" link at ?show=<app> revealing the endpoint list with the role badges that grant each entry or "only via all or by name", and a Grant link to /agents/<slug>/apps/<app> — under "What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing granted yet." · q filters the cards by app name, slug, description or endpoint name and opens the matching cards' lists, and an agent holding every active app reads "<agent> already holds a grant on every active app. Archived apps are not listed; unarchive one to grant it." (the twin)`);
+    // An ACTIVE app this agent holds nothing on: the pane renders, the set is empty, the
+    // badge says so, and the rail carries the app it is about.
+    const fresh = await page(paths.agentApp("claude", "brand"), cookie);
+    expect(textOf(fresh)).toContain("new grant · nothing saved yet");
+    const chosen = paneSubmission(fresh, paths.agentGrantSet("claude", "brand"));
+    expect(Object.keys(chosen).filter((name) => name.startsWith("e.")).length).toBeGreaterThan(0);
+    for (const [name, value] of Object.entries(chosen)) {
+      if (name.startsWith("e.")) expect(value, name).toBe("none");
+    }
+    expect(agentRail(fresh, "claude").map((entry) => entry.href)).toContain(paths.agentApp("claude", "brand"));
 
-  it.todo(`§13/§4 · /agents/<slug>/credentials lists the agent's unrevoked keys under "Tokens · N" beside one form whose expires_in select offers 2592000 / 7776000 / 31536000 / never and whose Issue token answers 200 in place — the reveal above the list, the plaintext on no URL of the response · a live row offers Revoke at ?confirm=revoke-token&id= where an expired one offers Remove at ?confirm=remove-token&id= ("Remove expired token <prefix>?" over "It expired <date>; removing it keeps its history."), both dialogs posting token_revoke and landing back on this pane, while "Connected clients · N" is read-only, each row linking to /settings/clients (the twin)`);
+    // The twin: everything that is not a pane of this agent is the hub's 404 — an unknown
+    // segment, the bare `apps` with no app, an unknown app, the builtin, an app of another
+    // namespace, and an archived app this agent holds nothing on.
+    for (const url of [
+      `${paths.agentDetail("claude")}/nowhere`,
+      `${paths.agentDetail("claude")}/apps`,
+      paths.agentApp("claude", uniqueSlug("nosuch")),
+      paths.agentApp("claude", PMCP_SLUG),
+      paths.agentApp("claude", "notion"),
+      paths.agentApp("cron", "parked"),
+    ]) {
+      const missing = await get(url, cookie);
+      expect(missing.status, url).toBe(404);
+      expect(await missing.text(), url).toContain("No such page");
+    }
+  });
 
-  it.todo(`§13/§15 · /agents/<slug>/activity lists "Awaiting approval · N" rows whose Reject and Approve post approval_decide to /agents/<slug>/approval_decide and land back on this pane, leaving the decided row dimmed with its status badge, above "Recent calls · N" from audit_query with one outcome badge per row (ok / approval required / not permitted / the failure) · sel=call:<id> on a refused call carries "Refused before the call was made, so there are no bodies to show." and the link /audit?expand=<id>#event-<id> (the twin)`);
+  it(`§13 · the moved editor keeps its old URLs as permanent moves: GET /agents/<slug>/grants/<app> answers 301 to /agents/<slug>/apps/<app> · GET /agents/<slug>/grants answers 301 to /agents/<slug>/grant (the twin)`, async () => {
+    const { cookie } = await withAgentPanes();
+    // Spelled, not built: the whole point of these two rows is that the OLD spelling still
+    // answers, and `paths` no longer carries it.
+    const moved = await get("/agents/claude/grants/news", cookie);
+    expect(moved.status).toBe(301);
+    expect(new URL(moved.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentApp("claude", "news"));
 
-  it.todo(`§13 · /agents/<slug>/danger draws the Delete agent card over "Deleting an agent deletes its tokens, revokes its clients and removes its grants everywhere. This cannot be undone.", whose Delete <agent> opens the same ?confirm=delete-agent dialog the list draws and lands on /agents with the notice · every other mutation an agent pane fronts lands back on its own pane (the twin)`);
+    // The twin: the chooser's old URL moves to the grant step.
+    const chooser = await get("/agents/claude/grants", cookie);
+    expect(chooser.status).toBe(301);
+    expect(new URL(chooser.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentPane("claude", "grant"));
+  });
 
-  it.todo(`§13 · the app pane's form is the one form the agent pages render whose fields are not its op's keys verbatim — one e.<entry> radio group per row, plus add / mode / drop / clear, composed by the route — and it is the only one: every other form on the five panes names an op's own fields (the twin, the parity-B sweep extended to /agents)`);
+  it(`§13 · the rail carries "Apps · N" — one entry per granted app in slug order, then "+ Grant another app…" with the count of grantable apps — then the "Agent" group (Credentials with its live · clients counts, Activity with its pending-approval count) and the tail group Danger zone, the open pane's entry marked aria-current="page" · a set holding an approval entry marks its entry rail-dot--warn, and an archived app draws the dash and rail-link--dim — and nothing else, the rail never reads a catalog — (the twin)`, async () => {
+    const { cookie } = await withAgentPanes();
+    const html = await page(paths.agentApp("claude", "news"), cookie);
+    const rail = agentRail(html, "claude");
+    expect(rail.map((entry) => entry.href)).toEqual([
+      paths.agentApp("claude", "linear"),
+      paths.agentApp("claude", "news"),
+      paths.agentApp("claude", "parked"),
+      paths.agentPane("claude", "grant"),
+      paths.agentPane("claude", "credentials"),
+      paths.agentPane("claude", "activity"),
+      paths.agentPane("claude", "danger"),
+    ]);
+    expect(rail.filter((entry) => entry.current).map((entry) => entry.href)).toEqual([
+      paths.agentApp("claude", "news"),
+    ]);
+    // The groups, and the one count the rail computes from the namespace rather than from
+    // this agent's own set: `brand` is the only active app it holds nothing on.
+    const block = agentRailBlock(html, "claude");
+    expect(textOf(block)).toContain("Apps · 3");
+    expect(textOf(block)).toContain("Agent");
+    expect(rail.find((entry) => entry.href === paths.agentPane("claude", "grant"))?.marker).toContain("1");
+
+    // The markers, which are the rail's whole vocabulary: amber where an entry asks first,
+    // the dash and the dimmed link where the app is archived, and neither anywhere else.
+    expect(railAnchor(html, "claude", paths.agentApp("claude", "news"))).toContain("rail-dot--warn");
+    expect(railAnchor(html, "claude", paths.agentApp("claude", "linear"))).not.toContain("rail-dot--warn");
+    const parked = railAnchor(html, "claude", paths.agentApp("claude", "parked"));
+    expect(parked).toContain("rail-link--dim");
+    expect(rail.find((entry) => entry.href === paths.agentApp("claude", "parked"))?.marker).toBe(DIMMED_MARKER);
+  });
+
+  it(`§13 · /agents/<slug>/grant lists one card per active non-builtin app the agent holds nothing on — name, slug, kind and status badges, description, and, while the card is CLOSED, "roles <names> · show endpoints" alone (the link, ?show=<app>), no count and no catalog read — under "What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing granted yet." and beside a Grant link to /agents/<slug>/apps/<app> · the OPEN card is the read: "T tools · P prompts · R resources · roles <names> · hide" above the endpoint list, whose rows carry the role badges that grant each entry or "only via all or by name", while q filters the cards by app name, slug, description or endpoint name and opens the ones it matched, and an agent holding every active app reads "<agent> already holds a grant on every active app. Archived apps are not listed; unarchive one to grant it." (the twin)`, async () => {
+    const { cookie } = await withAgentPanes();
+    const grant = paths.agentPane("claude", "grant");
+    const html = await page(grant, cookie);
+    const text = textOf(html);
+    expect(text).toContain("Grant another app");
+    expect(text).toContain(
+      "What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing granted yet.",
+    );
+    // Exactly the active apps held nothing on: `brand` — never `parked` (archived), never
+    // an app already granted, and never the builtin.
+    expect(text).toContain("Apps · 1");
+    expect(text).toContain("Brand");
+    expect(html).toContain(`href="${paths.agentApp("claude", "brand")}"`);
+    expect(linkTexts(html, paths.agentApp("claude", "brand"))).toContain("Grant");
+
+    // CLOSED: the roles it declares and the link that would open it — and nothing that
+    // could only come from a catalog, because a closed card has not read one.
+    expect(text).toContain("roles reader · show endpoints");
+    expect(text).not.toMatch(/\d+ tools/);
+    expect(linkTexts(html, `${grant}?show=brand`)).toContain("show endpoints");
+    expect(text).not.toContain("purge_cache");
+
+    // OPEN: the counts ARE the read, and the list names what grants each entry.
+    const opened = await page(`${grant}?show=brand`, cookie);
+    const shown = textOf(opened);
+    expect(shown).toMatch(/3 tools · \d+ prompts · \d+ resources · roles reader · hide/);
+    expect(linkTexts(opened, grant)).toContain("hide");
+    expect(shown).toContain("purge_cache");
+    expect(shown).toContain("reader");
+    expect(shown).toContain("only via all or by name");
+
+    // `q` filters by endpoint name too, and opens the cards it matched.
+    const searched = textOf(await page(`${paths.agentPane("claude", "grant")}?q=purge_cache`, cookie));
+    expect(searched).toContain("Brand");
+    expect(searched).toContain("purge_cache");
+
+    // The twin: an agent already granted on every active app is offered none.
+    const full = textOf(await page(paths.agentPane("everywhere", "grant"), cookie));
+    expect(full).toContain(
+      "everywhere already holds a grant on every active app. Archived apps are not listed; unarchive one to grant it.",
+    );
+  });
+
+  it(`§13/§4 · /agents/<slug>/credentials lists the agent's unrevoked keys under "Tokens · N" beside one form whose expires_in select offers 2592000 / 7776000 / 31536000 / never and whose Issue token answers 200 in place — the reveal above the list, the plaintext on no URL of the response · a live row offers Revoke at ?confirm=revoke-token&id= where an expired one offers Remove at ?confirm=remove-token&id= ("Remove expired token <prefix>?" over "It expired <date>; removing it keeps its history."), both dialogs posting token_revoke and landing back on this pane, while "Connected clients · N" is read-only, each row linking to /settings/clients (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel" }],
+      agents: [
+        {
+          slug: "keyed",
+          grants: { news: [{ role: "all", mode: "allow" }] },
+          tokens: [{ as: "live" }, { as: "dead", expired: true }],
+        },
+      ],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    await consentOnce(ns, session.cookie, "keyed", { client_name: "Claude Desktop" });
+    const pane = paths.agentPane("keyed", "credentials");
+    const html = await page(pane, session.cookie);
+    const text = textOf(html);
+    const keyed = (await tokensOf(ns.owner.userId)).filter((token) => token.refSlug === "keyed");
+    const dead = keyed.find((token) => token.id === ns.tokens.dead.id);
+    const live = keyed.find((token) => token.id === ns.tokens.live.id);
+    expect(dead, "the expired key vanished").toBeDefined();
+    expect(live, "the live key vanished").toBeDefined();
+    expect(text).toContain("Tokens · 2");
+
+    // The select the Issue control carries, in §4's own seconds.
+    const select = /<select\b[^>]*name="expires_in"[^>]*>([\s\S]*?)<\/select>/.exec(html);
+    expect(select, "the pane rendered no expires_in select").not.toBeNull();
+    expect(optionValues(select?.[1] ?? "")).toEqual(["2592000", "7776000", "31536000", "never"]);
+
+    // Issue answers 200 IN PLACE, on this pane's own URL, with the plaintext in the reveal
+    // and on no URL of the response.
+    const issueTarget = actionFor(html, "token_issue");
+    const issued = await formPost(issueTarget, { ...formsPostingTo(html, issueTarget)[0], csrf: csrfOf(html) }, session.cookie);
+    expect(issued.status).toBe(200);
+    const revealed = await issued.text();
+    const plaintext = /pmcp_agt_[A-Za-z0-9]+/.exec(textOf(revealed))?.[0];
+    expect(plaintext, "no plaintext key in the reveal").toBeDefined();
+    for (const href of revealed.matchAll(/href="([^"]*)"/g)) expect(href[1]).not.toContain(plaintext ?? "!");
+    expect(railAnchor(revealed, "keyed", pane), "the reveal is the pane, re-rendered").toBeTruthy();
+
+    // Revoke on the live row, Remove on the expired one — two dialogs, one op, and both
+    // land back here.
+    expect(links(html, `${pane}?confirm=revoke-token&id=${live?.id}`)).toBe(true);
+    expect(links(html, `${pane}?confirm=remove-token&id=${dead?.id}`)).toBe(true);
+    const remove = await page(`${pane}?confirm=remove-token&id=${dead?.id}`, session.cookie);
+    expect(remove).toContain("<dialog");
+    expect(textOf(remove)).toContain(`Remove expired token ${dead?.prefix}?`);
+    expect(textOf(remove)).toContain("removing it keeps its history.");
+    const removeTarget = actionFor(remove, "token_revoke");
+    const removed = await formPost(removeTarget, { csrf: csrfOf(remove) }, session.cookie);
+    expect(removed.status).toBe(303);
+    expect(new URL(removed.headers.get("Location") ?? "", ORIGIN).pathname).toBe(pane);
+    const revoke = await page(`${pane}?confirm=revoke-token&id=${live?.id}`, session.cookie);
+    const revoked = await formPost(actionFor(revoke, "token_revoke"), { csrf: csrfOf(revoke) }, session.cookie);
+    expect(revoked.status).toBe(303);
+    expect(new URL(revoked.headers.get("Location") ?? "", ORIGIN).pathname).toBe(pane);
+
+    // The twin: the clients half is read-only — it links into Settings and fronts no
+    // revocation of its own.
+    expect(text).toContain("Claude Desktop");
+    expect(html).toContain(`href="${paths.settingsClients}"`);
+    expect(postTargets(html).some((target) => target.endsWith("connection_revoke"))).toBe(false);
+  });
+
+  it(`§13/§15 · /agents/<slug>/activity lists "Awaiting approval · N" rows whose Reject and Approve post approval_decide to /agents/<slug>/approval_decide and land back on this pane, leaving the decided row dimmed with its status badge, above "Recent calls · N" from audit_query with one outcome badge per row (ok / approval required / not permitted / the failure) · sel=call:<id> on a refused call carries "Refused before the call was made, so there are no bodies to show." and the link /audit?expand=<id>#event-<id> (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel" }],
+      agents: [{ slug: "agent", grants: { news: [{ role: "all", mode: "approval" }] } }],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const approvalId = await openApproval(ns, "news");
+    // Two calls, so the badge vocabulary has both a success and a refusal to spell — the
+    // refused one deliberately recording no bodies, which is the sentence the twin reads.
+    await record(env.DB, {
+      ownerId: ns.owner.userId,
+      principal: "agent:agent",
+      event: "tools/call",
+      app: "news",
+      tool: "ok-tool",
+      outcome: "ok",
+      durationMs: 12,
+      args: { q: "term" },
+    });
+    await record(env.DB, {
+      ownerId: ns.owner.userId,
+      principal: "agent:agent",
+      event: "tools/call",
+      app: "news",
+      tool: "refused-tool",
+      outcome: "-32001",
+      durationMs: 1,
+    });
+    const pane = paths.agentPane("agent", "activity");
+    const html = await page(pane, session.cookie);
+    const text = textOf(html);
+    expect(text).toContain("Awaiting approval · 1");
+    expect(text).toContain("the last 7 days, the retention window");
+    expect(html).toContain(`href="${paths.audit}?principal=agent:agent"`);
+
+    // Recent calls, each with its outcome — the audit page's own vocabulary, which is
+    // where this pane's rows come from.
+    expect(text).toContain("ok-tool");
+    expect(text).toContain("refused-tool");
+    // A badge names the outcome; the raw JSON-RPC code the ledger stores is not a word a
+    // reader is owed, which is what "outcome badge" means here.
+    expect(text).not.toContain("-32001");
+
+    // Both decisions are drawn, each a form of its own whose target names the op and
+    // carries the op's own fields — and approving lands back on this pane.
+    const decide = (decision: "approve" | "reject"): string =>
+      paths.agentOp("agent", "approval_decide", { id: approvalId, decision });
+    expect(formsPostingTo(html, decide("reject")).length, "no Reject form").toBeGreaterThan(0);
+    expect(formsPostingTo(html, decide("approve")).length, "no Approve form").toBeGreaterThan(0);
+    const decided = await formPost(decide("approve"), { csrf: csrfOf(html) }, session.cookie);
+    expect(decided.status).toBe(303);
+    expect(new URL(decided.headers.get("Location") ?? "", ORIGIN).pathname).toBe(pane);
+    expect(textOf(await page(pane, session.cookie))).toContain("approved");
+
+    // The twin: the details of a refused call say why there are no bodies, and point at
+    // the same row in the trail.
+    const refused = (await query(env.DB, ns.owner.userId, { tool: "refused-tool" })).rows[0];
+    expect(refused, "no ledger row for the refused call").toBeDefined();
+    const details = await page(`${pane}?sel=call:${refused.id}`, session.cookie);
+    expect(textOf(details)).toContain("Refused before the call was made, so there are no bodies to show.");
+    expect(details).toContain(`href="${paths.audit}?expand=${refused.id}#event-${refused.id}"`);
+  });
+
+  it.todo(`§13/§15 · /agents/<slug>/activity pages the trail — Recent calls draws the newest twenty over a "Load 20 more" row that is a plain link carrying ?calls=<n+20> and reads "<remaining> older in the last 7 days · everything before that is in Audit" (Audit linking /audit?principal=agent:<slug>), and under ?calls=<n> the list draws n rows with the summary counting over the rows shown, "last N calls · ok · denied · K awaiting approval" · a week the list has exhausted reads "That is the whole week — older calls are in Audit." (the twin)`);
+
+  it(`§13 · /agents/<slug>/danger draws the Delete agent card over "Deleting an agent deletes its tokens, revokes its clients and removes its grants everywhere. This cannot be undone.", whose Delete <agent> opens the same ?confirm=delete-agent dialog the list draws and lands on /agents with the notice · every other mutation an agent pane fronts lands back on its own pane (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel" }],
+      agents: [{ slug: "gone", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "key" }] }],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const danger = paths.agentPane("gone", "danger");
+    const html = await page(danger, session.cookie);
+    expect(textOf(html)).toContain(
+      "Deleting an agent deletes its tokens, revokes its clients and removes its grants everywhere. This cannot be undone.",
+    );
+    expect(links(html, `${danger}?confirm=delete-agent`)).toBe(true);
+
+    // The twin first, so the agent still exists to land on: a refused revoke posted from
+    // the credentials pane comes back to the credentials pane with its failure.
+    const credentials = paths.agentPane("gone", "credentials");
+    const failed = await formPost(
+      paths.agentOp("gone", "token_revoke", { id: "tok_nope" }),
+      { csrf: csrfOf(await page(credentials, session.cookie)) },
+      session.cookie,
+    );
+    expect(failed.status).toBe(303);
+    const back = new URL(failed.headers.get("Location") ?? "", ORIGIN);
+    expect(back.pathname).toBe(credentials);
+    expect(back.searchParams.get("failed")).toBe("token_revoke");
+
+    const dialog = await page(`${danger}?confirm=delete-agent`, session.cookie);
+    expect(dialog).toContain("<dialog");
+    expect(textOf(dialog)).toContain("Delete agent “gone”?");
+    const deleted = await formPost(actionFor(dialog, "agent_delete"), { csrf: csrfOf(dialog) }, session.cookie);
+    expect(deleted.status).toBe(303);
+    const landing = new URL(deleted.headers.get("Location") ?? "", ORIGIN);
+    expect(landing.pathname).toBe(paths.agents);
+    expect(landing.searchParams.get("done")).toBe("agent_delete");
+    const agents = (await ops.agent_list.handler(ns.owner.userId, {})) as { agents: { slug: string }[] };
+    expect(agents.agents.map((row) => row.slug)).not.toContain("gone");
+  });
+
+  it(`§13 · the app pane's form is the one form the agent pages render whose fields are not its op's keys verbatim — one e.<entry> radio group per row, plus add / mode / drop / clear, composed by the route — and it is the only one: every other form on the five panes names an op's own fields (the twin, the parity-B sweep extended to /agents)`, async () => {
+    const { ns, cookie } = await withAgentPanes();
+    const key = (await tokensOf(ns.owner.userId)).find((token) => token.refSlug === "claude");
+    if (key === undefined) throw new Error("the seeded agent key vanished");
+
+    const seen = new Set<string>();
+    for (const url of [
+      paths.agents,
+      paths.agentsConfirmDelete("claude"),
+      paths.agentNew,
+      paths.agentDetail("claude"),
+      ...AGENT_PANES.map((pane) => paths.agentPane("claude", pane)),
+      `${paths.agentPane("claude", "credentials")}?confirm=revoke-token&id=${key.id}`,
+      `${paths.agentPane("claude", "danger")}?confirm=delete-agent`,
+    ]) {
+      for (const form of formsRenderedOn(await page(url, cookie))) {
+        if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
+        expect(Object.prototype.hasOwnProperty.call(ops, form.op), `${url} → ${form.op}`).toBe(true);
+        seen.add(form.op);
+        // The one exception, checked below rather than here — and the landing renders it,
+        // since the landing IS an app pane.
+        if (form.op === "grant_set") continue;
+        // Both sides derived off admin.ops: every required field, and nothing the schema
+        // does not declare. Not equality — `token_issue`'s optional `expires_in` is a
+        // control here, and nothing else's is.
+        for (const required of requiredKeysOf(ops[form.op])) {
+          expect(form.fields, `${url} → ${form.op} required`).toContain(required);
+        }
+        for (const submitted of form.fields) {
+          expect(schemaKeysOf(ops[form.op]), `${url} → ${form.op} submitted`).toContain(submitted);
+        }
+      }
+    }
+    for (const op of ["agent_create", "agent_delete", "token_issue", "token_revoke"]) {
+      expect([...seen], op).toContain(op);
+    }
+
+    // The one exception, and it is exactly one: the app pane's save fronts `grant_set` and
+    // submits no field the op declares — one `e.<entry>` per row plus the four the route
+    // composes, which it turns into the op's `roles` array (§13; D15 constraint 35).
+    const pane = await page(paths.agentApp("claude", "news"), cookie);
+    const forms = formsRenderedOn(pane).filter((form) => !BROWSER_ONLY_TARGETS.has(form.op));
+    expect(forms.map((form) => form.op)).toEqual(["grant_set"]);
+    expect(forms[0].fields).not.toEqual(schemaKeysOf(ops.grant_set));
+    expect(forms[0].fields.some((field) => field.startsWith("e."))).toBe(true);
+    for (const field of forms[0].fields) {
+      expect(schemaKeysOf(ops.grant_set), field).not.toContain(field);
+      expect(field.startsWith("e.") || COMPOSED_GRANT_FIELDS.has(field), field).toBe(true);
+    }
+  });
 
   it(`§13 · every agent slug the other pages print links to /agents/<slug> — the Tokens pane's Bound to, the Connected clients pane's Acts as, the app page's Agents pane, and the consent screen's empty state, which now reads "Create one under Agents before connecting a client." — and the Tokens intro reads "Issue new keys from an app or agent page." again · app slugs still link to /apps/<slug> (the twin)`, async () => {
     const agentLink = `href="${paths.agentDetail("agent")}"`;
@@ -2584,49 +2995,459 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(tokens).toContain(`href="${paths.appDetail("news")}"`);
   });
 
-  it.todo(`§13 · the app page's Agents pane carries Edit grants → /agents/<agent>/apps/<slug> per row now that the editor is a pane of the agent page, and its footer still reads "Grants are edited per agent × app pair — saving replaces that pair's whole set." (the twin — re-pointed 2026-09-16)`);
+  it(`§13 · the app page's Agents pane carries Edit grants → /agents/<agent>/apps/<slug> per row now that the editor is a pane of the agent page, and its footer still reads "Grants are edited per agent × app pair — saving replaces that pair's whole set." (the twin — re-pointed 2026-09-16)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel", name: "News MCP" }],
+      agents: [
+        { slug: "claude", grants: { news: [{ role: "all", mode: "allow" }] } },
+        { slug: "cron", grants: { news: [{ role: "all", mode: "approval" }] } },
+      ],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const html = await page(paths.appPane("news", "access"), session.cookie);
+    for (const agent of ["claude", "cron"]) {
+      expect(linkTexts(html, paths.agentApp(agent, "news")), agent).toContain("Edit grants");
+    }
+    // The twin: the pane still says what saving does, and still fronts no grant_set form —
+    // the control is a link into the pair's pane, not a second editor here.
+    expect(textOf(html)).toContain(AGENTS_FOOTER);
+    expect(formsRenderedOn(html).map((form) => form.op)).not.toContain("grant_set");
+  });
 });
 
 describe(`§13 · /agents/<slug>/apps/<app> — the (agent × app) grant pane`, () => {
   // The listing and its details pane: the one page that reads a catalog, and the one form
   // that writes a grant set.
-  it.todo(`§13 · the listing header carries the app's name, slug, kind badge and status badge, the reach line "<agent> reaches N of T tools · K ask first · P of PT prompts · R of RT resources" computed over the SAVED set, then the filter row (a GET form q, placeholder "filter, or type a pattern…") and the groups Roles · N ("declared by the app at connect" / "defined in config"), Tools · N ("R reached · U not"), Prompts · N, Resources · N ("matched by URI") and Patterns · N ("entries that are not one item") in that order · a family the hub cannot list renders one note line in its group — "<app> has not connected yet — nothing to list until it does." / "is not advertised" / "could not be read just now" (the twin)`);
+  it(`§13 · the listing header carries the app's name, slug, kind badge and status badge, the reach line "<agent> reaches N of T tools · K ask first · P of PT prompts · R of RT resources" computed over the SAVED set, then the filter row (a GET form q, placeholder "filter, or type a pattern…") and the groups Roles · N ("declared by the app at connect" / "defined in config"), Tools · N ("R reached · U not"), Prompts · N, Resources · N ("matched by URI") and Patterns · N ("entries that are not one item") in that order · a family the hub cannot list renders one note line in its group — "<app> has not connected yet — nothing to list until it does." / "is not advertised" / "could not be read just now" (the twin)`, async () => {
+    const { cookie } = await withGrantPane();
+    const html = await page(paths.agentApp("askrole", "feed"), cookie);
+    const text = textOf(html);
+    expect(text).toContain("News MCP");
+    expect(text).toContain("feed");
 
-  it.todo(`§13 · one role row per declared role — the name, the patterns per family beneath it and "matches N" — carries one control: three radios in a .seg named e.<role>, in the order none · ask · allow with values none / approval / allow, checked at the mode the saved set holds for that role · the built-in all, badged built-in, is last whatever order the declaration arrived in (the twin)`);
+    // The reach line, over the SAVED set: `reader` asks first, so every tool it reaches is
+    // reachable and gated, and the third tool is neither.
+    expect(text).toContain("askrole reaches 2 of 3 tools · 2 ask first · 1 of 1 prompts · 1 of 1 resources");
+    expect(html).toContain('placeholder="filter, or type a pattern…"');
 
-  it.todo(`§13 · an item row a granted role already reaches draws the implied mode hollow (.impl, and .warn when the role only asks) and marks every button BELOW it disabled with title "<roles> grants <ask|allow> — change the role to lower it", the row reading "via <roles>" · an item no role reaches draws the three buttons plain and enabled, with no via line (the twin)`);
+    // The groups, in §13's order, each with its count.
+    let at = -1;
+    for (const heading of ["Roles ·", "Tools · 3", "Prompts · 1", "Resources · 1"]) {
+      const next = text.indexOf(heading);
+      expect(next, heading).toBeGreaterThan(at);
+      at = next;
+    }
+    expect(text).toContain("2 reached · 1 not");
+    // The Patterns group is the set's own, so it is drawn where the set holds one.
+    expect(textOf(await page(paths.agentApp("direct", "feed"), cookie))).toContain("Patterns ·");
 
-  it.todo(`§13 · an item row's radio is checked at the DIRECT entry's mode — the set's own tool/<name>, prompt/<name> or resource/<uri> — and at none when the set holds no direct entry for that item, the row reading "also via <roles>" when a role matches it too (the twin)`);
+    // The twin: a tunneled app that has never connected has nothing to list, and says so
+    // in the group rather than leaving it blank.
+    const quiet = textOf(await page(paths.agentApp("dormant", "silent"), cookie));
+    expect(quiet).toContain("silent has not connected yet — nothing to list until it does.");
+  });
 
-  it.todo(`§13 · a direct entry at ask under a role that allows draws the "ask entry · no effect" badge, titled "allow wins over ask", beside a × button submitting drop=<entry> · the same entry with no role allowing it draws neither the badge nor the × (the twin)`);
+  it(`§13 · one role row per declared role — the name, the patterns per family beneath it and "matches N" — carries one control: three radios in a .seg named e.<role>, in the order none · ask · allow with values none / approval / allow, checked at the mode the saved set holds for that role · the built-in all, badged built-in, is last whatever order the declaration arrived in (the twin)`, async () => {
+    const { cookie } = await withGrantPane();
+    const html = await page(paths.agentApp("askrole", "feed"), cookie);
+    expect(segOf(html, "reader").map((button) => button.value)).toEqual(["none", "approval", "allow"]);
+    expect(checkedIn(html, "reader")).toBe("approval");
+    expect(checkedIn(html, "purger")).toBe("none");
+    expect(checkedIn(html, "all")).toBe("none");
 
-  it.todo(`§13 · a held role the app has not declared is its own row — the name, an undeclared badge and "granted, but the app has not declared it — dormant" — whose control is an "in Allowed" / "in Ask first" badge with a × remove button, never a radio group (the twin)`);
+    // `all` LAST, whatever order the declaration arrived in, and marked as the built-in.
+    expect(html.indexOf('name="e.all"')).toBeGreaterThan(html.indexOf('name="e.purger"'));
+    expect(html.indexOf('name="e.all"')).toBeGreaterThan(html.indexOf('name="e.reader"'));
+    const text = textOf(html);
+    expect(text).toMatch(/all\s+built-in/);
 
-  it.todo(`§13 · an inline entry whose pattern is not one literal item is a Patterns · N row reading "matches N today" / "matches nothing today" with a radio group of its own · a q that is not a literal name offers "As a pattern": one row tool/<q> (resource/<q> when q holds "://") over "would match N today, and any added later" / "matches nothing today", with the two submits Ask and Allow carrying add=<entry> and mode=approval | allow (the twin)`);
+    // The twin: a row says what its role matches — the patterns, per family, and a count.
+    expect(text).toContain("get_.*");
+    expect(text).toContain("purge_cache");
+    expect(text).toMatch(/matches \d+/);
+  });
 
-  it.todo(`§13 · with q set the rows are filtered by name or description substring while the pattern rows stay · a q that matches no row at all renders "Nothing matches “<q>”." (the twin)`);
+  it(`§13 · an item row a granted role already reaches draws the implied mode hollow (.impl, and .warn when the role only asks) and marks every button BELOW it disabled with title "<roles> grants <ask|allow> — change the role to lower it", the row reading "via <roles>" · an item no role reaches draws the three buttons plain and enabled, with no via line (the twin)`, async () => {
+    const { cookie } = await withGrantPane();
+    const allowed = await page(paths.agentApp("viarole", "feed"), cookie);
+    const implied = segOf(allowed, "tool/get_news");
+    expect(implied.map((button) => button.value)).toEqual(["none", "approval", "allow"]);
+    // Everything below the implied allow is unclickable, and says why.
+    expect(implied.filter((button) => button.disabled).map((button) => button.value)).toEqual(["none", "approval"]);
+    expect(allowed).toContain('title="reader grants allow — change the role to lower it"');
+    expect(textOf(allowed)).toContain("via reader");
 
-  it.todo(`§13/§8 · Save composes every e.<entry> radio into ONE grant_set for the pair — allow bare, approval suffixed :approval, none dropped — merging the offer's add=<entry> at its mode and removing every drop=<entry>, replacing the pair's whole set and landing 303 on the pane with the notice (the twin)`);
+    // A role that only ASKS implies less, so only the button below ask is disabled.
+    const asked = await page(paths.agentApp("askrole", "feed"), cookie);
+    expect(segOf(asked, "tool/get_news").filter((button) => button.disabled).map((button) => button.value)).toEqual([
+      "none",
+    ]);
+    expect(asked).toContain('title="reader grants ask — change the role to lower it"');
 
-  it.todo(`§13/§9 · a refused save — a proxied app's undeclared role, or a pattern that compiles to nothing valid — redraws the pane at 400 with the reason in a danger alert above the listing and every submitted choice preserved, never a redirect, leaving the saved set untouched (the twin)`);
+    // The twin: an item no granted role reaches is a free choice.
+    expect(segOf(allowed, "tool/purge_cache").some((button) => button.disabled)).toBe(false);
+  });
 
-  it.todo(`§13 · Remove from <agent> opens ?confirm=remove-app on the pane — "Remove <app> from <agent>?" over "<agent> loses every entry on <app>. History stays; a waiting request expires." — whose form posts clear=1 to the same action, writing grant_set an empty set and landing 303 on /agents/<slug> with the notice (the twin)`);
+  it(`§13 · an item row's radio is checked at the DIRECT entry's mode — the set's own tool/<name>, prompt/<name> or resource/<uri> — and at none when the set holds no direct entry for that item, the row reading "also via <roles>" when a role matches it too (the twin)`, async () => {
+    const { cookie } = await withGrantPane();
+    const direct = await page(paths.agentApp("direct", "feed"), cookie);
+    expect(checkedIn(direct, "tool/get_weather")).toBe("approval");
+    expect(checkedIn(direct, "tool/get_news")).toBe("none");
+    expect(checkedIn(direct, "prompt/daily_digest")).toBe("none");
+    expect(checkedIn(direct, "resource/news://feed/latest")).toBe("none");
 
-  it.todo(`§13 · the details pane answers sel: a role draws the role badge, "Declared by <app> at connect." / "Built in: every family, present and future.", its For-agent, Patterns and "Matches today" cards; a tool draws its Standing, the approval sentence, the Arguments table and "Called as <app>_<tool> on the aggregated endpoint"; a pattern draws the pattern badge, "An entry that is not one item: anchored, * aliases .*." and "Matches today · N" · nothing selected draws "Select a role, tool, prompt or resource on the left for its details." with the Catalog and "Grant set for <agent>" cards (the twin)`);
+    // The twin: a direct entry on an item a role ALSO matches says so, and is still what
+    // the radio is checked at.
+    const both = await page(paths.agentApp("both", "feed"), cookie);
+    expect(checkedIn(both, "tool/get_news")).toBe("approval");
+    expect(textOf(both)).toContain("also via reader");
+  });
+
+  it(`§13 · a direct entry at ask under a role that allows draws the "ask entry · no effect" badge, titled "allow wins over ask", beside a × button submitting drop=<entry> · the same entry with no role allowing it draws neither the badge nor the × (the twin)`, async () => {
+    const { cookie } = await withGrantPane();
+    const both = await page(paths.agentApp("both", "feed"), cookie);
+    expect(textOf(both)).toContain("ask entry · no effect");
+    expect(both).toContain('title="allow wins over ask"');
+    expect(dropOffers(both)).toContain("tool/get_news");
+
+    // The twin: the same shape of entry with nothing allowing over it is an ordinary ask.
+    const direct = await page(paths.agentApp("direct", "feed"), cookie);
+    expect(textOf(direct)).not.toContain("ask entry · no effect");
+    expect(dropOffers(direct)).not.toContain("tool/get_weather");
+  });
+
+  it(`§13 · a held role the app has not declared is its own row — the name, an undeclared badge and "granted, but the app has not declared it — dormant" — whose control is an "in Allowed" / "in Ask first" badge with a × remove button, never a radio group (the twin)`, async () => {
+    const { cookie } = await withGrantPane();
+    const quiet = await page(paths.agentApp("dormant", "silent"), cookie);
+    const text = textOf(quiet);
+    expect(text).toMatch(/triage\s+undeclared/);
+    expect(text).toContain("granted, but the app has not declared it — dormant");
+    expect(text).toContain("in Allowed");
+    expect(dropOffers(quiet)).toContain("triage");
+    // The twin: it is not a choice, so the row draws no radio group — the entry rides a
+    // hidden field, which is what keeps a save from silently dropping it.
+    expect(() => segOf(quiet, "triage")).toThrow();
+    expect(quiet).toContain('name="e.triage" value="allow"');
+  });
+
+  it(`§13 · an inline entry whose pattern is not one literal item is a Patterns · N row reading "matches N today" / "matches nothing today" with a radio group of its own · a q that is not a literal name offers "As a pattern": one row tool/<q> (resource/<q> when q holds "://") over "would match N today, and any added later" / "matches nothing today", with the two submits Ask and Allow carrying add=<entry> and mode=approval | allow (the twin)`, async () => {
+    const { cookie } = await withGrantPane();
+    const direct = await page(paths.agentApp("direct", "feed"), cookie);
+    expect(textOf(direct)).toContain("tool/purge_.*");
+    expect(textOf(direct)).toContain("matches 1 today");
+    expect(segOf(direct, "tool/purge_.*").map((button) => button.value)).toEqual(["none", "approval", "allow"]);
+
+    // The twin: a filter that is not a name is offered as a pattern, with both modes as
+    // submits of the pane's own form.
+    const base = paths.agentApp("viarole", "feed");
+    const offered = await page(`${base}?q=${encodeURIComponent("get_*")}`, cookie);
+    expect(textOf(offered)).toContain("As a pattern");
+    expect(textOf(offered)).toContain("would match 2 today, and any added later");
+    for (const [mode, label] of [["allow", "Allow"], ["approval", "Ask"]] as const) {
+      const press = clickedSubmission(offered, mode);
+      expect(press.fields.add, label).toBe("tool/get_*");
+      expect(press.fields.mode, label).toBe(mode);
+    }
+    // A `q` carrying a URI is a resource pattern, never a tool one.
+    const uri = await page(`${base}?q=${encodeURIComponent("news://feed/*")}`, cookie);
+    expect(textOf(uri)).toContain("resource/news://feed/*");
+  });
+
+  it(`§13 · with q set the rows are filtered by name or description substring while the pattern rows stay · a q that matches no row at all renders "Nothing matches “<q>”." (the twin)`, async () => {
+    const { cookie } = await withGrantPane();
+    const base = paths.agentApp("direct", "feed");
+    const filtered = textOf(await page(`${base}?q=forecast`, cookie));
+    // Matched on the DESCRIPTION, which is why the row it names is the weather one.
+    expect(filtered).toContain("get_weather");
+    expect(filtered).not.toContain("get_news");
+    // A held pattern is not a row the filter can narrow, so it stays.
+    expect(filtered).toContain("tool/purge_.*");
+
+    // The twin: nothing at all — read on a set holding no pattern of its own, since a
+    // pattern row is not a row the filter can empty.
+    const nothing = await page(`${paths.agentApp("viarole", "feed")}?q=zzz`, cookie);
+    expect(textOf(nothing)).toContain("Nothing matches “zzz”.");
+  });
+
+  it(`§13/§8 · Save composes every e.<entry> radio into ONE grant_set for the pair — allow bare, approval suffixed :approval, none dropped — merging the offer's add=<entry> at its mode and removing every drop=<entry>, replacing the pair's whole set and landing 303 on the pane with the notice (the twin)`, async () => {
+    const { ns, cookie } = await seedWritablePair();
+    const pane = paths.agentApp("claude", "feed");
+    const action = paths.agentGrantSet("claude", "feed");
+    const html = await page(pane, cookie);
+    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual([
+      "reader",
+      "tool/get_news:approval",
+      "tool/purge_.*",
+    ]);
+
+    // Pressed ×: the same composition, minus that one entry.
+    const dropped = await formPost(
+      action,
+      { ...pressed(html, action, "drop", "tool/get_news"), csrf: csrfOf(html) },
+      cookie,
+    );
+    expect(dropped.status).toBe(303);
+    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual(["reader", "tool/purge_.*"]);
+
+    // Pressed Allow on the pattern offer: the same composition, plus the offered entry.
+    const offered = await page(`${pane}?q=${encodeURIComponent("get_*")}`, cookie);
+    const added = await formPost(action, { ...pressed(offered, action, "mode", "allow"), csrf: csrfOf(offered) }, cookie);
+    expect(added.status).toBe(303);
+    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual(["reader", "tool/get_*", "tool/purge_.*"]);
+
+    // Pressed Save, with three rows changed: a role dropped, a role added bare, and an
+    // item added at ask — the whole set, replaced by what the page showed.
+    const again = await page(pane, cookie);
+    const saved = await formPost(
+      action,
+      {
+        ...paneSubmission(again, action),
+        "e.reader": "none",
+        "e.purger": "allow",
+        "e.tool/get_weather": "approval",
+        csrf: csrfOf(again),
+      },
+      cookie,
+    );
+    expect(saved.status).toBe(303);
+    const landing = new URL(saved.headers.get("Location") ?? "", ORIGIN);
+    expect(landing.pathname).toBe(pane);
+    expect(landing.searchParams.get("done")).toBe("grant_set");
+    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual([
+      "purger",
+      "tool/get_*",
+      "tool/get_weather:approval",
+      "tool/purge_.*",
+    ]);
+  });
+
+  it(`§13/§9 · a refused save — a proxied app's undeclared role, or a pattern that compiles to nothing valid — redraws the pane at 400 with the reason in a danger alert above the listing and every submitted choice preserved, never a redirect, leaving the saved set untouched (the twin)`, async () => {
+    const scenario = await paneScenario();
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        {
+          slug: "feed",
+          kind: "proxy",
+          name: "News MCP",
+          upstreamUrl: upstreamUrlFor(scenario),
+          upstreamAuthMode: "headers",
+          capabilities: ["tools", "prompts", "resources"],
+          // Declared at seed time so the grant below is legal, then withdrawn — the only
+          // way a proxied app can hold an undeclared grant, and the state §13 draws.
+          roles: { ...PANE_ROLES, triage: { tools: ["purge_.*"] } },
+        },
+      ],
+      agents: [
+        { slug: "claude", grants: { feed: [{ role: "reader", mode: "allow" }, { role: "triage", mode: "allow" }] } },
+      ],
+    });
+    await ops.app_update.handler(ns.owner.userId, { slug: "feed", roles: PANE_ROLES });
+    const cookie = (await seedOwnerSession(ns.owner)).cookie;
+    const pane = paths.agentApp("claude", "feed");
+    const action = paths.agentGrantSet("claude", "feed");
+    const html = await page(pane, cookie);
+
+    const refused = await formPost(
+      action,
+      { ...paneSubmission(html, action), "e.purger": "approval", csrf: csrfOf(html) },
+      cookie,
+    );
+    // Redrawn here rather than landed anywhere, with the choices the submission carried.
+    expect(refused.status).toBe(400);
+    const redrawn = await refused.text();
+    expect(redrawn).toContain(`action="${action}"`);
+    expect(textOf(redrawn)).toContain("triage");
+    expect(checkedIn(redrawn, "purger")).toBe("approval");
+    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual(["reader", "triage"]);
+
+    // The twin: a pattern that compiles to nothing valid is refused the same way — on a
+    // pair holding nothing else that could be refused first.
+    const clean = await seedWritablePair();
+    const cleanAction = paths.agentGrantSet("claude", "feed");
+    const offered = await page(`${paths.agentApp("claude", "feed")}?q=${encodeURIComponent("(")}`, clean.cookie);
+    const bad = await formPost(
+      cleanAction,
+      { ...pressed(offered, cleanAction, "mode", "allow"), csrf: csrfOf(offered) },
+      clean.cookie,
+    );
+    expect(bad.status).toBe(400);
+    expect(textOf(await bad.text())).toContain('entry "tool/(" is not a valid pattern');
+    expect(await grantsOn(clean.ns.owner.userId, "claude", "feed")).toEqual([
+      "reader",
+      "tool/get_news:approval",
+      "tool/purge_.*",
+    ]);
+  });
+
+  it(`§13 · Remove from <agent> opens ?confirm=remove-app on the pane — "Remove <app> from <agent>?" over "<agent> loses every entry on <app>. History stays; a waiting request expires." — whose form posts clear=1 to the same action, writing grant_set an empty set and landing 303 on /agents/<slug> with the notice (the twin)`, async () => {
+    const { ns, cookie } = await seedWritablePair();
+    const pane = paths.agentApp("claude", "feed");
+    const bare = await page(pane, cookie);
+    expect(links(bare, `${pane}?confirm=remove-app`)).toBe(true);
+
+    const dialog = await page(`${pane}?confirm=remove-app`, cookie);
+    expect(dialog).toContain("<dialog");
+    expect(textOf(dialog)).toContain("Remove feed from claude?");
+    expect(textOf(dialog)).toContain("claude loses every entry on feed. History stays; a waiting request expires.");
+    expect(
+      formsRenderedOn(dialog).some((form) => form.op === "grant_set" && form.fields.includes("clear")),
+    ).toBe(true);
+
+    const cleared = await formPost(
+      paths.agentGrantSet("claude", "feed"),
+      { clear: "1", csrf: csrfOf(dialog) },
+      cookie,
+    );
+    expect(cleared.status).toBe(303);
+    const landing = new URL(cleared.headers.get("Location") ?? "", ORIGIN);
+    expect(landing.pathname).toBe(paths.agentDetail("claude"));
+    expect(landing.searchParams.get("done")).toBe("grant_set");
+    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual([]);
+  });
+
+  it(`§13 · the details pane answers sel: a role draws the role badge, "Declared by <app> at connect." / "Built in: every family, present and future.", its For-agent, Patterns and "Matches today" cards; a tool draws its Standing, the approval sentence, the Arguments table and "Called as <app>_<tool> on the aggregated endpoint"; a pattern draws the pattern badge, "An entry that is not one item: anchored, * aliases .*." and "Matches today · N" · nothing selected draws "Select a role, tool, prompt or resource on the left for its details." with the Catalog and "Grant set for <agent>" cards (the twin)`, async () => {
+    const { cookie } = await withGrantPane();
+    const base = paths.agentApp("viarole", "feed");
+
+    const role = textOf(await page(`${base}?sel=role:reader`, cookie));
+    expect(role).toContain("Patterns");
+    expect(role).toContain("Matches today");
+    expect(role).toContain("get_news");
+    expect(role).toContain(
+      "A role widens when the app widens it. To keep a single item regardless, add it directly from its row.",
+    );
+    expect(textOf(await page(`${base}?sel=role:all`, cookie))).toContain(
+      "Built in: every family, present and future.",
+    );
+
+    const tool = textOf(await page(`${base}?sel=tool:get_news`, cookie));
+    expect(tool).toContain("Fetch the latest stories.");
+    expect(tool).toContain("Called as feed_get_news on the aggregated endpoint");
+
+    const pattern = textOf(
+      await page(`${paths.agentApp("direct", "feed")}?sel=pattern:${encodeURIComponent("tool/purge_.*")}`, cookie),
+    );
+    // The sentence ends in the code span `.*`, and `textOf` takes the space off in front
+    // of the full stop that follows it — the string a reader sees, spelled as they see it.
+    expect(pattern).toContain("An entry that is not one item: anchored, * aliases");
+    expect(pattern).toContain("Matches today · 1");
+
+    // The twin: nothing selected is the app's own summary, not an empty column.
+    const nothing = textOf(await page(base, cookie));
+    expect(nothing).toContain("Select a role, tool, prompt or resource on the left for its details.");
+    expect(nothing).toContain("Grant set for viarole");
+  });
 });
 
-/** The three-way choice each editor row rendered, by control name: the option a browser
- *  would submit untouched. The editor's whole input is these, so a row's preset and a
- *  submission built from the page are one reading. */
-function grantChoices(html: string): Record<string, string> {
-  const chosen: Record<string, string> = {};
-  for (const select of html.matchAll(/<select\b([^>]*)>([\s\S]*?)<\/select>/g)) {
-    const name = attributeOf(select[1], "name");
-    if (name === null) continue;
-    const selected = /<option\b[^>]*\bselected\b[^>]*>/.exec(select[2]);
-    chosen[name] = selected === null ? "" : decodeEntities(attributeOf(selected[0], "value") ?? "");
+/* ------------------------------------------------------------------ *
+ * The agent pages' own reading: the rail, one row's control, and the two seeded worlds.
+ * ------------------------------------------------------------------ */
+
+/** The four fields the app pane's form carries that are NOT one row's choice — the ones
+ *  the route composes into `grant_set`'s `roles` rather than passing through. */
+const COMPOSED_GRANT_FIELDS: ReadonlySet<string> = new Set(["add", "mode", "drop", "clear"]);
+
+/** The agent rail's accessible name, discovered rather than spelled: it is the navigation
+ *  that carries this agent's Danger zone and is not the compact one. Finding it by what it
+ *  links keeps every rail row about the rail's CONTENT, never about its label. */
+function agentRailLabel(html: string, slug: string): string {
+  const danger = `href="${paths.agentPane(slug, "danger")}"`;
+  for (const nav of html.matchAll(/<nav\b[^>]*aria-label="([^"]*)"[^>]*>([\s\S]*?)<\/nav>/g)) {
+    if (nav[2].includes(danger) && !nav[1].endsWith("compact")) return nav[1];
   }
-  return chosen;
+  throw new Error("the page rendered no agent rail");
+}
+
+/** The agent rail's markup, for the group headings a rail entry walk cannot see. */
+function agentRailBlock(html: string, slug: string): string {
+  return navBlock(html, agentRailLabel(html, slug)) ?? "";
+}
+
+/** The agent rail's entries, in the order it drew them. */
+function agentRail(html: string, slug: string): RailEntry[] {
+  return railEntries(html, agentRailLabel(html, slug));
+}
+
+/** One rail entry's own markup — where the two markers that are not text live (the amber
+ *  dot, the dimmed link), which is the only place they exist at all. */
+function railAnchor(html: string, slug: string, href: string): string {
+  const anchor = [...agentRailBlock(html, slug).matchAll(/<a\b([^>]*)>[\s\S]*?<\/a>/g)].find(
+    (candidate) => decodeEntities(attributeOf(candidate[1], "href") ?? "") === href,
+  );
+  if (anchor === undefined) throw new Error(`the agent rail carries no entry for "${href}"`);
+  return anchor[0];
+}
+
+/** One row's control as the browser sees it: the radios named `e.<entry>`, in the order
+ *  they are drawn, each with the three attributes that decide what a click can do. */
+function segOf(html: string, entry: string): { value: string; checked: boolean; disabled: boolean }[] {
+  const name = `e.${entry}`;
+  const buttons: { value: string; checked: boolean; disabled: boolean }[] = [];
+  for (const control of html.matchAll(/<input\b([^>]*)>/g)) {
+    if (decodeEntities(attributeOf(control[1], "name") ?? "") !== name) continue;
+    // RADIOS only: a row whose entry is not a choice carries its entry in a hidden field
+    // instead, and "that row offers no choice" must not read as "it offers one".
+    if (attributeOf(control[1], "type") !== "radio") continue;
+    buttons.push({
+      value: decodeEntities(attributeOf(control[1], "value") ?? ""),
+      checked: /\bchecked\b/.test(control[1]),
+      disabled: /\bdisabled\b/.test(control[1]),
+    });
+  }
+  if (buttons.length === 0) throw new Error(`the pane rendered no control named "${name}"`);
+  return buttons;
+}
+
+/** Which of one row's three buttons the page checked — `null` when it checked none, which
+ *  is a different claim from "checked at none" and must not read as one. */
+function checkedIn(html: string, entry: string): string | null {
+  return segOf(html, entry).find((button) => button.checked)?.value ?? null;
+}
+
+/** The entries the pane offers to remove: one `drop` submit per × button. */
+function dropOffers(html: string): string[] {
+  return [...html.matchAll(/<button\b([^>]*)>/g)]
+    .filter((button) => attributeOf(button[1], "name") === "drop")
+    .map((button) => decodeEntities(attributeOf(button[1], "value") ?? ""));
+}
+
+/**
+ * The app pane's form as a browser would submit it untouched: every hidden field, and each
+ * radio group at the option the page CHECKED — a browser sends one value per group, which
+ * `submissionOf` (written for text and checkbox controls) cannot say, and without which
+ * "Save replaces the set with what the page showed" would be untestable.
+ */
+function paneSubmission(html: string, action: string): Record<string, string> {
+  const form = [...html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].find(
+    (candidate) => decodeEntities(attributeOf(candidate[1], "action") ?? "") === action,
+  );
+  if (form === undefined) throw new Error(`the page rendered no form posting to "${action}"`);
+  const fields: Record<string, string> = {};
+  for (const control of form[2].matchAll(/<input\b([^>]*)>/g)) {
+    const name = decodeEntities(attributeOf(control[1], "name") ?? "");
+    if (name === "") continue;
+    const value = decodeEntities(attributeOf(control[1], "value") ?? "");
+    if (attributeOf(control[1], "type") === "radio") {
+      if (/\bchecked\b/.test(control[1])) fields[name] = value;
+      continue;
+    }
+    fields[name] = value;
+  }
+  return fields;
+}
+
+/** One PRESS of a named submit button on that form: the form's own controls plus the
+ *  button's name and value, because a browser sends the button that was pressed and no
+ *  other. Throws when the page drew no such button — a submission the page cannot make
+ *  proves nothing. */
+function pressed(html: string, action: string, name: string, value: string): Record<string, string> {
+  const button = [...html.matchAll(/<button\b([^>]*)>/g)].find(
+    (candidate) =>
+      attributeOf(candidate[1], "name") === name &&
+      decodeEntities(attributeOf(candidate[1], "value") ?? "") === value,
+  );
+  if (button === undefined) throw new Error(`the pane rendered no "${name}" button valued "${value}"`);
+  return { ...paneSubmission(html, action), [name]: value };
 }
 
 /** The values one `<select>` offers, in the order it offers them. */
@@ -2641,6 +3462,183 @@ async function grantsOn(ownerId: string, agent: string, app: string): Promise<st
     agents: { slug: string; grants: Record<string, string[]> }[];
   };
   return [...(listed.agents.find((row) => row.slug === agent)?.grants[app] ?? [])].sort();
+}
+
+/**
+ * The catalog every grant-pane fixture reads: three tools (two of them behind one pattern),
+ * one prompt and one resource, plus two roles — a pattern role that reaches most of it and a
+ * literal role that reaches the one tool the other does not. That shape is what makes "via
+ * <role>", "direct" and "reaches N of T" three different readings of one page.
+ */
+const PANE_TOOLS = [
+  {
+    name: "get_news",
+    description: "Fetch the latest stories.",
+    inputSchema: { type: "object", properties: { q: { type: "string", description: "The query." } }, required: ["q"] },
+  },
+  { name: "get_weather", description: "Fetch the forecast.", inputSchema: { type: "object" } },
+  { name: "purge_cache", description: "Drop the cache.", inputSchema: { type: "object" } },
+];
+const PANE_PROMPTS = [{ name: "daily_digest", description: "The day's digest.", arguments: [] }];
+const PANE_RESOURCES = [{ uri: "news://feed/latest", name: "Latest headlines", mimeType: "text/plain" }];
+const PANE_ROLES = {
+  reader: { tools: ["get_.*"], prompts: ["daily_.*"], resources: ["news://feed/*"] },
+  purger: { tools: ["purge_cache"] },
+};
+
+/** One fake upstream serving that catalog — registered per fixture, so two namespaces'
+ *  payloads can never collide. */
+async function paneScenario(): Promise<UpstreamScenario> {
+  const scenario: UpstreamScenario = { id: uniqueSlug("paneup"), mode: { kind: "ok" } };
+  await registerOverride(scenario.id, { tools: PANE_TOOLS, prompts: PANE_PROMPTS, resources: PANE_RESOURCES });
+  return scenario;
+}
+
+type AgentWorld = { ns: SeededNamespace; cookie: string };
+
+/**
+ * The agent page's own world, seeded ONCE and awaited from each row that reads it: four
+ * apps (one grantable, one plain grant, one that asks first, one archived) and three agents
+ * (one holding three grants, one holding none, one holding every active app). Memoized
+ * rather than hung off a hook, because `-t` naming one row must still seed it — and shared
+ * because these rows only READ: the rows that write seed their own.
+ */
+let agentPanesWorld: Promise<AgentWorld> | null = null;
+const withAgentPanes = (): Promise<AgentWorld> => (agentPanesWorld ??= seedAgentPanes());
+
+async function seedAgentPanes(): Promise<AgentWorld> {
+  const scenario = await paneScenario();
+  const ns = await seedNamespace(env.DB, {
+    apps: [
+      {
+        slug: "brand",
+        kind: "proxy",
+        name: "Brand",
+        description: "The brand app.",
+        upstreamUrl: upstreamUrlFor(scenario),
+        upstreamAuthMode: "headers",
+        capabilities: ["tools", "prompts", "resources"],
+        roles: { reader: { tools: ["get_.*"] } },
+      },
+      { slug: "linear", kind: "tunnel", name: "Linear" },
+      { slug: "news", kind: "tunnel", name: "News MCP" },
+      { slug: "parked", kind: "tunnel", archived: true },
+    ],
+    agents: [
+      {
+        slug: "claude",
+        name: "Claude",
+        description: "Claude sessions",
+        grants: {
+          linear: [{ role: "reader", mode: "allow" }],
+          news: [{ role: "reader", mode: "approval" }],
+          parked: [{ role: "all", mode: "allow" }],
+        },
+        tokens: [{ as: "claude" }],
+      },
+      { slug: "cron", grants: {} },
+      {
+        slug: "everywhere",
+        grants: {
+          brand: [{ role: "reader", mode: "allow" }],
+          linear: [{ role: "reader", mode: "allow" }],
+          news: [{ role: "reader", mode: "allow" }],
+        },
+      },
+    ],
+  });
+  // The two tunneled apps have connected once, so their roles are declared and the header's
+  // dormant count is about the archived app alone (seed FINDINGS 1).
+  const registry = new Registry(env.DB);
+  await registry.upsertDeclaredRoles(ns.apps.linear.id, { reader: ["get_.*"] });
+  await registry.upsertDeclaredRoles(ns.apps.news.id, { reader: ["get_.*"] });
+  return { ns, cookie: (await seedOwnerSession(ns.owner)).cookie };
+}
+
+/**
+ * The grant pane's world: one proxied app with a catalog, one tunneled app that has never
+ * connected, and five agents — one reaching through a role, one through the same role at
+ * ask, one holding inline items only, one holding both, and one holding a role its app has
+ * never declared. Every state the listing draws, as a grant set.
+ */
+let grantPaneWorld: Promise<AgentWorld> | null = null;
+const withGrantPane = (): Promise<AgentWorld> => (grantPaneWorld ??= seedGrantPane());
+
+async function seedGrantPane(): Promise<AgentWorld> {
+  const scenario = await paneScenario();
+  const ns = await seedNamespace(env.DB, {
+    apps: [
+      {
+        slug: "feed",
+        kind: "proxy",
+        name: "News MCP",
+        description: "The newsroom's own app.",
+        upstreamUrl: upstreamUrlFor(scenario),
+        upstreamAuthMode: "headers",
+        capabilities: ["tools", "prompts", "resources"],
+        roles: PANE_ROLES,
+      },
+      { slug: "silent", kind: "tunnel", name: "Silent app" },
+    ],
+    agents: [
+      { slug: "viarole", grants: { feed: [{ role: "reader", mode: "allow" }] } },
+      { slug: "askrole", grants: { feed: [{ role: "reader", mode: "approval" }] } },
+      {
+        slug: "direct",
+        grants: {
+          feed: [
+            { role: "tool/get_weather", mode: "approval" },
+            { role: "tool/purge_.*", mode: "allow" },
+          ],
+        },
+      },
+      {
+        slug: "both",
+        grants: {
+          feed: [
+            { role: "reader", mode: "allow" },
+            { role: "tool/get_news", mode: "approval" },
+          ],
+        },
+      },
+      { slug: "dormant", grants: { silent: [{ role: "triage", mode: "allow" }] } },
+    ],
+  });
+  return { ns, cookie: (await seedOwnerSession(ns.owner)).cookie };
+}
+
+/** One fresh namespace of the same shape, for the rows that WRITE: a save is not a read,
+ *  and the rows above share one seeding. */
+async function seedWritablePair(): Promise<AgentWorld> {
+  const scenario = await paneScenario();
+  const ns = await seedNamespace(env.DB, {
+    apps: [
+      {
+        slug: "feed",
+        kind: "proxy",
+        name: "News MCP",
+        upstreamUrl: upstreamUrlFor(scenario),
+        upstreamAuthMode: "headers",
+        capabilities: ["tools", "prompts", "resources"],
+        roles: PANE_ROLES,
+      },
+    ],
+    agents: [
+      {
+        slug: "claude",
+        grants: {
+          feed: [
+            { role: "reader", mode: "allow" },
+            // An ask entry under an allowing role, so the pane draws the one × a save row
+            // can press, and a pattern, so it draws a Patterns row to preserve.
+            { role: "tool/get_news", mode: "approval" },
+            { role: "tool/purge_.*", mode: "allow" },
+          ],
+        },
+      },
+    ],
+  });
+  return { ns, cookie: (await seedOwnerSession(ns.owner)).cookie };
 }
 
 describe("§19.5 · the consent screen", () => {

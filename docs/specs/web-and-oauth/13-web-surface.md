@@ -585,8 +585,17 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     **Approve** buttons — forms posting `approval_decide` to
     `/agents/<slug>/approval_decide` and landing back on this pane; a decided row is
     dimmed with its status badge. `Recent calls · N` from `audit_query`
-    (`principal=agent:<slug>`, limit 50): app, tool, when, ms, and the outcome badge (`ok`
-    / `approval required` / `not permitted` / the failure). Details: an approval → the
+    (`principal=agent:<slug>`): app, tool, when, ms, and the outcome badge (`ok`
+    / `approval required` / `not permitted` / the failure). **The trail is paged**
+    *(2026-09-16, owner: "things might actually scale")*: twenty rows a page, `?calls=<n>`
+    (a positive multiple of twenty, twenty by default) showing the newest n, read with
+    limit n + 1 so the pane knows whether older rows exist; beneath the list, while they
+    do, a row with a plain link **Load 20 more** to the same pane with `calls=<n+20>`
+    (`sel` kept) and "more older calls in the last 7 days · everything before that is in
+    Audit" (Audit linking `/audit?principal=agent:<slug>`), and once the week is
+    exhausted "That is the whole week — older calls are in Audit."; the summary line above
+    the groups counts what is shown, "last N calls · ok · denied · K awaiting approval".
+    Links only, so scripting off pages the same way one reload at a time. Details: an approval → the
     tool, a status badge, "<agent> wants to call this on <app> · asked … · expires in …",
     an Arguments (post-redaction) card, "Why it waits" ("<role> is in Ask first on <app>"
     — the entry that matched, with mode approval), and the same two buttons; a call → the

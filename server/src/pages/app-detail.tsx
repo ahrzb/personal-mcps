@@ -639,9 +639,17 @@ const RecordingSectionView: FC<{ section: AppRecordingSection }> = ({ section })
             </div>
             <div class="cr-control">
               {row.control.kind === "locked" ? (
-                <span class="cb lock" title="declared writeOnly by the app — always masked">
-                  <Check />
-                </span>
+                // A CONTROL, disabled — not a statement drawn in a control's place: the
+                // path has one, it is ticked, and it is not the owner's to clear (§7 masks
+                // a `writeOnly` leaf regardless). Disabled, so it submits nothing.
+                <input
+                  class="cb lock"
+                  type="checkbox"
+                  checked
+                  disabled
+                  aria-label={`mask ${row.path}`}
+                  title="declared writeOnly by the app — always masked"
+                />
               ) : row.control.kind === "mixed" ? (
                 <span class="cb mixed" title="masked on some of its tools — set it per tool below">
                   <Dash />

@@ -3871,6 +3871,12 @@ function countOf(view: AppFamilyView<unknown>): number {
   return view.state === "listed" ? view.rows.length : 0;
 }
 
+/** `1 tool` / `3 tools` — a real plural, everywhere a count is said in words. The page
+ *  never writes `tool(s)`: a count of one is a sentence the reader is owed too. */
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
 /** §2's one tiles line under the title row. */
 function tilesLine(
   row: Exclude<OpsAppRow, { kind: "builtin" }>,
@@ -3879,10 +3885,10 @@ function tilesLine(
   now: string,
 ): string {
   const parts = [
-    `${counts.tools} tools`,
-    `${counts.prompts} prompts`,
-    `${counts.resources} resources`,
-    `${agents} agents`,
+    plural(counts.tools, "tool"),
+    plural(counts.prompts, "prompt"),
+    plural(counts.resources, "resource"),
+    plural(agents, "agent"),
     `body logging ${row.logBodies ? "on" : "off"}`,
   ];
   if (row.kind === "tunnel") parts.push(`last seen ${formatLastSeen(row.lastSeen, now)}`);
@@ -4006,7 +4012,7 @@ function catalogPane(ctx: PageContext, at: AppPaneCtx): AppPaneView {
       at.kind === "tunnel"
         ? "advertised by the app on its last connect · re-listed on every reconnect"
         : "fetched live from the upstream",
-    summary: `${countOf(at.views.tools)} tools · ${countOf(at.views.prompts)} prompts · ${countOf(at.views.resources)} resources · reachable by ${at.agents.length} agent${at.agents.length === 1 ? "" : "s"}`,
+    summary: `${plural(countOf(at.views.tools), "tool")} · ${plural(countOf(at.views.prompts), "prompt")} · ${plural(countOf(at.views.resources), "resource")} · reachable by ${plural(at.agents.length, "agent")}`,
     q,
     groups,
     state,
@@ -4398,7 +4404,7 @@ function recordingPane(ctx: PageContext, at: AppPaneCtx): AppPaneView {
     kind: "recording",
     log: at.row.logBodies,
     summary:
-      `body logging ${at.row.logBodies ? "on" : "off"} · ${logDefault ? `${at.kind === "tunnel" ? "tunneled" : "proxied"} default` : "set explicitly"} · ${masked} masked path${masked === 1 ? "" : "s"} by config` +
+      `body logging ${at.row.logBodies ? "on" : "off"} · ${logDefault ? `${at.kind === "tunnel" ? "tunneled" : "proxied"} default` : "set explicitly"} · ${plural(masked, "masked path")} by config` +
       (declared === 0 ? "" : ` · ${declared} declared writeOnly by the app`),
     q: (ctx.query.get("q") ?? "").trim(),
     warning:
@@ -4447,7 +4453,7 @@ function recordingSection(
       return {
         path,
         type: entry.type,
-        detail: `${entry.tools.length} tool${entry.tools.length === 1 ? "" : "s"}${status === "" ? "" : ` · ${status}`}`,
+        detail: `${plural(entry.tools.length, "tool")}${status === "" ? "" : ` · ${status}`}`,
         which: which ? { href: whichHref(at.slug, dir, path, open, q), label: shown ? "hide" : "which" } : null,
         control:
           editable.length === 0
@@ -4486,7 +4492,7 @@ function recordingSection(
     noSchema:
       noOutput.length === 0
         ? null
-        : `${noOutput.length > 3 ? `${noOutput.length} tools` : noOutput.join(", ")} declare no output schema — a result path there can only come from a recorded call (mask from evidence).`,
+        : `${noOutput.length > 3 ? plural(noOutput.length, "tool") : noOutput.join(", ")} declare no output schema — a result path there can only come from a recorded call (mask from evidence).`,
   };
 }
 
@@ -4539,7 +4545,7 @@ function maskedCard(dir: "args" | "results", index: PathIndex, at: AppPaneCtx): 
 /** A list of tool names, or their count past three — the card's own abbreviation. */
 function names(tools: string[]): string {
   const sorted = [...new Set(tools)].sort();
-  return sorted.length > 3 ? `${sorted.length} tools` : sorted.join(", ");
+  return sorted.length > 3 ? plural(sorted.length, "tool") : sorted.join(", ");
 }
 
 /* ------------------------------------------------------------ Overview --- */
@@ -4614,7 +4620,8 @@ async function accessPane(ctx: PageContext, at: AppPaneCtx): Promise<AppPaneView
   );
   return {
     kind: "access",
-    summary: `${at.agents.length} agent${at.agents.length === 1 ? "" : "s"} hold a grant · open one to edit its grant on ${at.slug}`,
+    // The verb agrees as well as the noun: `1 agent holds` / `2 agents hold`.
+    summary: `${plural(at.agents.length, "agent")} ${at.agents.length === 1 ? "holds" : "hold"} a grant · open one to edit its grant on ${at.slug}`,
     rows,
     details: accessDetails(ctx, at),
   };
@@ -4860,24 +4867,48 @@ export function composeOwnerRoles(
   stored: RoleDeclaration,
   fields: Record<string, string>,
   keeps: string[],
-): { role: string; was: string; families: FamilyPatterns; roles: RoleDeclaration; deleted: boolean } {
+): {
+  role: string;
+  was: string;
+  families: FamilyPatterns;
+  roles: RoleDeclaration;
+  deleted: boolean;
+  /** Why this save cannot be sent at all, or null. `app_update` refuses a bad NAME it is
+   *  given, but an empty one is a name it is never given — the map would simply not gain a
+   *  key and the op would answer 200 to a save that saved nothing. */
+  refusal: string | null;
+} {
   const was = fields.was ?? "";
   const role = (fields.role ?? "").trim();
   const roles: RoleDeclaration = { ...stored };
   if (was !== "") delete roles[was];
   if (fields.delete === "1") {
-    return { role: was, was, families: {}, roles, deleted: true };
+    return { role: was, was, families: {}, roles, deleted: true, refusal: null };
+  }
+  if (!ROLE_NAME.test(role)) {
+    return { role, was, families: familiesFrom(fields, keeps), roles, deleted: false, refusal: ROLE_NAME_REFUSAL };
   }
 
+  const families = familiesFrom(fields, keeps);
+  roles[role] = families;
+  return { role, was, families, roles, deleted: false, refusal: null };
+}
+
+/** A role name: the charset the editor's own `pattern` attribute declares, and the one
+ *  `all` is reserved from (§2/§20.3). */
+const ROLE_NAME = /^[a-z0-9_-]+$/;
+
+const ROLE_NAME_REFUSAL = "a role name is [a-z0-9_-], and all is reserved";
+
+/** The per-family patterns the editor submitted: the ticked literals, plus the patterns
+ *  this render still listed minus the one `drop` named, plus whatever `add` offered. */
+function familiesFrom(fields: Record<string, string>, keeps: string[]): FamilyPatterns {
   const families: FamilyPatterns = {};
   const push = (family: RoleFamily, pattern: string): void => {
     const list = families[family] ?? [];
     if (!list.includes(pattern)) list.push(pattern);
     families[family] = list;
   };
-  // The ticked literals first, then the patterns this render still listed — a `keep` the
-  // form drew is a pattern the owner did not touch, and dropping it would be a silent
-  // narrowing of the role.
   for (const [name, value] of Object.entries(fields)) {
     if (!name.startsWith(ROLE_ITEM_PREFIX) || value !== "1") continue;
     const rest = name.slice(ROLE_ITEM_PREFIX.length);
@@ -4887,6 +4918,8 @@ export function composeOwnerRoles(
     if (!(ROLE_FAMILIES as readonly string[]).includes(family)) continue;
     push(family, rest.slice(cut + 1));
   }
+  // A `keep` the form drew is a pattern the owner did not touch, and dropping it would be
+  // a silent narrowing of the role.
   const dropped = fields.drop ?? "";
   for (const keep of keeps) {
     if (keep === dropped) continue;
@@ -4898,9 +4931,7 @@ export function composeOwnerRoles(
   }
   const added = (fields.add ?? "").trim();
   if (added !== "") push(added.includes("://") ? "resources" : "tools", added);
-
-  if (role !== "") roles[role] = families;
-  return { role, was, families, roles, deleted: false };
+  return families;
 }
 
 /** The role editor's per-item checkbox prefix — `i.<family>/<name>`. Spelled ONCE, here,

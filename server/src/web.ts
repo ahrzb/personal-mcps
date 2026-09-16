@@ -705,12 +705,17 @@ export function pageRoutes(): PageRouter {
       const tunnelled = row.kind === "tunnel";
       const stored = tunnelled ? (row as { ownerRoles: RoleDeclaration }).ownerRoles : row.roles;
       const composed = composeOwnerRoles(stored, fields, form.getAll("keep").filter(isText));
-      const saved = await attempt(() =>
-        ops.app_update.handler(session.user.userId, {
-          slug,
-          ...(tunnelled ? { owner_roles: composed.roles } : { roles: composed.roles }),
-        }),
-      );
+      // A name the op is never GIVEN is a name the op cannot refuse: an empty one would
+      // simply leave the map without a key and answer 200 to a save that saved nothing.
+      const saved =
+        composed.refusal !== null
+          ? { reason: composed.refusal }
+          : await attempt(() =>
+              ops.app_update.handler(session.user.userId, {
+                slug,
+                ...(tunnelled ? { owner_roles: composed.roles } : { roles: composed.roles }),
+              }),
+            );
       if (!("reason" in saved)) {
         const back = composed.deleted
           ? paths.appPane(slug, "roles")

@@ -686,6 +686,65 @@ describe("§20.3 · validateRoles — the per-family declaration gate", () => {
   });
 });
 
+describe("§7 step 2 · buildToolFilter — the inline item entry", () => {
+  /** The declaration an item entry must be able to ignore: it names one role, and no item
+   *  below is in it. A row that passed against a declaration containing its subject would
+   *  be evidence about the role path, not about the item path. */
+  const declared: RoleDeclaration = { reader: { tools: ["get_news"], prompts: ["digest"] } };
+
+  it("§7 step 2 · an inline item entry matches in its own family with no declaration behind it — `tool/get_weather` allows a tool the app never declared in any role", () => {
+    const filter = buildToolFilter([{ role: "tool/get_weather", mode: "allow" }], declared);
+    expect(filter.check("get_weather", "tools")).toBe("allow");
+    // The entry is stored and reported verbatim — the page says "direct" from this name.
+    expect(filter.roleNames).toEqual(["tool/get_weather"]);
+    // One item is one grant: the app's own declared tool is still out of reach.
+    expect(filter.check("get_news", "tools")).toBe("deny");
+  });
+
+  it("§7 step 2 · an inline item is confined to the family it names — `tool/x` never answers for the prompt or the resource `x` · twin: `prompt/x` does, on the same subject", () => {
+    const tool = buildToolFilter([{ role: "tool/x", mode: "allow" }], declared);
+    expect(tool.check("x", "tools")).toBe("allow");
+    expect(tool.check("x", "prompts")).toBe("deny");
+    expect(tool.check("x", "resources")).toBe("deny");
+
+    // One dimension off: the same subject, the same mode, the other family word. Without
+    // the family test an implementation passes the row above and fails only this one.
+    const prompt = buildToolFilter([{ role: "prompt/x", mode: "allow" }], declared);
+    expect(prompt.check("x", "prompts")).toBe("allow");
+    expect(prompt.check("x", "tools")).toBe("deny");
+  });
+
+  it("§7 step 2 · allow still beats approval when the two matches are a ROLE and an inline item, in either order — an item contributes its mode exactly as a role's pattern does", () => {
+    const role: GrantEntry = { role: "reader", mode: "allow" };
+    const item: GrantEntry = { role: "tool/get_news", mode: "approval" };
+    for (const entries of [
+      [role, item],
+      [item, role],
+    ]) {
+      expect(buildToolFilter(entries, declared).check("get_news", "tools"), entries[0].role).toBe("allow");
+    }
+
+    // The twin, one flip away: with the ROLE at approval and the item at allow the winner
+    // is still allow, so the rule is the mode and not which kind of entry carried it.
+    const flipped = buildToolFilter(
+      [
+        { role: "reader", mode: "approval" },
+        { role: "tool/get_news", mode: "allow" },
+      ],
+      declared,
+    );
+    expect(flipped.check("get_news", "tools")).toBe("allow");
+  });
+
+  it("§7 step 2 · a resource item matches by URI — `resource/news://feed/*` covers `news://feed/7`, so the colons inside the entry are pattern, never a mode suffix", () => {
+    const filter = buildToolFilter([{ role: "resource/news://feed/*", mode: "approval" }], declared);
+    expect(filter.check("news://feed/7", "resources")).toBe("approval");
+    expect(filter.check("news://other/7", "resources")).toBe("deny");
+    // Matched on the URI, in the resources keyspace only — a tool of that name is not it.
+    expect(filter.check("news://feed/7", "tools")).toBe("deny");
+  });
+});
+
 describe("§7 step 2 · buildToolFilter — laws", () => {
   it("§7 step 2 · law · allow beats approval under every permutation of the grant entries (rules out order-dependent precedence)", () => {
     for (const row of filterScenarios) {

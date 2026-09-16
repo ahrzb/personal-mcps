@@ -71,7 +71,9 @@ export type Reach = {
   agent: string;
   /** The door's verdict for this agent on this subject: never `deny` (those are dropped). */
   mode: Exclude<AccessMode, "deny">;
-  /** The granted roles that matched, `all` naming itself and never expanded. */
+  /** The granted entries that matched, each named as it is stored: `all` naming itself and
+   *  never expanded, and an inline item naming itself too (`tool/get_news`), which is what
+   *  lets a page say "via reader" or "direct" from this one list. */
   roles: string[];
 };
 
@@ -100,7 +102,7 @@ export type Reachability = {
 export function reachabilityFor(declared: RoleDeclaration, grants: Record<string, string[]>): Reachability {
   // deps: buildToolFilter · parseGrant
   const doors = Object.entries(grants).map(([agent, spelled]) => {
-    const entries = spelled.map(parseGrant).filter((entry): entry is GrantEntry => entry !== null);
+    const entries = spelled.map(parseGrant);
     return {
       agent,
       filter: buildToolFilter(entries, declared),
@@ -140,15 +142,20 @@ export function reachability(
  * §9's grant syntax as a stored entry — admin's `grantEntries` read backwards, spelled here
  * because that one is private and `admin` cannot be imported by a Node-clean module.
  *
- * A suffix that is not `:approval` yields `null` rather than an allow grant on the part
- * before the colon: this is a READ path, so an entry it cannot parse must reach nothing,
- * never more than it says. (Role names carry no colon, so the suffix is unambiguous.)
+ * The mode is the `:approval` SUFFIX, not the first colon: an inline resource item
+ * (`resource/news://feed/*`) carries colons of its own, and splitting at the first one
+ * would hand the door the pattern `//feed/*` under a family that is not resources. What
+ * is left is the entry verbatim; an entry naming nothing real (a mis-typed suffix, an
+ * unknown role) reaches nothing, because `buildToolFilter` finds no patterns for it.
  */
-function parseGrant(entry: string): GrantEntry | null {
-  const at = entry.indexOf(":");
-  if (at < 0) return { role: entry, mode: "allow" };
-  return entry.slice(at + 1) === "approval" ? { role: entry.slice(0, at), mode: "approval" } : null;
+function parseGrant(entry: string): GrantEntry {
+  return entry.endsWith(APPROVAL_SUFFIX)
+    ? { role: entry.slice(0, -APPROVAL_SUFFIX.length), mode: "approval" }
+    : { role: entry, mode: "allow" };
 }
+
+/** The wire spelling of approval mode — `agent_list`'s own (§8/§9). */
+const APPROVAL_SUFFIX = ":approval";
 
 /** A value as a plain record, or null when it is anything else (an array included). */
 function objectOf(value: unknown): Record<string, unknown> | null {

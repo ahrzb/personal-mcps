@@ -1049,6 +1049,54 @@ describe("§19/§8 · connections (fronting oauth.ts)", () => {
 // row and `resolves.toBeDefined()` oracle cannot see them. Here against the same
 // `ops.<name>.handler` seam the table uses.
 
+// ── §8 · grant_set's widened entry, at the op seam ────────────────────────────────────
+//
+// The table's `grant_set` row proves the op is wired and audited with a sample whose only
+// entry is the built-in `all`. What it cannot see is the ENTRY GRAMMAR: that an inline item
+// survives the proxied undeclared-role hard error, that `agent_list` relays it back in the
+// spelling `grant_set` takes (the CLI planner diffs one spelling against itself, §8/§9),
+// and that the mode is read off the SUFFIX — which only a resource URI's own colons can
+// witness. NOTION is the fixture's proxied app and declares no role at all, so every entry
+// below would be a hard error if it were read as a role name.
+
+describe("§8 · grant_set takes an inline item entry, and agent_list relays it", () => {
+  /** The grants `agent_list` reports for the fixture's agent, per app slug (§8's inline map). */
+  async function grantsOf(ownerId: string): Promise<Record<string, string[]>> {
+    const listed = (await ops.agent_list.handler(ownerId, {})) as {
+      agents: { slug: string; grants: Record<string, string[]> }[];
+    };
+    return listed.agents.find((agent) => agent.slug === CLAUDE)!.grants;
+  }
+
+  it("§8 · an inline item entry is accepted on a PROXIED app that declares nothing — it carries its own pattern, so it is never undeclared · agent_list relays the string verbatim, suffix and all", async () => {
+    const ns = await seedFixture();
+    const roles = ["tool/get_news:approval", "prompt/digest_daily", "resource/news://feed/*"];
+
+    const answer = (await ops.grant_set.handler(ns.owner.userId, {
+      agent: CLAUDE,
+      app: NOTION,
+      roles,
+    })) as { warnings: string[] };
+    expect(answer.warnings, "an item declares itself, so there is nothing to warn about").toEqual([]);
+
+    // Read back through the op the CLI diffs against: the same strings, suffix and all.
+    // `grantsFor` orders by the stored entry, so the round trip is a set, not a sequence.
+    expect((await grantsOf(ns.owner.userId))[NOTION]).toEqual([...roles].sort());
+  });
+
+  it("§8 · `resource/a://b:approval` is approval mode on the item `a://b` — the mode is the SUFFIX, so a URI's own colons stay inside the pattern · twin: the same entry bare is allow", async () => {
+    const ns = await seedFixture();
+
+    await ops.grant_set.handler(ns.owner.userId, { agent: CLAUDE, app: NOTION, roles: ["resource/a://b:approval"] });
+    // Splitting at the FIRST colon would have stored the role `resource/a` — the round trip
+    // through agent_list is what makes the difference between the two readings visible.
+    expect((await grantsOf(ns.owner.userId))[NOTION]).toEqual(["resource/a://b:approval"]);
+
+    await ops.grant_set.handler(ns.owner.userId, { agent: CLAUDE, app: NOTION, roles: ["resource/a://b"] });
+    expect((await grantsOf(ns.owner.userId))[NOTION]).toEqual(["resource/a://b"]);
+  });
+});
+
 describe("§22.4 · agent_update is a true partial patch", () => {
   it("§22.4 · updating `name` alone leaves `description` byte-identical, and the converse", async () => {
     const ns = await seedNamespace(env.DB, {

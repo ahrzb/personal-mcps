@@ -291,16 +291,24 @@ function parseAgent(slug: string, value: unknown): DesiredAgent {
 }
 
 /**
- * `reader` → allow, `reader:approval` → approval. Anything else with a colon throws:
- * treating an unrecognized suffix as allow would turn a one-character typo into a silent
- * privilege escalation.
+ * `reader` → allow, `reader:approval` → approval, by SUFFIX rather than by the first colon:
+ * an entry may be an inline item (`tool/<pattern>`, `prompt/<pattern>`,
+ * `resource/<uri-pattern>`), and a resource URI carries colons of its own. A ROLE entry —
+ * one with no family prefix — left holding a colon after the suffix is stripped still
+ * throws, because treating an unrecognized suffix as allow would turn a one-character typo
+ * into a silent privilege escalation.
  */
 function parseGrant(grant: string, path: string): DesiredGrant {
-  const colon = grant.indexOf(":");
-  if (colon === -1) return { role: grant, mode: "allow" };
-  if (grant.slice(colon + 1) === "approval") return { role: grant.slice(0, colon), mode: "approval" };
-  throw new TypeError(`${path}: "${grant}" — the only grant suffix is ":approval"`);
+  const approval = grant.endsWith(APPROVAL_SUFFIX);
+  const role = approval ? grant.slice(0, -APPROVAL_SUFFIX.length) : grant;
+  if (!role.includes("/") && role.includes(":")) {
+    throw new TypeError(`${path}: "${grant}" — the only grant suffix is ":approval"`);
+  }
+  return { role, mode: approval ? "approval" : "allow" };
 }
+
+/** The one wire spelling of approval mode, read by `parseGrant` and written by `grantStep`. */
+const APPROVAL_SUFFIX = ":approval";
 
 // ── the parse-time type checks, each naming the path it refused ────────────────────────
 
@@ -505,9 +513,10 @@ export function planChanges(desired: DesiredConfig, current: CurrentState): Plan
   return { steps: [...deletes, ...creates, ...updates, ...grants], warnings, errors };
 }
 
-/** One grant_set step, in the op's wire spelling: a flat list with `:approval` re-joined. */
+/** One grant_set step, in the op's wire spelling: a flat list with `:approval` re-joined as
+ *  the suffix `parseGrant` split off, item entries included. */
 function grantStep(agent: string, app: string, roles: readonly DesiredGrant[]): PlanStep {
-  const wire = roles.map((grant) => (grant.mode === "approval" ? `${grant.role}:approval` : grant.role));
+  const wire = roles.map((grant) => (grant.mode === "approval" ? `${grant.role}${APPROVAL_SUFFIX}` : grant.role));
   return {
     tool: "grant_set",
     args: { agent, app, roles: wire },
@@ -643,7 +652,9 @@ function grantProblems(
   // merely ahead of the first connection.
   const declared = kind === "proxy" ? Object.keys(declaredIn?.roles ?? {}) : Object.keys(onServer?.roles ?? {});
   for (const grant of wanted) {
-    if (grant.role === BUILTIN_ROLE || declared.includes(grant.role)) continue;
+    // An inline item carries its own pattern, so there is nothing for the app to declare —
+    // the undeclared split below is about role NAMES, which never contain a `/`.
+    if (grant.role === BUILTIN_ROLE || grant.role.includes("/") || declared.includes(grant.role)) continue;
     const message = `grants.${app}: role "${grant.role}" is not declared`;
     if (kind === "proxy") errors.push(message);
     else warnings.push(message);

@@ -585,6 +585,48 @@ describe("planChanges · the steps a difference produces (§8, §9)", () => {
   });
 });
 
+describe("§9 · the inline item entry, through the planner", () => {
+  it("§9 · an inline item parses as an entry and re-joins byte-identical in the grant_set step — the mode is split off the `:approval` SUFFIX, so a resource URI's own colons survive the round trip", () => {
+    const roles = ["reader", "tool/get_news:approval", "prompt/digest_daily", "resource/news://feed/*:approval"];
+    const file = parseDesired(doc({ news: {} }, { claude: { grants: { news: roles } } }));
+
+    // Split: the entry keeps its family prefix and its whole pattern, colons included.
+    expect(file.agents[0].grants.news).toEqual([
+      { role: "reader", mode: "allow" },
+      { role: "tool/get_news", mode: "approval" },
+      { role: "prompt/digest_daily", mode: "allow" },
+      { role: "resource/news://feed/*", mode: "approval" },
+    ]);
+
+    // Re-joined: the wire list the op takes, identical to what the file spelled — which is
+    // what keeps `pmcp diff` quiet against an `agent_list` that relays the same strings.
+    const plan = planChanges(file, state([currentApp({ slug: "news" })], [currentAgent({ slug: "claude" })]));
+    expect(plan.errors).toEqual([]);
+    expect(stepsOf(plan, "grant_set")).toEqual([{ agent: "claude", app: "news", roles }]);
+  });
+
+  it("§9 · an inline item is never `not declared`, not even on a PROXIED app whose declaration is complete by construction — it carries its own pattern · twin: a bare role name in the same position is the hard error", () => {
+    const proxied = (grants: string[]) =>
+      planChanges(
+        parseDesired(
+          doc(
+            { notion: { kind: "proxy", endpoint: "https://x/mcp", roles: { reader: ["search"] } } },
+            { claude: { grants: { notion: grants } } },
+          ),
+        ),
+        state(),
+      );
+
+    const items = proxied(["tool/get_news", "resource/a://b:approval"]);
+    expect(items.errors).toEqual([]);
+    expect(items.warnings, "nor a tunnel-style warning — there is nothing to declare").toEqual([]);
+
+    // One dimension off: the same entry with the family prefix removed is a role name, and
+    // a role the file does not declare on a proxied app is planChanges' error.
+    expect(proxied(["get_news"]).errors).toEqual([`grants.notion: role "get_news" is not declared`]);
+  });
+});
+
 describe("planChanges · severities, every refusal beside its allow-twin (§9)", () => {
   it("§9 · a grant naming a role a TUNNELED app has not declared warns and still plans the grant_set (the file may be ahead of the first connection); twin: a declared role plans with no warning", () => {
     const current = state([currentApp({ slug: "news", roles: { reader: ["get_.*"] } })]);

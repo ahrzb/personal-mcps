@@ -686,18 +686,20 @@ async function agentRow(row: Agent): Promise<Record<string, unknown>> {
   };
 }
 
-/** §9's grant syntax as stored entries. Role names contain no colon, so the suffix is
- *  unambiguous; `all` is the built-in and needs no declaration (§18 decision 10). */
+/** §9's grant syntax as stored entries: the mode is the `:approval` SUFFIX, never the first
+ *  colon — an inline resource item (`resource/news://feed/*`) carries colons of its own.
+ *  What is left over is the entry verbatim, role or item alike; whether it is a legal one is
+ *  registry's to answer (`setGrants`), which is also where `all` is exempt from declaration. */
 function grantEntries(roles: string[]): GrantEntry[] {
-  return roles.map((entry) => {
-    const at = entry.indexOf(":");
-    if (at < 0) return { role: entry, mode: "allow" };
-    if (entry.slice(at + 1) !== "approval") {
-      throw invalid(`"roles" takes a role name or "<role>:approval"`);
-    }
-    return { role: entry.slice(0, at), mode: "approval" };
-  });
+  return roles.map((entry) =>
+    entry.endsWith(APPROVAL_SUFFIX)
+      ? { role: entry.slice(0, -APPROVAL_SUFFIX.length), mode: "approval" }
+      : { role: entry, mode: "allow" },
+  );
 }
+
+/** The wire spelling of approval mode — the suffix `agentView` writes and this reads back. */
+const APPROVAL_SUFFIX = ":approval";
 
 /** The proxy-only half of a create/update draft, spelled once for both. */
 function proxyFields(input: Record<string, unknown>): Record<string, unknown> {
@@ -1179,11 +1181,13 @@ export const ops: Record<string, AdminOp> = {
 
   /**
    * `{ agent, app, roles }` — replace the FULL grant set for the pair: roles
-   * absent from the list are revoked (§8). Each entry is `name` or `name:approval`
-   * (§9's syntax — role names contain no colon, so the suffix is unambiguous); the same
-   * role in both modes is a config error. Registry's role language validates: undeclared
+   * absent from the list are revoked (§8). Each entry is a role name or an inline item
+   * (`tool/<pattern>`, `prompt/<pattern>`, `resource/<uri-pattern>`), optionally suffixed
+   * `:approval` — by SUFFIX, since a resource URI carries colons; the same
+   * entry in both modes is a config error. Registry's role language validates: undeclared
    * roles warn for tunneled apps (the file may be ahead of first connect) and
-   * hard-error for proxied ones; `all` is grantable, never declarable. `pmcp` is
+   * hard-error for proxied ones (an inline item declares itself and is never undeclared);
+   * `all` is grantable, never declarable. `pmcp` is
    * rejected — agents can never hold admin grants (§8).
    */
   grant_set: defineOp({
@@ -1192,7 +1196,11 @@ export const ops: Record<string, AdminOp> = {
       fields: {
         agent: { kind: "slug", description: "The agent's slug." },
         app: { kind: "slug", description: "The app's slug." },
-        roles: { kind: "stringList", description: 'Role names, each optionally suffixed ":approval".' },
+        roles: {
+          kind: "stringList",
+          description:
+            'Entries: a role name, or tool/<pattern>, prompt/<pattern>, resource/<uri-pattern>; each optionally suffixed ":approval".',
+        },
       },
     },
     async run(ownerId, parsed) {

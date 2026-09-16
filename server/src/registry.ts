@@ -433,17 +433,63 @@ function canonicalRoles(stored: RoleDeclaration): RoleDeclaration {
 const ROLE_NAME_CHARSET = /^[a-z0-9_-]+$/;
 
 /**
+ * One grant entry, parsed. A grant set is a list of entries, and an entry is either a
+ * ROLE NAME — the app's own vocabulary, resolved through its declaration — or an INLINE
+ * ITEM, `<family>/<pattern>`, which carries its own pattern and needs no declaration at
+ * all. The two kinds can never collide: a role name is `[a-z0-9_-]+` and so contains no
+ * `/`. The mode (allow, or the `:approval` suffix) is NOT part of this — it is stripped
+ * by whoever reads the wire spelling, because a resource URI carries colons of its own.
+ */
+export type GrantEntryKind = { kind: "role"; role: string } | { kind: "item"; family: RoleFamily; pattern: string };
+
+/**
+ * The entry grammar, read. Total and never throws, because it sits on a READ path too:
+ * an entry whose prefix is not one of the three family words (`foo/x`) parses as a role
+ * NAMED `foo/x`, which resolves to nothing and which the write path's role-name charset
+ * check then refuses — so a typo'd family is a refusal at `setGrants`, never a silent
+ * item. The pattern is everything after the FIRST `/`, so `resource/news://feed/*` keeps
+ * its whole URI pattern.
+ */
+export function parseGrantEntry(entry: string): GrantEntryKind {
+  // deps: none
+  const slash = entry.indexOf("/");
+  const family = slash < 0 ? undefined : ITEM_FAMILY_OF[entry.slice(0, slash)];
+  return family === undefined
+    ? { kind: "role", role: entry }
+    : { kind: "item", family, pattern: entry.slice(slash + 1) };
+}
+
+/** The entry grammar, written: the inverse of `parseGrantEntry`'s item arm. */
+export function itemEntry(family: RoleFamily, pattern: string): string {
+  // deps: none
+  return `${ITEM_PREFIX_OF[family]}/${pattern}`;
+}
+
+/** The entry prefix per family — singular, because an entry names one item, not a keyspace. */
+const ITEM_PREFIX_OF = { tools: "tool", prompts: "prompt", resources: "resource" } as const satisfies Record<
+  RoleFamily,
+  string
+>;
+
+/** …read backwards. A prefix outside it is not a family at all (see `parseGrantEntry`). */
+const ITEM_FAMILY_OF: Record<string, RoleFamily | undefined> = Object.fromEntries(
+  Object.entries(ITEM_PREFIX_OF).map(([family, prefix]) => [prefix, family as RoleFamily]),
+);
+
+/**
  * The pure heart of access resolution: grant entries (exactly as stored, or the
  * synthesized owner grant [{role: "all", mode: "allow"}]) plus the app's
  * declaration → a ToolFilter. A granted `all` contributes `.*` in EVERY family
  * without touching the declaration; a granted role absent from it contributes no
  * patterns but still appears in roleNames; a role's families are independent, so
  * a prompts-only role matches no tool of the same name; per (subject, family),
- * any allow-mode match beats every approval-mode match. Exported as the testable
+ * any allow-mode match beats every approval-mode match. An entry that is an INLINE
+ * ITEM (`tool/<pattern>`, see parseGrantEntry) contributes that one pattern in that
+ * one family and consults no declaration. Exported as the testable
  * seam for the union and precedence rules — resolveAccess is D1 reads plus this.
  */
 export function buildToolFilter(entries: GrantEntry[], declared: RoleDeclaration): ToolFilter {
-  // deps: matchesPattern
+  // deps: matchesPattern · parseGrantEntry
   const roleNames = entries.map((e) => e.role);
   // Normalized once, per role: a declaration may mix the two spellings, so sniffing the
   // shape of the declaration as a whole would read one role right and the next one empty.
@@ -451,6 +497,14 @@ export function buildToolFilter(entries: GrantEntry[], declared: RoleDeclaration
 
   function roleMatches(role: string, subject: string, family: RoleFamily): boolean {
     if (role === "all") return true; // §20.3: `all` spans every family, present and future
+    // An inline item IS its own one-pattern role, confined to its own family — so
+    // `tool/x` can never answer for the prompt `x`, exactly as a tools-only declared
+    // role cannot. Everything downstream (allow beats approval, the union, totality)
+    // is the same loop, because the only thing that differs is where the pattern came from.
+    const entry = parseGrantEntry(role);
+    if (entry.kind === "item") {
+      return entry.family === family && matchesPattern(entry.pattern, subject, family);
+    }
     const patterns = byFamily[role]?.[family];
     return patterns ? patterns.some((p) => matchesPattern(p, subject, family)) : false;
   }
@@ -1202,11 +1256,13 @@ export class Registry {
    * both modes and, for proxied apps, roles absent from the declaration;
    * `all` is always grantable and never declared. Returns warnings instead of
    * failing for tunneled roles not yet declared (the file may legitimately be
-   * ahead of the first connection). The `pmcp` builtin is unreachable here by
+   * ahead of the first connection). An inline item entry (parseGrantEntry) skips both:
+   * it declares itself, and is refused only when its pattern is empty or uncompilable.
+   * The `pmcp` builtin is unreachable here by
    * construction — it has no app id.
    */
   async setGrants(agentId: string, appId: string, entries: GrantEntry[]): Promise<string[]> {
-    // deps: validateRoles · D1 `grant_` · D1 `app`
+    // deps: validateRoles · parseGrantEntry · compilePattern · D1 `grant_` · D1 `app`
     const row = await this.row(appId);
     if (!row) throw new Error(`no app with id "${appId}"`);
     const declared: RoleDeclaration = JSON.parse(row.roles_json);
@@ -1223,6 +1279,17 @@ export class Registry {
       }
       seen.add(entry.role);
       if (entry.role === "all") continue; // the built-in: always grantable, never declared
+      // An inline item carries its own pattern, so it needs no declaration and is never
+      // "undeclared" — the tunneled warning and the proxied error below are role-only.
+      // What it owes instead is a pattern the language can read: an empty one, or one
+      // compilePattern refuses, would sit in storage matching nothing forever.
+      const parsed = parseGrantEntry(entry.role);
+      if (parsed.kind === "item") {
+        if (parsed.pattern === "" || compilePattern(parsed.pattern) === null) {
+          throw new RegistryRefusal("roles", `entry "${entry.role}" is not a valid pattern`);
+        }
+        continue;
+      }
       assertRoles({ [entry.role]: [] });
       if (Object.prototype.hasOwnProperty.call(declared, entry.role)) continue;
       if (row.kind === "proxy") {

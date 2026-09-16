@@ -557,6 +557,50 @@ describe("§6 · archived is a pipeline stage, not a filter", () => {
   });
 });
 
+describe("§8 · the inline item entry — a grant that declares itself", () => {
+  /** One proxied app with a complete declaration: the kind whose undeclared roles are a HARD
+   *  error, which is what makes the exemption below observable rather than incidental. */
+  async function proxiedApp() {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "app", kind: "proxy", upstreamUrl: UPSTREAM_URL, roles: { reader: ["get_news"] } }],
+      agents: [{ slug: "bot" }],
+    });
+    return { ns, registry: new Registry(env.DB), agentId: ns.agents.bot.id, appId: ns.apps.app.id };
+  }
+
+  it("§8 · an inline item entry stores on a PROXIED app without being declared — it carries its own pattern, so the undeclared-role hard error has nothing to fire on · resolveAccess answers approval for exactly that tool", async () => {
+    const { ns, registry, agentId, appId } = await proxiedApp();
+
+    // `notify` is absent from the declaration on purpose: as a ROLE name on this app it
+    // would be the hard error the row above the table pins. As an item it is the grant.
+    expect(await registry.setGrants(agentId, appId, [{ role: "tool/notify", mode: "approval" }])).toEqual([]);
+    expect((await registry.grantsFor(agentId))[0].entries).toEqual([{ role: "tool/notify", mode: "approval" }]);
+
+    const filter = await registry.resolveAccess(agentPrincipal(ns, "bot"), await detail(registry, ns, "app"));
+    expect(filter.check("notify")).toBe("approval");
+    // The declared role was not granted, so the item is the ONLY thing reaching anything.
+    expect(filter.check("get_news")).toBe("deny");
+  });
+
+  it("§8 · an inline item whose pattern does not compile (`tool/(`) is refused and stores nothing — an uncompilable pattern that reached storage would match no tool for ever", async () => {
+    const { registry, agentId, appId } = await proxiedApp();
+    await expect(registry.setGrants(agentId, appId, [{ role: "tool/(", mode: "allow" }])).rejects.toThrow(
+      `"roles" entry "tool/(" is not a valid pattern`,
+    );
+    expect(await registry.grantsFor(agentId)).toEqual([]);
+  });
+
+  it("§8 · an inline item with an empty pattern (`tool/`) is refused — it names no item, and the empty pattern is not a wildcard · twin: `tool/.*` is the spelling that means every tool", async () => {
+    const { registry, agentId, appId } = await proxiedApp();
+    await expect(registry.setGrants(agentId, appId, [{ role: "tool/", mode: "allow" }])).rejects.toThrow(
+      `"roles" entry "tool/" is not a valid pattern`,
+    );
+    expect(await registry.grantsFor(agentId)).toEqual([]);
+
+    expect(await registry.setGrants(agentId, appId, [{ role: "tool/.*", mode: "allow" }])).toEqual([]);
+  });
+});
+
 describe("§5/§9 · create and update invariants", () => {
   runGrantValidationTable(grantValidationRows);
 

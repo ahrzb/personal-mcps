@@ -326,3 +326,31 @@
     drops `PanePills` entirely (the rail-as-list is its replacement); `/settings` and
     `/apps/<slug>` keep the pill row, so decision 30's mobile rule now has one exception
     rather than a rewrite.
+    **One ladder for every width and height** *(2026-09-16, later the same day; §13,
+    `design/layout-and-density.md`)*. Drawing the third paned page made the drift visible
+    and the owner named it — "very inconsistent right now": five page widths (1140, 1176,
+    1180, 1220, fluid), two rail widths (200 and the framed rail's 180), five button
+    heights (36, 32, 30, 28, 22), three badge heights, two auth-card widths and two row
+    paddings, none of them decided, each the residue of whichever board was drawn last. The
+    fix is a single ladder, adopted from what the **published systems already agree on** —
+    Material 3 (window size classes and canonical layouts, via the AndroidX
+    `PaneScaffoldDirective`), GitHub **Primer**, IBM **Carbon**, **Atlassian** Design
+    System, Ant Design, Shopify **Polaris**, Microsoft **Fluent 2** and Apple's **HIG**,
+    plus NN/g and WCAG 2.2 for line length and target size — rather than invented here:
+    three page shapes (**document** 760, the auth card 400 · **table** 1280 · **workspace**
+    full width with the *panes* capped, Carbon's high-density exception), one **rail 200**,
+    breakpoints **768** and **1024** replacing the single 900 (nobody publishes 900), rows
+    **32 / 40 / 44**, controls **36 / 32 / 24 / 44**, one **badge 20**, no type under 11 px,
+    prose at **72ch**, gutters **16 → 24** at wide. Two consequences are decisions, not
+    arithmetic. **Settings and the app page join the framed workspace shape**: their rail
+    and pane move inside the one bordered frame the agent page uses, ending "a rail beside a
+    card" and the page width each carried for it — the three paned pages now differ in what
+    they list, never in how they are built. And the agent page is **the one page whose
+    levels and whose shell change at different widths** — levels below 1024 (rail 200 +
+    listing 520 + details 360 needs 1080 px; M3 calls two panes below expanded "too
+    packed"), hamburger below 768. §13 now states the shapes and defers every number to
+    `design/layout-and-density.md`, whose reasoning, sources and today-vs-fix table live
+    there and whose values live in `styles.css` `:root` and the **Layout & density** panel
+    of `design/Main.dc.html`; applying it to the pages and the boards is its own dispatch,
+    gated page by page beside its board per
+    `docs/superpowers/postmortems/2026-09-16-agent-page-layout-not-the-board.md`.

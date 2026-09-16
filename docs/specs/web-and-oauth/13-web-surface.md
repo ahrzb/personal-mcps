@@ -20,7 +20,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   set to ~10 minutes (down from better-auth's 30-minute default).
 - `/settings` *(rewritten 2026-09-02)* — sign-in and access for the owner, as six panes
   behind a left rail (the pane rules are pinned once, under **Panes behind a rail**
-  below). Requires a cookie-authenticated session with recent authentication —
+  below) *(2026-09-16: the rail and its pane are the **framed workspace box** the agent
+  page uses — not a rail beside a card at a width of its own)*. Requires a
+  cookie-authenticated session with recent authentication —
   bearer-sourced sessions are rejected on these routes (§4) — and the gate is a **prefix
   rule**: every route under `/settings`, every pane and every POST, is behind it, the two
   ops-backed panes included (stricter than `/oauth/connections` had; accepted so the page
@@ -237,7 +239,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   *(Amended 2026-09-02: every app row links to its detail page below; the list's own
   actions stay.)*
 - `/apps/<slug>` *(added 2026-09-02)* — the app detail page, behind the same rail as
-  `/settings`. §13 named no such page before this date: the page list stopped at `/apps`.
+  `/settings` *(2026-09-16: and in the same **framed workspace box** as `/settings` and
+  `/agents/<slug>` — a rail beside a card no longer)*. §13 named no such page before this
+  date: the page list stopped at `/apps`.
   Header: name, slug, kind badge (`tunnel` | `proxy`), status (tunneled: online /
   offline / archived, with last seen; proxied: the endpoint, the `auth` mode, forward
   identity, and for `auth: oauth` the connection state with Connect / Reconnect /
@@ -632,9 +636,13 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     History ("kept — audit rows name the principal, not the row").
   - **The three levels** — the narrow rendering *(2026-09-16, owner-approved:
     `MobileAgentDetail`, `MobileAgentDetailStates`, from `design/concepts/AgentMobileDemo.html`;
-    decision 31)*. Wide is unchanged, three panes side by side. Below the shell's
-    breakpoint **one level is visible at a time**, chosen from the URL **by the server**
-    and applied by CSS, so scripting off works and nothing is decided twice:
+    decision 31)*. At **wide** (≥ 1024) unchanged, three panes side by side. Below
+    **1024** — the ladder's split-pane breakpoint, **not** the phone shell's 768: rail 200
+    + listing 520 + details 360 need 1080 px, so 768–1023 gets the levels too, and this is
+    the one page whose levels and whose shell change at different widths *(2026-09-16: the
+    levels were pinned "below the shell's breakpoint" when there was only one)* — **one
+    level is visible at a time**, chosen from the URL **by the server** and applied by CSS,
+    so scripting off works and nothing is decided twice:
 
     | URL | level | what shows |
     |---|---|---|
@@ -720,9 +728,30 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
 
 **Panes behind a rail** *(added 2026-09-02)*. One shell component serves all three paned
 pages — `/settings`, `/apps/<slug>` and `/agents/<slug>` *(2026-09-16: three, not two;
-the agent page joined on decision 31)* — and its rules are pinned once. A pane is one
+the agent page joined on decision 31)* — and one **shape**: all three are the **framed
+workspace box**, the rail and its pane inside one bordered frame running the page's full
+width, the frame's own borders dividing them *(2026-09-16: `/settings` and `/apps/<slug>`
+were a rail beside a free-standing card, at a page width of their own; they join the shape
+the agent page uses, so the three paned pages read as one family)* — and its rules are
+pinned once. A pane is one
 region or two: `/agents/<slug>`'s app pane holds a **listing and a details pane side by
 side**, still one route and one rail entry *(2026-09-16)*:
+
+**Where the numbers live** *(2026-09-16: §13 pinned five page widths, two rail widths and a
+single 900 px breakpoint of its own; the owner found the pages inconsistent and the ladder
+below replaces all of them)*. Every width, height and breakpoint is pinned once in
+`design/layout-and-density.md` — derived there from the published systems, with the tokens
+in `server/src/pages/styles.css` `:root` and the **Layout & density** panel on
+`design/Main.dc.html` as its two homes. §13 decides the *shape*; that file decides the
+*numbers*, and §13 does not repeat them. The ladder in one line: three page shapes —
+**document** 760 (the auth card 400), **table** 1280, **workspace** full width with the
+*panes* capped and not the page; one **rail 200**; the **framed workspace box** shared by
+`/settings`, `/apps/<slug>` and `/agents/<slug>`; two breakpoints, **768** (the phone
+shell) and **1024** (panes side by side); rows **32 / 40 / 44**; controls
+**36 / 32 / 24 / 44**; one **badge 20**; no type under 11 px; prose capped at **72ch**;
+gutters **16 → 24** at wide. Every "the shell's breakpoint" below means 768, and every
+"side by side" means 1024. Any other number in §13 is an HTTP status, a lifetime or an op's
+value — never a layout one.
 
 - **A pane is a route.** Each pane has exactly one URL, `/<page>/<pane>`; the page root
   renders the first rail entry (the *landing* pane — `/settings` → Password,
@@ -740,7 +769,9 @@ side**, still one route and one rail entry *(2026-09-16)*:
   not advertise — read from the same calls that render the panes, never a second query
   that could disagree with them. Every count is the number of rows its pane lists. The
   active entry is `aria-current="page"`; dimmed entries stay links.
-- **Mobile** has no room for a rail: below the shell's existing breakpoint the same panes
+- **Mobile** has no room for a rail: below the shell's breakpoint *(2026-09-16: **768**,
+  the phone shell; the two-pane split waits for **1024** — the rail + listing + details
+  need 1080 px, so 768–1023 keeps the rail and stacks the rest)* the same panes
   become a horizontally scrolling **pill row** under the page title — label only, no
   markers, active pill highlighted and `aria-current="page"` like the rail's active entry
   *(pinned 2026-09-03)*, same routes. This is a shell rule, so it applies to
@@ -769,11 +800,15 @@ side**, still one route and one rail entry *(2026-09-16)*:
   *Closed 2026-09-03:* the top nav holds five (Apps · Agents · Audit · Approvals ·
   Settings); ~~the narrow nav is a horizontal scroller with its scrollbar hidden, which is
   the mechanism — no overflow menu.~~ *(2026-09-16: still five and still no overflow menu,
-  but the mechanism is now the sidebar below, not the scroller — 390 px never held five
-  comfortably, it only scrolled.)*
+  but the mechanism is now the sidebar below, not the scroller — no phone width holds five
+  nav entries comfortably, it only scrolled. The width the follow-up named is not a number
+  §13 pins: the phone shell is everything below the 768 breakpoint, per the ladder above.)*
 
 **The narrow shell** *(2026-09-16, owner-approved: `MobileAgentDetailStates`' "Sidebar"
-board; decision 31)*. Below the existing 900 px breakpoint the top bar is the brand mark
+board; decision 31)*. Below the shell's breakpoint — **768**, the ladder's phone shell
+*(2026-09-16: was 900 px, a number nothing published uses and the only breakpoint §13 had;
+the ladder replaces it with 768 and 1024, and every tappable control at narrow is 44)* —
+the top bar is the brand mark
 and name on the left and a **hamburger** on the right; the hamburger opens a **sidebar**
 that slides in from the right — the hamburger's own side — over a scrim. At its top the
 brand and a close control at the corner the hamburger occupied; then the five nav entries

@@ -60,7 +60,7 @@ import type { AgentPane, AppPane } from "../app-routes";
 import type { AppRow as OpsAppRow } from "../admin";
 import { config as auditConfig } from "../audit";
 import { DEFAULT_APP_CAPABILITIES } from "../capabilities";
-import { argumentRows, reachabilityFor } from "../catalog-view";
+import { argumentRows, reachabilityFor, schemaLeaves } from "../catalog-view";
 import type { ArgumentRow, Reach, Reachability } from "../catalog-view";
 import { ownerCatalog } from "../gateway";
 import type { ListedItem } from "../gateway";
@@ -74,6 +74,7 @@ import {
 import type { TokenInfo } from "../identity";
 import { DEVICE_CODE_TTL_MS } from "../limits";
 import {
+  effectiveRoles,
   itemEntry,
   parseGrantEntry,
   redactPathsIn,
@@ -100,7 +101,18 @@ import { capabilities as tunnelCapabilities } from "../tunnel";
 import type { status as tunnelStatus } from "../tunnel";
 // The one page-layer import: `sessionLabel` is a page string, and the revoke dialog and
 // the row it names must read the same definition of it (format.ts says why).
-import { sessionLabel } from "./format";
+import { formatLastSeen, formatStamp, sessionLabel } from "./format";
+// Type-only, and the ONE cycle in this directory: grant-rows.tsx imports `paths` and
+// `entryField` from here, and its own row types come back the other way. Types are erased,
+// so nothing crosses at run time — and the rows belong beside the components that draw
+// them, which two pages now render (grant-rows.tsx says why).
+import type {
+  AgentListGroup,
+  AgentListRow,
+  AgentPatternOffer,
+  FamilyReach,
+  RowControl,
+} from "./grant-rows";
 
 /* ------------------------------------------------------------------ *
  * Shared chrome
@@ -252,9 +264,26 @@ export const paths = {
   appDetail(slug: string): string {
     return `/apps/${encodeURIComponent(slug)}`;
   },
-  /** Any of the seven non-landing panes (app-routes.APP_PANES, §13's table order). */
+  /** Any of the six non-landing panes (app-routes.APP_PANES, §2's table order). */
   appPane(slug: string, pane: AppPane): string {
     return `${paths.appDetail(slug)}/${pane}`;
+  },
+  /**
+   * The app page's three own Save targets. Each names the op-shaped action its route
+   * composes rather than dispatching generically, for the reason `agentGrantSet` does: the
+   * form's fields are not the op's keys, and the route composes ONE `app_update` (or one
+   * `grant_set`) from them (§4–§6).
+   */
+  appRoleSet(slug: string): string {
+    return `${paths.appDetail(slug)}/role_set`;
+  },
+  appRecordingSet(slug: string): string {
+    return `${paths.appDetail(slug)}/recording_set`;
+  },
+  /** The Agents pane's Save — the SAME op the agent page's posts, composed by the same
+   *  function, with the agent riding a hidden field rather than the path. */
+  appGrantSet(slug: string): string {
+    return `${paths.appDetail(slug)}/grant_set`;
   },
   /** Pending requests plus decision history. */
   approvals: "/approvals",
@@ -474,6 +503,11 @@ export const paths = {
    */
   appConfirm(slug: string, pane: AppPane, kind: AppConfirm["kind"], id?: string): string {
     return `${paths.appPane(slug, pane)}${query({ confirm: kind, id })}`;
+  },
+  /** The same, for the one dialog whose row is named by a SLUG rather than an id — the
+   *  Agents pane's **Remove <agent>** (§6). */
+  appConfirmAgent(slug: string, kind: AppConfirm["kind"], agent: string): string {
+    return `${paths.appPane(slug, "access")}${query({ confirm: kind, agent })}`;
   },
 
   /* --- the consumer endpoint a page only ever displays --- */
@@ -996,16 +1030,17 @@ export type AppsProps = ShellProps & {
 };
 
 /* ------------------------------------------------------------------ *
- * /apps/<slug>
+ * /apps/<slug> — the seven panes (the 2026-09-17 dispatch, §2)
  * ------------------------------------------------------------------ */
 
-/** §13's eight panes: the seven routed ones plus the landing, which is Tools. */
-export type AppDetailPane = "tools" | AppPane;
+/** §2's seven panes: the six routed ones plus the landing, which is Catalog. */
+export type AppDetailPane = "catalog" | AppPane;
 
 /** The destructive confirmations `/apps/<slug>` raises, each riding the URL of the pane
  *  that draws its control (§13's "confirm-dialog state rides the owning pane's URL"). */
 export type AppConfirm =
-  | { kind: "revoke-token"; id: string; prefix: string }
+  | { kind: "revoke-token"; id: string; prefix: string; live: boolean }
+  | { kind: "remove-agent"; agent: string }
   | { kind: "archive" }
   | { kind: "delete" };
 
@@ -1013,41 +1048,52 @@ export type AppConfirm =
  *  it and the redirect a submitted dialog lands on are one URL (§13). */
 export const APP_CONFIRM_PANE: Record<AppConfirm["kind"], AppPane> = {
   "revoke-token": "token",
+  "remove-agent": "access",
   archive: "danger",
   delete: "danger",
 };
 
 /**
- * One rail entry as §13's pane table spells it. `marker` is the at-a-glance value in
- * FOUR distinguishable states, because §13 gives them four meanings: a count, the literal
- * `none`, the dimmed `—` of a family the app advertises none of, and the empty string —
- * which is BOTH "this pane's table cell says none" and "the listing could not be read",
- * since an unread count is not an empty set and must not render as one.
+ * One rail entry as §2's pane table spells it. `marker` is the at-a-glance value in FOUR
+ * distinguishable states, because the table gives them four meanings: a count, the literal
+ * `none`, the dimmed `—` (a family the app advertises none of, a proxied app's token), and
+ * the empty string — which is BOTH "this pane has no marker" and "the listing could not be
+ * read", since an unread count is not an empty set and must not render as one.
+ *
+ * `dot` is the one marker that is a STATUS rather than a count: Recording's body-logging
+ * light, whose `marker` is then the state said in words for anyone who cannot see a colour.
  */
 export type AppRailEntry = {
   pane: AppDetailPane;
   label: string;
   href: string;
   marker: string;
-  /** The heading this entry sits under; null is the ungrouped Danger zone (§13). */
+  dot: "on" | "off" | null;
+  /** The heading this entry sits under; null is the ungrouped Danger zone (§2). */
   group: "App" | "Access" | null;
 };
 
 /**
- * The page header (§13): identity, then whichever status the app's kind actually has —
- * a tunneled app's online/offline and last seen, a proxied app's endpoint, auth mode and
- * forward identity, and for `auth: oauth` the connection controls `/apps` also draws.
+ * The page header (§2): identity, the description as the subtitle, the one tiles line, and
+ * whichever status the app's kind actually has — a tunneled app's online/offline, a proxied
+ * app's endpoint, auth mode and forward identity, and for `auth: oauth` the connection
+ * controls `/apps` also draws.
  */
 export type AppDetailHeader = {
   name: string;
   slug: string;
   kind: AppKind;
   archived: boolean;
+  description: string;
   /** The status word beside the kind badge — null where there is nothing to connect
    *  (a headers-mode proxy), which is exactly when `/apps` draws no badge either. */
   status: string | null;
-  /** Tunneled only (§8's `lastSeen`); null on a proxied app and on one never connected. */
-  lastSeen: number | null;
+  /**
+   * §2's ONE tiles line: `T tools · P prompts · R resources · A agents · body logging
+   * on|off`, and, tunneled, ` · last seen <relative>`. Composed in the loader, because it
+   * counts the very lists the panes draw and no single pane holds all of them.
+   */
+  tiles: string;
   endpoint: string | null;
   authMode: UpstreamAuthMode | null;
   /** Proxied only — null on a tunneled app, which forwards nothing upstream. */
@@ -1059,10 +1105,10 @@ export type AppDetailHeader = {
 };
 
 /**
- * What a §20 family pane has to draw, as the three answers §13 distinguishes. The states
- * are separate because their MARKERS are: `listed` counts, `undeclared` is the dimmed `—`
- * whose pane says why (§20.2 for proxied, §20.5 for tunneled), and `unread` is blank —
- * a proxied listing that failed, which §13 forbids rendering as an empty set.
+ * What a §20 family has to draw, as the three answers §13 distinguishes. The states are
+ * separate because their MARKERS are: `listed` counts, `undeclared` is the dimmed `—` whose
+ * pane says why (§20.2 for proxied, §20.5 for tunneled), and `unread` is blank — a proxied
+ * listing that failed, which §13 forbids rendering as an empty set.
  */
 export type AppFamilyView<Row> =
   | { state: "listed"; rows: Row[] }
@@ -1073,121 +1119,273 @@ export type AppFamilyView<Row> =
    *  claim a declaration the hub never received. */
   | { state: "unconnected" };
 
-/**
- * One Tools row plus §13's "what only the hub knows" block, computed once per render: the
- * aggregated name (§7), who reaches it and how (the door's own matcher, through
- * catalog-view), and the redaction the call would apply. `schemaUnsound` is §7/§18
- * decision 16 — a tool whose schema tripped the indirection line has no derivable
- * redaction map at all, which is a different statement from "nothing is redacted".
- */
-export type AppToolRow = {
+/** One agent that reaches a row, as the badge beside it reads: `<agent>` for allow,
+ *  `<agent> · ask` in amber for the other (§3/§4). */
+export type AgentBadge = { agent: string; ask: boolean };
+
+/* ------------------------------------------------------------- Catalog --- */
+
+/** One Catalog row: the name, the description under it, and who reaches it. The row IS
+ *  the `?sel=` link (the agent page's row grammar). */
+export type AppCatalogRow = {
+  family: "tool" | "prompt" | "resource";
   name: string;
-  /** `<slug>_<tool>` — the name an agent calls it by on the aggregated endpoint. */
-  aggregated: string;
-  /** The whole description; `summary` is its first line, which is what the row shows. */
   description: string;
-  summary: string;
-  args: ArgumentRow[];
-  reach: Reach[];
-  /** The agents §13's approval line names: those reaching ONLY in approval mode. */
-  approvalAgents: string[];
-  redactedArgs: string[];
-  redactedResults: string[];
-  schemaUnsound: boolean;
+  sel: string;
+  reach: AgentBadge[];
 };
 
-/** One declared prompt argument as `prompts/list` reports it — §13's "name, description,
- *  required". There is no schema behind it: §20.3 says prompts have none, which is also
- *  why this pane draws no Arguments table and no `writeOnly` redaction half exists. */
-export type PromptArgumentRow = { name: string; description: string; required: boolean };
-
-/**
- * One Prompts row plus §13's hub block — the Tools block minus the schema table and minus
- * a posture, prompts being never approval-gated (§18 decision 27). `redacted` is the
- * `redact` entries matching the prompt's NAME: §20.3 keeps those maps family-blind, so it
- * is the same map and the same matcher a tool name goes through.
- */
-export type AppPromptRow = {
-  name: string;
-  /** `<slug>_<prompt>` — §20.6's aggregated name, which prompts share with tools alone. */
-  aggregated: string;
-  description: string;
-  args: PromptArgumentRow[];
-  reach: Reach[];
-  redacted: string[];
+/** One Catalog group — `Tools · N` and the two others. `note` is `none advertised` beside
+ *  the heading; `state` is the ONE line that stands in for the rows (§3). */
+export type AppCatalogGroup = {
+  title: string;
+  count: number;
+  note: string;
+  rows: AppCatalogRow[];
+  state: string | null;
 };
 
-/** One Resources or Templates row — §13's `URI` / `Name` / `Type` columns, a template's
- *  URI being its raw `uriTemplate`, and the reachability the door answered for that very
- *  string: grants match resources by URI, never by name (§20.3). */
-export type AppResourceRow = { uri: string; name: string; mimeType: string; reach: Reach[] };
+/**
+ * One row of the Arguments or Result card. TWO shapes, because §20.3 gives the two
+ * families two different things to print: a TOOL has a JSON Schema, so its rows are
+ * `schemaLeaves`' dotted paths with a declared type and the `writeOnly · masked` badge; a
+ * PROMPT has no schema at all, so its rows are the arguments it declares — name, the
+ * argument's own description (Markdown, or `—` where it declares none) and `required` /
+ * `optional`, and never a writeOnly badge, there being no schema to carry one.
+ */
+export type AppSchemaRow =
+  | { kind: "leaf"; path: string; type: string; writeOnly: boolean }
+  | { kind: "argument"; path: string; description: string; required: boolean };
+
+/** The Catalog details pane: the provenance card when nothing is selected, or one
+ *  tool/prompt/resource with §3's four cards. */
+export type AppCatalogDetails =
+  | { kind: "none"; schemas: string }
+  | {
+      kind: "item";
+      name: string;
+      family: "tool" | "prompt" | "resource";
+      description: string;
+      /** Tools (schema leaves) and prompts (declared arguments); null for a resource. */
+      args: AppSchemaRow[] | null;
+      /** Tools with an `outputSchema`; null everywhere else. */
+      results: AppSchemaRow[] | null;
+      /** Resources only — the URI, the media type and the scoped endpoint. */
+      resource: { uri: string; type: string; servedOn: string } | null;
+      /** `<slug>_<name>`; null for a resource, which is never aggregated (§20.6). */
+      calledAs: string | null;
+      reachableBy: string[];
+      /** Null for a resource, which §7 never gates. */
+      approval: string | null;
+      /** Null for a resource: a URI is not a body (§20.4). */
+      redaction: string | null;
+    };
+
+/* --------------------------------------------------------------- Roles --- */
+
+/** Where a role came from, as the row's small badge says it (§4). */
+export type AppRoleSource = "built-in" | "app" | "app · replaced yours" | "yours";
+
+export type AppRoleRow = {
+  name: string;
+  source: AppRoleSource;
+  /** The badge's `title` where the badge alone does not say it; null otherwise. */
+  sourceTitle: string | null;
+  /** `tools a, b · prompts c · matches N`. */
+  detail: string;
+  holders: AgentBadge[];
+  sel: string;
+};
+
+/** One item row of the role editor: a tick, a locked tick (matched by a pattern, or a
+ *  read-only role) or an empty box. `field` is `i.<family>/<name>`, empty when locked. */
+export type AppRoleItemRow = {
+  name: string;
+  description: string;
+  /** The non-literal patterns that put it in the role — the ` · via <pattern>` tail. */
+  via: string[];
+  field: string;
+  checked: boolean;
+  locked: boolean;
+  lockTitle: string;
+};
+
+/** `Tools · K of N` and its rows; `state` stands in for them (`no match`). */
+export type AppRoleGroup = { title: string; count: string; rows: AppRoleItemRow[]; state: string | null };
+
+/** One pattern row of the role editor. `entry` is `<family>/<pattern>` — the remove
+ *  button's value and the hidden `keep` field's, which is what makes a pattern this render
+ *  still lists survive a save (§4). */
+export type AppRolePatternRow = {
+  pattern: string;
+  family: RoleFamily;
+  detail: string;
+  entry: string;
+  editable: boolean;
+};
+
+export type AppRoleDetails =
+  | { kind: "none"; appsOwn: string }
+  | {
+      kind: "role";
+      name: string;
+      /** `new=1`: the name is an `<input>` and there is nothing to delete yet. */
+      isNew: boolean;
+      source: AppRoleSource;
+      /** `built-in` / `declared by the app` / `yours`. */
+      badge: string;
+      explain: string;
+      holders: AgentBadge[];
+      editable: boolean;
+      q: string;
+      groups: AppRoleGroup[];
+      patterns: AppRolePatternRow[];
+      /** Typed text that is not one item's name, offered as a pattern (editable only). */
+      offer: { pattern: string; family: RoleFamily; detail: string } | null;
+      /** One hidden `keep=<family>/<pattern>` per pattern row this render drew. */
+      keep: string[];
+      /** A refused save, redrawn on the choices that caused it (never a redirect). */
+      error: string | null;
+    };
+
+/* ----------------------------------------------------------- Recording --- */
 
 /**
- * §13's Overview pane — `app_get`'s row as a definition list. Only `logBodiesIsDefault` is
- * derived: §15 gives the setting a per-kind default (tunneled on, proxied off) and §13
- * asks the pane to say WHICH default it sits at, while the row reports the resolved
- * boolean alone. The redaction fields are the configured paths flattened — §13 says "the
- * config paths, or `none`", and which pattern earned a path is the Tools pane's business.
+ * A path row's control. `box` is the ordinary checkbox; `locked` is a path every tool
+ * declares `writeOnly`, which nothing here can clear; `mixed` is §5's data-safety rule —
+ * a path masked on SOME of its tools submits no `p.` field at all, so no save can quietly
+ * flatten a partial state into "all" or "none".
  */
-/** One `role · mode` chip of §13's Agents pane. `builtin` is the `all` marking: `all` is
- *  the reserved built-in nobody declares (§2/§20.3), so holding it is the whole test. */
-export type AppGrantChip = { role: string; mode: "allow" | "approval"; builtin: boolean };
+export type AppRecordingControl =
+  | { kind: "box"; field: string; checked: boolean }
+  | { kind: "locked" }
+  | { kind: "mixed" };
 
-/**
- * One Agents row (§13): the agent's own slug and description as TEXT — `/agents/<slug>` is
- * deferred, so a link there would be a link to a 404 — and one chip per grant it holds on
- * this app, in `agent_list`'s own order. The pane is read-only until the grant editor
- * lands, which is why no row carries a control.
- */
-export type AppAgentRow = { slug: string; description: string; chips: AppGrantChip[] };
+export type AppRecordingToolRow =
+  | { tool: string; writeOnly: true }
+  | { tool: string; writeOnly: false; field: string; checked: boolean };
 
-/**
- * One Token-pane row: a LIVE app token bound to this app, as `token_list` reports it
- * (§8, unchanged). Revoked and expired keys are absent — the pane is what is still
- * dialling in, and the rail marker is this list's length.
- */
-export type AppTokenRow = { id: string; prefix: string; createdAt: number; lastUsedAt: number | null };
+export type AppRecordingPathRow = {
+  path: string;
+  type: string;
+  /** `T tool(s) · masked on all T` and the other tails §5 pins. */
+  detail: string;
+  /** The `which` / `hide` link, or null where the path has one tool and no writeOnly. */
+  which: { href: string; label: string } | null;
+  control: AppRecordingControl;
+  /** The per-tool rows — drawn when `which=` opened them, or when the path is mixed. */
+  tools: AppRecordingToolRow[];
+};
 
-export type AppOverview = {
-  /** Always a real instant: this page 404s the builtin, which is the only app row
-   *  with no creation date (`appDetailProps` makes the narrowing true). */
+export type AppRecordingSection = {
+  dir: "args" | "results";
+  title: string;
+  count: number;
+  note: string;
+  rows: AppRecordingPathRow[];
+  /** `no path matches` / `no schema declares any field`, in place of the rows. */
+  state: string | null;
+  /** Results only, and only with an empty filter: the tools declaring no output schema. */
+  noSchema: string | null;
+};
+
+export type AppRecordingCard = { title: string; rows: { path: string; detail: string }[]; empty: string };
+
+/* -------------------------------------------------------------- Agents --- */
+
+/** One Agents row: who holds a grant on this app, what it holds, and how far it reaches. */
+export type AppAgentRow = {
+  slug: string;
+  description: string;
+  /** The allow entries as mono badges, or empty for the `—`. */
+  allowed: string[];
+  askFirst: string[];
+  /** `reaches R of T tools · K ask first[ · …] · C calls · 7 d`. */
+  reach: string;
+  sel: string;
+};
+
+export type AppAccessDetails =
+  | { kind: "none"; perTool: { name: string; agents: string }[]; more: number }
+  | {
+      kind: "agent";
+      slug: string;
+      description: string;
+      /** `/agents/<agent>/apps/<slug>` — the same editor on the agent's own page. */
+      agentHref: string;
+      newGrant: boolean;
+      reach: { tools: FamilyReach; prompts: FamilyReach; resources: FamilyReach };
+      groups: AgentListGroup[];
+      carry: { field: string; value: GrantChoice }[];
+      error: string | null;
+    };
+
+/* --------------------------------------------------------------- Token --- */
+
+/** One Token-pane row: a LIVE app token bound to this app, as `token_list` reports it
+ *  (§8), plus whether it is the key the live socket presented. */
+export type AppTokenRow = {
+  id: string;
+  prefix: string;
   createdAt: number;
-  logBodies: boolean;
-  logBodiesIsDefault: boolean;
-  redactedArgs: string[];
-  redactedResults: string[];
+  lastUsedAt: number | null;
+  /** The app's live socket authenticated with this key — the success badge (§7). */
+  live: boolean;
 };
 
+export type AppTokenDetails = { kind: "none" } | { kind: "token"; row: AppTokenRow; isNew: boolean };
+
+/* --------------------------------------------------------------- panes --- */
+
+/** One pane's whole content — the discriminant `app-detail.tsx` switches on, exactly as
+ *  the agent page's `AgentPaneView` is. */
+export type AppPaneView =
+  | {
+      kind: "catalog";
+      subtitle: string;
+      summary: string;
+      q: string;
+      groups: AppCatalogGroup[];
+      /** One whole-pane state in place of the three groups: never connected, or a listing
+       *  that could not be read at all (with the Reconnect that fixes the second). */
+      state: { text: string; reconnect: boolean } | null;
+      details: AppCatalogDetails;
+    }
+  | { kind: "roles"; summary: string; rows: AppRoleRow[]; details: AppRoleDetails }
+  | {
+      kind: "recording";
+      log: boolean;
+      summary: string;
+      q: string;
+      /** The proxied-with-nothing-masked warning above the sections; null otherwise. */
+      warning: string | null;
+      sections: AppRecordingSection[];
+      /** `keep.<dir>=<tool>:<path>` for every stored entry the rows do not represent, so a
+       *  save never drops one (§5's first data-safety rule). */
+      keep: { field: string; value: string }[];
+      auditHref: string;
+      /** The masked-before-recording sentence, and one card per direction. */
+      intro: string;
+      cards: AppRecordingCard[];
+      error: string | null;
+    }
+  | { kind: "overview"; rows: { key: string; value: string; mono: boolean }[] }
+  | { kind: "access"; summary: string; rows: AppAgentRow[]; details: AppAccessDetails }
+  | { kind: "token"; proxied: boolean; summary: string; rows: AppTokenRow[]; details: AppTokenDetails }
+  | { kind: "danger"; archived: boolean; tokens: number; agents: number };
+
 /**
- * `/apps/<slug>` and its seven panes as one props value. Every family view is present on
- * every render, because the rail is: §13 requires each marker to be "read from the same
- * calls that render the panes", so the loader makes those calls once and both the rail
- * and the active pane are drawn from the same answers.
+ * `/apps/<slug>` and each of its seven panes as one props value — ONE page, as
+ * `/agents/<slug>` is one: the header and the rail are identical on all of them, and the
+ * rail is drawn from the same reads the pane is, so a marker and the list under it cannot
+ * disagree.
  */
 export type AppDetailProps = ShellProps & {
   section: "apps";
   csrfToken: string;
-  pane: AppDetailPane;
   header: AppDetailHeader;
   rail: AppRailEntry[];
-  tools: AppFamilyView<AppToolRow>;
-  prompts: AppFamilyView<AppPromptRow>;
-  resources: AppFamilyView<AppResourceRow>;
-  templates: AppFamilyView<AppResourceRow>;
-  /** Which of the Resources pane's two tabs this URL selected (§13). */
-  tab: "resources" | "templates";
-  /** §2's `PUBLIC_ORIGIN`, the one answer to "what is the hub's address" — the Resources
-   *  pane prints the scoped endpoint with it so the sentence is copyable (§13). */
-  hubOrigin: string;
-  /** The DECLARED roles in §20.3's CANONICAL read shape — a bare pattern list for a
-   *  tools-only role, the per-family object otherwise — as the Roles pane renders them
-   *  and its rail marker counts them. `app_get` already canonicalizes; the page relays. */
-  roles: RoleDeclaration;
-  overview: AppOverview;
-  /** The agents holding ≥ 1 grant on this app, from `agent_list`'s inline grants (§8). */
-  agents: AppAgentRow[];
-  /** This app's live app tokens — always empty for a proxied app, which holds none (§2). */
-  tokens: AppTokenRow[];
+  pane: AppPaneView;
   /** The destructive dialog the URL asked for, or null (§13's `?confirm=` state). */
   confirm: AppConfirm | null;
   /**
@@ -1197,23 +1395,12 @@ export type AppDetailProps = ShellProps & {
    */
   reveal: string | null;
   /**
-   * §13's two narrow levels — 1 the landing (the rail as a list), 2 a pane — decided
-   * from the URL as the agent page's three are, and applied by CSS alone. The landing IS
-   * Tools (no alias exists), so the level is the pane's own name and nothing is decided
-   * twice.
+   * §2's three narrow levels — 1 the landing, 2 a pane, 3 a pane with `sel` — decided from
+   * the URL as the agent page's are, and applied by CSS alone.
    */
-  level: 1 | 2;
+  level: AgentLevel;
   levelHeader: LevelHeader;
 };
-
-/** The app page's level from its pane: the landing is 1, every other pane 2. The level
- *  header's titles are the header's name and the rail's own label, read from the same
- *  table the rail is drawn from. */
-export function appLevel(slug: string, pane: AppDetailPane, name: string): Pick<AppDetailProps, "level" | "levelHeader"> {
-  if (pane === "tools") return { level: 1, levelHeader: { backHref: paths.apps, backLabel: "Apps", title: name } };
-  const label = APP_PANE_TABLE.find((entry) => entry.pane === pane)?.label ?? pane;
-  return { level: 2, levelHeader: { backHref: paths.appDetail(slug), backLabel: name, title: label } };
-}
 
 /* ------------------------------------------------------------------ *
  * /apps/new
@@ -1838,100 +2025,18 @@ export type AgentRailEntry = {
 export type GrantChoice = "none" | "allow" | "approval";
 
 /**
- * One row's radio group, as both the listing and the details pane draw it. `value` is the
- * DIRECT entry's mode and is what the row submits; `implied` is what the rest of the set
- * already grants on this subject, drawn hollow and never submitted — so a row can show
- * `allow` reached through a role while submitting nothing of its own.
+ * The grant editor's own view-model types live beside the components that draw them
+ * (grant-rows.tsx), because BOTH pages that edit a grant set render those components over
+ * these rows — and are re-exported here so every consumer still reads one module for the
+ * view-model contract. Type-only in both directions: nothing crosses at run time.
  */
-export type RowControl = {
-  /** The field name — `e.<entry>`, spelled by `entryField` and read back by
-   *  `grantChoicesOf`, the two halves of the one translation this form makes. */
-  field: string;
-  value: GrantChoice;
-  /** The mode the OTHER entries grant here, or null when they grant nothing. */
-  implied: "allow" | "approval" | null;
-  /** Which entries grant it — the names the disabled buttons' `title` reads. */
-  impliedBy: string[];
-};
-
-/** One listing row. The four kinds differ in what they say, not in what they do: every
- *  one of them names an entry the set may hold. */
-export type AgentListRow =
-  | {
-      kind: "role";
-      /** The entry string — a role name, so never containing `/`. */
-      entry: string;
-      builtin: boolean;
-      /** `<family> <patterns> · matches N`, or the built-in's own sentence. */
-      detail: string;
-      /** `?sel=` for this row's details. */
-      sel: string;
-      control: RowControl;
-    }
-  | {
-      kind: "undeclared";
-      entry: string;
-      /** Which side the entry sits on — the `in Allowed` / `in Ask first` badge. */
-      standing: "allow" | "approval";
-    }
-  | {
-      kind: "item";
-      /** `tool/<name>` · `prompt/<name>` · `resource/<uri>` — the DIRECT entry. */
-      entry: string;
-      /** The subject itself: a tool or prompt name, or a resource URI. */
-      name: string;
-      description: string;
-      /** The entries that reach it besides the direct one, for the `via` line. */
-      via: string[];
-      /** `also via` rather than `via`: the row also carries a direct entry. */
-      alsoVia: boolean;
-      /** A direct ask under something that allows — kept, badged, removable. */
-      noEffect: boolean;
-      sel: string;
-      control: RowControl;
-    }
-  | {
-      kind: "pattern";
-      entry: string;
-      /** `matches N today` / `matches nothing today`. */
-      detail: string;
-      /** True for the second of those, which the board draws amber. */
-      dormant: boolean;
-      sel: string;
-      control: RowControl;
-    };
-
-/**
- * One listing group: a heading with its count and, where the family could not be listed,
- * the ONE note line that stands in for its rows (§13's `unconnected` / `undeclared` /
- * `unread`, said in the words the app page says them in).
- */
-export type AgentListGroup = {
-  title: string;
-  /** Empty where the heading carries no count (the pattern offer's `As a pattern`). */
-  count: string;
-  /** The heading's right-hand note (`declared by the app at connect`, `8 reached · 3 not`). */
-  note: string;
-  /** Rendered in place of `rows` when the family could not be listed; null otherwise. */
-  state: string | null;
-  rows: AgentListRow[];
-};
-
-/** The typed text offered as a pattern entry, when it is not one item's name. */
-export type AgentPatternOffer = {
-  /** `tool/<q>`, or `resource/<q>` when the text carries a URI scheme. */
-  entry: string;
-  /** `would match N today, and any added later` / `matches nothing today`. */
-  detail: string;
-};
-
-/** How far the agent reaches into one §20 family, as the listing's reach line reads it. */
-export type FamilyReach = {
-  reached: number;
-  total: number;
-  /** Subjects reached in approval mode — the `K ask first` the tools half prints. */
-  approval: number;
-};
+export type {
+  AgentListGroup,
+  AgentListRow,
+  AgentPatternOffer,
+  FamilyReach,
+  RowControl,
+} from "./grant-rows";
 
 /** A card of the grant step: one active app the agent holds nothing on. */
 export type AgentGrantCard = {
@@ -2706,16 +2811,6 @@ async function appPaneView(
   const app = await new Registry(env.DB).getApp(ctx.ownerId, appSlug);
   if (app === null) return null;
 
-  const saved = savedSpelled.map(grantEntryOf);
-  // The set the pane RENDERS: the stored one, or the refused save's own choices, so the
-  // row that caused a refusal is still on screen to fix.
-  const entries: ParsedEntry[] =
-    submitted === null
-      ? saved
-      : Object.entries(submitted.choices)
-          .filter(([, choice]) => choice !== "none")
-          .map(([entry, choice]) => grantEntryOf(choice === "approval" ? `${entry}${APPROVAL_SUFFIX}` : entry));
-
   const advertised: readonly AppCapability[] =
     app.kind === "tunnel"
       ? await tunnelCapabilities(app.id)
@@ -2730,13 +2825,108 @@ async function appPaneView(
   const [tools, prompts, resources] = await Promise.all([familyOf("tools"), familyOf("prompts"), familyOf("resources")]);
   const views: Record<RoleFamily, AppFamilyView<ListedItem>> = { tools, prompts, resources };
 
+  // The listing, the reach and the carried entries — built by the ONE builder both pages
+  // that edit a grant set call, so the app page's Agents pane is §6's "the agent page's
+  // grant editor, verbatim" by construction rather than by agreement.
+  const editor = grantEditorOf({
+    app: appSlug,
+    kind: row.kind,
+    roles: row.roles,
+    views,
+    savedSpelled,
+    submitted,
+    q: (ctx.query.get("q") ?? "").trim(),
+    offerPattern: true,
+  });
+
+  return {
+    kind: "app",
+    app: appSlug,
+    appName: row.name,
+    appKind: app.kind,
+    status: appHeader(row, app.kind, appSlug).status,
+    newGrant: savedSpelled.length === 0,
+    reach: editor.reach,
+    q: editor.q,
+    groups: editor.groups,
+    offer: editor.offer,
+    nothingMatches: editor.nothingMatches,
+    saved: editor.saved,
+    carry: editor.carry,
+    details: detailsView(
+      ctx,
+      agent,
+      row,
+      app,
+      appSlug,
+      editor.entries,
+      views,
+      editor.standing,
+      editor.matchedNames,
+      everyAgent,
+    ),
+    error: submitted?.error ?? null,
+  };
+}
+
+/**
+ * The grant editor over one (grant set × app catalog) pair: the reach line's three
+ * numbers, the listing groups, the pattern offer, and the hidden fields Save must carry.
+ * ONE builder for BOTH pages that edit a set — `/agents/<slug>` (the app pane) and
+ * `/apps/<slug>/access` (an agent selected) — because §6 makes the second the first
+ * "verbatim", and two builders would be two listings that drift.
+ *
+ * Pure over the views it is handed: the caller reads the catalogs (they differ — the app
+ * page folds resource TEMPLATES into the resources family, matched on their raw
+ * `uriTemplate` as §20.3 says) and this decides nothing about which app it is looking at.
+ *
+ * `roles` is the declaration the door resolves against — `effectiveRoles` on the app page,
+ * `app_get`'s own map where the two are the same thing.
+ */
+type GrantEditor = {
+  entries: ParsedEntry[];
+  q: string;
+  reach: Record<RoleFamily, FamilyReach>;
+  standing: Map<string, { mode: "allow" | "approval" | null; hits: Reach[] }>;
+  matchedNames: Map<string, Record<RoleFamily, string[]>>;
+  matchCount: Map<string, number>;
+  groups: AgentListGroup[];
+  offer: AgentPatternOffer | null;
+  nothingMatches: boolean;
+  carry: { field: string; value: GrantChoice }[];
+  saved: { allow: number; approval: number };
+};
+
+function grantEditorOf(args: {
+  app: string;
+  kind: "tunnel" | "proxy";
+  roles: RoleDeclaration;
+  views: Record<RoleFamily, AppFamilyView<ListedItem>>;
+  savedSpelled: string[];
+  submitted: { choices: Record<string, GrantChoice>; error: string } | null;
+  q: string;
+  /** Offer typed text as a pattern entry — the agent page's filter does; the app page's
+   *  Agents details has no filter, so there is nothing to offer (§6). */
+  offerPattern: boolean;
+}): GrantEditor {
+  const { app: appSlug, views, savedSpelled, submitted, q } = args;
+  const saved = savedSpelled.map(grantEntryOf);
+  // The set the pane RENDERS: the stored one, or the refused save's own choices, so the
+  // row that caused a refusal is still on screen to fix.
+  const entries: ParsedEntry[] =
+    submitted === null
+      ? saved
+      : Object.entries(submitted.choices)
+          .filter(([, choice]) => choice !== "none")
+          .map(([entry, choice]) => grantEntryOf(choice === "approval" ? `${entry}${APPROVAL_SUFFIX}` : entry));
+
   // ONE door per entry, built once: keyed BY the entry, so `reach(subject, family)` comes
   // back naming exactly the entries that match that subject and the mode each carries.
   // Every number on this pane — the reach line, each row's implied mode, `matches N` and
   // the details pane's "Matches today" — is read off these answers, so the page cannot
   // disagree with the door about any of them (catalog-view says why the build is hoisted).
   const doors = reachabilityFor(
-    row.roles,
+    args.roles,
     Object.fromEntries(entries.map((entry) => [entry.entry, [spelledOf(entry)]])),
   );
   const matchCount = new Map<string, number>();
@@ -2768,7 +2958,6 @@ async function appPaneView(
     }
   }
 
-  const q = (ctx.query.get("q") ?? "").trim();
   const needle = q.toLowerCase();
   const hit = (name: string, description: string): boolean =>
     needle === "" || name.toLowerCase().includes(needle) || description.toLowerCase().includes(needle);
@@ -2792,13 +2981,13 @@ async function appPaneView(
   // Roles, then the held role names the app does not declare — the board keeps those
   // immediately under the declared ones rather than in a heading of their own, because
   // they are the same kind of entry in a state the app can end at any connect.
-  const declared = Object.keys(row.roles);
+  const declared = Object.keys(args.roles);
   const roleNames = [...declared, BUILTIN_ROLE].filter((role) => hit(role, ""));
   if (roleNames.length > 0) {
     groups.push({
       title: "Roles",
       count: String(roleNames.length),
-      note: row.kind === "tunnel" ? "declared by the app at connect" : "defined in config",
+      note: args.kind === "tunnel" ? "declared by the app at connect" : "defined in config",
       state: null,
       rows: roleNames.map((role) => ({
         kind: "role" as const,
@@ -2807,7 +2996,7 @@ async function appPaneView(
         detail:
           role === BUILTIN_ROLE
             ? `every tool, prompt and resource, present and future · matches ${matchCount.get(role) ?? 0}`
-            : `${patternText(row.roles[role])} · matches ${matchCount.get(role) ?? 0}`,
+            : `${patternText(args.roles[role])} · matches ${matchCount.get(role) ?? 0}`,
         sel: `role:${role}`,
         // No implied arm on a role: nothing in the set grants a ROLE, so the three
         // buttons are always live and the checked one is the entry's own mode.
@@ -2890,21 +3079,17 @@ async function appPaneView(
     });
   }
 
-  const offer = patternOffer(q, entries, row.roles, views);
-  const nothingMatches = q !== "" && offer === null && filterable === 0;
-
+  const offer = args.offerPattern ? patternOffer(q, entries, args.roles, views) : null;
   return {
-    kind: "app",
-    app: appSlug,
-    appName: row.name,
-    appKind: app.kind,
-    status: appHeader(row, app.kind, appSlug).status,
-    newGrant: savedSpelled.length === 0,
-    reach,
+    entries,
     q,
+    reach,
+    standing,
+    matchedNames,
+    matchCount,
     groups,
     offer,
-    nothingMatches,
+    nothingMatches: q !== "" && offer === null && filterable === 0,
     saved: {
       allow: saved.filter((entry) => entry.mode === "allow").length,
       approval: saved.filter((entry) => entry.mode === "approval").length,
@@ -2912,8 +3097,6 @@ async function appPaneView(
     carry: entries
       .filter((entry) => !drawn.has(entry.entry))
       .map((entry) => ({ field: entryField(entry.entry), value: entry.mode })),
-    details: detailsView(ctx, agent, row, app, appSlug, entries, views, standing, matchedNames, everyAgent),
-    error: submitted?.error ?? null,
   };
 }
 
@@ -3475,69 +3658,73 @@ function whyItWaits(
 /* ------------------------------ /apps/<slug> ------------------------------ */
 
 /**
- * §13's pane table, in its own order — which is the rail's order, the pill row's order,
- * and the order every walk over the eight panes reads. Tools carries no route segment
- * because it is the LANDING pane: `/apps/<slug>` renders it and `/apps/<slug>/tools` is a
- * 404, so a segment here would be a spelling of a page that does not exist.
+ * §2's pane table, in its own order — which is the rail's order and the order every walk
+ * over the seven panes reads. Catalog carries no route segment because it is the LANDING
+ * pane: `/apps/<slug>` renders it and `/apps/<slug>/catalog` is a 404, so a segment here
+ * would be a spelling of a page that does not exist.
  */
 const APP_PANE_TABLE: readonly { pane: AppDetailPane; label: string; group: AppRailEntry["group"] }[] = [
-  { pane: "tools", label: "Tools", group: "App" },
-  { pane: "prompts", label: "Prompts", group: "App" },
-  { pane: "resources", label: "Resources", group: "App" },
+  { pane: "catalog", label: "Catalog", group: "App" },
   { pane: "roles", label: "Roles", group: "App" },
+  { pane: "recording", label: "Recording", group: "App" },
   { pane: "overview", label: "Overview", group: "App" },
   { pane: "access", label: "Agents", group: "Access" },
   { pane: "token", label: "Token", group: "Access" },
   { pane: "danger", label: "Danger zone", group: null },
 ];
 
-/** §13's dimmed marker — an em dash, and the ONE thing that means "advertises none".
- *  Exported so the rail can DRAW that entry dimmed (AppDetail.dc.html greys the label as
- *  well as the marker) without a second spelling of the glyph deciding what it means. */
+/** §2's dimmed marker — an em dash, and the ONE thing that means "advertises none".
+ *  Exported so the rail can DRAW that entry dimmed without a second spelling of the glyph
+ *  deciding what it means. */
 export const DIMMED = "—";
 
 /** `agent_list`'s row, narrowed to what this page reads: the slug and description the
  *  Agents pane draws, and the inline grants (§8) keyed by app slug in §9's own spelling. */
 type ListedAgent = { slug: string; description: string; grants: Record<string, string[]> };
 
-/** One catalog entry as a Tools row reads it — `ListedItem` plus the two descriptors the
- *  hub stores untouched and relays (§20.2), which the door itself never looks at. */
-type CatalogTool = ListedItem & { description?: string; inputSchema?: unknown };
-
-/** The same for a prompt: `arguments` is the app's own declaration, relayed untouched, so
- *  it is read defensively rather than trusted to be the shape the SDK documents. */
-type CatalogPrompt = ListedItem & {
-  description?: string;
-  arguments?: { name?: unknown; description?: unknown; required?: unknown }[];
-};
+/** How far back the Agents pane's call counts look — §15's own retention window, so the
+ *  `· 7 d` the row prints is the window the read actually asked for. */
+const CALL_WINDOW_DAYS = 7;
 
 /**
- * `/apps/<slug>` and each of its seven panes (§13). `null` is the 404 every unreachable
+ * The per-agent call count's ceiling. `audit_query` returns rows and counts nothing, so
+ * the number is this page's own `rows.length` and an agent past the cap reads as the cap.
+ * ponytail: a real `audit_stats` op would close it, which is a contract change (model.ts's
+ * header names the same ceiling for /audit's tiles).
+ */
+const CALL_COUNT_LIMIT = 500;
+
+/** What a refused save hands back, so the pane redraws on the owner's own choices rather
+ *  than on the stored state they tried to replace. One arm per form §4–§6 defines. */
+export type AppSubmitted =
+  | { kind: "grant"; agent: string; choices: Record<string, GrantChoice>; error: string }
+  | { kind: "role"; was: string; role: string; families: FamilyPatterns; error: string }
+  | { kind: "recording"; error: string };
+
+/**
+ * `/apps/<slug>` and each of its seven panes (§2). `null` is the 404 every unreachable
  * slug shares — the builtin `pmcp`, a slug naming nothing, and another namespace's app,
  * which are indistinguishable because a page reads only the session owner's namespace.
  *
- * ONE read pass fills both the rail and the pane being drawn, which is §13's shell rule
- * as code: a marker is "read from the same calls that render the panes", so every §20
- * family is listed on every render whichever pane the URL names, and each marker is the
- * length of the very list its pane draws. Catalogs come through gateway's `ownerCatalog`
- * and nowhere else — the scoped endpoint's own listing under the owner principal, left
- * unfiltered by §7 step 2 by construction (§20.6: this page fronts the MCP method exactly
- * as `pmcp tools` does, which is why §8's parity list is untouched).
+ * ONE read pass fills both the rail and the pane being drawn, which is §13's shell rule as
+ * code: a marker is "read from the same calls that render the panes". Catalogs come
+ * through gateway's `ownerCatalog` and nowhere else — the scoped endpoint's own listing
+ * under the owner principal, left unfiltered by §7 step 2 by construction.
  */
 export async function appDetailProps(
   ctx: PageContext,
   slug: string,
   pane: AppDetailPane,
+  submitted: AppSubmitted | null = null,
 ): Promise<AppDetailProps | null> {
-  // deps: registry.getApp · tunnel.capabilities · gateway.ownerCatalog · catalog-view
+  // deps: registry.getApp · tunnel.capabilities · tunnel.status · gateway.ownerCatalog ·
+  //       catalog-view · registry.effectiveRoles
   //
-  // The one read here that is not an ops handler, for web.ts's own reason
-  // (`connectRedirect`): an app's opaque id is addressing and no read op reports one
-  // (§3), and the id is what the tunnel's declared capability set and §7's redaction
-  // functions are keyed on. It doubles as this page's 404, since `getApp` answers null
-  // for the builtin, the unknown and the foreign slug alike.
-  const registry = new Registry(env.DB);
-  const app = await registry.getApp(ctx.ownerId, slug);
+  // The one read here that is not an ops handler: an app's opaque id is addressing and no
+  // read op reports one (§3), and the id is what the tunnel's declared capability set is
+  // keyed on. It doubles as this page's 404, since `getApp` answers null for the builtin,
+  // the unknown and the foreign slug alike.
+  const app = await new Registry(env.DB).getApp(ctx.ownerId, slug);
   if (app === null) return null;
 
   const [detail, listed, credentials] = await Promise.all([
@@ -3547,23 +3734,17 @@ export async function appDetailProps(
   ]);
   const row = detail.app;
   // `getApp` already answered null for the builtin, so `app_get` cannot be reporting it
-  // here — asserting that is what lets Overview print a creation date with no "unknown"
-  // arm, since the builtin row is the only one carrying no `createdAt`.
+  // here — asserting that is what lets Overview print a creation date with no "unknown" arm.
   if (row.kind === "builtin") throw new Error(`app_get reported the builtin row for ${slug}`);
 
   // §20.2/§20.5's advertised set, per kind — the same resolution gateway's
   // `capabilitiesFor` makes for the scoped handshake, because the dimming rule and the
-  // handshake are two readings of one stored fact: a tunneled app's set is what its last
-  // registration declared (tools for one that never connected), a proxied app's is the
-  // owner's config with "absent ≡ [tools]" applied.
+  // handshake are two readings of one stored fact.
   const advertised: readonly AppCapability[] =
     app.kind === "tunnel"
       ? await tunnelCapabilities(app.id)
       : (row.kind === "proxy" ? row.capabilities : undefined) ?? DEFAULT_APP_CAPABILITIES;
-
-  // §13 (2026-09-03): a tunneled app that has never connected has no catalog at all —
-  // `capabilities()` answers `tools` for it by policy, which would otherwise read as a
-  // declared-but-empty tools family. `lastSeen` is null exactly for never-connected.
+  // §13 (2026-09-03): a tunneled app that has never connected has no catalog at all.
   const neverConnected = row.kind === "tunnel" && row.lastSeen === null;
   const familyOf = async (kind: ListKind, family: AppCapability): Promise<AppFamilyView<ListedItem>> => {
     if (neverConnected) return { state: "unconnected" };
@@ -3572,57 +3753,80 @@ export async function appDetailProps(
     return answered.ok ? { state: "listed", rows: answered.items } : { state: "unread" };
   };
 
-  const [catalog, promptItems, resourceItems, templateItems] = await Promise.all([
+  const [toolView, promptView, resourceView, templateView] = await Promise.all([
     familyOf("tools", "tools"),
     familyOf("prompts", "prompts"),
     familyOf("resources", "resources"),
     familyOf("resourceTemplates", "resources"),
   ]);
+  // §3: resources and templates are ONE group, a template named by its raw `uriTemplate` —
+  // which `subjectOf` already reads — so the two reads become one family view here and
+  // every matcher below asks about one keyspace, as §20.3 has it.
+  const resources = joinViews(resourceView, templateView);
+  const views: Record<RoleFamily, AppFamilyView<ListedItem>> = {
+    tools: toolView,
+    prompts: promptView,
+    resources,
+  };
 
-  // The grants held ON THIS APP, agent slug → §9's own spelling — the shape
-  // catalog-view's reachability takes, and the very rows the Agents pane draws. Read
-  // before anything else is built, because every family's hub block is computed from it
-  // and the Agents marker is this list's length.
+  // §1's merge rule, read once for the whole page: the owner's roles, then the app's
+  // declaration on top. Every matcher below — the Catalog's reach badges, the role
+  // editor's ticks, the grant editor — asks THIS map, because it is the one the door
+  // resolves against.
+  const ownerRoles: RoleDeclaration = row.kind === "tunnel" ? row.ownerRoles : row.roles;
+  const appRoles: RoleDeclaration = row.kind === "tunnel" ? row.roles : {};
+  const effective = effectiveRoles({ declaredRoles: row.roles, ownerRoles: row.kind === "tunnel" ? row.ownerRoles : {} });
+
+  // The grants held ON THIS APP, agent slug → §9's own spelling — the shape catalog-view's
+  // reachability takes, and the very rows the Agents pane draws.
   const grants: Record<string, string[]> = {};
-  const agents: AppAgentRow[] = [];
+  const agentRows: ListedAgent[] = [];
   for (const agent of listed.agents) {
     const held = agent.grants[slug] ?? [];
     if (held.length === 0) continue;
     grants[agent.slug] = held;
-    agents.push({
-      slug: agent.slug,
-      description: agent.description ?? "",
-      chips: held.map(grantChip),
-    });
+    agentRows.push(agent);
   }
+  const reach = reachabilityFor(effective, grants);
 
-  // §13's live keys, in the one place the marker and the pane both read: the marker is
-  // this list's length, so a pane and its rail cannot disagree about what "live" means.
-  const tokens = app.kind === "proxy" ? [] : liveAppTokens(credentials.tokens, slug, Date.parse(ctx.now));
+  const now = Date.parse(ctx.now);
+  const tokens = app.kind === "proxy" ? [] : liveAppTokens(credentials.tokens, slug, now);
+  // Which key the live socket presented is not stored, so it is DERIVED: when the app is
+  // online, the most recently used live key is the one that opened it.
+  // ponytail: a `tunnel.status` that named the token id would replace this; until then the
+  // badge is a reading of `last_used_at`, not a fact the DO reported.
+  const online = row.kind === "tunnel" && row.status === "online" && !row.archived;
+  const liveId = online ? mostRecentlyUsed(tokens) : null;
+  for (const token of tokens) token.live = token.id === liveId;
 
-  // The doors, built once for the whole page: they are the APP's (its declaration and its
-  // grants), and every row of every family asks the same ones (catalog-view says why).
-  const reach = reachabilityFor(row.roles, grants);
+  const counts = {
+    tools: countOf(views.tools),
+    prompts: countOf(views.prompts),
+    resources: countOf(views.resources),
+  };
 
-  const [tools, prompts, resources, templates] = await Promise.all([
-    mapped(catalog, (item) => toolRow(row, app, reach, item as CatalogTool)),
-    mapped(promptItems, (item) => promptRow(row, app, reach, item as CatalogPrompt)),
-    // A template's subject is its RAW `uriTemplate`, which `resourceRow` already puts in
-    // `uri` — so both tabs reach the matcher through one function (§20.3).
-    mapped(resourceItems, (item) => resourceRow(item, reach)),
-    mapped(templateItems, (item) => resourceRow(item, reach)),
-  ]);
+  const view = await appPane(ctx, pane, {
+    slug,
+    row,
+    kind: app.kind,
+    views,
+    effective,
+    ownerRoles,
+    appRoles,
+    reach,
+    grants,
+    agents: agentRows,
+    tokens,
+    submitted,
+    now,
+  });
 
-  const roleNames = Object.keys(row.roles);
   const marker: Record<AppDetailPane, string> = {
-    tools: familyMarker(tools),
-    prompts: familyMarker(prompts),
-    // §13's Resources marker is the two tabs summed, which is also the two lists the pane
-    // draws between them — one marker, one pane, two counts.
-    resources: familyMarker(resources, templates),
-    roles: roleNames.length === 0 ? "none" : String(roleNames.length),
+    catalog: familyMarker(views.tools, views.prompts, views.resources),
+    roles: Object.keys(effective).length === 0 ? "none" : String(Object.keys(effective).length),
+    recording: row.logBodies ? "on" : "off",
     overview: "",
-    access: String(agents.length),
+    access: String(agentRows.length),
     // §2's reason, not a missing feature: nothing dials in to a proxied app, so it has no
     // token to hold and its entry dims like a family it does not advertise.
     token: app.kind === "proxy" ? DIMMED : String(tokens.length),
@@ -3632,50 +3836,853 @@ export async function appDetailProps(
   return {
     ...(await shell(ctx, "apps")),
     csrfToken: ctx.csrfToken,
-    pane,
-    header: appHeader(row, app.kind, slug),
-    ...appLevel(slug, pane, row.name),
+    header: { ...appHeader(row, app.kind, slug), tiles: tilesLine(row, counts, agentRows.length, ctx.now) },
     rail: APP_PANE_TABLE.map((entry) => ({
       ...entry,
-      href: entry.pane === "tools" ? paths.appDetail(slug) : paths.appPane(slug, entry.pane),
+      href: entry.pane === "catalog" ? paths.appDetail(slug) : paths.appPane(slug, entry.pane),
       marker: marker[entry.pane],
+      dot: entry.pane === "recording" ? (row.logBodies ? "on" : "off") : null,
     })),
-    tools,
-    prompts,
-    resources,
-    templates,
-    tab: ctx.query.get("tab") === "templates" ? "templates" : "resources",
-    hubOrigin: new URL(env.PUBLIC_ORIGIN).origin,
-    roles: row.roles,
-    overview: {
-      createdAt: row.createdAt,
-      logBodies: row.logBodies,
-      // §15's per-kind default, restated as the ONE comparison that tells "the owner set
-      // this" from "nobody has": the row reports the resolved boolean and no column says
-      // whether it was written, so the default itself is the discriminator.
-      logBodiesIsDefault: row.logBodies === (app.kind === "tunnel"),
-      redactedArgs: [...new Set(Object.values(row.redact).flat())],
-      redactedResults: [...new Set(Object.values(row.redactResults).flat())],
-    },
-    agents,
-    tokens,
-    confirm: appConfirm(ctx.query, pane, tokens),
-    // Only the Issue route sets this, in the response that mints the key; a render
-    // reached any other way has nothing to reveal (§4: shown once, here).
+    pane: view,
+    confirm: appConfirm(ctx.query, pane, tokens, agentRows),
+    // Only the Issue route sets this, in the response that mints the key (§4).
     reveal: null,
+    ...appLevel(slug, view, ctx.query, row.name),
   };
 }
 
-/** One grant string as §13's chip. §9 gives a grant exactly two spellings — `role` and
- *  `role:approval` — and admin writes no third, so the colon alone chooses the mode. */
-function grantChip(spelled: string): AppGrantChip {
-  const at = spelled.indexOf(":");
-  const role = at < 0 ? spelled : spelled.slice(0, at);
-  return { role, mode: at < 0 ? "allow" : "approval", builtin: role === BUILTIN_ROLE };
+/** Two reads of one keyspace as one family view (§3's resources-and-templates group). A
+ *  half that could not be read makes the whole view unread: an unread count is not an
+ *  empty set, and a group that listed one half would claim the other half is empty. */
+function joinViews(a: AppFamilyView<ListedItem>, b: AppFamilyView<ListedItem>): AppFamilyView<ListedItem> {
+  if (a.state === "unread" || b.state === "unread") return { state: "unread" };
+  if (a.state === "listed" || b.state === "listed") {
+    return {
+      state: "listed",
+      rows: [...(a.state === "listed" ? a.rows : []), ...(b.state === "listed" ? b.rows : [])],
+    };
+  }
+  return a;
+}
+
+/** A listed family's length, or 0 — what the tiles line counts, which is not what the rail
+ *  marker says (an unread family has no count at all there). */
+function countOf(view: AppFamilyView<unknown>): number {
+  return view.state === "listed" ? view.rows.length : 0;
+}
+
+/** §2's one tiles line under the title row. */
+function tilesLine(
+  row: Exclude<OpsAppRow, { kind: "builtin" }>,
+  counts: { tools: number; prompts: number; resources: number },
+  agents: number,
+  now: string,
+): string {
+  const parts = [
+    `${counts.tools} tools`,
+    `${counts.prompts} prompts`,
+    `${counts.resources} resources`,
+    `${agents} agents`,
+    `body logging ${row.logBodies ? "on" : "off"}`,
+  ];
+  if (row.kind === "tunnel") parts.push(`last seen ${formatLastSeen(row.lastSeen, now)}`);
+  return parts.join(" · ");
+}
+
+/** The most recently used of a set of live keys, or null when none has ever been used. */
+function mostRecentlyUsed(tokens: AppTokenRow[]): string | null {
+  let best: AppTokenRow | null = null;
+  for (const token of tokens) {
+    if (token.lastUsedAt === null) continue;
+    if (best === null || token.lastUsedAt > (best.lastUsedAt ?? 0)) best = token;
+  }
+  return best?.id ?? null;
+}
+
+/** Everything the seven pane builders read, gathered once so no builder re-reads. */
+type AppPaneCtx = {
+  slug: string;
+  row: Exclude<OpsAppRow, { kind: "builtin" }>;
+  kind: AppKind;
+  views: Record<RoleFamily, AppFamilyView<ListedItem>>;
+  effective: RoleDeclaration;
+  ownerRoles: RoleDeclaration;
+  appRoles: RoleDeclaration;
+  reach: Reachability;
+  grants: Record<string, string[]>;
+  agents: ListedAgent[];
+  tokens: AppTokenRow[];
+  submitted: AppSubmitted | null;
+  now: number;
+};
+
+async function appPane(ctx: PageContext, pane: AppDetailPane, at: AppPaneCtx): Promise<AppPaneView> {
+  if (pane === "catalog") return catalogPane(ctx, at);
+  if (pane === "roles") return rolesPane(ctx, at);
+  if (pane === "recording") return recordingPane(ctx, at);
+  if (pane === "overview") return overviewPane(ctx, at);
+  if (pane === "access") return accessPane(ctx, at);
+  if (pane === "token") return tokenPane(ctx, at);
+  return {
+    kind: "danger",
+    archived: at.row.archived,
+    tokens: at.tokens.length,
+    agents: at.agents.length,
+  };
+}
+
+/* ------------------------------------------------------------- Catalog --- */
+
+/** §3's three family headings, in the order the pane draws them. */
+const CATALOG_GROUPS: readonly { family: RoleFamily; title: string; one: "tool" | "prompt" | "resource" }[] = [
+  { family: "tools", title: "Tools", one: "tool" },
+  { family: "prompts", title: "Prompts", one: "prompt" },
+  { family: "resources", title: "Resources", one: "resource" },
+];
+
+function catalogPane(ctx: PageContext, at: AppPaneCtx): AppPaneView {
+  const q = (ctx.query.get("q") ?? "").trim();
+  const needle = q.toLowerCase();
+  const hit = (name: string, description: string): boolean =>
+    needle === "" || name.toLowerCase().includes(needle) || description.toLowerCase().includes(needle);
+
+  const badges = (subject: string, family: RoleFamily): AgentBadge[] =>
+    at.reach.reach(subject, family).map((entry) => ({ agent: entry.agent, ask: entry.mode === "approval" }));
+
+  const groups: AppCatalogGroup[] = CATALOG_GROUPS.map(({ family, title, one }) => {
+    const view = at.views[family];
+    if (view.state !== "listed") {
+      return {
+        title,
+        count: 0,
+        note: "none advertised",
+        rows: [],
+        state:
+          at.kind === "tunnel"
+            ? `This app declared no ${family} capability on its last connect.`
+            : `The capabilities configured for this app omit ${family}.`,
+      };
+    }
+    const rows: AppCatalogRow[] = view.rows
+      .filter((item) => hit(subjectOf(item, family), itemDescription(item, family)))
+      .map((item) => {
+        const name = subjectOf(item, family);
+        return {
+          family: one,
+          name,
+          description: itemDescription(item, family),
+          sel: `${one}:${name}`,
+          reach: badges(name, family),
+        };
+      });
+    return {
+      title,
+      count: view.rows.length,
+      note: "",
+      rows,
+      state: rows.length === 0 ? "no match" : null,
+    };
+  });
+
+  // The two whole-pane answers, which stand in place of all three groups: nothing has ever
+  // been listed, or nothing could be read just now (§3).
+  const unconnected = CATALOG_GROUPS.every(({ family }) => at.views[family].state === "unconnected");
+  const unread = CATALOG_GROUPS.some(({ family }) => at.views[family].state === "unread");
+  const state = unconnected
+    ? { text: "This app has never connected, so the hub has no catalog to list yet.", reconnect: false }
+    : unread
+      ? at.row.kind === "proxy" && at.row.auth === "oauth"
+        ? { text: "Token refresh failed — calls return errors until you reconnect.", reconnect: true }
+        : {
+            text: `Couldn't reach ${at.row.kind === "proxy" ? at.row.endpoint : at.slug} — the live listing failed, so nothing is shown; calls return errors until it answers again.`,
+            reconnect: false,
+          }
+      : null;
+
+  const total = CATALOG_GROUPS.reduce((sum, { family }) => sum + countOf(at.views[family]), 0);
+  return {
+    kind: "catalog",
+    subtitle:
+      at.kind === "tunnel"
+        ? "advertised by the app on its last connect · re-listed on every reconnect"
+        : "fetched live from the upstream",
+    summary: `${countOf(at.views.tools)} tools · ${countOf(at.views.prompts)} prompts · ${countOf(at.views.resources)} resources · reachable by ${at.agents.length} agent${at.agents.length === 1 ? "" : "s"}`,
+    q,
+    groups,
+    state,
+    details: catalogDetails(ctx, at, total),
+  };
+}
+
+function catalogDetails(ctx: PageContext, at: AppPaneCtx, total: number): AppCatalogDetails {
+  const unselected = (): AppCatalogDetails => ({
+    kind: "none",
+    schemas:
+      at.kind === "tunnel"
+        ? "the app's last tools/list — the hub stores them, it does not author them"
+        : "the upstream's live listing, under a 10 s deadline",
+  });
+  void total;
+  const sel = ctx.query.get("sel") ?? "";
+  const cut = sel.indexOf(":");
+  if (cut < 0) return unselected();
+  const one = sel.slice(0, cut);
+  const name = sel.slice(cut + 1);
+  const group = CATALOG_GROUPS.find((entry) => entry.one === one);
+  if (group === undefined) return unselected();
+  const view = at.views[group.family];
+  if (view.state !== "listed") return unselected();
+  const item = view.rows.find((each) => subjectOf(each, group.family) === name);
+  if (item === undefined) return unselected();
+
+  const schemas = item as ListedItem & {
+    description?: unknown;
+    inputSchema?: unknown;
+    arguments?: { name?: unknown; description?: unknown; required?: unknown }[];
+  };
+  const reached = at.reach.reach(name, group.family);
+  const isResource = group.family === "resources";
+  // A prompt declares ARGUMENTS, not a schema (§20.3), so its card is the declaration and
+  // `schemaLeaves` is never asked about it — there is nothing for it to walk.
+  const args =
+    group.family === "tools"
+      ? leafRows(schemas.inputSchema)
+      : group.family === "prompts"
+        ? argumentCardRows(schemas.arguments)
+        : null;
+  const results = group.family === "tools" ? leafRows(item.outputSchema) : null;
+  const redactedArgs = [
+    ...new Set([
+      ...redactPathsIn(at.row.redact, name),
+      ...(args ?? []).filter((leaf) => leaf.kind === "leaf" && leaf.writeOnly).map((leaf) => leaf.path),
+    ]),
+  ];
+  const redactedResults = [...new Set(redactPathsIn(at.row.redactResults, name))];
+  const asked = reached.filter((entry) => entry.mode === "approval").map((entry) => entry.agent);
+  return {
+    kind: "item",
+    name,
+    family: group.one,
+    description: typeof schemas.description === "string" ? schemas.description : "",
+    args,
+    results: results !== null && results.length === 0 ? null : results,
+    resource: isResource
+      ? {
+          uri: name,
+          type: itemDescription(item, "resources"),
+          servedOn: `the scoped endpoint only — ${new URL(env.PUBLIC_ORIGIN).origin}${paths.mcpScoped(ctx.username, at.slug)}`,
+        }
+      : null,
+    calledAs: isResource ? null : `${at.slug}_${name} on the aggregated endpoint`,
+    reachableBy:
+      reached.length === 0
+        ? []
+        : reached.map((entry) => `${entry.agent} · via ${entry.roles.join(", ")}`),
+    approval: isResource
+      ? null
+      : group.family === "prompts"
+        ? "never asked for prompts"
+        : asked.length === 0
+          ? "none required"
+          : `asked for ${asked.join(", ")}`,
+    redaction: isResource
+      ? null
+      : redactedArgs.length === 0 && redactedResults.length === 0
+        ? "no redacted fields"
+        : [
+            redactedArgs.length === 0 ? "" : `arguments ${redactedArgs.join(", ")}`,
+            redactedResults.length === 0 ? "" : `results ${redactedResults.join(", ")}`,
+          ]
+            .filter((part) => part !== "")
+            .join(" · "),
+  };
+}
+
+/** A TOOL's schema as the Arguments / Result cards draw it (§1's `schemaLeaves`). */
+function leafRows(schema: unknown): AppSchemaRow[] {
+  return schemaLeaves(schema).map((leaf) => ({
+    kind: "leaf" as const,
+    path: leaf.path,
+    type: leaf.type,
+    writeOnly: leaf.writeOnly,
+  }));
+}
+
+/** A PROMPT's declared arguments as the same card draws them — the app's own declaration,
+ *  relayed untouched, so it is read defensively rather than trusted to be the documented
+ *  shape (§20.3: a prompt carries no schema, and printing a type would invent a fact). */
+function argumentCardRows(
+  declared: { name?: unknown; description?: unknown; required?: unknown }[] | undefined,
+): AppSchemaRow[] {
+  return (Array.isArray(declared) ? declared : []).map((argument) => ({
+    kind: "argument" as const,
+    path: typeof argument?.name === "string" ? argument.name : "",
+    description: typeof argument?.description === "string" ? argument.description : "",
+    required: argument?.required === true,
+  }));
+}
+
+/* --------------------------------------------------------------- Roles --- */
+
+function rolesPane(ctx: PageContext, at: AppPaneCtx): AppPaneView {
+  const names = [...Object.keys(at.effective), BUILTIN_ROLE];
+  const yours = Object.keys(at.ownerRoles).filter((role) => !(role in at.appRoles)).length;
+  const rows: AppRoleRow[] = names.map((role) => roleRow(role, at));
+  return {
+    kind: "roles",
+    summary:
+      `${Object.keys(at.appRoles).length} declared by the app · ${yours} yours · plus the built-in all` +
+      (at.kind === "tunnel"
+        ? " · the app's declaration wins when it declares a name you defined"
+        : " · a proxied app declares none, so every role is yours"),
+    rows,
+    details: roleDetails(ctx, at),
+  };
+}
+
+/** Where one role came from, and the badge that says so (§4). */
+function roleSourceOf(role: string, at: AppPaneCtx): { source: AppRoleSource; title: string | null } {
+  if (role === BUILTIN_ROLE) return { source: "built-in", title: null };
+  if (role in at.appRoles) {
+    return role in at.ownerRoles
+      ? { source: "app · replaced yours", title: "the app declares this name — its declaration replaced yours" }
+      : { source: "app", title: "declared by the app at connect" };
+  }
+  return { source: "yours", title: null };
+}
+
+/** What a role's patterns match in the live catalog today — the number every row prints. */
+function roleMatches(families: FamilyPatterns, at: AppPaneCtx): number {
+  const door = reachabilityFor({ role: families }, { role: ["role"] });
+  let total = 0;
+  for (const family of ROLE_FAMILIES) {
+    const view = at.views[family];
+    if (view.state !== "listed") continue;
+    total += view.rows.filter((item) => door.reach(subjectOf(item, family), family).length > 0).length;
+  }
+  return total;
+}
+
+/** §20.3's canonical read shape as the per-family object every builder here works in —
+ *  the bare array being the tools-only shorthand. */
+function familiesOf(patterns: string[] | FamilyPatterns | undefined): FamilyPatterns {
+  if (patterns === undefined) return {};
+  if (Array.isArray(patterns)) return { tools: patterns };
+  return patterns;
+}
+
+/** The whole-catalog role, spelled as patterns so `all` goes through one matcher. */
+const ALL_FAMILIES: FamilyPatterns = { tools: [".*"], prompts: [".*"], resources: [".*"] };
+
+function roleRow(role: string, at: AppPaneCtx): AppRoleRow {
+  const { source, title } = roleSourceOf(role, at);
+  const families = role === BUILTIN_ROLE ? ALL_FAMILIES : familiesOf(at.effective[role]);
+  const holders: AgentBadge[] = at.agents
+    .map((agent) => ({
+      agent: agent.slug,
+      held: (agent.grants[at.slug] ?? []).map(grantEntryOf).find((entry) => entry.entry === role),
+    }))
+    .filter((each) => each.held !== undefined)
+    .map((each) => ({ agent: each.agent, ask: each.held?.mode === "approval" }));
+  return {
+    name: role,
+    source,
+    sourceTitle: title,
+    detail:
+      role === BUILTIN_ROLE
+        ? `every tool, prompt and resource, present and future · matches ${roleMatches(families, at)}`
+        : `${patternText(at.effective[role])} · matches ${roleMatches(families, at)}`,
+    holders,
+    sel: `role:${role}`,
+  };
+}
+
+function roleDetails(ctx: PageContext, at: AppPaneCtx): AppRoleDetails {
+  const unselected = (): AppRoleDetails => ({
+    kind: "none",
+    appsOwn:
+      at.kind === "tunnel"
+        ? "declared at connect; read-only here — the app owns them"
+        : "none: a proxied app declares no roles",
+  });
+  const submitted = at.submitted?.kind === "role" ? at.submitted : null;
+  const isNew = ctx.query.get("new") === "1" || (submitted !== null && submitted.was === "");
+  const sel = ctx.query.get("sel") ?? "";
+  const name = submitted !== null ? submitted.role : sel.startsWith("role:") ? sel.slice("role:".length) : "";
+  if (!isNew && name === "") return unselected();
+  if (!isNew && name !== BUILTIN_ROLE && !(name in at.effective)) return unselected();
+
+  const { source } = isNew ? ({ source: "yours" } as const) : roleSourceOf(name, at);
+  const editable = source === "yours";
+  const families: FamilyPatterns =
+    submitted !== null
+      ? submitted.families
+      : isNew
+        ? {}
+        : name === BUILTIN_ROLE
+          ? ALL_FAMILIES
+          : familiesOf(editable ? at.ownerRoles[name] : at.effective[name]);
+
+  const q = (ctx.query.get("q") ?? "").trim();
+  const needle = q.toLowerCase();
+  const hit = (subject: string, description: string): boolean =>
+    needle === "" || subject.toLowerCase().includes(needle) || description.toLowerCase().includes(needle);
+  const door = reachabilityFor({ role: families }, { role: ["role"] });
+
+  const groups: AppRoleGroup[] = [];
+  for (const { family, title } of CATALOG_GROUPS) {
+    const view = at.views[family];
+    if (view.state !== "listed" || view.rows.length === 0) continue;
+    const patterns = families[family] ?? [];
+    let inRole = 0;
+    const rows: AppRoleItemRow[] = [];
+    for (const item of view.rows) {
+      const subject = subjectOf(item, family);
+      const matched = door.reach(subject, family).length > 0;
+      if (matched) inRole += 1;
+      if (!hit(subject, itemDescription(item, family))) continue;
+      const literal = patterns.includes(subject);
+      const via = matched && !literal ? patterns.filter((pattern) => !isOneItem(pattern, family)) : [];
+      rows.push({
+        name: subject,
+        description: itemDescription(item, family),
+        via,
+        field: editable && via.length === 0 ? `i.${family}/${subject}` : "",
+        checked: editable ? literal : matched,
+        locked: editable ? via.length > 0 : matched,
+        lockTitle: editable
+          ? `matched by ${via.join(", ")}`
+          : matched
+            ? "in this role"
+            : "not in this role",
+      });
+    }
+    groups.push({
+      title,
+      count: `${inRole} of ${view.rows.length}`,
+      rows,
+      state: rows.length === 0 ? "no match" : null,
+    });
+  }
+
+  const patterns: AppRolePatternRow[] = ROLE_FAMILIES.flatMap((family) =>
+    (families[family] ?? [])
+      .filter((pattern) => !isOneItem(pattern, family))
+      .map((pattern) => {
+        const view = at.views[family];
+        const one = reachabilityFor({ role: { [family]: [pattern] } }, { role: ["role"] });
+        const matches =
+          view.state === "listed"
+            ? view.rows.filter((item) => one.reach(subjectOf(item, family), family).length > 0).length
+            : 0;
+        return {
+          pattern,
+          family,
+          detail: `matches ${matches} today, and any added later`,
+          entry: `${family}/${pattern}`,
+          editable,
+        };
+      }),
+  );
+
+  const offerFamily: RoleFamily = q.includes("://") ? "resources" : "tools";
+  const offerView = at.views[offerFamily];
+  const offerDoor = reachabilityFor({ role: { [offerFamily]: [q] } }, { role: ["role"] });
+  const offer =
+    editable && q !== "" && !isOneItem(q, offerFamily)
+      ? {
+          pattern: q,
+          family: offerFamily,
+          detail: `would match ${
+            offerView.state === "listed"
+              ? offerView.rows.filter((item) => offerDoor.reach(subjectOf(item, offerFamily), offerFamily).length > 0).length
+              : 0
+          } today, and any added later`,
+        }
+      : null;
+
+  return {
+    kind: "role",
+    name,
+    isNew,
+    source,
+    badge: source === "built-in" ? "built-in" : source === "yours" ? "yours" : "declared by the app",
+    explain: roleExplain(name, source, at, isNew),
+    holders: isNew ? [] : roleRow(name, at).holders,
+    editable,
+    q,
+    groups,
+    patterns,
+    offer,
+    keep: patterns.map((pattern) => pattern.entry),
+    error: submitted?.error ?? null,
+  };
+}
+
+/** §4's sentence for each of the four states a selected role can be in. */
+function roleExplain(name: string, source: AppRoleSource, at: AppPaneCtx, isNew: boolean): string {
+  if (source === "built-in") {
+    return "Every tool, prompt and resource, present and future. Never declarable, only grantable.";
+  }
+  if (source === "app") {
+    return `Declared by ${at.row.name} at connect. Read-only: the app owns it and may widen it on its next connect.`;
+  }
+  if (source === "app · replaced yours") {
+    return `${at.row.name} declares this name, so its declaration replaced the one you had defined. Read-only: the app owns it.`;
+  }
+  if (at.kind === "proxy") {
+    return "Defined by you. A proxied app declares no roles, so this is the only kind it has.";
+  }
+  return `Defined by you. If ${at.row.name} later declares a role named ${isNew && name === "" ? "…" : name}, the app's declaration replaces this one.`;
+}
+
+/* ----------------------------------------------------------- Recording --- */
+
+/** One direction's paths, indexed over every tool's schema: path → its type and the tools
+ *  that take it, each marked with whether the app declared it `writeOnly`. */
+type PathIndex = Map<string, { type: string; tools: { tool: string; writeOnly: boolean }[] }>;
+
+function pathIndexOf(view: AppFamilyView<ListedItem>, dir: "args" | "results"): PathIndex {
+  const index: PathIndex = new Map();
+  if (view.state !== "listed") return index;
+  for (const item of view.rows) {
+    const tool = item.name ?? "";
+    const schema = dir === "args" ? (item as { inputSchema?: unknown }).inputSchema : item.outputSchema;
+    for (const leaf of schemaLeaves(schema)) {
+      const entry = index.get(leaf.path) ?? { type: leaf.type, tools: [] };
+      entry.tools.push({ tool, writeOnly: leaf.writeOnly });
+      index.set(leaf.path, entry);
+    }
+  }
+  return index;
+}
+
+/** The stored map for one direction, as the form and the composer both name it. */
+function storedMap(at: AppPaneCtx, dir: "args" | "results"): Record<string, string[]> {
+  return dir === "args" ? at.row.redact : at.row.redactResults;
+}
+
+function recordingPane(ctx: PageContext, at: AppPaneCtx): AppPaneView {
+  const index = { args: pathIndexOf(at.views.tools, "args"), results: pathIndexOf(at.views.tools, "results") };
+  const q = (ctx.query.get("q") ?? "").trim().toLowerCase();
+  const open = new Set(ctx.query.getAll("which"));
+
+  const masked =
+    Object.values(at.row.redact).flat().length + Object.values(at.row.redactResults).flat().length;
+  const declared = (["args", "results"] as const).reduce(
+    (total, dir) =>
+      total + [...index[dir].values()].flatMap((entry) => entry.tools).filter((tool) => tool.writeOnly).length,
+    0,
+  );
+  const logDefault = at.row.logBodies === (at.kind === "tunnel");
+
+  const sections = (["args", "results"] as const).map((dir) =>
+    recordingSection(dir, index[dir], at, q, open),
+  );
+
+  // Every stored entry the rows above do not represent — a tool the catalog does not list,
+  // a path no schema declares, a pattern key — rides as a hidden field, so a save composed
+  // from the rows can never drop it (§5's first data-safety rule).
+  const keep: { field: string; value: string }[] = [];
+  for (const dir of ["args", "results"] as const) {
+    for (const [tool, paths] of Object.entries(storedMap(at, dir))) {
+      for (const path of paths) {
+        const entry = index[dir].get(path);
+        if (entry !== undefined && entry.tools.some((each) => each.tool === tool)) continue;
+        keep.push({ field: `keep.${dir}`, value: `${tool}:${path}` });
+      }
+    }
+  }
+
+  return {
+    kind: "recording",
+    log: at.row.logBodies,
+    summary:
+      `body logging ${at.row.logBodies ? "on" : "off"} · ${logDefault ? `${at.kind === "tunnel" ? "tunneled" : "proxied"} default` : "set explicitly"} · ${masked} masked path${masked === 1 ? "" : "s"} by config` +
+      (declared === 0 ? "" : ` · ${declared} declared writeOnly by the app`),
+    q: (ctx.query.get("q") ?? "").trim(),
+    warning:
+      at.kind === "proxy" && at.row.logBodies && masked === 0
+        ? "A proxied app's schema is not cached at call time, so nothing is masked automatically. Tick what is secret before you save, or it is stored in the clear for 7 days."
+        : null,
+    sections,
+    keep,
+    auditHref: paths.auditWith({ app: at.slug }),
+    intro: at.row.logBodies
+      ? "These fields are replaced with ‹redacted› before a call is written to the trail. Everything else in the body is kept as sent."
+      : "Body logging is off, so no bodies reach the trail; the masks below apply once it is turned on.",
+    cards: (["args", "results"] as const).map((dir) => maskedCard(dir, index[dir], at)),
+    error: at.submitted?.kind === "recording" ? at.submitted.error : null,
+  };
+}
+
+function recordingSection(
+  dir: "args" | "results",
+  index: PathIndex,
+  at: AppPaneCtx,
+  q: string,
+  open: Set<string>,
+): AppRecordingSection {
+  const stored = storedMap(at, dir);
+  const has = (tool: string, path: string): boolean => (stored[tool] ?? []).includes(path);
+  const rows: AppRecordingPathRow[] = [...index.entries()]
+    .filter(([path]) => q === "" || path.toLowerCase().includes(q))
+    .sort((a, b) => b[1].tools.length - a[1].tools.length || a[0].localeCompare(b[0]))
+    .map(([path, entry]) => {
+      const editable = entry.tools.filter((tool) => !tool.writeOnly);
+      const locked = entry.tools.filter((tool) => tool.writeOnly);
+      const on = editable.filter((tool) => has(tool.tool, path)).length;
+      const all = editable.length > 0 && on === editable.length;
+      // §5's rule: a path masked on SOME of its editable tools renders expanded and submits
+      // no `p.` field, so no save can flatten a partial state into all-or-nothing.
+      const mixed = on > 0 && !all;
+      const which = entry.tools.length > 1 || locked.length > 0;
+      const shown = open.has(`${dir}:${path}`);
+      const status =
+        locked.length > 0
+          ? `declared writeOnly${locked.length < entry.tools.length ? ` on ${locked.length}` : ""}`
+          : on === 0
+            ? ""
+            : `masked on ${all ? (editable.length === 1 ? "its tool" : `all ${editable.length}`) : `${on} of ${editable.length}`}`;
+      return {
+        path,
+        type: entry.type,
+        detail: `${entry.tools.length} tool${entry.tools.length === 1 ? "" : "s"}${status === "" ? "" : ` · ${status}`}`,
+        which: which ? { href: whichHref(at.slug, dir, path, open), label: shown ? "hide" : "which" } : null,
+        control:
+          editable.length === 0
+            ? { kind: "locked" as const }
+            : mixed
+              ? { kind: "mixed" as const }
+              : { kind: "box" as const, field: `p.${dir}.${path}`, checked: all },
+        tools:
+          shown || mixed
+            ? entry.tools.map((tool) =>
+                tool.writeOnly
+                  ? ({ tool: tool.tool, writeOnly: true } as const)
+                  : ({
+                      tool: tool.tool,
+                      writeOnly: false,
+                      field: `m.${dir}.${tool.tool}.${path}`,
+                      checked: has(tool.tool, path),
+                    } as const),
+              )
+            : [],
+      };
+    });
+
+  const view = at.views.tools;
+  const noOutput =
+    dir === "results" && q === "" && view.state === "listed"
+      ? view.rows.filter((item) => item.outputSchema === undefined).map((item) => item.name ?? "")
+      : [];
+  return {
+    dir,
+    title: dir === "args" ? "Arguments" : "Results",
+    count: rows.length,
+    note: dir === "args" ? "from each tool's inputSchema" : "from outputSchema, where declared",
+    rows,
+    state: rows.length === 0 ? (q === "" ? "no schema declares any field" : "no path matches") : null,
+    noSchema:
+      noOutput.length === 0
+        ? null
+        : `${noOutput.length > 3 ? `${noOutput.length} tools` : noOutput.join(", ")} declare no output schema — a result path there can only come from a recorded call (mask from evidence).`,
+  };
+}
+
+/** The `which` link: this pane's URL with one more (or one fewer) `which=` on it, so the
+ *  expanded set is addressable and several paths can be open at once. */
+function whichHref(slug: string, dir: "args" | "results", path: string, open: Set<string>): string {
+  const key = `${dir}:${path}`;
+  const kept = [...open].filter((each) => each !== key);
+  const params = new URLSearchParams();
+  for (const each of open.has(key) ? kept : [...kept, key]) params.append("which", each);
+  const rendered = params.toString();
+  return `${paths.appPane(slug, "recording")}${rendered === "" ? "" : `?${rendered}`}`;
+}
+
+/** One direction's `Arguments · N masked` card: every masked path, and who masks it. */
+function maskedCard(dir: "args" | "results", index: PathIndex, at: AppPaneCtx): AppRecordingCard {
+  const byPath = new Map<string, { config: string[]; declared: string[] }>();
+  const at_ = (path: string) => {
+    const found = byPath.get(path) ?? { config: [], declared: [] };
+    byPath.set(path, found);
+    return found;
+  };
+  for (const [tool, paths] of Object.entries(storedMap(at, dir))) {
+    for (const path of paths) at_(path).config.push(tool);
+  }
+  for (const [path, entry] of index) {
+    for (const tool of entry.tools) if (tool.writeOnly) at_(path).declared.push(tool.tool);
+  }
+  const rows = [...byPath.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([path, who]) => ({
+      path,
+      detail: [
+        who.config.length === 0 ? "" : `on ${names(who.config)}`,
+        who.declared.length === 0 ? "" : `declared writeOnly by ${names(who.declared)}`,
+      ]
+        .filter((part) => part !== "")
+        .join(" · "),
+    }));
+  return {
+    title: `${dir === "args" ? "Arguments" : "Results"} · ${rows.length} masked`,
+    rows,
+    empty: `nothing masked — ${dir === "args" ? "arguments" : "results"} are recorded whole`,
+  };
+}
+
+/** A list of tool names, or their count past three — the card's own abbreviation. */
+function names(tools: string[]): string {
+  const sorted = [...new Set(tools)].sort();
+  return sorted.length > 3 ? `${sorted.length} tools` : sorted.join(", ");
+}
+
+/* ------------------------------------------------------------ Overview --- */
+
+function overviewPane(_ctx: PageContext, at: AppPaneCtx): AppPaneView {
+  const rows: { key: string; value: string; mono: boolean }[] = [
+    { key: "Slug", value: at.slug, mono: true },
+    { key: "Kind", value: at.kind, mono: true },
+    { key: "Created", value: formatStamp(at.row.createdAt), mono: false },
+  ];
+  if (at.row.kind === "proxy") {
+    rows.push({ key: "Endpoint", value: at.row.endpoint ?? "", mono: true });
+    rows.push({ key: "Auth", value: at.row.auth ?? "", mono: true });
+    rows.push({ key: "Forward identity", value: at.row.forwardIdentity ? "On" : "Off", mono: false });
+  } else {
+    rows.push({ key: "Last seen", value: formatLastSeen(at.row.lastSeen, new Date(at.now).toISOString()), mono: false });
+  }
+  const state = at.row.logBodies ? "On" : "Off";
+  rows.push({
+    key: "Body logging",
+    value:
+      at.row.logBodies === (at.kind === "tunnel")
+        ? `${state} — ${at.kind === "tunnel" ? "tunneled" : "proxied"} default`
+        : state,
+    mono: false,
+  });
+  rows.push({ key: "Description", value: at.row.description, mono: false });
+  return { kind: "overview", rows };
+}
+
+/* -------------------------------------------------------------- Agents --- */
+
+async function accessPane(ctx: PageContext, at: AppPaneCtx): Promise<AppPaneView> {
+  const since = at.now - CALL_WINDOW_DAYS * 86_400_000;
+  const rows: AppAgentRow[] = await Promise.all(
+    at.agents.map(async (agent) => {
+      const held = (agent.grants[at.slug] ?? []).map(grantEntryOf);
+      const editor = grantEditorOf({
+        app: at.slug,
+        kind: at.row.kind,
+        roles: at.effective,
+        views: at.views,
+        savedSpelled: agent.grants[at.slug] ?? [],
+        submitted: null,
+        q: "",
+        offerPattern: false,
+      });
+      const trail = await read<{ rows: AuditRow[] }>(ctx, "audit_query", {
+        principal: `agent:${agent.slug}`,
+        app: at.slug,
+        event: "tools/call",
+        since,
+        limit: CALL_COUNT_LIMIT,
+      });
+      const reach = editor.reach;
+      const parts = [
+        `reaches ${reach.tools.reached} of ${reach.tools.total} tools`,
+        `${reach.tools.approval} ask first`,
+      ];
+      if (reach.prompts.total > 0) parts.push(`${reach.prompts.reached} of ${reach.prompts.total} prompts`);
+      if (reach.resources.total > 0) parts.push(`${reach.resources.reached} of ${reach.resources.total} resources`);
+      parts.push(`${trail.rows.length} calls`, `${CALL_WINDOW_DAYS} d`);
+      return {
+        slug: agent.slug,
+        description: agent.description ?? "",
+        allowed: held.filter((entry) => entry.mode === "allow").map((entry) => entry.entry),
+        askFirst: held.filter((entry) => entry.mode === "approval").map((entry) => entry.entry),
+        reach: parts.join(" · "),
+        sel: `agent:${agent.slug}`,
+      };
+    }),
+  );
+  return {
+    kind: "access",
+    summary: `${at.agents.length} agent${at.agents.length === 1 ? "" : "s"} hold a grant · open one to edit its grant on ${at.slug}`,
+    rows,
+    details: accessDetails(ctx, at),
+  };
+}
+
+function accessDetails(ctx: PageContext, at: AppPaneCtx): AppAccessDetails {
+  const submitted = at.submitted?.kind === "grant" ? at.submitted : null;
+  const sel = ctx.query.get("sel") ?? "";
+  const picked = submitted !== null ? submitted.agent : sel.startsWith("agent:") ? sel.slice("agent:".length) : "";
+  const agent = at.agents.find((each) => each.slug === picked);
+  if (agent === undefined) {
+    const view = at.views.tools;
+    const tools = view.state === "listed" ? view.rows : [];
+    return {
+      kind: "none",
+      perTool: tools.slice(0, 6).map((item) => {
+        const name = item.name ?? "";
+        const reached = at.reach.reach(name, "tools");
+        return {
+          name,
+          agents:
+            reached.length === 0
+              ? "no agent"
+              : reached.map((each) => `${each.agent}${each.mode === "approval" ? " (ask)" : ""}`).join(", "),
+        };
+      }),
+      more: Math.max(0, tools.length - 6),
+    };
+  }
+  const saved = agent.grants[at.slug] ?? [];
+  const editor = grantEditorOf({
+    app: at.slug,
+    kind: at.row.kind,
+    roles: at.effective,
+    views: at.views,
+    savedSpelled: saved,
+    submitted: submitted === null ? null : { choices: submitted.choices, error: submitted.error },
+    q: "",
+    offerPattern: false,
+  });
+  return {
+    kind: "agent",
+    slug: agent.slug,
+    description: agent.description ?? "",
+    agentHref: paths.agentApp(agent.slug, at.slug),
+    newGrant: saved.length === 0,
+    reach: editor.reach,
+    groups: editor.groups,
+    carry: editor.carry,
+    error: submitted?.error ?? null,
+  };
+}
+
+/* --------------------------------------------------------------- Token --- */
+
+function tokenPane(ctx: PageContext, at: AppPaneCtx): AppPaneView {
+  const issued = ctx.query.get("issued") ?? "";
+  const sel = ctx.query.get("sel") ?? "";
+  const picked = sel.startsWith("token:") ? sel.slice("token:".length) : "";
+  const row = at.tokens.find((token) => token.id === picked);
+  return {
+    kind: "token",
+    proxied: at.kind === "proxy",
+    summary: `${at.tokens.length} live · app tokens have no expiry — rotate by issuing, then revoking the old one. Revoking the key a live socket used closes it.`,
+    rows: at.tokens,
+    details: row === undefined ? { kind: "none" } : { kind: "token", row, isNew: row.id === issued },
+  };
 }
 
 /** This app's live keys — `token_list`'s rows minus the revoked and the expired, which is
- *  what §13's "every live app token" means and what its marker counts. */
+ *  what §7's "every live app token" means and what its marker counts. */
 function liveAppTokens(tokens: TokenInfo[], slug: string, now: number): AppTokenRow[] {
   return tokens
     .filter(
@@ -3690,60 +4697,117 @@ function liveAppTokens(tokens: TokenInfo[], slug: string, now: number): AppToken
       prefix: token.prefix,
       createdAt: token.createdAt,
       lastUsedAt: token.lastUsedAt,
+      live: false,
     }));
 }
+
+/* ------------------------------------------------- the page's own state --- */
 
 /**
  * §13's `?confirm=` state for this page. A dialog belongs to the pane that draws its
  * control, so the same query carried to another pane's URL opens nothing — and a
- * `revoke-token` naming no listed key opens nothing either, for the reason /settings's
- * dialogs do not: a dialog is about a row, and a guessed id names none.
+ * `revoke-token` naming no listed key, or a `remove-agent` naming no listed agent, opens
+ * nothing either: a dialog is about a row, and a guessed id names none.
  */
-function appConfirm(query: URLSearchParams, pane: AppDetailPane, tokens: AppTokenRow[]): AppConfirm | null {
+function appConfirm(
+  query: URLSearchParams,
+  pane: AppDetailPane,
+  tokens: AppTokenRow[],
+  agents: ListedAgent[],
+): AppConfirm | null {
   const kind = query.get("confirm") ?? "";
   if (!Object.prototype.hasOwnProperty.call(APP_CONFIRM_PANE, kind)) return null;
   if (APP_CONFIRM_PANE[kind as AppConfirm["kind"]] !== pane) return null;
-  if (kind !== "revoke-token") return { kind: kind as "archive" | "delete" };
+  if (kind === "archive" || kind === "delete") return { kind };
+  if (kind === "remove-agent") {
+    const agent = query.get("agent") ?? "";
+    return agents.some((each) => each.slug === agent) ? { kind: "remove-agent", agent } : null;
+  }
   const id = query.get("id") ?? "";
   const row = tokens.find((token) => token.id === id);
-  return row === undefined ? null : { kind: "revoke-token", id, prefix: row.prefix };
+  return row === undefined ? null : { kind: "revoke-token", id, prefix: row.prefix, live: row.live };
 }
 
-/** One family view's rows through `row`, leaving the two non-list answers alone — the
- *  only place `undeclared` and `unread` are carried across a mapping, so neither can be
- *  turned into an empty list by a `.map` on the way to a pane. */
-async function mapped<Row>(
-  view: AppFamilyView<ListedItem>,
-  row: (item: ListedItem) => Row | Promise<Row>,
-): Promise<AppFamilyView<Row>> {
-  return view.state === "listed" ? { state: "listed", rows: await Promise.all(view.rows.map(row)) } : view;
+/** The panes that render the listing ALONE — §2's "Wide panes", plus the Token pane of a
+ *  proxied app, which has nothing to select. A wide pane has no level 3. */
+function isWide(pane: AppPaneView): boolean {
+  return pane.kind === "overview" || pane.kind === "danger" || (pane.kind === "token" && pane.proxied);
+}
+
+/** The row the URL picked, as the level header names it — read off the pane the loader
+ *  actually built, so a `sel` naming nothing falls back to the pane's own name. */
+function appSelectedName(pane: AppPaneView): string | null {
+  if (pane.kind === "catalog") return pane.details.kind === "none" ? null : pane.details.name;
+  if (pane.kind === "roles") return pane.details.kind === "none" ? null : pane.details.name;
+  if (pane.kind === "access") return pane.details.kind === "none" ? null : pane.details.slug;
+  if (pane.kind === "token") return pane.details.kind === "none" ? null : pane.details.row.prefix;
+  return null;
 }
 
 /**
- * §13's rail marker for one §20 family, over the view(s) its pane draws. Three answers
- * that must stay three: a count, the dimmed `—` where the app advertises none, and the
- * empty string where a listing could not be read at all — "an unread count is not an
- * empty set", so unread is neither `—` nor `0`, and one unread half makes the whole
- * marker blank rather than reporting the half that answered.
+ * §2's three narrow levels, from the URL alone: the landing (`/apps/<slug>` with nothing
+ * selected) is 1, a pane 2, a pane with `sel` 3. The level is the URL's, never the
+ * viewport's — CSS decides whether it matters, so one response serves both widths.
+ *
+ * The landing is the ONE place the dispatch's URL table and its level table collide: the
+ * Catalog pane has no second URL to be level 2 at, since `/apps/<slug>/catalog` is a 404.
+ * Level 1 therefore draws the rail AND the Catalog listing under it (styles.css's
+ * `.listing--landing`), so a phone reaches the catalog from the landing in one tap of
+ * nothing at all rather than one that cannot exist.
  */
-export function familyMarker(...views: AppFamilyView<unknown>[]): string {
-  if (views.some((view) => view.state === "unread")) return "";
-  if (views.every((view) => view.state === "undeclared" || view.state === "unconnected")) return DIMMED;
-  return String(views.reduce((total, view) => total + (view.state === "listed" ? view.rows.length : 0), 0));
+export function appLevel(
+  slug: string,
+  pane: AppPaneView,
+  query: URLSearchParams,
+  name: string,
+): { level: AgentLevel; levelHeader: LevelHeader } {
+  const label = APP_PANE_TABLE.find((entry) => entry.pane === pane.kind)?.label ?? pane.kind;
+  const picked = query.has("sel") && !isWide(pane) ? appSelectedName(pane) : null;
+  if (pane.kind === "catalog" && picked === null) {
+    return { level: 1, levelHeader: { backHref: paths.apps, backLabel: "Apps", title: name } };
+  }
+  if (picked === null) {
+    return {
+      level: 2,
+      levelHeader: { backHref: paths.appDetail(slug), backLabel: name, title: label },
+    };
+  }
+  return {
+    level: 3,
+    levelHeader: { backHref: appPaneHref(slug, pane.kind, query), backLabel: label, title: picked },
+  };
+}
+
+/** The pane's own URL — level 3's way back, minus the `sel` that put it there and plus the
+ *  reading state a pane carries, so going up drops the row and keeps the filter. */
+function appPaneHref(slug: string, pane: AppDetailPane, query: URLSearchParams): string {
+  const base = pane === "catalog" ? paths.appDetail(slug) : paths.appPane(slug, pane);
+  const kept = new URLSearchParams();
+  for (const key of ["q", "new"]) {
+    const value = query.get(key);
+    if (value !== null && value !== "") kept.set(key, value);
+  }
+  for (const value of query.getAll("which")) kept.append("which", value);
+  return kept.toString() === "" ? base : `${base}?${kept}`;
 }
 
 /**
- * §13's header: identity, then whichever status the kind has. The status WORD is the one
+ * §2's header: identity, then whichever status the kind has. The status WORD is the one
  * §8's row already reports — a tunnel's `status`, a proxied oauth app's `connection` —
  * said in words rather than in the op's snake case, so the page names no state of its own.
  */
-function appHeader(row: OpsAppRow, kind: AppKind, slug: string): AppDetailHeader {
+function appHeader(
+  row: Exclude<OpsAppRow, { kind: "builtin" }>,
+  kind: AppKind,
+  slug: string,
+): Omit<AppDetailHeader, "tiles"> {
   const oauth = row.kind === "proxy" && row.auth === "oauth";
   return {
     name: row.name,
     slug,
     kind,
     archived: row.archived,
+    description: row.description,
     status: row.archived
       ? "archived"
       : row.kind === "tunnel"
@@ -3751,7 +4815,6 @@ function appHeader(row: OpsAppRow, kind: AppKind, slug: string): AppDetailHeader
         : oauth
           ? (row.connection ?? "not_connected").replace(/_/g, " ")
           : null,
-    lastSeen: row.kind === "tunnel" ? row.lastSeen : null,
     endpoint: row.kind === "proxy" ? row.endpoint : null,
     authMode: row.kind === "proxy" ? row.auth : null,
     forwardIdentity: row.kind === "proxy" ? row.forwardIdentity : null,
@@ -3763,94 +4826,144 @@ function appHeader(row: OpsAppRow, kind: AppKind, slug: string): AppDetailHeader
           href: paths.appConnect(slug),
         }
       : null,
-    // §13 gives an `auth: oauth` app all three controls, so Disconnect is drawn whenever
-    // there is a credential the app could be holding — the header is the app's own page,
-    // not /apps's one-action-per-row table, and `app_disconnect` is idempotent (§8). Its
-    // target is the app page's own dispatch, so the notice lands here (37(b)).
     disconnect: oauth ? paths.appHeaderDisconnect(slug) : null,
   };
 }
 
-/** The two §7 config maps `app_get`'s row already carries. Taken as a VALUE rather than
- *  re-read per row: `registry.redactPathsFor` runs an `app` SELECT per call, so a page
- *  looping over a catalog would pay `2×tools + prompts` reads for the maps in its hand. */
-type RedactConfig = Pick<OpsAppRow, "redact" | "redactResults">;
-
 /**
- * One Tools row with §13's "what only the hub knows" block attached. Every verdict in it
- * is the door's own: the mode comes from `registry.buildToolFilter` through catalog-view
- * (never a page matcher, which would be a page that lies about access), and the redaction
- * paths are `writeOnlyPaths` unioned with the config map exactly as the gateway unions
- * them before anything is stored or shown (§7).
+ * §2's rail marker for the Catalog, over the three views its pane draws. Three answers that
+ * must stay three: a count, the dimmed `—` where the app advertises none, and the empty
+ * string where a listing could not be read at all — "an unread count is not an empty set",
+ * so unread is neither `—` nor `0`, and one unread family makes the whole marker blank.
  */
-function toolRow(
-  redact: RedactConfig,
-  app: App,
-  reachable: Reachability,
-  tool: CatalogTool,
-): AppToolRow {
-  const name = tool.name ?? "";
-  const description = typeof tool.description === "string" ? tool.description : "";
-  const reach = reachable.reach(name, "tools");
-  const args = redactPathsIn(redact.redact, name);
-  const results = redactPathsIn(redact.redactResults, name);
-  return {
-    name,
-    aggregated: `${app.slug}_${name}`,
-    description,
-    summary: description.split("\n")[0],
-    args: argumentRows(tool.inputSchema),
-    reach,
-    // §2's allow-wins is already inside the door's verdict, so an agent holding both an
-    // allow role and an approval role on this tool arrives here as `allow` and is named
-    // by the reachability line alone.
-    approvalAgents: reach.filter((entry) => entry.mode === "approval").map((entry) => entry.agent),
-    redactedArgs: [...new Set([...writeOnlyPaths(tool.inputSchema), ...args])],
-    redactedResults: results,
-    schemaUnsound: validateSchemaIndirection(tool.inputSchema).length > 0,
-  };
+export function familyMarker(...views: AppFamilyView<unknown>[]): string {
+  if (views.some((view) => view.state === "unread")) return "";
+  if (views.every((view) => view.state === "undeclared" || view.state === "unconnected")) return DIMMED;
+  return String(views.reduce((total, view) => total + (view.state === "listed" ? view.rows.length : 0), 0));
 }
 
+/* ------------------------ the three forms, composed ------------------------ */
+
 /**
- * One `prompts/list` entry with §13's hub block attached (§20.2/§20.3). The reachability
- * runs over the role's PROMPT patterns — the same door, a different keyspace, which is
- * what makes a tools-only role reach no prompt — and the redaction is `redact` matched
- * against the prompt's name, the maps being family-blind. There is no results half: §20.4
- * puts prompt results outside the question entirely.
+ * §4's Save, composed: the stored owner map, minus `was`, plus `role` → { per family: the
+ * checked literals + the `keep` patterns − `drop` + `add` }, empty families omitted — or
+ * minus `was` alone on `delete`. ONE `app_update` comes out of it, and which field it
+ * writes is the kind's (`owner_roles` tunneled, `roles` proxied), never both.
+ *
+ * Pure: web.ts reads the stored map and posts the op, this decides only what the map
+ * becomes — which is what lets a refusal redraw the editor on `families` unchanged.
  */
-function promptRow(
-  redact: RedactConfig,
-  app: App,
-  reachable: Reachability,
-  item: CatalogPrompt,
-): AppPromptRow {
-  const name = item.name ?? "";
-  return {
-    name,
-    aggregated: `${app.slug}_${name}`,
-    description: typeof item.description === "string" ? item.description : "",
-    args: (Array.isArray(item.arguments) ? item.arguments : []).map((argument) => ({
-      name: typeof argument?.name === "string" ? argument.name : "",
-      description: typeof argument?.description === "string" ? argument.description : "",
-      required: argument?.required === true,
-    })),
-    reach: reachable.reach(name, "prompts"),
-    redacted: redactPathsIn(redact.redact, name),
+export function composeOwnerRoles(
+  stored: RoleDeclaration,
+  fields: Record<string, string>,
+  keeps: string[],
+): { role: string; was: string; families: FamilyPatterns; roles: RoleDeclaration; deleted: boolean } {
+  const was = fields.was ?? "";
+  const role = (fields.role ?? "").trim();
+  const roles: RoleDeclaration = { ...stored };
+  if (was !== "") delete roles[was];
+  if (fields.delete === "1") {
+    return { role: was, was, families: {}, roles, deleted: true };
+  }
+
+  const families: FamilyPatterns = {};
+  const push = (family: RoleFamily, pattern: string): void => {
+    const list = families[family] ?? [];
+    if (!list.includes(pattern)) list.push(pattern);
+    families[family] = list;
   };
+  // The ticked literals first, then the patterns this render still listed — a `keep` the
+  // form drew is a pattern the owner did not touch, and dropping it would be a silent
+  // narrowing of the role.
+  for (const [name, value] of Object.entries(fields)) {
+    if (!name.startsWith(ROLE_ITEM_PREFIX) || value !== "1") continue;
+    const rest = name.slice(ROLE_ITEM_PREFIX.length);
+    const cut = rest.indexOf("/");
+    if (cut < 0) continue;
+    const family = rest.slice(0, cut) as RoleFamily;
+    if (!(ROLE_FAMILIES as readonly string[]).includes(family)) continue;
+    push(family, rest.slice(cut + 1));
+  }
+  const dropped = fields.drop ?? "";
+  for (const keep of keeps) {
+    if (keep === dropped) continue;
+    const cut = keep.indexOf("/");
+    if (cut < 0) continue;
+    const family = keep.slice(0, cut) as RoleFamily;
+    if (!(ROLE_FAMILIES as readonly string[]).includes(family)) continue;
+    push(family, keep.slice(cut + 1));
+  }
+  const added = (fields.add ?? "").trim();
+  if (added !== "") push(added.includes("://") ? "resources" : "tools", added);
+
+  if (role !== "") roles[role] = families;
+  return { role, was, families, roles, deleted: false };
 }
 
-/** One resource or template row — §13's three columns plus who reaches it. A template's
- *  `URI` is its RAW `uriTemplate`, which is both what the column shows and the string the
- *  matcher is given: grants match resources by URI, never by name (§20.3). */
-function resourceRow(item: ListedItem, reachable: Reachability): AppResourceRow {
-  const described = item as ListedItem & { mimeType?: unknown };
-  const uri = item.uri ?? item.uriTemplate ?? "";
-  return {
-    uri,
-    name: item.name ?? "",
-    mimeType: typeof described.mimeType === "string" ? described.mimeType : "",
-    reach: reachable.reach(uri, "resources"),
+/** The role editor's per-item checkbox prefix — `i.<family>/<name>`. Spelled ONCE, here,
+ *  because the page that writes the control and the route that reads it must agree. */
+const ROLE_ITEM_PREFIX = "i.";
+
+/**
+ * §5's Save, composed: for each ticked `p.<dir>.<path>` every EDITABLE tool that takes the
+ * path, each `m.<dir>.<tool>.<path>` that tool alone, plus every `keep.<dir>` entry the
+ * form carried. An untouched writeOnly path contributes nothing — §7 masks it regardless,
+ * and writing it into the config would be the hub authoring a declaration it did not make.
+ *
+ * `index` is the path index over the app's own tool schemas, which is why web.ts asks this
+ * module for it rather than re-deriving one.
+ */
+export function composeRedaction(
+  index: PathIndex,
+  dir: "args" | "results",
+  fields: Record<string, string>,
+  keeps: string[],
+): Record<string, string[]> {
+  const map: Record<string, string[]> = {};
+  const add = (tool: string, path: string): void => {
+    const list = map[tool] ?? [];
+    if (!list.includes(path)) list.push(path);
+    map[tool] = list;
   };
+  const pathPrefix = `p.${dir}.`;
+  const toolPrefix = `m.${dir}.`;
+  for (const [name, value] of Object.entries(fields)) {
+    if (value !== "1") continue;
+    if (name.startsWith(pathPrefix)) {
+      const path = name.slice(pathPrefix.length);
+      for (const tool of index.get(path)?.tools ?? []) if (!tool.writeOnly) add(tool.tool, path);
+      continue;
+    }
+    if (!name.startsWith(toolPrefix)) continue;
+    // `m.<dir>.<tool>.<path>`: the TOOL is the segment the index can confirm, so the split
+    // is made against the index rather than at the first dot — a path carries dots.
+    const rest = name.slice(toolPrefix.length);
+    for (const [path, entry] of index) {
+      const suffix = `.${path}`;
+      if (!rest.endsWith(suffix)) continue;
+      const tool = rest.slice(0, -suffix.length);
+      if (entry.tools.some((each) => each.tool === tool && !each.writeOnly)) add(tool, path);
+    }
+  }
+  for (const keep of keeps) {
+    const cut = keep.indexOf(":");
+    if (cut < 0) continue;
+    add(keep.slice(0, cut), keep.slice(cut + 1));
+  }
+  return map;
+}
+
+/** The path index the Recording composer needs, read the way the pane reads it — one
+ *  `ownerCatalog` call for the app's tools and nothing else. */
+export async function recordingIndex(
+  ctx: PageContext,
+  slug: string,
+): Promise<{ args: PathIndex; results: PathIndex }> {
+  const answered = await ownerCatalog(env, ctx.ownerId, slug, "tools");
+  const view: AppFamilyView<ListedItem> = answered.ok
+    ? { state: "listed", rows: answered.items }
+    : { state: "unread" };
+  return { args: pathIndexOf(view, "args"), results: pathIndexOf(view, "results") };
 }
 
 /* ------------------------------- /apps/new -------------------------------- */

@@ -26,7 +26,7 @@ import type { FC } from "hono/jsx";
 import { ConfirmShell, Layout, PaneRail, TokenReveal, paneGroups, LevelHeader } from "./layout";
 import type { PaneEntry } from "./layout";
 import { alertClass, formatLastSeen, formatStamp, formatUntil } from "./format";
-import { DIMMED, entryField, paths } from "./model";
+import { DIMMED, paths } from "./model";
 import type {
   AgentActivityDetails,
   AgentApprovalRow,
@@ -37,17 +37,16 @@ import type {
   AgentDetailProps,
   AgentDetailsView,
   AgentGrantCard,
-  AgentListGroup,
-  AgentListRow,
   AgentPaneView,
   AgentRailEntry,
   AgentTokenRow,
-  FamilyReach,
-  RowControl,
 } from "./model";
+// The grant editor rows, groups and controls — ONE definition, shared with
+// `/apps/<slug>/access`, which renders §6’s "the agent page’s grant editor, verbatim".
+import { GrantGroup, reachLine } from "./grant-rows";
 import { DELETE_AGENT_TEXT } from "./agents";
 import { NO_BODIES_SENTENCE } from "./audit";
-import { inlineMarkdown, plainText, renderMarkdown } from "./markdown";
+import { plainText, renderMarkdown } from "./markdown";
 import { raw } from "hono/html";
 
 /** The accessible name of this page's pane navigation. The pill row every OTHER paned page
@@ -83,65 +82,6 @@ function paneEntries(rail: AgentRailEntry[]): PaneEntry[] {
   }));
 }
 
-/* ------------------------------------------------------------ the control --- */
-
-/** The three buttons, in the order the boards fix them, with the mode each submits. */
-const SEGMENTS: { value: "none" | "approval" | "allow"; label: string; rank: number }[] = [
-  { value: "none", label: "none", rank: 0 },
-  { value: "approval", label: "ask", rank: 1 },
-  { value: "allow", label: "allow", rank: 2 },
-];
-
-const RANK: Record<string, number> = { none: 0, approval: 1, allow: 2 };
-
-/**
- * One row's three-way control: three radios in a `.seg`, the checked one being the DIRECT
- * entry's mode. Where the rest of the set already grants more than this row does, the
- * implied button is drawn hollow and everything below it is disabled — lowering it means
- * lowering the entry that grants it, which is what the disabled button's title says.
- *
- * One exception to "below the implied mode is disabled": the segment that is checked AND
- * carries an entry. A disabled radio submits nothing and `grant_set` replaces the pair's
- * whole set, so disabling it would make plain Save delete the very entry the row is drawn
- * to show — the direct ask under an allowing role, which the `ask entry · no effect` badge
- * exists to keep. A checked `none` needs no exception: it submits nothing either way.
- */
-const Seg: FC<{ control: RowControl }> = ({ control }) => {
-  const impliedRank = control.implied === null ? -1 : RANK[control.implied];
-  const title = `${control.impliedBy.join(", ")} grants ${control.implied === "allow" ? "allow" : "ask"} — change the role to lower it`;
-  return (
-    <span class="seg">
-      {SEGMENTS.map((segment) => {
-        const checked = control.value === segment.value;
-        const held = checked && control.value !== "none";
-        const disabled = segment.rank < impliedRank && !held;
-        const implied = segment.rank === impliedRank && !checked;
-        // Amber marks ASK, and only where ask is the state being shown — a live-but-unset
-        // ask button is not a warning about anything.
-        const warn = segment.value === "approval" && (checked || implied);
-        return (
-          <label
-            class={`seg-opt${implied ? " impl" : ""}${warn ? " seg-opt--warn" : ""}`}
-            title={disabled ? title : undefined}
-          >
-            {/* The title sits on the input as well: a pointer reaches the label, a
-                keyboard reaches the input, and both are owed the reason. */}
-            <input
-              type="radio"
-              name={control.field}
-              value={segment.value}
-              checked={checked}
-              disabled={disabled}
-              title={disabled ? title : undefined}
-            />
-            <span>{segment.label}</span>
-          </label>
-        );
-      })}
-    </span>
-  );
-};
-
 /** The arrow that marks a link leaving this page for another — decoration beside words
  *  that already say where it goes, so it is hidden from anyone listing the page's links. */
 const IconExternal: FC = () => (
@@ -151,114 +91,7 @@ const IconExternal: FC = () => (
   </svg>
 );
 
-/** The `×` beside a badge: a submit button naming the entry to drop, so it works with
- *  scripting off and rides the same Save the radios do. */
-const DropButton: FC<{ entry: string }> = ({ entry }) => (
-  <button type="submit" class="badge-x" name="drop" value={entry} title="remove this entry">
-    ×
-  </button>
-);
-
 /* ----------------------------------------------------------- the app pane --- */
-
-const Row: FC<{ row: AgentListRow; href: (sel: string) => string }> = ({ row, href }) => {
-  if (row.kind === "undeclared") {
-    return (
-      <div class="cr">
-        <div>
-          <span class="mono">{row.entry}</span> <span class="badge badge--warning">undeclared</span>
-          <div class="cr-detail">granted, but the app has not declared it — dormant</div>
-        </div>
-        <div class="cr-control">
-          {/* No radio here, so the entry would vanish on Save: the hidden field is what
-              keeps it, and the × is the only way to let it go. */}
-          <input type="hidden" name={entryField(row.entry)} value={row.standing} />
-          <span class={row.standing === "allow" ? "badge badge--success" : "badge badge--warning"}>
-            {row.standing === "allow" ? "in Allowed" : "in Ask first"}
-            <DropButton entry={row.entry} />
-          </span>
-        </div>
-      </div>
-    );
-  }
-  if (row.kind === "role") {
-    return (
-      <div class="cr">
-        <div>
-          <a class="row-link mono" href={href(row.sel)}>
-            {row.entry}
-          </a>
-          {row.builtin ? <> <span class="badge badge--muted">built-in</span></> : null}
-          <div class="cr-detail">{row.detail}</div>
-        </div>
-        <div class="cr-control">
-          <Seg control={row.control} />
-        </div>
-      </div>
-    );
-  }
-  if (row.kind === "pattern") {
-    return (
-      <div class="cr">
-        <div>
-          <a class="row-link mono" href={href(row.sel)}>
-            {row.entry}
-          </a>
-          <div class={row.dormant ? "cr-detail cr-detail--warn" : "cr-detail"}>{row.detail}</div>
-        </div>
-        <div class="cr-control">
-          <Seg control={row.control} />
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div class="cr">
-      <div>
-        <a class="row-link mono" href={href(row.sel)}>
-          {row.name}
-        </a>
-        {/* The app's own Markdown, inline only: a row is one line high, and a fence or a
-            list in a description must not be allowed to make it three (markdown.ts). */}
-        <div class="cr-detail md">{raw(inlineMarkdown(row.description))}</div>
-      </div>
-      <div class="cr-control">
-        {row.noEffect ? (
-          <span class="badge badge--warning" title="allow wins over ask">
-            ask entry · no effect
-            <DropButton entry={row.entry} />
-          </span>
-        ) : null}
-        {row.via.length === 0 ? null : (
-          <span class="via">
-            {row.alsoVia ? "also via" : "via"} {row.via.join(", ")}
-          </span>
-        )}
-        <Seg control={row.control} />
-      </div>
-    </div>
-  );
-};
-
-const Group: FC<{ group: AgentListGroup; href: (sel: string) => string }> = ({ group, href }) => (
-  <>
-    {group.title === "" ? null : (
-      <div class="gh">
-        <span>
-          {group.title}
-          {group.count === "" ? null : ` · ${group.count}`}
-        </span>
-        {group.note === "" ? null : <span class="gh-note">{group.note}</span>}
-      </div>
-    )}
-    {group.state === null ? group.rows.map((row) => <Row row={row} href={href} />) : <p class="note gh-state">{group.state}</p>}
-  </>
-);
-
-/** `<agent> reaches N of T tools · K ask first · P of PT prompts · R of RT resources`. */
-function reachLine(agent: string, reach: { tools: FamilyReach; prompts: FamilyReach; resources: FamilyReach }): string {
-  return `${agent} reaches ${reach.tools.reached} of ${reach.tools.total} tools · ${reach.tools.approval} ask first · ${reach.prompts.reached} of ${reach.prompts.total} prompts · ${reach.resources.reached} of ${reach.resources.total} resources`;
-}
 
 const AppPane: FC<{ props: AgentDetailProps; pane: AgentPaneView & { kind: "app" } }> = ({ props, pane }) => {
   const agent = props.header.slug;
@@ -296,7 +129,7 @@ const AppPane: FC<{ props: AgentDetailProps; pane: AgentPaneView & { kind: "app"
           <input type="hidden" name="csrf" value={props.csrfToken} />
           <div class="scroll">
             {pane.groups.map((group) => (
-              <Group group={group} href={href} />
+              <GrantGroup group={group} href={href} />
             ))}
             {pane.offer === null ? null : (
               <>

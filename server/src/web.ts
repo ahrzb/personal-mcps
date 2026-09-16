@@ -35,7 +35,7 @@ import { env } from "cloudflare:workers";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { ops } from "./admin";
-import type { AdminOp } from "./admin";
+import type { AdminOp, AppRow } from "./admin";
 import { AGENT_PANES, APP_PANES } from "./app-routes";
 import type { AgentPane, AppPane } from "./app-routes";
 import type { PushSubscriptionJson } from "./approvals";
@@ -45,7 +45,7 @@ import { callAuth, callAuthResponse, formatPrincipal, requireOwnerSession } from
 import type { OwnerSession } from "./identity";
 import { upsertBinding } from "./oauth";
 import { Registry } from "./registry";
-import type { App, Violation } from "./registry";
+import type { App, RoleDeclaration, Violation } from "./registry";
 import { beginConnect } from "./upstream";
 import { approvalsFromEnv } from "./wiring";
 import { SettingsPage } from "./pages/settings";
@@ -86,12 +86,16 @@ import {
   agentNewProps,
   agentNewForm,
   agentDetailProps,
+  composeOwnerRoles,
+  composeRedaction,
   composeRoles,
   grantChoicesOf,
+  recordingIndex,
 } from "./pages/model";
 import { ICON_192, ICON_512 } from "./pages/icon";
 import type {
   AppDetailPane,
+  GrantChoice,
   Notice,
   PageContext,
   AppNewErrors,
@@ -546,7 +550,15 @@ export function pageRoutes(): PageRouter {
   //
   // The gate is `requireOwnerSession` with no options — §13's "`/apps/<slug>/*` is the
   // ordinary owner session", deliberately NOT /settings's recent-auth prefix rule.
-  app.get("/apps/:slug", async (c) => appDetailPane(c, "tools"));
+  app.get("/apps/:slug", async (c) => appDetailPane(c, "catalog"));
+
+  // The two URLs the family panes lived at until 2026-09-17, moved for good: the Catalog
+  // holds all three families now, so a bookmark should stop coming back here — 301 rather
+  // than 302, and the query is dropped with the pane that read it. Mounted ahead of the
+  // pane route so neither segment ever reads as a pane.
+  app.get("/apps/:slug/prompts", (c) => c.redirect(paths.appDetail(c.req.param("slug") ?? ""), 301));
+  app.get("/apps/:slug/resources", (c) => c.redirect(paths.appDetail(c.req.param("slug") ?? ""), 301));
+
   app.get("/apps/:slug/:pane", async (c) => {
     const pane = c.req.param("pane") ?? "";
     if (!(APP_PANES as readonly string[]).includes(pane)) return noSuchPage();
@@ -660,9 +672,122 @@ export function pageRoutes(): PageRouter {
       const back = paths.appPane(slug, "token");
       if ("reason" in minted) return c.redirect(noticeUrl(back, TOKEN_ISSUE, minted), 303);
       const ctx = await context(c.req.raw, session);
+      // The new key is the SELECTED row, so the reveal is drawn in its details (§7). The
+      // selection rides the render's own query rather than the URL: the request that
+      // minted it is a POST, and a plaintext key must never ride a URL at all (§15).
+      const id = String((minted.value as { id?: unknown }).id ?? "");
+      ctx.query.set("sel", `token:${id}`);
+      ctx.query.set("issued", id);
       const props = await appDetailProps(ctx, slug, "token");
       if (props === null) return noSuchPage();
       return render(AppDetailPage({ ...props, reveal: tokenOf(minted.value) }));
+    }),
+  );
+
+  // §4's Save — ONE `app_update` writing `owner_roles` on a tunneled app and `roles` on a
+  // proxied one, composed from the editor's checkboxes, its `keep` patterns and whichever
+  // of `add` / `drop` / `delete` was pressed. A route of its own rather than the generic
+  // dispatch for `grant_set`'s reason: the form's fields are not the op's keys, and a
+  // refusal redraws the editor on the very choices that caused it (never a redirect, or
+  // they would be lost).
+  app.post(
+    `/apps/:slug/${ROLE_SET}`,
+    mutation(async (c, session, form) => {
+      const slug = c.req.param("slug") ?? "";
+      const ctx = await context(c.req.raw, session);
+      const fields = formFields(form);
+      const current = await attempt(() => ops.app_get.handler(session.user.userId, { slug }));
+      if ("reason" in current) return c.redirect(noticeUrl(paths.appPane(slug, "roles"), ROLE_SET, current), 303);
+      const row = (current.value as { app: AppRow }).app;
+      // Which stored map the editor is editing follows the KIND, and the page never mixes
+      // them: a tunneled app's owner roles live beside the app's declaration, a proxied
+      // app's roles are already all the owner's (§1).
+      const tunnelled = row.kind === "tunnel";
+      const stored = tunnelled ? (row as { ownerRoles: RoleDeclaration }).ownerRoles : row.roles;
+      const composed = composeOwnerRoles(stored, fields, form.getAll("keep").filter(isText));
+      const saved = await attempt(() =>
+        ops.app_update.handler(session.user.userId, {
+          slug,
+          ...(tunnelled ? { owner_roles: composed.roles } : { roles: composed.roles }),
+        }),
+      );
+      if (!("reason" in saved)) {
+        const back = composed.deleted
+          ? paths.appPane(slug, "roles")
+          : `${paths.appPane(slug, "roles")}?sel=role:${encodeURIComponent(composed.role)}`;
+        return c.redirect(noticeUrl(back, ROLE_SET, saved), 303);
+      }
+      const props = await appDetailProps(ctx, slug, "roles", {
+        kind: "role",
+        was: composed.was,
+        role: composed.role,
+        families: composed.families,
+        error: saved.reason,
+      });
+      if (props === null) return noSuchPage();
+      return render(AppDetailPage(props), 400);
+    }),
+  );
+
+  // §5's Save — ONE `app_update { log_bodies, redact, redact_results }`. The two maps are
+  // composed from the ticked paths (expanded to every editable tool that takes one), the
+  // per-tool ticks, and the hidden `keep.<dir>` entries carrying every stored entry the
+  // rows did not represent — so a save can never drop what this render did not draw.
+  app.post(
+    `/apps/:slug/${RECORDING_SET}`,
+    mutation(async (c, session, form) => {
+      const slug = c.req.param("slug") ?? "";
+      const ctx = await context(c.req.raw, session);
+      const fields = formFields(form);
+      const index = await recordingIndex(ctx, slug);
+      const saved = await attempt(() =>
+        ops.app_update.handler(session.user.userId, {
+          slug,
+          log_bodies: fields.log === "1",
+          redact: composeRedaction(index.args, "args", fields, form.getAll("keep.args").filter(isText)),
+          redact_results: composeRedaction(
+            index.results,
+            "results",
+            fields,
+            form.getAll("keep.results").filter(isText),
+          ),
+        }),
+      );
+      const back = paths.appPane(slug, "recording");
+      if (!("reason" in saved)) return c.redirect(noticeUrl(back, RECORDING_SET, saved), 303);
+      const props = await appDetailProps(ctx, slug, "recording", { kind: "recording", error: saved.reason });
+      if (props === null) return noSuchPage();
+      return render(AppDetailPage(props), 400);
+    }),
+  );
+
+  // §6's Save — the SAME `grant_set` the agent page posts, composed by the same function,
+  // with the agent riding a hidden field because the pane's URL names the app. `clear=1`
+  // is Remove <agent>: the same op with nothing to compose.
+  app.post(
+    `/apps/:slug/${GRANT_SET}`,
+    mutation(async (c, session, form) => {
+      const slug = c.req.param("slug") ?? "";
+      const fields = formFields(form);
+      const agent = fields.agent ?? "";
+      const { cleared, choices, roles } = grantSetFrom(fields);
+      const saved = await attempt(() =>
+        ops[GRANT_SET].handler(session.user.userId, { agent, app: slug, roles }),
+      );
+      const pane = paths.appPane(slug, "access");
+      if (!("reason" in saved)) {
+        const back = cleared ? pane : `${pane}?sel=agent:${encodeURIComponent(agent)}`;
+        return c.redirect(noticeUrl(back, GRANT_SET, saved), 303);
+      }
+      const ctx = await context(c.req.raw, session);
+      const props = await appDetailProps(ctx, slug, "access", {
+        kind: "grant",
+        agent,
+        choices,
+        error: saved.reason,
+      });
+      if (props === null) return noSuchPage();
+      return render(AppDetailPage(props), 400);
     }),
   );
 
@@ -671,6 +796,14 @@ export function pageRoutes(): PageRouter {
   // that cannot go back: the page it came from is the 404 §13 pins, so it lands on the list.
   app.post(
     "/apps/:slug/:op",
+    (c, next) =>
+      // An op with a route of its own must not ALSO be reachable generically: the three
+      // Save targets compose their op's arguments out of fields that are not its keys, and
+      // `token_issue`'s reveal would ride the redirect §15 forbids. Both spellings mounted
+      // is one op with two contracts, so the generic one answers like any unknown action.
+      APP_OWN_ROUTE.has(c.req.param("op") ?? "")
+        ? new Response("No such action\n", { status: 404, headers: TEXT })
+        : next(),
     dispatch((c) => {
       const pane = APP_OP_PANE[c.req.param("op") ?? ""];
       return pane === undefined ? paths.apps : paths.appPane(c.req.param("slug") ?? "", pane);
@@ -1260,6 +1393,34 @@ const TOKEN_ISSUE = "token_issue";
  *  keys the ops table with it and names it back in the landing notice. */
 const GRANT_SET = "grant_set";
 
+/** The two Save targets that are op-SHAPED without being ops: each composes one
+ *  `app_update` out of fields that are not its keys (§4/§5), and the final-segment
+ *  convention still describes them, which is why they are spelled once here. */
+const ROLE_SET = "role_set";
+const RECORDING_SET = "recording_set";
+
+/**
+ * ONE composer for `grant_set`, called by BOTH routes that post it — the agent page's and
+ * the app page's — so §6's "composes exactly what the agent page's does" is a shared
+ * function rather than a promise. `clear=1` is the Remove dialog: the same op with nothing
+ * to compose, since the op replaces the pair's whole set.
+ */
+function grantSetFrom(fields: Record<string, string>): {
+  cleared: boolean;
+  choices: Record<string, GrantChoice>;
+  roles: string[];
+} {
+  const cleared = fields.clear === "1";
+  const choices = cleared ? {} : grantChoicesOf(fields);
+  return { cleared, choices, roles: composeRoles(choices) };
+}
+
+/** A repeated form field's values, the Files a `<form>` can never produce dropped — the
+ *  multi-valued half of `formFields`, which keeps one value per name. */
+function isText(value: FormDataEntryValue): value is string {
+  return typeof value === "string";
+}
+
 /**
  * Which `/apps/<slug>` pane owns each mutation its panes render, so the redirect-back lands
  * where the form was (§13). An op with no entry here has no pane to go back to — which is
@@ -1289,6 +1450,10 @@ const AGENT_OP_PANE: Record<string, AgentPane> = {
  *  generic dispatcher's to serve — `grant_set`, whose route composes the `roles` list and
  *  knows the app, and `token_issue`, whose answer is a 200 carrying the plaintext. */
 const AGENT_OWN_ROUTE: ReadonlySet<string> = new Set([GRANT_SET, TOKEN_ISSUE]);
+
+/** The same, for `/apps/<slug>`: the three Save targets and the Issue whose answer is a
+ *  200 carrying the plaintext. */
+const APP_OWN_ROUTE: ReadonlySet<string> = new Set([ROLE_SET, RECORDING_SET, GRANT_SET, TOKEN_ISSUE]);
 
 /**
  * §13's two mapped refusal codes, as the control each is drawn beside. A code that is not

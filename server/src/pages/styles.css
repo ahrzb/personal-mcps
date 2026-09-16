@@ -3100,6 +3100,13 @@ dialog .actions {
     display: flex;
   }
 
+  /* The Catalog has no second URL to be level 2 at (`/apps/<slug>/catalog` is a 404), so
+     the app page's level 1 is the rail AND the catalog listing under it — model.ts's
+     `appLevel` states the collision this resolves. */
+  [data-level="1"] .listing--landing {
+    display: flex;
+  }
+
   /* The app page's two levels: its pane is one region, so level 2 is the pane itself
      (the agent page's `.pane--split` holds the listing and details and stays laid out for
      its own levels above). */
@@ -3275,4 +3282,203 @@ dialog .actions {
   .appcard-end .btn {
     width: 100%;
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * The app page's own grammar (design/concepts/AppThreePaneDemo.html, 2026-09-17)
+ *
+ * What the agent page's three-pane box did not already need: the role editor's tick, the
+ * Recording switch, sticky group headings over a long path list, the small type label
+ * beside a path or a pattern, and the three-column schema row.
+ * ------------------------------------------------------------------ */
+
+/* The tick. ONE class over two elements, because a row draws either a control or a
+   statement and both have to sit on the same 14px square: an `<input type="checkbox">`
+   where the owner may change it, a `<span>` where a pattern or the app already decided.
+   `appearance: none` is what lets the two agree — a native checkbox cannot be made to
+   match a span, and a span cannot be made to submit. */
+.cb {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1.5px solid var(--ring);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--primary-fg);
+  cursor: pointer;
+}
+
+/* The 24px target the ladder asks for, added AROUND the glyph by an overflowing
+   pseudo-element rather than to the box, which would push the row open (`.badge-x`'s
+   reason, and the same arithmetic). */
+.cb::before {
+  content: "";
+  position: absolute;
+  inset: calc((14px - var(--control-h-xs)) / 2);
+}
+
+.cb:checked,
+.cb.on,
+.cb.mixed {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+/* The glyph a CHECKED input draws — a span carries its own <svg>, an input cannot, so
+   this is the one place the tick is a border trick rather than a path. */
+.cb:checked::after {
+  content: "";
+  width: 4px;
+  height: 8px;
+  margin-top: -2px;
+  border: solid var(--primary-fg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Decided elsewhere and not clearable here: matched by a pattern, declared `writeOnly` by
+   the app, or a role the app owns. Grey rather than black, so "in" and "in, and yours to
+   change" stay two different statements. */
+.cb.lock {
+  background: var(--ring);
+  border-color: var(--ring);
+  cursor: default;
+}
+
+/* Masked on SOME of a path's tools: the dash, and no field at all — the per-tool rows
+   below it are where a mixed state changes (§5's data-safety rule). */
+.cb.mixed {
+  cursor: default;
+}
+
+.cb:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.cb:disabled {
+  cursor: default;
+}
+
+/* The Recording switch: a real checkbox, so it submits and a keyboard reaches it, drawn
+   as the board's pill. The label beside it is visible text — a colour alone is a state
+   only a sighted reader has. */
+.sw-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--muted-fg);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sw {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--border);
+  cursor: pointer;
+}
+
+.sw::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: left 0.15s ease;
+}
+
+.sw:checked {
+  background: var(--primary);
+}
+
+.sw:checked::after {
+  left: 18px;
+}
+
+.sw:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* A heading that stays put over a list long enough to lose it — the Recording pane's two
+   sections and the role editor's three. The ground is opaque because rows scroll under it. */
+.gh.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+}
+
+/* The small type label beside a path or a pattern — what it is, not what it does. */
+.ty {
+  font-size: var(--text-2xs);
+  color: var(--ring);
+}
+
+/* One schema row of the Arguments / Result card: path, type, and whatever the third
+   column has to say (the `writeOnly · masked` badge, or a prompt argument's requiredness). */
+.arg {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px minmax(0, 1fr);
+  column-gap: var(--space-5);
+  align-items: baseline;
+  padding: var(--space-2) 0;
+  font-size: var(--text-xs);
+  border-bottom: 1px solid var(--row-border);
+}
+
+.arg:last-child {
+  border-bottom: none;
+}
+
+.arg > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A path's per-tool row, under the path it belongs to: indented, and on the sunken ground
+   that says it is inside the row above rather than beside it. */
+.cr--sub {
+  padding-left: var(--space-11);
+  background: var(--sunken);
+}
+
+/* A badge standing INSIDE a row's first line beside a name, where the 20px one would set
+   the line height (the Roles pane's source marking). */
+.badge--xs {
+  height: 16px;
+  padding: 0 var(--space-3);
+  font-size: 10px;
+}
+
+/* Overview and the danger zone are the listing alone, so their content needs the padding
+   the rows of every other listing carry themselves. */
+.kv--pad {
+  padding: var(--space-8);
+  max-width: 640px;
+}
+
+.listing--wide .db {
+  max-width: 640px;
 }

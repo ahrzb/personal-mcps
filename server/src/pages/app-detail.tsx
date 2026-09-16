@@ -1,28 +1,29 @@
-// app-detail.tsx — /apps/<slug>: §13's eight panes of one app behind the same rail
-// /settings uses.
+// app-detail.tsx — /apps/<slug>: one app as three panes behind a rail, the shape
+// /agents/<slug> already has (the 2026-09-17 dispatch; design/concepts/AppThreePaneDemo.html
+// is the visual contract).
 //
 // Pure: (props) => JSX. Every URL comes from `paths`, every count from the very list its
-// pane draws, and the render instant arrives as `now` — so a pane renders identically
-// from a fixture and from a request (model.ts's two template rules).
+// pane draws, and the render instant arrives as `now` — so a pane renders identically from
+// a fixture and from a request (model.ts's two template rules).
 //
-// ONE component draws the header, both navigations and whichever pane the URL asked for,
-// because §13 makes them one page: a rail marker is the LENGTH of the list its pane
-// renders, so the rail is drawn from the same props the pane is and cannot disagree with
-// it. `props.pane` says which pane; the header and the two navigations are identical on
-// all eight, which is what makes the landing render (Tools) the same response shape as
-// every other.
+// ONE component draws the header, the rail and whichever pane the URL asked for, because
+// §13 makes them one page: the rail's markers are read from the same props the pane is, so
+// they cannot disagree with it. `props.pane.kind` says which pane; the header and the rail
+// are identical on all seven, which is what makes the landing render (Catalog, in place)
+// the same response shape as every other.
 //
-// The hub block under an expanded tool row is §13's "what only the hub knows", and none
-// of it is computed here: model.ts hands over the aggregated name, the reachability the
-// DOOR's own matcher answered (catalog-view over registry.buildToolFilter), the approval
-// posture that verdict already decided, and the redaction paths §7's own functions
-// produced. This file only puts them in the sentences §13 pins.
+// THREE forms live here, each posting ONE op (§4–§6): the Roles editor
+// (`role_set` → `app_update { owner_roles | roles }`), the Recording editor
+// (`recording_set` → `app_update { log_bodies, redact, redact_results }`) and the grant
+// editor (`grant_set`, the agent page's own composer). Each carries the CSRF field, each
+// is redrawn at 400 on a refusal with the submitted choices in place, and none of them
+// nests inside another — the filters above them are GET forms of their own, and the two
+// controls that must sit in a filter's header (the role name, the recording switch) reach
+// their form through HTML's own `form=` attribute rather than by nesting.
 //
-// Everything destructive is behind a server-rendered `<dialog open>` reached by a URL
-// (§13's `?confirm=`), so the confirm step works with scripting off — and the Token pane's
-// Issue is the one control whose answer cannot survive a redirect, which is why its target
-// is a route of its own rather than the generic dispatch (§15: a plaintext key never rides
-// a URL).
+// The demo has two things this page deliberately does not: the unsaved-changes banner and
+// the blue draft dots. Both are script-only state and the pages are server-rendered with
+// scripting off, exactly as the agent page dropped them.
 
 import type { FC } from "hono/jsx";
 import { ConfirmShell, Layout, LevelHeader, PaneRail, TokenReveal, paneGroups } from "./layout";
@@ -30,44 +31,54 @@ import type { PaneEntry } from "./layout";
 import { alertClass, formatLastSeen, formatStamp } from "./format";
 import { APP_CONFIRM_PANE, DIMMED, paths } from "./model";
 import type {
+  AgentBadge,
+  AppAccessDetails,
+  AppCatalogDetails,
+  AppCatalogGroup,
   AppConfirm,
   AppDetailHeader,
-  AppDetailPane,
   AppDetailProps,
-  AppFamilyView,
-  AppGrantChip,
-  AppPromptRow,
-  AppResourceRow,
-  AppToolRow,
+  AppPaneView,
+  AppRecordingCard,
+  AppRecordingSection,
+  AppRoleDetails,
+  AppRoleRow,
+  AppSchemaRow,
+  AppTokenRow,
 } from "./model";
+import { GrantGroup, reachLine } from "./grant-rows";
 import { inlineMarkdown, renderMarkdown } from "./markdown";
 import { raw } from "hono/html";
-import type { ArgumentRow, Reach } from "../catalog-view";
-import type { FamilyPatterns } from "../registry";
 
 /**
  * The accessible name of this page's pane navigation — the rail, which below the
- * breakpoint is the landing level's list (§13's two levels; the pill row left this page
- * with them, 2026-09-17).
+ * breakpoint is the landing level's list (§2's three levels, as the agent page's).
  */
 const RAIL_NAV_LABEL = "App panes";
 
+const DIALOG_ID = "confirm-app";
+
+/** The two form ids a control reaches from outside its own parent, HTML's `form=` standing
+ *  in for the nesting a filter above the form makes impossible. */
+const ROLE_FORM = "role-editor";
+const RECORDING_FORM = "recording-editor";
+
 /* ------------------------------------------------------------------ rail --- */
 
-/** The eight entries the rail draws, in §13's table order, each carrying the marker
- *  model.ts computed beside the very list that entry's pane renders. */
 function paneEntries(props: AppDetailProps): PaneEntry[] {
   return props.rail.map((entry) => ({
     href: entry.href,
     label: entry.label,
     short: entry.label,
-    // The em dash is the ONE marker that means "advertises none" (§13), so it is also the
-    // one that draws its entry receded — read from model's own constant, never respelled.
-    marker: entry.marker === "" ? null : { text: entry.marker, dim: entry.marker === DIMMED },
-    current: entry.pane === props.pane,
-    // §13's two headings, then the ungrouped Danger zone — a headless run rather than a
-    // third heading, because §13 makes that entry neutral and a heading of its own would
-    // be the emphasis it refuses, by another route. The shell groups on this field.
+    marker:
+      entry.dot !== null
+        ? { text: entry.marker, dot: entry.dot }
+        : // The em dash is the ONE marker that means "advertises none" (§2), so it is also
+          // the one that draws its entry receded — read from model's own constant.
+          entry.marker === ""
+          ? null
+          : { text: entry.marker, dim: entry.marker === DIMMED },
+    current: entry.pane === props.pane.kind,
     group: entry.group,
   }));
 }
@@ -83,27 +94,14 @@ const STATUS_CLASS: Record<string, string> = {
   archived: "badge badge--warning",
 };
 
-/** `badge--title` is the one place a badge is not 20px: these three stand beside a 24px
- *  page title rather than in a row (design/layout-and-density.md §2 "Badges"). */
-const HeaderBadges: FC<{ header: AppDetailHeader }> = ({ header }) => (
-  <div class="badge-row">
-    <span class="badge badge--title badge--mono">{header.slug}</span>
-    <span class="badge badge--title badge--mono">{header.kind}</span>
-    {header.status === null ? null : (
-      <span class={`${STATUS_CLASS[header.status] ?? "badge badge--muted"} badge--title`}>{header.status}</span>
-    )}
-  </div>
-);
-
 /**
- * The proxied half of §13's header: what the hub dials, how it authenticates, and whether
- * it forwards the caller's identity — plus, for `auth: oauth` alone, the same
- * Connect/Reconnect and Disconnect targets /apps draws, taken from `paths` so this page
- * cannot invent a third spelling of either.
+ * The proxied half of §2's header: what the hub dials, how it authenticates, and whether it
+ * forwards the caller's identity — plus, for `auth: oauth` alone, the same
+ * Connect/Reconnect and Disconnect targets /apps draws.
  *
- * `rows` is off on the Overview pane alone: §13 gives those three facts to the header AND
- * to Overview, so there they would be the pane's own first rows printed again with nothing
- * between them. The controls stay on all eight — they belong to the header, not to a pane.
+ * `rows` is off on the Overview pane alone: those three facts belong to the header AND to
+ * Overview, so there they would be the pane's own first rows printed again with nothing
+ * between them. The controls stay on all seven — they belong to the header, not to a pane.
  */
 const UpstreamCard: FC<{ header: AppDetailHeader; csrfToken: string; rows: boolean }> = ({
   header,
@@ -154,772 +152,985 @@ const UpstreamCard: FC<{ header: AppDetailHeader; csrfToken: string; rows: boole
   );
 };
 
-/* ----------------------------------------------------------- empty states --- */
+/* ----------------------------------------------------------------- bits --- */
 
-/**
- * Why a family pane has nothing to list, per kind — §20.2's owner-declared `capabilities`
- * for a proxied app, §20.5's registration-time declaration for a tunneled one. §13 pins
- * both verbatim with the family's own name substituted, which is why the family is a
- * parameter here rather than three copies of each sentence.
- */
-/** A tunneled app that has never connected (§13, 2026-09-03): no catalog to list, for any
- *  family — the sentence is the same on all three panes, and it is not "declared none". */
-const Unconnected: FC = () => (
-  <div class="empty empty--inline">
-    <div class="empty-text">This app has never connected, so the hub has no catalog to list yet.</div>
-    <div class="empty-text empty-text--aside">
-      Start it with its token and the catalog appears after its first connect.
-    </div>
-  </div>
-);
-
-const Undeclared: FC<{ family: string; kind: AppDetailHeader["kind"] }> = ({ family, kind }) => (
-  <div class="empty empty--inline">
-    {kind === "tunnel" ? (
-      <>
-        <div class="empty-text">
-          This app declared no {family} capability on its last connect, so the hub advertises none and serves an
-          empty list.
-        </div>
-        <div class="empty-text empty-text--aside">
-          Declare {family} with your MCP SDK and they appear here after the next reconnect — the client library
-          passes the declaration through untouched.
-        </div>
-      </>
-    ) : (
-      <div class="empty-text">
-        The <code class="code-inline">capabilities</code> configured for this app omit {family} (§20.2) — add it
-        with <code class="code-inline">app_update</code> or the YAML.
-      </div>
-    )}
-  </div>
-);
-
-/**
- * A listing that could not be read at all — §13's "rendering that state in place of the
- * list" rather than an empty one. BOTH arms below say something, because rendering nothing
- * is less than an empty list, not more: a card with no rows, no count and no sentence is
- * exactly what §13 reserves for an app that advertises none.
- *
- * Which sentence depends on what could have failed. §13's copy is about a credential, so
- * it is drawn where a credential refresh exists to have failed — `auth: oauth`, the one
- * mode carrying a Connect target — beside the control that fixes it. A headers-mode
- * upstream has no refresh and no control, so telling its owner to reconnect would be a
- * lie; that arm says the thing that IS true of every unread listing. §13 pins no copy for
- * it (the plan's constraint 37(a) leaves the wording to the page), only that the state is
- * rendered.
- */
-const Unread: FC<{ header: AppDetailHeader; csrfToken: string }> = ({ header, csrfToken }) =>
-  header.connect === null ? (
-    <div class="empty empty--inline">
-      <div class="empty-text">
-        Couldn't reach <code class="code-inline">{header.endpoint}</code> — the live listing failed, so nothing is
-        shown; calls return errors until it answers again.
-      </div>
-    </div>
-  ) : (
-    <div class="empty empty--inline">
-      <div class="empty-text">Token refresh failed — calls return errors until you reconnect.</div>
-      <form method="post" action={header.connect.href}>
-        <input type="hidden" name="csrf" value={csrfToken} />
-        <button type="submit" class="btn btn--outline btn--sm">
-          {header.connect.label}
-        </button>
-      </form>
-    </div>
-  );
-
-/** The two answers a family view carries that are NOT a list, in the one place both are
- *  drawn — so "advertises none" and "could not be read" can never render as each other. */
-const FamilyEmpty: FC<{
-  view: Exclude<AppFamilyView<unknown>, { state: "listed" }>;
-  family: string;
-  header: AppDetailHeader;
-  csrfToken: string;
-}> = ({ view, family, header, csrfToken }) =>
-  view.state === "unconnected" ? (
-    <Unconnected />
-  ) : view.state === "undeclared" ? (
-    <Undeclared family={family} kind={header.kind} />
-  ) : (
-    <Unread header={header} csrfToken={csrfToken} />
-  );
-
-/* ----------------------------------------------------------------- tools --- */
-
-/** §13's `no args` / `N args`, singular where the artboard draws it singular. */
-function argCount(rows: ArgumentRow[]): string {
-  if (rows.length === 0) return "no args";
-  return rows.length === 1 ? "1 arg" : `${rows.length} args`;
-}
-
-/** §13's Arguments table — the tool's own `inputSchema`, top-level properties only; a
- *  nested schema prints its outer type and is not recursed into (the pinned ceiling: the
- *  row is a glance, and `pmcp describe` prints the schema whole). */
-const Arguments: FC<{ rows: ArgumentRow[] }> = ({ rows }) => (
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Type</th>
-        <th>Required</th>
-      </tr>
-    </thead>
-    <tbody>
-      {rows.map((row) => (
-        <tr>
-          <td class="cell-mono">{row.name}</td>
-          <td class="cell-mono cell-muted">{row.type}</td>
-          <td class="cell-muted">
-            {row.required ? (
-              "required"
-            ) : row.hasDefault ? (
-              <>
-                optional · defaults to <code class="code-inline">{JSON.stringify(row.default)}</code>
-              </>
-            ) : (
-              "optional"
-            )}
-          </td>
-        </tr>
-      ))}
-    </tbody>
-  </table>
-);
-
-/**
- * §13 line 2: every agent whose granted roles on this subject match, and the roles that
- * matched — the door's own verdict, put into the sentence §13 spells. One function for all
- * three families, because §13 gives them one sentence and §20.3 one matcher.
- *
- * §13's short form ("Reachable by `<agent>`, `<agent>` · via `<role>`") states one role
- * set about every agent it names, which is TRUE only where they all matched the same way.
- * Where two agents reached the subject through different roles, unioning the roles would
- * assert a cross-product the door never answered — each agent reading as though it held
- * both — so those name their own roles instead.
- */
-function reachLine(reach: Reach[]): string {
-  if (reach.length === 0) return "Reachable by no agent yet";
-  const rolesOf = (entry: Reach) => entry.roles.join(", ");
-  const shared = rolesOf(reach[0]);
-  if (reach.every((entry) => rolesOf(entry) === shared)) {
-    return `Reachable by ${reach.map((entry) => entry.agent).join(", ")} · via ${shared}`;
-  }
-  return `Reachable by ${reach.map((entry) => `${entry.agent} · via ${rolesOf(entry)}`).join("; ")}`;
-}
-
-/** §13 line 3. Allow wins over approval per agent (§2) and the door already decided it,
- *  so an agent holding both reaches in allow mode and is named by neither half of this
- *  line; owners are never gated, which is why it is about agents alone. */
-function approvalLine(tool: AppToolRow): string {
-  return tool.approvalAgents.length === 0
-    ? "No approval required"
-    : `Approval required for ${tool.approvalAgents.join(", ")}`;
-}
-
-/** §13 line 4: what a call would mask, or the refusal a tool with no derivable redaction
- *  map earns instead — two different statements that never collapse into one. */
-function redactionLine(tool: AppToolRow): string {
-  if (tool.schemaUnsound) return "schema-unsound — approval-gated calls refuse, bodies are not recorded";
-  return maskedLine(tool.redactedArgs, tool.redactedResults);
-}
-
-/** The same sentence a prompt earns, which has an arguments half alone — §20.4 keeps
- *  prompt results out of the question, and §20.3 leaves it no `writeOnly` half either. */
-function maskedLine(args: string[], results: string[]): string {
-  const parts: string[] = [];
-  if (args.length > 0) parts.push(`arguments ${args.join(", ")}`);
-  if (results.length > 0) parts.push(`results ${results.join(", ")}`);
-  return parts.length === 0 ? "No redacted fields" : `Redacted ${parts.join(" · ")}`;
-}
-
-/**
- * One Tools row, expanded IN PLACE: a native <details>, so the full description, the
- * Arguments table and the hub block all arrive in this same response and open with no
- * second request and no script of any kind.
- */
-const ToolRow: FC<{ tool: AppToolRow }> = ({ tool }) => (
-  <details class="disclosure tool">
-    <summary>
-      <span class="tool-name mono">{tool.name}</span>
-      {/* The description's own Markdown, twice: inline for the summary line, which is one
-          line by construction, and whole under it (markdown.ts owns the whitelist). */}
-      <span class="tool-summary md">{raw(inlineMarkdown(tool.summary))}</span>
-      <span class="tool-args">{argCount(tool.args)}</span>
-    </summary>
-    <div class="detail tool-detail">
-      <div class="tool-description md">{raw(renderMarkdown(tool.description))}</div>
-      {tool.args.length === 0 ? null : (
-        <>
-          <div class="eyebrow">Arguments</div>
-          <Arguments rows={tool.args} />
-        </>
-      )}
-      {/* §13's four lines, in the order it pins them: the aggregated name, who reaches it,
-          the approval posture, then what a call would mask. */}
-      <div class="tool-hub">
-        <div>
-          Called by agents as <code class="code-inline">{tool.aggregated}</code>
-        </div>
-        <div>{reachLine(tool.reach)}</div>
-        <div>{approvalLine(tool)}</div>
-        <div>{redactionLine(tool)}</div>
-      </div>
-    </div>
-  </details>
-);
-
-/** A listing's own size beside its card title, in the boards' lighter weight — drawn only
- *  where the pane carries no other count (the Resources tabs carry theirs), and absent
- *  where the listing could not be read at all, for the rail marker's reason. */
-const TitleCount: FC<{ view: AppFamilyView<unknown> }> = ({ view }) =>
-  view.state === "listed" ? <span class="card-count">{view.rows.length}</span> : null;
-
-const ToolsPane: FC<AppDetailProps> = (props) => (
-  <div class="card card--pad">
-    <div class="card-head">
-      <div>
-        <h2 class="card-title">
-          Tools <TitleCount view={props.tools} />
-        </h2>
-        {props.header.kind === "tunnel" ? (
-          <p class="card-desc">Advertised by the app on its last connect.</p>
-        ) : null}
-      </div>
-      {props.header.kind === "tunnel" ? <p class="note">Re-listed on every reconnect</p> : null}
-    </div>
-    {props.tools.state === "listed" ? (
-      <div class="list">
-        {props.tools.rows.map((tool) => (
-          <ToolRow tool={tool} />
-        ))}
-      </div>
-    ) : (
-      <FamilyEmpty view={props.tools} family="tools" header={props.header} csrfToken={props.csrfToken} />
-    )}
-    <p class="note">
-      Schemas come from the app's last <code class="code-inline">tools/list</code> — the hub stores them, it does
-      not author them.
-    </p>
-  </div>
-);
-
-/* --------------------------------------------------- prompts · resources --- */
-
-/**
- * One Prompts row: §13's "the same shape without a schema table". The declared arguments
- * are a plain list rather than the Tools table — a prompt has no `inputSchema`, so there
- * is no type column to fill and printing one would invent a fact (§20.3).
- */
-const PromptRow: FC<{ prompt: AppPromptRow }> = ({ prompt }) => (
-  <details class="disclosure tool">
-    <summary>
-      <span class="tool-name mono">{prompt.name}</span>
-      <span class="tool-summary md">{raw(inlineMarkdown(prompt.description))}</span>
-    </summary>
-    <div class="detail tool-detail">
-      {prompt.args.length === 0 ? null : (
-        <>
-          <div class="eyebrow">Arguments</div>
-          <div class="kv">
-            {prompt.args.map((argument) => (
-              <div class="kv-row">
-                <div class="kv-key mono">{argument.name}</div>
-                <div>
-                  <span class="md">{raw(inlineMarkdown(argument.description))}</span>{" "}
-                  <span class="muted">{argument.required ? "required" : "optional"}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-      {/* §13's hub block for this family: the aggregated name, who reaches it over the
-          role's PROMPT patterns, the posture §18 decision 27 fixed, and what a
-          `prompts/get` would mask. */}
-      <div class="tool-hub">
-        <div>
-          Called by agents as <code class="code-inline">{prompt.aggregated}</code>
-        </div>
-        <div>{reachLine(prompt.reach)}</div>
-        <div>Never approval-gated</div>
-        <div>{maskedLine(prompt.redacted, [])}</div>
-      </div>
-    </div>
-  </details>
-);
-
-const PromptsPane: FC<AppDetailProps> = (props) => (
-  <div class="card card--pad">
-    <div>
-      <h2 class="card-title">
-        Prompts <TitleCount view={props.prompts} />
-      </h2>
-      <p class="card-desc">
-        Reusable message templates the app offers — Claude Code turns them into slash commands.
-      </p>
-    </div>
-    {props.prompts.state === "listed" ? (
-      <div class="list">
-        {props.prompts.rows.map((prompt) => (
-          <PromptRow prompt={prompt} />
-        ))}
-      </div>
-    ) : (
-      <FamilyEmpty view={props.prompts} family="prompts" header={props.header} csrfToken={props.csrfToken} />
-    )}
-  </div>
-);
-
-/** A tab's own count — blank where its listing could not be read, for the rail's reason:
- *  an unread count is not an empty set. */
-function countOf(view: AppFamilyView<unknown>): string {
-  return view.state === "listed" ? String(view.rows.length) : "";
-}
-
-/** §13's two Resources tabs, each carrying its own count. Links rather than script, so a
- *  tab is a URL like everything else on this page. */
-const ResourceTabs: FC<AppDetailProps> = (props) => (
-  <div class="segmented">
-    <a
-      href={paths.appPane(props.header.slug, "resources")}
-      aria-current={props.tab === "resources" ? "page" : undefined}
-    >
-      Resources {countOf(props.resources)}
-    </a>
-    <a
-      href={`${paths.appPane(props.header.slug, "resources")}?tab=templates`}
-      aria-current={props.tab === "templates" ? "page" : undefined}
-    >
-      Templates {countOf(props.templates)}
-    </a>
-  </div>
-);
-
-/**
- * §13's three columns, each row followed by its own hub line. The reachability sits in a
- * spanning row under the values it is about rather than in a fourth column: it is a
- * sentence, and a sentence in a 120px column is unreadable at every width.
- */
-const ResourceTable: FC<{ rows: AppResourceRow[] }> = ({ rows }) => (
-  <table class="table">
-    <thead>
-      <tr>
-        <th>URI</th>
-        <th>Name</th>
-        <th>Type</th>
-      </tr>
-    </thead>
-    <tbody>
-      {rows.map((row) => (
-        <>
-          <tr>
-            <td class="cell-mono">{row.uri}</td>
-            <td>{row.name}</td>
-            <td class="cell-muted">{row.mimeType}</td>
-          </tr>
-          <tr class="row-detail">
-            {/* No redaction line here, and that is §13's rule rather than an omission:
-                URIs are not bodies, and §20.4 pins what the audit row keeps. */}
-            <td colspan={3} class="cell-muted">
-              {reachLine(row.reach)}
-            </td>
-          </tr>
-        </>
-      ))}
-    </tbody>
-  </table>
-);
-
-/**
- * The two rules a reader would otherwise learn from a `-32601`, verbatim (§13/§20.2). The
- * endpoint is printed whole and copyable — the hub's own origin (§2's `PUBLIC_ORIGIN`,
- * carried in props by the model; never a request header) with this app's user and slug —
- * rather than the literal `<hub>` the board draws (§13, 2026-09-03).
- */
-const ResourceRules: FC<{ origin: string; username: string; slug: string }> = ({ origin, username, slug }) => (
-  <>
-    <p class="note">
-      Resources are served on the <strong>scoped</strong> endpoint only —{" "}
-      <code class="code-inline">
-        {origin}
-        {paths.mcpScoped(username, slug)}
-      </code>
-      . The aggregated endpoint answers <code class="code-inline">-32601</code>, because a URI cannot carry a
-      slug prefix and stay the URI the app knows.
-    </p>
-    <p class="note">
-      Grants match resources by <strong>URI</strong>, never by name — a role's resource patterns are URI
-      patterns, and templates are matched against their raw <code class="code-inline">uriTemplate</code>.
-    </p>
-  </>
-);
-
-const ResourcesPane: FC<AppDetailProps> = (props) => {
-  // The tab decides which listing the table draws; both counts come from the two views
-  // beside each other, which is also where the one rail marker's sum comes from.
-  const shown = props.tab === "templates" ? props.templates : props.resources;
-  return (
-    <div class="card card--pad">
-      {/* No count beside this title, unlike the other two listings: §13 gives each of the
-          two tabs its own count, and a third number here would name a different set. */}
-      <div>
-        <h2 class="card-title">Resources</h2>
-        <p class="card-desc">Readable documents and data the app exposes by URI.</p>
-      </div>
-      {/* Above the ternary, not inside its listed arm: §13 gives this pane two tabs each
-          carrying its own count, and the two halves are two independent reads — one can
-          fail while the other lists fine. A tab row that disappeared with the selected
-          half would strand the reader on the failure with no way back to the other. */}
-      <ResourceTabs {...props} />
-      {shown.state === "listed" ? (
-        <ResourceTable rows={shown.rows} />
-      ) : (
-        <FamilyEmpty view={shown} family="resources" header={props.header} csrfToken={props.csrfToken} />
-      )}
-      <ResourceRules origin={props.hubOrigin} username={props.username} slug={props.header.slug} />
-    </div>
-  );
-};
-
-/* --------------------------------------------------------- roles · about --- */
-
-/**
- * §20.3's canonical read shape, rendered in both directions because the read shape has
- * two: a tools-only role is a bare pattern list and prints as one, every other role is
- * the per-family object and prints its family keys. The page relays `app_get`'s answer —
- * canonicalizing here would be a second normalizer beside `registry`'s.
- */
-const RoleRow: FC<{ name: string; patterns: string[] | FamilyPatterns }> = ({ name, patterns }) => (
-  <div class="list-item">
-    <div class="list-title mono">{name}</div>
-    {Array.isArray(patterns) ? (
-      <div class="list-meta mono">{patterns.join(", ")}</div>
-    ) : (
-      <div class="kv">
-        {Object.entries(patterns).map(([family, list]) => (
-          <div class="kv-row">
-            <div class="kv-key mono">{family}</div>
-            <div class="mono">{(list ?? []).join(", ")}</div>
-          </div>
-        ))}
-      </div>
-    )}
-  </div>
-);
-
-const RolesPane: FC<AppDetailProps> = (props) => {
-  const names = Object.keys(props.roles);
-  return (
-    <div class="card card--pad">
-      <div class="card-head">
-        <div>
-          <h2 class="card-title">Roles</h2>
-          {/* Each kind's own sentence for where a role comes from — and, for the tunneled
-              kind alone, §2's trust boundary: the app declared these about itself. */}
-          <p class="card-desc">
-            {props.header.kind === "tunnel"
-              ? "Declared by the app at connect time."
-              : "Roles are defined in config (virtual) for proxied apps."}
-          </p>
-        </div>
-      </div>
-      {names.length === 0 ? (
-        <div class="empty empty--inline">
-          <div class="empty-title">No roles declared</div>
-          <div class="empty-text">
-            Grants fall back to the built-in <code class="code-inline">all</code> role — every tool, present and
-            future.
-          </div>
-        </div>
-      ) : (
-        <div class="list">
-          {names.map((name) => (
-            <RoleRow name={name} patterns={props.roles[name]} />
-          ))}
-        </div>
-      )}
-      {props.header.kind === "tunnel" ? (
-        <p class="note">
-          Roles are self-declared by the tunneled app — granting a role trusts the app's declaration.
-        </p>
-      ) : null}
-    </div>
-  );
-};
-
-/** One row of §13's definition list — a label and whatever `app_get` reported for it. */
-const OverviewRow: FC<{ label: string; children?: unknown }> = ({ label, children }) => (
+const Kv: FC<{ k: string; children?: unknown }> = ({ k, children }) => (
   <div class="kv-row">
-    <div class="kv-key">{label}</div>
+    <div class="kv-key">{k}</div>
     <div>{children}</div>
   </div>
 );
 
-/** §15's setting, said as §13 asks: which default it sits at, or the bare word where the
- *  owner set it explicitly and naming a default would be false. */
-function bodyLogging(overview: AppDetailProps["overview"], kind: AppDetailHeader["kind"]): string {
-  const state = overview.logBodies ? "On" : "Off";
-  if (!overview.logBodiesIsDefault) return state;
-  return `${state} — ${kind === "tunnel" ? "tunneled" : "proxied"} default`;
-}
+/** One agent that reaches a row: mono for allow, amber for `· ask` (§3/§4). */
+const Badges: FC<{ badges: AgentBadge[]; empty: string }> = ({ badges, empty }) =>
+  badges.length === 0 ? (
+    <span class="muted">{empty}</span>
+  ) : (
+    <>
+      {badges.map((badge) => (
+        <span class={badge.ask ? "badge badge--warning" : "badge badge--mono"}>
+          {badge.ask ? `${badge.agent} · ask` : badge.agent}
+        </span>
+      ))}
+    </>
+  );
 
-/** §7's configured paths, or the word §13 puts where there are none. */
-const Paths: FC<{ paths: string[] }> = ({ paths: found }) =>
-  found.length === 0 ? <span class="muted">none</span> : <span class="mono">{found.join(", ")}</span>;
-
-const OverviewPane: FC<AppDetailProps> = (props) => (
-  <div class="card card--pad">
-    <h2 class="card-title">Overview</h2>
-    <div class="kv">
-      <OverviewRow label="Slug">
-        <span class="mono">{props.header.slug}</span>
-      </OverviewRow>
-      {/* An absolute date WITH its year, unlike every other stamp on this page: "Last
-          seen" is recent by nature so its year is implicit, while an app created in 2025
-          and one created this August are the same "Aug 20" to `formatLastSeen`. */}
-      <OverviewRow label="Created">{formatStamp(props.overview.createdAt)}</OverviewRow>
-      <OverviewRow label="Kind">
-        <span class="mono">{props.header.kind}</span>
-      </OverviewRow>
-      {props.header.kind === "proxy" ? (
-        <>
-          <OverviewRow label="Endpoint">
-            <span class="mono">{props.header.endpoint}</span>
-          </OverviewRow>
-          <OverviewRow label="Auth">
-            <span class="mono">{props.header.authMode}</span>
-          </OverviewRow>
-          <OverviewRow label="Forward identity">{props.header.forwardIdentity ? "On" : "Off"}</OverviewRow>
-        </>
-      ) : null}
-      <OverviewRow label="Body logging">{bodyLogging(props.overview, props.header.kind)}</OverviewRow>
-      <OverviewRow label="Redacted arguments">
-        <Paths paths={props.overview.redactedArgs} />
-      </OverviewRow>
-      <OverviewRow label="Redacted results">
-        <Paths paths={props.overview.redactedResults} />
-      </OverviewRow>
+/** A danger alert above a refused editor — never a redirect, or the choices would be
+ *  lost (§4/§5/§6's "400 redraw"). */
+const Refusal: FC<{ error: string | null }> = ({ error }) =>
+  error === null ? null : (
+    <div class="alert alert--danger" role="alert">
+      <div class="alert-text">{error}</div>
     </div>
-  </div>
+  );
+
+/** The tick glyph both the checkbox's checked state and the locked ticks draw. */
+const Check: FC = () => (
+  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
 );
 
-/* -------------------------------------------------------- agents · token --- */
+/** The dash a MIXED path wears: masked on some of its tools, and clearable on none of
+ *  them from here (§5's data-safety rule — the rows below it are where it changes). */
+const Dash: FC = () => (
+  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true">
+    <path d="M5 12h14" />
+  </svg>
+);
 
-/** One grant, as §13 spells it: `<role> · <mode>`, with the built-in `all` marked — the
- *  page's rendering of `agent_list`'s own grant string and no second read of anything. */
-const GrantChip: FC<{ chip: AppGrantChip }> = ({ chip }) => (
+/* -------------------------------------------------------------- Catalog --- */
+
+const CatalogGroupView: FC<{ group: AppCatalogGroup; href: (sel: string) => string }> = ({ group, href }) => (
   <>
-    <span class="badge badge--mono">
-      {chip.role} <span class="muted">· {chip.mode}</span>
-    </span>
-    {chip.builtin ? <span class="muted">built-in</span> : null}
+    <div class="gh">
+      <span>
+        {group.title} · {group.count}
+      </span>
+      {group.note === "" ? null : <span class="gh-note">{group.note}</span>}
+    </div>
+    {group.state === null ? (
+      group.rows.map((row) => (
+        <div class="cr">
+          <div>
+            <a class="row-link mono" href={href(row.sel)}>
+              {row.name}
+            </a>
+            {/* The app's own Markdown, inline only: a row is one line high (markdown.ts). */}
+            <div class="cr-detail md">{raw(inlineMarkdown(row.description))}</div>
+          </div>
+          <div class="cr-control">
+            <Badges badges={row.reach} empty="no agent" />
+          </div>
+        </div>
+      ))
+    ) : (
+      <p class="note gh-state">{group.state}</p>
+    )}
   </>
 );
 
-/**
- * §13's Agents pane, read-only in every sense: the slug and description are TEXT because
- * `/agents/<slug>` is deferred and a link there would be a link to a 404, and there is no
- * **Edit grants** control because the (agent × app) editor is deferred too — which is why
- * the footer states where grants ARE edited (`design/AppDetailPanes.dc.html` draws that
- * control three times; §13 removes it).
- */
-const AgentsPane: FC<AppDetailProps> = (props) => (
-  <div class="card card--pad">
-    <div class="card-head">
-      <div>
-        <h2 class="card-title">Agents with access</h2>
-        <p class="card-desc">Which agents can call this app, and how each granted role runs.</p>
-      </div>
+/** One row of the Arguments or Result card, in whichever of its two shapes it came in —
+ *  a tool's schema leaf, or a prompt's declared argument (§20.3: a prompt has no schema). */
+const ArgRow: FC<{ row: AppSchemaRow }> = ({ row }) =>
+  row.kind === "leaf" ? (
+    <div class="arg">
+      <div class="mono">{row.path}</div>
+      <div class="muted">{row.type}</div>
+      <div>{row.writeOnly ? <span class="badge badge--warning">writeOnly · masked</span> : null}</div>
     </div>
-    {props.agents.length === 0 ? (
-      <div class="empty empty--inline">
-        <div class="empty-text">No agent holds a grant on this app yet.</div>
+  ) : (
+    <div class="arg">
+      <div class="mono">{row.path}</div>
+      <div class="muted md">
+        {row.description === "" ? "—" : raw(inlineMarkdown(row.description))}
       </div>
-    ) : (
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Agent</th>
-            <th>Granted roles</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {props.agents.map((agent) => (
-            <tr>
-              <td>
-                <div class="cell-name mono">
-                  <a href={paths.agentDetail(agent.slug)}>{agent.slug}</a>
-                </div>
-                <div class="list-meta">{agent.description}</div>
-              </td>
-              <td class="badge-row">
-                {agent.chips.map((chip) => (
-                  <GrantChip chip={chip} />
-                ))}
-              </td>
-              <td class="cell-actions">
-                {/* A LINK, not a form: the editor is a page of its own (§13), so this pane
-                    fronts no `grant_set` and the pair's whole set is edited in one place. */}
-                <a class="btn btn--ghost btn--sm" href={paths.agentApp(agent.slug, props.header.slug)}>
-                  Edit grants
-                </a>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    )}
-    <p class="note">Grants are edited per agent × app pair — saving replaces that pair's whole set.</p>
-  </div>
+      <div class="muted">{row.required ? "required" : "optional"}</div>
+    </div>
+  );
+
+const ArgCard: FC<{ title: string; rows: AppSchemaRow[] }> = ({ title, rows }) => (
+  <section class="card card--pad">
+    <div class="eyebrow">{title}</div>
+    {rows.length === 0 ? <p class="note">none</p> : rows.map((row) => <ArgRow row={row} />)}
+  </section>
 );
 
-/**
- * §13's Token pane. A proxied app's is the dimmed entry's own explanation and nothing
- * else — §2's reason, so there is no control to hide and none is drawn; `token_issue`
- * refuses `kind: "app"` on that app for the same reason.
- */
-const TokenPane: FC<AppDetailProps> = (props) => (
-  <div class="card card--pad">
-    <div class="card-head">
-      <div>
-        <h2 class="card-title">App token</h2>
-        {props.header.kind === "tunnel" ? (
-          <p class="card-desc">The bot presents this token to dial in. App tokens do not expire.</p>
-        ) : null}
-      </div>
-    </div>
-    {props.header.kind === "proxy" ? (
-      <div class="empty empty--inline">
-        <div class="empty-text">
-          Proxied apps hold no tokens — the hub dials the upstream; nothing dials in (§2).
+const CatalogDetailsView: FC<{ view: AppCatalogDetails; slug: string }> = ({ view, slug }) => {
+  if (view.kind === "none") {
+    return (
+      <div class="details">
+        <div class="dh">
+          <div class="listing-title">Catalog</div>
+          <p class="note">Select a tool, prompt or resource for its details.</p>
+        </div>
+        <div class="db">
+          <section class="card card--pad">
+            <div class="eyebrow">Where this comes from</div>
+            <div class="kv">
+              <Kv k="Schemas">{view.schemas}</Kv>
+              <Kv k="Reach">computed with the gate's own matcher over each agent's grant</Kv>
+            </div>
+          </section>
         </div>
       </div>
-    ) : (
-      <>
-        {/* §13: "the same reveal the add-app flow shows" — so it IS that one, Copy button
-            and store-it warning included, with the sentence that is true of a ROTATION
-            alone added beneath rather than folded into the warning both share. */}
-        {props.reveal === null ? null : (
-          <TokenReveal token={props.reveal}>
-            <p class="note">The previous token keeps working until you revoke it.</p>
-          </TokenReveal>
+    );
+  }
+  return (
+    <div class="details">
+      <div class="dh">
+        <div class="title-row">
+          <span class="listing-title mono">{view.name}</span>
+          <span class="badge badge--muted">{view.family}</span>
+        </div>
+        {view.description === "" ? null : <div class="note md">{raw(renderMarkdown(view.description))}</div>}
+      </div>
+      <div class="db">
+        {view.resource === null ? null : (
+          <section class="card card--pad">
+            <div class="eyebrow">Resource</div>
+            <div class="kv">
+              <Kv k="URI">
+                <span class="mono">{view.resource.uri}</span>
+              </Kv>
+              <Kv k="Type">{view.resource.type === "" ? "—" : view.resource.type}</Kv>
+              <Kv k="Served on">
+                <span class="mono">{view.resource.servedOn}</span>
+              </Kv>
+              <Kv k="Matched">by URI, never by name</Kv>
+            </div>
+          </section>
         )}
-        {props.tokens.length === 0 ? (
-          <div class="empty empty--inline">
-            <div class="empty-text">No live key — this app cannot dial in until one is issued.</div>
+        {view.args === null ? null : <ArgCard title="Arguments" rows={view.args} />}
+        {view.results === null ? null : <ArgCard title="Result · outputSchema" rows={view.results} />}
+        <section class="card card--pad">
+          <div class="eyebrow">What only the hub knows</div>
+          <div class="kv">
+            {view.calledAs === null ? null : (
+              <Kv k="Called as">
+                <span class="mono">{view.calledAs}</span>
+              </Kv>
+            )}
+            <Kv k="Reachable by">
+              {view.reachableBy.length === 0
+                ? "no agent yet"
+                : view.reachableBy.map((line) => <div>{line}</div>)}
+            </Kv>
+            {view.approval === null ? null : <Kv k="Approval">{view.approval}</Kv>}
+            {view.redaction === null ? null : <Kv k="Redaction">{view.redaction}</Kv>}
+          </div>
+        </section>
+        <p class="note">
+          The same block the audit row and the agent page show for this {view.family}. Editing reach happens on{" "}
+          <a href={paths.appPane(slug, "access")}>Agents</a>, masking on{" "}
+          <a href={paths.appPane(slug, "recording")}>Recording</a>.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+const CatalogPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "catalog" } }> = ({ props, pane }) => {
+  const slug = props.header.slug;
+  const base = paths.appDetail(slug);
+  const href = (sel: string): string =>
+    `${base}?${new URLSearchParams(pane.q === "" ? { sel } : { q: pane.q, sel })}`;
+  return (
+    <>
+      {/* `--landing`: below the breakpoint this listing shows at level 1 beside the rail,
+          because the Catalog has no second URL to be level 2 at (model's `appLevel`). */}
+      <div class="listing listing--landing">
+        <div class="lh">
+          <div class="title-row">
+            <span class="listing-title">Catalog</span>
+            <span class="note">{pane.subtitle}</span>
+          </div>
+          <div class="sum">{pane.summary}</div>
+          <form method="get" action={base} class="lh-filter">
+            <input
+              type="search"
+              name="q"
+              value={pane.q}
+              placeholder="filter tools, prompts, resources…"
+              aria-label="Filter"
+            />
+          </form>
+        </div>
+        <div class="scroll">
+          {pane.state === null ? (
+            pane.groups.map((group) => <CatalogGroupView group={group} href={href} />)
+          ) : (
+            <div class="empty empty--inline">
+              <div class="empty-text">{pane.state.text}</div>
+              {pane.state.reconnect && props.header.connect !== null ? (
+                <form method="post" action={props.header.connect.href}>
+                  <input type="hidden" name="csrf" value={props.csrfToken} />
+                  <button type="submit" class="btn btn--outline btn--sm">
+                    {props.header.connect.label}
+                  </button>
+                </form>
+              ) : null}
+            </div>
+          )}
+        </div>
+      </div>
+      <CatalogDetailsView view={pane.details} slug={slug} />
+    </>
+  );
+};
+
+/* ---------------------------------------------------------------- Roles --- */
+
+/** The small source badge: `built-in` / `app` / `app · replaced yours` / `yours`. */
+const SourceBadge: FC<{ row: Pick<AppRoleRow, "source" | "sourceTitle"> }> = ({ row }) => (
+  <span
+    class={row.source === "yours" ? "badge badge--success badge--xs" : "badge badge--xs"}
+    title={row.sourceTitle ?? undefined}
+  >
+    {row.source}
+  </span>
+);
+
+const RoleDetailsView: FC<{ props: AppDetailProps; view: AppRoleDetails }> = ({ props, view }) => {
+  const slug = props.header.slug;
+  const base = paths.appPane(slug, "roles");
+  if (view.kind === "none") {
+    return (
+      <div class="details">
+        <div class="dh">
+          <div class="listing-title">Roles</div>
+          <p class="note">Select a role to see what it can do, or add one of your own.</p>
+        </div>
+        <div class="db">
+          <section class="card card--pad">
+            <div class="eyebrow">Two sources, one rule</div>
+            <div class="kv">
+              <Kv k="The app's">{view.appsOwn}</Kv>
+              <Kv k="Yours">defined here by ticking items or adding patterns; usable in grants like any role</Kv>
+              <Kv k="Collision">
+                if the app later declares a name you defined, its declaration replaces yours — the row says so
+              </Kv>
+            </div>
+          </section>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div class="details">
+      <div class="dh">
+        <div class="title-row">
+          {view.isNew ? (
+            // Outside the form below it, and bound to it by `form=`: the filter under this
+            // header is a GET form of its own, so the two cannot nest.
+            <input
+              class="input input--mono input--auto"
+              type="text"
+              name="role"
+              form={ROLE_FORM}
+              value={view.name}
+              placeholder="role name"
+              pattern="[a-z0-9_-]+"
+              aria-label="Role name"
+            />
+          ) : (
+            <span class="listing-title mono">{view.name}</span>
+          )}
+          <span class={view.source === "yours" ? "badge badge--success" : "badge badge--muted"}>{view.badge}</span>
+          <span class="title-row-end">
+            <Badges badges={view.holders} empty={view.isNew ? "" : "held by no agent"} />
+          </span>
+        </div>
+        <p class="note">{view.explain}</p>
+        {view.editable ? (
+          <form method="get" action={base} class="lh-filter">
+            {view.isNew ? <input type="hidden" name="new" value="1" /> : <input type="hidden" name="sel" value={`role:${view.name}`} />}
+            <input type="search" name="q" value={view.q} placeholder="filter, or type a pattern…" aria-label="Filter" />
+          </form>
+        ) : null}
+      </div>
+      <Refusal error={view.error} />
+      <form id={ROLE_FORM} method="post" action={paths.appRoleSet(slug)} class="listing-form">
+        <input type="hidden" name="csrf" value={props.csrfToken} />
+        {/* The role being edited (empty for a new one) and, for a saved role, its name —
+            the new-role name rides the input above through `form=`. */}
+        <input type="hidden" name="was" value={view.isNew ? "" : view.name} />
+        {view.isNew ? null : <input type="hidden" name="role" value={view.name} />}
+        <div class="scroll">
+          {view.groups.map((group) => (
+            <>
+              <div class="gh sticky">
+                <span>
+                  {group.title} · {group.count}
+                </span>
+              </div>
+              {group.state === null ? (
+                group.rows.map((row) => (
+                  <div class="cr">
+                    <div>
+                      <span class="mono">{row.name}</span>
+                      <div class="cr-detail">
+                        <span class="md">{raw(inlineMarkdown(row.description))}</span>
+                        {row.via.length === 0 ? null : (
+                          <>
+                            {" "}
+                            · via <span class="mono">{row.via.join(", ")}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div class="cr-control">
+                      {row.locked ? (
+                        <span class="cb lock" title={row.lockTitle}>
+                          <Check />
+                        </span>
+                      ) : row.field === "" ? (
+                        <span class="cb" title={row.lockTitle} aria-hidden="true"></span>
+                      ) : (
+                        <input class="cb" type="checkbox" name={row.field} value="1" checked={row.checked} aria-label={row.name} />
+                      )}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p class="note gh-state">{group.state}</p>
+              )}
+            </>
+          ))}
+          {view.patterns.length === 0 && view.offer === null ? null : (
+            <>
+              <div class="gh sticky">
+                <span>Patterns · {view.patterns.length}</span>
+                <span class="gh-note">anchored · * aliases .*</span>
+              </div>
+              {view.patterns.map((row) => (
+                <div class="cr">
+                  <div>
+                    <span class="mono">{row.pattern}</span> <span class="ty">{row.family}</span>
+                    <div class="cr-detail">{row.detail}</div>
+                  </div>
+                  <div class="cr-control">
+                    {row.editable ? (
+                      <button type="submit" class="cb on" name="drop" value={row.entry} title="remove this pattern">
+                        <Check />
+                      </button>
+                    ) : (
+                      <span class="cb lock" title="in this role">
+                        <Check />
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {view.offer === null ? null : (
+                <div class="cr">
+                  <div>
+                    <span class="mono">{view.offer.pattern}</span> <span class="ty">{view.offer.family}</span>
+                    <div class="cr-detail">{view.offer.detail}</div>
+                  </div>
+                  <div class="cr-control">
+                    <button type="submit" class="btn btn--outline btn--sm" name="add" value={view.offer.pattern}>
+                      Add as pattern
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        {/* A pattern this render still LISTS survives the save: the checkboxes name
+            literals only, so without these the composer would read a pattern row the owner
+            never touched as one they removed (§4). */}
+        {view.keep.map((entry) => (
+          <input type="hidden" name="keep" value={entry} />
+        ))}
+        {view.editable ? (
+          <div class="save">
+            {view.isNew ? (
+              <span class="muted">nothing saved yet</span>
+            ) : (
+              <span class="save-end">
+                <button type="submit" class="btn btn--danger-outline btn--sm" name="delete" value="1">
+                  Delete role
+                </button>
+                <span class="muted">grants naming it keep the name and match nothing until it exists again</span>
+              </span>
+            )}
+            <span class="save-end">
+              <a class="btn btn--ghost btn--sm" href={base}>
+                Discard
+              </a>
+              <button type="submit" class="btn btn--primary btn--sm">
+                Save
+              </button>
+            </span>
+          </div>
+        ) : null}
+      </form>
+    </div>
+  );
+};
+
+const RolesPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "roles" } }> = ({ props, pane }) => {
+  const slug = props.header.slug;
+  const base = paths.appPane(slug, "roles");
+  return (
+    <>
+      <div class="listing">
+        <div class="lh">
+          <div class="title-row">
+            <span class="listing-title">Roles</span>
+            <span class="note">named sets of what this app exposes</span>
+          </div>
+          <div class="sum">{pane.summary}</div>
+        </div>
+        <div class="scroll">
+          {pane.rows.map((row) => (
+            <div class="cr">
+              <div>
+                <a class="row-link mono" href={`${base}?sel=${row.sel}`}>
+                  {row.name}
+                </a>{" "}
+                <SourceBadge row={row} />
+                <div class="cr-detail">{row.detail}</div>
+              </div>
+              <div class="cr-control">
+                <Badges badges={row.holders} empty="held by no agent" />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div class="save">
+          <a class="btn btn--outline btn--sm" href={`${base}?new=1`}>
+            New role
+          </a>
+        </div>
+      </div>
+      <RoleDetailsView props={props} view={pane.details} />
+    </>
+  );
+};
+
+/* ------------------------------------------------------------ Recording --- */
+
+const RecordingSectionView: FC<{ section: AppRecordingSection }> = ({ section }) => (
+  <>
+    <div class="gh sticky">
+      <span>
+        {section.title} · {section.count} path{section.count === 1 ? "" : "s"}
+      </span>
+      <span class="gh-note">{section.note}</span>
+    </div>
+    {section.state === null ? (
+      section.rows.map((row) => (
+        <>
+          <div class="cr">
+            <div>
+              <span class="mono">{row.path}</span> <span class="ty">{row.type}</span>
+              <div class="cr-detail">
+                {row.detail}
+                {row.which === null ? null : (
+                  <>
+                    {" "}
+                    <a href={row.which.href}>{row.which.label}</a>
+                  </>
+                )}
+              </div>
+            </div>
+            <div class="cr-control">
+              {row.control.kind === "locked" ? (
+                <span class="cb lock" title="declared writeOnly by the app — always masked">
+                  <Check />
+                </span>
+              ) : row.control.kind === "mixed" ? (
+                <span class="cb mixed" title="masked on some of its tools — set it per tool below">
+                  <Dash />
+                </span>
+              ) : (
+                <input
+                  class="cb"
+                  type="checkbox"
+                  name={row.control.field}
+                  value="1"
+                  checked={row.control.checked}
+                  aria-label={`mask ${row.path}`}
+                  title="mask on every tool that takes it"
+                />
+              )}
+            </div>
+          </div>
+          {row.tools.map((tool) => (
+            <div class="cr cr--sub">
+              <div>
+                <span class="mono">{tool.tool}</span>
+                {tool.writeOnly ? <div class="cr-detail">declared by the app — always masked</div> : null}
+              </div>
+              <div class="cr-control">
+                {tool.writeOnly ? (
+                  <span class="cb lock">
+                    <Check />
+                  </span>
+                ) : (
+                  <input
+                    class="cb"
+                    type="checkbox"
+                    name={tool.field}
+                    value="1"
+                    checked={tool.checked}
+                    aria-label={`mask ${row.path} on ${tool.tool}`}
+                  />
+                )}
+              </div>
+            </div>
+          ))}
+        </>
+      ))
+    ) : (
+      <p class="note gh-state">{section.state}</p>
+    )}
+    {section.noSchema === null ? null : <p class="note gh-state">{section.noSchema}</p>}
+  </>
+);
+
+const MaskedCard: FC<{ card: AppRecordingCard }> = ({ card }) => (
+  <section class="card card--pad">
+    <div class="eyebrow">{card.title}</div>
+    {card.rows.length === 0 ? (
+      <p class="note">{card.empty}</p>
+    ) : (
+      card.rows.map((row) => (
+        <div class="kv-row">
+          <div class="mono">{row.path}</div>
+          <div class="muted">{row.detail}</div>
+        </div>
+      ))
+    )}
+  </section>
+);
+
+const RecordingPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "recording" } }> = ({ props, pane }) => {
+  const slug = props.header.slug;
+  const base = paths.appPane(slug, "recording");
+  return (
+    <>
+      <div class="listing">
+        <div class="lh">
+          <div class="title-row title-row--split">
+            <span class="listing-title">Recording</span>
+            <span class="note">what the audit trail keeps, and what it masks</span>
+            {/* A real checkbox styled as the switch, bound to the form below by `form=`:
+                the label is visible text, so the state is readable without the colour. */}
+            <label class="sw-label title-row-end">
+              <span>Record call bodies</span>
+              <input class="sw" type="checkbox" name="log" value="1" checked={pane.log} form={RECORDING_FORM} />
+            </label>
+          </div>
+          <div class="sum">{pane.summary}</div>
+          <form method="get" action={base} class="lh-filter">
+            <input type="search" name="q" value={pane.q} placeholder="filter paths…" aria-label="Filter" />
+          </form>
+        </div>
+        {pane.warning === null ? null : (
+          <div class="alert alert--warning" role="status">
+            <div class="alert-text">{pane.warning}</div>
+          </div>
+        )}
+        <Refusal error={pane.error} />
+        <form id={RECORDING_FORM} method="post" action={paths.appRecordingSet(slug)} class="listing-form">
+          <input type="hidden" name="csrf" value={props.csrfToken} />
+          <div class="scroll">
+            {pane.sections.map((section) => (
+              <RecordingSectionView section={section} />
+            ))}
+          </div>
+          {/* Every stored entry these rows do not represent, so a save never drops one. */}
+          {pane.keep.map((field) => (
+            <input type="hidden" name={field.field} value={field.value} />
+          ))}
+          <div class="save">
+            <a href={pane.auditHref}>Recorded calls to {slug} →</a>
+            <span class="save-end">
+              <a class="btn btn--ghost btn--sm" href={base}>
+                Discard
+              </a>
+              <button type="submit" class="btn btn--primary btn--sm">
+                Save
+              </button>
+            </span>
+          </div>
+        </form>
+      </div>
+      <div class="details">
+        <div class="dh">
+          <div class="listing-title">Masked before recording</div>
+          <p class="note">{pane.intro}</p>
+        </div>
+        <div class="db">
+          {pane.cards.map((card) => (
+            <MaskedCard card={card} />
+          ))}
+          <section class="card card--pad">
+            <div class="eyebrow">What a recorded call keeps</div>
+            <div class="kv">
+              <Kv k="Arguments">
+                <span class="mono">params.arguments</span>, post-redaction
+              </Kv>
+              <Kv k="Results">
+                <span class="mono">structuredContent</span> post-redaction; text, image and resource blocks become
+                size stubs, never bytes
+              </Kv>
+              <Kv k="Cap">
+                16 KiB per body — an over-cap body is one <span class="mono">oversize</span> stub
+              </Kv>
+              <Kv k="Kept for">
+                7 days, then pruned with the rest of the audit table ·{" "}
+                <a href={paths.auditExport({ app: slug })}>Export JSONL</a> to keep longer
+              </Kv>
+              <Kv k="Never">
+                refused calls, token material, <span class="mono">writeOnly</span> and config-masked fields
+              </Kv>
+            </div>
+          </section>
+          <p class="note">
+            A tick writes one literal (tool, path) entry per tool; nothing here is a pattern and nothing is typed.
+            Masking applies to the approval record too.
+          </p>
+        </div>
+      </div>
+    </>
+  );
+};
+
+/* ------------------------------------------------------------- Overview --- */
+
+const OverviewPane: FC<{ pane: AppPaneView & { kind: "overview" } }> = ({ pane }) => (
+  <div class="listing listing--wide">
+    <div class="lh">
+      <span class="listing-title">Overview</span>
+    </div>
+    <div class="scroll">
+      <div class="kv kv--pad">
+        {pane.rows.map((row) => (
+          <div class="kv-row">
+            <div class="kv-key">{row.key}</div>
+            <div class={row.mono ? "mono" : undefined}>{row.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
+/* --------------------------------------------------------------- Agents --- */
+
+const AccessDetailsView: FC<{ props: AppDetailProps; view: AppAccessDetails }> = ({ props, view }) => {
+  const slug = props.header.slug;
+  if (view.kind === "none") {
+    return (
+      <div class="details">
+        <div class="dh">
+          <div class="listing-title">Agents</div>
+          <p class="note">Select an agent to edit what it may call on {slug}.</p>
+        </div>
+        <div class="db">
+          <section class="card card--pad">
+            <div class="eyebrow">Per tool</div>
+            <div class="kv">
+              {view.perTool.map((row) => (
+                <Kv k={row.name}>{row.agents}</Kv>
+              ))}
+            </div>
+            {view.more === 0 ? null : <p class="note">… {view.more} more in the Catalog</p>}
+          </section>
+        </div>
+      </div>
+    );
+  }
+  // A grant row's `?sel=` belongs to the AGENT page, whose details pane explains a role,
+  // a pattern or an item; here `sel` already names the agent being edited, so the rows
+  // link where the explanation actually lives.
+  const href = (sel: string): string => `${view.agentHref}?${new URLSearchParams({ sel })}`;
+  return (
+    <div class="details">
+      <div class="dh">
+        <div class="title-row">
+          <span class="listing-title mono">{view.slug}</span>
+          <span class="badge badge--muted">agent</span>
+          {view.description === "" ? null : <span class="note">{view.description}</span>}
+          {view.newGrant ? <span class="badge badge--warning badge--dashed">new grant · nothing saved yet</span> : null}
+          <a class="title-row-end" href={view.agentHref}>
+            open agent page
+          </a>
+        </div>
+        <p class="note">
+          {view.slug}'s grant on {slug}. Solid: set on the row · hollow: implied by a role · a row cannot lower what
+          a role grants.
+        </p>
+        <div class="sum">{reachLine(view.slug, view.reach)}</div>
+      </div>
+      <Refusal error={view.error} />
+      <form method="post" action={paths.appGrantSet(slug)} class="listing-form">
+        <input type="hidden" name="csrf" value={props.csrfToken} />
+        <input type="hidden" name="agent" value={view.slug} />
+        <div class="scroll">
+          {view.groups.map((group) => (
+            <GrantGroup group={group} href={href} />
+          ))}
+        </div>
+        {/* What this render drew no control for still belongs to the set, and Save replaces
+            the set whole — so it rides along as a hidden field. */}
+        {view.carry.map((field) => (
+          <input type="hidden" name={field.field} value={field.value} />
+        ))}
+        <div class="save">
+          <a
+            class="btn btn--danger-outline btn--sm"
+            href={paths.appConfirmAgent(slug, "remove-agent", view.slug)}
+          >
+            Remove {view.slug}
+          </a>
+          <span class="save-end">
+            <a class="btn btn--ghost btn--sm" href={paths.appPane(slug, "access")}>
+              Discard
+            </a>
+            <button type="submit" class="btn btn--primary btn--sm">
+              Save
+            </button>
+          </span>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+const AccessPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "access" } }> = ({ props, pane }) => {
+  const slug = props.header.slug;
+  const base = paths.appPane(slug, "access");
+  return (
+    <>
+      <div class="listing">
+        <div class="lh">
+          <div class="title-row">
+            <span class="listing-title">Agents</span>
+            <span class="note">who can call this app, and how</span>
+          </div>
+          <div class="sum">{pane.summary}</div>
+        </div>
+        <div class="scroll">
+          {pane.rows.map((row) => (
+            <div class="cr">
+              <div>
+                <a class="row-link mono" href={`${base}?sel=${row.sel}`}>
+                  {row.slug}
+                </a>{" "}
+                <span class="note">{row.description}</span>
+                <div class="cr-detail">
+                  <div>
+                    <span class="muted">allowed</span>{" "}
+                    {row.allowed.length === 0 ? (
+                      <span class="muted">—</span>
+                    ) : (
+                      row.allowed.map((entry) => <span class="badge badge--mono">{entry}</span>)
+                    )}
+                  </div>
+                  <div>
+                    <span class="muted">ask first</span>{" "}
+                    {row.askFirst.length === 0 ? (
+                      <span class="muted">—</span>
+                    ) : (
+                      row.askFirst.map((entry) => <span class="badge badge--warning">{entry}</span>)
+                    )}
+                  </div>
+                  <div>{row.reach}</div>
+                </div>
+              </div>
+              <div class="cr-control"></div>
+            </div>
+          ))}
+          <p class="note gh-state">
+            Granting a new agent starts from the agent's own page — <a href={paths.agents}>Agents</a> → the agent →
+            Grant another app.
+          </p>
+        </div>
+      </div>
+      <AccessDetailsView props={props} view={pane.details} />
+    </>
+  );
+};
+
+/* ---------------------------------------------------------------- Token --- */
+
+const TokenPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "token" } }> = ({ props, pane }) => {
+  const slug = props.header.slug;
+  const base = paths.appPane(slug, "token");
+  if (pane.proxied) {
+    return (
+      <div class="listing listing--wide">
+        <div class="lh">
+          <span class="listing-title">Token</span>
+        </div>
+        <div class="scroll">
+          <p class="note gh-state">
+            Proxied apps hold no tokens — the hub dials the upstream; nothing dials in.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  const isNew = (row: AppTokenRow): boolean =>
+    pane.details.kind === "token" && pane.details.isNew && pane.details.row.id === row.id;
+  return (
+    <>
+      <div class="listing">
+        <div class="lh">
+          <div class="title-row title-row--split">
+            <span class="listing-title">Token</span>
+            <span class="note">what the app presents to dial in</span>
+            {/* The one mutation on this page that answers 200 rather than the redirect-back:
+                a plaintext key must never ride a URL (§15), so its own route re-renders this
+                pane with the reveal in place. */}
+            <form
+              method="post"
+              action={paths.appOp(slug, "token_issue", { kind: "app", slug })}
+              class="title-row-end"
+            >
+              <input type="hidden" name="csrf" value={props.csrfToken} />
+              <button type="submit" class="btn btn--outline btn--sm">
+                Issue new token
+              </button>
+            </form>
+          </div>
+          <div class="sum">{pane.summary}</div>
+        </div>
+        <div class="scroll">
+          {pane.rows.length === 0 ? (
+            <p class="note gh-state">No live token — the app cannot connect until one is issued.</p>
+          ) : (
+            pane.rows.map((row) => (
+              <div class="cr">
+                <div>
+                  <a class="row-link mono" href={`${base}?sel=token:${row.id}`}>
+                    {row.prefix}
+                  </a>
+                  {row.live ? <> <span class="badge badge--success">holds the live socket</span></> : null}
+                  {isNew(row) ? <> <span class="badge badge--success badge--dashed">new</span></> : null}
+                  <div class="cr-detail">
+                    issued {formatLastSeen(row.createdAt, props.now)} ·{" "}
+                    {row.lastUsedAt === null ? "never used" : `used ${formatLastSeen(row.lastUsedAt, props.now)}`}
+                  </div>
+                </div>
+                <div class="cr-control">
+                  <a
+                    class="btn btn--danger-outline btn--sm"
+                    href={paths.appConfirm(slug, "token", "revoke-token", row.id)}
+                  >
+                    Revoke
+                  </a>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+      <div class="details">
+        {pane.details.kind === "none" ? (
+          <div class="dh">
+            <div class="listing-title">Token</div>
+            <p class="note">Select a token for its details.</p>
           </div>
         ) : (
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Token</th>
-                <th>Issued</th>
-                <th>Last used</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {props.tokens.map((token) => (
-                <tr>
-                  <td class="cell-mono">{token.prefix}</td>
-                  <td class="cell-muted">{formatLastSeen(token.createdAt, props.now)}</td>
-                  <td class="cell-muted">
-                    {token.lastUsedAt === null ? "never" : formatLastSeen(token.lastUsedAt, props.now)}
-                  </td>
-                  <td class="cell-actions">
-                    {/* Behind the dialog §13 gives it, so the destructive form exists only
-                        under the pane's own `?confirm=` URL. */}
-                    <a
-                      class="btn btn--danger-outline btn--sm"
-                      href={paths.appConfirm(props.header.slug, "token", "revoke-token", token.id)}
-                    >
-                      Revoke
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            <div class="dh">
+              <div class="title-row">
+                <span class="listing-title mono">{pane.details.row.prefix}</span>
+                <span class="badge badge--muted">app token</span>
+              </div>
+              <p class="note">Only valid for opening the reverse WebSocket as {slug}.</p>
+            </div>
+            <div class="db">
+              {props.reveal === null || !pane.details.isNew ? null : (
+                <section class="card card--pad">
+                  <div class="eyebrow">Shown once — copy it now</div>
+                  <TokenReveal token={props.reveal}>
+                    <p class="note">The previous token keeps working until you revoke it.</p>
+                  </TokenReveal>
+                </section>
+              )}
+              <section class="card card--pad">
+                <div class="kv">
+                  <Kv k="Issued">{formatStamp(pane.details.row.createdAt)}</Kv>
+                  <Kv k="Expires">never — revoke on compromise</Kv>
+                  <Kv k="Last used">
+                    {pane.details.row.lastUsedAt === null
+                      ? "never"
+                      : formatLastSeen(pane.details.row.lastUsedAt, props.now)}
+                  </Kv>
+                  <Kv k="Connection">{pane.details.row.live ? "holds the live socket now" : "none"}</Kv>
+                </div>
+              </section>
+            </div>
+          </>
         )}
-        {/* The one mutation on this page that answers 200 rather than the generic
-            redirect-back: a plaintext key must never ride a URL (§15), so the reveal is
-            rendered in place by a route of its own. */}
-        <form
-          method="post"
-          action={paths.appOp(props.header.slug, "token_issue", { kind: "app", slug: props.header.slug })}
-          class="actions actions--start"
-        >
-          <input type="hidden" name="csrf" value={props.csrfToken} />
-          <button type="submit" class="btn btn--outline btn--sm">
-            Issue new token
-          </button>
-        </form>
-      </>
-    )}
-  </div>
-);
+      </div>
+    </>
+  );
+};
 
-/* ------------------------------------------------------------ danger zone --- */
+/* ----------------------------------------------------------- Danger zone --- */
 
-/** One danger-zone control: what it does, said in §13's own sentence, and the link that
- *  opens its dialog. Unarchive is the exception §13 makes — it destroys nothing, so it is
- *  the form itself. */
-const DangerRow: FC<{ title: string; text: string; children?: unknown }> = ({ title, text, children }) => (
-  <div class="list-item">
-    <div>
-      <div class="list-title">{title}</div>
-      <div class="list-meta">{text}</div>
+const DangerPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "danger" } }> = ({ props, pane }) => {
+  const slug = props.header.slug;
+  return (
+    <div class="listing listing--wide">
+      <div class="lh">
+        <span class="listing-title">Danger zone</span>
+      </div>
+      <div class="scroll">
+        <div class="db">
+          <section class="card card--pad">
+            <h2 class="card-title">{pane.archived ? "Unarchive" : `Archive ${slug}`}</h2>
+            <p class="card-desc">
+              {pane.archived
+                ? "It accepts connections again, with everything it kept while archived."
+                : "It refuses connections and leaves the list — tokens, grants and history are kept."}
+            </p>
+            <div class="actions actions--start">
+              {pane.archived ? (
+                <form method="post" action={paths.appOp(slug, "app_unarchive", { slug })}>
+                  <input type="hidden" name="csrf" value={props.csrfToken} />
+                  <button type="submit" class="btn btn--outline btn--sm">
+                    Unarchive
+                  </button>
+                </form>
+              ) : (
+                <a class="btn btn--outline btn--sm" href={paths.appConfirm(slug, "danger", "archive")}>
+                  Archive {slug}
+                </a>
+              )}
+            </div>
+          </section>
+          <section class="card card--pad card--danger">
+            <h2 class="card-title">Delete {slug}</h2>
+            <p class="card-desc">
+              Revokes its {pane.tokens} token{pane.tokens === 1 ? "" : "s"}, closes the live connection and removes
+              every grant ({pane.agents} agent{pane.agents === 1 ? "" : "s"}). This cannot be undone.
+            </p>
+            <div class="actions actions--start">
+              <a class="btn btn--danger-outline btn--sm" href={paths.appConfirm(slug, "danger", "delete")}>
+                Delete {slug}
+              </a>
+            </div>
+          </section>
+        </div>
+      </div>
     </div>
-    <div class="actions">{children}</div>
-  </div>
-);
-
-const DangerPane: FC<AppDetailProps> = (props) => (
-  <div class="card card--pad">
-    <h2 class="card-title">Danger zone</h2>
-    <div class="list">
-      {props.header.archived ? (
-        <DangerRow
-          title="Unarchive this app"
-          text="It accepts connections again, with everything it kept while archived."
-        >
-          <form method="post" action={paths.appOp(props.header.slug, "app_unarchive", { slug: props.header.slug })}>
-            <input type="hidden" name="csrf" value={props.csrfToken} />
-            <button type="submit" class="btn btn--outline btn--sm">
-              Unarchive
-            </button>
-          </form>
-        </DangerRow>
-      ) : (
-        <DangerRow
-          title="Archive this app"
-          text="It refuses connections and leaves the list — tokens, grants and history are kept."
-        >
-          <a class="btn btn--outline btn--sm" href={paths.appConfirm(props.header.slug, "danger", "archive")}>
-            Archive
-          </a>
-        </DangerRow>
-      )}
-      <DangerRow
-        title="Delete this app"
-        text="Revokes its tokens, closes the live connection and removes every grant. This cannot be undone."
-      >
-        <a class="btn btn--danger-outline btn--sm" href={paths.appConfirm(props.header.slug, "danger", "delete")}>
-          Delete
-        </a>
-      </DangerRow>
-    </div>
-  </div>
-);
+  );
+};
 
 /* ---------------------------------------------------------------- dialogs --- */
 
-const DIALOG_ID = "confirm-app";
-
 /**
- * The three destructive confirmations `/apps/<slug>` raises, as server-rendered
+ * The four destructive confirmations `/apps/<slug>` raises, as server-rendered
  * `<dialog open>` state — so each works with scripting off and is reachable from a URL, a
  * fixture and a bookmark alike. Every one rides, and cancels back to, the pane that drew
  * its control (§13's "confirm-dialog state rides the owning pane's URL").
@@ -930,35 +1141,53 @@ const AppConfirmDialog: FC<{ confirm: AppConfirm; slug: string; csrfToken: strin
   csrfToken,
 }) => {
   const pane = paths.appPane(slug, APP_CONFIRM_PANE[confirm.kind]);
-  let title: string;
-  let text: string;
-  let action: string;
-  let word: string;
-  if (confirm.kind === "revoke-token") {
-    title = `Revoke “${confirm.prefix}”?`;
-    text = "Revoking closes the app's live connection.";
-    action = paths.appOp(slug, "token_revoke", { id: confirm.id });
-    word = "Revoke";
-  } else if (confirm.kind === "archive") {
-    title = `Archive “${slug}”?`;
-    text = "It refuses connections and leaves the list — tokens, grants and history are kept.";
-    action = paths.appOp(slug, "app_archive", { slug });
-    word = "Archive";
-  } else {
-    title = `Delete “${slug}”?`;
-    text = "Revokes its tokens, closes the live connection and removes every grant. This cannot be undone.";
-    action = paths.appOp(slug, "app_delete", { slug });
-    word = "Delete";
-  }
+  const spec =
+    confirm.kind === "revoke-token"
+      ? {
+          title: `Revoke “${confirm.prefix}”?`,
+          text: confirm.live
+            ? "Revoking closes the app's live connection."
+            : "The app can no longer connect with it.",
+          action: paths.appOp(slug, "token_revoke", { id: confirm.id }),
+          word: "Revoke",
+        }
+      : confirm.kind === "remove-agent"
+        ? {
+            title: `Remove ${confirm.agent} from ${slug}?`,
+            text: `${confirm.agent} loses every entry on ${slug}. History stays; a waiting request expires.`,
+            action: paths.appGrantSet(slug),
+            word: "Remove",
+          }
+        : confirm.kind === "archive"
+          ? {
+              title: `Archive “${slug}”?`,
+              text: "It refuses connections and leaves the list — tokens, grants and history are kept.",
+              action: paths.appOp(slug, "app_archive", { slug }),
+              word: "Archive",
+            }
+          : {
+              title: `Delete “${slug}”?`,
+              text: "Revokes its tokens, closes the live connection and removes every grant. This cannot be undone.",
+              action: paths.appOp(slug, "app_delete", { slug }),
+              word: "Delete",
+            };
   return (
-    <ConfirmShell id={DIALOG_ID} title={title} text={text}>
-      <form method="post" action={action} class="actions">
+    <ConfirmShell id={DIALOG_ID} title={spec.title} text={spec.text}>
+      <form method="post" action={spec.action} class="actions">
         <input type="hidden" name="csrf" value={csrfToken} />
+        {/* The whole set, cleared: `grant_set` replaces it, so an empty one IS the removal
+            — the same op Save posts, with nothing to compose. */}
+        {confirm.kind === "remove-agent" ? (
+          <>
+            <input type="hidden" name="agent" value={confirm.agent} />
+            <input type="hidden" name="clear" value="1" />
+          </>
+        ) : null}
         <a class="btn btn--ghost" href={pane}>
           Cancel
         </a>
         <button type="submit" class="btn btn--danger">
-          {word}
+          {spec.word}
         </button>
       </form>
     </ConfirmShell>
@@ -967,56 +1196,66 @@ const AppConfirmDialog: FC<{ confirm: AppConfirm; slug: string; csrfToken: strin
 
 /* ------------------------------------------------------------- the panes --- */
 
-const Pane: FC<AppDetailProps> = (props) => {
-  if (props.pane === "tools") return <ToolsPane {...props} />;
-  if (props.pane === "prompts") return <PromptsPane {...props} />;
-  if (props.pane === "resources") return <ResourcesPane {...props} />;
-  if (props.pane === "roles") return <RolesPane {...props} />;
-  if (props.pane === "overview") return <OverviewPane {...props} />;
-  if (props.pane === "access") return <AgentsPane {...props} />;
-  if (props.pane === "token") return <TokenPane {...props} />;
-  return <DangerPane {...props} />;
+const Pane: FC<{ props: AppDetailProps }> = ({ props }) => {
+  const pane = props.pane;
+  if (pane.kind === "catalog") return <CatalogPane props={props} pane={pane} />;
+  if (pane.kind === "roles") return <RolesPane props={props} pane={pane} />;
+  if (pane.kind === "recording") return <RecordingPane props={props} pane={pane} />;
+  if (pane.kind === "overview") return <OverviewPane pane={pane} />;
+  if (pane.kind === "access") return <AccessPane props={props} pane={pane} />;
+  if (pane.kind === "token") return <TokenPane props={props} pane={pane} />;
+  return <DangerPane props={props} pane={pane} />;
 };
 
 /* ------------------------------------------------------------------ page --- */
 
 export const AppDetailPage: FC<AppDetailProps> = (props) => {
   const entries = paneEntries(props);
+  const header = props.header;
   return (
     <Layout
-      title={`${props.header.name} · personal-mcps`}
+      title={`${header.name} · Apps · personal-mcps`}
       active={props.section}
       username={props.username}
       pendingApprovals={props.pendingApprovals}
     >
-      {/* `data-level` is read by the narrow stylesheet ALONE: 1 shows the rail as a list,
-          2 the pane; the wide one never looks (§13's two levels, as the agent page's three). */}
+      {/* `data-level` is read by the narrow stylesheet ALONE: it shows one of the rail, the
+          listing and the details by it, and the wide one never looks. */}
       <main class="page--workspace" data-level={String(props.level)}>
         <LevelHeader header={props.levelHeader} />
 
         <div class="page-head">
-          {/* ONE row (AgentDetail's rule, 2026-09-16): the crumb, the name and the badges
-              together — a crumb on a line of its own spent a whole line saying "Apps" and
-              then the slug the badge beside the name says again. */}
-          <div class="title-row">
-            <a class="crumb" href={paths.apps}>
-              Apps
-            </a>
-            <span class="crumb-sep" aria-hidden="true">
-              ›
-            </span>
-            <h1 class="page-title">{props.header.name}</h1>
-            <HeaderBadges header={props.header} />
+          <div>
+            {/* ONE row: where the page sits, what it is, and what it is called. */}
+            <div class="title-row">
+              <a class="crumb" href={paths.apps}>
+                Apps
+              </a>
+              <span class="crumb-sep" aria-hidden="true">
+                ›
+              </span>
+              <h1 class="page-title">{header.name}</h1>
+              <div class="badge-row">
+                <span class="badge badge--title badge--mono">{header.slug}</span>
+                <span class="badge badge--title badge--mono">{header.kind}</span>
+                {header.status === null ? null : (
+                  <span class={`${STATUS_CLASS[header.status] ?? "badge badge--muted"} badge--title`}>
+                    {header.status}
+                  </span>
+                )}
+              </div>
+            </div>
+            {header.description === "" ? null : <p class="page-subtitle">{header.description}</p>}
           </div>
-          {props.header.kind === "tunnel" ? (
-            <p class="note">Last seen {formatLastSeen(props.header.lastSeen, props.now)}</p>
-          ) : null}
+          {/* ONE line, the parts separated by the hub's own middot — five tiles side by side
+              would read as five independent facts rather than one partition. */}
+          <div class="tiles">{header.tiles}</div>
         </div>
 
         {/* §13's archived banner, on every pane rather than on the danger zone alone: an
-            archived app's page stays reachable and everything on it is still listed, so
-            the one thing a reader needs on any of them is why nothing connects. */}
-        {props.header.archived ? (
+            archived app's page stays reachable and everything on it is still listed, so the
+            one thing a reader needs on any of them is why nothing connects. */}
+        {header.archived ? (
           <div class="alert alert--warning" role="status">
             <div class="alert-text">
               Archived apps refuse connections; everything is kept — tokens, grants and audit history.
@@ -1033,28 +1272,24 @@ export const AppDetailPage: FC<AppDetailProps> = (props) => {
           </div>
         )}
 
-        {/* `--framed`: the rail and the pane are ONE box here as they are on the agent
-            page, so the three paned pages read as one family
-            (design/layout-and-density.md §2 "Page width by shape"). Below the split
-            breakpoint the frame goes and `data-level` picks the rail or the pane. */}
+        {/* The proxied header card sits ABOVE the framed box on every pane except Overview,
+            which prints those same three facts as its own first rows (§2). */}
+        {header.kind === "proxy" ? (
+          <UpstreamCard header={header} csrfToken={props.csrfToken} rows={props.pane.kind !== "overview"} />
+        ) : null}
+
+        {/* `--framed`: the rail and the panes are ONE box here as they are on the agent
+            page, so the paned pages read as one family. */}
         <div class="paned paned--framed">
           <PaneRail label={RAIL_NAV_LABEL} groups={paneGroups(entries)} />
-          <div class="pane">
-            {props.header.kind === "proxy" ? (
-              // §13 gives the endpoint, auth mode and forward identity to the header AND
-              // to Overview, so on that one pane the card's rows would be the pane's own
-              // rows printed again with nothing between them. The pane wins there; the
-              // controls stay, because they belong to the header on all eight.
-              <UpstreamCard header={props.header} csrfToken={props.csrfToken} rows={props.pane !== "overview"} />
-            ) : null}
-            <Pane {...props} />
+          <div class="pane pane--split">
+            <Pane props={props} />
           </div>
         </div>
-
-        {props.confirm === null ? null : (
-          <AppConfirmDialog confirm={props.confirm} slug={props.header.slug} csrfToken={props.csrfToken} />
-        )}
       </main>
+      {props.confirm === null ? null : (
+        <AppConfirmDialog confirm={props.confirm} slug={header.slug} csrfToken={props.csrfToken} />
+      )}
     </Layout>
   );
 };

@@ -18,14 +18,16 @@
 import { SLUG_CHARSET } from "./registry";
 
 /**
- * The seven panes `/apps/<slug>/<pane>` serves, in §13's own table order (Tools is the
- * LANDING pane at `/apps/<slug>` itself and is deliberately absent: a route for
- * `/apps/<slug>/tools` would be the alias §13 makes a 404). `access` is the Agents pane —
- * the rail groups it under `Access`, and the URL is the group's.
+ * The six non-landing panes `/apps/<slug>/<pane>` serves, in §13's own table order
+ * (Catalog is the LANDING pane at `/apps/<slug>` itself and is deliberately absent: a
+ * route for `/apps/<slug>/catalog` — or for `/apps/<slug>/tools` — would be the alias §13
+ * makes a 404). `access` is the Agents pane — the rail groups it under `Access`, and the
+ * URL is the group's. `prompts` and `resources` left this list on 2026-09-17: the Catalog
+ * holds all three families, and both old URLs are 301s to the landing.
  */
-export const APP_PANES = ["prompts", "resources", "roles", "overview", "access", "token", "danger"] as const;
+export const APP_PANES = ["roles", "recording", "overview", "access", "token", "danger"] as const;
 
-/** One of the seven pane segments — the type `paths.appPane` and the page take. */
+/** One of the six pane segments — the type `paths.appPane` and the page take. */
 export type AppPane = (typeof APP_PANES)[number];
 
 /**

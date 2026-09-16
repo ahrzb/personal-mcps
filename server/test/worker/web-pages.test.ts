@@ -2824,7 +2824,7 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     }
   });
 
-  it(`§13 · the agent page renders no pill row — no nav.pill-row on the landing or on any of the five panes, the rail-as-list being its replacement there · /apps/<slug> and /settings still render theirs (the twin)`, async () => {
+  it(`§13 · the agent page renders no pill row — no nav.pill-row on the landing or on any of the five panes, the rail-as-list being its replacement there · /settings still renders its (the twin; 2026-09-16: /apps/<slug> left the twin when it took the levels too)`, async () => {
     const { cookie } = await withAgentPanes();
     for (const url of [
       paths.agentDetail("claude"),
@@ -2841,9 +2841,8 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
       expect(agentRail(html, "claude").length, url).toBeGreaterThan(0);
     }
 
-    // The twin: the rule is the agent page's alone — the other two paned pages keep the
-    // pill row §13 gave them.
-    expect(navBlock(await page(paths.appDetail("news")), APP_PILL_NAV_LABEL), paths.appDetail("news")).not.toBeNull();
+    // The twin: the rule is the two level pages' — /settings keeps the pill row §13 gave
+    // it (the app page's own absence is the app page's row).
     expect(navBlock(await page(paths.settings), PILL_NAV_LABEL), paths.settings).not.toBeNull();
   });
 
@@ -7749,24 +7748,7 @@ describe(`§13 · /apps/<slug> — the header and the Tools pane`, () => {
     }
   });
 
-  it(`§13 · /apps/<slug> gets the pill row too — the shell rule applies although only MobileSettings was drawn: on every one of the eight panes the pill navigation lists the same eight pane URLs in the same rail order, markerless`, async () => {
-    const hrefs = appPaneHrefs(CATALOG);
-    let walked = 0;
-    for (const href of hrefs) {
-      const html = await appPage(href);
-      const rail = railEntries(html, APP_RAIL_NAV_LABEL);
-      const pills = railEntries(html, APP_PILL_NAV_LABEL);
-      expect(rail.map((entry) => entry.href), href).toEqual(hrefs);
-      expect(pills.map((entry) => entry.href), href).toEqual(hrefs);
-      // Markerless, held non-vacuous on this same render: every pill has a label, and the
-      // rail beside it does carry markers.
-      expect(pills.every((entry) => entry.marker === ""), href).toBe(true);
-      expect(pills.every((entry) => entry.label !== ""), href).toBe(true);
-      expect(rail.some((entry) => entry.marker !== ""), href).toBe(true);
-      walked += 1;
-    }
-    expect(walked).toBe(8);
-  });
+  it.todo(`§13 · the app page's root carries data-level chosen from the URL alone — 1 on /apps/<slug>, 2 on each of the seven other panes — and the level header above the content names the level above and the current thing: at 1 the back link "‹ Apps" → /apps titled with the app's name, at 2 "‹ <name>" → /apps/<slug> titled with the pane's own rail label (Prompts … Danger zone) · the wide title row "Apps › <name>" is in the document at both levels, the "Apps / <slug>" crumb line above it is gone, and no pane renders a pill row — no nav.pill-row and no "App panes, compact" navigation on any of the eight — while /settings still renders its (the twin; 2026-09-16, replacing "gets the pill row too")`);
 
   it(`§13 · a tunneled app's Tools pane is the DO's cached catalog: the tools it advertised on its last connect are listed under a numeric Tools marker while its socket is open, and are still listed, unchanged and still counted, after the socket closes and the header reads offline`, async () => {
     const slug = uniqueSlug("cached");
@@ -8712,6 +8694,8 @@ describe(`§13 · /apps/<slug> — Agents, Token and the Danger zone`, () => {
       [...active, ...archived].some((row) => links(html, paths.appsConfirmDelete(row.slug))),
     ).toBe(true);
   });
+
+  it.todo(`§13 · every /apps row IS the link — the name an anchor class="row-link" stretched over a class="app-row" row with the trailing chevron, on the active and the archived rows alike (2026-09-16: as the agents list, replacing the name-only link) — while the row's own Archive / Unarchive / Delete / Connect actions still sit beside it above the stretched anchor, and the builtin pmcp row is still not listed (the twin)`);
 
   it(`§8 · every mutating form the /apps/<slug> panes render fronts a real admin.ops key and submits within that op's schema — every required field, and no field the schema does not declare — so the page that issues and revokes app tokens joins parity direction B instead of standing outside it`, async () => {
     const tunneled = uniqueSlug("paritytun");

@@ -1241,6 +1241,9 @@ export type AppRoleDetails =
       editable: boolean;
       q: string;
       groups: AppRoleGroup[];
+      /** Why there are no item groups to tick: the catalog could not be read. The patterns
+       *  below stand regardless — they are the role's, not the catalog's. */
+      catalogNote: string | null;
       patterns: AppRolePatternRow[];
       /** Typed text that is not one item's name, offered as a pattern (editable only). */
       offer: { pattern: string; family: RoleFamily; detail: string } | null;
@@ -1275,6 +1278,14 @@ export type AppRecordingPathRow = {
   /** The `which` / `hide` link, or null where the path has one tool and no writeOnly. */
   which: { href: string; label: string } | null;
   control: AppRecordingControl;
+  /**
+   * The EDITABLE tools this row is a control for, carried as one hidden `t.<dir>.<path>`
+   * field each. The composer starts from the stored maps and changes only the pairs named
+   * here, so a path the filter hid, a tool the catalog stopped listing and an entry added
+   * from evidence are all simply untouched — and the save never needs a catalog read of
+   * its own, which two renders apart could disagree with the one this row was drawn from.
+   */
+  drawn: string[];
   /** The per-tool rows — drawn when `which=` opened them, or when the path is mixed. */
   tools: AppRecordingToolRow[];
 };
@@ -1362,9 +1373,6 @@ export type AppPaneView =
       /** The proxied-with-nothing-masked warning above the sections; null otherwise. */
       warning: string | null;
       sections: AppRecordingSection[];
-      /** `keep.<dir>=<tool>:<path>` for every stored entry the rows do not represent, so a
-       *  save never drops one (§5's first data-safety rule). */
-      keep: { field: string; value: string }[];
       auditHref: string;
       /** The masked-before-recording sentence, and one card per direction. */
       intro: string;
@@ -2389,7 +2397,11 @@ function accessOf(grants: Record<string, string[]>, apps: OpsAppRow[]): AgentAcc
       const dormant =
         app === undefined ||
         app.archived ||
-        (parsed.kind === "role" && parsed.role !== BUILTIN_ROLE && !(parsed.role in app.roles));
+        (parsed.kind === "role" &&
+          parsed.role !== BUILTIN_ROLE &&
+          // The builtin declares no roles at all, and no agent may hold a grant on it
+          // (§8) — so an entry naming one is dormant by the same rule.
+          !(parsed.role in (app.kind === "builtin" ? {} : effectiveOf(app))));
       if (dormant) access.dormant += 1;
       else if (parsed.mode === "approval") access.askFirst += 1;
       else access.allowed += 1;
@@ -2492,6 +2504,22 @@ function grantEntryOf(spelled: string): ParsedEntry {
 }
 
 const APPROVAL_SUFFIX = ":approval";
+
+/**
+ * The roles the DOOR resolves against for one app row — §1's merge rule, read off the
+ * shape `app_get` and `app_list` report: the owner's, then the app's declaration on top.
+ *
+ * EVERY page-side matcher asks this and none asks `row.roles` alone. The agent page did,
+ * until 2026-09-17, and the bug that made visible: a live owner role reached the door but
+ * rendered as `undeclared · dormant` on the page that grants it, so the one place an owner
+ * edits a grant disagreed with the one place a call is decided.
+ */
+function effectiveOf(row: Exclude<OpsAppRow, { kind: "builtin" }>): RoleDeclaration {
+  return effectiveRoles({
+    declaredRoles: row.roles,
+    ownerRoles: row.kind === "tunnel" ? row.ownerRoles : {},
+  });
+}
 
 /**
  * Whether a pattern names exactly ONE item — the test that sorts an inline entry into its
@@ -2833,7 +2861,7 @@ async function appPaneView(
   const editor = grantEditorOf({
     app: appSlug,
     kind: row.kind,
-    roles: row.roles,
+    roles: effectiveOf(row),
     views,
     savedSpelled,
     submitted,
@@ -2989,7 +3017,10 @@ function grantEditorOf(args: {
     groups.push({
       title: "Roles",
       count: String(roleNames.length),
-      note: args.kind === "tunnel" ? "declared by the app at connect" : "defined in config",
+      // No note: this group holds the EFFECTIVE roles — the app's declaration, the owner's
+      // own, and the built-in `all` — so any one provenance named here would be wrong
+      // about the rest of the rows under it (2026-09-17).
+      note: "",
       state: null,
       rows: roleNames.map((role) => ({
         kind: "role" as const,
@@ -3223,7 +3254,7 @@ function detailsView(
       tools: familyCount(views.tools, standing, "tools"),
       prompts: familyCount(views.prompts, standing, "prompts"),
       resources: familyCount(views.resources, standing, "resources"),
-      roles: Object.keys(row.roles),
+      roles: Object.keys(effectiveOf(row)),
     },
     allowed: entries.filter((entry) => entry.mode === "allow").map((entry) => entry.entry),
     askFirst: entries.filter((entry) => entry.mode === "approval").map((entry) => entry.entry),
@@ -3237,10 +3268,11 @@ function detailsView(
 
   if (kind === "role") {
     const builtin = name === BUILTIN_ROLE;
-    if (!builtin && !(name in row.roles)) return unselected();
+    const declaredHere = effectiveOf(row);
+    if (!builtin && !(name in declaredHere)) return unselected();
     const patterns: [string, string[]][] = builtin
       ? ROLE_FAMILIES.map((family) => [family, [".*"]])
-      : familyEntries(row.roles[name]);
+      : familyEntries(declaredHere[name]);
     const matched = matchedNames.get(name) ?? { tools: [], prompts: [], resources: [] };
     return {
       kind: "role",
@@ -3302,7 +3334,7 @@ function detailsView(
       family === "tools"
         ? {
             aggregated: `${appSlug}_${name}`,
-            reachableBy: reachableBy(row.roles, everyAgent, appSlug, name),
+            reachableBy: reachableBy(effectiveOf(row), everyAgent, appSlug, name),
             redaction: redactionText(row, name),
           }
         : null,
@@ -3412,7 +3444,7 @@ async function grantPaneView(
         // A closed card has read no catalog, so it has no counts to print — which is why
         // its line names the roles it already knows and offers to fetch the rest.
         counts: open ? countsText(endpoints) : "",
-        roles: Object.keys(row.roles),
+        roles: Object.keys(effectiveOf(row)),
         open,
         toggle: open ? "hide" : "show endpoints",
         endpoints: open ? kept : [],
@@ -3430,7 +3462,8 @@ async function grantPaneView(
 /** One grantable app's endpoints, with the declared roles that grant each — the roles are
  *  read through the door, so `only via all or by name` is what the door actually says. */
 async function grantEndpoints(ctx: PageContext, row: Exclude<OpsAppRow, { kind: "builtin" }>): Promise<AgentEndpointRow[]> {
-  const doors = reachabilityFor(row.roles, Object.fromEntries(Object.keys(row.roles).map((role) => [role, [role]])));
+  const declared = effectiveOf(row);
+  const doors = reachabilityFor(declared, Object.fromEntries(Object.keys(declared).map((role) => [role, [role]])));
   const rows: AgentEndpointRow[] = [];
   for (const family of ROLE_FAMILIES) {
     const answered = await ownerCatalog(env, ctx.ownerId, row.slug, family);
@@ -3650,7 +3683,7 @@ function whyItWaits(
   if (app === undefined || app.kind === "builtin") return null;
   const held = (agent.grants[approval.app] ?? []).map(grantEntryOf);
   const doors = reachabilityFor(
-    app.roles,
+    effectiveOf(app),
     Object.fromEntries(held.map((entry) => [entry.entry, [spelledOf(entry)]])),
   );
   const matched = doors.reach(approval.tool, "tools").find((each) => each.mode === "approval");
@@ -3781,7 +3814,7 @@ export async function appDetailProps(
   // resolves against.
   const ownerRoles: RoleDeclaration = row.kind === "tunnel" ? row.ownerRoles : row.roles;
   const appRoles: RoleDeclaration = row.kind === "tunnel" ? row.roles : {};
-  const effective = effectiveRoles({ declaredRoles: row.roles, ownerRoles: row.kind === "tunnel" ? row.ownerRoles : {} });
+  const effective = effectiveOf(row);
 
   // The grants held ON THIS APP, agent slug → §9's own spelling — the shape catalog-view's
   // reachability takes, and the very rows the Agents pane draws.
@@ -4326,6 +4359,11 @@ function roleDetails(ctx: PageContext, at: AppPaneCtx): AppRoleDetails {
     groups,
     patterns,
     offer,
+    // Nothing to tick where nothing could be listed — and, because the editor draws no
+    // item rows there, nothing to un-tick either: a save then leaves every literal alone.
+    catalogNote: CATALOG_GROUPS.every(({ family }) => at.views[family].state !== "listed")
+      ? "The catalog could not be read, so items cannot be ticked; patterns can still be edited."
+      : null,
     keep: patterns.map((pattern) => pattern.entry),
     error: submitted?.error ?? null,
   };
@@ -4392,20 +4430,6 @@ function recordingPane(ctx: PageContext, at: AppPaneCtx): AppPaneView {
     recordingSection(dir, index[dir], at, q, open),
   );
 
-  // Every stored entry the rows above do not represent — a tool the catalog does not list,
-  // a path no schema declares, a pattern key — rides as a hidden field, so a save composed
-  // from the rows can never drop it (§5's first data-safety rule).
-  const keep: { field: string; value: string }[] = [];
-  for (const dir of ["args", "results"] as const) {
-    for (const [tool, paths] of Object.entries(storedMap(at, dir))) {
-      for (const path of paths) {
-        const entry = index[dir].get(path);
-        if (entry !== undefined && entry.tools.some((each) => each.tool === tool)) continue;
-        keep.push({ field: `keep.${dir}`, value: `${tool}:${path}` });
-      }
-    }
-  }
-
   return {
     kind: "recording",
     log: at.row.logBodies,
@@ -4418,7 +4442,6 @@ function recordingPane(ctx: PageContext, at: AppPaneCtx): AppPaneView {
         ? "A proxied app's schema is not cached at call time, so nothing is masked automatically. Tick what is secret before you save, or it is stored in the clear for 7 days."
         : null,
     sections,
-    keep,
     auditHref: paths.auditWith({ app: at.slug }),
     intro: at.row.logBodies
       ? "These fields are replaced with ‹redacted› before a call is written to the trail. Everything else in the body is kept as sent."
@@ -4449,7 +4472,9 @@ function recordingSection(
       // no `p.` field, so no save can flatten a partial state into all-or-nothing.
       const mixed = on > 0 && !all;
       const which = entry.tools.length > 1 || locked.length > 0;
-      const shown = open.has(`${dir}:${path}`);
+      // A mixed row is expanded whether or not `which=` asked for it (§5), so the link
+      // reads `hide` on every row whose sub-rows are actually drawn.
+      const expanded = open.has(`${dir}:${path}`) || mixed;
       const status =
         locked.length > 0
           ? `declared writeOnly${locked.length < entry.tools.length ? ` on ${locked.length}` : ""}`
@@ -4460,15 +4485,21 @@ function recordingSection(
         path,
         type: entry.type,
         detail: `${plural(entry.tools.length, "tool")}${status === "" ? "" : ` · ${status}`}`,
-        which: which ? { href: whichHref(at.slug, dir, path, open, q), label: shown ? "hide" : "which" } : null,
+        which: which
+          ? { href: whichHref(at.slug, dir, path, open, q), label: expanded ? "hide" : "which" }
+          : null,
         control:
           editable.length === 0
             ? { kind: "locked" as const }
             : mixed
               ? { kind: "mixed" as const }
               : { kind: "box" as const, field: `p.${dir}.${path}`, checked: all },
+        // The (tool, path) pairs this row is a control FOR — carried as hidden `t.` fields
+        // so the composer knows what the render covered without reading a catalog of its
+        // own. Everything not named here is untouched by the save (§5's first rule).
+        drawn: editable.map((tool) => tool.tool),
         tools:
-          shown || mixed
+          expanded
             ? entry.tools.map((tool) =>
                 tool.writeOnly
                   ? ({ tool: tool.tool, writeOnly: true } as const)
@@ -4861,27 +4892,38 @@ export function familyMarker(...views: AppFamilyView<unknown>[]): string {
 /* ------------------------ the three forms, composed ------------------------ */
 
 /**
- * §4's Save, composed: the stored owner map, minus `was`, plus `role` → { per family: the
- * checked literals + the `keep` patterns − `drop` + `add` }, empty families omitted — or
- * minus `was` alone on `delete`. ONE `app_update` comes out of it, and which field it
- * writes is the kind's (`owner_roles` tunneled, `roles` proxied), never both.
+ * §4's Save, composed: the STORED owner map with the edited role replaced by the stored
+ * role plus the deltas of the rows the form says it drew, and `was` removed — or `was`
+ * removed alone on `delete`. ONE `app_update` comes out of it, and which field it writes is
+ * the kind's (`owner_roles` tunneled, `roles` proxied), never both.
+ *
+ * `drawn` is the render's own account of itself: one `row=<family>/<name>` per item row
+ * that carried a checkbox. A literal named there takes its new value from its `i.` box; a
+ * literal NOT named keeps whatever is stored. That is what makes the filter safe — `?q=`
+ * hides rows, and a hidden row is not an unticked one — and what makes an unreadable
+ * catalog safe: it draws no rows at all, so a save then changes no literal.
  *
  * Pure: web.ts reads the stored map and posts the op, this decides only what the map
  * becomes — which is what lets a refusal redraw the editor on `families` unchanged.
  */
 export function composeOwnerRoles(
   stored: RoleDeclaration,
+  /** The APP's own declaration — empty on a proxied app, which declares none (§1). A name
+   *  in it cannot be an owner role: the app's declaration would replace it on sight. */
+  declared: RoleDeclaration,
   fields: Record<string, string>,
   keeps: string[],
+  drawn: string[],
 ): {
   role: string;
   was: string;
   families: FamilyPatterns;
   roles: RoleDeclaration;
   deleted: boolean;
-  /** Why this save cannot be sent at all, or null. `app_update` refuses a bad NAME it is
-   *  given, but an empty one is a name it is never given — the map would simply not gain a
-   *  key and the op would answer 200 to a save that saved nothing. */
+  /** Why this save cannot be sent at all, or null. Two of the three refusals §4 names are
+   *  the page's own, because the OP never sees what it would refuse: an empty name is a
+   *  name it is not given (the map would simply not gain a key, and it would answer 200 to
+   *  a save that saved nothing), and a collision is two maps it is only given one of. */
   refusal: string | null;
 } {
   const was = fields.was ?? "";
@@ -4891,53 +4933,93 @@ export function composeOwnerRoles(
   if (fields.delete === "1") {
     return { role: was, was, families: {}, roles, deleted: true, refusal: null };
   }
-  if (!ROLE_NAME.test(role)) {
-    return { role, was, families: familiesFrom(fields, keeps), roles, deleted: false, refusal: ROLE_NAME_REFUSAL };
-  }
-
-  const families = familiesFrom(fields, keeps);
+  const families = familiesFrom(familiesOf(stored[was]), fields, keeps, drawn);
+  const refusal =
+    !ROLE_NAME.test(role) || role === BUILTIN_ROLE
+      ? ROLE_NAME_REFUSAL
+      : Object.prototype.hasOwnProperty.call(declared, role)
+        ? `${role} is declared by the app — its declaration would replace yours`
+        : null;
+  if (refusal !== null) return { role, was, families, roles, deleted: false, refusal };
   roles[role] = families;
   return { role, was, families, roles, deleted: false, refusal: null };
 }
 
-/** A role name: the charset the editor's own `pattern` attribute declares, and the one
- *  `all` is reserved from (§2/§20.3). */
+/** A role name: the charset the editor's own `pattern` attribute declares, and `all`, which
+ *  §2 reserves — granted like any other role, declared by nobody. */
 const ROLE_NAME = /^[a-z0-9_-]+$/;
 
 const ROLE_NAME_REFUSAL = "a role name is [a-z0-9_-], and all is reserved";
 
-/** The per-family patterns the editor submitted: the ticked literals, plus the patterns
- *  this render still listed minus the one `drop` named, plus whatever `add` offered. */
-function familiesFrom(fields: Record<string, string>, keeps: string[]): FamilyPatterns {
-  const families: FamilyPatterns = {};
-  const push = (family: RoleFamily, pattern: string): void => {
-    const list = families[family] ?? [];
-    if (!list.includes(pattern)) list.push(pattern);
-    families[family] = list;
-  };
-  for (const [name, value] of Object.entries(fields)) {
-    if (!name.startsWith(ROLE_ITEM_PREFIX) || value !== "1") continue;
-    const rest = name.slice(ROLE_ITEM_PREFIX.length);
-    const cut = rest.indexOf("/");
-    if (cut < 0) continue;
-    const family = rest.slice(0, cut) as RoleFamily;
-    if (!(ROLE_FAMILIES as readonly string[]).includes(family)) continue;
-    push(family, rest.slice(cut + 1));
+/**
+ * The role's new patterns: the STORED ones, with each drawn literal set from its checkbox,
+ * and the pattern rows the form carried (`keep`) minus the one `drop` named plus whatever
+ * `add` offered.
+ *
+ * Literals and patterns share one list per family (§20.3), so they are told apart the way
+ * the door tells them apart — `isOneItem` — rather than by a second stored field.
+ */
+function familiesFrom(
+  base: FamilyPatterns,
+  fields: Record<string, string>,
+  keeps: string[],
+  drawn: string[],
+): FamilyPatterns {
+  const literals = new Map<RoleFamily, string[]>();
+  const patterns = new Map<RoleFamily, string[]>();
+  for (const family of ROLE_FAMILIES) {
+    const held = base[family] ?? [];
+    literals.set(family, held.filter((each) => isOneItem(each, family)));
+    patterns.set(family, held.filter((each) => !isOneItem(each, family)));
   }
-  // A `keep` the form drew is a pattern the owner did not touch, and dropping it would be
-  // a silent narrowing of the role.
+
+  const push = (map: Map<RoleFamily, string[]>, family: RoleFamily, value: string): void => {
+    const list = map.get(family) ?? [];
+    if (!list.includes(value)) list.push(value);
+    map.set(family, list);
+  };
+  const split = (entry: string): { family: RoleFamily; rest: string } | null => {
+    const cut = entry.indexOf("/");
+    if (cut < 0) return null;
+    const family = entry.slice(0, cut) as RoleFamily;
+    if (!(ROLE_FAMILIES as readonly string[]).includes(family)) return null;
+    return { family, rest: entry.slice(cut + 1) };
+  };
+
+  // Only what the render DREW moves: a row the filter hid, and every row of a catalog that
+  // could not be read, is neither ticked nor unticked — it is simply not here.
+  for (const row of drawn) {
+    const at = split(row);
+    if (at === null) continue;
+    const kept = (literals.get(at.family) ?? []).filter((each) => each !== at.rest);
+    if (fields[`${ROLE_ITEM_PREFIX}${row}`] === "1") kept.push(at.rest);
+    literals.set(at.family, kept);
+  }
+
   const dropped = fields.drop ?? "";
   for (const keep of keeps) {
     if (keep === dropped) continue;
-    const cut = keep.indexOf("/");
-    if (cut < 0) continue;
-    const family = keep.slice(0, cut) as RoleFamily;
-    if (!(ROLE_FAMILIES as readonly string[]).includes(family)) continue;
-    push(family, keep.slice(cut + 1));
+    const at = split(keep);
+    if (at !== null) push(patterns, at.family, at.rest);
+  }
+  const droppedAt = split(dropped);
+  if (droppedAt !== null) {
+    patterns.set(droppedAt.family, (patterns.get(droppedAt.family) ?? []).filter((each) => each !== droppedAt.rest));
   }
   const added = (fields.add ?? "").trim();
-  if (added !== "") push(added.includes("://") ? "resources" : "tools", added);
+  if (added !== "") push(patterns, added.includes("://") ? "resources" : "tools", added);
+
+  const families: FamilyPatterns = {};
+  for (const family of ROLE_FAMILIES) {
+    const all = [...(literals.get(family) ?? []), ...(patterns.get(family) ?? [])];
+    if (all.length > 0) families[family] = all;
+  }
   return families;
+}
+
+/** The item rows a submitted Roles form says it drew — one `row=<family>/<name>` each. */
+export function drawnRows(form: FormData): string[] {
+  return form.getAll("row").filter((value): value is string => typeof value === "string");
 }
 
 /** The role editor's per-item checkbox prefix — `i.<family>/<name>`. Spelled ONCE, here,
@@ -4945,65 +5027,69 @@ function familiesFrom(fields: Record<string, string>, keeps: string[]): FamilyPa
 const ROLE_ITEM_PREFIX = "i.";
 
 /**
- * §5's Save, composed: for each ticked `p.<dir>.<path>` every EDITABLE tool that takes the
- * path, each `m.<dir>.<tool>.<path>` that tool alone, plus every `keep.<dir>` entry the
- * form carried. An untouched writeOnly path contributes nothing — §7 masks it regardless,
- * and writing it into the config would be the hub authoring a declaration it did not make.
+ * §5's Save, composed: the STORED maps with the drawn rows' deltas applied, and nothing
+ * else touched.
  *
- * `index` is the path index over the app's own tool schemas, which is why web.ts asks this
- * module for it rather than re-deriving one.
+ * `drawn` is the render's own account of itself — one `(path, tools)` pair per path row,
+ * carried on the form as hidden `t.<dir>.<path>=<tool>` fields. A pair named there takes
+ * its new value from the form; a pair not named keeps whatever is stored. That is what
+ * makes every one of the ways a render and a save can disagree harmless: a path the filter
+ * hid, a tool the upstream stopped listing between the two requests, an entry added from
+ * evidence that no schema declares, a pattern key. None of them is drawn, so none of them
+ * moves.
+ *
+ * No catalog read happens here, deliberately: one taken at POST time is a DIFFERENT answer
+ * from the one the form was drawn against — an upstream that 503s in between, or a
+ * reconnect that renames a tool, would have made the save compose a map for rows nobody
+ * saw. The form carries what the render covered; the save trusts nothing else.
+ *
+ * A writeOnly pair is never drawn (§7 masks it regardless), so it never enters the config —
+ * the hub does not author a declaration it did not make.
  */
 export function composeRedaction(
-  index: PathIndex,
+  stored: Record<string, string[]>,
   dir: "args" | "results",
   fields: Record<string, string>,
-  keeps: string[],
+  drawn: [path: string, tools: string[]][],
 ): Record<string, string[]> {
   const map: Record<string, string[]> = {};
-  const add = (tool: string, path: string): void => {
-    const list = map[tool] ?? [];
-    if (!list.includes(path)) list.push(path);
-    map[tool] = list;
+  for (const [tool, paths] of Object.entries(stored)) map[tool] = [...paths];
+  const set = (tool: string, path: string, on: boolean): void => {
+    const list = (map[tool] ?? []).filter((each) => each !== path);
+    if (on) list.push(path);
+    if (list.length === 0) delete map[tool];
+    else map[tool] = list;
   };
-  const pathPrefix = `p.${dir}.`;
-  const toolPrefix = `m.${dir}.`;
-  for (const [name, value] of Object.entries(fields)) {
-    if (value !== "1") continue;
-    if (name.startsWith(pathPrefix)) {
-      const path = name.slice(pathPrefix.length);
-      for (const tool of index.get(path)?.tools ?? []) if (!tool.writeOnly) add(tool.tool, path);
-      continue;
+  for (const [path, tools] of drawn) {
+    // The path control says "all of them"; a per-tool row is the finer statement and adds
+    // to it. Both are ORed, so a row expanded by `which=` — which draws both — cannot have
+    // one silently cancel the other.
+    const wholePath = fields[`p.${dir}.${path}`] === "1";
+    for (const tool of tools) {
+      set(tool, path, wholePath || fields[`m.${dir}.${tool}.${path}`] === "1");
     }
-    if (!name.startsWith(toolPrefix)) continue;
-    // `m.<dir>.<tool>.<path>`: the TOOL is the segment the index can confirm, so the split
-    // is made against the index rather than at the first dot — a path carries dots.
-    const rest = name.slice(toolPrefix.length);
-    for (const [path, entry] of index) {
-      const suffix = `.${path}`;
-      if (!rest.endsWith(suffix)) continue;
-      const tool = rest.slice(0, -suffix.length);
-      if (entry.tools.some((each) => each.tool === tool && !each.writeOnly)) add(tool, path);
-    }
-  }
-  for (const keep of keeps) {
-    const cut = keep.indexOf(":");
-    if (cut < 0) continue;
-    add(keep.slice(0, cut), keep.slice(cut + 1));
   }
   return map;
 }
 
-/** The path index the Recording composer needs, read the way the pane reads it — one
- *  `ownerCatalog` call for the app's tools and nothing else. */
-export async function recordingIndex(
-  ctx: PageContext,
-  slug: string,
-): Promise<{ args: PathIndex; results: PathIndex }> {
-  const answered = await ownerCatalog(env, ctx.ownerId, slug, "tools");
-  const view: AppFamilyView<ListedItem> = answered.ok
-    ? { state: "listed", rows: answered.items }
-    : { state: "unread" };
-  return { args: pathIndexOf(view, "args"), results: pathIndexOf(view, "results") };
+/**
+ * The `(path, tools)` pairs a submitted Recording form says it drew — the `t.<dir>.<path>`
+ * fields, read back. A form is a caller's input, so nothing here is trusted beyond being a
+ * pair of strings: an unknown pair can only set or clear a mask on a (tool, path) the op
+ * itself validates, and `app_update` refuses a path that is not a dotted JSON path.
+ */
+export function drawnPaths(form: FormData, dir: "args" | "results"): [string, string[]][] {
+  const prefix = `t.${dir}.`;
+  const pairs = new Map<string, string[]>();
+  form.forEach((value, name) => {
+    if (!name.startsWith(prefix) || typeof value !== "string" || value === "") return;
+    const path = name.slice(prefix.length);
+    if (path === "") return;
+    const tools = pairs.get(path) ?? [];
+    if (!tools.includes(value)) tools.push(value);
+    pairs.set(path, tools);
+  });
+  return [...pairs];
 }
 
 /* ------------------------------- /apps/new -------------------------------- */

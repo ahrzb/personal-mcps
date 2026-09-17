@@ -268,6 +268,32 @@ export const TokenReveal: FC<{ token: string; children?: Child }> = ({ token, ch
 );
 
 /**
+ * A value the reader is meant to take away rather than read — the scoped endpoint a
+ * resource is served on (§3), and anything else a page wants to hand over intact. The Copy
+ * button is ENHANCEMENT, exactly as the token reveal's is: the value is selectable text
+ * without it and the script only saves a drag.
+ *
+ * The script binds by attribute rather than by id, and marks what it has bound, so several
+ * of these on one page cost one listener each and no coordination — a component cannot
+ * hold a counter, and an id per instance would be one.
+ */
+export const Copyable: FC<{ value: string }> = ({ value }) => (
+  <>
+    <span class="copyable">
+      <span class="mono copy-value">{value}</span>
+      <button type="button" class="btn btn--ghost btn--sm" data-copy aria-label="Copy">
+        Copy
+      </button>
+    </span>
+    <script
+      dangerouslySetInnerHTML={{
+        __html: `document.querySelectorAll("[data-copy]:not([data-copy-bound])").forEach(function(b){b.setAttribute("data-copy-bound","1");b.addEventListener("click",function(){var v=b.previousElementSibling;navigator.clipboard.writeText(v?v.textContent||"":"");});});`,
+      }}
+    />
+  </>
+);
+
+/**
  * The stitching behind `OtpBoxes` below: static text, no interpolated data, moved
  * verbatim off /login (G30 — the settings card had six named boxes and none of this, so a
  * correctly typed code posted `code=""` and could never verify). Auto-advance,

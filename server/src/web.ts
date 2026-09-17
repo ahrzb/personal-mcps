@@ -90,7 +90,8 @@ import {
   composeRedaction,
   composeRoles,
   grantChoicesOf,
-  recordingIndex,
+  drawnPaths,
+  drawnRows,
 } from "./pages/model";
 import { ICON_192, ICON_512 } from "./pages/icon";
 import type {
@@ -705,7 +706,16 @@ export function pageRoutes(): PageRouter {
       // app's roles are already all the owner's (§1).
       const tunnelled = row.kind === "tunnel";
       const stored = tunnelled ? (row as { ownerRoles: RoleDeclaration }).ownerRoles : row.roles;
-      const composed = composeOwnerRoles(stored, fields, form.getAll("keep").filter(isText));
+      // The app's OWN declaration, which an owner role may not collide with — empty on a
+      // proxied app, whose `roles` are already all the owner's (§1).
+      const declared = tunnelled ? row.roles : {};
+      const composed = composeOwnerRoles(
+        stored,
+        declared,
+        fields,
+        form.getAll("keep").filter(isText),
+        drawnRows(form),
+      );
       // A name the op is never GIVEN is a name the op cannot refuse: an empty one would
       // simply leave the map without a key and answer 200 to a save that saved nothing.
       const saved =
@@ -735,28 +745,28 @@ export function pageRoutes(): PageRouter {
     }),
   );
 
-  // §5's Save — ONE `app_update { log_bodies, redact, redact_results }`. The two maps are
-  // composed from the ticked paths (expanded to every editable tool that takes one), the
-  // per-tool ticks, and the hidden `keep.<dir>` entries carrying every stored entry the
-  // rows did not represent — so a save can never drop what this render did not draw.
+  // §5's Save — ONE `app_update { log_bodies, redact, redact_results }`, composed as the
+  // STORED maps plus the deltas of the rows the form says it drew (its hidden `t.` fields).
+  // The only read is `app_get`, for those stored maps: a catalog read here would be a
+  // SECOND answer, taken after the one the form was drawn against, and a path the two
+  // disagree about is a path the save would rewrite without anyone having seen it.
   app.post(
     `/apps/:slug/${RECORDING_SET}`,
     mutation(async (c, session, form) => {
       const slug = c.req.param("slug") ?? "";
       const ctx = await context(c.req.raw, session);
       const fields = formFields(form);
-      const index = await recordingIndex(ctx, slug);
+      const current = await attempt(() => ops.app_get.handler(session.user.userId, { slug }));
+      if ("reason" in current) {
+        return c.redirect(noticeUrl(paths.appPane(slug, "recording"), RECORDING_SET, current), 303);
+      }
+      const row = (current.value as { app: AppRow }).app;
       const saved = await attempt(() =>
         ops.app_update.handler(session.user.userId, {
           slug,
           log_bodies: fields.log === "1",
-          redact: composeRedaction(index.args, "args", fields, form.getAll("keep.args").filter(isText)),
-          redact_results: composeRedaction(
-            index.results,
-            "results",
-            fields,
-            form.getAll("keep.results").filter(isText),
-          ),
+          redact: composeRedaction(row.redact, "args", fields, drawnPaths(form, "args")),
+          redact_results: composeRedaction(row.redactResults, "results", fields, drawnPaths(form, "results")),
         }),
       );
       const back = paths.appPane(slug, "recording");

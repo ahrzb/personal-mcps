@@ -2552,16 +2552,6 @@ dialog .actions {
     display: none !important;
   }
 
-  /* A schema row has three columns and a phone has room for two: the path and its type
-     keep the first line, and whatever the third column has to say drops under them
-     rather than off the card. */
-  .arg {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .arg > :nth-child(3) {
-    grid-column: 1 / -1;
-  }
 
   .narrow-only {
     display: revert;
@@ -3494,4 +3484,50 @@ input.role-name {
   max-width: 100%;
   height: var(--control-h-sm);
   font-family: var(--font-mono);
+}
+
+/* A value the reader takes away rather than reads: the text, then the control that copies
+   it. The text wraps — an endpoint is one long token and the card is 300px wide. */
+.copyable {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.copy-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A grant entry inside a row's detail lines is a badge, and a declared pattern is one
+   unbreakable 300-character token: it wraps rather than pushing the row past the listing
+   (the same rule `.cr > :first-child` makes for the name beside it). */
+.cr-detail .badge {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  height: auto;
+  min-height: 20px;
+  max-width: 100%;
+}
+
+/* ------------------------------------------------------------------ *
+ * The narrow tier's own overrides for the app page's grammar.
+ *
+ * LAST in the file, deliberately: the rules they override are the app-page block above,
+ * which is itself after the 767 block — and two rules of equal specificity are decided by
+ * order, so an override written up there would lose to the desktop rule it is for.
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 767px) {
+  /* A schema row has three columns and a phone has room for two: the path and its type
+     keep the first line, and whatever the third column has to say drops under them rather
+     than off the card. */
+  .arg {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .arg > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
 }

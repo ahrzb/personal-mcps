@@ -26,7 +26,7 @@
 // scripting off, exactly as the agent page dropped them.
 
 import type { FC } from "hono/jsx";
-import { ConfirmShell, Layout, LevelHeader, PaneRail, TokenReveal, paneGroups } from "./layout";
+import { ConfirmShell, Copyable, Layout, LevelHeader, PaneRail, TokenReveal, paneGroups } from "./layout";
 import type { PaneEntry } from "./layout";
 import { alertClass, formatLastSeen, formatStamp } from "./format";
 import { APP_CONFIRM_PANE, DIMMED, paths } from "./model";
@@ -295,7 +295,7 @@ const CatalogDetailsView: FC<{ view: AppCatalogDetails; slug: string }> = ({ vie
               </Kv>
               <Kv k="Type">{view.resource.type === "" ? "—" : view.resource.type}</Kv>
               <Kv k="Served on">
-                <span class="mono">{view.resource.servedOn}</span>
+                <Copyable value={view.resource.servedOn} />
               </Kv>
               <Kv k="Matched">by URI, never by name</Kv>
             </div>
@@ -457,6 +457,7 @@ const RoleDetailsView: FC<{ props: AppDetailProps; view: AppRoleDetails }> = ({ 
         <input type="hidden" name="was" value={view.isNew ? "" : view.name} />
         {view.isNew ? null : <input type="hidden" name="role" value={view.name} />}
         <div class="scroll">
+          {view.catalogNote === null ? null : <p class="note gh-state">{view.catalogNote}</p>}
           {view.groups.map((group) => (
             <>
               <div class="gh sticky">
@@ -467,6 +468,11 @@ const RoleDetailsView: FC<{ props: AppDetailProps; view: AppRoleDetails }> = ({ 
               {group.state === null ? (
                 group.rows.map((row) => (
                   <div class="cr">
+                    {/* What this row is a control FOR. A literal the filter hid is not an
+                        unticked one, so the composer moves only what is named here. */}
+                    {row.field === "" ? null : (
+                      <input type="hidden" name="row" value={row.field.slice("i.".length)} />
+                    )}
                     <div>
                       <span class="mono">{row.name}</span>
                       <div class="cr-detail">
@@ -546,8 +552,11 @@ const RoleDetailsView: FC<{ props: AppDetailProps; view: AppRoleDetails }> = ({ 
         ))}
         {view.editable ? (
           <div class="save">
+            {/* No change counter anywhere on this page: counting what is unsaved needs the
+                form's live state, and these pages are server-rendered with scripting off —
+                the same reason the agent page dropped its own (§0). */}
             {view.isNew ? (
-              <span class="muted">nothing saved yet</span>
+              <span></span>
             ) : (
               <span class="save-end">
                 <button type="submit" class="btn btn--danger-outline btn--sm" name="delete" value="1">
@@ -637,6 +646,12 @@ const RecordingSectionView: FC<{ section: AppRecordingSection }> = ({ section })
                 )}
               </div>
             </div>
+            {/* What this row is a control FOR. Without it a save has to ask a catalog what
+                the render covered, and the answer it gets is a second one — taken later,
+                and free to disagree about every path nobody looked at (§5). */}
+            {row.drawn.map((tool) => (
+              <input type="hidden" name={`t.${section.dir}.${row.path}`} value={tool} />
+            ))}
             <div class="cr-control">
               {row.control.kind === "locked" ? (
                 // A CONTROL, disabled — not a statement drawn in a control's place: the
@@ -753,10 +768,6 @@ const RecordingPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "re
               <RecordingSectionView section={section} />
             ))}
           </div>
-          {/* Every stored entry these rows do not represent, so a save never drops one. */}
-          {pane.keep.map((field) => (
-            <input type="hidden" name={field.field} value={field.value} />
-          ))}
           <div class="save">
             <a href={pane.auditHref}>Recorded calls to {slug} →</a>
             <span class="save-end">

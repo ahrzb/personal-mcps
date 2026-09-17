@@ -1557,6 +1557,59 @@ check and (manual, once) a real push notification to a real browser.
   renderer were designed together. `f4bce19` (`design:` — the layout & density guideline,
   `design/layout-and-density.md`, with the audit's inconsistencies mapped to fixes; applying
   it is the next dispatch, visual gate per page).
+- 2026-09-17 — **The app page as three panes, owner-defined roles, the Recording pane, the
+  mobile boards — shipped.** The owner's ask: board `design/concepts/AppThreePaneDemo.html`,
+  add the mobile boards, implement and deploy — whole, New role included. Brief
+  `docs/superpowers/plans/2026-09-17-app-three-pane.md` (`fb24145`, with the board capture
+  scripts under `plans/tools/`). Five Opus agents in parallel on one tree with file ownership:
+  **spec** (`b040b83` — §13's `/apps/<slug>` rewritten around seven panes, §5 `owner_roles_json`,
+  §8 `owner_roles` + the tunnel row's `ownerRoles` + the proxied refusal, §9 `owner_roles:`,
+  §20.3 "two sources, one rule", §22, decision 32), **core** (`dce2dee` rows, `0047cfc` — the
+  migration `0010_owner_roles.sql`, `effectiveRoles` read by `resolveAccess` and `setGrants`,
+  `schemaLeaves`, the CLI's `owner_roles:` grammar and diff, contracts; 12 rows), **pages**
+  (`4be8827` the page, `b1ea828` 46 fixtures, then the fix commits), **tests** (`9f83a42`…
+  `8f5089f` — the four old `/apps/<slug>` describes became six, 255 rows in the file; smoke
+  leg and routes), **boards** (`345f4c4`, `a3df9c5` — `AppDetail`, `AppDetailPanes`,
+  `AppDetailStates` recaptured from the demo, `concepts/AppMobileDemo.html`,
+  `MobileAppDetail`, `MobileAppDetailStates`, `MobileAgents`, README/concepts/canvas; plus
+  `3bd3c81`, a colour regression the agent found in the agent phone boards from an id
+  rewrite eating hex colours). Rulings made on the way (recorded in §13 / decision 32): real
+  plurals with verb agreement (the brief's "(s)" was shorthand); `/apps/<slug>/catalog` is
+  the Catalog's own URL and `/apps/<slug>` the landing — the no-alias rule's one recorded
+  exception, the phone's level 2 needed a URL; the Roles editor's Discard/Save live in the
+  details foot for every editable role incl. new; a prompt's Arguments card is one row per
+  declared argument (prompts have no schema); `ownerCatalog` keeps `writeOnly` on result
+  schemas (`5eede33`) so the Recording pane can say "declared writeOnly". **Verifier round**
+  (two Opus agents, read-only): the safety verifier reproduced SIX defects against the
+  harness — four silent data losses on Save (a catalog re-read at POST time wiping masks when
+  the upstream failed between render and Save; the Roles and Recording filters deleting
+  what they hid; an unread catalog emptying a role), the missing collision refusal, and the
+  AGENT page computing reach from `declaredRoles` alone (a live owner role drawn as dormant)
+  — fixed in `0dec7fc` by making both composers deltas over DRAWN rows (`t.<dir>.<path>=<tool>`,
+  `row=<family>/<name>`; no `keep.` fields, no second catalog read) and one `effectiveOf`
+  helper for every matcher; the fidelity verifier walked all 42 fixtures at 1300 and 375
+  beside the demo and boards and found 19 blockers (missing Resources/Prompts/Patterns
+  groups in the editors, an `all` row saying `matches 0`, unwrapped 300-char chips, phone
+  Arguments grids in three columns, fixture data contradicting itself), all fixed in the
+  same commit. A **reconcile** agent owning both pages and the test file settled the last
+  15 red rows (`78ef859`, `9771c7a`: 12 page fixes, 3 rows corrected). Orchestrator's visual
+  gate: the frame 1252 at 1300 with rail 200 / listing 520, every editor group present, the
+  mixed path expanded per tool, long chips wrapped; the phone's three levels with arguments
+  stacked and level 3 backing to the catalog URL. Deploy **`29508d87`** (migration 0010
+  applied; the first `pnpm ship` died on the transient D1 API error again and was re-run),
+  smoke green on every leg incl. the rewritten `/apps/<slug>` leg (Catalog, the 301, the
+  404). Gate: `tsc` 0; web-pages 255/255; full suite 46 files / **1585 passed / 1 red** —
+  the §21 stream rows flaked under load on all four full runs today (a different one each
+  time; 13/13 alone every time), the owner said ship and debug them separately; a
+  diagnosing agent is on it (`mattpocock-skills:diagnosing-bugs`); the inventory commit
+  `c7f36bd` records the red row honestly. Process notes: a pages agent's Bash-started
+  `wrangler dev` outlived its "preview stopped" and hung 8788 (memory
+  `orphaned-agent-preview-holds-port`); two rulings the brief should have pinned up front
+  (the Catalog URL, the plural forms) cost a round trip each. Cost: 8 Opus agents (5 build,
+  2 verify, 1 reconcile) + the debugger. For the owner: the Recording pane's expanded path
+  row draws its aggregate box `disabled` (per-tool boxes carry the state) — a deviation from
+  the demo's toggle-all, chosen so an un-tick on one tool cannot be cancelled by the path
+  box; §22's provider mapping carries `owner_roles` but the provider repo itself is untouched.
 - 2026-09-17 — **The app page takes the agent page's shape; every /apps row is the link,
   shipped.** The owner's ask after the ladder ("do the changes to the app page, also fix
   the listing page for apps so that the row is clickable"). `48d412b` (two `it.todo` rows

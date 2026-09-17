@@ -7647,12 +7647,12 @@ describe(`§2 · /apps/<slug> — the seven panes, the rail, the header and the 
       expect(aboveRail(await appPage(href)), href).toContain("Forward identity");
     }
 
-    // The controls, on the oauth app that has them, on every pane but Overview.
+    // The CONTROLS belong to the header rather than to a pane, so they sit above every one
+    // of them — Overview included, which absorbs the three FIELDS alone (2026-09-17).
     await breakBrokensCredential();
     for (const href of appPaneHrefs(BROKEN)) {
       const drawn = postTargets(await appPage(href));
-      const expected = href !== paths.appPane(BROKEN, "overview");
-      expect(drawn.includes(paths.appHeaderDisconnect(BROKEN)), href).toBe(expected);
+      expect(drawn.includes(paths.appHeaderDisconnect(BROKEN)), href).toBe(true);
     }
 
     // THE TWIN: a tunneled app draws no card on any pane.
@@ -8394,7 +8394,10 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
     const text = textOf(html);
     expect(text).toContain("built-in");
     expect(text).toContain(ALL_EXPLAINED);
-    expect(text).not.toContain(PATTERNS_LEGEND);
+    // The legend is read off the MARKUP: `textOf` closes the space before a full stop, so
+    // "aliases .*" survives a text walk only as "aliases.*".
+    expect(html).not.toContain(PATTERNS_LEGEND);
+    expect(text).not.toContain("Patterns ·");
     expect(html).not.toContain('name="i.');
     expect(opsOn(html)).not.toContain("role_set");
     expect(text, "the built-in has no editor foot either").not.toContain("Discard");
@@ -8440,16 +8443,20 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
     const editable = await page(`${pane}?sel=role:mine`, detail.session.cookie);
     const text = textOf(editable);
     expect(text).toContain("Patterns · 1");
-    expect(text).toContain(PATTERNS_LEGEND);
+    // The legend is read off the MARKUP: `textOf` closes the space before a full stop, so
+    // "aliases .*" survives a text walk only as "aliases.*".
+    expect(editable).toContain(PATTERNS_LEGEND);
     expect(text).toContain("get_.*");
     expect(text).toContain("matches 1 today, and any added later");
     expect(valuesNamed("drop", editable)).toEqual(["tools/get_.*"]);
     // The pattern the form still lists rides the save as a `keep`.
     expect(paneSubmission(editable, actionFor(editable, "role_set"))["keep"]).toBe("tools/get_.*");
 
-    // THE TWIN: the app's own role lists its pattern and offers no way to drop it.
+    // THE TWIN: the app's own role lists its pattern under the SAME legend — the group is
+    // the group whoever may edit it — and offers no way to drop it.
     const readOnly = await page(`${pane}?sel=role:theirs`, detail.session.cookie);
     expect(textOf(readOnly)).toContain("put_.*");
+    expect(readOnly).toContain(PATTERNS_LEGEND);
     expect(valuesNamed("drop", readOnly)).toEqual([]);
   });
 
@@ -9134,14 +9141,15 @@ describe(`§5/§15 · /apps/<slug> — the Recording pane and recording_set`, ()
     expect(textOf(await page(pane, detail.session.cookie))).toContain("body logging on");
 
     // THE TWIN: a refusal redraws the pane at 400 with the tick preserved. `redact`'s own
-    // validation is what refuses — a path key no tool could ever carry.
+    // validation is what refuses — a KEY that does not compile as a pattern, which is the
+    // one thing about this map the registry judges (assertRedactKeys) and the only refusal
+    // this form can actually reach: a tool name it has never heard of is a literal key like
+    // any other, and the op has no catalog to check it against.
     const live = await page(pane, detail.session.cookie);
-    // A drawn row naming an illegal tool: the composer builds an entry keyed by it, and
-    // `app_update` refuses the map — the cheapest refusal this form can actually reach.
     const liveTarget = actionFor(live, "recording_set");
     const refused = await formPost(
       liveTarget,
-      [...formPairs(live, liveTarget), ["t.args.shared", "NOT A TOOL"], ["p.args.shared", "1"]],
+      [...formPairs(live, liveTarget), ["t.args.shared", "alpha_(call"], ["p.args.shared", "1"]],
       detail.session.cookie,
     );
     expect(refused.status).toBe(400);

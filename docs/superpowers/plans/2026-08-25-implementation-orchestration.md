@@ -1557,6 +1557,33 @@ check and (manual, once) a real push notification to a real browser.
   renderer were designed together. `f4bce19` (`design:` — the layout & density guideline,
   `design/layout-and-density.md`, with the audit's inconsistencies mapped to fixes; applying
   it is the next dispatch, visual gate per page).
+- 2026-09-17 — **The five deadlines become env configuration; the global timer lever is
+  deleted — shipped from branch `deadlines`.** The owner's follow-up ("it seems a bit
+  awful" that tests rely on the clock): the residue after the flake fix was a
+  `globalThis.setTimeout` / `AbortSignal.timeout` patch inside the worker, global by nature.
+  One Opus agent in an isolated worktree. Step 0 probe decided the shape: in both workerd
+  pools the `cloudflare:test` env object IS the ambient env and every Durable Object's
+  `this.env`, constructed before or after a mutation alike, and a `delete` is seen — so
+  Design A: `limits.deadlines(env)` returns the five numbers (`PMCP_CALL_TIMEOUT_MS`,
+  `PMCP_AGGREGATED_LIST_DEADLINE_MS`, `PMCP_REGISTRATION_DEADLINE_MS`,
+  `PMCP_LISTEN_KEEPALIVE_MS`, `PMCP_LISTEN_BELL_MIN_INTERVAL_MS`; a positive-integer
+  binding wins, anything else — `"0"`, `""`, `"soon"` — falls back to the constant so a
+  mistyped binding can never disarm a deadline), read AT EACH USE in gateway.ts, tunnel.ts
+  and upstream.ts; `Env` intersects `DeadlineBindings`; production sets none
+  (`wrangler.jsonc` documents them unset). The harness is `withDeadlines(env, {…}, body)` /
+  `setDeadlines` (`server/test/harness/deadlines.ts`), teardown DELETING the binding rather
+  than restoring a captured value; `harness/timers.ts` and its overlap regression are gone;
+  16 rows in `server/test/unit/limits.test.ts`; the testing spec's "how a constant is
+  shrunk" bullet and the never-faked list amended. The agent's worktree forked at `e0dfef5`
+  (68 commits behind), so it re-found and re-fixed the stream rows' scoping defect on its own
+  base (1/5 → 5/5); the merge onto master (`eae9063`, `deadlines` branch in the ship
+  worktree) took its stream file whole and dropped the lever's own test. Gate on the merged
+  branch: `tsc` 0; **47 files / 1602 passed / 0** (`e8cdf0c`). Deploy **`5ce0f215`** (no
+  migration; the transient D1 API error struck a third time today and was re-run), smoke
+  green. **Not on master yet**: the main checkout carries a peer session's uncommitted
+  changes to files this merge touches (`server/src/upstream.ts` among them), so a
+  fast-forward there would overwrite them; `git merge --ff-only deadlines` once that tree is
+  clean. Cost: 1 Opus agent + the orchestrator's merge and gate.
 - 2026-09-17 — **The §21 stream flake, diagnosed and fixed — a harness bug, not the hub.**
   The owner asked for a subagent on `mattpocock-skills:diagnosing-bugs` (after the four full
   runs above each lost a different stream row). Feedback loop: `stream.test.ts` in a loop

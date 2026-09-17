@@ -1593,7 +1593,10 @@ export function noticeUrl(
   for (const [key, value] of Object.entries(extras)) {
     if (value !== undefined) fields.set(NOTICE_KEYS[key as "field" | "signedOut"], value);
   }
-  return `${back}?${fields}`;
+  // `back` is a pane URL, and a pane URL carries a query of its own (`?sel=`, `?q=`): the
+  // flash is APPENDED to it, never a second `?` that would fold the whole selection into
+  // one unreadable parameter value.
+  return `${back}${back.includes("?") ? "&" : "?"}${fields}`;
 }
 
 /** The flash the redirect above left, read back on the next render. */

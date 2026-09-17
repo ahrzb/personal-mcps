@@ -1206,6 +1206,9 @@ export type AppRoleItemRow = {
   description: string;
   /** The non-literal patterns that put it in the role — the ` · via <pattern>` tail. */
   via: string[];
+  /** `<family>/<name>` — the hidden `row` field EVERY drawn row carries, locked or not,
+   *  which is what makes the save a delta over the rows this render actually drew (§4). */
+  entry: string;
   field: string;
   checked: boolean;
   locked: boolean;
@@ -1262,8 +1265,10 @@ export type AppRoleDetails =
  * flatten a partial state into "all" or "none".
  */
 export type AppRecordingControl =
-  | { kind: "box"; field: string; checked: boolean }
-  | { kind: "locked" }
+  /** `disabled` where the row is expanded: the per-tool rows below are the control there,
+   *  so the path box states the aggregate and submits nothing (§5). */
+  | { kind: "box"; field: string; checked: boolean; disabled: boolean }
+  | { kind: "locked"; field: string }
   | { kind: "mixed" };
 
 export type AppRecordingToolRow =
@@ -2846,14 +2851,26 @@ async function appPaneView(
       ? await tunnelCapabilities(app.id)
       : (row.kind === "proxy" ? row.capabilities : undefined) ?? DEFAULT_APP_CAPABILITIES;
   const neverConnected = row.kind === "tunnel" && row.lastSeen === null;
-  const familyOf = async (family: RoleFamily): Promise<AppFamilyView<ListedItem>> => {
+  const familyOf = async (kind: ListKind, family: AppCapability): Promise<AppFamilyView<ListedItem>> => {
     if (neverConnected) return { state: "unconnected" };
     if (!advertised.includes(family)) return { state: "undeclared" };
-    const answered = await ownerCatalog(env, ctx.ownerId, appSlug, family);
+    const answered = await ownerCatalog(env, ctx.ownerId, appSlug, kind);
     return answered.ok ? { state: "listed", rows: answered.items } : { state: "unread" };
   };
-  const [tools, prompts, resources] = await Promise.all([familyOf("tools"), familyOf("prompts"), familyOf("resources")]);
-  const views: Record<RoleFamily, AppFamilyView<ListedItem>> = { tools, prompts, resources };
+  // §20.3's one keyspace, on BOTH pages that edit a grant set: resources and TEMPLATES are
+  // one family, a template matched on its raw `uriTemplate` — so the two pages' editors
+  // draw the same rows for the same pair, which is what §6's "verbatim" means (2026-09-17).
+  const [tools, prompts, resourceView, templateView] = await Promise.all([
+    familyOf("tools", "tools"),
+    familyOf("prompts", "prompts"),
+    familyOf("resources", "resources"),
+    familyOf("resourceTemplates", "resources"),
+  ]);
+  const views: Record<RoleFamily, AppFamilyView<ListedItem>> = {
+    tools,
+    prompts,
+    resources: joinViews(resourceView, templateView),
+  };
 
   // The listing, the reach and the carried entries — built by the ONE builder both pages
   // that edit a grant set call, so the app page's Agents pane is §6's "the agent page's
@@ -4274,10 +4291,15 @@ function roleDetails(ctx: PageContext, at: AppPaneCtx): AppRoleDetails {
     needle === "" || subject.toLowerCase().includes(needle) || description.toLowerCase().includes(needle);
   const door = reachabilityFor({ role: families }, { role: ["role"] });
 
+  // The built-in is not a set of items but a promise about every one, present and future
+  // (§4): there is nothing to tick, nothing to list and nothing to add a pattern to, so it
+  // draws neither groups nor a Patterns section.
+  const builtin = !isNew && name === BUILTIN_ROLE;
+
   const groups: AppRoleGroup[] = [];
   for (const { family, title } of CATALOG_GROUPS) {
     const view = at.views[family];
-    if (view.state !== "listed" || view.rows.length === 0) continue;
+    if (builtin || view.state !== "listed" || view.rows.length === 0) continue;
     const patterns = families[family] ?? [];
     let inRole = 0;
     const rows: AppRoleItemRow[] = [];
@@ -4292,6 +4314,7 @@ function roleDetails(ctx: PageContext, at: AppPaneCtx): AppRoleDetails {
         name: subject,
         description: itemDescription(item, family),
         via,
+        entry: `${family}/${subject}`,
         field: editable && via.length === 0 ? `i.${family}/${subject}` : "",
         checked: editable ? literal : matched,
         locked: editable ? via.length > 0 : matched,
@@ -4310,7 +4333,8 @@ function roleDetails(ctx: PageContext, at: AppPaneCtx): AppRoleDetails {
     });
   }
 
-  const patterns: AppRolePatternRow[] = ROLE_FAMILIES.flatMap((family) =>
+  const patternFamilies: readonly RoleFamily[] = builtin ? [] : ROLE_FAMILIES;
+  const patterns: AppRolePatternRow[] = patternFamilies.flatMap((family) =>
     (families[family] ?? [])
       .filter((pattern) => !isOneItem(pattern, family))
       .map((pattern) => {
@@ -4361,7 +4385,7 @@ function roleDetails(ctx: PageContext, at: AppPaneCtx): AppRoleDetails {
     offer,
     // Nothing to tick where nothing could be listed — and, because the editor draws no
     // item rows there, nothing to un-tick either: a save then leaves every literal alone.
-    catalogNote: CATALOG_GROUPS.every(({ family }) => at.views[family].state !== "listed")
+    catalogNote: !builtin && CATALOG_GROUPS.every(({ family }) => at.views[family].state !== "listed")
       ? "The catalog could not be read, so items cannot be ticked; patterns can still be edited."
       : null,
     keep: patterns.map((pattern) => pattern.entry),
@@ -4490,10 +4514,14 @@ function recordingSection(
           : null,
         control:
           editable.length === 0
-            ? { kind: "locked" as const }
+            ? // A path every tool declares writeOnly still has its control, in the
+              // section's normal row order — disabled, because it is not the owner's to
+              // clear, and never absent, because "there is no control" is a different
+              // statement from "the control cannot be moved" (§5).
+              { kind: "locked" as const, field: `p.${dir}.${path}` }
             : mixed
               ? { kind: "mixed" as const }
-              : { kind: "box" as const, field: `p.${dir}.${path}`, checked: all },
+              : { kind: "box" as const, field: `p.${dir}.${path}`, checked: all, disabled: expanded },
         // The (tool, path) pairs this row is a control FOR — carried as hidden `t.` fields
         // so the composer knows what the render covered without reading a catalog of its
         // own. Everything not named here is untouched by the save (§5's first rule).
@@ -4986,14 +5014,20 @@ function familiesFrom(
     return { family, rest: entry.slice(cut + 1) };
   };
 
-  // Only what the render DREW moves: a row the filter hid, and every row of a catalog that
-  // could not be read, is neither ticked nor unticked — it is simply not here.
+  // A TICK adds whatever it names, drawn or not: a box that came back ticked is a choice
+  // the owner made, and a refusal has to redraw it or the reason they are being shown costs
+  // them the work. Adding is also the safe direction — the narrowing one is removal.
+  for (const [name, value] of Object.entries(fields)) {
+    if (!name.startsWith(ROLE_ITEM_PREFIX) || value !== "1") continue;
+    const at = split(name.slice(ROLE_ITEM_PREFIX.length));
+    if (at !== null) push(literals, at.family, at.rest);
+  }
+  // A REMOVAL needs the row that drew it: a row the filter hid, and every row of a catalog
+  // that could not be read, is not an unticked one — it is simply not here.
   for (const row of drawn) {
     const at = split(row);
-    if (at === null) continue;
-    const kept = (literals.get(at.family) ?? []).filter((each) => each !== at.rest);
-    if (fields[`${ROLE_ITEM_PREFIX}${row}`] === "1") kept.push(at.rest);
-    literals.set(at.family, kept);
+    if (at === null || fields[`${ROLE_ITEM_PREFIX}${row}`] === "1") continue;
+    literals.set(at.family, (literals.get(at.family) ?? []).filter((each) => each !== at.rest));
   }
 
   const dropped = fields.drop ?? "";
@@ -5009,9 +5043,12 @@ function familiesFrom(
   const added = (fields.add ?? "").trim();
   if (added !== "") push(patterns, added.includes("://") ? "resources" : "tools", added);
 
+  // Sorted, so one role saved twice from two different renders is byte-identical: a family
+  // list is a SET (§20.3 matches it, never walks it), and leaving it in the order the rows
+  // happened to be drawn in would make the stored map depend on the filter that drew them.
   const families: FamilyPatterns = {};
   for (const family of ROLE_FAMILIES) {
-    const all = [...(literals.get(family) ?? []), ...(patterns.get(family) ?? [])];
+    const all = [...(literals.get(family) ?? []), ...(patterns.get(family) ?? [])].sort();
     if (all.length > 0) families[family] = all;
   }
   return families;

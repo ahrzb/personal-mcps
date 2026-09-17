@@ -332,7 +332,10 @@ const CatalogDetailsView: FC<{ view: AppCatalogDetails; slug: string }> = ({ vie
 
 const CatalogPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "catalog" } }> = ({ props, pane }) => {
   const slug = props.header.slug;
-  const base = paths.appDetail(slug);
+  // The Catalog's OWN url, on the landing render too (2026-09-17): `/apps/<slug>` is the
+  // landing — level 1 on the phone — and `/apps/<slug>/catalog` is the pane, so every row,
+  // the filter and the level-3 back link point at the pane rather than at the landing.
+  const base = paths.appPane(slug, "catalog");
   const href = (sel: string): string =>
     `${base}?${new URLSearchParams(pane.q === "" ? { sel } : { q: pane.q, sel })}`;
   return (
@@ -390,6 +393,30 @@ const SourceBadge: FC<{ row: Pick<AppRoleRow, "source" | "sourceTitle"> }> = ({ 
     {row.source}
   </span>
 );
+
+/**
+ * What wraps the role editor's rows: the `role_set` form for a role the owner may edit,
+ * and a plain box for one they may not (2026-09-17). The app's own declaration and the
+ * built-in `all` are read-only, and a form around a read-only listing is a Save the route
+ * would have to refuse — so the page does not draw one.
+ */
+const RoleEditorShell: FC<{ props: AppDetailProps; view: AppRoleDetails & { kind: "role" }; children?: unknown }> = ({
+  props,
+  view,
+  children,
+}) =>
+  view.editable ? (
+    <form id={ROLE_FORM} method="post" action={paths.appRoleSet(props.header.slug)} class="listing-form">
+      <input type="hidden" name="csrf" value={props.csrfToken} />
+      {/* The role being edited (empty for a new one) and, for a saved role, its name —
+          the new-role name rides the header's input through `form=`. */}
+      <input type="hidden" name="was" value={view.isNew ? "" : view.name} />
+      {view.isNew ? null : <input type="hidden" name="role" value={view.name} />}
+      {children}
+    </form>
+  ) : (
+    <div class="listing-form">{children}</div>
+  );
 
 const RoleDetailsView: FC<{ props: AppDetailProps; view: AppRoleDetails }> = ({ props, view }) => {
   const slug = props.header.slug;
@@ -450,12 +477,11 @@ const RoleDetailsView: FC<{ props: AppDetailProps; view: AppRoleDetails }> = ({ 
         ) : null}
       </div>
       <Refusal error={view.error} />
-      <form id={ROLE_FORM} method="post" action={paths.appRoleSet(slug)} class="listing-form">
-        <input type="hidden" name="csrf" value={props.csrfToken} />
-        {/* The role being edited (empty for a new one) and, for a saved role, its name —
-            the new-role name rides the input above through `form=`. */}
-        <input type="hidden" name="was" value={view.isNew ? "" : view.name} />
-        {view.isNew ? null : <input type="hidden" name="role" value={view.name} />}
+      {/* A read-only role — the app's own declaration, and the built-in `all` — renders NO
+          `role_set` form at all (2026-09-17): its rows are statements, and a form around
+          them would be a Save with nothing it is allowed to write. The GET filter above is
+          a form of its own and belongs to neither. */}
+      <RoleEditorShell props={props} view={view}>
         <div class="scroll">
           {view.catalogNote === null ? null : <p class="note gh-state">{view.catalogNote}</p>}
           {view.groups.map((group) => (
@@ -468,11 +494,11 @@ const RoleDetailsView: FC<{ props: AppDetailProps; view: AppRoleDetails }> = ({ 
               {group.state === null ? (
                 group.rows.map((row) => (
                   <div class="cr">
-                    {/* What this row is a control FOR. A literal the filter hid is not an
-                        unticked one, so the composer moves only what is named here. */}
-                    {row.field === "" ? null : (
-                      <input type="hidden" name="row" value={row.field.slice("i.".length)} />
-                    )}
+                    {/* What this render DREW, ticked, locked or not. A literal the filter
+                        hid is not an unticked one, so the composer moves only what is
+                        named here — and a row a pattern already reaches names itself too,
+                        or its literal would survive a save that drew it unticked. */}
+                    <input type="hidden" name="row" value={row.entry} />
                     <div>
                       <span class="mono">{row.name}</span>
                       <div class="cr-detail">
@@ -575,7 +601,7 @@ const RoleDetailsView: FC<{ props: AppDetailProps; view: AppRoleDetails }> = ({ 
             </span>
           </div>
         ) : null}
-      </form>
+      </RoleEditorShell>
     </div>
   );
 };
@@ -660,6 +686,7 @@ const RecordingSectionView: FC<{ section: AppRecordingSection }> = ({ section })
                 <input
                   class="cb lock"
                   type="checkbox"
+                  name={row.control.field}
                   checked
                   disabled
                   aria-label={`mask ${row.path}`}
@@ -670,14 +697,18 @@ const RecordingSectionView: FC<{ section: AppRecordingSection }> = ({ section })
                   <Dash />
                 </span>
               ) : (
+                // Expanded, the per-tool rows below ARE the control: the path box submits
+                // nothing there, or un-ticking one tool would be cancelled by the box the
+                // owner never touched (the mixed row's rule, for the same reason).
                 <input
                   class="cb"
                   type="checkbox"
                   name={row.control.field}
                   value="1"
                   checked={row.control.checked}
+                  disabled={row.control.disabled}
                   aria-label={`mask ${row.path}`}
-                  title="mask on every tool that takes it"
+                  title={row.control.disabled ? "set it per tool below" : "mask on every tool that takes it"}
                 />
               )}
             </div>

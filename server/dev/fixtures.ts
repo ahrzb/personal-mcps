@@ -1224,6 +1224,7 @@ const roleGroup = (
     name: row.name,
     description: row.description,
     via: via[row.name] ?? [],
+    entry: `${family}/${row.name}`,
     field: row.name in via ? "" : `i.${family}/${row.name}`,
     checked: inRole.includes(row.name) || row.name in via,
     locked: row.name in via,
@@ -1348,10 +1349,10 @@ const recordingRows = (
             : null,
         control:
           editable.length === 0
-            ? { kind: "locked" as const }
+            ? { kind: "locked" as const, field: `p.${dir}.${entry.path}` }
             : mixed
               ? { kind: "mixed" as const }
-              : { kind: "box" as const, field: `p.${dir}.${entry.path}`, checked: all },
+              : { kind: "box" as const, field: `p.${dir}.${entry.path}`, checked: all, disabled: expanded },
         drawn: editable.map((tool) => tool.tool),
         // Every tool that takes the path, always — a sub-row list shorter than the count
         // beside it would be the fixture disagreeing with itself.

@@ -427,7 +427,7 @@
     "§6/§8 severing a live connection 8. §6 · in-flight consumers are failed fast when the socket goes: a call awaiting a response gets -32000 at the close, not at limits.CALL_TIMEOUT_MS": "passed"
   },
   "server/test/tunnel/pipeline-tunnel.test.ts": {
-    "§15 deadline, disconnect, and the audit chokepoint 13. §15 · an app that never answers fails -32000 at limits.CALL_TIMEOUT_MS — asserted against the constant with the run's value shrunk, never waited out": "passed",
+    "§15 deadline, disconnect, and the audit chokepoint 13. §15 · an app that never answers fails -32000 at limits.CALL_TIMEOUT_MS — asserted against the constant with the run's value set short, never waited out": "passed",
     "§15 deadline, disconnect, and the audit chokepoint 14. §15 · a disconnect mid-call fails the waiting consumer -32000 immediately rather than at the deadline (the allow-twin: an app that answers in time resolves)": "passed",
     "§15 deadline, disconnect, and the audit chokepoint 14a. §15 · a frame already on the wire is never reported as certainly-did-not-execute: the dropped call's -32000 discloses that it MAY have run and its row records the disconnect, while the next call — with the socket gone, so nothing left — discloses nothing and records `offline`": "passed",
     "§15 deadline, disconnect, and the audit chokepoint 14b. §10/§15 · a DO RPC that fails under a waiting consumer refuses -32000 with a failure class in the row, never the unclassified -32603: a forcibly restarted instance is downtime, and the ledger is where §15's at-most-once question about that call is answered": "passed",
@@ -530,7 +530,7 @@
   "server/test/tunnel/stream.test.ts": {
     "§21.1 the stream a caller gets §21.1 · a granted caller's stream receives a doorbell when its app's catalog changes · an ungranted caller's aggregated stream, driven by the same provocation, receives nothing — same status, same content-type, same keepalive cadence, session ids differing by construction (the twin that makes silence evidence)": "passed",
     "§21.1 the stream a caller gets §21.1 · a reopened stream starts fresh — a bell rung while no stream was open is not replayed (Last-Event-ID honored nowhere), and the fresh change after reopen arrives as a data frame carrying no id: or event: lines": "passed",
-    "§21.2 the fan-out §15/§21.1 · with CALL_TIMEOUT_MS shrunk by the suite's shim, a forwarded call against a hanging tunneled app fails at the shrunk deadline while the stream on the same hub is still delivering keepalives past it — the 30 s budget governs forwarded requests, never the held response": "passed",
+    "§21.2 the fan-out §15/§21.1 · with CALL_TIMEOUT_MS set short through the hub's own binding, a forwarded call against a hanging tunneled app fails at the shrunk deadline while the stream on the same hub is still delivering keepalives past it — the 30 s budget governs forwarded requests, never the held response": "passed",
     "§21.2 the fan-out §21.2 · a mixed grant set discriminates: the tunneled app rings, the proxied app and the pmcp builtin never ring and no upstream is dialed": "passed",
     "§21.2 the fan-out §21.2 · LISTEN_FANOUT_MAX bounds the subscribed set in deterministic slug order — the same apps chosen across two concurrent streams over one namespace and across a close-and-reopen, the excess silent with no time qualifier": "passed",
     "§21.2 the re-authorization tick §21.2 · a grant revoked mid-stream: aggregated narrows (socket dropped, subscriptions dead, other apps' bells continue) · scoped, the caller's last grant on the app, closes the stream — a fresh open would now 404 (the twin)": "passed",
@@ -622,6 +622,24 @@
     "§7 step 2 · buildToolFilter — the scenario table §7 step 2 · union across roles · a tool matched by either granted role is reachable": "passed",
     "§7 step 2 · buildToolFilter — the scenario table §7 step 2 · zero grants · roleNames is empty — the gateway's scoped-404 signal (twin: the one-grant scenario below)": "passed",
     "§7 step 2 · buildToolFilter — the scenario table §9 rule 2 · the table itself · every all-deny scenario names its allow-twin": "passed"
+  },
+  "server/test/unit/limits.test.ts": {
+    "limits.deadlines a absent PMCP_CALL_TIMEOUT_MS is ignored, not obeyed — the constant stands": "passed",
+    "limits.deadlines a blank PMCP_CALL_TIMEOUT_MS is ignored, not obeyed — the constant stands": "passed",
+    "limits.deadlines a empty PMCP_CALL_TIMEOUT_MS is ignored, not obeyed — the constant stands": "passed",
+    "limits.deadlines a fractional PMCP_CALL_TIMEOUT_MS is ignored, not obeyed — the constant stands": "passed",
+    "limits.deadlines a Infinity PMCP_CALL_TIMEOUT_MS is ignored, not obeyed — the constant stands": "passed",
+    "limits.deadlines a NaN PMCP_CALL_TIMEOUT_MS is ignored, not obeyed — the constant stands": "passed",
+    "limits.deadlines a negative PMCP_CALL_TIMEOUT_MS is ignored, not obeyed — the constant stands": "passed",
+    "limits.deadlines a positive integer is taken verbatim, including one LONGER than the constant — the seam is configuration, not a cap": "passed",
+    "limits.deadlines a with a unit PMCP_CALL_TIMEOUT_MS is ignored, not obeyed — the constant stands": "passed",
+    "limits.deadlines a zero PMCP_CALL_TIMEOUT_MS is ignored, not obeyed — the constant stands": "passed",
+    "limits.deadlines an env with none of the bindings is the production constants, exactly — this is what wrangler.jsonc sets and therefore what ships": "passed",
+    "limits.deadlines an exponent PMCP_CALL_TIMEOUT_MS still names a positive whole number of ms, and is taken": "passed",
+    "limits.deadlines every deadline has its OWN binding, and setting one moves only that one — a lever that moved two would let a row watch the wrong duration": "passed",
+    "limits.deadlines padded PMCP_CALL_TIMEOUT_MS still names a positive whole number of ms, and is taken": "passed",
+    "limits.deadlines reads the env AT THE CALL — the same object mutated between two calls gives two answers, which is what lets a row shorten a deadline the hub has already been running with": "passed",
+    "limits.deadlines the binding names are distinct and PMCP_-prefixed, so none can collide with a wrangler var the hub already reads": "passed"
   },
   "server/test/unit/listen.test.ts": {
     "§21.2 · LISTEN_FANOUT_MAX §21.2 · LISTEN_FANOUT_MAX is an integer in [1, 6] — the platform's documented per-invocation connection ceiling is a hard upper bound the probe measurement can only lower": "passed",

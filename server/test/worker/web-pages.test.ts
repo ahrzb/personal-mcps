@@ -3261,6 +3261,8 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(tokens).toContain(`href="${paths.appDetail("news")}"`);
   });
 
+  it.todo(`§6/§20.3 · the agent page's grant editor reads the EFFECTIVE map: an owner-defined role on a tunneled app is listed in its Roles group as an ordinary grantable row — never with the undeclared badge and never "granted, but the app has not declared it — dormant" — and the reach line counts what it reaches · a held role in NEITHER map is still dormant (the twin)`);
+
   it.todo(`§6 · every agent slug the app page's Agents pane prints links to its own /agents/<agent>/apps/<slug> pane through the details' open agent page link, now that the app page carries the grant editor in place — the pane fronting grant_set itself rather than pointing at a second editor (the twin, re-pointed 2026-09-17)`);
 });
 
@@ -8234,8 +8236,8 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
       owner: { mine: { tools: ["put_paper"] }, app_role: { tools: ["jobfeed_crawl"] } },
     });
     const pane = paths.appPane(app.slug, "roles");
-    await grantRole(app.slug, "holder", "mine", "allow");
-    await grantRole(app.slug, "asker", "app_role", "approval");
+    const holder = await grantRole(app.slug, "holder", "mine", "allow");
+    const asker = await grantRole(app.slug, "asker", "app_role", "approval");
     const html = await page(pane, detail.session.cookie);
 
     // One row per EFFECTIVE role, then `all` last — order read off the rows themselves.
@@ -8251,12 +8253,12 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
     expect(html).toContain(ROLE_REPLACED_TITLE);
     expect(rows.app_role).toContain("tools get_.*");
     expect(rows.app_role).toContain("matches 1");
-    expect(rows.app_role).toContain("asker · ask");
+    expect(rows.app_role).toContain(`${asker} · ask`);
 
     expect(rows.mine).toContain("yours");
     expect(rows.mine).toContain("matches 1");
-    expect(rows.mine).toContain("holder");
-    expect(rows.mine).not.toContain("holder · ask");
+    expect(rows.mine).toContain(holder);
+    expect(rows.mine).not.toContain(`${holder} · ask`);
 
     expect(rows.all).toContain("built-in");
     expect(rows.all).toContain(ROLE_ALL_ITEMS);
@@ -8479,7 +8481,7 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
     expect(valuesNamed("add", literal)).toEqual([]);
   });
 
-  it(`§4/§8 · role_set composes ONE app_update: the stored owner map, minus was, plus role → per family the checked i. literals + the keep patterns − drop + add, empty families omitted — writing owner_roles on a TUNNELED app and roles on a PROXIED one and never both — then lands 303 on /apps/<slug>/roles?sel=role:<name> with the notice · a pattern the form still lists survives a save that did not touch it, through its hidden keep=<family>/<pattern> (the twin: the same save with the keep fields dropped loses it)`, async () => {
+  it(`§4/§8 · role_set composes ONE app_update out of the rows the form DREW: the stored owner map, minus was, plus role → per family the literals whose hidden row=<family>/<name> the form carried, ticked or not, plus the patterns − drop + add, empty families omitted — writing owner_roles on a TUNNELED app and roles on a PROXIED one and never both — then lands 303 on /apps/<slug>/roles?sel=role:<name> with the notice (the twin: the role the form did not name is untouched)`, async () => {
     const app = await seedRoleApp("compose", {
       owner: { mine: { tools: ["put_paper", "get_.*"] }, untouched: { tools: ["jobfeed_crawl"] } },
     });
@@ -8540,6 +8542,8 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
     expect(held.agents.find((row) => row.slug === agent)?.grants[app.slug]).toContain("doomed");
     expect(textOf(await page(pane, detail.session.cookie))).not.toContain("doomed");
   });
+
+  it.todo(`§4/§9 · a role_set Save is a delta over the rows the form DREW, never a replacement: under ?q= the editor draws a narrowed set of item rows, each carrying its hidden row=<family>/<name>, and the Save leaves every undrawn literal in the role · an app whose catalog could not be read draws no item row at all, says "The catalog could not be read, so items cannot be ticked; patterns can still be edited." and a Save there leaves the role's literals untouched while its patterns are still editable (the twin)`);
 
   it(`§4/§9 · a refused role_set redraws the pane at 400 with the reason in a danger alert and every submitted choice preserved, never a bare error page and never a partial write: an empty or illegal name, the reserved all, a pattern that does not compile, and — on a tunneled app — a name the app declares, refused with "<name> is declared by the app — its declaration would replace yours"; after each the stored map is byte-identical to what it was (the twin)`, async () => {
     const app = await seedRoleApp("refuse", {
@@ -8945,7 +8949,7 @@ describe(`§5/§15 · /apps/<slug> — the Recording pane and recording_set`, ()
     expect(links(html, `${paths.audit}?app=${app.slug}`)).toBe(true);
   });
 
-  it(`§5/§8 · recording_set composes ONE app_update { slug, log_bodies, redact, redact_results }: each ticked p. path becomes an entry on every editable tool that takes it, each ticked m. becomes that tool alone, and every hidden keep.<dir>=<tool>:<path> — the stored entries no schema row represents, added from evidence or keyed by a pattern — survives the save untouched · the same submission with the keep fields dropped loses exactly those entries (the twin)`, async () => {
+  it(`§5/§8 · recording_set composes ONE app_update { slug, log_bodies, redact, redact_results } as DELTAS over the rows the form drew: each drawn path row carries one hidden t.<dir>.<path>=<tool> per editable tool and each per-tool sub-row its own, so a ticked p. adds the entry on every tool the row named and an unticked one removes it there — leaving every stored entry no drawn row names exactly as it was (the twin: a pattern-keyed entry no row can represent)`, async () => {
     // One stored entry no schema row can represent: a PATTERN key, which the rows never
     // draw, so it exists only as a `keep`.
     const app = await seedRecordingApp("reccompose", { redact: { "alpha_.*": ["ghost"] } });
@@ -8979,6 +8983,8 @@ describe(`§5/§15 · /apps/<slug> — the Recording pane and recording_set`, ()
     expect((await formPost(actionFor(again, "recording_set"), bare, detail.session.cookie)).status).toBe(303);
     expect((await redactionOf(app.slug)).redact["alpha_.*"]).toBeUndefined();
   });
+
+  it.todo(`§5/§9 · a recording_set Save touches only the paths and tools the form drew: under ?q= the sections draw a narrowed set of rows and the Save leaves every stored mask on an undrawn path exactly as it was, and a Save whose form drew NO row at all — an app whose catalog could not be read — leaves redact and redact_results byte-identical (the twin: the same Save unfiltered does move the drawn ones)`);
 
   it(`§5/§9 · the switch is the save: recording_set posted with log unticked turns body logging off and with it ticked turns it on, each landing 303 back on the pane with the notice and the summary line reading the new state · a refused save redraws the pane at 400 with the reason and every submitted tick preserved (the twin)`, async () => {
     const app = await seedRecordingApp("recswitch", {});
@@ -9405,8 +9411,8 @@ describe(`§7 · /apps/<slug> — Token, Overview and the Danger zone`, () => {
   it(`§10 · the long-data fixtures render whole rather than truncating a listing away: a 300-character pattern on a role, a 40-word tool description and a 60-character slug each appear in full in their own pane's row and in its details, and the pane still draws every other row beside them (the twin)`, async () => {
     // 120, not the brief's 300: §20.3 caps a pattern at 128 characters, and a fixture the
     // op refuses would pin nothing about how the page draws a long one.
-    const long = "get_".concat("x".repeat(116));
-    expect(long.length).toBe(120);
+    const long = "get_".concat("x".repeat(115), ".*");
+    expect(long.length).toBe(121);
     const app = await seedRoleApp("longdata", {
       owner: { longrole: { tools: [long] }, shortrole: { tools: ["get_paper"] } },
     });

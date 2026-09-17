@@ -428,7 +428,7 @@ function post(
  */
 function formPost(
   target: string,
-  fields: Record<string, string>,
+  fields: Record<string, string> | [string, string][],
   cookie?: string,
 ): Promise<Response> {
   return call(
@@ -3261,7 +3261,28 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(tokens).toContain(`href="${paths.appDetail("news")}"`);
   });
 
-  it.todo(`§6/§20.3 · the agent page's grant editor reads the EFFECTIVE map: an owner-defined role on a tunneled app is listed in its Roles group as an ordinary grantable row — never with the undeclared badge and never "granted, but the app has not declared it — dormant" — and the reach line counts what it reaches · a held role in NEITHER map is still dormant (the twin)`);
+  it(`§6/§20.3 · the agent page's grant editor reads the EFFECTIVE map: an owner-defined role on a tunneled app is listed in its Roles group as an ordinary grantable row — never with the undeclared badge and never "granted, but the app has not declared it — dormant" — and the reach line counts what it reaches · a held role in NEITHER map is still dormant (the twin)`, async () => {
+    const app = await seedRoleApp("effective", { owner: { mine: { tools: ["get_paper"] } } });
+    const agent = await grantRole(app.slug, "effholder", "mine", "allow");
+    const html = await appPage(paths.agentApp(agent, app.slug));
+    const text = textOf(html);
+    // The owner's role is an ORDINARY row: a control of its own, and no dormancy.
+    expect(segOf(html, "mine").length).toBeGreaterThan(0);
+    expect(text).not.toContain("undeclared");
+    expect(text).not.toContain("granted, but the app has not declared it — dormant");
+    // …and the reach line counts through it.
+    expect(text).toContain(`${agent} reaches 1 of ${ROLE_TOOLS.length} tools`);
+
+    // THE TWIN: a held role in NEITHER map is still dormant, so the clause is not gone.
+    await ops.grant_set.handler(detail.ns.owner.userId, {
+      agent,
+      app: app.slug,
+      roles: ["mine", "ghostrole"],
+    });
+    const dormant = textOf(await appPage(paths.agentApp(agent, app.slug)));
+    expect(dormant).toContain("ghostrole");
+    expect(dormant).toContain("granted, but the app has not declared it — dormant");
+  });
 
   it.todo(`§6 · every agent slug the app page's Agents pane prints links to its own /agents/<agent>/apps/<slug> pane through the details' open agent page link, now that the app page carries the grant editor in place — the pane fronting grant_set itself rather than pointing at a second editor (the twin, re-pointed 2026-09-17)`);
 });
@@ -8488,10 +8509,18 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
     const pane = paths.appPane(app.slug, "roles");
     const html = await page(`${pane}?sel=role:mine`, detail.session.cookie);
     const target = actionFor(html, "role_set");
+    // Every drawn item row names itself, ticked or not — which is what makes the save a
+    // delta over the rows rather than a replacement of the role.
+    expect(valuesNamed("row", html).sort()).toEqual(
+      [...ROLE_TOOLS.map((tool) => `tools/${tool.name}`), ...ROLE_PROMPTS.map((p) => `prompts/${p.name}`)].sort(),
+    );
 
     // Submitted exactly as the browser submits it, plus one new tick.
-    const fields = { ...paneSubmission(html, target), "i.tools/jobfeed_crawl": "1" };
-    const posted = await formPost(target, fields, detail.session.cookie);
+    const posted = await formPost(
+      target,
+      [...formPairs(html, target), ["i.tools/jobfeed_crawl", "1"]],
+      detail.session.cookie,
+    );
     expect(posted.status).toBe(303);
     const landed = new URL(posted.headers.get("Location") ?? "", ORIGIN);
     expect(landed.pathname).toBe(pane);
@@ -8500,18 +8529,12 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
 
     const saved = await ownerRolesOf(app.slug);
     expect(saved.mine).toEqual(["get_.*", "jobfeed_crawl", "put_paper"]);
-    // The role the form did not name is untouched — the composition is of the STORED map.
+    // THE TWIN: the role the form did not name is untouched — the composition is of the
+    // STORED map, not of the pane.
     expect(saved.untouched).toEqual(["jobfeed_crawl"]);
     // A TUNNELED app writes `owner_roles`: its declaration map stays empty.
     const row = await new Registry(env.DB).getApp(detail.ns.owner.userId, app.slug);
     expect(row?.declaredRoles ?? {}).toEqual({});
-
-    // THE TWIN: the same submission WITHOUT the keep fields loses exactly the pattern.
-    const again = await page(`${pane}?sel=role:mine`, detail.session.cookie);
-    const bare = { ...paneSubmission(again, actionFor(again, "role_set")) };
-    delete bare["keep"];
-    expect((await formPost(actionFor(again, "role_set"), bare, detail.session.cookie)).status).toBe(303);
-    expect((await ownerRolesOf(app.slug)).mine).toEqual(["jobfeed_crawl", "put_paper"]);
   });
 
   it(`§4/§8 · Delete role posts delete=1 and composes the stored map minus was ALONE — no other role changes and no dialog, the hint beside it reading "grants naming it keep the name and match nothing until it exists again" — landing 303 on /apps/<slug>/roles; a grant naming the deleted role keeps the name and matches nothing until it exists again (the twin)`, async () => {
@@ -8543,7 +8566,60 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
     expect(textOf(await page(pane, detail.session.cookie))).not.toContain("doomed");
   });
 
-  it.todo(`§4/§9 · a role_set Save is a delta over the rows the form DREW, never a replacement: under ?q= the editor draws a narrowed set of item rows, each carrying its hidden row=<family>/<name>, and the Save leaves every undrawn literal in the role · an app whose catalog could not be read draws no item row at all, says "The catalog could not be read, so items cannot be ticked; patterns can still be edited." and a Save there leaves the role's literals untouched while its patterns are still editable (the twin)`);
+  it(`§4/§9 · a role_set Save is a delta over the rows the form DREW, never a replacement: under ?q= the editor draws a narrowed set of item rows, each carrying its hidden row=<family>/<name>, and the Save leaves every undrawn literal in the role · an app whose catalog could not be read draws no item row at all, says "The catalog could not be read, so items cannot be ticked; patterns can still be edited." and a Save there leaves the role's literals untouched while its patterns are still editable (the twin)`, async () => {
+    const app = await seedRoleApp("roledelta", {
+      owner: { mine: { tools: ["get_paper", "put_paper"] } },
+    });
+    const href = `${paths.appPane(app.slug, "roles")}?sel=role:mine`;
+
+    // NARROWED: one row drawn, and the save moves only what that row named.
+    const narrowed = await page(`${href}&q=get_paper`, detail.session.cookie);
+    expect(valuesNamed("row", narrowed)).toEqual(["tools/get_paper"]);
+    const target = actionFor(narrowed, "role_set");
+    expect(
+      (await formPost(target, formPairs(narrowed, target), detail.session.cookie)).status,
+    ).toBe(303);
+    expect((await ownerRolesOf(app.slug)).mine, "the undrawn literal stays in the role").toEqual([
+      "get_paper",
+      "put_paper",
+    ]);
+
+    // …and unticking the drawn one takes exactly it, which is what keeps the row honest.
+    const again = await page(`${href}&q=get_paper`, detail.session.cookie);
+    const bare = formPairs(again, actionFor(again, "role_set")).filter(
+      ([name]) => name !== "i.tools/get_paper",
+    );
+    expect((await formPost(actionFor(again, "role_set"), bare, detail.session.cookie)).status).toBe(303);
+    expect((await ownerRolesOf(app.slug)).mine).toEqual(["put_paper"]);
+
+    // THE TWIN: a catalog that could not be read draws NO item row, says so, and a save
+    // there leaves the literals alone while the patterns stay editable.
+    const unread = uniqueSlug("roleunread");
+    const scenario: UpstreamScenario = { id: uniqueSlug("roleup"), mode: { kind: "unreachable" } };
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        {
+          slug: unread,
+          kind: "proxy",
+          upstreamUrl: upstreamUrlFor(scenario),
+          upstreamAuthMode: "headers",
+          roles: { mine: { tools: ["get_paper", "put_paper", "get_.*"] } },
+        },
+      ],
+    });
+    const { cookie } = await seedOwnerSession(ns.owner);
+    const blind = await page(`${paths.appPane(unread, "roles")}?sel=role:mine`, cookie);
+    expect(valuesNamed("row", blind)).toEqual([]);
+    expect(textOf(blind)).toContain(
+      "The catalog could not be read, so items cannot be ticked; patterns can still be edited.",
+    );
+    const blindTarget = actionFor(blind, "role_set");
+    expect((await formPost(blindTarget, formPairs(blind, blindTarget), cookie)).status).toBe(303);
+    const kept = (await new Registry(env.DB).getApp(ns.owner.userId, unread))?.declaredRoles ?? {};
+    expect(kept.mine).toEqual(["get_.*", "get_paper", "put_paper"]);
+    // The patterns are still editable there: the row offers its own drop.
+    expect(valuesNamed("drop", blind)).toEqual(["tools/get_.*"]);
+  });
 
   it(`§4/§9 · a refused role_set redraws the pane at 400 with the reason in a danger alert and every submitted choice preserved, never a bare error page and never a partial write: an empty or illegal name, the reserved all, a pattern that does not compile, and — on a tunneled app — a name the app declares, refused with "<name> is declared by the app — its declaration would replace yours"; after each the stored map is byte-identical to what it was (the twin)`, async () => {
     const app = await seedRoleApp("refuse", {
@@ -8950,41 +9026,92 @@ describe(`§5/§15 · /apps/<slug> — the Recording pane and recording_set`, ()
   });
 
   it(`§5/§8 · recording_set composes ONE app_update { slug, log_bodies, redact, redact_results } as DELTAS over the rows the form drew: each drawn path row carries one hidden t.<dir>.<path>=<tool> per editable tool and each per-tool sub-row its own, so a ticked p. adds the entry on every tool the row named and an unticked one removes it there — leaving every stored entry no drawn row names exactly as it was (the twin: a pattern-keyed entry no row can represent)`, async () => {
-    // One stored entry no schema row can represent: a PATTERN key, which the rows never
-    // draw, so it exists only as a `keep`.
+    // A stored entry no schema row can represent: a PATTERN key, which the rows never draw.
     const app = await seedRecordingApp("reccompose", { redact: { "alpha_.*": ["ghost"] } });
     const pane = paths.appPane(app.slug, "recording");
     const html = await page(pane, detail.session.cookie);
     const target = actionFor(html, "recording_set");
-    const submitted = paneSubmission(html, target);
-    expect(Object.keys(submitted)).toContain("keep.args");
+    const pairs = formPairs(html, target);
+    // The drawn row names its editable tools — one hidden field each, and no `keep.`.
+    expect(pairs.filter(([name]) => name === "t.args.shared").map(([, tool]) => tool).sort()).toEqual(
+      RECORD_TOOLS.map((tool) => tool.name).slice().sort(),
+    );
+    expect(pairs.some(([name]) => name.startsWith("keep."))).toBe(false);
 
     const posted = await formPost(
       target,
-      { ...submitted, "p.args.shared": "1", "m.args.beta_call.only_beta": "1" },
+      [...pairs, ["p.args.shared", "1"], ["p.args.only_beta", "1"]],
       detail.session.cookie,
     );
     expect(posted.status).toBe(303);
     const saved = await redactionOf(app.slug);
-    // A `p.` tick is one literal entry per editable tool that takes the path.
+    // A ticked `p.` is one literal entry per tool the row named.
     for (const tool of RECORD_TOOLS.map((row) => row.name)) {
       expect(saved.redact[tool] ?? [], tool).toContain("shared");
     }
-    // An `m.` tick is that tool alone.
+    // …and a path only one tool takes reaches that tool alone.
     expect(saved.redact.beta_call).toContain("only_beta");
     expect(saved.redact.alpha_call ?? []).not.toContain("only_beta");
-    // The pattern-keyed entry survived, untouched.
+    // THE TWIN: the pattern-keyed entry no drawn row names is exactly as it was.
     expect(saved.redact["alpha_.*"]).toEqual(["ghost"]);
 
-    // THE TWIN: the same submission with the keeps dropped loses exactly that entry.
-    const again = await page(pane, detail.session.cookie);
-    const bare = { ...paneSubmission(again, actionFor(again, "recording_set")) };
-    delete bare["keep.args"];
-    expect((await formPost(actionFor(again, "recording_set"), bare, detail.session.cookie)).status).toBe(303);
-    expect((await redactionOf(app.slug)).redact["alpha_.*"]).toBeUndefined();
+    // A per-tool sub-row moves its own tool and no other: unticked, beta loses `shared`.
+    const open = await page(`${pane}?which=args:shared`, detail.session.cookie);
+    const openTarget = actionFor(open, "recording_set");
+    const withoutBeta = formPairs(open, openTarget).filter(
+      ([name]) => name !== "m.args.beta_call.shared",
+    );
+    expect((await formPost(openTarget, withoutBeta, detail.session.cookie)).status).toBe(303);
+    const after = await redactionOf(app.slug);
+    expect(after.redact.beta_call ?? []).not.toContain("shared");
+    expect(after.redact.alpha_call ?? []).toContain("shared");
   });
 
-  it.todo(`§5/§9 · a recording_set Save touches only the paths and tools the form drew: under ?q= the sections draw a narrowed set of rows and the Save leaves every stored mask on an undrawn path exactly as it was, and a Save whose form drew NO row at all — an app whose catalog could not be read — leaves redact and redact_results byte-identical (the twin: the same Save unfiltered does move the drawn ones)`);
+  it(`§5/§9 · a recording_set Save touches only the paths and tools the form drew: under ?q= the sections draw a narrowed set of rows and the Save leaves every stored mask on an undrawn path exactly as it was, and a Save whose form drew NO row at all — an app whose catalog could not be read — leaves redact and redact_results byte-identical (the twin: the same Save unfiltered does move the drawn ones)`, async () => {
+    const app = await seedRecordingApp("recdelta", {
+      redact: { alpha_call: ["note"], beta_call: ["only_beta"] },
+    });
+    const pane = paths.appPane(app.slug, "recording");
+
+    // NARROWED: one path drawn, and the save moves only it.
+    const narrowed = await page(`${pane}?q=shared`, detail.session.cookie);
+    expect(pathRowOrder(narrowed, "args")).toEqual(["shared"]);
+    const target = actionFor(narrowed, "recording_set");
+    expect(
+      (await formPost(target, [...formPairs(narrowed, target), ["p.args.shared", "1"]], detail.session.cookie))
+        .status,
+    ).toBe(303);
+    const saved = await redactionOf(app.slug);
+    expect(saved.redact.alpha_call, "the undrawn path's mask stays").toContain("note");
+    expect(saved.redact.beta_call).toContain("only_beta");
+    // THE TWIN, on the same save: the drawn path DID move, so the row is not vacuous.
+    expect(saved.redact.gamma_call ?? []).toContain("shared");
+
+    // A form that drew NOTHING leaves both maps byte-identical.
+    const blind = uniqueSlug("recunread");
+    const scenario: UpstreamScenario = { id: uniqueSlug("recup"), mode: { kind: "unreachable" } };
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        {
+          slug: blind,
+          kind: "proxy",
+          upstreamUrl: upstreamUrlFor(scenario),
+          upstreamAuthMode: "headers",
+          redact: { alpha_call: ["note"] },
+          redactResults: { gamma_call: ["out"] },
+        },
+      ],
+    });
+    const { cookie } = await seedOwnerSession(ns.owner);
+    const before = await new Registry(env.DB).getApp(ns.owner.userId, blind);
+    const html = await page(paths.appPane(blind, "recording"), cookie);
+    expect(pathRowOrder(html, "args")).toEqual([]);
+    const blindTarget = actionFor(html, "recording_set");
+    expect((await formPost(blindTarget, formPairs(html, blindTarget), cookie)).status).toBe(303);
+    const after = await new Registry(env.DB).getApp(ns.owner.userId, blind);
+    expect(after?.redact).toEqual(before?.redact);
+    expect(after?.redactResults).toEqual(before?.redactResults);
+  });
 
   it(`§5/§9 · the switch is the save: recording_set posted with log unticked turns body logging off and with it ticked turns it on, each landing 303 back on the pane with the notice and the summary line reading the new state · a refused save redraws the pane at 400 with the reason and every submitted tick preserved (the twin)`, async () => {
     const app = await seedRecordingApp("recswitch", {});
@@ -10812,6 +10939,29 @@ function rowMarkupFor(html: string, sel: string): string {
   });
   if (at < 0) throw new Error(`no listing row selects "${sel}"`);
   return html.slice(rows[at].index ?? 0, at + 1 < rows.length ? rows[at + 1].index : html.length);
+}
+
+/**
+ * One form's submission as the BROWSER builds it: every enabled named control in document
+ * order, REPEATED names kept, with unticked checkboxes and unchecked radios dropped.
+ * `paneSubmission` keeps one value per name, which cannot describe a form whose rows repeat
+ * one — the two composers' `t.<dir>.<path>` and `row` fields, on which "a Save is a delta
+ * over the rows the form drew" entirely rests (2026-09-17).
+ */
+function formPairs(html: string, action: string): [string, string][] {
+  const form = [...html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].find(
+    (candidate) => decodeEntities(attributeOf(candidate[1], "action") ?? "") === action,
+  );
+  if (form === undefined) throw new Error(`the page rendered no form posting to "${action}"`);
+  const pairs: [string, string][] = [];
+  for (const control of form[2].matchAll(/<input\b([^>]*)>/g)) {
+    const name = decodeEntities(attributeOf(control[1], "name") ?? "");
+    if (name === "" || /\bdisabled\b/.test(control[1])) continue;
+    const type = attributeOf(control[1], "type");
+    if ((type === "checkbox" || type === "radio") && !/\bchecked\b/.test(control[1])) continue;
+    pairs.push([name, decodeEntities(attributeOf(control[1], "value") ?? "")]);
+  }
+  return pairs;
 }
 
 /** The details pane's own markup — the right-hand half of a split pane. A claim about

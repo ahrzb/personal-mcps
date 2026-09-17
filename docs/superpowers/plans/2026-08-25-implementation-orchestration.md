@@ -1557,6 +1557,34 @@ check and (manual, once) a real push notification to a real browser.
   renderer were designed together. `f4bce19` (`design:` — the layout & density guideline,
   `design/layout-and-density.md`, with the audit's inconsistencies mapped to fixes; applying
   it is the next dispatch, visual gate per page).
+- 2026-09-17 — **The §21 stream flake, diagnosed and fixed — a harness bug, not the hub.**
+  The owner asked for a subagent on `mattpocock-skills:diagnosing-bugs` (after the four full
+  runs above each lost a different stream row). Feedback loop: `stream.test.ts` in a loop
+  beside three concurrent `web-pages.test.ts` processes — 4/5 red (0/6 under pure CPU load,
+  which ruled out slowness). One tagged probe at the failing wait — `ok=false closed=false
+  sockets=1 pending=undefined rangAgo=never` — killed four of five hypotheses at once:
+  `ring()` was never called. Root cause: the file wrapped every row in `withShrunkTimers`
+  mapping `CALL_TIMEOUT_MS` 30 000 → 40 ms, but that constant also arms the hub's own
+  catalog re-list (`warmCatalog` through `AppConnection.request`); under load the DO ↔
+  fake-app round trip ran past 40 ms, the re-list timed out, wrote no catalog and — correctly,
+  §20.5 — rang no bell; the rows waited for a doorbell that could not exist (`catalog-warm-
+  failed … timeout` in every red run, for exactly the family asserted). Second defect, the
+  one that spread the red to `subscriptions.test.ts`: `shrinkTimers` captured "the current
+  setTimeout" at install; vitest abandons a case at `testTimeout` but its body keeps running,
+  so its restore landed after the next case installed and put a PATCHED timer back as the
+  real one — every later case and (`isolate: false`) every later file then ran with a
+  millisecond budget. Fix `36cde22` (`server/test/tunnel/stream.test.ts`,
+  `server/test/harness/timers.ts`): the hub's call budget is shrunk only by the one row that
+  watches it; originals captured once at module load; `untilSockets` budgeted in turns. The
+  hub is unchanged — no hotfix. Verification: the file 0/5 red alone and 0/5 red under the
+  same load that gave 4/5; the tunnel project 227/227 twice under load; `tsc` clean. The
+  orchestrator added the overlap regression the agent flagged as outside its ownership:
+  `server/test/unit/timers.test.ts` (two overlapping installs restored in the wrong order
+  leave the real timers; the twin: a mapped 30 s fires in milliseconds while installed).
+  Cost: 1 Opus agent. Noted: while this landed, a peer session (`personal-mcps-a9`) had ~58
+  files modified and uncommitted in the same working tree (the §9 planner's retirement, by
+  the look of it — `cli/src/plan.ts`, `contracts/*.json`, §9 deleted); nothing of it was
+  committed here, and every commit of this dispatch was added by path.
 - 2026-09-17 — **The app page as three panes, owner-defined roles, the Recording pane, the
   mobile boards — shipped.** The owner's ask: board `design/concepts/AppThreePaneDemo.html`,
   add the mobile boards, implement and deploy — whole, New role included. Brief

@@ -64,12 +64,7 @@ import {
 import { availability, upstreamBackend } from "./upstream";
 import { approvalsFromEnv, vapidFromEnv } from "./wiring";
 import type { Env } from "./index";
-import {
-  AGGREGATED_LIST_DEADLINE_MS,
-  AUDIT_URI_CAP_BYTES,
-  LISTEN_FANOUT_MAX,
-  LISTEN_KEEPALIVE_MS,
-} from "./limits";
+import { AUDIT_URI_CAP_BYTES, deadlines, LISTEN_FANOUT_MAX } from "./limits";
 
 /**
  * A JSON-RPC 2.0 id as the hub accepts it on requests. `null` ids are never accepted
@@ -823,7 +818,7 @@ async function listAggregated(
       try {
         const catalog = await withDeadline(
           LIST_CATALOG[kind](selectBackend(app), app, { ...ctx, roles: filter.roleNames }),
-          AGGREGATED_LIST_DEADLINE_MS,
+          deadlines(env).aggregatedListDeadlineMs,
         );
         return {
           slug: app.slug,
@@ -1701,7 +1696,9 @@ class ListenStream {
   ): Promise<void> {
     for (;;) {
       await new Promise<void>((resolve) => {
-        setTimeout(resolve, LISTEN_KEEPALIVE_MS);
+        // Re-read every tick: a row that shortens the keepalive through its binding gets
+        // the short one from the very next tick, and nothing global is patched.
+        setTimeout(resolve, deadlines(env).listenKeepaliveMs);
       });
       if (this.ended) return;
       if (this.keepalivesIssued !== this.keepalivesAccepted) {

@@ -28,6 +28,22 @@ package (2026-08). Facts the layout depends on:
   owning the 10 s / 30 s / 1 h / 7 d / 10 min values plus the audit body cap;
   tests reference constants,
   never literals — "30 s → 45 s" is then a one-line change with zero test churn).
+- **How a constant is shrunk: through the hub's own env, never through a global.**
+  The five deadlines a row would otherwise have to sit through —
+  `CALL_TIMEOUT_MS`, `AGGREGATED_LIST_DEADLINE_MS`, `REGISTRATION_DEADLINE_MS`,
+  `LISTEN_KEEPALIVE_MS`, `LISTEN_BELL_MIN_INTERVAL_MS` — are **configuration**:
+  `limits.deadlines(env)` reads `PMCP_<NAME>` from the env bindings at the moment
+  the timer is armed, and falls back to the constant whenever the binding is not a
+  positive integer count of milliseconds. Production sets none of them, so what
+  ships is the constant. A test sets the one deadline its row watches through
+  `harness/deadlines` (`withDeadlines` per row, `setDeadlines` per file) — the env
+  object `cloudflare:test` hands the test is the same one the Worker's handlers and
+  every Durable Object read, whether the DO was constructed before or after the
+  write (measured in both workerd pools, 2026-09-17). The teardown DELETES the
+  binding rather than restoring a captured value: absence is production's setting,
+  so restoring to it is idempotent and order-independent. `vi.mock` on `limits.ts`
+  is NOT a substitute — it reaches the test file's import and not the hub's modules
+  inside workerd, so the suite believes in a deadline the hub is not enforcing.
 
 The projects:
 

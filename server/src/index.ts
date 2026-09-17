@@ -31,6 +31,7 @@ import {
   protectedResourceMetadata,
 } from "./oauth";
 import { HUB_PRINCIPAL } from "./principal";
+import type { DeadlineBindings } from "./limits";
 import { PMCP_SLUG, Registry } from "./registry";
 import { handleConnect } from "./tunnel";
 import {
@@ -105,7 +106,14 @@ export type Env = {
    * limits.AUDIT_BODY_CAP_BYTES. Same parse path as AUDIT_RETENTION_DAYS.
    */
   AUDIT_BODY_CAP_BYTES?: string;
-};
+} & DeadlineBindings;
+// …and, spread in above, the five optional deadline vars —
+// PMCP_CALL_TIMEOUT_MS, PMCP_AGGREGATED_LIST_DEADLINE_MS, PMCP_REGISTRATION_DEADLINE_MS,
+// PMCP_LISTEN_KEEPALIVE_MS, PMCP_LISTEN_BELL_MIN_INTERVAL_MS. Production sets NONE of them:
+// unset means the limits.ts constant, which is the whole point — the durations are
+// configuration only so that a test can shorten the one it watches without patching
+// anything global, and limits.ts spells the names beside the constants they override so the
+// binding and its default cannot drift apart (limits.deadlines).
 
 /**
  * The top-level route table, as data: the first path segments the worker serves ahead

@@ -56,8 +56,10 @@ export function liveSockets(appId: string): Promise<number> {
  * it is suppressed into a pending trailing ring that ONLY the coalescing alarm delivers.
  * Which half a case gets is decided by how many real milliseconds the suite happened to
  * spend between two provocations — the floor is wall-clock arithmetic plus a storage alarm,
- * so `shrinkTimers` (which patches setTimeout) cannot reach it and no amount of ticking
- * makes a one-second window pass. A case that waited only for the frame therefore asserted
+ * so no amount of ticking makes a one-second window pass (a row CAN set the floor short
+ * through PMCP_LISTEN_BELL_MIN_INTERVAL_MS, but that changes which half it observes rather
+ * than making both observable, which is what this wants). A case that waited only for the
+ * frame therefore asserted
  * the suite's own speed: two of them passed for months and went red when D16 made setup
  * fast enough to land both changes inside the same window.
  *

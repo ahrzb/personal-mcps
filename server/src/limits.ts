@@ -119,3 +119,55 @@ export const SUBSCRIBE_URI_MAX_BYTES = 2048;
  * this, never raise it.
  */
 export const LISTEN_FANOUT_MAX = 6;
+
+// ── the five deadlines as CONFIGURATION ───────────────────────────────────────────────
+//
+// These five are the durations a test must be able to SHORTEN: each is a wait a row would
+// otherwise sit through, and none can be reached by a clock injection — two are bare
+// `setTimeout`s inside workerd, three are `AbortSignal.timeout`, one is Date.now arithmetic
+// plus a storage alarm. The lever this replaced patched `globalThis.setTimeout` and
+// `AbortSignal.timeout` inside the worker, keyed by the exact millisecond value: global
+// mutable state with a restore, and two overlapping restores leaked a patched timer across
+// files (the 2026-09-17 §21 stream flake).
+//
+// So the deadline is read from the env instead. Production sets none of these bindings and
+// gets the constants above; a test sets one for the row that watches it, and there is
+// nothing to restore to "whatever was there" — ABSENCE is the default. Read AT EACH USE,
+// never captured at construct, so a per-row setting applies to the very next timer armed
+// and cannot outlive the row that set it.
+
+/** The env binding each configurable deadline reads, and the constant it falls back to. */
+const DEADLINES = {
+  callTimeoutMs: ["PMCP_CALL_TIMEOUT_MS", CALL_TIMEOUT_MS],
+  aggregatedListDeadlineMs: ["PMCP_AGGREGATED_LIST_DEADLINE_MS", AGGREGATED_LIST_DEADLINE_MS],
+  registrationDeadlineMs: ["PMCP_REGISTRATION_DEADLINE_MS", REGISTRATION_DEADLINE_MS],
+  listenKeepaliveMs: ["PMCP_LISTEN_KEEPALIVE_MS", LISTEN_KEEPALIVE_MS],
+  listenBellMinIntervalMs: ["PMCP_LISTEN_BELL_MIN_INTERVAL_MS", LISTEN_BELL_MIN_INTERVAL_MS],
+} as const satisfies Record<string, readonly [string, number]>;
+
+/** The five configurable deadlines, in milliseconds. */
+export type Deadlines = { [K in keyof typeof DEADLINES]: number };
+
+/** The binding name behind each one — the harness that sets them reads the names from here. */
+export const DEADLINE_ENV = Object.fromEntries(
+  Object.entries(DEADLINES).map(([key, [name]]) => [key, name]),
+) as { readonly [K in keyof typeof DEADLINES]: string };
+
+/** The optional string bindings `deadlines` reads — Env's five fields, structurally. */
+export type DeadlineBindings = { [K in (typeof DEADLINES)[keyof typeof DEADLINES][0]]?: string };
+
+/**
+ * The five deadlines this env asks for: an override where the binding parses to a positive
+ * integer count of milliseconds, the production constant everywhere else. Anything that is
+ * not one — absent, empty, zero, negative, fractional, "soon" — is ignored rather than
+ * obeyed, because a mistyped binding must not silently disarm a deadline.
+ */
+export function deadlines(env: DeadlineBindings): Deadlines {
+  const read = env as Record<string, string | undefined>;
+  const out = {} as Record<string, number>;
+  for (const [key, [name, fallback]] of Object.entries(DEADLINES)) {
+    const ms = Number(read[name]);
+    out[key] = Number.isInteger(ms) && ms > 0 ? ms : fallback;
+  }
+  return out as Deadlines;
+}

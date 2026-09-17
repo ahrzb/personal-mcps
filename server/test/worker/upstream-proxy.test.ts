@@ -42,8 +42,8 @@
 //   oauth-mode, plus a third healthy one for the fan-out) · harness/fake-upstream
 //   (miniflare.outboundService router: per-slug behavior, adversarial fake AS, dial
 //   counters) · ../../src/index (default.fetch) · ../../src/upstream · ../../src/gateway ·
-//   ../../src/limits (CALL_TIMEOUT_MS, AGGREGATED_LIST_DEADLINE_MS) · harness/timers
-//   (the two deadlines mapped to test-run durations for the whole file) ·
+//   ../../src/limits (CALL_TIMEOUT_MS, AGGREGATED_LIST_DEADLINE_MS) · harness/deadlines
+//   (the two deadlines set to test-run durations for the whole file) ·
 //   applyD1Migrations (setup) · env.DB
 
 import { env } from "cloudflare:test";
@@ -58,13 +58,16 @@ import { beforeAll, describe, expect, it } from "vitest";
 // assumed: with the mock in place a `hang` row outlived a 13.2 s budget derived from the
 // shrunk values.
 //
-// What DOES reach the hub is the one surface the test and the hub share inside this pool:
-// `globalThis`. The whole file runs with the two deadlines mapped there (harness/timers —
-// `setTimeout` for gateway's `withDeadline`, `AbortSignal.timeout` for upstream's dials),
-// so the hub enforces its real deadline code against a shorter duration and a `hang` row
-// costs 1.8 s instead of 30. The map is keyed by the constants BY NAME and every number
-// downstream — CASE_BUDGET_MS, the two-knob row's bounds — derives from what they map TO,
-// so a spec change to either deadline still moves this file and nothing else does.
+// What DOES reach the hub is the hub's own ENV: upstream.ts and gateway.ts read these two
+// deadlines from their bindings at the moment they arm a dial (limits.deadlines), and the
+// env object `cloudflare:test` hands this file is the same one the worker reads. So the
+// whole file runs with the two deadlines set short there (harness/deadlines), the hub
+// enforces its real deadline code against a shorter duration, and a `hang` row costs 1.8 s
+// instead of 30. Nothing on `globalThis` is patched — the lever this replaced patched
+// `setTimeout` and `AbortSignal.timeout` and restored them, and two overlapping restores
+// leaked a patched timer into the next file. The settings are named BY DEADLINE and every
+// number downstream — CASE_BUDGET_MS, the two-knob row's bounds — derives from what they
+// are set TO, so a spec change to either deadline still moves this file and nothing else.
 import { query } from "../../src/audit";
 import type { AuditRow } from "../../src/audit";
 import type { BackendCtx, JsonRpcResponse, Prompt, Resource, Tool } from "../../src/gateway";
@@ -97,9 +100,9 @@ import type {
 } from "../harness/fake-upstream";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
-import { shrinkTimers } from "../harness/timers";
+import { setDeadlines } from "../harness/deadlines";
 
-/** What the hub's two deadlines are mapped to for this run — test-run durations, not spec
+/** What the hub's two deadlines are set to for this run — test-run durations, not spec
  *  numbers, which is why neither is a limits.ts constant. The ratio §11 pins survives (an
  *  aggregated listing gives up well before a direct call's budget is spent, 1:3 as
  *  limits.ts has it), and both are sized for the machine rather than for the arithmetic:
@@ -109,16 +112,14 @@ import { shrinkTimers } from "../harness/timers";
 const SHRUNK_CALL_TIMEOUT_MS = 1_800;
 const SHRUNK_LIST_DEADLINE_MS = 600;
 
-// File-scoped, not per row: every row here drives the same hub, so one mapping for the
+// File-scoped, not per row: every row here drives the same hub, so one setting for the
 // file means no row can accidentally see the real 30 s. The hook's return value is the
-// restore, which vitest runs as the teardown.
+// teardown, which unsets the two bindings — back to ABSENT, which is production's value.
 beforeAll(() =>
-  shrinkTimers(
-    new Map([
-      [CALL_TIMEOUT_MS, SHRUNK_CALL_TIMEOUT_MS],
-      [AGGREGATED_LIST_DEADLINE_MS, SHRUNK_LIST_DEADLINE_MS],
-    ]),
-  ),
+  setDeadlines(env, {
+    callTimeoutMs: SHRUNK_CALL_TIMEOUT_MS,
+    aggregatedListDeadlineMs: SHRUNK_LIST_DEADLINE_MS,
+  }),
 );
 
 /**

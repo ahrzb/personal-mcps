@@ -68,6 +68,14 @@
     // Both are strings here and parsed once by the composition root.
     // "AUDIT_RETENTION_DAYS": "7",      // default limits.RETENTION_DAYS = 7 days
     // "AUDIT_BODY_CAP_BYTES": "16384"   // default limits.AUDIT_BODY_CAP_BYTES = 16 KiB
+
+    // The five deadlines (limits.deadlines) are configuration for the same reason —
+    // but they exist so the SUITE can set one short for the row that watches it, not
+    // so a deployment can retune the spec. Leave every one unset; a value that is not
+    // a positive integer of milliseconds is ignored and the constant stands.
+    // "PMCP_CALL_TIMEOUT_MS", "PMCP_AGGREGATED_LIST_DEADLINE_MS",
+    // "PMCP_REGISTRATION_DEADLINE_MS", "PMCP_LISTEN_KEEPALIVE_MS",
+    // "PMCP_LISTEN_BELL_MIN_INTERVAL_MS"
   }
 
   // Secrets — never values here, only names. Set each with:

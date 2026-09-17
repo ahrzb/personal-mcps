@@ -74,7 +74,7 @@ import { CODES, HubError, unavailable } from "./errors";
 import type { BackendCtx, JsonRpcRequest, JsonRpcResponse, AppBackend, Tool } from "./gateway";
 import { formatPrincipal } from "./principal";
 import { resolveAppToken } from "./identity";
-import { CALL_TIMEOUT_MS, LISTEN_BELL_MIN_INTERVAL_MS, REGISTRATION_DEADLINE_MS } from "./limits";
+import { deadlines } from "./limits";
 import {
   patternFamilyOf,
   Registry,
@@ -851,7 +851,7 @@ export class AppConnection extends DurableObject {
     // stored beside it (constraint 2), because one slot cannot remember two intentions and
     // the handler must not spend this deadline early on the coalescer's firing. Armed
     // through the multiplexer, which never pushes a pending ring out behind it (§21.3).
-    const dueAt = Date.now() + REGISTRATION_DEADLINE_MS;
+    const dueAt = Date.now() + deadlines(env).registrationDeadlineMs;
     await this.ctx.storage.put(ALARM_DEADLINE_KEY, dueAt);
     await this.armAlarm(dueAt);
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -1150,14 +1150,15 @@ export class AppConnection extends DurableObject {
    */
   private async ring(bell: string): Promise<void> {
     const now = Date.now();
+    const floor = deadlines(env).listenBellMinIntervalMs;
     const last = (await this.ctx.storage.get<number>(BELL_RANG_PREFIX + bell)) ?? 0;
-    if (now - last >= LISTEN_BELL_MIN_INTERVAL_MS) {
+    if (now - last >= floor) {
       await this.ctx.storage.put(BELL_RANG_PREFIX + bell, now);
       this.fanout(bellFrame(bell));
       return;
     }
     await this.ctx.storage.put(BELL_PENDING_PREFIX + bell, true);
-    await this.armAlarm(last + LISTEN_BELL_MIN_INTERVAL_MS);
+    await this.armAlarm(last + floor);
   }
 
   /**
@@ -1392,12 +1393,13 @@ export class AppConnection extends DurableObject {
   private request(ws: WebSocket, msg: Omit<JsonRpcRequest, "id">): Promise<ForwardResult> {
     const id = crypto.randomUUID();
     return new Promise<ForwardResult>((resolve) => {
-      // ONE ambient setTimeout at exactly CALL_TIMEOUT_MS — the module header publishes
-      // this as the deadline's seam, because a suite shrinks it to observe §15's budget.
+      // ONE setTimeout per request, at the call budget READ HERE — a suite shortens it
+      // through PMCP_CALL_TIMEOUT_MS to observe §15's budget without waiting it out, and a
+      // read at arming time is what makes a per-row setting apply to the very next call.
       const timer = setTimeout(() => {
         this.pending.delete(id);
         resolve({ ok: false, reason: "timeout" });
-      }, CALL_TIMEOUT_MS);
+      }, deadlines(env).callTimeoutMs);
       this.pending.set(id, {
         ws,
         method: msg.method,

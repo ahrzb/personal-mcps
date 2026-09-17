@@ -42,7 +42,7 @@ import type {
 import { requireOwnerSession } from "./identity";
 import { formatPrincipal } from "./principal";
 import type { App } from "./registry";
-import { CALL_TIMEOUT_MS, OAUTH_STATE_TTL_MS } from "./limits";
+import { deadlines, OAUTH_STATE_TTL_MS } from "./limits";
 
 /**
  * Upstream credential state of a proxied app, as shown by `app_list` /
@@ -204,7 +204,7 @@ async function dial(
       // Strategy §10: a redirect is answered, never followed — the credential must not
       // walk off to another origin.
       redirect: "manual",
-      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(deadlines(env).callTimeoutMs),
     });
   } catch (err) {
     throw failure((err as { name?: string } | null)?.name === "TimeoutError" ? "timeout" : "unreachable");
@@ -443,7 +443,7 @@ async function redeem(
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: new URLSearchParams(form).toString(),
       redirect: "manual",
-      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(deadlines(env).callTimeoutMs),
     });
   } catch (err) {
     return (err as { name?: string } | null)?.name === "TimeoutError" ? "timeout" : "unreachable";
@@ -1035,7 +1035,7 @@ async function fetchJson(
   try {
     const response = await fetch(url, {
       redirect: "manual",
-      signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(deadlines(env).callTimeoutMs),
       ...init,
     });
     if (!response.ok) return null;

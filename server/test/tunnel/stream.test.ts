@@ -26,11 +26,15 @@
  * THE TIMING LEVER: the keepalive is a bare `setTimeout(…, deadlines(env).listenKeepaliveMs)`
  * re-read on every tick, so setting PMCP_LISTEN_KEEPALIVE_MS for a row (harness/deadlines,
  * the map below) reaches the very next tick — an interval, a `scheduler.wait` or an alarm
- * would strand every tick-dependent row at real time. The two deadlines are set BY NAME and
+ * would strand every tick-dependent row at real time. Each deadline is set BY NAME and
  * nothing global is patched, so shortening the keepalive cannot silently shorten an
  * unrelated deadline (the `CALL_TIMEOUT_MS` row would then prove nothing), and each setting
  * is removed at the end of the row that made it — to ABSENT, which is what production has,
- * so two overlapping rows cannot leave one behind for the next file.
+ * so two overlapping rows cannot leave one behind for the next file. The CALL budget is
+ * short for the one row that watches it and for no other: it is the budget the DO arms
+ * around every hub-originated request, the catalog re-list included, and shortening it
+ * file-wide silences the very doorbells the other twelve rows wait for (see
+ * SHORT_DEADLINES_AND_CALL).
  *
  * Project: `tunnel` — workerd, serial (`--max-workers=1 --no-isolate`): held responses,
  * live sockets, DOs and D1 all at once. Every case mints its own namespace.
@@ -156,12 +160,31 @@ const SHRUNK_KEEPALIVE_MS = 25;
 const SHRUNK_CALL_MS = 40;
 
 /**
- * The two deadlines this file sets short, by name (harness/deadlines → limits.Deadlines).
- * NAMED — these two and nothing else — so no other deadline in the worker moves, and a row
- * that thinks it observed the keepalive cannot have observed something else that happened
- * to be longer.
+ * The keepalive, short for EVERY row — this file's one timing lever, and the only deadline
+ * all thirteen rows depend on. Set BY NAME (harness/deadlines → limits.Deadlines), so no
+ * other deadline in the worker moves and a row that thinks it observed the keepalive cannot
+ * have observed something merely longer.
  */
-const SHORT_DEADLINES = {
+const SHORT_DEADLINES = { listenKeepaliveMs: SHRUNK_KEEPALIVE_MS } as const;
+
+/**
+ * The keepalive AND the call budget — for the ONE row that observes the call budget, and
+ * for no other.
+ *
+ * CALL_TIMEOUT_MS is not a consumer-only dial: `AppConnection.request` arms it around EVERY
+ * hub-originated request on the app socket, which includes the catalog re-list a family's
+ * list_changed frame provokes. Setting it short file-wide therefore gives the fake app
+ * SHRUNK_CALL_MS to answer a `tools/list` — and when a loaded machine makes that round trip
+ * slower than that, `warmCatalog` takes its timeout leg, writes no catalog, and by design
+ * rings NO BELL (§20.5: a failure is not an undeclare). The row then waits out a doorbell
+ * that was never going to exist and fails as a vitest timeout naming no assertion. Measured
+ * twice: 2026-09-17 on the old globalThis lever, and again when this file was ported to the
+ * env bindings with both deadlines still file-wide (1 of 5 runs green, alone, unloaded).
+ *
+ * So the budget is short where it is the SUBJECT and nowhere else — the same scoping
+ * data-model.test.ts and pipeline-tunnel.test.ts already use for this deadline.
+ */
+const SHORT_DEADLINES_AND_CALL = {
   listenKeepaliveMs: SHRUNK_KEEPALIVE_MS,
   callTimeoutMs: SHRUNK_CALL_MS,
 } as const;
@@ -305,16 +328,28 @@ async function subscriberSockets(appId: string): Promise<number> {
   );
 }
 
-/** …polled to what a row expects, since a socket the tick drops goes on its own turn. */
+/**
+ * …polled to what a row expects, since a socket the tick drops goes on its own turn.
+ *
+ * Budgeted in TURNS rather than in milliseconds, and the unit is the point: a turn is one
+ * event-loop tick plus one round trip into the DO, so a turn count buys the same number of
+ * OBSERVATIONS however loaded the machine is, while `SHRUNK_KEEPALIVE_MS * 6` of wall clock
+ * buys fewer and fewer of them. Under load that wall-clock budget expired before a socket
+ * the tick had already dropped could be seen gone (the reopen row reading 1 where it wanted
+ * 0). Same budget as `waitFor`, and paid in full only when the answer is "it never reached
+ * that count", which is a failure either way.
+ */
 async function untilSockets(appId: string, expected: number): Promise<number> {
   let held = await subscriberSockets(appId);
-  const deadline = Date.now() + SHRUNK_KEEPALIVE_MS * 6;
-  while (held !== expected && Date.now() < deadline) {
+  for (let turn = 0; turn < SOCKET_TURNS && held !== expected; turn++) {
     await tick();
     held = await subscriberSockets(appId);
   }
   return held;
 }
+
+/** Turns of the loop above — one DO round trip each, the same budget `waitFor` uses. */
+const SOCKET_TURNS = 250;
 
 // ── the rows ──────────────────────────────────────────────────────────────────────────
 
@@ -848,7 +883,7 @@ describe("§21.2 the fan-out", () => {
   });
 
   it("§15/§21.1 · with CALL_TIMEOUT_MS set short through the hub's own binding, a forwarded call against a hanging tunneled app fails at the shrunk deadline while the stream on the same hub is still delivering keepalives past it — the 30 s budget governs forwarded requests, never the held response", async () => {
-    await withDeadlines(env, SHORT_DEADLINES, async () => {
+    await withDeadlines(env, SHORT_DEADLINES_AND_CALL, async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),

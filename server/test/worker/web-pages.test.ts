@@ -3285,14 +3285,24 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
   });
 
   it(`§6 · every agent slug the app page's Agents pane prints links to its own /agents/<agent>/apps/<slug> pane through the details' open agent page link, now that the app page carries the grant editor in place — the pane fronting grant_set itself rather than pointing at a second editor (the twin, re-pointed 2026-09-17)`, async () => {
-    const pane = paths.appPane(ALPHA, "access");
-    const listing = await page(pane, access.cookie);
+    // Its own namespace: this row is in the AGENT page's describe, which has no app world.
+    const slug = uniqueSlug("linkapp");
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug, kind: "tunnel" }],
+      agents: [
+        { slug: "claude", grants: { [slug]: [{ role: "all", mode: "allow" }] } },
+        { slug: "cron", grants: { [slug]: [{ role: "all", mode: "approval" }] } },
+      ],
+    });
+    const { cookie } = await seedOwnerSession(ns.owner);
+    const pane = paths.appPane(slug, "access");
+    const listing = await page(pane, cookie);
     // Every listed agent, read off the pane's own rows rather than off the fixture.
     const listed = selValuesOn(listing, pane).map((sel) => sel.slice("agent:".length));
-    expect(listed.length).toBeGreaterThan(1);
+    expect(listed.sort()).toEqual(["claude", "cron"]);
     for (const agent of listed) {
-      const details = await page(`${pane}?sel=agent:${agent}`, access.cookie);
-      expect(links(details, paths.agentApp(agent, ALPHA)), agent).toBe(true);
+      const details = await page(`${pane}?sel=agent:${agent}`, cookie);
+      expect(links(details, paths.agentApp(agent, slug)), agent).toBe(true);
       // THE TWIN: the pane fronts the editor itself, so the link is a way OUT and not the
       // only way in — a pane that merely pointed at the agent page would draw no form.
       expect(opsOn(details), agent).toContain("grant_set");

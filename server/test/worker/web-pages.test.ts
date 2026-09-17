@@ -3261,28 +3261,6 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(tokens).toContain(`href="${paths.appDetail("news")}"`);
   });
 
-  it(`§6/§20.3 · the agent page's grant editor reads the EFFECTIVE map: an owner-defined role on a tunneled app is listed in its Roles group as an ordinary grantable row — never with the undeclared badge and never "granted, but the app has not declared it — dormant" — and the reach line counts what it reaches · a held role in NEITHER map is still dormant (the twin)`, async () => {
-    const app = await seedRoleApp("effective", { owner: { mine: { tools: ["get_paper"] } } });
-    const agent = await grantRole(app.slug, "effholder", "mine", "allow");
-    const html = await appPage(paths.agentApp(agent, app.slug));
-    const text = textOf(html);
-    // The owner's role is an ORDINARY row: a control of its own, and no dormancy.
-    expect(segOf(html, "mine").length).toBeGreaterThan(0);
-    expect(text).not.toContain("undeclared");
-    expect(text).not.toContain("granted, but the app has not declared it — dormant");
-    // …and the reach line counts through it.
-    expect(text).toContain(`${agent} reaches 1 of ${ROLE_TOOLS.length} tools`);
-
-    // THE TWIN: a held role in NEITHER map is still dormant, so the clause is not gone.
-    await ops.grant_set.handler(detail.ns.owner.userId, {
-      agent,
-      app: app.slug,
-      roles: ["mine", "ghostrole"],
-    });
-    const dormant = textOf(await appPage(paths.agentApp(agent, app.slug)));
-    expect(dormant).toContain("ghostrole");
-    expect(dormant).toContain("granted, but the app has not declared it — dormant");
-  });
 
   it(`§6 · every agent slug the app page's Agents pane prints links to its own /agents/<agent>/apps/<slug> pane through the details' open agent page link, now that the app page carries the grant editor in place — the pane fronting grant_set itself rather than pointing at a second editor (the twin, re-pointed 2026-09-17)`, async () => {
     // Its own namespace: this row is in the AGENT page's describe, which has no app world.
@@ -8699,11 +8677,7 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
     const { cookie } = await seedOwnerSession(ns.owner);
     const html = await page(`${paths.appPane(proxied, "roles")}?sel=role:mine`, cookie);
     const target = actionFor(html, "role_set");
-    const posted = await formPost(
-      target,
-      { ...paneSubmission(html, target), "i.tools/get_paper": "1" },
-      cookie,
-    );
+    const posted = await formPost(target, [...formPairs(html, target), ["i.tools/get_paper", "1"]], cookie);
     expect(posted.status).toBe(303);
     const row = await new Registry(env.DB).getApp(ns.owner.userId, proxied);
     expect(row?.declaredRoles.mine).toEqual(["get_paper", "put_paper"]);
@@ -8723,7 +8697,7 @@ describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
     expect(
       (await formPost(
         tunnelTarget,
-        { ...paneSubmission(tunnelHtml, tunnelTarget), "i.tools/get_paper": "1" },
+        [...formPairs(tunnelHtml, tunnelTarget), ["i.tools/get_paper", "1"]],
         detail.session.cookie,
       )).status,
     ).toBe(303);
@@ -9363,6 +9337,29 @@ describe(`§6 · /apps/<slug> — the Agents pane and grant_set`, () => {
     expect(checkedIn(body, "reader")).toBe("allow");
     // …and nothing was written.
     expect(await grantsOn(detail.ns.owner.userId, agent, CATALOG)).toEqual(before);
+  });
+
+  it(`§6/§20.3 · the agent page's grant editor reads the EFFECTIVE map: an owner-defined role on a tunneled app is listed in its Roles group as an ordinary grantable row — never with the undeclared badge and never "granted, but the app has not declared it — dormant" — and the reach line counts what it reaches · a held role in NEITHER map is still dormant (the twin)`, async () => {
+    const app = await seedRoleApp("effective", { owner: { mine: { tools: ["get_paper"] } } });
+    const agent = await grantRole(app.slug, "effholder", "mine", "allow");
+    const html = await appPage(paths.agentApp(agent, app.slug));
+    const text = textOf(html);
+    // The owner's role is an ORDINARY row: a control of its own, and no dormancy.
+    expect(segOf(html, "mine").length).toBeGreaterThan(0);
+    expect(text).not.toContain("undeclared");
+    expect(text).not.toContain("granted, but the app has not declared it — dormant");
+    // …and the reach line counts through it.
+    expect(text).toContain(`${agent} reaches 1 of ${ROLE_TOOLS.length} tools`);
+
+    // THE TWIN: a held role in NEITHER map is still dormant, so the clause is not gone.
+    await ops.grant_set.handler(detail.ns.owner.userId, {
+      agent,
+      app: app.slug,
+      roles: ["mine", "ghostrole"],
+    });
+    const dormant = textOf(await appPage(paths.agentApp(agent, app.slug)));
+    expect(dormant).toContain("ghostrole");
+    expect(dormant).toContain("granted, but the app has not declared it — dormant");
   });
 
   it(`§6 · Remove <agent> opens ?confirm=remove-agent&agent=<slug> on THIS pane — the dialog "Remove <agent> from <slug>?" over "<agent> loses every entry on <slug>. History stays; a waiting request expires." — whose form posts clear=1 to grant_set, after which the agent is off the pane and off the rail's Agents marker · the same query on another pane's URL draws no dialog (the twin)`, async () => {

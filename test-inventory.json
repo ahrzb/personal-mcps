@@ -529,7 +529,7 @@
   },
   "server/test/tunnel/stream.test.ts": {
     "§21.1 the stream a caller gets §21.1 · a granted caller's stream receives a doorbell when its app's catalog changes · an ungranted caller's aggregated stream, driven by the same provocation, receives nothing — same status, same content-type, same keepalive cadence, session ids differing by construction (the twin that makes silence evidence)": "passed",
-    "§21.1 the stream a caller gets §21.1 · a reopened stream starts fresh — a bell rung while no stream was open is not replayed (Last-Event-ID honored nowhere), and the fresh change after reopen arrives as a data frame carrying no id: or event: lines": "failed",
+    "§21.1 the stream a caller gets §21.1 · a reopened stream starts fresh — a bell rung while no stream was open is not replayed (Last-Event-ID honored nowhere), and the fresh change after reopen arrives as a data frame carrying no id: or event: lines": "passed",
     "§21.2 the fan-out §15/§21.1 · with CALL_TIMEOUT_MS shrunk by the suite's shim, a forwarded call against a hanging tunneled app fails at the shrunk deadline while the stream on the same hub is still delivering keepalives past it — the 30 s budget governs forwarded requests, never the held response": "passed",
     "§21.2 the fan-out §21.2 · a mixed grant set discriminates: the tunneled app rings, the proxied app and the pmcp builtin never ring and no upstream is dialed": "passed",
     "§21.2 the fan-out §21.2 · LISTEN_FANOUT_MAX bounds the subscribed set in deterministic slug order — the same apps chosen across two concurrent streams over one namespace and across a close-and-reopen, the excess silent with no time qualifier": "passed",

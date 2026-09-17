@@ -33,7 +33,11 @@
    about their contract.
 
 Never faked, anywhere: a sibling module, D1, the `AppConnection` DO,
-WebCrypto, or the MCP SDK on either side. The fakes that do exist (fake upstream,
+WebCrypto, or the MCP SDK on either side. Nor is a **runtime primitive** patched:
+`globalThis.setTimeout` and `AbortSignal.timeout` are the hub's, not the suite's —
+a row that needs a shorter deadline sets the hub's own env binding for it (§2's
+"how a constant is shrunk"), so the hub runs its real deadline code against a
+shorter duration and there is no global to restore. The fakes that do exist (fake upstream,
 fake AS, fake push endpoint, fake tunneled app, fake hubs for the clients) do
 *real* protocol work — real JSON-RPC, real S256 PKCE checks, real decryptable
 push crypto — and each documents what it must NOT fake. The fake AS should be

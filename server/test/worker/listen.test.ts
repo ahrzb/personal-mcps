@@ -19,19 +19,18 @@
 // keepalive timer in the runtime, and the worker project runs files in parallel.
 //
 // deps: harness/seed (seedNamespace, seedOwnerSession, uniqueSlug) · harness/fake-upstream
-//   (upstreamUrlFor) · ../../src/index (default.fetch) · ../../src/limits
-//   (LISTEN_KEEPALIVE_MS) · harness/timers (withShrunkTimers) · applyD1Migrations (setup) ·
+//   (upstreamUrlFor) · ../../src/index (default.fetch) ·
+//   harness/deadlines (withDeadlines) · applyD1Migrations (setup) ·
 //   env.DB
 
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import type { Env } from "../../src/index";
-import { LISTEN_KEEPALIVE_MS } from "../../src/limits";
 import { upstreamUrlFor } from "../harness/fake-upstream";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
-import { withShrunkTimers } from "../harness/timers";
+import { withDeadlines } from "../harness/deadlines";
 
 /** The hub's own origin, as the worker under test knows it. */
 const ORIGIN = (env as unknown as Env).PUBLIC_ORIGIN;
@@ -48,7 +47,7 @@ const CONSUMER_ID = 7;
  *  that echoed it would look correct rather than corrupt. */
 const CLIENT_SESSION_ID = "FAKE0000-0000-4000-8000-000000000000";
 
-/** What the shim shrinks LISTEN_KEEPALIVE_MS to for the one row that counts ticks — a
+/** What PMCP_LISTEN_KEEPALIVE_MS is set to for the rows that count ticks — a
  *  test-run duration, not a spec number, which is why it is not a limits.ts constant. */
 const SHRUNK_KEEPALIVE_MS = 25;
 
@@ -90,7 +89,8 @@ class Held {
    * Wait until the stream has delivered `count` blocks, or the budget runs out — REAL time,
    * deliberately: workerd is the runtime under test, vitest's fake timers do not reach
    * inside it, and what is being waited on is the hub's own keepalive, whose constant the
-   * shim below already shrank to milliseconds. Nothing here waits out a spec number. The
+   * row below already set to milliseconds through the hub's own binding. Nothing here waits
+   * out a spec number. The
    * `new Promise` executor is the lib's fault, not a preference: `Promise.withResolvers` is
    * ES2024 and this repo compiles against ES2022.
    */
@@ -189,10 +189,11 @@ async function listen(
   return stream;
 }
 
-/** The one duration this file shrinks, handed to the shared shim (harness/timers): the
- *  match is EXACT, so no other timer in the worker moves and a row that thinks it watched
- *  the keepalive cannot have watched something else that was merely longer. */
-const SHRUNK_TIMERS = new Map([[LISTEN_KEEPALIVE_MS, SHRUNK_KEEPALIVE_MS]]);
+/** The one deadline this file sets short, BY NAME (harness/deadlines): no other deadline in
+ *  the worker moves, a row that thinks it watched the keepalive cannot have watched
+ *  something else that was merely longer, and the setting is removed — to absent, which is
+ *  production's value — when the row that made it ends. */
+const SHORT_DEADLINES = { listenKeepaliveMs: SHRUNK_KEEPALIVE_MS } as const;
 
 /** UUID as the hub mints it (crypto.randomUUID): version 4, variant 8/9/a/b. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -237,7 +238,7 @@ describe("§21.1 · the listen envelope", () => {
   }, CASE_BUDGET_MS);
 
   it("§21.1 · while nothing changes the stream carries one SSE COMMENT per shrunk LISTEN_KEEPALIVE_MS and no data frame — a client parsing keepalives as JSON-RPC breaks on the first idle stream, so the form is pinned", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const ns = await seedWorld();
       const stream = await listen(ns, ns.tokens[TOKEN].token, null);
 
@@ -312,7 +313,7 @@ describe("§21.1/§7 · who may open one", () => {
   }, CASE_BUDGET_MS);
 
   it("§21.1 · an owner's aggregated stream with zero granted tunneled apps opens and keepalives — a stream over nothing is a legal answer", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       // One proxied app and nothing else: §21.2 dials neither a proxied app nor the
       // builtin, so this namespace holds nothing for a stream to subscribe at all.
       const ns = await seedWorld();

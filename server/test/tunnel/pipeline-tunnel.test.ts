@@ -30,7 +30,8 @@
  * split, id non-crossing, and "a resolved call is audited exactly once" are durable.
  * Incidental and unasserted: audit `detail` layout, the ttlMs/cacheScope values, listing
  * order, and every timeout literal — the deadline case reads limits.CALL_TIMEOUT_MS
- * (shrunk for the run) and pins THAT a deadline is enforced, never how long it is.
+ * (set short for the run through the hub's own binding) and pins THAT a deadline is
+ * enforced, never how long it is.
  *
  * Project: `tunnel` — workerd, serial (`--max-workers=1 --no-isolate`): a live socket
  * and a real DO on every case (strategy §2). The consumer side is driven through
@@ -43,11 +44,12 @@
  * readD1Migrations, applied with applyD1Migrations — idempotent); with --no-isolate the
  * database is shared across this project's files, so every case seeds its own owner,
  * app, agent and tokens, and asserts on rows it created rather than on counts.
- * Nothing sleeps: the never-answering app reaches the deadline against a shrunk
- * constant, and the fake app's release gates make ordering explicit.
+ * Nothing sleeps: the never-answering app reaches the deadline with the hub's own
+ * PMCP_CALL_TIMEOUT_MS binding set short for that row, and the fake app's release gates
+ * make ordering explicit.
  */
 
-// deps: harness/seed · harness/fake-app · harness/tunnel-do (backendCtx, untilStatus, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env) · src/gateway (JsonRpcRequest, JsonRpcResponse, Tool) · src/tunnel (tunnelBackend) · src/audit (query) · src/registry (Registry, buildToolFilter) · src/limits (CALL_TIMEOUT_MS) · src/errors (CODES)
+// deps: harness/seed · harness/fake-app · harness/tunnel-do (backendCtx, untilStatus, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env) · src/gateway (JsonRpcRequest, JsonRpcResponse, Tool) · src/tunnel (tunnelBackend) · src/audit (query) · src/registry (Registry, buildToolFilter) · src/limits (CALL_TIMEOUT_MS) · harness/deadlines (withDeadlines) · src/errors (CODES)
 
 import { abortAllDurableObjects, env } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
@@ -61,7 +63,7 @@ import { REDACTED, Registry } from "../../src/registry";
 import type { App } from "../../src/registry";
 import { tunnelBackend } from "../../src/tunnel";
 import { connectFakeApp, tick, waitFor } from "../harness/fake-app";
-import { withShrunkTimers } from "../harness/timers";
+import { withDeadlines } from "../harness/deadlines";
 import type { FakeApp, ToolBehavior } from "../harness/fake-app";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace, SeededApp } from "../harness/seed";
@@ -556,25 +558,24 @@ async function callRows(fixture: Fixture): Promise<AuditRow[]> {
 }
 
 /**
- * Runs `body` with every long timer the DO arms shrunk to a few milliseconds — the
- * §15 call deadline observed against the CONSTANT rather than waited out.
+ * Runs `body` with the DO's correlation budget set to a few milliseconds — the §15 call
+ * deadline observed against the CONSTANT rather than waited out.
  *
  * This leans on a seam tunnel.ts's module header PUBLISHES rather than on a mechanic
  * inferred from its source: the correlation deadline is armed once per hub-originated
- * request, as a single ambient `setTimeout` at exactly limits.CALL_TIMEOUT_MS. A Durable
- * Object shares this isolate's globals, so that is the timer patched here, and the
- * predicate reads the constant — a spec change to the number changes what is shrunk and
- * nothing else, and a change to HOW the deadline is armed is a change to that published
- * sentence, which lands here. Restored unconditionally: a leaked patch is a leak into the
- * next file (this project shares one runtime).
+ * request, at the budget the hub READS from PMCP_CALL_TIMEOUT_MS as it arms it. A Durable
+ * Object reads the same env object this test holds, so setting that binding reaches the
+ * DO's next request and nothing else — a spec change to the number changes what the row
+ * compares against and nothing else, and a change to HOW the deadline is armed is a change
+ * to that published sentence, which lands here. The setting is removed in `finally`, to
+ * ABSENT rather than to a captured value: a leaked binding is a leak into the next file
+ * (this project shares one runtime), and absence is what production has.
  */
 async function withShrunkCallTimeout<T>(body: () => Promise<T>): Promise<T> {
-  // The harness's one timer lever, keyed by the EXACT value the seam arms (D16 residue,
-  // 2026-09-03) — the local range-keyed copy this replaced is gone from both files.
-  return withShrunkTimers(new Map([[CALL_TIMEOUT_MS, SHRUNK_DEADLINE_MS]]), body);
+  return withDeadlines(env, { callTimeoutMs: SHRUNK_DEADLINE_MS }, body);
 }
 
-/** What limits.CALL_TIMEOUT_MS is shrunk TO for the deadline case — a test-run duration, not
+/** What limits.CALL_TIMEOUT_MS is set to for the deadline case — a test-run duration, not
  *  a spec number, which is why it is not a limits.ts constant. */
 const SHRUNK_DEADLINE_MS = 25;
 
@@ -852,7 +853,7 @@ describe("§7 `_meta` hygiene, observed at the app", () => {
 });
 
 describe("§15 deadline, disconnect, and the audit chokepoint", () => {
-  it("13. §15 · an app that never answers fails -32000 at limits.CALL_TIMEOUT_MS — asserted against the constant with the run's value shrunk, never waited out", async () => {
+  it("13. §15 · an app that never answers fails -32000 at limits.CALL_TIMEOUT_MS — asserted against the constant with the run's value set short, never waited out", async () => {
     const fixture = await seedFixture({ behavior: { mode: "hang" } });
 
     const startedAt = Date.now();
@@ -865,7 +866,7 @@ describe("§15 deadline, disconnect, and the audit chokepoint", () => {
     // The app RECEIVED it — a timed-out call may already have executed (§15's
     // at-most-once), which is exactly what separates this from an offline refusal.
     expect(fixture.fake.callCount(TOOL)).toBe(1);
-    expect(elapsed, "the deadline was waited out rather than shrunk").toBeLessThan(CALL_TIMEOUT_MS);
+    expect(elapsed, "the deadline was waited out rather than set short").toBeLessThan(CALL_TIMEOUT_MS);
   });
 
   it("14. §15 · a disconnect mid-call fails the waiting consumer -32000 immediately rather than at the deadline (the allow-twin: an app that answers in time resolves)", async () => {

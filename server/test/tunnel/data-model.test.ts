@@ -35,15 +35,16 @@
  * Project: `tunnel` — workerd, serial (`--max-workers=1 --no-isolate`): live WebSockets and
  * the real AppConnection DO, which per-file storage isolation cannot cover (strategy
  * §2). Nothing sleeps except the one row that is ABOUT elapsed time (§6's "worst-case two
- * correlation timeouts wide"), which measures against a shrunk limits.CALL_TIMEOUT_MS
- * rather than waiting the real budget out — the same seam pipeline-tunnel.test.ts uses.
+ * correlation timeouts wide"), and that row sets limits.CALL_TIMEOUT_MS short through the
+ * hub's own PMCP_CALL_TIMEOUT_MS binding rather than waiting the real budget out — the same
+ * seam pipeline-tunnel.test.ts uses.
  *
  * Isolation and ordering, load-bearing: smoke.test.ts and protocol.test.ts green first —
  * this file assumes the handshake works and only asks what §20 added to it. Every case
  * seeds its own owner, slug and app id, and asserts on rows and keys it created.
  */
 
-// deps: harness/seed · harness/fake-app (connectFakeApp, LIST_METHOD, tick, waitFor) · harness/tunnel-do (backendCtx, connectionStub, untilCataloged, untilStatus) · cloudflare:test (env, runInDurableObject) · src/tunnel (tunnelBackend, capabilities) · src/audit (query) · src/errors (CODES) · src/registry (Registry) · src/limits (CALL_TIMEOUT_MS)
+// deps: harness/seed · harness/fake-app (connectFakeApp, LIST_METHOD, tick, waitFor) · harness/tunnel-do (backendCtx, connectionStub, untilCataloged, untilStatus) · cloudflare:test (env, runInDurableObject) · src/tunnel (tunnelBackend, capabilities) · src/audit (query) · src/errors (CODES) · src/registry (Registry) · harness/deadlines (withDeadlines)
 
 import { env, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -51,13 +52,12 @@ import { query } from "../../src/audit";
 import type { AuditRow } from "../../src/audit";
 import { CODES } from "../../src/errors";
 import type { Tool } from "../../src/gateway";
-import { CALL_TIMEOUT_MS } from "../../src/limits";
 import { Registry } from "../../src/registry";
 import type { App } from "../../src/registry";
 import { capabilities, tunnelBackend } from "../../src/tunnel";
 import type { AppConnection } from "../../src/tunnel";
 import { LIST_METHOD, connectFakeApp, tick, waitFor } from "../harness/fake-app";
-import { withShrunkTimers } from "../harness/timers";
+import { withDeadlines } from "../harness/deadlines";
 import type { CatalogEntry, FakeApp, FakeAppOptions } from "../harness/fake-app";
 import { seedNamespace, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace, SeededApp } from "../harness/seed";
@@ -265,23 +265,21 @@ async function quiesce(turns = 25): Promise<void> {
 }
 
 /**
- * Runs `body` with every long timer the DO arms shrunk to a few milliseconds — §6's
- * correlation budget observed against the CONSTANT rather than waited out.
+ * Runs `body` with the DO's correlation budget set to a few milliseconds — §6's budget
+ * observed against the CONSTANT rather than waited out.
  *
- * Leans on the seam tunnel.ts's module header PUBLISHES: the correlation deadline is armed
- * once per hub-originated request, as a single ambient `setTimeout` at exactly
- * limits.CALL_TIMEOUT_MS. A Durable Object shares this isolate's globals, so that is the
- * timer patched here, and the predicate reads the constant. Restored unconditionally: a
- * leaked patch is a leak into the next file.
+ * Nothing is patched: the hub reads its call budget from PMCP_CALL_TIMEOUT_MS at the moment
+ * it arms the timer (limits.deadlines), and a Durable Object reads the same env object this
+ * test holds, so setting the binding reaches the DO's next request and nothing else. The
+ * setting is removed in `finally` — restored to ABSENT, never to a captured value, so two
+ * overlapping windows cannot leave one behind for the next file (this project shares one
+ * runtime).
  */
 async function withShrunkCallTimeout<T>(body: () => Promise<T>): Promise<T> {
-  // The harness's one timer lever, keyed by the EXACT value the seam arms (D16 residue,
-  // 2026-09-03): the local `ms >= CALL_TIMEOUT_MS` copy this replaced would also have
-  // shrunk any longer timer, which is more than the published sentence says.
-  return withShrunkTimers(new Map([[CALL_TIMEOUT_MS, SHRUNK_DEADLINE_MS]]), body);
+  return withDeadlines(env, { callTimeoutMs: SHRUNK_DEADLINE_MS }, body);
 }
 
-/** What limits.CALL_TIMEOUT_MS is shrunk TO for the width row — a test-run duration, not a
+/** What limits.CALL_TIMEOUT_MS is set to for the width row — a test-run duration, not a
  *  spec number, which is why it is not a limits.ts constant. Wide enough that one budget
  *  and two budgets are never confusable by scheduling noise. */
 const SHRUNK_DEADLINE_MS = 120;

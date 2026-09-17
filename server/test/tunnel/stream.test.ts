@@ -23,12 +23,14 @@
  * from a consumer (§21.1: it is correlation, never authentication — the bearer decides
  * everything, and the id selects only among that principal's own streams).
  *
- * THE TIMING LEVER: the keepalive is a bare `setTimeout(…, LISTEN_KEEPALIVE_MS)`, which is
- * what makes the shared shim (harness/timers, driven by the map below) reach it — an
- * interval, a `scheduler.wait` or an alarm would strand every tick-dependent row at real
- * time. The shim maps the EXACT constant, never `ms >= X`, so shrinking the keepalive
- * cannot silently shrink an unrelated deadline (the `CALL_TIMEOUT_MS` row would then prove
- * nothing).
+ * THE TIMING LEVER: the keepalive is a bare `setTimeout(…, deadlines(env).listenKeepaliveMs)`
+ * re-read on every tick, so setting PMCP_LISTEN_KEEPALIVE_MS for a row (harness/deadlines,
+ * the map below) reaches the very next tick — an interval, a `scheduler.wait` or an alarm
+ * would strand every tick-dependent row at real time. The two deadlines are set BY NAME and
+ * nothing global is patched, so shortening the keepalive cannot silently shorten an
+ * unrelated deadline (the `CALL_TIMEOUT_MS` row would then prove nothing), and each setting
+ * is removed at the end of the row that made it — to ABSENT, which is what production has,
+ * so two overlapping rows cannot leave one behind for the next file.
  *
  * Project: `tunnel` — workerd, serial (`--max-workers=1 --no-isolate`): held responses,
  * live sockets, DOs and D1 all at once. Every case mints its own namespace.
@@ -37,7 +39,7 @@
  * assumes the DO rings and routes correctly and asserts only what the Worker does with it.
  */
 
-// deps: harness/seed · harness/fake-app (connectFakeApp, tick, waitFor) · harness/tunnel-do (connectionStub, untilBellRings, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env, runInDurableObject, runDurableObjectAlarm) · src/identity (revokeToken) · src/registry (Registry, seedGrants) · src/limits (LISTEN_KEEPALIVE_MS, LISTEN_FANOUT_MAX, CALL_TIMEOUT_MS) · src/capabilities (BELL_*, RESOURCES_UPDATED) · harness/timers (withShrunkTimers)
+// deps: harness/seed · harness/fake-app (connectFakeApp, tick, waitFor) · harness/tunnel-do (connectionStub, untilBellRings, untilCataloged) · cloudflare:workers (exports.default.fetch) · cloudflare:test (env, runInDurableObject, runDurableObjectAlarm) · src/identity (revokeToken) · src/registry (Registry, seedGrants) · src/limits (LISTEN_FANOUT_MAX, CALL_TIMEOUT_MS) · src/capabilities (BELL_*, RESOURCES_UPDATED) · harness/deadlines (withDeadlines)
 
 import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
@@ -50,13 +52,13 @@ import {
 } from "../../src/capabilities";
 import type { JsonRpcRequest, Tool } from "../../src/gateway";
 import { revokeToken } from "../../src/identity";
-import { CALL_TIMEOUT_MS, LISTEN_FANOUT_MAX, LISTEN_KEEPALIVE_MS } from "../../src/limits";
+import { CALL_TIMEOUT_MS, LISTEN_FANOUT_MAX } from "../../src/limits";
 import { Registry } from "../../src/registry";
 import { connectFakeApp, tick, waitFor } from "../harness/fake-app";
 import type { CatalogEntry, FakeApp } from "../harness/fake-app";
 import { seedGrants, seedNamespace, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
-import { withShrunkTimers } from "../harness/timers";
+import { withDeadlines } from "../harness/deadlines";
 import { connectionStub, untilBellRings } from "../harness/tunnel-do";
 
 // ── the held stream, as a consumer holds it ───────────────────────────────────────────
@@ -147,22 +149,22 @@ class HeldStream {
   }
 }
 
-/** What the two constants are shrunk TO — test-run durations, not spec numbers, which is
+/** What the two deadlines are set TO — test-run durations, not spec numbers, which is
  *  why neither is a limits.ts constant. Wide enough that one tick and two are never
  *  confusable by scheduling noise. */
 const SHRUNK_KEEPALIVE_MS = 25;
 const SHRUNK_CALL_MS = 40;
 
 /**
- * The two constants this file leans on, handed to the shared shim (harness/timers). The
- * mapping is EXACT — these two values and nothing else — so no other timer in the worker is
- * touched, and a row that thinks it observed the keepalive cannot have observed something
- * else that happened to be longer.
+ * The two deadlines this file sets short, by name (harness/deadlines → limits.Deadlines).
+ * NAMED — these two and nothing else — so no other deadline in the worker moves, and a row
+ * that thinks it observed the keepalive cannot have observed something else that happened
+ * to be longer.
  */
-const SHRUNK_TIMERS = new Map([
-  [LISTEN_KEEPALIVE_MS, SHRUNK_KEEPALIVE_MS],
-  [CALL_TIMEOUT_MS, SHRUNK_CALL_MS],
-]);
+const SHORT_DEADLINES = {
+  listenKeepaliveMs: SHRUNK_KEEPALIVE_MS,
+  callTimeoutMs: SHRUNK_CALL_MS,
+} as const;
 
 // ── the fixture ───────────────────────────────────────────────────────────────────────
 
@@ -268,7 +270,8 @@ async function connect(
  * Enough turns of the loop for a keepalive tick at the SHRUNK cadence to have run `count`
  * times. A real duration, deliberately: workerd is the runtime under test, vitest's fake
  * timers do not reach inside it, and what is being waited on is the hub's own tick — whose
- * constant the shim already shrank to milliseconds, so nothing here waits out a spec
+ * constant the row already set to milliseconds through the hub's binding, so nothing here
+ * waits out a spec
  * number.
  */
 async function ticks(count: number): Promise<void> {
@@ -317,7 +320,7 @@ async function untilSockets(appId: string, expected: number): Promise<number> {
 
 describe("§21.1 the stream a caller gets", () => {
   it("§21.1 · a granted caller's stream receives a doorbell when its app's catalog changes · an ungranted caller's aggregated stream, driven by the same provocation, receives nothing — same status, same content-type, same keepalive cadence, session ids differing by construction (the twin that makes silence evidence)", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
@@ -352,7 +355,7 @@ describe("§21.1 the stream a caller gets", () => {
   });
 
   it("§21.1 · a reopened stream starts fresh — a bell rung while no stream was open is not replayed (Last-Event-ID honored nowhere), and the fresh change after reopen arrives as a data frame carrying no id: or event: lines", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
@@ -391,7 +394,7 @@ describe("§21.1 the stream a caller gets", () => {
 
 describe("§21.2 the re-authorization tick", () => {
   it("§21.2 · the re-auth tick: a bearer revoked mid-stream closes it within one shrunk LISTEN_KEEPALIVE_MS, an expired one identically — and a deleted agent closes on the principal re-read leg, constructed with its token still resolvable · a live bearer's stream survives the same ticks (the twin)", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const slug = uniqueSlug("notes");
       const grants = { [slug]: [{ role: "all", mode: "allow" as const }] };
       const ns = await seedNamespace(env.DB, {
@@ -431,7 +434,7 @@ describe("§21.2 the re-authorization tick", () => {
   });
 
   it("§21.2 · an app archived mid-stream closes its scoped stream on the next tick · the same archive narrows an aggregated stream — that app's subscriber socket is gone on the next tick and its bells stop, while the stream and its other apps' bells continue (the twin)", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const doomedSlug = uniqueSlug("a-doomed");
       const otherSlug = uniqueSlug("b-other");
       const grants = {
@@ -472,7 +475,7 @@ describe("§21.2 the re-authorization tick", () => {
   });
 
   it("§21.2 · a grant revoked mid-stream: aggregated narrows (socket dropped, subscriptions dead, other apps' bells continue) · scoped, the caller's last grant on the app, closes the stream — a fresh open would now 404 (the twin)", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const lostSlug = uniqueSlug("a-lost");
       const keptSlug = uniqueSlug("b-kept");
       const ns = await seedNamespace(env.DB, {
@@ -526,7 +529,7 @@ describe("§21.2 the re-authorization tick", () => {
   });
 
   it("§21.2/§21.3 · a grant added mid-stream is subscribed on the next tick and the Worker rings exactly the family bells its shape serves that the app's stored set contains — a tools-only app rings the tools bell alone · a further tick with no change rings nothing (the twin)", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const heldSlug = uniqueSlug("a-held");
       const addedSlug = uniqueSlug("b-added");
       const ns = await seedNamespace(env.DB, {
@@ -572,7 +575,7 @@ describe("§21.2 the re-authorization tick", () => {
   });
 
   it("§21.2 · a subscriber-socket close the Worker did not initiate — closed DO-side through runInDurableObject — ends the WHOLE stream rather than leaving it deaf to one app (deploy and restart stay out-of-process, strategy §10)", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const firstSlug = uniqueSlug("a-first");
       const secondSlug = uniqueSlug("b-second");
       const ns = await seedNamespace(env.DB, {
@@ -614,7 +617,7 @@ describe("§21.2 the re-authorization tick", () => {
 
 describe("§21.2/§21.4 what each shape forwards", () => {
   it("§21.2/§21.3 · an aggregated stream forwards tools and prompts bells and NEVER the resources bell the DO also rang at it · a scoped stream forwards all three plus updated (the twin)", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
@@ -656,7 +659,7 @@ describe("§21.2/§21.4 what each shape forwards", () => {
   });
 
   it("§21.4 · principal equality end to end: B's subscribe carrying A's live session id leaves A's stream silent for that URI, and B's own scoped stream receives the updated B subscribed — the sentence §21.1's \"steals nothing\" rests on", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const slug = uniqueSlug("notes");
       const grants = { [slug]: [{ role: "all", mode: "allow" as const }] };
       const ns = await seedNamespace(env.DB, {
@@ -703,7 +706,7 @@ describe("§21.2/§21.4 what each shape forwards", () => {
   });
 
   it("§21.1/§21.4 · subscriptions die with the stream — subscribe on stream A, close A, reopen: the app's next updated for that URI reaches nobody, and the new stream's minted session id inherits nothing", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
@@ -740,7 +743,7 @@ describe("§21.2/§21.4 what each shape forwards", () => {
 
 describe("§21.2 the fan-out", () => {
   it("§21.2 · LISTEN_FANOUT_MAX bounds the subscribed set in deterministic slug order — the same apps chosen across two concurrent streams over one namespace and across a close-and-reopen, the excess silent with no time qualifier", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const slugs = Array.from({ length: LISTEN_FANOUT_MAX + 2 }, (_, index) =>
         uniqueSlug(`s${String(index).padStart(2, "0")}`),
       ).sort();
@@ -797,7 +800,7 @@ describe("§21.2 the fan-out", () => {
   });
 
   it("§21.2 · a mixed grant set discriminates: the tunneled app rings, the proxied app and the pmcp builtin never ring and no upstream is dialed", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const tunneled = uniqueSlug("a-tunnel");
       const proxied = uniqueSlug("b-proxy");
       const ns = await seedNamespace(env.DB, {
@@ -844,8 +847,8 @@ describe("§21.2 the fan-out", () => {
     });
   });
 
-  it("§15/§21.1 · with CALL_TIMEOUT_MS shrunk by the suite's shim, a forwarded call against a hanging tunneled app fails at the shrunk deadline while the stream on the same hub is still delivering keepalives past it — the 30 s budget governs forwarded requests, never the held response", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+  it("§15/§21.1 · with CALL_TIMEOUT_MS set short through the hub's own binding, a forwarded call against a hanging tunneled app fails at the shrunk deadline while the stream on the same hub is still delivering keepalives past it — the 30 s budget governs forwarded requests, never the held response", async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),

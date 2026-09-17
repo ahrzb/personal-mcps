@@ -154,12 +154,31 @@ const SHRUNK_KEEPALIVE_MS = 25;
 const SHRUNK_CALL_MS = 40;
 
 /**
- * The two constants this file leans on, handed to the shared shim (harness/timers). The
- * mapping is EXACT — these two values and nothing else — so no other timer in the worker is
- * touched, and a row that thinks it observed the keepalive cannot have observed something
- * else that happened to be longer.
+ * The keepalive, shrunk for EVERY row — this file’s one timing lever, and the only
+ * constant all thirteen rows depend on. The mapping is EXACT (this value and nothing else),
+ * so no other timer in the worker is touched and a row that thinks it observed the
+ * keepalive cannot have observed something merely longer.
  */
-const SHRUNK_TIMERS = new Map([
+const SHRUNK_TIMERS = new Map([[LISTEN_KEEPALIVE_MS, SHRUNK_KEEPALIVE_MS]]);
+
+/**
+ * The keepalive AND the call budget — for the ONE row that observes the call budget, and
+ * for no other.
+ *
+ * CALL_TIMEOUT_MS is not a consumer-only dial: `AppConnection.request` arms it around EVERY
+ * hub-originated request on the app socket, which includes the catalog re-list a
+ * a family’s list_changed frame provokes. Shrinking it file-wide therefore gave the fake app
+ * SHRUNK_CALL_MS to answer a `tools/list` — and when a loaded machine made that round trip
+ * slower than that, `warmCatalog` took its timeout leg, wrote no catalog, and by design rang
+ * NO BELL (§20.5: a failure is not an undeclare). The row then waited out a doorbell that was
+ * never going to exist, and failed as a vitest timeout naming no assertion. Measured
+ * 2026-09-17: 3 of 4 runs red under three concurrent worker-project processes, each red run
+ * carrying `pmcp/catalog-warm-failed: … timeout` for exactly the bell the failed row awaited.
+ *
+ * So the budget is shrunk where it is the SUBJECT and nowhere else — the same scoping
+ * data-model.test.ts and pipeline-tunnel.test.ts already use for this constant.
+ */
+const SHRUNK_TIMERS_AND_CALL = new Map([
   [LISTEN_KEEPALIVE_MS, SHRUNK_KEEPALIVE_MS],
   [CALL_TIMEOUT_MS, SHRUNK_CALL_MS],
 ]);
@@ -302,16 +321,29 @@ async function subscriberSockets(appId: string): Promise<number> {
   );
 }
 
-/** …polled to what a row expects, since a socket the tick drops goes on its own turn. */
+/**
+ * …polled to what a row expects, since a socket the tick drops goes on its own turn.
+ *
+ * Budgeted in TURNS rather than in milliseconds, and the unit is the point: a turn is one
+ * event-loop tick plus one round trip into the DO, so a turn count buys the same number of
+ * OBSERVATIONS however loaded the machine is, while `SHRUNK_KEEPALIVE_MS * 6` of wall clock
+ * buys fewer and fewer of them. Under load that wall-clock budget expired before a socket
+ * the tick had already dropped could be seen gone (measured 2026-09-17, the reopen row
+ * reading 1 where it wanted 0). Same budget as `waitFor`, and paid in full only when the
+ * answer is "it never reached that count", which is a failure either way.
+ */
 async function untilSockets(appId: string, expected: number): Promise<number> {
   let held = await subscriberSockets(appId);
-  const deadline = Date.now() + SHRUNK_KEEPALIVE_MS * 6;
-  while (held !== expected && Date.now() < deadline) {
+  for (let turn = 0; turn < SOCKET_TURNS && held !== expected; turn++) {
     await tick();
     held = await subscriberSockets(appId);
   }
   return held;
 }
+
+/** One budget for every socket-count poll above — a turn is a DO round trip, so this is far
+ *  longer in wall time than its number suggests, and it is spent only on a failure. */
+const SOCKET_TURNS = 250;
 
 // ── the rows ──────────────────────────────────────────────────────────────────────────
 
@@ -845,7 +877,7 @@ describe("§21.2 the fan-out", () => {
   });
 
   it("§15/§21.1 · with CALL_TIMEOUT_MS shrunk by the suite's shim, a forwarded call against a hanging tunneled app fails at the shrunk deadline while the stream on the same hub is still delivering keepalives past it — the 30 s budget governs forwarded requests, never the held response", async () => {
-    await withShrunkTimers(SHRUNK_TIMERS, async () => {
+    await withShrunkTimers(SHRUNK_TIMERS_AND_CALL, async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),

@@ -39,19 +39,37 @@ export async function withShrunkTimers<T>(
  * `beforeAll(() => shrinkTimers(map))` hands vitest the restore as the hook's teardown.
  */
 export function shrinkTimers(map: ReadonlyMap<number, number>): () => void {
-  const realSetTimeout = globalThis.setTimeout;
-  const realAbortTimeout = AbortSignal.timeout;
   const shrink = (ms: number): number => map.get(ms) ?? ms;
   globalThis.setTimeout = ((handler: TimerHandler, ms?: number, ...rest: unknown[]) =>
-    (realSetTimeout as (...args: unknown[]) => unknown)(
+    (REAL_SET_TIMEOUT as (...args: unknown[]) => unknown)(
       handler,
       typeof ms === "number" ? shrink(ms) : ms,
       ...rest,
     )) as typeof globalThis.setTimeout;
   AbortSignal.timeout = ((ms: number) =>
-    realAbortTimeout.call(AbortSignal, shrink(ms))) as typeof AbortSignal.timeout;
+    REAL_ABORT_TIMEOUT.call(AbortSignal, shrink(ms))) as typeof AbortSignal.timeout;
   return () => {
-    globalThis.setTimeout = realSetTimeout;
-    AbortSignal.timeout = realAbortTimeout;
+    globalThis.setTimeout = REAL_SET_TIMEOUT;
+    AbortSignal.timeout = REAL_ABORT_TIMEOUT;
   };
 }
+
+/**
+ * The genuine originals, captured ONCE when this module loads — never at install time, and
+ * called through rather than merely restored to.
+ *
+ * Install time is wrong because two installs can overlap, and in this suite they routinely
+ * do: vitest abandons a case at `testTimeout` but the case's BODY keeps running, so its
+ * `finally` restore lands only after the NEXT case has already installed. An install that
+ * captured "whatever setTimeout is right now" would then capture the previous case's PATCHED
+ * one and put it back as if it were real — leaving every later case, and (this project runs
+ * `isolate: false`) every later FILE in the tunnel project, silently running with a 30 s
+ * budget shrunk to milliseconds. That is how one timed-out row in stream.test.ts turned into
+ * unrelated red rows in the file that runs after it, and why a suite that was green per file
+ * was red in a different place on every full run.
+ *
+ * Restoring to the module originals collapses any overlap onto the same correct end state.
+ * It costs nesting, which nothing here does: a row shrinks once, around its whole body.
+ */
+const REAL_SET_TIMEOUT = globalThis.setTimeout;
+const REAL_ABORT_TIMEOUT = AbortSignal.timeout;

@@ -3284,7 +3284,20 @@ describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and w
     expect(dormant).toContain("granted, but the app has not declared it — dormant");
   });
 
-  it.todo(`§6 · every agent slug the app page's Agents pane prints links to its own /agents/<agent>/apps/<slug> pane through the details' open agent page link, now that the app page carries the grant editor in place — the pane fronting grant_set itself rather than pointing at a second editor (the twin, re-pointed 2026-09-17)`);
+  it(`§6 · every agent slug the app page's Agents pane prints links to its own /agents/<agent>/apps/<slug> pane through the details' open agent page link, now that the app page carries the grant editor in place — the pane fronting grant_set itself rather than pointing at a second editor (the twin, re-pointed 2026-09-17)`, async () => {
+    const pane = paths.appPane(ALPHA, "access");
+    const listing = await page(pane, access.cookie);
+    // Every listed agent, read off the pane's own rows rather than off the fixture.
+    const listed = selValuesOn(listing, pane).map((sel) => sel.slice("agent:".length));
+    expect(listed.length).toBeGreaterThan(1);
+    for (const agent of listed) {
+      const details = await page(`${pane}?sel=agent:${agent}`, access.cookie);
+      expect(links(details, paths.agentApp(agent, ALPHA)), agent).toBe(true);
+      // THE TWIN: the pane fronts the editor itself, so the link is a way OUT and not the
+      // only way in — a pane that merely pointed at the agent page would draw no form.
+      expect(opsOn(details), agent).toContain("grant_set");
+    }
+  });
 });
 
 describe(`§13 · /agents/<slug>/apps/<app> — the (agent × app) grant pane`, () => {
@@ -9139,9 +9152,12 @@ describe(`§5/§15 · /apps/<slug> — the Recording pane and recording_set`, ()
     // THE TWIN: a refusal redraws the pane at 400 with the tick preserved. `redact`'s own
     // validation is what refuses — a path key no tool could ever carry.
     const live = await page(pane, detail.session.cookie);
+    // A drawn row naming an illegal tool: the composer builds an entry keyed by it, and
+    // `app_update` refuses the map — the cheapest refusal this form can actually reach.
+    const liveTarget = actionFor(live, "recording_set");
     const refused = await formPost(
-      actionFor(live, "recording_set"),
-      { ...paneSubmission(live, actionFor(live, "recording_set")), "keep.args": "NOT A TOOL:x" },
+      liveTarget,
+      [...formPairs(live, liveTarget), ["t.args.shared", "NOT A TOOL"], ["p.args.shared", "1"]],
       detail.session.cookie,
     );
     expect(refused.status).toBe(400);

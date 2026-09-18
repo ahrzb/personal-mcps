@@ -19,7 +19,7 @@ copies stay copies — the fixture pins the *shape*, never the declaration.
 
 ## The fixture families
 
-Per the testing strategy §4, which pins **eight** families. Each family names one
+Per the testing strategy §4, these are **ten** families. Each family names one
 boundary, and each has exactly one producer.
 
 The **Read by** column names the suites that actually open the file — not the surfaces the
@@ -31,13 +31,15 @@ otherwise here would make this table the drift it exists to prevent.
 | Family | Pins | Read by |
 |---|---|---|
 | whoami | `GET /api/whoami`'s `{ principal, namespace }` for both credential kinds, and the 401 | producer only — `cli`'s `WhoamiResponse` is pinned as a *type* in `contracts.test.ts` |
-| error codes | the five JSON-RPC codes (§7) and the `-32003` `data` shape | producer only — `cli`'s `HUB_ERRORS` and `ApprovalRequiredData` are pinned as types there |
+| initialize | the hub's fixed handshake capability picture and the four scoped application capability pictures (§7, §20, §21, §23) | producer only — consumer capabilities are pinned as types and behavior |
+| error codes | the six JSON-RPC codes (§7) and their data shapes | producer only — `cli`'s `HUB_ERRORS` and `ApprovalRequiredData` are pinned as types there |
 | tunnel frames | `hub/register` and its ack, `hub/replaced`, the forwarded-call `_meta` key names (§6, §7) — emitted from `tunnel.ts`'s exported `HUB_METHODS` | `clients/js/test/contracts-consumer.test.ts`, `clients/py/tests/test_contracts.py`, `clients/go/pmcp_test.go` |
 | close codes | close code → **required client behavior**, one of `stop_fatal` / `stop_quiet` / `reconnect`, plus a `schedule` attribute (`exponential` / `max_only`) on the entries that reconnect (§6's upgrade matrix and 4000–4004) — emitted from `tunnel.ts`'s exported `CLOSE_*` vocabulary | the same three consumer suites and their reconnect tables |
 | bootstrap | the `POST /internal/users` request and response bodies per op (§12) | `scripts/test/bootstrap-contract.test.ts` |
-| admin ops | op names and their rendered input/output schemas (§8) | producer only — parity directions C/D read `ops` and the CLI command table directly |
-| planner rows | the `app_list` / `agent_list` row shapes the diff planner reads (§8, §9) | producer only — `cli/test/plan.test.ts` builds `CurrentState` from literals |
+| admin ops | op names and their rendered input/output schemas (§8) | `cli/test/commands.test.ts` and the provider parity check (§22.5) |
 | audit body stubs | the wire spelling of the two typed size stubs §15 defers to this directory: the `blob` stub an unstructured result block collapses into and the `oversize` stub that replaces a whole over-cap body — the discriminator, the field names, and which fields carry a variable value | `server/test/worker/hygiene.test.ts` (its `BodyColumnShape` / `BodyStub` rows), and any client-side renderer of a recorded body |
+| push frames | three bare list-changed notifications and the URI-bearing resource update frame (§21) | producer only — client relays are pinned as behavior |
+| hub | the §23 hub's whole wire surface: the aggregate `hub_execute` / `hub_search_types` and the scoped `execute` / `search_types` names with their complete input/output JSON schemas, the two declaration resources and four declaration templates, and the numeric limits — emitted from `hub-contract.ts`'s exported producers | producer only — the hub router's refusals and allow-twins are pinned as behavior |
 
 The close-code family is the one whose *content* is behavior rather than shape: it maps a
 code to what a client must do. That is **three** behaviors — `stop_fatal`, `stop_quiet`,
@@ -57,13 +59,19 @@ recorded body all answer to one shape rather than to whatever `audit.ts` emitted
 It is a contract for the same reason the others are: the recorder writes the stub and
 something else reads it, with no shared declaration between them.
 
-**Families no consumer suite reads yet.** whoami, error codes, admin ops and planner rows
-are produced and type-pinned, but no consumer suite opens the JSON. That is a recorded
-gap, not a hidden one — `contracts.test.ts` states it as a row property ("a family with
-none is a fixture nobody needs — the emptiness is itself a finding"), and the honest place
-for it to surface is `ContractFamily.consumers` going empty for those rows. `cli/test/`
-currently holds only `plan.test.ts`, whose deps line reads `none`; a CLI consumer suite
-that reads whoami, the error codes, and the ops schemas is the work that closes this.
+The hub family is the one whose producer is a *pure module* rather than a captured
+surface: §23 gives the hub's tool names and declaration vocabulary one home in
+`hub-contract.ts`, while the numeric runtime caps live as named constants in
+`server/src/limits.ts`; `contracts.test.ts` freezes their composed snapshot as
+`contracts/hub.json`. The hub that serves those names is built from the same
+exports, so the fixture pins the vocabulary — the file's cases re-read the composed value
+against each individual export, and against §23's own spellings, so a renamed or dropped
+declaration fails there rather than becoming the standard by default.
+
+**Families no consumer suite reads yet.** Whoami, initialize, error codes, push frames, and
+hub are produced and type- or behavior-pinned, but no consumer suite opens their JSON
+fixtures. That is a recorded gap, not a hidden one: `contracts.test.ts` leaves their
+`ContractFamily.consumers` empty.
 
 ---
 
@@ -90,12 +98,11 @@ directory exists to prevent.
 
 **Consumers are read-only.** Today those are
 `clients/js/test/contracts-consumer.test.ts`, `clients/py/tests/test_contracts.py`,
-`clients/go/pmcp_test.go` (close codes and tunnel frames), and
-`scripts/test/bootstrap-contract.test.ts` (bootstrap); `server/test/worker/hygiene.test.ts`
-reads the audit body stubs from inside the server. `cli/test/` reads none yet — see the
-gap noted above. Whichever suite reads a fixture, it asserts against it and never writes:
-a consumer that needs a fixture changed has found either a bug or a spec question — see
-below — never a reason to write.
+`clients/go/pmcp_test.go` (close codes and tunnel frames),
+`scripts/test/bootstrap-contract.test.ts` (bootstrap),
+`cli/test/commands.test.ts` (admin operation schemas), and
+`server/test/worker/hygiene.test.ts` (audit body stubs). A consumer asserts against a
+fixture and never writes it.
 
 **Fixtures are owner-authored, and always their own commit.** Strategy §9 rule 1: the
 oracle lands separately from the implementation that satisfies it. CI rejects any commit
@@ -136,15 +143,10 @@ nearly automatic — a spec change touches fixtures, a code regression touches n
 
 ---
 
-## Parity directions C and D
+## Parity direction D
 
-Two of the four parity invariants (§8's "anything the UI or CLI can do has a `pmcp` tool")
-are checked here, because both sides are data:
-
-- **Direction C** — every step the CLI's diff planner can emit maps to an ops key, with
-  that op's schema-required fields present in the step's arguments.
-- **Direction D** — every non-auth CLI subcommand maps to an ops key, **total in both
-  directions**: no subcommand without an op, no op unreachable from the CLI.
+Direction D of §8's parity invariant is checked here because both sides are data: every
+non-auth CLI subcommand maps to a served admin operation or a named MCP method.
 
 Directions A (every op renders as a `pmcp` tool) and B (web form fields come from the same
 zod schema) live in `admin-ops.test.ts` and `web-pages.test.ts`, where the other side of

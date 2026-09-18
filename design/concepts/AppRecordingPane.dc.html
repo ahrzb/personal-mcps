@@ -114,7 +114,7 @@
             <div class="row"><div class="btn ghost">Cancel</div><div class="btn primary">Save</div></div>
           </div>
         </div>
-        <div class="note">Body logging and redaction paths are the same fields <span class="mono">app_update</span> and the YAML take &mdash; saving here is what <span class="mono">pmcp diff</span> will see. Masking applies to the approval record too.</div>
+        <div class="note">Body logging and redaction paths are the same fields used by <span class="mono">app_update</span>, the web UI, and OpenTofu. Masking applies to the approval record too.</div>
       </div>
     </div>
   </div>
@@ -196,7 +196,7 @@
       <div>&bull; A new pane, <b>Recording</b>, in the App group between Roles and Overview; its rail marker is a dot lit when body logging is on (the Two-factor marker, reused). Overview loses its three recording rows to it and keeps identity only.</div>
       <div>&bull; One form, one <span class="mono">app_update</span>: <span class="mono">log_bodies</span>, <span class="mono">redact</span>, <span class="mono">redact_results</span> &mdash; the three fields the op already takes for either kind. The pane lands back on itself with the notice, like every other pane mutation.</div>
       <div>&bull; The switch is a checkbox; with scripting on it enables the Save button and, on a proxied app, opens the warning and focuses the first empty redaction row. With scripting off everything is already visible and Save works as drawn.</div>
-      <div>&bull; Redaction rows are plain inputs, one row per tool-or-pattern, paths comma-separated &mdash; the YAML&rsquo;s shape, flattened. The route composes the two objects the way the grant editor composes <span class="mono">roles</span>.</div>
+      <div>&bull; Redaction rows are plain inputs, one row per tool-or-pattern, paths comma-separated. The route composes the two objects the way the grant editor composes <span class="mono">roles</span>.</div>
       <div>&bull; Schema-declared masking is stated, not edited: it comes from the app&rsquo;s own schemas. A schema-unsound tool would be named here with the &sect;13 sentence.</div>
     </div>
   </div>

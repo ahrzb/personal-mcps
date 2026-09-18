@@ -26,6 +26,7 @@
 // deps: registry.Registry · identity.issueToken/revokeToken/deleteTokensFor/setPassword · admin.provisionUser/deleteUser · cloudflare:test env.DB (the real D1 binding)
 
 import { deleteUser, provisionUser } from "../../src/admin";
+import type { TypescriptAliases } from "../../src/hub-types";
 import { issueToken, revokeToken, setPassword } from "../../src/identity";
 import { Registry } from "../../src/registry";
 import type {
@@ -56,7 +57,7 @@ type D1Database = unknown;
  *    `expiresIn` counts seconds forward and identity read no clock but the global one —
  *    while `auth-matrix.test.ts` needs expired-beside-live to satisfy §9 rule 2 (every
  *    refusal carries its allow-twin). Of the three candidates (a negative `expiresIn`, an
- *    injected clock, dropping the row) the middle one was pinned: `resolvePrincipal`,
+ *    injected clock, dropping the row) the middle one was pinned: `resolveCaller`,
  *    `resolveAppToken` and `issueToken` each take an optional `now?: () => number`,
  *    the same seam `ApprovalsConfig.now` already is, omitted by every production caller.
  *    The MECHANISM is therefore: ISSUE at a fake t0 with a short `expiresIn`, then RESOLVE
@@ -170,6 +171,12 @@ export type AppSpec = {
    * leaves createApp's default in place, which is the state the dimming rules read.
    */
   capabilities?: string[];
+  /**
+   * §23.6's owner alias lane, either kind — passed straight into the draft, so a fixture
+   * pins the same precedence/collision behavior a real `app_create`/`app_update` would get
+   * (the reservation writes included). Absent configures nothing.
+   */
+  typescriptAliases?: TypescriptAliases;
   redact?: Record<string, string[]>;
   redactResults?: Record<string, string[]>;
   /** absent leaves createApp's by-kind default in place (§15) — the point of several rows. */
@@ -352,6 +359,7 @@ export async function seedApp(
     forwardIdentity: spec.forwardIdentity,
     roles: spec.roles,
     capabilities: spec.capabilities,
+    typescriptAliases: spec.typescriptAliases,
     redact: spec.redact,
     redactResults: spec.redactResults,
     logBodies: spec.logBodies,

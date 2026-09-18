@@ -9,10 +9,8 @@
  * Two fixtures are in scope for this library: the close-code table (codes and
  * upgrade statuses → required client behavior) and the tunnel frames (the
  * hub/register request, its ok reply, the hub/replaced notification). The other
- * fixtures — whoami, the error codes, the admin ops, the planner's rows — belong
- * to the CLI and scripts consumers. Exact filenames are pinned by the producer,
- * `server/test/worker/contracts.test.ts`, at implementation; the names used
- * below (contracts/close-codes.json, contracts/tunnel-frames.json) follow it.
+ * fixtures belong to their CLI, provider, script, or server consumers. Exact filenames
+ * are pinned by the producer, `server/test/worker/contracts.test.ts`.
  *
  * Project: `scripts` + clients (plain Node, parallel). The fixtures are files on
  * disk read with node:fs — no worker, no network, no ordering between cases.
@@ -130,9 +128,18 @@ describe("close codes → client behavior · §4, §6", () => {
 });
 
 describe("tunnel frames · §4, §6", () => {
-  it("§6 · the hub/register frame the library emits deep-equals the fixture's request shape: the method name and the params keys clientVersion, protocolVersion, roles — and no app or slug field, ever, because identity comes exclusively from the token", async () => {
+  it("§6/§23 · the hub/register frame the library emits deep-equals the fixture's request shape: the method name and the params keys clientVersion, protocolVersion, roles, and the optional typescriptAliases — and no app or slug field, ever, because identity comes exclusively from the token", async () => {
     const hub = await startFakeHub();
-    const transport = new HubTransport({ url: hub.origin, token: TOKEN, roles: {} });
+    // The optional members come from the FIXTURE, so the key-set comparison is against what
+    // an author who declares both hints and roles sends: a hub-side rename of either key
+    // leaves this library emitting the old spelling and the sort() below fails first.
+    const declared = tunnelFrames.register.request.params as Record<string, any>;
+    const transport = new HubTransport({
+      url: hub.origin,
+      token: TOKEN,
+      roles: declared.roles,
+      typescriptAliases: declared.typescriptAliases,
+    });
     opened.push({ hub, transport });
     void transport.start().catch(() => {});
     const emitted = (await hub.nextFrame(1)).message;
@@ -144,6 +151,24 @@ describe("tunnel frames · §4, §6", () => {
       expect(Object.keys(emitted.params as object), forbidden).not.toContain(forbidden);
       expect(JSON.stringify(emitted), forbidden).not.toContain(`"${forbidden}"`);
     }
+  });
+
+  it("§23 · the typescriptAliases VALUE the library sends is the fixture's own hint map — the service name and the canonical-keyed tool aliases both verbatim, because the hub is the single syntax/allocation authority and this library normalizes nothing", async () => {
+    const declared = tunnelFrames.register.request.params as Record<string, any>;
+    // The fixture must really carry the member; a renamed or dropped fixture key would
+    // otherwise make the value comparison below vacuously true.
+    expect(declared.typescriptAliases).toBeTruthy();
+    const hub = await startFakeHub();
+    const transport = new HubTransport({
+      url: hub.origin,
+      token: TOKEN,
+      roles: declared.roles,
+      typescriptAliases: declared.typescriptAliases,
+    });
+    opened.push({ hub, transport });
+    void transport.start().catch(() => {});
+    const emitted = (await hub.nextFrame(1)).message.params as Record<string, unknown>;
+    expect(emitted.typescriptAliases).toEqual(declared.typescriptAliases);
   });
 
   it("§6/§20.3 · the roles VALUE the library sends is the fixture's own declaration, both spellings intact — a bare pattern list beside a per-family object, neither repaired on the way out. The shape case above compares params KEYS, which a library that flattened {tools, prompts, resources} to its tools would still satisfy", async () => {

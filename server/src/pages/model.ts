@@ -64,6 +64,8 @@ import { argumentRows, reachabilityFor, schemaLeaves } from "../catalog-view";
 import type { ArgumentRow, Reach, Reachability } from "../catalog-view";
 import { ownerCatalog } from "../gateway";
 import type { ListedItem } from "../gateway";
+import { aliasDiagnosticMessage } from "../hub-types";
+import type { AliasFamily, AliasSource, TypescriptAliases } from "../hub-types";
 import {
   AUTH_BASE_PATH,
   callAuth,
@@ -252,6 +254,20 @@ export const paths = {
   settingsSessions: "/settings/sessions",
   settingsTokens: "/settings/tokens",
   settingsClients: "/settings/clients",
+  /**
+   * §23's Execution pane — the owner's hub execution timeout pair (§13's Runtime group,
+   * added 2026-09-18). It is the one /settings pane that configures what programs may
+   * SPEND rather than who may reach the hub, which is why it sits outside Sign-in/Access.
+   */
+  settingsExecution: "/settings/execution",
+  /**
+   * hub_settings_update — the Execution pane's one Save, under its own pane's prefix so
+   * the redirect-back lands where the form was drawn (§13's "mutations belong to a
+   * pane"). A route of its own rather than the generic dispatch: the two controls are
+   * milliseconds the op takes as INTEGERS, and a refusal must redraw the pane at 400 with
+   * the op's sentence under the field it named, which a redirect's single flash cannot do.
+   */
+  settingsExecutionUpdate: "/settings/execution/hub_settings_update",
   /** App management: active, archived, and the add-app entry point. */
   apps: "/apps",
   /** The add-app form (§13's "add-app flow"). */
@@ -279,6 +295,15 @@ export const paths = {
   },
   appRecordingSet(slug: string): string {
     return `${paths.appDetail(slug)}/recording_set`;
+  },
+  /**
+   * §23.6's alias Save — ONE `app_update { slug, typescript_aliases }` composed from the
+   * Overview editor's rows, so this is a route of its own for `role_set`'s reason: the
+   * form's fields are not the op's keys, and a refusal must redraw the editor on the very
+   * rows that caused it. Named after its three siblings.
+   */
+  appAliasSet(slug: string): string {
+    return `${paths.appDetail(slug)}/alias_set`;
   },
   /** The Agents pane's Save — the SAME op the agent page's posts, composed by the same
    *  function, with the agent riding a hidden field rather than the path. */
@@ -867,7 +892,7 @@ export const NOTICE_KEYS = {
 } as const;
 
 /**
- * Which of §13's six panes is being rendered. A pane is a route, so this is also which
+ * Which of §13's seven panes is being rendered. A pane is a route, so this is also which
  * URL was asked for and which rail entry is `aria-current="page"` — one value, read
  * from the path by web.ts and never from a query parameter.
  */
@@ -877,17 +902,18 @@ export type SettingsPane =
   | "passkeys"
   | "sessions"
   | "tokens"
-  | "clients";
+  | "clients"
+  | "execution";
 
-/** The six panes in rail order, and the URL each answers at — §13's own table, which is
- *  also the mobile pill row's order. `label` is the rail's; `short` is the pill's, and
+/** The seven panes in rail order, and the URL each answers at — §13's own table, which
+ *  is also the mobile pill row's order. `label` is the rail's; `short` is the pill's, and
  *  differs for exactly one pane (§13: "Mobile pills shorten only the last label"). */
 export const SETTINGS_PANES: readonly {
   pane: SettingsPane;
   href: string;
   label: string;
   short: string;
-  group: "Sign-in" | "Access";
+  group: "Sign-in" | "Access" | "Runtime";
 }[] = [
   { pane: "password", href: paths.settings, label: "Password", short: "Password", group: "Sign-in" },
   { pane: "two-factor", href: paths.settingsTwoFactor, label: "Two-factor", short: "Two-factor", group: "Sign-in" },
@@ -895,6 +921,7 @@ export const SETTINGS_PANES: readonly {
   { pane: "sessions", href: paths.settingsSessions, label: "Sessions", short: "Sessions", group: "Access" },
   { pane: "tokens", href: paths.settingsTokens, label: "Tokens", short: "Tokens", group: "Access" },
   { pane: "clients", href: paths.settingsClients, label: "Connected clients", short: "Clients", group: "Access" },
+  { pane: "execution", href: paths.settingsExecution, label: "Execution", short: "Execution", group: "Runtime" },
 ];
 
 /**
@@ -931,7 +958,7 @@ export type TokenRow = {
  * credential management rides better-auth's endpoints and has no pmcp tool, and §4's
  * guards reject bearer-sourced sessions on every route under the prefix.
  *
- * ONE shape for all six panes, and that is the point of §13's shell rule: the rail's
+ * ONE shape for all seven panes, and that is the point of §13's shell rule: the rail's
  * markers are the LENGTHS of the very lists the panes render, so they are read off these
  * fields rather than counted a second way. `pane` says which one is drawn; everything
  * else is present on every render because the rail is.
@@ -962,7 +989,44 @@ export type SettingsProps = ShellProps & {
   confirm: SettingsConfirm | null;
   /** The control §13 maps the last change-password refusal onto, or null (`PasswordField`). */
   passwordError: PasswordField | null;
+  /**
+   * §23.3's committed timeout pair for this owner — `hub_settings_get`'s answer, read on
+   * every pane render like the rest of the shell, and what the Execution rail marker and
+   * the Execution pane's readback both draw. Milliseconds.
+   */
+  execution: SettingsExecution;
+  /**
+   * The Execution pane's two controls as they are drawn. A GET fills them from
+   * `execution`; a refused save fills them from what the owner typed, with the op's
+   * message under the field it named (`settingsProps`'s `submitted`).
+   */
+  executionForm: SettingsExecutionForm;
 };
+
+/** §23.3 — the owner's hub execution timeout pair, in milliseconds, as `hub_settings_get`
+ *  and the Execution pane both read it: `defaultTimeoutMs` is what an `execute` without
+ *  `timeout_ms` gets, `maxTimeoutMs` the largest a program may request. */
+export type SettingsExecution = { defaultTimeoutMs: number; maxTimeoutMs: number };
+
+/**
+ * The Execution pane's form state, one field per control plus the whole-form slot for a
+ * refusal that names neither (the pair's ORDERING — "default must not exceed max" — is
+ * about both fields at once, though the op still names `default_timeout_ms` for it).
+ * `defaults`/`maximum` are the control VALUES as strings, because a refused save redraws
+ * the owner's own text rather than the pair it refused to replace.
+ */
+export type SettingsExecutionForm = {
+  defaults: string;
+  maximum: string;
+  errors: Partial<Record<"defaults" | "maximum" | "form", string>>;
+};
+
+/** §13's Execution rail marker and the pane's readback line: the pair in SECONDS where the
+ *  millisecond value divides evenly, and in milliseconds where it does not — the rail
+ *  column is a glance, and a value the reader would have to convert is not one. */
+export function timeoutLabel(ms: number): string {
+  return ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`;
+}
 
 /* ------------------------------------------------------------------ *
  * /apps
@@ -1159,8 +1223,17 @@ export type AppSchemaRow =
   | { kind: "leaf"; path: string; type: string; writeOnly: boolean }
   | { kind: "argument"; path: string; description: string; required: boolean };
 
+/** One selected catalog member's two identities. The scoped identity is canonical and
+ * always present; TypeScript exists only for tools and may carry an omission diagnostic. */
+export type CatalogIdentity = {
+  /** Canonical service/member pair plus the copyable endpoint that serves it. */
+  scoped: { service: string; member: string; endpoint: string };
+  /** The callable generated path and reservation provenance, or an explained omission. */
+  typescript: { path: string | null; source: string | null; diagnostic: string | null } | null;
+};
+
 /** The Catalog details pane: the provenance card when nothing is selected, or one
- *  tool/prompt/resource with §3's four cards. */
+ * tool/prompt/resource with §3's four cards. */
 export type AppCatalogDetails =
   | { kind: "none"; schemas: string }
   | {
@@ -1174,8 +1247,8 @@ export type AppCatalogDetails =
       results: AppSchemaRow[] | null;
       /** Resources only — the URI, the media type and the scoped endpoint. */
       resource: { uri: string; type: string; servedOn: string } | null;
-      /** `<slug>_<name>`; null for a resource, which is never aggregated (§20.6). */
-      calledAs: string | null;
+      /** Canonical scoped identity and, for tools, the generated TypeScript identity. */
+      identity: CatalogIdentity;
       reachableBy: string[];
       /** Null for a resource, which §7 never gates. */
       approval: string | null;
@@ -1384,10 +1457,53 @@ export type AppPaneView =
       cards: AppRecordingCard[];
       error: string | null;
     }
-  | { kind: "overview"; rows: { key: string; value: string; mono: boolean }[] }
+  | { kind: "overview"; rows: { key: string; value: string; mono: boolean }[]; aliases: AppAliasView }
   | { kind: "access"; summary: string; rows: AppAgentRow[]; details: AppAccessDetails }
   | { kind: "token"; proxied: boolean; summary: string; rows: AppTokenRow[]; details: AppTokenDetails }
   | { kind: "danger"; archived: boolean; tokens: number; agents: number };
+
+/* ----------------------------------------------------------- §23.6 aliases --- */
+
+/**
+ * One committed reservation as the Overview pane's read-only map draws it — §13's "the
+ * owner sees the complete reservation map, source, tombstones". `canonicalName` is the
+ * upstream identity (the app's slug for a service, a canonical tool name for a tool) and
+ * `typescriptName` the hub-local name reserved for it; the pair is the whole statement.
+ */
+export type AppAliasReservationRow = {
+  family: AliasFamily;
+  canonicalName: string;
+  typescriptName: string;
+  source: AliasSource;
+  /** False for a TOMBSTONE: the name is retired but stays reserved, so a later addition
+   *  can never claim a path code was written against (§23.6). */
+  active: boolean;
+};
+
+/**
+ * The Overview pane's alias editor — §23.6's owner surface: the service control and one
+ * row per canonical tool, the committed map, and the bounded diagnostics for this app's
+ * canonical identities. The pane DRAWS this and posts one `app_update { typescript_aliases }`
+ * through `paths.appAliasSet`; it never renames the upstream.
+ */
+export type AppAliasView = {
+  /** The service control's value: the owner's configured alias, or "" for none. */
+  service: string;
+  /** One row per canonical tool worth prefilling: every entry the owner already
+   *  configured, plus every tool the catalog lists, deduplicated and in canonical order
+   *  (sorted, so a redraw after a save cannot reshuffle rows the owner is comparing). */
+  tools: AliasRow[];
+  /** Every committed reservation, tombstones included, in canonical order. */
+  reservations: AppAliasReservationRow[];
+  /** Bounded, self-scoped diagnostic prose — one sentence per unassignable member, naming
+   *  no contender the owner could not see (`hub-types.aliasDiagnosticMessage`). */
+  diagnostics: string[];
+  /** A refused save's own sentence, drawn above the editor, or null. */
+  error: string | null;
+  /** The rows a refused save redraws — the owner's own spelling, spares and all — or null
+   *  on a GET, where `service`/`tools` above are the prefill. */
+  draft: AliasRow[] | null;
+};
 
 /**
  * `/apps/<slug>` and each of its seven panes as one props value — ONE page, as
@@ -1426,6 +1542,10 @@ export type AppDetailProps = ShellProps & {
  * failure so nothing the owner typed is lost. `endpoint` and `authMode` are
  * proxy-only and are ignored — not rejected in the UI — while `kind` is
  * "tunnel"; app_create rejects them server-side (§8).
+ *
+ * `aliases` is §23.6's optional TypeScript naming: the service control plus the pair
+ * rows, echoed whole so a refused create redraws every row the owner typed (including
+ * the ones the hub will not keep — the refusal is about the SET).
  */
 export type AppNewForm = {
   kind: AppKind;
@@ -1433,7 +1553,20 @@ export type AppNewForm = {
   slug: string;
   endpoint: string;
   authMode: UpstreamAuthMode;
+  aliases: AliasDraft;
 };
+
+/**
+ * One alias editor row: a canonical upstream name and the hub-local TypeScript name the
+ * owner wants for it. `canonicalName` is what the upstream serves and is never renamed;
+ * `alias` is the §23.6 identifier generated programs will use. Either may be empty — a
+ * row with both empty is a spare the render drew, and a row with an empty alias keeps
+ * whatever name is established for that canonical member (omission never clears).
+ */
+export type AliasRow = { canonicalName: string; alias: string };
+
+/** §23.6 — the alias editor's whole state: the service control's value plus its rows. */
+export type AliasDraft = { service: string; rows: AliasRow[] };
 
 /**
  * Field-scoped validation messages, keyed by the control they sit under.
@@ -1443,7 +1576,7 @@ export type AppNewForm = {
  * NO `name` key, deliberately: §8 makes the field optional and defaults it to the
  * slug, and a blank one is not sent at all, so no refusal can ever name it (§13).
  */
-export type AppNewErrors = Partial<Record<"slug" | "endpoint" | "form", string>>;
+export type AppNewErrors = Partial<Record<"slug" | "endpoint" | "aliases" | "form", string>>;
 
 /**
  * The form, then one of its two receipts. `created` is the TOKEN REVEAL state of
@@ -2036,7 +2169,7 @@ export type AgentRailEntry = {
 };
 
 /** The one three-way choice a row's control carries: `none` is the absence of an entry,
- *  and the other two are §9's two spellings (`<entry>` and `<entry>:approval`). */
+ *  and the other two are §8's wire spellings (`<entry>` and `<entry>:approval`). */
 export type GrantChoice = "none" | "allow" | "approval";
 
 /**
@@ -2172,8 +2305,8 @@ export type AgentDetailsView =
       approval: string;
       /** Tools only; null for a prompt or a resource, which declare no schema (§20.3). */
       args: ArgumentRow[] | null;
-      /** `What only the hub knows` — absent where the subject is not a tool. */
-      hub: { aggregated: string; reachableBy: string; redaction: string } | null;
+      /** Canonical scoped identity and, for tools, the generated TypeScript identity. */
+      hub: (CatalogIdentity & { reachableBy: string; redaction: string | null });
     }
   | {
       kind: "pattern";
@@ -2488,7 +2621,7 @@ export function grantChoicesOf(fields: Record<string, string>): Record<string, G
   return choices;
 }
 
-/** `grant_set`'s `roles` argument, composed from those choices: §9's bare entry for allow
+/** `grant_set`'s `roles` argument, composed from those choices: the bare entry for allow
  *  and its `:approval` suffix for the other, with `none` contributing nothing at all —
  *  which is how the pane revokes (the op replaces the pair's whole set). */
 export function composeRoles(choices: Record<string, GrantChoice>): string[] {
@@ -2836,7 +2969,7 @@ async function appPaneView(
   everyAgent: ListedAgent[],
   submitted: { choices: Record<string, GrantChoice>; error: string } | null,
 ): Promise<(AgentPaneView & { kind: "app" }) | null> {
-  const row = byslug.get(appSlug);
+  let row = byslug.get(appSlug);
   if (row === undefined || row.kind === "builtin") return null;
   const savedSpelled = agent.grants[appSlug] ?? [];
   if (row.archived && savedSpelled.length === 0) return null;
@@ -2871,6 +3004,13 @@ async function appPaneView(
     prompts,
     resources: joinViews(resourceView, templateView),
   };
+  // A successful tools read commits §23.6's generated reservations. Re-read the app row
+  // before building the details card so the page reports that committed map, not the
+  // pre-discovery snapshot held by the shell.
+  if (tools.state === "listed") {
+    const refreshed = await read<{ app: OpsAppRow }>(ctx, "app_get", { slug: appSlug });
+    if (refreshed.app.kind !== "builtin") row = refreshed.app;
+  }
 
   // The listing, the reach and the carried entries — built by the ONE builder both pages
   // that edit a grant set call, so the app page's Agents pane is §6's "the agent page's
@@ -3346,15 +3486,12 @@ function detailsView(
             ? `Not asked — allow wins over any ask entry, so adding one here would not gate it while ${via.join(", ")} allows it.`
             : "Not asked."
           : "—",
-    args: family === "tools" ? argumentRows((item as { inputSchema?: unknown }).inputSchema) : null,
-    hub:
-      family === "tools"
-        ? {
-            aggregated: `${appSlug}_${name}`,
-            reachableBy: reachableBy(effectiveOf(row), everyAgent, appSlug, name),
-            redaction: redactionText(row, name),
-          }
-        : null,
+    args: family === "tools" ? argumentRows(inputSchemaOf(item)) : null,
+    hub: {
+      ...catalogIdentity(ctx, row, appSlug, family, name),
+      reachableBy: reachableBy(effectiveOf(row), everyAgent, appSlug, name),
+      redaction: family === "tools" ? redactionText(row, name) : null,
+    },
   };
 }
 
@@ -3731,7 +3868,7 @@ const APP_PANE_TABLE: readonly { pane: AppDetailPane; label: string; group: AppR
 export const DIMMED = "—";
 
 /** `agent_list`'s row, narrowed to what this page reads: the slug and description the
- *  Agents pane draws, and the inline grants (§8) keyed by app slug in §9's own spelling. */
+ *  Agents pane draws, and the inline grants (§8) keyed by app slug. */
 type ListedAgent = { slug: string; description: string; grants: Record<string, string[]> };
 
 /** How far back the Agents pane's call counts look — §15's own retention window, so the
@@ -3747,11 +3884,13 @@ const CALL_WINDOW_DAYS = 7;
 const CALL_COUNT_LIMIT = 500;
 
 /** What a refused save hands back, so the pane redraws on the owner's own choices rather
- *  than on the stored state they tried to replace. One arm per form §4–§6 defines. */
+ *  than on the stored state they tried to replace. One arm per form §4–§6 and §23.6
+ *  defines. */
 export type AppSubmitted =
   | { kind: "grant"; agent: string; choices: Record<string, GrantChoice>; error: string }
   | { kind: "role"; was: string; role: string; families: FamilyPatterns; error: string }
-  | { kind: "recording"; error: string };
+  | { kind: "recording"; error: string }
+  | { kind: "alias"; service: string; rows: AliasRow[]; error: string };
 
 /**
  * `/apps/<slug>` and each of its seven panes (§2). `null` is the 404 every unreachable
@@ -3788,7 +3927,7 @@ export async function appDetailProps(
     read<{ agents: ListedAgent[] }>(ctx, "agent_list"),
     read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
   ]);
-  const row = detail.app;
+  let row = detail.app;
   // `getApp` already answered null for the builtin, so `app_get` cannot be reporting it
   // here — asserting that is what lets Overview print a creation date with no "unknown" arm.
   if (row.kind === "builtin") throw new Error(`app_get reported the builtin row for ${slug}`);
@@ -3824,6 +3963,12 @@ export async function appDetailProps(
     prompts: promptView,
     resources,
   };
+  // `ownerCatalog(..., "tools")` commits §23.6's generated reservations. Refresh the one
+  // app row after that discovery so Catalog and Overview render the committed identities.
+  if (toolView.state === "listed") {
+    const refreshed = await read<{ app: OpsAppRow }>(ctx, "app_get", { slug });
+    if (refreshed.app.kind !== "builtin") row = refreshed.app;
+  }
 
   // §1's merge rule, read once for the whole page: the owner's roles, then the app's
   // declaration on top. Every matcher below — the Catalog's reach badges, the role
@@ -3832,9 +3977,8 @@ export async function appDetailProps(
   const ownerRoles: RoleDeclaration = row.kind === "tunnel" ? row.ownerRoles : row.roles;
   const appRoles: RoleDeclaration = row.kind === "tunnel" ? row.roles : {};
   const effective = effectiveOf(row);
-
-  // The grants held ON THIS APP, agent slug → §9's own spelling — the shape catalog-view's
-  // reachability takes, and the very rows the Agents pane draws.
+  // The grants held on this app, agent slug → §8's wire spelling — the shape
+  // catalog-view's reachability takes, and the rows the Agents pane draws.
   const grants: Record<string, string[]> = {};
   const agentRows: ListedAgent[] = [];
   for (const agent of listed.agents) {
@@ -4076,6 +4220,59 @@ function catalogPane(ctx: PageContext, at: AppPaneCtx): AppPaneView {
   };
 }
 
+/** The two identity spellings one selected catalog member owns. Canonical MCP identity is
+ * never rewritten; a TypeScript path exists only when both active reservations exist. */
+function catalogIdentity(
+  ctx: PageContext,
+  row: Exclude<OpsAppRow, { kind: "builtin" }>,
+  slug: string,
+  family: RoleFamily,
+  member: string,
+): CatalogIdentity {
+  const endpoint = `${new URL(env.PUBLIC_ORIGIN).origin}${paths.mcpScoped(ctx.username, slug)}`;
+  if (family !== "tools") return { scoped: { service: slug, member, endpoint }, typescript: null };
+  const service = row.typescriptReservations.find(
+    (reservation) =>
+      reservation.active && reservation.family === "service" && reservation.canonicalName === slug,
+  );
+  const tool = row.typescriptReservations.find(
+    (reservation) =>
+      reservation.active && reservation.family === "tool" && reservation.canonicalName === member,
+  );
+  const diagnostic =
+    row.typescriptDiagnostics
+      .filter(
+        (entry) =>
+          (entry.family === "service" && entry.canonicalName === slug) ||
+          (entry.family === "tool" && entry.canonicalName === member),
+      )
+      .map(aliasDiagnosticMessage)
+      .join(" ") || null;
+  return {
+    scoped: { service: slug, member, endpoint },
+    typescript: {
+      path:
+        service === undefined || tool === undefined
+          ? null
+          : `mcp.${service.typescriptName}.${tool.typescriptName}`,
+      source:
+        service === undefined || tool === undefined
+          ? null
+          : service.source === tool.source
+            ? service.source
+            : `service ${service.source} · tool ${tool.source}`,
+      diagnostic,
+    },
+  };
+}
+
+/** Reads one in-process catalog item's optional schema without asserting its shape. */
+function inputSchemaOf(item: ListedItem): unknown {
+  return typeof item === "object" && item !== null && "inputSchema" in item
+    ? item.inputSchema
+    : undefined;
+}
+
 function catalogDetails(ctx: PageContext, at: AppPaneCtx, total: number): AppCatalogDetails {
   const unselected = (): AppCatalogDetails => ({
     kind: "none",
@@ -4121,6 +4318,7 @@ function catalogDetails(ctx: PageContext, at: AppPaneCtx, total: number): AppCat
   ];
   const redactedResults = [...new Set(redactPathsIn(at.row.redactResults, name))];
   const asked = reached.filter((entry) => entry.mode === "approval").map((entry) => entry.agent);
+  const identity = catalogIdentity(ctx, at.row, at.slug, group.family, name);
   return {
     kind: "item",
     name,
@@ -4132,10 +4330,10 @@ function catalogDetails(ctx: PageContext, at: AppPaneCtx, total: number): AppCat
       ? {
           uri: name,
           type: itemDescription(item, "resources"),
-          servedOn: `the scoped endpoint only — ${new URL(env.PUBLIC_ORIGIN).origin}${paths.mcpScoped(ctx.username, at.slug)}`,
+          servedOn: identity.scoped.endpoint,
         }
       : null,
-    calledAs: isResource ? null : `${at.slug}_${name} on the aggregated endpoint`,
+    identity,
     reachableBy:
       reached.length === 0
         ? []
@@ -4638,7 +4836,50 @@ function overviewPane(_ctx: PageContext, at: AppPaneCtx): AppPaneView {
     mono: false,
   });
   rows.push({ key: "Description", value: at.row.description, mono: false });
-  return { kind: "overview", rows };
+  return { kind: "overview", rows, aliases: aliasViewOf(at) };
+}
+
+/** §23.6's editor state for the Overview pane: the prefill (or a refused save's own rows),
+ *  the committed map, and the bounded diagnostics — all read off the ONE `app_get` row the
+ *  page already holds, so the editor and the read-only map beside it cannot disagree. */
+function aliasViewOf(at: AppPaneCtx): AppAliasView {
+  const submitted = at.submitted?.kind === "alias" ? at.submitted : null;
+  const configured = at.row.typescriptAliases;
+  const names = new Set<string>(Object.keys(configured.tools ?? {}));
+  if (at.views.tools.state === "listed") {
+    for (const item of at.views.tools.rows) {
+      const name = subjectOf(item, "tools");
+      if (name !== "") names.add(name);
+    }
+  }
+  return {
+    service: submitted?.service ?? configured.service ?? "",
+    tools: [...names].sort().map((canonicalName) => ({
+      canonicalName,
+      alias: configured.tools?.[canonicalName] ?? "",
+    })),
+    // §23.6's deterministic order: service before tools, canonical subject within a family
+    // — the order the declarations and the diagnostics are published in, so the owner's
+    // map reads the same way the generated API does.
+    reservations: [...at.row.typescriptReservations]
+      .sort((left, right) =>
+        left.family === right.family
+          ? left.canonicalName.localeCompare(right.canonicalName)
+          : left.family === "service"
+            ? -1
+            : 1,
+      )
+      .map((row) => ({
+        family: row.family,
+        canonicalName: row.canonicalName,
+        typescriptName: row.typescriptName,
+        source: row.source,
+        active: row.active,
+      })),
+    diagnostics: at.row.typescriptDiagnostics.map(aliasDiagnosticMessage),
+    error: submitted?.error ?? null,
+    draft: submitted?.rows ?? null,
+  };
 }
 
 /* -------------------------------------------------------------- Agents --- */
@@ -4917,7 +5158,7 @@ export function familyMarker(...views: AppFamilyView<unknown>[]): string {
   return String(views.reduce((total, view) => total + (view.state === "listed" ? view.rows.length : 0), 0));
 }
 
-/* ------------------------ the three forms, composed ------------------------ */
+/* ------------------------ the four forms, composed ------------------------- */
 
 /**
  * §4's Save, composed: the STORED owner map with the edited role replaced by the stored
@@ -5129,6 +5370,90 @@ export function drawnPaths(form: FormData, dir: "args" | "results"): [string, st
   return [...pairs];
 }
 
+/* --------------------------- §23.6's alias editor --------------------------- */
+
+/**
+ * The alias editor's field names, spelled ONCE so the pages that draw the controls and the
+ * routes that read them cannot drift: the service control, and each row's two controls as
+ * `canonical.<i>` / `alias.<i>`, paired by index. Indexed rather than named by canonical
+ * name because a canonical name is arbitrary upstream text, while an index is always a
+ * safe field name.
+ */
+export const ALIAS_SERVICE_FIELD = "typescript_service";
+export const ALIAS_CANONICAL_PREFIX = "canonical.";
+export const ALIAS_ALIAS_PREFIX = "alias.";
+
+/**
+ * How many empty rows the editor draws after the prefilled ones, on both surfaces. The
+ * prefilled set is what the hub already knows (the owner's configured entries, plus the
+ * tools an app's catalog lists); the spares are how the owner names something the hub has
+ * not seen yet — a tool the app will declare on its next connect, or one a proxied
+ * upstream has not listed. A blank row composes to nothing, so drawing them is free.
+ */
+export const ALIAS_SPARE_ROWS = 3;
+
+/**
+ * The rows one render draws: the prefilled set — or, on a refused save, the owner's own
+ * submitted rows, which REPLACE the prefill rather than sitting beside it, so a refusal
+ * cannot double a row the owner just edited — padded with spares. The padding is measured
+ * against the prefilled length, so a redraw of a redraw cannot grow the form.
+ */
+export function aliasRowsFor(known: readonly AliasRow[], draft: readonly AliasRow[] | null = null): AliasRow[] {
+  const rows = (draft ?? known).map((row) => ({ canonicalName: row.canonicalName, alias: row.alias }));
+  while (rows.length < known.length + ALIAS_SPARE_ROWS) rows.push({ canonicalName: "", alias: "" });
+  return rows;
+}
+
+/**
+ * §23.6's Save, composed from the editor's fields: the service control plus the rows, as
+ * the `typescript_aliases` object `app_create` / `app_update` take. Omission is the point
+ * of the shape — a blank control contributes no key, so a save never clears a name the hub
+ * already established (registry's planner keeps it; only typing a DIFFERENT alias moves
+ * it), and a blank row contributes nothing at all.
+ *
+ * Every value is passed through BYTE FOR BYTE, deliberately: a canonical name is the
+ * upstream's own identity and the hub never rewrites it, and an alias with surrounding
+ * whitespace is a syntax mistake the op's grammar must refuse — trimming here would store
+ * a name nobody typed and swallow the reason to refuse. Only an EXACTLY empty control is
+ * omitted, so a whitespace-only one still reaches the op and fails its grammar.
+ *
+ * Returns the editor's own one refusal, or the composed value. Syntax (the identifier
+ * grammar, the reserved names) and collisions are NOT judged here: the op is the authority
+ * for both, and its violation carries the sentence the surface redraws.
+ */
+export function composeTypescriptAliases(
+  fields: Record<string, string>,
+): { aliases: TypescriptAliases } | { error: string } {
+  const service = fields[ALIAS_SERVICE_FIELD] ?? "";
+  const tools: Record<string, string> = {};
+  const indices = Object.keys(fields)
+    .filter((name) => name.startsWith(ALIAS_CANONICAL_PREFIX))
+    .map((name) => name.slice(ALIAS_CANONICAL_PREFIX.length))
+    .filter((index) => /^\d+$/.test(index))
+    .sort((left, right) => Number(left) - Number(right));
+  for (const index of indices) {
+    const canonicalName = fields[`${ALIAS_CANONICAL_PREFIX}${index}`] ?? "";
+    const alias = fields[`${ALIAS_ALIAS_PREFIX}${index}`] ?? "";
+    // A spare row the owner never touched. Blanking an alias on a prefilled row is NOT
+    // this: its canonical name is still there, and the omission is the save's own answer.
+    if (canonicalName === "" && alias === "") continue;
+    if (canonicalName === "") {
+      return { error: "a tool alias needs its canonical tool name — the upstream name it renames" };
+    }
+    if (alias === "") continue;
+    if (Object.prototype.hasOwnProperty.call(tools, canonicalName)) {
+      return { error: `"${canonicalName}" is listed twice — one row per canonical tool name` };
+    }
+    tools[canonicalName] = alias;
+  }
+  return {
+    aliases: {
+      ...(service === "" ? {} : { service }),
+      ...(Object.keys(tools).length === 0 ? {} : { tools }),
+    },
+  };
+}
+
 /* ------------------------------- /apps/new -------------------------------- */
 
 /** /apps/new — a chromeless page whose whole state is the step web.ts is in:
@@ -5149,7 +5474,29 @@ export function appNewForm(query: URLSearchParams): AppNewForm {
     slug: query.get("slug") ?? "",
     endpoint: query.get("endpoint") ?? "",
     authMode,
+    aliases: { service: query.get(ALIAS_SERVICE_FIELD) ?? "", rows: aliasRowsFor(aliasDraftOf(query)) },
   };
+}
+
+/** The alias rows a submitted form carried back — `canonical.<i>` / `alias.<i>` pairs in
+ *  index order, with a row whose two controls are both EXACTLY empty dropped, so a redraw
+ *  of a redraw cannot grow the form. Every value is echoed byte for byte: a whitespace-only
+ *  entry is not a blank one, and rewriting it here would hide it from the op that refuses
+ *  it. Reads any key/value bag, because the create form's draft comes back through the
+ *  query string and the app page's through `formFields` — one reader for both. */
+export function aliasDraftOf(entries: Iterable<[string, string]>): AliasRow[] {
+  const values = new Map(entries);
+  const found: { index: number; row: AliasRow }[] = [];
+  for (const [name, value] of values) {
+    if (!name.startsWith(ALIAS_CANONICAL_PREFIX)) continue;
+    const index = name.slice(ALIAS_CANONICAL_PREFIX.length);
+    if (!/^\d+$/.test(index)) continue;
+    const alias = values.get(`${ALIAS_ALIAS_PREFIX}${index}`) ?? "";
+    if (value === "" && alias === "") continue;
+    found.push({ index: Number(index), row: { canonicalName: value, alias } });
+  }
+  found.sort((left, right) => left.index - right.index);
+  return found.map((entry) => entry.row);
 }
 
 /* -------------------------------- /approvals ---------------------------------- */
@@ -5499,11 +5846,15 @@ export async function settingsProps(
   ctx: PageContext,
   req: Request,
   pane: SettingsPane,
+  /** A refused Execution save's own state, or null on every GET: the owner's submitted
+   *  text for both controls plus the op's messages, keyed by control. The only caller is
+   *  web.ts's `hub_settings_update` route, which redraws the pane at 400 with it. */
+  submitted: SettingsExecutionForm | null = null,
 ): Promise<SettingsProps> {
   // §13's shell rule, as code: ONE read per render feeding both the rail and the pane, so
   // a marker cannot be a second query that disagrees with the list beside it. Every pane
-  // pays for all five, which is the price of a rail that is always right.
-  const [me, sessions, passkeys, lastUsed, tokens, connections] = await Promise.all([
+  // pays for all seven, which is the price of a rail that is always right.
+  const [me, sessions, passkeys, lastUsed, tokens, connections, execution] = await Promise.all([
     callAuth<{ user?: { twoFactorEnabled?: boolean } }>(req, "/get-session"),
     callAuth<BetterAuthSession[]>(req, "/list-sessions"),
     callAuth<BetterAuthPasskey[]>(req, "/passkey/list-user-passkeys"),
@@ -5511,6 +5862,10 @@ export async function settingsProps(
     passkeyLastUsed(ctx.ownerId),
     read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
     read<{ connections: ConnectionRow[] }>(ctx, "connection_list"),
+    // §23.3's pair. Read on every pane for the rail marker's sake, exactly like the four
+    // list lengths above — the marker must not be a second query that can disagree with
+    // the pane beside it.
+    read<{ settings: SettingsExecution }>(ctx, "hub_settings_get"),
   ]);
   // better-auth's listings, defended: the shapes are better-auth's own to change, and
   // /settings showing an empty list is a better answer than a 500 (callAuth's contract
@@ -5534,6 +5889,14 @@ export async function settingsProps(
     connections: connections.connections,
     confirm: settingsConfirm(ctx.query, pane, rows, keys, connections.connections),
     passwordError: passwordErrorOf(ctx.query, pane),
+    execution: execution.settings,
+    // The committed pair on a GET; the owner's own text (and the op's messages) on a
+    // refused save, so the reason they are being shown does not cost them their work.
+    executionForm: submitted ?? {
+      defaults: String(execution.settings.defaultTimeoutMs),
+      maximum: String(execution.settings.maxTimeoutMs),
+      errors: {},
+    },
   };
 }
 

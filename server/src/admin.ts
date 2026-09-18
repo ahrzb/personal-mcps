@@ -36,12 +36,15 @@ import {
   USERNAME_CHARSET,
 } from "./identity";
 import type { Principal, TokenKind } from "./identity";
+import { HUB_HARD_MAX_TIMEOUT_MS, HUB_MIN_TIMEOUT_MS } from "./limits";
 import { listConnections, revokeConnection } from "./oauth";
+import type { AliasDiagnostic, AliasReservation, TypescriptAliases } from "./hub-types";
 import {
+  APP_CAPABILITIES,
+  HUB_SLUG,
   PMCP_SLUG,
   Registry,
   RegistryRefusal,
-  APP_CAPABILITIES,
   patchViolations,
   SLUG_CHARSET,
   writeOnlyPaths,
@@ -123,6 +126,12 @@ export type AdminOp = {
  *   union) — never family names, pattern compilation, or the size caps, which is
  *   registry.validateRoles' job inside `createApp`/`updateApp` (via `domain`,
  *   below); a shape this loose still refuses every malformed value `pathMap` used to.
+ * - `aliasMap` — §23.6's `typescript_aliases`: optional `service` string plus an optional
+ *   `tools` object of canonicalName → alias. Shape only, `roleDeclaration`'s own
+ *   division of labour: the identifier grammar, the reserved names and the atomic
+ *   collision arbitration are registry's (assertTypescriptAliases and the reservation
+ *   planner), so the op advertises and the table enforces one shape while one module owns
+ *   the language.
  * - `duration` — seconds, or the literal `never` (§8's `expires_in`).
  */
 type Field = {
@@ -135,6 +144,7 @@ type Field = {
     | "headerMap"
     | "pathMap"
     | "roleDeclaration"
+    | "aliasMap"
     | "duration";
   /** Rendered into the JSON Schema, so the MCP tool and the web form describe a field once. */
   description: string;
@@ -143,6 +153,12 @@ type Field = {
    *  list kind, the ITEM's enum) and refused by `coerce` — one constant, advertised and
    *  enforced. */
   values?: readonly string[];
+  /** `count` only: the inclusive bounds `coerce` enforces, rendered as `minimum`/`maximum`
+   *  so the advertised JSON Schema is the checked rule (§8's "what the tool advertises is
+   *  what the table refuses"). Cross-field rules (a pair's ordering) stay in the handler,
+   *  because JSON Schema cannot state them. */
+  minimum?: number;
+  maximum?: number;
   /** Output schemas only: the hub's internal result-secret marker (§7). */
   writeOnly?: true;
   /** Output schemas only: the field is present but may be null. */
@@ -186,7 +202,12 @@ function render(field: Field): Record<string, unknown> {
     case "flag":
       return { ...base, type: nullable("boolean") };
     case "count":
-      return { ...base, type: nullable("integer") };
+      return {
+        ...base,
+        type: nullable("integer"),
+        ...(field.minimum === undefined ? {} : { minimum: field.minimum }),
+        ...(field.maximum === undefined ? {} : { maximum: field.maximum }),
+      };
     case "stringList":
       return { ...base, type: "array", items: { type: "string", ...(field.values ? { enum: field.values } : {}) } };
     case "headerMap":
@@ -203,6 +224,16 @@ function render(field: Field): Record<string, unknown> {
             { type: "object", additionalProperties: { type: "array", items: { type: "string" } } },
           ],
         },
+      };
+    case "aliasMap":
+      return {
+        ...base,
+        type: "object",
+        properties: {
+          service: { type: "string" },
+          tools: { type: "object", additionalProperties: { type: "string" } },
+        },
+        additionalProperties: false,
       };
     case "duration":
       return { ...base, oneOf: [{ type: "integer" }, { const: "never" }] };
@@ -257,8 +288,17 @@ function coerce(name: string, field: Field, value: unknown): unknown {
       return value;
     case "flag":
       return typeof value === "boolean" ? value : bad();
-    case "count":
-      return Number.isInteger(value) ? value : bad();
+    case "count": {
+      if (!Number.isInteger(value)) bad();
+      const count = value as number;
+      if (field.minimum !== undefined && count < field.minimum) {
+        throw refuse(name, `"${name}" is below the minimum this tool accepts`);
+      }
+      if (field.maximum !== undefined && count > field.maximum) {
+        throw refuse(name, `"${name}" is above the maximum this tool accepts`);
+      }
+      return count;
+    }
     case "duration":
       return value === "never" || Number.isInteger(value) ? value : bad();
     case "stringList": {
@@ -276,6 +316,8 @@ function coerce(name: string, field: Field, value: unknown): unknown {
       return isPathMap(value) ? value : bad();
     case "roleDeclaration":
       return isRoleDeclaration(value) ? value : bad();
+    case "aliasMap":
+      return isTypescriptAliases(value) ? value : bad();
   }
 }
 
@@ -308,6 +350,18 @@ function isRoleDeclaration(value: unknown): value is RoleDeclaration {
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** §23.6's alias shape, checked for STRUCTURE only (see the `aliasMap` bullet): an
+ *  optional `service` string and an optional `tools` object of string values. The
+ *  identifier grammar and the reserved names are registry's, so a value this loose still
+ *  cannot smuggle a non-string alias past the op. */
+function isTypescriptAliases(value: unknown): value is TypescriptAliases {
+  if (!plainObject(value)) return false;
+  const { service, tools } = value;
+  if (service !== undefined && typeof service !== "string") return false;
+  if (tools === undefined) return true;
+  return plainObject(tools) && Object.values(tools).every((alias) => typeof alias === "string");
 }
 
 // ── the one error vocabulary these ops speak ──────────────────────────────────────────
@@ -414,11 +468,11 @@ function endpointViolations(parsed: Record<string, unknown>): Violation[] {
 }
 
 /**
- * The uniform `pmcp`-slug rejection (§8): every op that takes an app slug —
- * `app_*`, `grant_set`, `token_issue` alike — refuses the reserved builtin slug via
- * this one check with its one error, so the reservation can never drift per-tool.
- * Internal seam, deliberately not exported: the reservation is reachable only through
- * the ops.
+ * The uniform virtual-slug rejection (§8): every op that takes an app slug —
+ * `app_*`, `grant_set`, `token_issue` alike — refuses BOTH reserved virtual slugs (`pmcp`
+ * and `hub`) via this one check with its one error apiece, so the reserved set can never
+ * drift per-tool. Internal seam, deliberately not exported: the reservations are
+ * reachable only through the ops.
  */
 function assertSlugNotReserved(slug: string): void {
   // deps: errors.HubError
@@ -426,12 +480,18 @@ function assertSlugNotReserved(slug: string): void {
   if (violation !== null) throw refusedWith([violation]);
 }
 
-/** The same reservation as a VIOLATION, for `app_create` — which collects rather than
- *  throws, so its refusal can name a bad endpoint in the same breath (§8). */
+/** The same reservations as a VIOLATION, for `app_create` — which collects rather than
+ *  throws, so its refusal can name a bad endpoint in the same breath (§8). Both virtual
+ *  slugs are refused through this one check, so the reserved set can never drift per tool:
+ *  `pmcp` for the builtin admin app, `hub` for §23's TypeScript surface. */
 function reservedSlugViolation(slug: string): Violation | null {
-  return slug === PMCP_SLUG
-    ? { field: "slug", reason: `the slug "${PMCP_SLUG}" is reserved for the builtin admin app` }
-    : null;
+  if (slug === PMCP_SLUG) {
+    return { field: "slug", reason: `the slug "${PMCP_SLUG}" is reserved for the builtin admin app` };
+  }
+  if (slug === HUB_SLUG) {
+    return { field: "slug", reason: `the slug "${HUB_SLUG}" is reserved for the TypeScript execution surface` };
+  }
+  return null;
 }
 
 /**
@@ -562,9 +622,8 @@ async function tunnelStatus(appId: string): Promise<"online" | "offline"> {
  * `capabilities` in their place, plus the OAuth connection state where the mode is
  * `oauth`; the virtual builtin
  * carries neither, and says so with `builtin: true`. Credentials never appear in any
- * variant. The CLI diff/apply planner, both read ops and the /apps page all read
- * exactly this, so a field added to one variant is a compile error until every producer
- * carries it — which is what "§8 pins the completeness" has to mean to be worth anything.
+ * variant. Both read operations and the `/apps` page consume exactly this shape, so a
+ * field added to one variant is a compile error until every producer carries it.
  */
 export type AppRow = CommonRow & (BuiltinRow | TunnelRow | ProxyRow);
 
@@ -577,6 +636,24 @@ type CommonRow = {
   roles: RoleDeclaration;
   redact: Record<string, string[]>;
   redactResults: Record<string, string[]>;
+  /**
+   * §23.6's owner alias CONFIGURATION, always present (`{}` when the owner configured
+   * none). Reported separately from the committed reservations below, because "what the
+   * owner asked for" and "what the hub committed" are two different facts §13's owner view
+   * and the provider's refresh both need distinct.
+   */
+  typescriptAliases: TypescriptAliases;
+  /**
+   * §23.6's committed reservation rows for this app — tombstones included (`active` false),
+   * deterministic order — i.e. the resolved map with its source lane and its history.
+   */
+  typescriptReservations: readonly AliasReservation[];
+  /**
+   * Bounded, self-scoped mapping diagnostics for this app's canonical identities: a name
+   * that is contested or underivable. Recomputed from committed rows on every read, and
+   * safe to render wherever the app itself is visible.
+   */
+  typescriptDiagnostics: readonly AliasDiagnostic[];
 };
 
 type BuiltinRow = { kind: "builtin"; builtin: true };
@@ -603,12 +680,10 @@ type ProxyRow = {
   auth: AppDetail["upstreamAuthMode"];
   forwardIdentity: boolean;
   /**
-   * §20.2's owner-declared advertisement, made readable by §8's 2026-08-27 amendment —
-   * OPTIONAL, and that is the whole content of the amendment: the row reports what is
-   * STORED, so an app that never configured the key carries no key. Filling in the
-   * hub's `["tools"]` default here would be a second answer to "what did the owner
-   * declare", and `pmcp diff` — whose file may equally omit the key — would then plan an
-   * update against every pre-amendment app, forever.
+   * §20.2's owner-declared advertisement, made readable by §8's 2026-08-27 amendment.
+   * Optional means the row reports what is stored: an app that never configured the key
+   * carries no key. Filling in the `["tools"]` runtime default here would erase the
+   * distinction between an absent declaration and an explicit declaration.
    */
   capabilities?: NonNullable<AppDetail["capabilities"]>;
   connection?: UpstreamConnectionStatus;
@@ -616,6 +691,7 @@ type ProxyRow = {
 
 /** One real app as both read ops report it (§8's shape, above). */
 async function appRow(detail: AppDetail): Promise<AppRow> {
+  const mapping = await registry().typescriptReservationsFor(detail.id);
   const common: CommonRow = {
     slug: detail.slug,
     name: detail.name,
@@ -625,6 +701,9 @@ async function appRow(detail: AppDetail): Promise<AppRow> {
     roles: detail.declaredRoles,
     redact: detail.redact,
     redactResults: detail.redactResults,
+    typescriptAliases: detail.typescriptAliases,
+    typescriptReservations: mapping.reservations,
+    typescriptDiagnostics: mapping.diagnostics,
   };
   if (detail.kind === "tunnel") {
     return {
@@ -669,6 +748,12 @@ function builtinRow(): AppRow {
     roles: {},
     redact: {},
     redactResults: {},
+    // §23.6: the builtin is virtual — no row, no owner configuration, no reservations, so
+    // the three keys report the empty facts rather than being absent from one variant of
+    // the row shape (which would make every consumer branch on kind).
+    typescriptAliases: {},
+    typescriptReservations: [],
+    typescriptDiagnostics: [],
   };
 }
 
@@ -684,8 +769,7 @@ export const BUILTIN_LOG_BODIES = true;
 async function agentRow(row: Agent): Promise<Record<string, unknown>> {
   const grants: Record<string, string[]> = {};
   for (const held of await registry().grantsFor(row.id)) {
-    // §9's own syntax, so what agent_list reads back is what grant_set takes — the CLI
-    // planner diffs one spelling against itself.
+    // agent_list and grant_set share the same role[:approval] spelling (§8).
     grants[held.appSlug] = held.entries.map((entry) =>
       entry.mode === "approval" ? `${entry.role}:approval` : entry.role,
     );
@@ -699,7 +783,7 @@ async function agentRow(row: Agent): Promise<Record<string, unknown>> {
   };
 }
 
-/** §9's grant syntax as stored entries: the mode is the `:approval` SUFFIX, never the first
+/** §8's grant syntax as stored entries: the mode is the `:approval` SUFFIX, never the first
  *  colon — an inline resource item (`resource/news://feed/*`) carries colons of its own.
  *  What is left over is the entry verbatim, role or item alike; whether it is a legal one is
  *  registry's to answer (`setGrants`), which is also where `all` is exempt from declaration. */
@@ -740,6 +824,12 @@ function commonFields(input: Record<string, unknown>): Record<string, unknown> {
     // which is what makes the refusal one sentence in one place for create and update
     // alike, in the op's own field name.
     ...(input.owner_roles === undefined ? {} : { ownerRoles: input.owner_roles as RoleDeclaration }),
+    // §23.6's owner alias lane: either kind, and the value is relayed whole — omission
+    // preserves established configuration, which registry's patch/insert paths enforce by
+    // only touching the column when the key is present.
+    ...(input.typescript_aliases === undefined
+      ? {}
+      : { typescriptAliases: input.typescript_aliases as TypescriptAliases }),
   };
 }
 
@@ -768,6 +858,12 @@ const APP_FIELDS: Record<string, Field> = {
   owner_roles: {
     kind: "roleDeclaration",
     description: "Owner-defined roles on a tunneled app — the app's own declaration wins on a name collision.",
+    optional: true,
+  },
+  typescript_aliases: {
+    kind: "aliasMap",
+    description:
+      "Hub-local TypeScript names for this app: `service` renames its namespace, `tools` maps canonical tool names to aliases. Omission preserves established names; a collision refuses the whole write. Never renames the upstream.",
     optional: true,
   },
   capabilities: {
@@ -877,11 +973,16 @@ export const ops: Record<string, AdminOp> = {
    * §15) plus, for proxied
    * kind only: `endpoint`, `roles` (virtual role definitions), `auth` ('headers' |
    * 'oauth', default 'headers'), `forward_identity` (default false) — those fields are
-   * rejected on tunneled creates. Slug is `[a-z0-9-]`, unique per owner, never `pmcp`.
-   * Proxied role definitions get exactly the `hub/register` validation (§6/§8): name
+   * rejected on tunneled creates. Slug is `[a-z0-9-]`, unique per owner, never `pmcp` or
+   * `hub`. Proxied role definitions get exactly the `hub/register` validation (§6/§8): name
    * charset, `all` rejected, patterns compile, length/count caps. `kind` is immutable
    * forever after (recreate to convert). Mints no token — `token_issue` is the sole
    * credential path (§6).
+   *
+   * §23.6: `typescript_aliases` (either kind) sets the hub-local names for the app's
+   * service and canonical tools; syntax is refused as `-32602` and a collision with another
+   * identity's committed reservation refuses the whole create, while the app row and its
+   * reservations commit in one batch.
    */
   app_create: defineOp({
     schema: {
@@ -934,7 +1035,9 @@ export const ops: Record<string, AdminOp> = {
    * any stored upstream credential envelope is wiped in the same write (audit row
    * `upstream.auth_mode_changed` beside this op's own `admin.app_update`), leaving
    * the app not-connected until Connect or app_set_upstream_auth runs. Role
-   * redefinitions revalidate like create.
+   * redefinitions revalidate like create. §23.6: `typescript_aliases` replaces the owner
+   * alias configuration whole — omitted, it preserves both the configuration and every
+   * committed name — and a collision refuses the entire patch.
    */
   app_update: defineOp({
     schema: {
@@ -976,26 +1079,30 @@ export const ops: Record<string, AdminOp> = {
 
   /**
    * `{ slug }` — terminal delete. Cascade ordering pinned (§15): the app row (grants
-   * cascade by FK) and its token rows go FIRST, in ONE D1 batch — both or neither, D1
-   * having no interactive transaction to offer instead; only then is the tunnel DO told
-   * to sever the live socket (close 4001) and wipe cached state — so a racing re-register
-   * finds neither row nor token and fails, never rebinding. Proxied apps stop after
-   * the batch (no DO, no tokens). The DO stays addressed by the opaque app.id, dead
-   * forever. Everything that can refuse — the reservation, the lookup — runs before the
-   * batch, so a refused delete deletes nothing.
+   * cascade by FK), its token rows and §23.6's reservation tombstones go FIRST, in ONE D1
+   * batch — all or nothing, D1 having no interactive transaction to offer instead; only
+   * then is the tunnel DO told to sever the live socket (close 4001) and wipe cached state
+   * — so a racing re-register finds neither row nor token and fails, never rebinding
+   * (and a later app reusing the slug gets a new app id, so the old names stay reserved).
+   * Proxied apps stop after the batch (no DO, no tokens). The DO stays addressed by the
+   * opaque app.id, dead forever. Everything that can refuse — the reservation, the lookup —
+   * runs before the batch, so a refused delete deletes nothing.
    */
   app_delete: defineOp({
     schema: { description: "Delete an app, its grants, and its tokens. Terminal.", fields: { slug: SLUG_FIELD } },
     async run(ownerId, parsed) {
-      // deps: registry.deleteAppStatement · identity.countTokensFor · identity.deleteTokensForStatement · tunnel.sever · tunnel.wipe · audit.record
+      // deps: registry.deleteAppStatements · identity.countTokensFor · identity.deleteTokensForStatement · tunnel.sever · tunnel.wipe · audit.record
       const { slug } = parsed as { slug: string };
       const target = await app(ownerId, slug);
       const tokens = await countTokensFor(target.id);
       // The credential leads the batch: if a future D1 ever tore one apart, the surviving
       // half must be "the token is dead and the row is not", never the reverse.
+      // §23.6's reservation tombstones ride the same batch (deleteAppStatements): the app's
+      // names flip inactive rather than disappearing, so a deleted-and-recreated slug (a
+      // NEW app id) can never claim TypeScript code written against the old member.
       await db().batch([
         deleteTokensForStatement(target.id),
-        registry().deleteAppStatement(target.id),
+        ...registry().deleteAppStatements(target.id),
       ]);
       const tunnel =
         target.kind === "tunnel"
@@ -1019,7 +1126,7 @@ export const ops: Record<string, AdminOp> = {
    * `auth: headers` apps only: rejected on tunneled apps and on `auth: oauth`
    * ones (each mode has exactly one credential path, §8). Write-only and imperative
    * like token_issue: headers are sealed into the encrypted envelope and never readable
-   * back through any tool, page, or YAML; the audit row says auth was set, not what to.
+   * back through any tool, page, or provider state; the audit row says auth was set, not what to.
    */
   app_set_upstream_auth: defineOp({
     schema: {
@@ -1104,9 +1211,8 @@ export const ops: Record<string, AdminOp> = {
   }),
 
   /**
-   * List agents with their grants inline — per app: role names and modes
-   * (§8). One app_list plus one agent_list is the complete desired-state read the
-   * CLI diff planner depends on; there is deliberately no separate grant-read tool.
+   * List agents with their grants inline — per app: role names and modes (§8).
+   * There is deliberately no separate grant-read tool.
    */
   agent_list: defineOp({
     schema: { description: "List this namespace's agents and their grants.", fields: {} },
@@ -1543,6 +1649,62 @@ export const ops: Record<string, AdminOp> = {
         detail: { connectionId: revoked.id, clientId: revoked.clientId },
       });
       return { id: revoked.id };
+    },
+  }),
+
+  /**
+   * §23.3's settings read: `{}` → `{ settings: { defaultTimeoutMs, maxTimeoutMs } }` in
+   * milliseconds, with the absent row answering the pinned `30_000/30_000` pair. Owner
+   * scoped and read-only, so it writes no `admin.*` row — it fronts
+   * `registry.hubExecutionSettings` exactly as every other read here fronts its module.
+   */
+  hub_settings_get: defineOp({
+    schema: { description: "Read this namespace's hub execution timeout settings.", fields: {} },
+    async run(ownerId) {
+      // deps: registry.hubExecutionSettings
+      return { settings: await registry().hubExecutionSettings(ownerId) };
+    },
+  }),
+
+  /**
+   * §23.3's settings write: both integers required, `1_000 <= default <= max <= 300_000`,
+   * one atomic upsert, and the same read shape back. The advertised bounds are the checked
+   * ones (render/coerce share this one declaration); the ORDERING is the cross-field rule
+   * JSON Schema cannot state, so it lives in registry's `executionSettingViolations`, whose
+   * field names are this op's. Settings are snapshotted at admission, so this governs new
+   * executions and never extends a running one.
+   */
+  hub_settings_update: defineOp({
+    schema: {
+      description: "Set this namespace's hub execution timeout pair. Affects new executions only.",
+      fields: {
+        default_timeout_ms: {
+          kind: "count",
+          description: "Default execution wall clock, milliseconds — used when a program sends no timeout_ms.",
+          minimum: HUB_MIN_TIMEOUT_MS,
+          maximum: HUB_HARD_MAX_TIMEOUT_MS,
+        },
+        max_timeout_ms: {
+          kind: "count",
+          description: "Largest timeout_ms a program may request, milliseconds (at least default, at most the hard ceiling).",
+          minimum: HUB_MIN_TIMEOUT_MS,
+          maximum: HUB_HARD_MAX_TIMEOUT_MS,
+        },
+      },
+    },
+    async run(ownerId, parsed) {
+      // deps: registry.updateHubExecutionSettings · audit.record
+      const settings = await domain(
+        registry().updateHubExecutionSettings(ownerId, {
+          defaultTimeoutMs: parsed.default_timeout_ms as number,
+          maxTimeoutMs: parsed.max_timeout_ms as number,
+        }),
+      );
+      await summarise(ownerId, "hub_settings_update", {
+        defaultTimeoutMs: settings.defaultTimeoutMs,
+        maxTimeoutMs: settings.maxTimeoutMs,
+      });
+      return { settings };
     },
   }),
 

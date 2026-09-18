@@ -40,8 +40,9 @@ to what they explain:
 - The two production seams the reconnect policy is otherwise unobservable
   through — the jitter draw and the wait itself — are the module-level
   functions :func:`_rng` and :func:`_sleep`, not constructor parameters.
-  ``HubTransport.__init__`` takes exactly ``(url, token, roles)`` per its own
-  docstring; tests reach the seams with ``monkeypatch.setattr(pmcp_client,
+  ``HubTransport.__init__`` takes exactly ``(url, token, roles,
+  typescript_aliases)`` per its own docstring; tests reach the seams with
+  ``monkeypatch.setattr(pmcp_client,
   "_rng", ...)`` / ``"_sleep"``, the same shape as ``conftest.recorded_sleep``.
   A bare-name call inside this module re-resolves the module's globals on
   every call, so a monkeypatch of the module attribute is visible to code
@@ -75,7 +76,7 @@ import os
 import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Protocol, TypedDict
 from urllib.parse import urlsplit
 
 import anyio
@@ -117,6 +118,25 @@ class McpServer(Protocol):
 # exact spelling is load-bearing.
 Roles = dict[str, list[str] | dict[str, list[str]]]
 
+
+class TypescriptAliases(TypedDict, total=False):
+    """Optional TypeScript alias hints sent beside ``roles`` in ``hub/register``
+    (§23; wire key ``typescriptAliases``): ``service`` is a preferred name for the
+    app's service namespace and ``tools`` maps canonical MCP tool names to alias
+    names. Hub-local author hints only — an alias never renames the app's MCP wire
+    surface, and canonical names keep crossing the MCP wire untouched. Both members
+    are optional; passing ``None`` (or omitting the option) sends no hints at all.
+    Syntax and collision policy are the HUB's job, not this library's — it is the
+    single allocation authority (§23) — so this library copies the hint map
+    verbatim: a malformed one is refused at registration (:class:`RegistrationError`,
+    like a bad declaration), while a syntactically valid one that collides never
+    disconnects the tunnel — the hub keeps the established assignment and omits the
+    newcomer."""
+
+    service: str
+    tools: dict[str, str]
+
+
 __all__ = [
     "CallerIdentity",
     "CredentialsError",
@@ -125,6 +145,7 @@ __all__ = [
     "RegistrationError",
     "Roles",
     "Secret",
+    "TypescriptAliases",
     "backoff_delay",
     "caller",
     "sensitive",
@@ -252,10 +273,11 @@ async def serve(
     url: str | None = None,
     token: str | None = None,
     roles: Roles | None = None,
+    typescript_aliases: TypescriptAliases | None = None,
 ) -> None:
-    """Run ``mcp`` as a tunneled hub app: dial, register the role
-    declaration, and stay reachable until the hub says otherwise. Blocks the
-    calling thread for the life of the app — hours to months; treat it as
+    """Run ``mcp`` as a tunneled hub app: dial, register the role declaration and
+    any TypeScript alias hints, and stay reachable until the hub says otherwise.
+    Blocks the calling thread for the life of the app — hours to months; treat it as
     the bot's main loop (it runs its own event loop internally).
 
     ``url`` is the hub's https origin, e.g. ``"https://mcp.example.com"`` — a
@@ -267,6 +289,8 @@ async def serve(
     app/slug parameter (§6: a token for one slug can never touch another).
     ``roles`` omitted or ``{}`` declares none — the app is then reachable
     only by owner tokens or grants of the built-in ``all`` role.
+    ``typescript_aliases`` is the optional hub-local hint map (§23); ``None``
+    sends no hints, and hints never rename the app's MCP wire surface.
 
     Terminal outcomes are the whole return contract: returns quietly when the
     hub replaces this connection with a newer one for the same app (close
@@ -277,7 +301,11 @@ async def serve(
     resolved_url = _resolve(url, "PMCP_URL", "hub url")
     resolved_token = _resolve(token, "PMCP_APP_TOKEN", "app token")
     async with HubTransport(
-        resolved_url, resolved_token, roles, discover=lambda: _probe_capabilities(mcp)
+        resolved_url,
+        resolved_token,
+        roles,
+        typescript_aliases=typescript_aliases,
+        discover=lambda: _probe_capabilities(mcp),
     ) as (read_stream, write_stream):
         # The SDK session owns the handshake from here. ``create_initialization_options``
         # stays a getattr because the SDK itself makes it optional; ``run`` does not.
@@ -379,6 +407,7 @@ class HubTransport:
         token: str,
         roles: Roles | None = None,
         *,
+        typescript_aliases: TypescriptAliases | None = None,
         discover: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         """``url`` is the hub's https origin — a bare origin, no path; anything
@@ -386,14 +415,20 @@ class HubTransport:
         ``pmcp_app_`` credential the whole connection authenticates as. No
         network happens until ``__aenter__``.
 
+        ``typescript_aliases`` is the optional hint map sent as the
+        ``typescriptAliases`` member of every ``hub/register`` (§23); ``None``
+        sends no member at all, so a transport built without hints emits exactly
+        the historical three-key frame.
+
         ``discover`` answers the hub's registration-time ``server/discover``
         (§6/§11, §20) — internal wiring :func:`serve` supplies from the SDK
-        server's own capabilities, not one of the three public options a
+        server's own capabilities, not one of the public options a
         app author sets. Omitted (a hand-rolled session that does not pass
         one) means every ``server/discover`` gets the ``-32601`` fallback."""
         self._address = _connect_address(url)
         self._token = token
         self._roles: Roles = roles if roles is not None else {}
+        self._typescript_aliases = typescript_aliases
         self._discover = discover
 
         self._read_send: MemoryObjectSendStream[SessionMessage | Exception]
@@ -534,17 +569,24 @@ class HubTransport:
                 self._attempt = 0
                 self._current_ws = ws
                 try:
+                    params = {
+                        "clientVersion": _CLIENT_VERSION,
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "roles": self._roles,
+                    }
+                    # §23's optional member: absent means the key is ABSENT — an author
+                    # who declares no hints keeps sending exactly the three-key frame,
+                    # and the hub reads a missing member as "no hints", never as a
+                    # cleared map.
+                    if self._typescript_aliases is not None:
+                        params["typescriptAliases"] = self._typescript_aliases
                     await ws.send(
                         json.dumps(
                             {
                                 "jsonrpc": "2.0",
                                 "id": _REGISTER_ID,
                                 "method": HUB_METHOD_REGISTER,
-                                "params": {
-                                    "clientVersion": _CLIENT_VERSION,
-                                    "protocolVersion": PROTOCOL_VERSION,
-                                    "roles": self._roles,
-                                },
+                                "params": params,
                             }
                         )
                     )

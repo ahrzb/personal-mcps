@@ -1,7 +1,7 @@
 {
   "name": "@ahrzb/personal-mcp-cli",
   "version": "0.2.0",
-  "description": "CLI for a personal-mcps hub — apps, agents, tokens, admin tokens, approvals, audit, YAML diff/apply.",
+  "description": "CLI for a personal-mcps hub — apps, agents, tokens, admin tokens, approvals, and audit.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ahrzb/personal-mcps.git",
@@ -22,8 +22,7 @@
     "commander": "^15.0.0",
     "picocolors": "^1.1.1",
     "smol-toml": "^1.4.0",
-    "wrap-ansi": "^10.0.1",
-    "yaml": "^2.8.0"
+    "wrap-ansi": "^10.0.1"
   },
   "scripts": {
     "prepublishOnly": "node build.mjs"

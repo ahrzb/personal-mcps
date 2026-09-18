@@ -37,6 +37,7 @@ import type {
   PasskeyRow,
   AppAccessDetails,
   AppAgentRow,
+  AppAliasView,
   AppCatalogDetails,
   AppCatalogGroup,
   AppCatalogRow,
@@ -397,6 +398,10 @@ const settingsBase: Omit<SettingsProps, keyof ShellProps | "section" | "pane"> =
   connections,
   confirm: null,
   passwordError: null,
+  // §23.3's pair at the pinned defaults, drawn as the Execution pane's controls: the
+  // committed values are milliseconds and the form's are the same numbers as text.
+  execution: { defaultTimeoutMs: 30_000, maxTimeoutMs: 300_000 },
+  executionForm: { defaults: "30000", maximum: "300000", errors: {} },
 };
 
 const settings = {
@@ -474,12 +479,26 @@ const settings = {
     sessions: [sessions[0]!],
   },
 
-  /** One fixture per pane, so the preview index walks all six of §13's routes. */
+  /** One fixture per pane, so the preview index walks all seven of §13's routes. */
   twoFactor: { ...shell("settings"), ...settingsBase, pane: "two-factor" },
   passkeys: { ...shell("settings"), ...settingsBase, pane: "passkeys" },
   sessions: { ...shell("settings"), ...settingsBase, pane: "sessions" },
   tokens: { ...shell("settings"), ...settingsBase, pane: "tokens" },
   clients: { ...shell("settings"), ...settingsBase, pane: "clients" },
+  execution: { ...shell("settings"), ...settingsBase, pane: "execution" },
+
+  /** §23.3's refused pair: the op's sentence under the control it named, and the owner's
+   *  own text in both boxes rather than the pair that was refused. */
+  executionRefused: {
+    ...shell("settings"),
+    ...settingsBase,
+    pane: "execution",
+    executionForm: {
+      defaults: "600000",
+      maximum: "300000",
+      errors: { defaults: "Must not exceed max timeout." },
+    },
+  },
 
   /** SettingsStates "Two-factor — not enrolled": the rail dot unlit beside it. */
   bare: {
@@ -1190,7 +1209,14 @@ const catalogToolDetails: AppCatalogDetails = {
   ],
   results: [{ kind: "leaf", path: "out.stored", type: "boolean", writeOnly: false }],
   resource: null,
-  calledAs: "mcp-tools_secret_push on the aggregated endpoint",
+  identity: {
+    scoped: {
+      service: "mcp-tools",
+      member: "secret_push",
+      endpoint: "https://hub.example/ahrzb/mcp/mcp-tools",
+    },
+    typescript: { path: "mcp.mcpTools.secretPush", source: "generated", diagnostic: null },
+  },
   reachableBy: [],
   approval: "none required",
   redaction: "arguments payload.key, credentials.token",
@@ -1459,7 +1485,7 @@ const grantControl = (field: string, value: GrantChoice): RowControl => ({
   impliedBy: [],
 });
 
-/** What claude holds on mcp-tools, in §9's own spelling — the one place this fixture's
+/** What claude holds on mcp-tools, in §8's wire spelling — the one place this fixture's
  *  grant set is written, so the rows, the reach line and the carried fields agree. */
 const claudeGrant: Record<string, "allow" | "approval"> = {
   reader: "allow",
@@ -1608,6 +1634,31 @@ const overviewRows = [
   { key: "Description", value: tunnelHeaderBase.description, mono: false },
 ];
 
+/**
+ * §23.6's alias surface as the Overview fixtures draw it: a configured service name and
+ * two configured tool aliases beside the catalog's own tools, the committed map with one
+ * tombstone, and no diagnostic — the state a healthy app is in. The refused save above is
+ * the same cast with the error, the draft and a diagnostic over it.
+ */
+const aliasView: AppAliasView = {
+  service: "news",
+  tools: [
+    { canonicalName: "digest_latest", alias: "latest" },
+    { canonicalName: "get_news", alias: "" },
+    { canonicalName: "search_feeds", alias: "searchFeeds" },
+  ],
+  reservations: [
+    { family: "service", canonicalName: "news", typescriptName: "news", source: "owner", active: true },
+    { family: "tool", canonicalName: "digest_latest", typescriptName: "latest", source: "owner", active: true },
+    { family: "tool", canonicalName: "get_news", typescriptName: "getNews", source: "generated", active: true },
+    { family: "tool", canonicalName: "search_feeds", typescriptName: "searchFeeds", source: "owner", active: true },
+    { family: "tool", canonicalName: "old_digest", typescriptName: "oldDigest", source: "generated", active: false },
+  ],
+  diagnostics: [],
+  error: null,
+  draft: null,
+};
+
 /** The key the Issue POST just minted, in the one response that carries its plaintext. */
 const newAppToken: AppTokenRow = {
   id: "tok_2b8x",
@@ -1733,7 +1784,14 @@ const appDetailFixtures = {
         ],
         results: null,
         resource: null,
-        calledAs: "mcp-tools_digest_daily on the aggregated endpoint",
+        identity: {
+          scoped: {
+            service: "mcp-tools",
+            member: "digest_daily",
+            endpoint: "https://hub.example/ahrzb/mcp/mcp-tools",
+          },
+          typescript: null,
+        },
         reachableBy: ["claude · via reader"],
         approval: "never asked for prompts",
         redaction: "arguments audience",
@@ -1758,7 +1816,14 @@ const appDetailFixtures = {
           type: "text/plain",
           servedOn: "the scoped endpoint only — https://hub.example/ahrzb/mcp/mcp-tools",
         },
-        calledAs: null,
+        identity: {
+          scoped: {
+            service: "mcp-tools",
+            member: "news://feed/hn",
+            endpoint: "https://hub.example/ahrzb/mcp/mcp-tools",
+          },
+          typescript: null,
+        },
         reachableBy: ["claude · via reader"],
         approval: null,
         redaction: null,
@@ -2068,8 +2133,8 @@ const appDetailFixtures = {
     { token: DIMMED },
   ),
 
-  /** AppDetailPanes "Overview", wide: the facts, and nothing to edit. */
-  overview: appDetail(tunnelHeaderBase, { kind: "overview", rows: overviewRows }),
+  /** AppDetailPanes "Overview", wide: the facts, and §23.6's alias surface below them. */
+  overview: appDetail(tunnelHeaderBase, { kind: "overview", rows: overviewRows, aliases: aliasView }),
 
   /** The proxied Overview: three more rows, and the header card above it without them. */
   overviewProxied: appDetail(
@@ -2086,10 +2151,30 @@ const appDetailFixtures = {
         { key: "Body logging", value: "Off — proxied default", mono: false },
         { key: "Description", value: proxiedHeaderBase.description, mono: false },
       ],
+      aliases: { ...aliasView, service: "", tools: [], reservations: [] },
     },
     {},
     { token: DIMMED },
   ),
+
+  /** §23.6's refused alias save: the op's sentence above the editor, the owner's own rows
+   *  redrawn, and the diagnostic that explains the omitted member beside the map. */
+  overviewRefused: appDetail(tunnelHeaderBase, {
+    kind: "overview",
+    rows: overviewRows,
+    aliases: {
+      ...aliasView,
+      service: "news2",
+      draft: [
+        { canonicalName: "digest_latest", alias: "latest2" },
+        { canonicalName: "get_news", alias: "getNews" },
+      ],
+      error: 'TypeScript name "latest2" is held by tool "digest_latest"; contenders: tool "digest_latest"',
+      diagnostics: [
+        'tool "search_feeds": the derived TypeScript name ("searchFeeds") is already reserved; configure an explicit alias',
+      ],
+    },
+  }),
 
   /** AppDetailPanes "Danger zone", wide: Archive and Delete, each behind its own dialog. */
   danger: appDetail(tunnelHeaderBase, {
@@ -2235,6 +2320,7 @@ const appNew = {
         slug: "linear",
         endpoint: "https://mcp.linear.app/mcp",
         authMode: "oauth",
+        aliases: { service: "", rows: [] },
       },
       errors: {},
     },
@@ -2253,6 +2339,7 @@ const appNew = {
         slug: "news",
         endpoint: "",
         authMode: "headers",
+        aliases: { service: "", rows: [] },
       },
       errors: {},
     },
@@ -2265,7 +2352,7 @@ const appNew = {
     csrfToken: CSRF,
     step: {
       kind: "form",
-      form: { kind: "tunnel", name: "", slug: "", endpoint: "", authMode: "headers" },
+      form: { kind: "tunnel", name: "", slug: "", endpoint: "", authMode: "headers", aliases: { service: "", rows: [] } },
       errors: {},
     },
   },
@@ -2278,7 +2365,14 @@ const appNew = {
     csrfToken: CSRF,
     step: {
       kind: "form",
-      form: { kind: "tunnel", name: "PMCP", slug: "pmcp", endpoint: "", authMode: "headers" },
+      form: {
+        kind: "tunnel",
+        name: "PMCP",
+        slug: "pmcp",
+        endpoint: "",
+        authMode: "headers",
+        aliases: { service: "", rows: [] },
+      },
       errors: { slug: `The slug "pmcp" is reserved for the builtin admin app.` },
     },
   },
@@ -2297,6 +2391,7 @@ const appNew = {
         slug: "News_Feed",
         endpoint: "",
         authMode: "headers",
+        aliases: { service: "", rows: [] },
       },
       errors: { slug: "Is not a valid slug." },
     },
@@ -2317,6 +2412,7 @@ const appNew = {
         slug: "notion",
         endpoint: "mcp.notion.com",
         authMode: "headers",
+        aliases: { service: "", rows: [] },
       },
       errors: {
         slug: "Already exists in this namespace.",
@@ -2375,6 +2471,7 @@ const appNew = {
         endpoint:
           "https://mcp.internal.example.com/observability/incident-response/v2/streamable-http?tenant=staging-mirror",
         authMode: "oauth",
+        aliases: { service: "", rows: [] },
       },
       errors: {},
     },
@@ -2405,7 +2502,7 @@ const pendingCreatePage = {
   args: {
     title: "Weekly report",
     parent: "Reports",
-    // Config-declared redaction path (§9's redact: create_page → credentials.token).
+    // Owner-declared redaction path (§7: create_page → credentials.token).
     credentials: { token: "‹redacted›" },
   },
   status: "pending",
@@ -2691,7 +2788,7 @@ const auditRows: AuditEventRow[] = [
     outcome: "ok",
     durationMs: 1204,
     client: { name: "claude-code", version: "2.1.37", sessionId: "a3f9c2d1" },
-    // Proxied app with log_bodies opted in (§9) — config paths do the masking.
+    // Proxied app with log_bodies opted in (§15) — configured paths do the masking.
     args: { title: "Weekly report", parent: "Reports", credentials: { token: "‹redacted›" } },
     result: { structuredContent: { page_id: "page_0091", url: "https://notion.so/page_0091" } },
   },
@@ -3545,7 +3642,12 @@ const toolDetails: AgentDetailsView = {
     "Not asked — allow wins over any ask entry, so adding one here would not gate it while reader allows it.",
   args: [{ name: "since", type: "string", required: false, hasDefault: false }],
   hub: {
-    aggregated: "news_get_news",
+    scoped: {
+      service: "news",
+      member: "get_news",
+      endpoint: "https://hub.example/ahrzb/mcp/news",
+    },
+    typescript: { path: "mcp.news.getNews", source: "generated", diagnostic: null },
     reachableBy: "claude · via reader, cron · via reader",
     redaction: "none",
   },
@@ -3805,7 +3907,8 @@ const agentDetail = {
       },
     }),
   ),
-  /** A resource selected: no arguments and no hub block — neither is a resource's. */
+  /** A resource selected: no arguments or TypeScript call path, but its canonical scoped
+   * identity remains visible beside the same reach facts as every other family. */
   resourceSelected: agentPage(
     "news",
     appPane({
@@ -3818,7 +3921,16 @@ const agentDetail = {
         standing: "not reachable",
         approval: "—",
         args: null,
-        hub: null,
+        hub: {
+          scoped: {
+            service: "news",
+            member: "news://config",
+            endpoint: "https://hub.example/ahrzb/mcp/news",
+          },
+          typescript: null,
+          reachableBy: "no agent yet",
+          redaction: null,
+        },
       },
     }),
   ),
@@ -4152,7 +4264,12 @@ const agentDetail = {
         approval: "Not asked — allow wins over any ask entry.",
         args: [{ name: "since", type: "string", required: false, hasDefault: false }],
         hub: {
-          aggregated: `news_${LONG_TOOL}`,
+          scoped: {
+            service: "news",
+            member: LONG_TOOL,
+            endpoint: "https://hub.example/ahrzb/mcp/news",
+          },
+          typescript: { path: "mcp.news.longTool", source: "generated", diagnostic: null },
           reachableBy: "claude · via incident-responder",
           redaction: "none",
         },

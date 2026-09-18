@@ -22,6 +22,8 @@
     "connection_list",
     "connection_revoke",
     "grant_set",
+    "hub_settings_get",
+    "hub_settings_update",
     "token_issue",
     "token_list",
     "token_revoke"
@@ -135,6 +137,22 @@
               }
             ]
           }
+        },
+        "typescript_aliases": {
+          "description": "Hub-local TypeScript names for this app: `service` renames its namespace, `tools` maps canonical tool names to aliases. Omission preserves established names; a collision refuses the whole write. Never renames the upstream.",
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "string"
+            },
+            "tools": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
         },
         "capabilities": {
           "description": "Proxied only: which MCP families this upstream serves (default: tools only).",
@@ -258,6 +276,22 @@
               }
             ]
           }
+        },
+        "typescript_aliases": {
+          "description": "Hub-local TypeScript names for this app: `service` renames its namespace, `tools` maps canonical tool names to aliases. Omission preserves established names; a collision refuses the whole write. Never renames the upstream.",
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "string"
+            },
+            "tools": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
         },
         "capabilities": {
           "description": "Proxied only: which MCP families this upstream serves (default: tools only).",
@@ -642,6 +676,36 @@
       },
       "required": [
         "id"
+      ],
+      "additionalProperties": false
+    },
+    "hub_settings_get": {
+      "type": "object",
+      "description": "Read this namespace's hub execution timeout settings.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "hub_settings_update": {
+      "type": "object",
+      "description": "Set this namespace's hub execution timeout pair. Affects new executions only.",
+      "properties": {
+        "default_timeout_ms": {
+          "description": "Default execution wall clock, milliseconds — used when a program sends no timeout_ms.",
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 300000
+        },
+        "max_timeout_ms": {
+          "description": "Largest timeout_ms a program may request, milliseconds (at least default, at most the hard ceiling).",
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 300000
+        }
+      },
+      "required": [
+        "default_timeout_ms",
+        "max_timeout_ms"
       ],
       "additionalProperties": false
     },

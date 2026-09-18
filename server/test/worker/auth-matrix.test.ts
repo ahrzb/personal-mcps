@@ -39,14 +39,14 @@
 //   agent, a live/revoked/expired token per kind, and a password session — the expired
 //   one minted through TokenSpec.expired, i.e. issueToken at a backdated now(), so no row
 //   of this table sleeps) · ../../src/index (default.fetch, Env) · ../../src/identity
-//   (resolvePrincipal/resolveAppToken and their optional now()) · ../../src/gateway ·
+//   (resolveCaller/resolveAppToken and their optional now()) · ../../src/gateway ·
 //   applyD1Migrations (setup) · env with and without BOOTSTRAP_SECRET
 
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import type { Env } from "../../src/index";
-import { AUTH_BASE_PATH, requireOwnerSession, resolvePrincipal } from "../../src/identity";
+import { AUTH_BASE_PATH, requireOwnerSession, resolveCaller } from "../../src/identity";
 import type { Principal, TokenKind } from "../../src/identity";
 import type { JsonRpcResponse } from "../../src/gateway";
 import { TOKEN_LAST_USED_STAMP_MS } from "../../src/limits";
@@ -144,7 +144,7 @@ export type AuthOutcome =
   /**
    * `principal` is `"none"` wherever the answer names no principal. Two cases, one word:
    * §12's `/internal/users` is guarded by a shared secret rather than by
-   * `resolvePrincipal`, so naming a `Principal["kind"]` there would assert a resolution
+   * `resolveCaller`, so naming a `Principal["kind"]` there would assert a resolution
    * that never happens; and §7's `initialize` DOES resolve one at the door and then
    * answers statelessly, so its result names nobody either. "Allow" still means what it
    * means everywhere else — the surface admitted the request — which keeps the twin law (a
@@ -643,7 +643,7 @@ export const AUTH_MATRIX_ROWS: readonly AuthMatrixRow[] = [
   },
   // The allow-twin without which the row above is satisfied by a worker that has no such
   // route at all. `principal: "none"` says what this surface actually does: §12's route is
-  // guarded by a shared-secret compare, not by resolvePrincipal, so it admits the request
+  // guarded by a shared-secret compare, not by resolveCaller, so it admits the request
   // without resolving anyone — the allow verdict is "the route answered", and no row has to
   // pretend a `user` was found. Its own semantics (create/list/delete/reset-password) belong
   // to routes.test.ts and the scripts contract.
@@ -1178,21 +1178,21 @@ function envFor(row: AuthMatrixRow): Partial<Env> {
  * own vocabulary:
  *
  * · whoami says it outright, in its body.
- * · The consumer endpoints say it through §8's one asymmetry: the builtin `pmcp` app
- *   participates in an OWNER's listing and can never appear in an agent's. So
- *   "did the tools this caller was served include the builtin" IS the pipeline's
- *   statement about the principal it resolved, for the exact request the row made. That
- *   covers every aggregated row and the scoped `/mcp/pmcp` one.
+ * · The scoped `/mcp/pmcp` builtin says it through §8's one asymmetry: the builtin `pmcp`
+ *   app participates in an OWNER's listing and can never appear in an agent's. So "did the
+ *   tools this caller was served include the builtin" IS the pipeline's statement about the
+ *   principal it resolved, for the exact request the row made.
  *
- * Two rows are left where the surface genuinely cannot name its caller, and both fall
- * back to calling the guard by hand — which is a stated CEILING, not an oracle: their
- * `principal` half is proven against identity, while the surface itself is proven only to
- * have admitted.
+ * Three surfaces are left where the surface genuinely cannot name its caller, and all
+ * three fall back to calling the guard by hand — which is a stated CEILING, not an oracle:
+ * their `principal` half is proven against identity, while the surface itself is proven
+ * only to have admitted.
  * · /settings — the page behind the guard is a 501 stub.
  * · scoped `/mcp/<granted>` — a tools/list there names tools, not callers, and the row's
  *   app is a proxied one whose far side is unreachable in this fixture.
- * Both close the day the row's outcome vocabulary may say `principal: "none"` for a
- * surface that answers no principal — a member §12's bootstrap rows already use.
+ * · every aggregated row — §23.1 replaced the aggregate application catalog with the two
+ *   hub tools, so an aggregated listing serves the same names to every admitted credential
+ *   and no longer distinguishes an owner from an agent at all.
  */
 async function expectAdmittedAs(row: AuthMatrixRow, response: Response): Promise<void> {
   if (row.expect.verdict !== "allow") throw new Error("not an allow row");
@@ -1231,9 +1231,13 @@ async function expectAdmittedAs(row: AuthMatrixRow, response: Response): Promise
       return;
     }
     default: {
-      if (row.surface.route === "mcp-scoped" && row.surface.slug !== "pmcp") {
-        // The other ceiling: a scoped list names tools, not callers.
-        expect((await resolvePrincipal(requestFor(row))).kind).toBe(expected);
+      if (
+        row.surface.route === "mcp-aggregated" ||
+        (row.surface.route === "mcp-scoped" && row.surface.slug !== "pmcp")
+      ) {
+        // The ceilings: an aggregated list serves the hub's own tools to everyone (§23.1),
+        // and a scoped list names tools, not callers.
+        expect((await resolveCaller(requestFor(row))).principal.kind).toBe(expected);
         return;
       }
       const served = await servedTools(response);
@@ -1809,8 +1813,10 @@ describe("§19.6/§19.8 — the OAuth door", () => {
 
   it("§19.6 · a valid OAuth access token resolves to agent:<slug> and reaches tools/call · the same agent's pmcp_agt_ key resolves identically (the twin — nothing downstream branches on carrier)", async () => {
     const aggregated = `${ORIGIN}/${door.user}/mcp`;
-    // Resolves to the APP AGENT — the aggregated listing carries no builtin (only an
-    // owner's does, §8) — and it is the SAME listing the agent's own key produces.
+    // Resolves to the APP AGENT, and §23.1 made the aggregated listing credential-blind —
+    // it serves the hub's own tools to every admitted credential — so "the same listing the
+    // agent's own key produces" is now the whole of what the aggregate can say, and the
+    // owner/agent asymmetry is read on the scoped builtin instead (§8).
     const oauthTools = await servedTools(await mcpCall(aggregated, door.validClient.token, "tools/list"));
     const keyTools = await servedTools(await mcpCall(aggregated, door.agentKey, "tools/list"));
     expect(oauthTools, "the OAuth token was refused at the door").not.toBeNull();
@@ -1919,16 +1925,19 @@ describe("§19.6/§19.8 — the OAuth door", () => {
 
   it("§7/§19.6 · \"JWT-shaped\" is exactly three non-empty base64url segments — a two- or four-segment bearer takes the session path, a three-segment base64url string that verifies as nothing takes the OAuth path and 401s (both directions)", async () => {
     const aggregated = `${ORIGIN}/${door.user}/mcp`;
+    const builtin = `${aggregated}/${PMCP_SLUG}`;
     // A better-auth session bearer is ONE segment — not JWT-shaped — so it takes the session
-    // path and resolves to the OWNER, whose aggregated listing carries the builtin (§8).
-    const asOwner = await mcpCall(aggregated, door.session.token, "tools/list");
+    // path and resolves to the OWNER, who is the one credential family the scoped builtin
+    // admits (§8) — the discriminator §23.1 moved off the aggregated listing, which now
+    // serves the same hub tools to every admitted credential.
+    const asOwner = await mcpCall(builtin, door.session.token, "tools/list");
     expect(asOwner.status).toBe(200);
     expect((await servedTools(asOwner))?.some(namesTheBuiltin)).toBe(true);
     // A three-segment access token takes the OAuth path and resolves to the APP AGENT
     // (no builtin) — the other direction, observable in WHO each carrier resolves to.
-    const asAgent = await mcpCall(aggregated, door.validClient.token, "tools/list");
-    expect(asAgent.status).toBe(200);
-    expect((await servedTools(asAgent))?.some(namesTheBuiltin)).toBe(false);
+    const asAgent = await mcpCall(builtin, door.validClient.token, "tools/list");
+    expect(asAgent.status).toBe(404);
+    expect((await mcpCall(aggregated, door.validClient.token, "tools/list")).status).toBe(200);
     // Two- and four-segment bearers are not JWT-shaped → session path → refused (junk).
     expect((await mcpCall(aggregated, "aa.bb", "tools/list")).status).toBe(401);
     expect((await mcpCall(aggregated, "aa.bb.cc.dd", "tools/list")).status).toBe(401);

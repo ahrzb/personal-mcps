@@ -3,10 +3,13 @@
 // what actually mints and signs the tokens. Every caller here asks for a PRINCIPAL or a
 // METADATA DOCUMENT and gets exactly that — never a token payload, never a better-auth
 // handle, never a JWKS. The door leg (identity.resolveCredential) hands this module a
-// JWT-shaped bearer and the addressed namespace and receives a `agent` Principal
-// or `null`; the consent page hands it a chosen agent and receives a written binding; the
-// connections surfaces hand it an owner id and receive rows with no secret in them. That the
-// authorization server underneath is better-auth is not knowledge any of them carry.
+// JWT-shaped bearer and the addressed namespace and receives an `OAuthLeg` — the `agent`
+// principal the token names, plus the two non-secret facts identity's `CredentialReference`
+// captures for later reauthorization (the `oauth_binding` row id and the verified `exp`
+// claim) — or `null`; the consent page hands it a chosen agent and receives a written
+// binding; the connections surfaces hand it an owner id and receive rows with no secret in
+// them. That the authorization server underneath is better-auth is not knowledge any of
+// them carry.
 //
 // OWNS, and is the only site that touches:
 //   · the two §19.2 discovery documents — RFC 8414 AS metadata (forwarded from the
@@ -132,14 +135,28 @@ function forwardToProvider(path: string): Promise<Response> {
 // ─────────────────────────────── §19.6 the door: token → principal ───────────────────────
 
 /**
+ * One resolved OAuth door leg: the `agent` principal a verified access token names, plus
+ * the two non-secret facts identity's `CredentialReference` captures so the credential can
+ * be re-checked later — the `oauth_binding` row the door read, and the verified `exp` claim
+ * in epoch SECONDS. There is deliberately no token, signature or JWKS here: a caller that
+ * needs authority again goes through `reauthorizeOAuthBinding`, never through these facts.
+ */
+export type OAuthLeg = {
+  principal: Extract<Principal, { kind: "agent" }>;
+  bindingId: string;
+  expiresAt: number;
+};
+
+/**
  * §19.6, the whole OAuth leg of the door, as ONE answer: a JWT-shaped bearer and the
- * addressed namespace in, a `agent` Principal or `null` out — the identical shape a
- * `pmcp_agt_` key produces, so nothing downstream branches on how the credential arrived (§16).
+ * addressed namespace in, an `OAuthLeg` or `null` out — the principal shape a `pmcp_agt_`
+ * key produces, so nothing downstream branches on how the credential arrived (§16).
  * `null` for EVERY way the token fails to name a live binding: bad signature, wrong issuer,
- * wrong or missing audience, expired, missing `mcp` scope, no `client_id`, an unknown or
- * deleted namespace, or no live `oauth_binding` row. The caller (identity.resolveCredential)
- * turns every `null` into the one 401 challenge and NEVER falls through to a session lookup —
- * that terminality is the leg's, this function only refuses to resolve anyone it should not.
+ * wrong or missing audience, expired, missing `mcp` scope, absent `exp`, no `client_id`, an
+ * unknown or deleted namespace, or no live `oauth_binding` row. The caller
+ * (identity.resolveCredential) turns every `null` into the one 401 challenge and NEVER falls
+ * through to a session lookup — that terminality is the leg's, this function only refuses to
+ * resolve anyone it should not.
  *
  * The acceptance test is the claims, not the signer (§19.6 step 3): `verifyJwsAccessToken`
  * proves signature, issuer, `exp` and — crucially — `aud` = this namespace's aggregated
@@ -147,30 +164,34 @@ function forwardToProvider(path: string): Promise<Response> {
  * matching `aud`, no `mcp` scope) is refused here, "hub-signed" never being sufficient. The
  * binding row is read per call, which is what makes revocation immediate rather than
  * `exp`-bound, and is the SAME one-per-request D1 cost a `pmcp_agt_` key already pays — the
- * verify side adds none (§19.1).
+ * verify side adds none (§19.1). A token carrying no `exp` is refused rather than admitted
+ * unbounded: the reference captures it, and `reauthorizeOAuthBinding` needs a ceiling.
  *
  * `now` is the injected clock the coarse `last_used_at` stamp reads, the same seam
- * identity.resolvePrincipal carries; production callers omit it.
+ * identity.resolveCaller carries; production callers omit it.
  */
 export async function resolveOAuthPrincipal(
   token: string,
   username: string,
   now: () => number = Date.now,
-): Promise<Principal | null> {
+): Promise<OAuthLeg | null> {
   // deps: better-auth verifyJwsAccessToken · identity.authRoutes (JWKS) · D1 `user` · D1 `oauth_binding` · D1 `agent`
   const payload = await verifyAccessToken(token, resourceIdentifier(username));
   if (payload === null) return null;
   if (!hasMcpScope(payload)) return null;
   const clientId = typeof payload.client_id === "string" ? payload.client_id : null;
   if (clientId === null) return null;
+  const expiresAt = typeof payload.exp === "number" ? payload.exp : null;
+  if (expiresAt === null) return null;
   const ownerId = await ownerIdFor(username);
   if (ownerId === null) return null;
-  return bindingPrincipal(ownerId, clientId, now);
+  return bindingPrincipal(ownerId, clientId, expiresAt, now);
 }
 
-/** An access-token JWT payload with the two claims the door reads by name; every other
- *  claim `verifyJwsAccessToken` returns is present but not this leg's business. */
-type AccessTokenPayload = { client_id?: unknown; scope?: unknown; scp?: unknown };
+/** An access-token JWT payload with the three claims the door reads by name — the client
+ *  the token was issued to, its scopes, and its expiry; every other claim
+ *  `verifyJwsAccessToken` returns is present but not this leg's business. */
+type AccessTokenPayload = { client_id?: unknown; scope?: unknown; scp?: unknown; exp?: unknown };
 
 /**
  * Local JWS verification against the hub's own JWKS (§19.1's `verifyJwsAccessToken` with a
@@ -234,15 +255,17 @@ function hasMcpScope(payload: AccessTokenPayload): boolean {
 /**
  * §19.6 step 4: the verified `client_id` plus the addressed owner resolve `oauth_binding`. A
  * live row (not revoked, its agent still present — the JOIN drops a cascade-deleted one)
- * yields the `agent` Principal and coarsely stamps `last_used_at`; anything else is
+ * yields the `OAuthLeg` and coarsely stamps `last_used_at`; anything else is
  * `null`, the same refusal a missing token gets, and also the actionable answer — the owner
- * re-consents.
+ * re-consents. `expiresAt` is the verified claim, carried through untouched: the row has no
+ * expiry of its own, so the token's `exp` is the only ceiling the leg has.
  */
 async function bindingPrincipal(
   ownerId: string,
   clientId: string,
+  expiresAt: number,
   now: () => number,
-): Promise<Principal | null> {
+): Promise<OAuthLeg | null> {
   const row = await db()
     .prepare(
       `SELECT b."id", b."agent_id", b."last_used_at", a."slug"
@@ -254,7 +277,47 @@ async function bindingPrincipal(
     .first<{ id: string; agent_id: string; last_used_at: number | null; slug: string }>();
   if (row === null) return null;
   await stampBinding(row.id, row.last_used_at, now());
-  return { kind: "agent", agentId: row.agent_id, ownerId, slug: row.slug };
+  return {
+    principal: { kind: "agent", agentId: row.agent_id, ownerId, slug: row.slug },
+    bindingId: row.id,
+    expiresAt,
+  };
+}
+
+/**
+ * The OAuth family's reauthorization, from the `oauth` member of identity's
+ * `CredentialReference`: the verified token's `exp` must still be in the future, and the
+ * `oauth_binding` row must still exist unrevoked, still bound to the captured agent and
+ * still under the captured owner — the same live-row join the door reads, by id instead of
+ * by (owner, client). Absence, a revoke, a rebound agent (re-consent with another agent
+ * UPDATEs `agent_id` in place) and an expired token are all `null`, so a connection revoked
+ * mid-execution stops the next bridge operation rather than waiting for `exp`.
+ *
+ * Read-only: no `last_used_at` stamp here. Reauthorization is a check on an already
+ * admitted credential, not a new presentation of it — and a stamp on this path would let a
+ * long execution keep a revoked-later row warm in the listing.
+ */
+export async function reauthorizeOAuthBinding(
+  reference: { bindingId: string; agentId: string; ownerId: string; expiresAt: number },
+  now: () => number = Date.now,
+): Promise<Extract<Principal, { kind: "agent" }> | null> {
+  // deps: D1 `oauth_binding` · D1 `agent`
+  // JWT `exp` is epoch SECONDS (the claim's own unit) while every clock in this repo is
+  // epoch milliseconds: compared at the boundary, never mixed into one variable.
+  if (reference.expiresAt * 1000 <= now()) return null;
+  const row = await db()
+    .prepare(
+      `SELECT b."agent_id", b."owner_id", a."slug"
+         FROM oauth_binding b
+         JOIN agent a ON a."id" = b."agent_id"
+        WHERE b."id" = ? AND b."revoked_at" IS NULL`,
+    )
+    .bind(reference.bindingId)
+    .first<{ agent_id: string; owner_id: string; slug: string }>();
+  if (row === null || row.agent_id !== reference.agentId || row.owner_id !== reference.ownerId) {
+    return null;
+  }
+  return { kind: "agent", agentId: row.agent_id, ownerId: row.owner_id, slug: row.slug };
 }
 
 /** The coarse `last_used_at` stamp (§19.6/§5): advanced at most once per

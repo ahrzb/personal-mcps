@@ -10,20 +10,25 @@
 
 import { httpServerIntegration, withSentry } from "@sentry/cloudflare";
 import { Hono } from "hono";
+import type { Context, ExecutionContext } from "hono";
 import { beforeSend, HUB_NAMESPACE, prune, record, resolveAuditConfig } from "./audit";
 import type { AuditConfig } from "./audit";
 import { mcpMessage } from "./gateway";
+import type { RequestLifecycle } from "./gateway";
+import { installHubExecutor } from "./hub-backend";
+import { createHubExecutor } from "./hub-sandbox";
 import {
   anonymousNotFound,
   authRoutes,
   bootstrapRoute,
+  reauthorize,
   requireOwnerSession,
-  resolvePrincipal,
+  resolveCaller,
   unauthorized,
   USERNAME_CHARSET,
   whoamiRoute,
 } from "./identity";
-import type { Principal } from "./identity";
+import type { AuthenticatedCaller, Principal } from "./identity";
 import {
   AUTH_SERVER_METADATA_PATH,
   PROTECTED_RESOURCE_PATH,
@@ -32,7 +37,7 @@ import {
 } from "./oauth";
 import { HUB_PRINCIPAL } from "./principal";
 import type { DeadlineBindings } from "./limits";
-import { PMCP_SLUG, Registry } from "./registry";
+import { HUB_SLUG, PMCP_SLUG, Registry } from "./registry";
 import { handleConnect } from "./tunnel";
 import {
   cleanupStaleState,
@@ -59,6 +64,12 @@ export type Env = {
   DB: D1Database;
   /** AppConnection DO namespace, addressed by opaque `app.id` only (§3, §6). */
   APP_CONNECTION: DurableObjectNamespace;
+  /**
+   * HubSandbox DO namespace, addressed by the EXACT-TOKEN digest only (§23.8): the id is
+   * the digest itself, so two tokens never share a container and the binding carries no
+   * user or principal identity. `hub-sandbox.ts` narrows it to the two members it calls.
+   */
+  HUB_SANDBOX: DurableObjectNamespace;
   /**
    * The canonical public https origin, e.g. "https://mcp.example.com" — scheme + host,
    * no trailing slash, no path. The single source for every absolute URL the hub emits:
@@ -107,9 +118,10 @@ export type Env = {
    */
   AUDIT_BODY_CAP_BYTES?: string;
 } & DeadlineBindings;
-// …and, spread in above, the five optional deadline vars —
+// …and, spread in above, the optional deadline vars —
 // PMCP_CALL_TIMEOUT_MS, PMCP_AGGREGATED_LIST_DEADLINE_MS, PMCP_REGISTRATION_DEADLINE_MS,
-// PMCP_LISTEN_KEEPALIVE_MS, PMCP_LISTEN_BELL_MIN_INTERVAL_MS. Production sets NONE of them:
+// PMCP_LISTEN_KEEPALIVE_MS, PMCP_LISTEN_BELL_MIN_INTERVAL_MS, PMCP_HUB_CATALOG_DEADLINE_MS.
+// Production sets NONE of them:
 // unset means the limits.ts constant, which is the whole point — the durations are
 // configuration only so that a test can shorten the one it watches without patching
 // anything global, and limits.ts spells the names beside the constants they override so the
@@ -159,6 +171,23 @@ export const RESERVED_ROUTES: ReadonlySet<string> = new Set([...ROUTES, "mcp"]);
 export { AppConnection } from "./tunnel";
 
 /**
+ * §23.8/§23.9 — the execution plane's two exports, for the same platform reason: wrangler
+ * resolves the Sandbox DO class against the entry module, and the platform resolves
+ * `ctx.exports.ContainerProxy` there too, which is what routes intercepted container
+ * egress (`mcp.internal`) into `HubSandbox.bridgeFetch`.
+ */
+export { ContainerProxy, HubSandbox } from "./hub-sandbox";
+
+/**
+ * §23.8's ONE wiring point for the execution plane: the hub backend's `execute` tool calls
+ * whatever executor is installed, and this is the only place one is. Built once per isolate
+ * — `createHubExecutor` closes over the HUB_SANDBOX binding through the ambient `env` and
+ * starts nothing until a run is admitted — so the gateway never imports the Sandbox SDK and
+ * a worker test that never touches a container never loads it either.
+ */
+installHubExecutor(createHubExecutor());
+
+/**
  * The worker entrypoint: HTTP/WebSocket in `fetch`, the daily cron in `scheduled`.
  * Uninstrumented on purpose — `instrumented` below is what wraps it in Sentry, and only
  * when there is a DSN to wrap it for. `ctx` is declared and unused by both legs: neither
@@ -176,7 +205,11 @@ const handler = {
   async fetch(request: Request, env: Env, _ctx?: unknown): Promise<Response> {
     // deps: hono · identity.authRoutes · identity.whoamiRoute · identity.bootstrapRoute · web.pageRoutes · gateway.mcpMessage · tunnel.handleConnect · upstream.clientMetadata · audit.resolveAuditConfig
     try {
-      return await router().fetch(request, env);
+      // The third argument is the runtime's ExecutionContext; Hono takes it as its own, so
+      // `c.executionCtx` is real for the hub execution plane's background cleanup (§23.10).
+      // A direct caller (a test invoking `worker.fetch`) may pass none, and the hub then
+      // simply has no background lifetime to register.
+      return await router().fetch(request, env, _ctx as ExecutionContext | undefined);
     } catch (thrown) {
       // identity's guards refuse by THROWING a built Response (its failure convention);
       // the composition root is where those become the answer, verbatim. Hono rethrows
@@ -361,12 +394,31 @@ function buildRouter(): Hono<{ Bindings: Env }> {
 
   // §7's two consumer endpoint shapes, registered LAST so a reserved segment can never be
   // shadowed by a username. POST only — the 2026-07-28 revision is POST-only, and every
-  // other method falls through to the same 404 an unknown path gets.
-  app.post("/:user/mcp", (c) => mcpEntry(c.req.raw, c.env, c.req.param("user")));
+  // other method falls through to the same 404 an unknown path gets. The hub execution
+  // plane's background lifetime rides in from here (§23.10): it is the one thing Hono holds
+  // that the gateway cannot read off a Request.
+  app.post("/:user/mcp", (c) => mcpEntry(c.req.raw, c.env, c.req.param("user"), undefined, lifecycleOf(c)));
   app.post("/:user/mcp/:slug", (c) =>
-    mcpEntry(c.req.raw, c.env, c.req.param("user"), c.req.param("slug")),
+    mcpEntry(c.req.raw, c.env, c.req.param("user"), c.req.param("slug"), lifecycleOf(c)),
   );
   return app;
+}
+
+/**
+ * §23.10 — the invocation's background lifetime, as the hub execution plane needs it:
+ * `ExecutionContext.waitUntil`, so cleanup registered after a client disconnect outlives the
+ * response. Absent when the runtime gave the router no ExecutionContext at all (a test that
+ * calls `worker.fetch` directly), which is a lifetime fact rather than a failure — every
+ * non-hub path ignores it. Hono offers no absence check beside its throwing getter, so the
+ * absence is read the only way it is observable.
+ */
+function lifecycleOf(c: Context<{ Bindings: Env }>): RequestLifecycle | undefined {
+  try {
+    const ctx = c.executionCtx;
+    return { waitUntil: (work) => ctx.waitUntil(work) };
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -539,6 +591,7 @@ async function mcpEntry(
   env: Env,
   user: string,
   slug?: string,
+  lifecycle?: RequestLifecycle,
 ): Promise<Response> {
   // A reserved segment is never a namespace (§2), so a request shaped like one is
   // route-not-found — checked here as well as at registration, because a segment stubbed
@@ -559,32 +612,28 @@ async function mcpEntry(
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   }
-  const principal = await admitted(request, env, slug);
-  if (principal === null) return anonymousNotFound();
-  // The tick re-reads the credential and (scoped) the app's visibility off the SAME
-  // request — bearer, namespace and slug are all still on it — so nothing about the
-  // stream's own state can widen what the door already decided. Identity refuses by
-  // THROWING a Response, and on a tick there is nobody to hand one to: every way step 1
-  // can refuse means one thing to a held stream, which is that it is no longer admitted
-  // (§21.2 — the stream closes, and the client's reopen meets the door properly).
-  return mcpMessage(request, env, principal, slug, () =>
-    admitted(request, env, slug).catch(() => null),
-  );
+  const caller = await admitted(request, env, slug);
+  if (caller === null) return anonymousNotFound();
+  // A held stream keeps only the non-secret reference resolved at admission. Every tick
+  // re-reads that family directly, then re-applies scoped visibility; it never retains or
+  // replays the bearer, and a principal-key change closes the stream.
+  return mcpMessage(request, env, caller, slug, async () => {
+    const principal = await reauthorize(caller.credential.reference);
+    if (principal === null) return null;
+    if (slug !== undefined && !(await visibleOnScoped(env, principal, slug))) return null;
+    return principal;
+  }, lifecycle);
 }
 
 /**
- * §7 step 1's identity half, as one verdict: the caller resolved (identity's own 401/404
- * throws travel out of here untouched — the composition root turns them into the answer)
- * and, on the scoped shape, judged visible for the addressed slug. `null` is the
- * scoped-visibility 404 alone; a credential that resolves to nobody never gets this far.
- *
- * Called twice per held stream and once per POST, which is the whole reason it is a
- * function: §21.2's re-authorization tick has to ask the door, not a copy of it.
+ * §7 step 1's initial identity verdict: resolve the bearer once, retain its non-secret
+ * reauthorization reference, then judge scoped visibility. Identity's 401/404 Responses
+ * travel out untouched; `null` remains the scoped-visibility 404 alone.
  */
-async function admitted(request: Request, env: Env, slug?: string): Promise<Principal | null> {
-  const principal = await resolvePrincipal(request);
-  if (slug !== undefined && !(await visibleOnScoped(env, principal, slug))) return null;
-  return principal;
+async function admitted(request: Request, env: Env, slug?: string): Promise<AuthenticatedCaller | null> {
+  const caller = await resolveCaller(request);
+  if (slug !== undefined && !(await visibleOnScoped(env, caller.principal, slug))) return null;
+  return caller;
 }
 
 /** §7 step 1: `Content-Type: application/json` is required (parameters ignored). */
@@ -600,12 +649,18 @@ function isJson(request: Request): boolean {
  * one more slug it holds no grants on (§8: admin tokens only), never a 401 that would
  * invite it to authenticate differently. Owners see every app in their own namespace.
  *
+ * §23.1 adds the virtual `hub`: protocol infrastructure, so EVERY principal the namespace
+ * admits sees it — a zero-grant agent (pure TypeScript), an owner, and an admin token,
+ * whose program catalog is then only the `pmcp` subset `adminOpsFor` allows. It has no row
+ * to grant on and no archive state, so it is answered before the registry is consulted.
+ *
  * §22.1: an `admin` principal (a `pmcp_adm_` bearer) is visible on `pmcp` alone — the
  * one door its credential family exists to open — and on nothing else, ahead of the
  * ordinary app lookup below: it holds no grants and is not an owner, so falling through
  * would answer "no app" rather than the deliberate "no admin surface here" this states.
  */
 async function visibleOnScoped(env: Env, principal: Principal, slug: string): Promise<boolean> {
+  if (slug === HUB_SLUG) return true;
   if (slug === PMCP_SLUG) return principal.kind === "user" || principal.kind === "admin";
   if (principal.kind === "admin") return false;
   const registry = new Registry(env.DB);

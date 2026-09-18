@@ -1,8 +1,8 @@
 ## 22. The OpenTofu provider
 
-`terraform-provider-pmcp` is the hub's declarative surface, living in its own repository and
-managing hub **contents** — apps, agents, grants, upstream credentials. Wrangler still owns the
-Worker. It supersedes `pmcp diff`/`apply`, which §9 described and which this section retires.
+`terraform-provider-pmcp` is the hub's sole declarative surface, living in its own
+repository and managing hub **contents** — apps, agents, grants, upstream credentials.
+Wrangler still owns the Worker.
 
 This spec is the output of a wayfinding effort (`.scratch/opentofu-provider/`) and is written to
 be built from without re-deciding anything. Where a decision was reversed during review, the
@@ -52,9 +52,8 @@ credential resolution is a hash lookup; `owner_id` is indexed because list and r
 | `admin_token_list` | `{}` | `{ tokens: [{ id, prefix, createdAt, expiresAt, lastUsedAt, revokedAt }] }` |
 | `admin_token_revoke` | `{ id }` | `{ id }` |
 
-The casing split is the hub's existing convention, not a slip: inputs are snake_case because
-they mirror §9's YAML, and outputs are camelCase because they are rows a TypeScript client
-consumes. An op's input and output therefore spell the same column two ways.
+The casing split is the hub's existing convention, not a slip: operation inputs use
+snake_case and row-shaped outputs use camelCase, so the same column has two wire spellings.
 
 `expires_in` defaults to 365 days. Expiry is **fixed, not sliding** — an admin token is not a
 session. Revocation is by `id`, never by prefix or plaintext. **Rotation is issue-then-revoke**,
@@ -137,10 +136,10 @@ approve its own requests defeats the human gate it administers) and `admin_token
 | Surface | Session bearer | `pmcp_adm_` |
 |---|---|---|
 | `POST /<user>/mcp/pmcp` | yes | yes, minus `approval_decide` and `admin_token_issue` |
-| `GET /api/whoami` | yes | yes |
-| `POST /<user>/mcp` (aggregate) | yes | **no** — explicit kind gate |
-| `POST /<user>/mcp/<other-slug>` | yes | no |
-| browser routes, `/api/auth/*`, `/connect` | see below | no |
+| `POST /<user>/mcp/hub` | yes | yes; program catalog contains that same restricted pmcp subset |
+| `POST /<user>/mcp` (aggregate hub) | yes | **no** |
+| `POST /<user>/mcp/<real-app>` | yes | no |
+| browser routes, `/api/auth/*`, `/connect` | cookie rules below | no |
 | `POST /internal/users` | no | no |
 
 Two rows need their cells read carefully rather than as a route matrix.
@@ -159,17 +158,15 @@ that is unset. Neither a session nor an admin token is a credential there, and a
 tokens changed nothing about it — it belongs in the table precisely so the next reader does not
 have to re-derive that.
 
-The narrowing is about **app tools**: an admin token administers the hub and cannot itself call a
-single app tool. Read as containment that claims too much — as shown above, it can issue an agent
-key that does. What the rows above actually buy, stated without overreach:
+The narrowing is about live app authority: an admin token cannot call a real app tool,
+either directly or through a hub program. It may use scoped hub only to orchestrate the
+same `pmcp` subset it already has.
 
-- **A smaller live surface.** No browser routes, no `/api/auth/*`, no `/connect`, no aggregate
-  endpoint, no direct app tool. A stolen admin token cannot be replayed into a web session.
-- **A bounded life.** A fixed, non-sliding default expiry, where a session token slides forward
-  on every use and so lives as long as it is used.
-- **Individual revocability and visibility.** One credential of many, revocable by `id` without
-  disturbing the others, and enumerable in `admin_token_list` / the `pmcp_tokens` data source —
-  where a leaked session token is a row an operator cannot name.
+- **A smaller live surface.** No browser session, `/connect`, aggregate admission, or
+  direct/indirect real-app call.
+- **A bounded life.** A fixed, non-sliding expiry rather than a sliding session.
+- **Individual revocability and visibility.** One named credential among many, listed
+  and revoked by id without disturbing the others.
 
 That is the real inversion, and it is still worth having: today an operator credential in an age
 file **is** a full human session, with none of those three properties.
@@ -237,22 +234,11 @@ pmcp admin-token list
 pmcp admin-token revoke <id>
 ```
 
-All honour `--json`. The CLI **accepts** `pmcp_adm_` in `PMCP_TOKEN` and in profiles. The consumer
-subcommands that address a single app — `call`, `get`, `read`, and the hidden
-`tools`/`prompts`/`resources` — fail with `unauthenticated` and a hint naming the credential kind
-**when the addressed slug is not `pmcp`**, because those reach
-`POST /<user>/mcp/<other-slug>`, which the table above refuses.
-`cli/src/main.ts`'s existing `pmcp_app_` refusal gains this second arm.
-
-**The slug condition is load-bearing, and an earlier draft omitted it.** The premise "these reach
-another slug" is false exactly when the slug IS the builtin: the table grants `POST
-/<user>/mcp/pmcp` to an admin token, so `pmcp call pmcp grant_set` — the documented imperative
-grant-edit path — is honoured by the hub and was refused by its own client. The refusal is
-therefore target-based at all six sites, not blanket. Per subcommand against `pmcp`: `call` and
-`tools` are real (the builtin dispatches ops and renders a catalog); `prompts` and `resources`
-legitimately answer EMPTY rather than refusing, since §20.6 makes those empty families here, and
-an empty family is not an auth failure; `get` and `read` name an item that cannot exist, and get
-the server's own not-found semantics rather than a client-side lie about the credential.
+All commands honour `--json`. The CLI accepts `pmcp_adm_` for scoped `pmcp` and
+`hub` targets. Calls/reads against a real app fail client-side as unauthenticated; calls
+against `pmcp` or hub settings/execution are sent and the server applies `adminOpsFor`.
+This target-based distinction prevents the CLI from denying authority the server grants
+while preserving the direct-real-app refusal.
 
 **`ls` is not among them**, though an earlier draft listed it. It fronts `app_list` — an admin op
 on `/mcp/pmcp`, which the table grants outright — so refusing it client-side would deny an admin
@@ -357,10 +343,10 @@ history that revocation cannot unpublish. That trade was made deliberately, and 
 
 **Managed and ad-hoc tokens coexist, by construction.** `token`'s only uniqueness is on `hash`
 — there is no constraint on `(kind, ref_id)` and `token_issue` never revokes a prior key — so an
-agent or app may hold any number of live tokens. The provider is *additive* here, unlike the
-YAML planner it replaces: it destroys only rows in its own state, each identified by the `id`
-returned at issue, so a hand-issued key is invisible to plan, apply and destroy alike. Issuing
-with `pmcp token issue` beside a `pmcp_token` resource is a supported workflow, not a conflict.
+agent or app may hold any number of live tokens. The provider destroys only rows in its
+own state, each identified by the `id` returned at issue, so a hand-issued key is invisible
+to plan, apply and destroy alike. Issuing with `pmcp token issue` beside a `pmcp_token`
+resource is a supported workflow, not a conflict.
 
 Three consequences that must be documented for an operator, because two of them surprise:
 
@@ -369,9 +355,8 @@ Three consequences that must be documented for an operator, because two of them 
   `tofu destroy` reaches credentials the provider never created and cannot list in its plan.
 - **Bumping `rotation` replaces only the managed row.** Ad-hoc keys for the same principal keep
   working. That enables staged rotation and misleads anyone who reads it as rotating "the" key.
-- **Ad-hoc keys are invisible to state**, which is how `shed` came to hold app tokens for
-  `proton-mail-read` and `proton-mail-mutate` — two identities `mcps.yaml` does not declare. The
-  `pmcp_tokens` data source (§22.4) exists to close that blind spot.
+- **Ad-hoc keys are invisible to state.** The `pmcp_tokens` data source (§22.4) exists to
+  make those credentials visible without claiming ownership of them.
 
 **Schema** (`pmcp_token`):
 
@@ -480,8 +465,8 @@ appears in §22.1's acceptance table.
 
 ### 22.4 Resources and data sources
 
-Five resources and three data sources. `pmcp_token` is specified in §22.2 beside the state-cost
-decision that shapes it, rather than repeated here.
+The provider adds singleton `pmcp_hub_settings` beside its existing resources and data
+sources. `pmcp_token` remains specified in §22.2.
 
 #### `pmcp_tunnel_app`
 
@@ -494,6 +479,7 @@ decision that shapes it, rather than repeated here.
 | `redact`, `redact_results` | map(list(string)) | optional + computed | anchored regex keys, must compile |
 | `log_bodies` | bool | optional | default **`true`** |
 | `owner_roles` | map(object) | optional + computed | *(2026-09-17, decision 32)* the owner's own roles, the same typed object `pmcp_proxy_app.roles` takes below; the app's declaration wins a name collision (§20.3) and is never an attribute here |
+| `typescript_aliases` | object `{ service?, tools? }` | optional + computed | owner-authoritative hub-local aliases; omission preserves established assignments |
 
 #### `pmcp_proxy_app`
 
@@ -509,6 +495,7 @@ The above with `log_bodies` default **`false`**, plus:
 | `headers_wo` | map(string) | optional, write-only, sensitive | §22.2 |
 | `headers_version` | number (integer) | optional | co-required with `headers_wo` |
 | `headers_applied_version` | number (integer) | computed | convergence witness |
+| `typescript_aliases` | object `{ service?, tools? }` | optional + computed | configures hub-local names without changing the proxied server |
 
 **`roles` is typed, not dynamic.** The wire shape is a `oneOf` — a bare pattern list *or* a
 per-family object — which the plugin framework cannot express. The provider takes only the object
@@ -521,10 +508,26 @@ roles = {
 }
 ```
 
-with `tools`, `prompts`, `resources` all optional lists. The bare-list sugar lives in the terranix
-module, which normalizes `["get_.*"]` to `{ tools = ["get_.*"] }` before emitting. The client
-always sends the object form; comparison drops empty families, so the hub's canonical rendering
+with `tools`, `prompts`, `resources` all optional lists. The bare-list sugar lives in the
+terranix module, which normalizes `["get_.*"]` to `{ tools = ["get_.*"] }`. The client
+always sends the object form; comparison drops empty families, so canonical rendering
 never diffs.
+
+`typescript_aliases` uses the same bounded keys for both app kinds. Plan validates shape
+and identifier syntax; apply delegates atomic collision arbitration to `app_update`;
+refresh reads owner configuration separately from resolved mapping diagnostics.
+
+#### `pmcp_hub_settings`
+
+| Attribute | Type | Mode | Notes |
+|---|---|---|---|
+| `owner_id` | string | computed | singleton import/state identity from `whoami` |
+| `default_timeout_ms` | integer | required | 1,000–300,000 |
+| `max_timeout_ms` | integer | required | `default <= max <= 300,000` |
+
+Create/update sends both values to `hub_settings_update`; refresh calls
+`hub_settings_get`; destroy restores `30_000/30_000`. Import uses the authenticated
+owner id. No token, source code, or secret enters state.
 
 **`capabilities` absent means `["tools"]`, not `[]`.** The hub omits the key entirely when
 undeclared, and §20.2's default is tools-only; normalizing absent to an empty set would plan a
@@ -557,9 +560,9 @@ Create and Update are both `grant_set`; Delete is `grant_set {roles: []}`.
 
 **Undeclared roles.** A grant naming a role the app has not declared is a **warning** on a
 tunneled app (roles arrive at connect time, so config may legitimately lead the first connection)
-and an **error** on a proxy app (its roles live in the same config). **`all` is exempt from both**
-— it is the built-in role, never declarable, and the live `mcps.yaml` grants it. *(2026-09-16,
-decision 31: the check **skips inline entries** — an entry containing `/` is an item, not a role
+and an **error** on a proxy app (its roles live in the same config). **`all` is exempt from
+both** because it is the built-in role and can never be declared. *(2026-09-16, decision
+31: the check **skips inline entries** — an entry containing `/` is an item, not a role
 name, so it is never declared and never undeclared.)*
 
 The check runs at **apply** time in Create/Update, after an `app_get` on the referenced app: a
@@ -706,74 +709,24 @@ fixture-ahead failures alone. That is what breaks the cleanup deadlock:
 op or `op.field`, and states the two remedies verbatim: map it to a provider attribute, or add an
 `unmanaged` row with a reason. A tripwire whose fix is unobvious is deleted within a year.
 
-**Documentation duty.** `contracts/README.md`'s parity section records this direction and the
-retirement of direction C; §8 gains a pointer to this section so a session changing the admin
-surface meets it. `admin-ops.json` finally gets a consumer, closing the gap that file records
-today ("a family with none is a fixture nobody needs").
+**Documentation duty.** `contracts/README.md` records the provider parity consumer and
+the CLI's command-to-operation mapping; §8 points here so admin-surface changes meet the
+provider contract.
 
 ---
 
-### 22.6 Retiring `pmcp diff` / `apply`
+### 22.6 Declarative ownership
 
-`pmcp diff`, `pmcp apply` and `cli/src/plan.ts` are **removed**.
+OpenTofu is the only declarative owner of hub contents. Its state boundary is additive:
+it destroys only objects it owns, while imperative CLI and UI actions may coexist outside
+that state. Existing objects are adopted with import blocks, one per object.
 
-Merely deleting `mcps.yaml` is not a guard: the missing-file error is a `usage` error whose own
-hint teaches the `-f` bypass — and the file is **untracked**, so any working copy or stale
-worktree still holds one while git offers no authoritative version to delete. The Nix packaging
-work simultaneously puts `pmcp` on every operator PATH. The prune asymmetry makes this
-load-bearing — OpenTofu
-destroys only what is in its state, while `pmcp apply` unconditionally deletes everything present
-on the server and absent from the file. One `pmcp apply` against a tofu-managed hub wipes it.
+The web UI remains the interactive management surface. The CLI remains an imperative
+client over the same admin operations, including the generic
+`pmcp call pmcp <operation>` path. Neither surface maintains a second desired-state model.
 
-**Three replacement subcommands**, because direction D permits no exceptions and `apply` is the
-only row reaching `app_update` and `grant_set` — with `agent_update` newly unreachable too. This
-is a gap the planner was hiding:
-
-```
-pmcp app update <slug> [--name <s>] [--description <s>] [--endpoint <url>]
-                       [--auth headers|oauth] [--forward-identity] [--no-forward-identity]
-                       [--log-bodies] [--no-log-bodies]
-pmcp agent update <slug> [--name <s>] [--description <s>]
-pmcp grant set <agent> <app> [--allow <role>]… [--approval <role>]… [--yes]
-```
-
-- `app update` and `agent update` are **partial patches**: only flags actually passed are sent, so
-  an omitted flag means *unchanged*, never "clear". Booleans use paired `--flag`/`--no-flag` so
-  that absence is distinguishable from `false`. Clearing a string is `--description ""`; there is
-  no unset, matching `app_update`.
-- `grant set` is **full replacement**, matching `grant_set`. Because replacement silently drops
-  omitted roles it is guarded in both directions: on a TTY it prints the resulting role set and
-  asks for confirmation; **without a TTY it refuses unless `--yes`**, so a piped or CI invocation
-  is never less protected than a human. Passing neither flag clears all roles and is refused
-  without `--yes` either way.
-
-All honour `--json`; the refusal emits the standard `{"error":{"code":"confirmation_required",…}}`
-document. Specifying argv matters because direction D goes green as soon as each row names an op —
-a set-equality test would happily bless an unusable or destructive command.
-
-**Round-trip.** Walking §9's grammar against §22.4: `kind` → two resource types; `name`,
-`description`, `archived`, `redact`, `redact_results`, `log_bodies`, `endpoint`, `auth`,
-`forward_identity`, `capabilities` → attributes; per-family and bare-list `roles` → the typed
-object plus terranix normalization, and *(2026-09-17, decision 32)* a tunneled app's
-`owner_roles` → the same typed object on `pmcp_tunnel_app`; `role:approval` → the `approval` set; `all` → exempt from the
-undeclared-role check. No gaps. Upstream credentials, which §9 explicitly excluded, are now
-covered by §22.2.
-
-**Adoption** is `import` blocks, one per existing object, since the hub predates the provider.
-
-**Blast radius**, because this is larger than two subcommands: `cli/src/main.ts` (planner imports,
-YAML I/O, diff/apply render and execute paths — `yaml` leaves the CLI's dependency closure, which
-becomes five packages) · `cli/test/commands.test.ts` (surgery, not deletion) ·
-`server/test/worker/contracts.test.ts` (planner types and constants, plus role/capability locks
-that live outside direction C) · the `planner-rows` fixture family and direction C both retire,
-changing `contracts/README.md`'s family table and parity section · `test-inventory.json`
-regenerates · and the docs that promise YAML diff/apply: `README.md`, the client quickstart,
-`docs/specs/README.md`, §8, **§9 in its entirety**, §10, the overview, the repo layout, the
-testing docs, and the decision log.
-
-**Ownership boundary**, restated in both repositories — in this section, and in
-`shed/docs/opentofu.md` beside its existing line: the provider manages hub *contents*; Wrangler
-owns the Worker.
+This ownership boundary is repeated in `shed/docs/opentofu.md`: the provider manages hub
+contents; Wrangler owns the Worker.
 
 ---
 
@@ -873,11 +826,10 @@ evaluation time the property the two resource types give at plan time: a proxy-o
 tunneled app is unrepresentable rather than rejected later.
 
 `roles` accepts the bare-list sugar and normalizes it to the per-family object the provider
-requires, and `ownerRoles` — tunnel-only, the option tree keeping a proxy's roles and a tunnel's
-owner roles unrepresentable on the other kind — takes the same sugar through the same
-normalization *(2026-09-17, decision 32)*. Grants are keyed agent-then-app, mirroring `mcps.yaml`. Secrets never appear: there is
-no `headersWo` option — `headers_wo` is supplied through `extraConfig` or a variable, because a
-terranix module renders to JSON on disk.
+requires. `ownerRoles` is tunnel-only, keeping a proxy's roles and a tunnel's owner roles
+unrepresentable on the wrong kind. Grants are keyed agent-then-app. Secrets never appear:
+there is no `headersWo` option — `headers_wo` is supplied through `extraConfig` or a
+variable because a terranix module renders to JSON on disk.
 
 The module emits `terraform.required_providers`, `required_version = ">= 1.11"`, and
 `provider.pmcp = {}` — credentials come from the environment, as every other provider in `shed`

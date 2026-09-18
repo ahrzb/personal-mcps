@@ -12,7 +12,9 @@
  * register race; that registration writes its audit rows (connect.register,
  * connect.replaced, connect.roles_widened) through the paths that own them; that a tool
  * whose schema trips §7's indirection refuse-line is reported LOUDLY at catalog warm
- * while registration still succeeds; and the absence of any application-level heartbeat.
+ * while registration still succeeds; §23's alias hints at the socket — syntax refused
+ * like any malformed declaration, collisions kept off the socket as bounded decisions;
+ * and the absence of any application-level heartbeat.
  *
  * It also carries the BEHAVIOR↔TABLE LOCK for §6's wire vocabulary. tunnel.ts exports
  * CLOSE_REPLACED / CLOSE_ROW_GONE / CLOSE_PROTOCOL and HUB_METHODS as the published
@@ -47,7 +49,7 @@
  * alarm with runDurableObjectAlarm.
  */
 
-// deps: harness/seed · harness/fake-app · harness/tunnel-do (connectionStub, liveSockets, stillOpen, backendCtx) · cloudflare:test (runDurableObjectAlarm) · src/tunnel (handleConnect, AppConnection, CLOSE_REPLACED, CLOSE_ROW_GONE, CLOSE_PROTOCOL, HUB_METHODS) · src/errors (CODES) · src/registry (Registry.upsertDeclaredRoles, RoleDeclaration, validateSchemaIndirection) · src/audit (query) · src/limits (REGISTRATION_DEADLINE_MS)
+// deps: harness/seed · harness/fake-app (roles, aliases) · harness/tunnel-do (connectionStub, liveSockets, stillOpen, backendCtx) · cloudflare:test (runDurableObjectAlarm) · src/tunnel (handleConnect, AppConnection, CLOSE_REPLACED, CLOSE_ROW_GONE, CLOSE_PROTOCOL, HUB_METHODS, TYPESCRIPT_ALIASES_PARAM) · src/errors (CODES) · src/registry (Registry.upsertDeclaredRoles, Registry.typescriptReservationsFor, RoleDeclaration, validateSchemaIndirection) · src/hub-types (AliasReservation) · src/audit (query) · src/limits (REGISTRATION_DEADLINE_MS)
 
 import { env, runDurableObjectAlarm } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +59,7 @@ import { CODES } from "../../src/errors";
 import type { Tool } from "../../src/gateway";
 import { Registry } from "../../src/registry";
 import type { RoleDeclaration, App } from "../../src/registry";
+import type { AliasReservation } from "../../src/hub-types";
 import {
   CLOSE_PROTOCOL,
   CLOSE_REPLACED,
@@ -64,6 +67,7 @@ import {
   HUB_METHODS,
   status,
   tunnelBackend,
+  TYPESCRIPT_ALIASES_PARAM,
 } from "../../src/tunnel";
 import { connectFakeApp, waitFor } from "../harness/fake-app";
 import type { FakeApp, FakeAppOptions } from "../harness/fake-app";
@@ -99,9 +103,13 @@ export type ProtocolCloseCode =
  * The field exists so the rule has an input rather than an argument — "the payload carries
  * no app field" is a claim about what the hub IGNORES, and a table that can only send
  * well-formed payloads cannot witness it.
+ *
+ * `aliases` rides the same params as §23's optional `typescriptAliases` member, typed
+ * `unknown` on purpose: the refusal rows send values a well-typed option could not express,
+ * through the real wire shape, so "malformed syntax is refused" is a claim about the socket.
  */
 export type FirstMessage =
-  | { kind: "register"; roles: RoleDeclaration; extra?: "names_another_app" }
+  | { kind: "register"; roles: RoleDeclaration; extra?: "names_another_app"; aliases?: unknown }
   | { kind: "mcp"; method: string }
   | { kind: "control"; method: string }
   | { kind: "malformed" }
@@ -255,6 +263,50 @@ export const registrationRows: readonly RegistrationRow[] = [
     twin: "§6 · a valid hub/register replies ok, the socket stays open, the app reads online and the catalog is warmed",
   },
 
+  // ── refused §23 alias hints: the same consequence as a bad declaration ───────────────
+  // §23: "Invalid syntax returns payload-free `-32602`", and §6's socket rule makes that
+  // an error reply followed by close 4004. Two rows rather than one because the syntax
+  // family has two halves — the MEMBER's shape and each NAME's grammar — and a hub that
+  // only checked the outer object would still have to refuse the identifier.
+  {
+    name: "§23 · a typescriptAliases member that is not an object is refused like any malformed declaration: error reply, then close 4004, and the app never reads online",
+    first: { kind: "register", roles: {}, aliases: "news" },
+    appRow: "present",
+    reply: "jsonrpc_error",
+    close: 4004,
+    online: false,
+    catalogWarmed: false,
+    twin: "§6 · a valid hub/register replies ok, the socket stays open, the app reads online and the catalog is warmed",
+  },
+  // The identifier half. "1bad" is exactly the near-miss §23's rule exists for: the
+  // GENERATOR prefixes `_` for a leading digit, but an EXPLICIT alias is held to
+  // `[A-Za-z_$][A-Za-z0-9_$]*` as written — a hub that reused the generator's tolerance
+  // here would accept a name no TypeScript declaration can spell.
+  {
+    name: "§23 · an explicit alias identifier that cannot be a TypeScript name is refused the same way — the whole syntax family has one consequence",
+    first: { kind: "register", roles: {}, aliases: { service: "1bad" } },
+    appRow: "present",
+    reply: "jsonrpc_error",
+    close: 4004,
+    online: false,
+    catalogWarmed: false,
+    twin: "§6 · a valid hub/register replies ok, the socket stays open, the app reads online and the catalog is warmed",
+  },
+  // The absent/null distinction, as a row: a MISSING member is the only legal absence, so
+  // an explicit `null` — the value a transport sends if it collapses omission into a null
+  // — is refused like any other non-object member. Otherwise `null` would be a back door
+  // for "clear my aliases", which §23.6 does not have.
+  {
+    name: "§23 · an explicit null typescriptAliases member is refused — absence is the only legal 'no hints', so null can never read as a cleared configuration",
+    first: { kind: "register", roles: {}, aliases: null },
+    appRow: "present",
+    reply: "jsonrpc_error",
+    close: 4004,
+    online: false,
+    catalogWarmed: false,
+    twin: "§6 · a valid hub/register replies ok, the socket stays open, the app reads online and the catalog is warmed",
+  },
+
   // ── speaking before registering ──────────────────────────────────────────────────────
   // §6: "Any message other than `hub/register` received before registration completes is a
   // protocol error: JSON-RPC error reply, then close `4004`." Its twin is the register that
@@ -380,6 +432,10 @@ export async function runRegistrationCase(
     skipRegister: true,
     tools: [WALKABLE_TOOL],
     roles: row.first.kind === "register" ? row.first.roles : undefined,
+    // §23's hints ride the same register frame; a row can therefore carry a malformed
+    // member through the REAL shape, which is the only way the refusal rows are about the
+    // wire rather than about a helper.
+    aliases: row.first.kind === "register" ? row.first.aliases : undefined,
   });
   // The 4003 race, provoked exactly where §6 puts it: after the upgrade, before the frame.
   // Through registry rather than the admin op, because an owner-driven delete SEVERS — and
@@ -436,7 +492,8 @@ async function sendFirstMessage(
   switch (first.kind) {
     case "register":
       // The forbidden key rides the real register params, so the hub gets every chance to
-      // read it (§6: it must not).
+      // read it (§6: it must not). §23's alias hints are the app's own option (FakeAppOptions
+      // .aliases) — sent through the same real frame, malformed values included.
       return app.sendRegister(
         first.extra === "names_another_app" ? { app: fixture.other.slug } : undefined,
       );
@@ -540,6 +597,15 @@ async function declaredRoles(fixture: Fixture, slug: string): Promise<RoleDeclar
   const row = await new Registry(env.DB).getApp(fixture.ownerId, slug);
   if (row === null) throw new Error(`the fixture's app "${slug}" vanished`);
   return row.declaredRoles;
+}
+
+/**
+ * §23's committed TypeScript names for one app, through the registry's own read —
+ * tombstones included, because a tombstoned name stays reserved and "the reservation
+ * moved" is exactly the fact a collision case has to rule out.
+ */
+async function reservations(appId: string): Promise<readonly AliasReservation[]> {
+  return (await new Registry(env.DB).typescriptReservationsFor(appId)).reservations;
 }
 
 /**
@@ -957,6 +1023,10 @@ describe("§6 the published wire vocabulary — the behavior↔table lock", () =
     const first = await connect(fixture);
     expect(await first.registered).toEqual({ ok: true });
     expect(HUB_METHODS.register).toBe("hub/register");
+    // §23's optional register member, same lock one level down: the exported key names what
+    // the socket actually reads (cases 21-24 send it through the fake app's spelled wire
+    // shape), so the fixture contracts.test.ts emits from the export describes this socket.
+    expect(TYPESCRIPT_ALIASES_PARAM).toBe("typescriptAliases");
 
     // 4000, beside the hub/replaced notification that precedes it.
     const second = await connect(fixture, { skipRegister: true });
@@ -999,5 +1069,204 @@ describe("§6 the published wire vocabulary — the behavior↔table lock", () =
       .filter((method) => method.startsWith("hub/"));
     expect(control.length).toBeGreaterThan(0);
     expect(control.every((method) => published.includes(method))).toBe(true);
+  });
+});
+
+/**
+ * §23's SDK alias lane, at the socket. The rules these cases pin are §23.6's and are
+ * STATED there once: syntax is judged before any write and refused like a bad declaration;
+ * allocation is a separate step in which a collision is a mapping decision — never a
+ * registration refusal — that keeps established assignments, omits the newcomer, and rides
+ * the registration's own audit row. What lives here is the WIRE half: that the member
+ * arrives through the real `hub/register` params, that a hint changes no forwarded frame,
+ * and that the decisions are exactly as bounded as the audit row can carry.
+ */
+describe("§23 alias hints at registration", () => {
+  it("21. §23 · a valid hint map registers and commits sdk reservations for the service and the tool, and the canonical tool name still crosses the wire on a forwarded call", async () => {
+    const fixture = await seedFixture();
+    // A fresh app row already carries a GENERATED service reservation (creation allocates
+    // one); the SDK hint is what supersedes it, and the tombstone it leaves must stay
+    // reserved (§23.6: names are never released).
+    const generated = (await reservations(fixture.app.id)).filter((row) => row.source === "generated");
+    expect(generated).toHaveLength(1);
+
+    const app = await connect(fixture, {
+      aliases: { service: "news", tools: { search: "searchNews" } },
+    });
+    expect(await app.registered).toEqual({ ok: true });
+    expect(await status(fixture.app.id)).toBe("online");
+    const committed = await reservations(fixture.app.id);
+    expect(committed.find((row) => row.family === "service" && row.source === "sdk")).toEqual({
+      appId: fixture.app.id,
+      family: "service",
+      canonicalName: fixture.app.slug,
+      typescriptName: "news",
+      source: "sdk",
+      active: true,
+    });
+    expect(committed.find((row) => row.family === "tool")).toEqual({
+      appId: fixture.app.id,
+      family: "tool",
+      canonicalName: "search",
+      typescriptName: "searchNews",
+      source: "sdk",
+      active: true,
+    });
+    // The superseded generated name is tombstoned rather than reused or dropped.
+    expect(committed.filter((row) => row.source === "generated")).toHaveLength(1);
+    expect(committed.find((row) => row.source === "generated")?.active).toBe(false);
+    // No collision, so the registration's row keeps its historical detail EXACTLY: the
+    // decision member is simply not carried when there is no decision (§23).
+    const rows = await auditedAfterRegister(fixture, app, "connect.register");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].detail).toEqual({ roles: [] });
+
+    // Canonical callability: the forwarded frame names the CANONICAL tool — a TypeScript
+    // alias is hub-local and never reaches the app, which answers under the name it has
+    // always served.
+    const response = await tunnelBackend.call(
+      await appRow(fixture),
+      {
+        jsonrpc: "2.0",
+        id: "alias-call",
+        method: "tools/call",
+        params: { name: "search", arguments: {} },
+      },
+      backendCtx(),
+    );
+    expect(response.error).toBeUndefined();
+    expect(app.invocations.map((invocation) => invocation.tool)).toEqual(["search"]);
+  });
+
+  it("22. §23 · a colliding SDK service hint never disconnects: the contender registers and stays online, the established app keeps the name, and the bounded decision rides the contender's connect.register row with no extra audit row", async () => {
+    const fixture = await seedFixture();
+    const established = await connect(fixture, { aliases: { service: "news" } });
+    expect(await established.registered).toEqual({ ok: true });
+    const before = await reservations(fixture.app.id);
+    expect(before.filter((row) => row.source === "sdk")).toHaveLength(1);
+
+    const contender = await connect(fixture, {
+      token: fixture.otherToken,
+      aliases: { service: "news" },
+    });
+    // The whole point of the SDK lane: a syntactically valid collision is NOT a refusal.
+    // The socket registers, stays up, and the app reads online.
+    expect(await contender.registered).toEqual({ ok: true });
+    expect(await status(fixture.other.id)).toBe("online");
+
+    // Established kept, newcomer omitted — never suffixed, never renamed, never swapped.
+    expect(await reservations(fixture.app.id)).toEqual(before);
+    const otherRows = await reservations(fixture.other.id);
+    expect(otherRows.filter((row) => row.source === "sdk")).toEqual([]);
+    expect(otherRows.map((row) => row.typescriptName)).not.toContain("news");
+
+    const rows = (await auditedAfterRegister(fixture, contender, "connect.register")).filter(
+      (row) => row.app === fixture.other.slug,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].detail).toEqual({
+      roles: [],
+      aliasConflict: [
+        {
+          family: "service",
+          canonicalName: fixture.other.slug,
+          typescriptName: "news",
+          reason: "established",
+        },
+      ],
+    });
+    // §23: the decision is metadata on the registration's OWN row and no progress row is
+    // written — so nothing else in this app's audit trail mentions the alias at all.
+    const all = await query(env.DB, fixture.ownerId, {});
+    expect(
+      all.rows.filter((row) => row.app === fixture.other.slug && row.event !== "connect.register"),
+    ).toEqual([]);
+  });
+
+  it("23. §23 · a re-sent hint is idempotent and a later canonical tool wanting the same name is omitted while the established tool keeps it — the tunnel stays up and the reservations do not move", async () => {
+    const fixture = await seedFixture();
+    const aliases = { tools: { search: "lookup" } };
+    const app = await connect(fixture, { tools: [WALKABLE_TOOL, UNSOUND_TOOL], aliases });
+    expect(await app.registered).toEqual({ ok: true });
+    const established = await reservations(fixture.app.id);
+    expect(established.filter((row) => row.source === "sdk")).toEqual([
+      {
+        appId: fixture.app.id,
+        family: "tool",
+        canonicalName: "search",
+        typescriptName: "lookup",
+        source: "sdk",
+        active: true,
+      },
+    ]);
+
+    // Re-sent verbatim at a reconnect: the identical assignment is re-asserted, nothing is
+    // re-suffixed, and no decision is diagnosed.
+    const again = await connect(fixture, { tools: [WALKABLE_TOOL, UNSOUND_TOOL], aliases });
+    expect(await again.registered).toEqual({ ok: true });
+    expect(await reservations(fixture.app.id)).toEqual(established);
+
+    // A DIFFERENT canonical tool wanting the same name: omitted with a bounded diagnostic
+    // while the established member keeps its reservation and the socket stays up.
+    const contender = await connect(fixture, {
+      tools: [WALKABLE_TOOL, UNSOUND_TOOL],
+      aliases: { tools: { publish: "lookup" } },
+    });
+    expect(await contender.registered).toEqual({ ok: true });
+    expect(await status(fixture.app.id)).toBe("online");
+    expect(await reservations(fixture.app.id)).toEqual(established);
+
+    const rows = (await auditedAfterRegister(fixture, contender, "connect.register")).filter(
+      (row) => row.app === fixture.app.slug,
+    );
+    // Registration order is the only difference between these rows, and it is not what the
+    // assertion is about: exactly one of them — the newest — carries the decision.
+    const conflicted = rows.filter((row) => row.detail?.aliasConflict !== undefined);
+    expect(conflicted).toHaveLength(1);
+    expect(conflicted[0]?.detail).toEqual({
+      roles: [],
+      aliasConflict: [
+        {
+          family: "tool",
+          canonicalName: "publish",
+          typescriptName: "lookup",
+          reason: "established",
+        },
+      ],
+    });
+  });
+
+  it("24. §23 · a refused alias hint writes nothing: a payload-free invalid-params reply, close 4004, and no reservation committed — twin of case 8's unchanged roles", async () => {
+    const fixture = await seedFixture();
+    // The app's creation-time generated service reservation, read before the refusal so
+    // "writes nothing" means exactly "the ledger is unchanged".
+    const before = await reservations(fixture.app.id);
+    expect(before.filter((row) => row.source !== "generated")).toEqual([]);
+
+    const app = await connect(fixture, { aliases: { service: "1bad" } });
+    expect(await app.registered.catch(() => undefined)).toEqual({
+      ok: false,
+      error: expect.anything(),
+    });
+    const refusal = replies(app).find((frame) => frame.error !== undefined);
+    expect((refusal?.error as { code: number }).code).toBe(CODES.invalidParams);
+    // Payload-free (§23): the refusal names no member's details on the wire — the error
+    // object carries no `data` at all.
+    expect((refusal?.error as { data?: unknown }).data).toBeUndefined();
+    expect((await app.closed).code).toBe(CLOSE_PROTOCOL);
+    expect(await reservations(fixture.app.id)).toEqual(before);
+
+    // The accepted twin: the SAME app with a legal hint commits exactly what it asked for,
+    // so the unchanged ledger above is the refusal's doing and not a read that never works.
+    const accepted = await connect(fixture, { aliases: { service: "news" } });
+    expect(await accepted.registered).toEqual({ ok: true });
+    expect(await reservations(fixture.app.id)).toContainEqual({
+      appId: fixture.app.id,
+      family: "service",
+      canonicalName: fixture.app.slug,
+      typescriptName: "news",
+      source: "sdk",
+      active: true,
+    });
   });
 });

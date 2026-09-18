@@ -1,17 +1,18 @@
 ## 7. Consumer-facing proxy
 
-Two shapes, one pipeline — both stateless 2026-07-28 MCP endpoints (via
-`createMcpHandler`, user and app resolved from the URL; *amended 2026-09-01: §21's
-`subscriptions/listen` is the one held-open response, served by a hub-owned route beside
-the handler — statelessness everywhere else is unchanged*):
+Three mounts, one authorization pipeline — stateless 2026-07-28 MCP POST endpoints
+except for §21's held `subscriptions/listen` response:
 
-- `POST /<user>/mcp` — **aggregated**: every tool the caller may use across `<user>`'s
-  apps, tool names prefixed `<slug>_<tool>`. Slugs contain no `_`, so the first `_`
-  splits the name unambiguously. The built-in `pmcp` app participates like any
-  other — owners see `pmcp_app_list` etc.; agents can't hold `pmcp`
-  grants (§8), so admin tools never reach them.
-- `POST /<user>/mcp/<slug>` — **scoped** to one app, unprefixed tool names. This is
-  also how `pmcp` is reached (`/<user>/mcp/pmcp`).
+- `POST /<user>/mcp` — the aggregate **hub** surface: only `hub_execute`,
+  `hub_search_types`, and hub-owned declaration resources (§23). It has no application
+  catalog and performs no generic first-underscore dispatch.
+- `POST /<user>/mcp/hub` — the same virtual hub with unprefixed `execute` and
+  `search_types`.
+- `POST /<user>/mcp/<slug>` — one real app or virtual `pmcp`, with its canonical,
+  unprefixed tools and the family surface §§20–21 assign to its kind.
+
+The aggregate replacement is a clean cutover. Application callers use scoped endpoints;
+there are no compatibility aliases for old `<slug>_<tool>` or prompt names.
 
 Per request:
 
@@ -42,16 +43,17 @@ Per request:
    where the addressed namespace supplies the canonical URL its audience check needs;
    §8's `/api/whoami` mirrors the rest of this step but refuses a JWT-shaped bearer
    outright, because it has no `<user>` to supply one. Then)* better-auth session lookup
-   → user. Failure
-   matrix: any request that doesn't resolve
-   to a valid principal → **401** with a `WWW-Authenticate: Bearer` header, regardless
-   of whether `<user>` exists (so unauthenticated probes can't enumerate usernames)
-   — *(amended 2026-08-26, §19: on `/<user>/mcp` that header additionally carries
-   `error="invalid_token"` and the `resource_metadata` URL, interpolated from the
-   request **path** and never from a lookup, so the challenge on a live namespace and
-   on a nonexistent one stay the same bytes)*. A
-   *resolved* principal on another user's namespace (or a nonexistent user) → **404**
-   (namespaces don't leak existence).
+   → user. Failure matrix: any request that does not resolve to a valid
+   `AuthenticatedCaller`
+   (`{ principal, credential }`, §23.4) → **401** with a
+   `WWW-Authenticate: Bearer` header, regardless of whether `<user>` exists (so
+   unauthenticated probes cannot enumerate usernames). On `/<user>/mcp*` that header
+   additionally carries `error="invalid_token"` and the path-derived
+   `resource_metadata` URL, byte-identical for live and absent namespaces. A resolved
+   principal on another user's namespace (or a nonexistent user) → **404**.
+   `Principal` remains the authorization/audit identity. The credential reference is
+   non-secret and supports §23 operation-time and final-publication reauthorization;
+   its exact-bearer digest supplies only the Sandbox identity.
 2. Resolve the allowed-tool filter (per app):
    - owner → all tools (sees everything in their namespace);
    - agent → the union of anchored-regex patterns of its granted roles,
@@ -63,13 +65,13 @@ Per request:
      of a role's patterns does and under the same composition rule: the strongest mode a
      matching entry carries wins, so allow beats approval. There is **no deny mode** —
      nothing on either side of this union subtracts; a subject nobody's entry matches is
-     simply not reachable.)* A granted role no
-     longer present in `roles_json` resolves to the empty pattern set — it still counts
-     as a grant (the agent gets an empty `tools/list` and `-32001`, not a 404). On the
-     scoped endpoint an agent gets **404** both for a nonexistent slug and for
-     an app it holds no grants on — indistinguishable, so zero-grant agents can't
-     enumerate the namespace. The aggregated endpoint spans the apps with at least
-     one grant.
+     simply not reachable.)* A granted role no longer present in `roles_json` resolves
+     to the empty pattern set — it still counts as a grant (the agent gets an empty
+     `tools/list` and `-32001`, not a 404). On a real scoped endpoint an agent gets
+     **404** both for a nonexistent slug and for an app it holds no grants on. Virtual
+     `hub` is deliberately addressable by a zero-grant agent; its fixed access filter
+     grants only the §23 surface. Aggregate hub admission likewise does not require an
+     app grant.
 
    Pattern semantics, pinned: compile as `^(?:<pattern>)$` with no flags (naive
    `'^'+p+'$'` breaks on top-level `|` — `^foo|bar$` matches `foox` via its `^foo`
@@ -85,53 +87,27 @@ Per request:
      follow-up `notifications/initialized` is a notification and is absorbed like
      every notification, 202 with no body. Before this amendment `initialize` fell
      to `-32601` and no real MCP client could connect).
-   - `server/discover` → answered by the Worker (hub capabilities).
-   - `tools/list` → tunneled: served from the DO's **cached** list (kept in DO SQLite,
-     so it survives disconnects — deploy-induced reconnect flapping doesn't churn agent
-     tool lists; an app that has never connected lists no tools). Proxied: forwarded
-     live to the upstream endpoint with the stored auth headers. Both filtered by the
-     allowed patterns; aggregated adds the slug prefix and fans out over the relevant
-     apps **in parallel**, skipping archived ones, with a **10 s per-upstream
-     deadline** (inside §15's 30 s request budget — tunneled apps answer from cache
-     and are unaffected). A proxied upstream that errors, times out, or is in
-     needs-reconnect (§7, "Upstream OAuth") contributes zero tools and the aggregated
-     list still succeeds; the omitted slugs are reported in the result's `_meta`
-     (`pmcp/unavailable: ["<slug>", …]`) and logged as an ops event (not an audit row —
-     §15 keeps `tools/list` out of audit). The scoped endpoint is where that failure
-     surfaces: scoped `tools/list` against an unreachable or needs-reconnect proxied
-     upstream fails `-32000`, and an archived app fails with `-32002` like every
-     other request to it. `ttlMs`/`cacheScope` hints set so clients can cache.
-     *(Amended 2026-08-26: `prompts/list` obeys every sentence of this bullet — same
-     cache, same live fetch, same filter, same `<slug>_` prefix, same fan-out, same
-     `_meta` — and §20 adds `resources/list`, `resources/templates/list`,
-     `resources/read`, `prompts/get` and `completion/complete` with the scoping rules
-     it pins there.)*
-   - `tools/call` → (aggregated: split off the slug prefix first; a prefix matching no
-     app → `-32001`, indistinguishable from not-permitted) checks run in a fixed
-     order, identical on both endpoint shapes: **filter first** (`-32001` "tool not
-     permitted" — so an ungranted agent can't even learn an app is archived), then
-     **archived** (`-32002`), then the **approval gate** (`-32003`, below), then
-     **availability** (tunnel-not-connected or upstream-unreachable → `-32000` "app
-     unavailable"). Passing all four, the call is forwarded — through the DO to the live
-     connection (tunneled) or to the upstream endpoint (proxied) — with the caller
-     identity attached (below), and the response relayed back verbatim. For proxied
-     apps, "verbatim" applies only to a well-formed JSON-RPC response from the
-     upstream; any HTTP-level failure — non-2xx status, a body that is not a JSON-RPC
-     message, TLS or transport error — maps to `-32000` with a generic "app
-     unavailable" message. The upstream's status line, headers (including
-     `WWW-Authenticate`), and body are never echoed to the consumer (extending §15's
-     log-hygiene rule); the audit row's `detail` records the failure class (e.g.
-     `upstream_status: 401` vs `unreachable`) so the owner can tell expired static
-     headers from a down upstream.
-   - anything else → `-32601`. *(Amended 2026-08-26: §20's seven methods join this
-     table; everything outside it — `subscriptions/listen`, `logging/*`, any
-     server-initiated request — is still `-32601`, and §20 records why for each.)*
-     *(Amended 2026-09-01: `subscriptions/listen` joins per §21 — on both endpoint
-     shapes, listing-class, filter → archived and never availability — and
-     `resources/subscribe` / `resources/unsubscribe` join scoped-only like every other
-     resource method, filtered by URI against the caller's resource patterns before
-     forwarding. The leftover `-32601` set is `logging/*` and server-initiated requests,
-     both dead in 2026-07-28 itself.)*
+   - `server/discover` → answered by the Worker from the same capability producer as
+     `initialize`.
+   - On aggregate or scoped `hub`, `tools/list`, hub `resources/list`,
+     `resources/templates/list`, `resources/read`, `tools/call`, and
+     `subscriptions/listen` follow §23. Every other family method is `-32601`.
+   - On a real scoped app, `tools/list` is unchanged: tunneled apps use the DO's cached
+     list, proxied apps forward live, both filter by current grants. Scoped unreachable
+     or needs-reconnect proxied listing fails `-32000`; archived listing fails `-32002`.
+     Prompts/resources/completions follow §20 and push follows §21.
+   - `tools/call` on a real scoped app checks the current filter first (`-32001`),
+     archived (`-32002`), the availability-aware approval gate (`-32003`), then dispatch
+     availability (`-32000`). It forwards canonical names unmodified. A proxied
+     HTTP/transport/protocol failure remains a generic `-32000` and exposes only its
+     bounded failure class in audit.
+   - A hub program operation resolves its explicit TypeScript map to canonical service
+     and subject, then calls the same extracted `dispatchTool` or
+     `dispatchResourceRead` used by ordinary scoped routes. The app id, current
+     credential/grants, check order, redaction, metadata strip-then-set, approval,
+     backend, and exactly-once audit are rechecked; no second authorization path exists.
+   - Unknown methods return `-32601`; unknown/not-permitted addressed subjects return
+     the existing indistinguishable `-32001`.
 
 ### Approval flow
 
@@ -177,9 +153,9 @@ that is genuinely unreachable still surfaces at dispatch. Past that refusal:
    error **`-32003`** ("approval required"), whose `data` carries
    `{ approvalId, approvalUrl, expiresAt }`. The message text includes the URL too, so
    an agent that only surfaces error strings still hands the user something
-   actionable. `approval.tool` stores the **unprefixed** tool name (aggregated calls
-   split off the slug prefix before the gate, above), so retries through either
-   endpoint shape match the same row.
+   actionable. `approval.tool` stores the canonical unprefixed tool name. A direct
+   scoped retry and a §23 program retry therefore match the same row; aggregate prefix
+   parsing no longer exists.
 3. The owner opens the link (or `pmcp approvals`), sees the request detail — agent,
    app, tool, redacted arguments, requested time — and approves or rejects.
 4. The agent retries the **identical** call (same canonical-JSON arguments — the hash
@@ -274,6 +250,17 @@ already run and apps must not treat these fields as secrets. Apps *may* trust
 `hub/*` values for their own fine-grained checks precisely because the hub strips
 inbound copies — a consumer cannot inject them.
 
+### Hub-program dispatch context
+
+Sandbox calls never inherit arbitrary outer `_meta`. They advertise empty
+`io.modelcontextprotocol/clientCapabilities`, while the coordinator carries bounded
+display-only client metadata separately for audit. `prepareForward` remains the single
+authoritative `hub/*` strip-then-set step. An optional earlier absolute deadline travels
+through backend context only for Sandbox-originated operations; the effective backend
+timeout is the minimum of the existing direct-call timeout, ten seconds, and the
+remaining execution budget. Direct scoped behavior retains its existing 30-second
+deadline.
+
 ### Upstream OAuth (proxied apps)
 
 A proxied app's upstream auth is one of two kinds, declared as `auth: headers`
@@ -303,8 +290,8 @@ A proxied app's upstream auth is one of two kinds, declared as `auth: headers`
   refreshes proactively. A failed refresh flips the app to **needs reconnect** —
   calls fail `-32000` and `/apps` shows a Reconnect button — and Disconnect wipes
   the bundle. Connect/disconnect/refresh-failure all write audit rows
-  (`upstream.oauth_*`). The YAML declares only the `auth` mode; tokens never appear in
-  it, and the mode is diffed like any other field.
+  (`upstream.oauth_*`). The auth mode is ordinary app configuration; token bundles are
+  write-only and never returned.
 
 ### Sensitive-field redaction
 
@@ -337,13 +324,11 @@ per direction, from two sources, unioned:
   so approval-gated calls refuse `-32001` (the catalog-miss rule below) and its
   bodies are never recorded (§15). Inlining `$defs` client-side remains optional
   sugar, not a requirement.
-- **Config-declared** (both kinds): the owner lists redaction paths per tool —
-  `redact: { "<tool-or-pattern>": ["password", "credentials.token"] }` for
-  arguments, and `redact_results:` (identical shape, applied to the result's
-  `structuredContent`) — in the YAML / `app_update`. This is the **only** path
-  for proxied apps in v1: their `tools/list` is forwarded live and never cached,
-  so there is no schema to derive from (honoring upstream `writeOnly` becomes
-  possible if a proxied schema cache is ever added).
+- **Owner-declared** (both kinds): redaction paths per tool —
+  `redact: { "<tool-or-pattern>": ["password", "credentials.token"] }` for arguments and
+  `redact_results` for result `structuredContent` — are set through `app_update`, the web
+  UI, or the provider. This is the only path for proxied apps in v1 because their
+  `tools/list` is forwarded live and never cached.
 
 Redacted fields are replaced with `"‹redacted›"` before anything is stored or shown:
 the approval `args_json` (§5), the audit body columns (`args_json` / `result_json`,

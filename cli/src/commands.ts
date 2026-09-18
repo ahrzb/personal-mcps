@@ -15,11 +15,11 @@
  * One row of the CLI's command table: an argv spelling and what it fronts.
  *
  * `ops` is the §8 admin ops the subcommand actually calls — the left-hand side of parity
- * direction D. `method` is for the two commands that front the GATEWAY rather than an
- * admin op: `pmcp tools` and `pmcp call` are the MCP tool surface itself (any agent
- * holding the same token calls tools/list and tools/call directly), so they are not a CLI
- * capability that needs a tool of its own — §8's exception list does not mention them
- * because they are not an exception to it. `exception` names §8's pinned parity
+ * direction D. `method` marks commands that front the GATEWAY rather than an admin op:
+ * `pmcp tools`, `pmcp call`, and the hub/data-model commands are MCP surface sugar (any
+ * admitted agent holding the same token can call those methods directly), so they do not
+ * need separately named admin capabilities and are not parity exceptions. `exception`
+ * names §8's pinned parity
  * exceptions — the auth/credential family, the upstream-OAuth consent redirect, and
  * `/audit`'s JSONL export — so a name that fronts no op of its own is always explicitly
  * accounted for rather than skipped.
@@ -42,6 +42,18 @@ export const COMMANDS: readonly CliCommand[] = [
   { name: "ls", ops: ["app_list"] },
   { name: "tools", ops: [], method: "tools/list" },
   { name: "call", ops: [], method: "tools/call" },
+  // §23.1: the hub's own two tools, on the virtual `hub` app's scoped endpoint. They front
+  // `tools/call` rather than an admin op for the same reason `call` does — any credential
+  // (admin tokens included, §23.1) that reaches `/mcp/hub` calls them directly, so no
+  // separately-named capability appears here; the aggregate `hub_execute` /
+  // `hub_search_types` spelling belongs to the consumer endpoint and never to this table.
+  { name: "hub execute", ops: [], method: "tools/call" },
+  { name: "hub search-types", ops: [], method: "tools/call" },
+  // §23.3's owner-scoped execution settings: real ops, unlike the two rows above — the
+  // pair lives in D1 behind `pmcp`, is not an MCP method of its own, and is the same one the
+  // `/settings/execution` pane and the provider's `pmcp_hub_settings` front.
+  { name: "hub settings get", ops: ["hub_settings_get"] },
+  { name: "hub settings set", ops: ["hub_settings_update"] },
   // §20.6 (added 2026-08-26): gateway sugar of exactly the same kind as the two rows above
   // — they front an MCP method on the scoped endpoint, not an admin op, so they sit outside
   // §8's parity list rather than inside it (§10's amendment note).
@@ -57,6 +69,11 @@ export const COMMANDS: readonly CliCommand[] = [
   { name: "app delete", ops: ["app_delete"] },
   { name: "app disconnect", ops: ["app_disconnect"] },
   { name: "app set-auth", ops: ["app_set_upstream_auth"] },
+  // §23.6's owner lane for hub-local TypeScript names: one `app_update` carrying
+  // `typescript_aliases` (create carries the same object through the `app create` row
+  // above). Display-only renaming on the hub side — the upstream keeps its canonical MCP
+  // service/tool names, and reservations/tombstones outlive any single write.
+  { name: "app aliases set", ops: ["app_update"] },
   { name: "agent list", ops: ["agent_list"] },
   { name: "agent create", ops: ["agent_create"] },
   { name: "agent update", ops: ["agent_update"] },
@@ -81,22 +98,4 @@ export const COMMANDS: readonly CliCommand[] = [
   // SCREEN it manages, this pair is grants-shaped and fronts a real op each.
   { name: "connections", ops: ["connection_list"] },
   { name: "connection revoke", ops: ["connection_revoke"] },
-  { name: "diff", ops: ["app_list", "agent_list"] },
-  {
-    name: "apply",
-    // The planner's whole vocabulary plus the two reads it plans against — `apply` is the
-    // only front for app_update and grant_set (§9: grants are declarative).
-    ops: [
-      "app_list",
-      "agent_list",
-      "app_create",
-      "app_update",
-      "app_delete",
-      "app_archive",
-      "app_unarchive",
-      "agent_create",
-      "agent_delete",
-      "grant_set",
-    ],
-  },
 ];

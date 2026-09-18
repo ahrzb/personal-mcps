@@ -4,9 +4,12 @@ A personal MCP hub. Apps come in two kinds: **tunneled** — small programs (wri
 like telegram bots) that dial **out** to the hub with a persistent WebSocket and expose
 an MCP server through it — and **proxied** — existing remote MCP endpoints (e.g.
 Notion's) that the hub forwards to directly. The hub proxies inbound MCP clients
-(Claude, other agents, the CLI) to those apps, enforcing per-agent role
-grants. Each user owns their own namespace — apps, agents, grants, YAML
-file — managed via a CLI and served under `/<user>/mcp…` URLs.
+(Claude, other agents, the CLI) to scoped apps, enforcing per-agent role grants. Its
+aggregate endpoint is a hub-owned TypeScript orchestration surface that can compose those
+authorized scoped operations without exposing an aggregate application catalog (§23).
+Each user owns a namespace of apps, agents, grants, execution settings, and durable
+TypeScript aliases, managed through the web UI, CLI, or OpenTofu and served under
+`/<user>/mcp…` URLs.
 
 Components:
 
@@ -14,17 +17,13 @@ Components:
 |---|---|
 | **server** | Cloudflare Worker + Durable Objects. Terminates auth, owns the registry, proxies MCP traffic. |
 | **clients** (py + js) | Libraries an app author uses: write a normal MCP server, hand it to the lib, it maintains the reverse connection. |
-| **cli** (`pmcp`) | Login via device flow, invoke MCP tools, diff/apply the YAML config. |
-| **admin MCP** | The hub's own management (apps, agents, grants, tokens) exposed as a built-in MCP app named `pmcp` — its tools are ordinary tools (`pmcp_app_list` on the aggregated endpoint). |
-| **web pages** | Server-rendered pages (Hono JSX, §13): `/login`, `/device`, `/settings` (six panes behind a rail), plus `/apps`, `/apps/<slug>`, `/approvals`, `/audit` — fronts over the same handlers as the `pmcp` tools, no web-only capability (except `/settings`'s sign-in and sessions panes, and `/audit`'s streaming JSONL export — a serialization of `audit_query`, §13). |
+| **cli** (`pmcp`) | Login via device flow, inspect the namespace, invoke MCP and admin tools. |
+| **admin MCP** | The hub's management app named `pmcp`, reached directly at scoped `/mcp/pmcp` or from an authorized §23 program; it is no longer published as prefixed aggregate tools. |
+| **web pages** | Server-rendered pages (Hono JSX, §13): login/device, seven-pane Settings including Execution, apps/agents, approvals, and audit; fronts over shared operations except the pinned browser/auth/export exceptions. |
 
-Non-goals (v1): cross-namespace sharing between users, MCP push streams
-(`subscriptions/listen` and every server→consumer notification with it, §20), any web UI
-beyond the server-rendered pages of §13 (no SPA — the pages do ship as an installable PWA
-with Web Push for approvals, §13). *(Amended 2026-08-26: two former non-goals became
-sections of their own — MCP-native OAuth for third-party clients is **§19**, and
-prompts/resources proxying is **§20**. The push-stream non-goal is the one that stayed,
-and §20 records why.)* *(Amended 2026-09-01: it did not stay either — push is **§21**
-now, decision 28 — leaving cross-namespace sharing and the no-SPA rule as the v1
-non-goals.)*
+Non-goals (v1): cross-namespace sharing, a browser SPA, persistent execution
+workspaces, package installation, saved programs, and asynchronous execution jobs.
+OAuth, prompts/resources, and push are specified in §§19–21. The §23 orchestration
+surface is synchronous, dependency-free TypeScript with explicit limits; it does not
+imply a future job/resume protocol.
 

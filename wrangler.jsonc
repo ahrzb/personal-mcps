@@ -10,7 +10,10 @@
   // Load-bearing, not decoration: the vitest worker pool silently tolerates its
   // absence while a real deploy rejects it, so `wrangler deploy --dry-run` in CI is
   // what actually pins this flag (testing strategy §"every commit").
-  "compatibility_flags": ["nodejs_compat"],
+  //
+  // `enable_request_signal` is §23.10's disconnect channel: without it `Request.signal`
+  // never aborts, and the hub's abort cleanup has nothing to fire on.
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
 
   // Workers Logs: ops debugging only. The record of record is the D1 `audit` table
   // (§15) — these lines are never queried by the product.
@@ -37,9 +40,31 @@
   ],
 
   // One DO instance per tunneled app, addressed by opaque `app.id` (§3, §6).
+  //
+  // HUB_SANDBOX is the §23.8 execution plane: one instance per EXACT-TOKEN digest (the DO
+  // id is the digest itself), owning that token's single container. It is a Sandbox DO —
+  // the class extends the pinned SDK's — and the `containers` entry below links it to the
+  // image it supervises.
   "durable_objects": {
-    "bindings": [{ "name": "APP_CONNECTION", "class_name": "AppConnection" }]
+    "bindings": [
+      { "name": "APP_CONNECTION", "class_name": "AppConnection" },
+      { "name": "HUB_SANDBOX", "class_name": "HubSandbox" }
+    ]
   },
+
+  // §23.8: one container class, `basic` (1/4 vCPU, 1 GiB), at most ten instances
+  // account-wide. This deployment cap is the authoritative capacity and spend-rate
+  // guardrail; the platform may queue saturated starts rather than expose a distinct
+  // refusal. The image is the repository's own Dockerfile: pinned Sandbox control binary
+  // + pinned Deno.
+  "containers": [
+    {
+      "class_name": "HubSandbox",
+      "image": "./server/sandbox/Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 10
+    }
+  ],
   // `new_sqlite_classes`, not `new_classes`: the class is SQLite-backed. Storage backend
   // is fixed at class creation and cannot be changed afterwards.
   //
@@ -47,9 +72,11 @@
   // rewriting v1 would tell the platform a different class had always been there,
   // orphaning every live object's storage. The 2026-09-01 lingo rename
   // (service → app) is v2's `renamed_classes` instead, which carries the state over.
+  // v3 appends the hub execution plane's class; AppConnection's history is untouched.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ServiceConnection"] },
-    { "tag": "v2", "renamed_classes": [{ "from": "ServiceConnection", "to": "AppConnection" }] }
+    { "tag": "v2", "renamed_classes": [{ "from": "ServiceConnection", "to": "AppConnection" }] },
+    { "tag": "v3", "new_sqlite_classes": ["HubSandbox"] }
   ],
 
   // Daily sweep (§15, §7): expire past-deadline approvals, prune audit/approval rows

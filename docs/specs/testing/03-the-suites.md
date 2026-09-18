@@ -8,28 +8,28 @@
 | `server/test/unit/filter.test.ts` | `buildToolFilter`: `all` → everything untouched declaration; granted-but-undeclared in `roleNames` but matches nothing; empty grants = the scoped-404 signal; allow-beats-approval as a law |
 | `server/test/unit/canonical.test.ts` | `canonicalJson` laws: key order irrelevant at depth, arrays ordered, idempotent, `undefined`≡`{}` (enables "absent args binds as {}"), throws on cycles/BigInt |
 | `server/test/unit/redact.test.ts` | the path grammar + writeOnly walk as a pure table — direction-blind: input and output schemas through the same walk (§7, decided 2026-08-25) |
-| `cli/test/plan.test.ts` | the diff planner, classic fail-first TDD: defaults, `role:approval` split, delete-by-absence, warn-vs-error per kind, `pmcp` rejection, kind-change error, destructive flags, step order — plus the empty-plan law (state derived from desired ⇒ empty plan) |
 | `clients/js/test/api.test.ts` | `caller()`/`sensitive()`/`secret()` pure halves (marking works on input and output schemas; values untouched); backoff schedule table *(nudge N2)* |
+| `server/test/unit/hub-types.test.ts` | stable name generation/reservations, schema allowlist and hostile/cyclic rendering, declaration context separation, search ranking/caps, canonical identity |
 
 ### `worker` — real D1, no sockets
 
 | File | Pins |
 |---|---|
-| `migrations.test.ts` | the schema itself: CHECK constraints bite, UNIQUEs, FK cascades really cascade, **the partial unique pending index exists and kills the double-insert race**, re-application is a no-op |
-| `registry.test.ts` | Registry against real D1: slug rules, archived-is-a-pipeline-stage, request-time re-read of declarations, auth-flip wipes the envelope in the same write, drift semantics (textual, subset-is-not-drift), grant validation both kinds |
-| `identity-tokens.test.ts` | plaintext-once, one-null-for-every-failure on `resolveAppToken`, revoke vs delete, defaults by kind |
-| `approvals.test.ts` | the deepest file: dedup via the constraint, post-redaction hashing proven observably (two calls differing only in a redacted field match), check-never-consumes, claim first-wins/lost, settle restores on `input_required` only, lazy expiry audited exactly once, push crypto **decrypted in-test** (VAPID JWT verified, RFC 8291 body decrypted, payload = app+tool+id and nothing else), notifyOwner never throws, 404/410 prunes |
-| `upstream-credentials.test.ts` | envelope actually encrypted + version byte; `connectionStatus` totality; the callback rejection matrix (missing/replayed/expired/other-session state, `iss` mismatch) each storing **nothing**; PKCE + token-endpoint pinning enforced by a fake AS that does REAL S256 checks |
-| `admin-ops.test.ts` | the ops table: uniform `pmcp` rejection driven over `Object.keys(ops)` so a new op can't forget it; cascade atomicity (both rows gone or neither); audit discipline as a table (every mutating op exactly one `admin.<tool>` row, reads none); **parity direction A** — every op renders as a pmcp tool from its one zod schema |
-| `auth-matrix.test.ts` | §7 step 1 + whoami as one ~25-row table, every refusal beside its allow-twin: the 401/404 matrix, `pmcp_app_` never-session, cookies never on `/mcp`, Origin rules, bearer-sourced session rejected on `/settings`, bootstrap route 404-when-unset |
-| `order.table.test.ts` | the check order as the table it is (~16 rows): ungranted+archived → `-32001` not `-32002`; unknown prefix → `-32001`; first-`_` split; `server/discover`; `-32601` |
-| `upstream-proxy.test.ts` | the failure table (everything → `-32000`, `data` unset, body never echoed, class only in audit detail); aggregated fan-out with a failing + a hanging upstream; refresh-before-forward observed in order; `X-Pmcp-*` only with `forward_identity`; **subrequest counts asserted explicitly** (workerd enforces no cap locally) |
-| `admin-pipeline.test.ts` | pmcp through the real endpoint: agents see no `pmcp_*` tools (structural), owner never approval-gated, `builtin: true` row |
-| `hygiene.test.ts` | sentinel-string sweep: no persisted row contains token material or an unmasked sentinel secret; bodies exist only in approval `args_json` and the audit body columns, always post-redaction (§15 — the body table: `log_bodies` defaults by kind and flips both ways, results only as masked structuredContent, unstructured blocks → blob stubs, over-cap → oversize stub against a shrunk `AUDIT_BODY_CAP_BYTES`, `token_issue`'s recorded result masked by the uniform rule); served outputSchemas carry no `writeOnly`; recomputed post-redaction hash equality + raw-hash inequality |
-| `cron.test.ts` | one scheduled run produces all three effects; the wrangler cron string equals the expected constant (honestly labelled — nothing local proves an expression fires daily) |
-| `web-pages.test.ts` | thin by design: CSRF rejection with the ops handler provably not run; `/approvals/<id>` owner-only; export line count = `total`; **parity direction B** — form fields = the same zod schema's keys |
-| `routes.test.ts` | the §2 router-walk equivalence, both sides derived; reserved-username refusal |
-| `contracts.test.ts` | **the L4 producer** (§4) |
+| `migrations.test.ts` | D1 CHECK/UNIQUE/FK behavior, including execution settings and sticky reservation/tombstone indexes |
+| `registry.test.ts` | app/grant behavior plus atomic owner aliases, settings, reservation discovery and deletion tombstones |
+| `identity-tokens.test.ts` | initial credential resolution, exact-token digest, non-secret references and family reauthorization |
+| `approvals.test.ts` | approval/redaction/exactly-once semantics retained through shared dispatch |
+| `upstream-credentials.test.ts` | encrypted upstream and OAuth state behavior |
+| `admin-ops.test.ts` | ops table, reserved hub/pmcp slugs, settings and alias schema/audit parity |
+| `auth-matrix.test.ts` | 401/404 matrix plus aggregate/scoped-hub admin and zero-grant-agent rows |
+| `order.table.test.ts` | shared dispatch order; aggregate hub-only refusal/allow twins; no first-underscore dispatch |
+| `upstream-proxy.test.ts` | scoped forwarding/failures and proxied alias additions preserving incumbent TypeScript paths |
+| `admin-pipeline.test.ts` | scoped pmcp plus credential-mirrored pmcp authority inside hub programs |
+| `hygiene.test.ts` | persisted-secret sweep plus metadata-only hub outer audit and source/output/nonce absence |
+| `cron.test.ts` | scheduled effects unchanged |
+| `web-pages.test.ts` | CSRF and schema parity plus execution settings/alias forms |
+| `routes.test.ts` | reserved route equivalence including virtual hub |
+| `contracts.test.ts` | sole producer for hub/initialize/errors/admin/tunnel fixtures |
 
 ### `tunnel` — serial: the DO, live sockets, hibernation
 
@@ -41,15 +41,12 @@
 | `hibernation.test.ts` | the honest hibernation pins via `evictDurableObject`: socket round-trips after eviction; catalog still served; identity survives via attachment; the alarm still fires; **the pending map is EMPTY after eviction** — converting §6's unvalidated assumption into a validated one. (No test asserts the map survives; upstream proves it doesn't.) |
 | `pipeline-tunnel.test.ts` | §16's core integration test: both endpoint shapes, role filtering, `_meta` hygiene observed at the app (strip-then-set, mirrored capabilities, ids never cross), deadline → `-32000`, the audit chokepoint (row exists with `duration_ms` when the response resolves) |
 | `approval-e2e.test.ts` | §16's approval bullet over a real tunnel with the fake app's **invocation counter as the exactly-once oracle**; CAS under table-driven deterministic interleavings (never fire-50-and-hope — workerd is cooperative); availability-between-check-and-claim both directions; MRTR legs; the redaction union; catalog-miss refused with `-32001` (decided 2026-08-25) |
+| `hub-sandbox.test.ts` | fake-adapter worker proof of generation lease, counters, deadlines, reauthorization, abort cleanup and shared dispatch without pretending to prove container permissions |
 
 ### Clients and scripts
 
-JS and Python each keep their existing transport, API, and contract-consumer
-suites. Go keeps the same behavioral coverage in `clients/go/pmcp_test.go`: a
-real in-process WebSocket drives `hub/register`, `server/discover`, a tool call,
-resource subscription, caller metadata, and replacement shutdown through the
-official SDK; pure rows pin URL derivation, backoff, schema marking, and both
-shared fixtures.
-`scripts/test/bootstrap-contract.test.ts` pins the status→message mapping — the
-one place a bare fetch stub is legitimate.
+JS, Python, and Go retain their transports and add parity for optional registration
+aliases without changing canonical MCP names. CLI tests cover hub execution/search,
+bounded integer settings flags, and app alias configuration. Provider acceptance in the
+sibling repository proves settings and alias plan/apply/import/refresh/destroy behavior.
 

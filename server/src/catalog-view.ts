@@ -9,9 +9,9 @@
 // own verdict, which already owns `all`'s span across families, per-family independence and
 // allow-beats-approval — so a page that disagreed with the door about access is impossible
 // here rather than merely discouraged (§13: "never a second implementation"). What this
-// module does own is the INPUT translation: `agent_list` reports grants in its own spelling
-// (`"<role>"` allow, `"<role>:approval"` approval, §8/§9) and admin's inverse parser is
-// private, so the strings are parsed here.
+// module does own is the input translation: `agent_list` reports grants in its own
+// spelling (`"<role>"` allow, `"<role>:approval"` approval, §8) and admin's inverse
+// parser is private, so the strings are parsed here.
 //
 // A LEAF, deliberately: it imports `registry` and nothing else, so it runs in the `unit`
 // project's plain-Node pool (gateway, admin and tunnel each drag `cloudflare:workers` in at
@@ -211,8 +211,8 @@ export function reachability(
 }
 
 /**
- * §9's grant syntax as a stored entry — admin's `grantEntries` read backwards, spelled here
- * because that one is private and `admin` cannot be imported by a Node-clean module.
+ * §8's grant syntax as a stored entry — admin's `grantEntries` read backwards, spelled
+ * here because that one is private and `admin` cannot be imported by a Node-clean module.
  *
  * The mode is the `:approval` SUFFIX, not the first colon: an inline resource item
  * (`resource/news://feed/*`) carries colons of its own, and splitting at the first one
@@ -226,7 +226,7 @@ function parseGrant(entry: string): GrantEntry {
     : { role: entry, mode: "allow" };
 }
 
-/** The wire spelling of approval mode — `agent_list`'s own (§8/§9). */
+/** The wire spelling of approval mode in `agent_list` (§8). */
 const APPROVAL_SUFFIX = ":approval";
 
 /** A value as a plain record, or null when it is anything else (an array included). */

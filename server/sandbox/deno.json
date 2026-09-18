@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "types": ["./program.d.ts"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true
+  }
+}

@@ -12,15 +12,14 @@ pmcp login [--profile <name>] [--url <origin>]   # RFC 8628 device flow; prompts
 pmcp logout | whoami
 pmcp profile add <name> --url <origin>           # url only; login fills the token
 pmcp profile list | use <name> | remove <name>
-pmcp ls                                          # apps + kind/status/roles (wire vocabulary)
+pmcp ls                                          # apps + kind/status/roles
 pmcp describe <ref>                              # app/<slug>[/<item>] | agent/<slug>
-pmcp call <app> <tool> [key=value … | --args '{…}']       # or the aggregated name:
-pmcp call <slug>_<tool> [...]                             # unambiguous, slugs have no '_'
-pmcp get prompt/<app>/<name> [key=value … | --args '{…}']       # prompts/get
-pmcp get resource/<app>/<uri>                    # resources/read — scoped endpoint only (§20)
+pmcp call <app> <tool> [key=value … | --args '{…}']       # scoped canonical call
+pmcp hub execute --args '{"code":"export default 1","timeout_ms":5000}'
+pmcp hub search-types --args '{"query":"news"}'
+pmcp get prompt/<app>/<name> [key=value … | --args '{…}']
+pmcp get resource/<app>/<uri>                    # resources/read — scoped endpoint
 pmcp connections | connection revoke <id>        # connection_list / connection_revoke (§19)
-pmcp diff  [-f mcps.yaml]
-pmcp apply [-f mcps.yaml] [--yes]
 pmcp token issue (--agent <slug> | --app <slug>) [--expires 90d]
 pmcp token list | revoke <id>
 pmcp audit [--agent <slug>] [--app <slug>] [--session <id>] [--since 7d]
@@ -31,6 +30,10 @@ pmcp app create <slug> (--tunneled | --proxied <endpoint> [--auth headers|oauth]
                                                  # tunneled create prints the app token once
 pmcp app archive|unarchive|delete|disconnect <slug>
 pmcp app set-auth <slug> --header 'Authorization: Bearer …'       # app_set_upstream_auth
+pmcp hub settings get
+pmcp hub settings set --default-timeout-ms <int> --max-timeout-ms <int>
+pmcp app create <slug> ... [--typescript-aliases '<json>']
+pmcp app aliases set <slug> --args '{"service":"...","tools":{...}}'
 ```
 
 **Refs.** `describe` and `get` take one path-style ref whose **first segment names
@@ -54,19 +57,13 @@ exception) is that follow-up amendment. Guessable noun-verb forms resolve as
 aliases instead of erroring: `app list` → `ls`, `connection list` →
 `connections`, `approval list` → `approvals`.
 
-**Output contract.** Every command that emits data takes `--json` (boolean):
-one JSON document on stdout, nothing else on stdout, wire shapes and
-vocabulary verbatim (`kind: tunnel|proxy|builtin`, `principal`/`namespace`,
-the planner's `{steps, warnings, errors}`), identifiers always full and
-unelided. Because `--json` now means output format everywhere, the argument
-payload flag on `call`/`get` is `--args '{…}'` (the old `--json '{…}'`
-spelling is the one deliberate grammar break). Human rendering: color and
-truncation only on a TTY — piped output is complete and carries no ANSI
-escapes (decorative glyphs like `→`/`·` appear in both renderings; the mock's
-samples pin them). Exit codes: `0` success (including a computed
-non-empty `diff`; drift detection is `--json` + `steps.length`), `1` any
-runtime/remote failure (a tool result with `isError: true` exits 1 with the
-result still printed), `2` malformed argv only.
+**Output contract.** Every command that emits data takes `--json` (boolean): one JSON
+document on stdout, nothing else on stdout, wire shapes and vocabulary verbatim,
+identifiers always full and unelided. Because `--json` means output format everywhere,
+the argument payload flag on `call`/`get` is `--args '{…}'`. Human rendering uses color
+and truncation only on a TTY; piped output is complete and carries no ANSI escapes.
+Exit codes are `0` for success, `1` for runtime or remote failure, and `2` for malformed
+argv only.
 
 **Errors.** The first stderr line is `error: <code>: <message>` with a stable
 snake_case code (`usage`, `not_found`, `invalid_arguments`, `unauthenticated`,
@@ -80,26 +77,17 @@ fetch on the error path only** (did-you-mean from the catalog, the expected
 arguments rendered from `inputSchema`) — never a pre-flight cost, silently
 skipped if the fetch fails.
 
-**Interactivity.** Prompts (@clack) appear only in `login`/`profile add`, only
-on a TTY. Destructive commands (`app delete`, `agent delete`, `apply`,
-`profile remove`) keep a y/N confirm on a TTY, bypassed by `--yes`; non-TTY
-without `--yes` refuses on stderr, exit 1. Everything else is argv-in/text-out
-— the CLI is built to be driven by agents, which get discoverability from
-help text, error hints, and `--json` instead of pickers.
+**Interactivity.** Prompts (@clack) appear only in `login`/`profile add`, only on a TTY.
+Destructive commands (`app delete`, `agent delete`, `profile remove`) keep a y/N confirm
+on a TTY, bypassed by `--yes`; non-TTY without `--yes` refuses on stderr, exit 1.
+Everything else is argv-in/text-out.
 
-Every subcommand except the auth and profile families is presentation sugar:
-`ls`, `describe`, `get`, `token`, `app`, `diff`, and `apply` are
-compositions of the same `pmcp_*` and MCP tool calls that `pmcp call` (or any
-agent) can make directly — nicer output, zero extra capability. `describe`
-and `get` front MCP methods, not admin ops, so like `tools`/`call` before
-them they sit outside §8's parity list rather than being exceptions to it
-(`describe agent/…` composes `agent_list` + `token_list`; there is still
-no `completion` command — nothing observably consumes `completion/complete`,
-§20 serves it for conformance). The converse holds too: every UI capability
-is reachable from the CLI (§8's parity invariant) — only the UX differs.
-YAML `diff`/`apply` is the CLI-native way to manage apps and grants
-declaratively; the imperative `pmcp app` family covers the one-off
-actions the UI does with buttons.
+Every subcommand except auth/profile is presentation sugar over the same scoped admin
+operations and MCP methods. `pmcp call pmcp <operation>` remains the universal admin
+path; old generic aggregate `<slug>_<tool>` dispatch does not. Hub execution uses the
+ordinary JSON `--args` payload so `timeout_ms` remains a JSON integer. Dedicated settings
+flags parse bounded integers before invoking `hub_settings_update`; numeric `key=value`
+strings are never passed as schema integers.
 
 Config: `~/.config/pmcp/config.toml` *(amended 2026-08-26; was config.json — an
 existing flat `config.json` is read once as profile `default` and superseded by
@@ -121,14 +109,10 @@ bootstrap_secret = "…"     # dev-only; hand-written, survives login/logout
 ```
 
 *(Amended 2026-09-01: parsing/emitting moves from the hand-rolled subset to
-**smol-toml** behind a thin wrapper whose contract is pinned by tests — parse
-errors are caught and replaced with a message rebuilt from line/column only
-(the library's own message embeds the offending line's text, i.e. a live
-credential, and must never reach stderr); unknown top-level and per-profile
-keys survive a parse→emit round trip; writes stay mode 0600. `mcps.yaml`
-likewise moves to the **yaml** package — YAML 1.2 core schema; anchors,
-multi-line scalars, and flow mappings start working, while duplicate keys and
-tabs, which the subset tolerated, become parse errors.)*
+**smol-toml** behind a thin wrapper whose contract is pinned by tests — parse errors are
+caught and rebuilt from line/column only because the library's own message embeds the
+offending line's text; unknown top-level and per-profile keys survive a parse→emit round
+trip; writes stay mode 0600.)*
 
 Profile selection precedence: `--profile <name>` flag > `PMCP_PROFILE` env var > the
 file's top-level `profile` key > the name `default` (neutral on purpose — the CLI's
@@ -150,8 +134,10 @@ key, and both fields survive into `whoami`'s human and `--json` output. `PMCP_UR
 overrides the URL and is always the **https origin** — everywhere, including the client
 libraries, which derive `wss://<origin>/connect` from it.
 
-Runtime dependencies (the §4 carve-out, amended 2026-09-01): `commander`,
-`@clack/prompts`, `picocolors`, `wrap-ansi`, `smol-toml`, `yaml` — declared at
-the repo root (the install the repo actually runs) and mirrored into
-`cli/package.json` for the published bin, whose build type-strips without
-bundling.
+App alias commands configure only hub-local TypeScript paths. They never ask a proxied
+upstream to rename a service/tool. Human output shows canonical scoped identities beside
+resolved TypeScript paths and collision diagnostics.
+
+
+Runtime dependencies (the §4 carve-out): `commander`, `@clack/prompts`, `picocolors`,
+`wrap-ansi`, and `smol-toml`, declared in `cli/package.json`.

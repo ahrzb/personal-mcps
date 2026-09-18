@@ -17,7 +17,7 @@
 
 /**
  * The resolved caller identity that every downstream decision keys on — produced by
- * identity.resolvePrincipal, consumed by the gateway pipeline, never constructed
+ * identity.resolveCaller, consumed by the gateway pipeline, never constructed
  * anywhere else.
  *
  * A `user` is the namespace owner acting as themself (web session or CLI device-flow

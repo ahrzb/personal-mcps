@@ -22,7 +22,7 @@
 
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { PMCP_SLUG, Registry, RegistryRefusal } from "../../src/registry";
+import { HUB_SLUG, PMCP_SLUG, Registry, RegistryRefusal } from "../../src/registry";
 import type {
   AccessMode,
   GrantEntry,
@@ -265,8 +265,8 @@ export const grantValidationRows: readonly GrantValidationRow[] = [
     probe: { tool: "get_news", verdict: "allow" },
   },
   // §8 (`grant_set` "replaces the full grant set") plus registry's own sentence: "an empty
-  // entries list revokes everything on that pair". The empty set is a legal grant set, not a
-  // validation error — and it is how the CLI's diff planner expresses a removed grant.
+  // entries list revokes everything on that pair". The empty set is a legal grant set,
+  // not a validation error; it is how an owner removes every grant for the pair.
   {
     title: "§8 · an empty entry list is a legal grant set — it stores nothing and the agent resolves deny",
     appKind: "proxy",
@@ -869,5 +869,373 @@ describe("§6 · declaration drift", () => {
     const stamped = (await detail(registry, ns, "app")).lastConnectedAt;
     expect(typeof stamped).toBe("number");
     expect(stamped).toBeGreaterThanOrEqual(registeredAt);
+  });
+});
+
+describe("§23.3 · owner execution settings", () => {
+  it("§23.3 · an owner with no row reads the pinned default pair, one pair write is what every later read answers, and a second write replaces the whole pair · twin: another owner's namespace still reads the defaults", async () => {
+    const mine = await seedNamespace(env.DB, {});
+    const other = await seedNamespace(env.DB, {});
+    const registry = new Registry(env.DB);
+
+    expect(await registry.hubExecutionSettings(mine.owner.userId)).toEqual({
+      defaultTimeoutMs: 30_000,
+      maxTimeoutMs: 30_000,
+    });
+
+    expect(await registry.updateHubExecutionSettings(mine.owner.userId, { defaultTimeoutMs: 5_000, maxTimeoutMs: 60_000 })).toEqual({
+      defaultTimeoutMs: 5_000,
+      maxTimeoutMs: 60_000,
+    });
+    expect(await registry.hubExecutionSettings(mine.owner.userId)).toEqual({
+      defaultTimeoutMs: 5_000,
+      maxTimeoutMs: 60_000,
+    });
+
+    // Both columns move together: a pair write is one upsert, never two half-updates.
+    await registry.updateHubExecutionSettings(mine.owner.userId, { defaultTimeoutMs: 1_000, maxTimeoutMs: 300_000 });
+    expect(await registry.hubExecutionSettings(mine.owner.userId)).toEqual({
+      defaultTimeoutMs: 1_000,
+      maxTimeoutMs: 300_000,
+    });
+
+    expect(await registry.hubExecutionSettings(other.owner.userId)).toEqual({
+      defaultTimeoutMs: 30_000,
+      maxTimeoutMs: 30_000,
+    });
+  });
+
+  it("§23.3 · the range rule is enforced before the write: a sub-second default, a maximum above the hard ceiling and a default above the maximum are each refused as RegistryRefusal and leave the stored pair untouched · twin: the boundary pair 1_000/300_000 stores", async () => {
+    const ns = await seedNamespace(env.DB, {});
+    const registry = new Registry(env.DB);
+    const ownerId = ns.owner.userId;
+
+    await expect(
+      registry.updateHubExecutionSettings(ownerId, { defaultTimeoutMs: 999, maxTimeoutMs: 30_000 }),
+    ).rejects.toThrow(RegistryRefusal);
+    await expect(
+      registry.updateHubExecutionSettings(ownerId, { defaultTimeoutMs: 30_000, maxTimeoutMs: 300_001 }),
+    ).rejects.toThrow(RegistryRefusal);
+    await expect(
+      registry.updateHubExecutionSettings(ownerId, { defaultTimeoutMs: 31_000, maxTimeoutMs: 30_000 }),
+    ).rejects.toThrow(RegistryRefusal);
+    // Nothing landed: the refused writes did not leave a partially-updated row behind.
+    expect(await registry.hubExecutionSettings(ownerId)).toEqual({
+      defaultTimeoutMs: 30_000,
+      maxTimeoutMs: 30_000,
+    });
+
+    // The twin, at the boundary: 1_000 <= default <= max <= 300_000 is inclusive.
+    await registry.updateHubExecutionSettings(ownerId, { defaultTimeoutMs: 1_000, maxTimeoutMs: 300_000 });
+    expect(await registry.hubExecutionSettings(ownerId)).toEqual({
+      defaultTimeoutMs: 1_000,
+      maxTimeoutMs: 300_000,
+    });
+  });
+});
+
+describe("§23.6 · durable TypeScript names", () => {
+  it("§23.1 · `hub` is reserved like `pmcp` in both directions — createApp refuses it and getApp answers null · twin: a slug one edit away creates and reads back", async () => {
+    const ns = await seedNamespace(env.DB, {});
+    const registry = new Registry(env.DB);
+    const ownerId = ns.owner.userId;
+
+    await expect(
+      registry.createApp({ ownerId, slug: HUB_SLUG, name: "hub", kind: "tunnel" }),
+    ).rejects.toThrow();
+    expect(await registry.getApp(ownerId, HUB_SLUG)).toBeNull();
+
+    const twin = await registry.createApp({ ownerId, slug: `${HUB_SLUG}-tools`, name: "twin", kind: "tunnel" });
+    expect((await registry.getApp(ownerId, `${HUB_SLUG}-tools`))?.id).toBe(twin.id);
+  });
+
+  it("§23.6 · createApp allocates the app's service name eagerly from its slug (generated lane) and the app row reports owner configuration separately from the committed reservation map", async () => {
+    const ns = await seedNamespace(env.DB, { apps: [{ slug: "news-feed", kind: "tunnel" }] });
+    const registry = new Registry(env.DB);
+    const app = await detail(registry, ns, "news-feed");
+
+    expect(app.typescriptAliases).toEqual({});
+    const mapping = await registry.typescriptReservationsFor(app.id);
+    expect(mapping.reservations).toEqual([
+      {
+        appId: app.id,
+        family: "service",
+        canonicalName: "news-feed",
+        typescriptName: "newsFeed",
+        source: "generated",
+        active: true,
+      },
+    ]);
+    expect(mapping.diagnostics).toEqual([]);
+  });
+
+  it("§23.6 · owner configuration outranks the generated candidate and persists with source owner; a later update that omits the key preserves it, and a deliberate service change tombstones the old path while activating the new one", async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        {
+          slug: "news",
+          kind: "tunnel",
+          typescriptAliases: { service: "feed", tools: { get_news: "fetchNews" } },
+        },
+      ],
+    });
+    const registry = new Registry(env.DB);
+    const app = await detail(registry, ns, "news");
+    expect(app.typescriptAliases).toEqual({ service: "feed", tools: { get_news: "fetchNews" } });
+
+    const assigned = await registry.typescriptReservationsFor(app.id);
+    expect(assigned.reservations).toEqual([
+      { appId: app.id, family: "service", canonicalName: "news", typescriptName: "feed", source: "owner", active: true },
+      { appId: app.id, family: "tool", canonicalName: "get_news", typescriptName: "fetchNews", source: "owner", active: true },
+    ]);
+
+    // An update that does not name the key preserves both the configuration and the names.
+    await registry.updateApp(app.id, { description: "unchanged aliases" });
+    const preserved = await detail(registry, ns, "news");
+    expect(preserved.typescriptAliases).toEqual({ service: "feed", tools: { get_news: "fetchNews" } });
+
+    // A deliberate change is a clean cutover: the old service name tombstones, the new one
+    // activates, and the tool assignment the new configuration does not mention survives
+    // (omission never clears an established assignment). Rows come back in the table's own
+    // order — app, family, canonical name, TypeScript name — so the new active name sorts
+    // ahead of the tombstone it superseded.
+    await registry.updateApp(app.id, { typescriptAliases: { service: "articles" } });
+    const changed = await registry.typescriptReservationsFor(app.id);
+    expect(changed.reservations).toEqual([
+      { appId: app.id, family: "service", canonicalName: "news", typescriptName: "articles", source: "owner", active: true },
+      { appId: app.id, family: "service", canonicalName: "news", typescriptName: "feed", source: "owner", active: false },
+      { appId: app.id, family: "tool", canonicalName: "get_news", typescriptName: "fetchNews", source: "owner", active: true },
+    ]);
+  });
+
+  it("§23.6 · an owner alias colliding with another identity's committed name refuses the whole write — the app row is not updated and no reservation changes · twin: a free name stores", async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        { slug: "first", kind: "tunnel", typescriptAliases: { service: "shared" } },
+        { slug: "second", kind: "tunnel" },
+      ],
+    });
+    const registry = new Registry(env.DB);
+    const second = await detail(registry, ns, "second");
+    const before = await registry.typescriptReservationsFor(second.id);
+
+    await expect(
+      registry.updateApp(second.id, { typescriptAliases: { service: "shared" }, description: "must not land" }),
+    ).rejects.toThrow(RegistryRefusal);
+
+    const after = await detail(registry, ns, "second");
+    expect(after.typescriptAliases).toEqual({});
+    expect(after.description).toBe("");
+    expect(await registry.typescriptReservationsFor(second.id)).toEqual(before);
+
+    // The twin, one name away: a free alias stores and the app row moves with it.
+    await registry.updateApp(second.id, { typescriptAliases: { service: "secondAlias" } });
+    expect((await detail(registry, ns, "second")).typescriptAliases).toEqual({ service: "secondAlias" });
+    expect((await registry.typescriptReservationsFor(second.id)).reservations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ family: "service", typescriptName: "secondAlias", source: "owner", active: true }),
+      ]),
+    );
+  });
+
+  it("§23.6 · the SDK lane accepts hints, owner configuration outranks them, and a hint colliding with an established name omits only that member with a bounded diagnostic — the healthy tunnel keeps its assignments and registration is never refused", async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel", typescriptAliases: { service: "ownerFeed" } }],
+    });
+    const registry = new Registry(env.DB);
+    const app = ns.apps.news;
+
+    const first = await registry.upsertDeclaredTypescriptAliases(app.id, {
+      service: "sdkFeed",
+      tools: { get_news: "fetchNews" },
+    });
+    expect(first.diagnostics).toEqual([]);
+
+    // Owner configuration outranked the SDK's service hint; the tool hint landed.
+    const mapped = await registry.typescriptReservationsFor(app.id);
+    expect(mapped.reservations).toEqual([
+      { appId: app.id, family: "service", canonicalName: "news", typescriptName: "ownerFeed", source: "owner", active: true },
+      { appId: app.id, family: "tool", canonicalName: "get_news", typescriptName: "fetchNews", source: "sdk", active: true },
+    ]);
+
+    // A second canonical claiming the same tool name: the newcomer is omitted, the
+    // established assignment is untouched, and the answer is a diagnostic — not a throw.
+    const collided = await registry.upsertDeclaredTypescriptAliases(app.id, {
+      tools: { get_articles: "fetchNews" },
+    });
+    expect(collided.diagnostics).toEqual([
+      { family: "tool", canonicalName: "get_articles", typescriptName: "fetchNews", reason: "established" },
+    ]);
+    expect((await registry.typescriptReservationsFor(app.id)).reservations).toEqual(mapped.reservations);
+
+    // Syntax is the one thing the SDK lane refuses: a hint the identifier grammar rejects
+    // never reaches storage, and the registration write is what the caller refuses.
+    await expect(
+      registry.upsertDeclaredTypescriptAliases(app.id, { service: "not-a-valid-alias" }),
+    ).rejects.toThrow(RegistryRefusal);
+  });
+
+  it("§23.6 · discovery retires a canonical member the fetched family no longer contains, and a returning member reactivates its OWN unchanged name rather than a fresh candidate", async () => {
+    const ns = await seedNamespace(env.DB, { apps: [{ slug: "news", kind: "tunnel" }] });
+    const registry = new Registry(env.DB);
+    const app = ns.apps.news;
+
+    // A successfully fetched family is authoritative for membership: a canonical member the
+    // fetch no longer contains retires its reservation. The member here is held by an SDK
+    // hint; the rule is the same for an owner-configured or generated name — what keeps a
+    // name alive across a fetch is the NAME, not its source.
+    await registry.upsertDeclaredTypescriptAliases(app.id, { tools: { get_news: "fetchNews" } });
+    const fetched = await registry.allocateTypescriptNames([
+      { appId: app.id, service: "news", tools: ["get_articles"] },
+    ]);
+    expect(fetched.diagnostics).toEqual([]);
+    expect(fetched.retire).toEqual([
+      { appId: app.id, family: "tool", canonicalName: "get_news", typescriptName: "fetchNews", source: "sdk", active: false },
+    ]);
+    expect(fetched.activate).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ family: "tool", canonicalName: "get_articles", source: "generated", active: true }),
+      ]),
+    );
+
+    // The member returns: its single tombstone is reactivated under the SAME name, not
+    // re-derived — code written against `fetchNews` keeps working.
+    const returned = await registry.allocateTypescriptNames([
+      { appId: app.id, service: "news", tools: ["get_articles", "get_news"] },
+    ]);
+    expect(returned.activate).toEqual(
+      expect.arrayContaining([
+        { appId: app.id, family: "tool", canonicalName: "get_news", typescriptName: "fetchNews", source: "sdk", active: true },
+      ]),
+    );
+    const rows = (await registry.typescriptReservationsFor(app.id)).reservations;
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ canonicalName: "get_news", typescriptName: "fetchNews", active: true }),
+      ]),
+    );
+  });
+
+  it("§23.6 · a failed family fetch (tools: null) disables disappearance retirement — an unreachable upstream is not an empty catalog — while the same call still resolves the service", async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        { slug: "news", kind: "tunnel", typescriptAliases: { tools: { get_news: "fetchNews" } } },
+      ],
+    });
+    const registry = new Registry(env.DB);
+    const app = ns.apps.news;
+
+    const unreachable = await registry.allocateTypescriptNames([
+      { appId: app.id, service: "news", tools: null },
+    ]);
+    expect(unreachable.retire).toEqual([]);
+    const rows = (await registry.typescriptReservationsFor(app.id)).reservations;
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ canonicalName: "get_news", typescriptName: "fetchNews", active: true }),
+      ]),
+    );
+  });
+
+  it("§23.6 · deleting an app tombstones its names in the same write and a recreated slug (a new app id) cannot claim them — the owner alias that named the old path is refused, while the newcomer's generated candidate is free", async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "reborn", kind: "tunnel", typescriptAliases: { service: "rebornAlias" } }],
+    });
+    const registry = new Registry(env.DB);
+    const first = await detail(registry, ns, "reborn");
+
+    await registry.deleteApp(first.id);
+    expect(await registry.getApp(ns.owner.userId, "reborn")).toBeNull();
+
+    const second = await registry.createApp({
+      ownerId: ns.owner.userId,
+      slug: "reborn",
+      name: "reborn",
+      kind: "tunnel",
+    });
+    expect(second.id).not.toBe(first.id);
+
+    // The tombstone still holds the name: an owner alias naming the old path is refused...
+    await expect(
+      registry.updateApp(second.id, { typescriptAliases: { service: "rebornAlias" } }),
+    ).rejects.toThrow(RegistryRefusal);
+
+    // ...and the newcomer's own generated candidate — a name the old app never held — is
+    // allocated without inheriting anything from the deleted member.
+    const mapping = await registry.typescriptReservationsFor(second.id);
+    expect(mapping.reservations).toEqual([
+      {
+        appId: second.id,
+        family: "service",
+        canonicalName: "reborn",
+        typescriptName: "reborn",
+        source: "generated",
+        active: true,
+      },
+    ]);
+  });
+
+  it("§23.6 · two SDK writers racing for one name: exactly one assignment commits, and the loser re-reads the winner's row and answers a diagnostic instead of failing the registration", async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        { slug: "news", kind: "tunnel" },
+        { slug: "notes", kind: "tunnel" },
+      ],
+    });
+    const registry = new Registry(env.DB);
+    const [news, notes] = [ns.apps.news.id, ns.apps.notes.id];
+
+    // The two hints derive the same service alias from different canonical slugs; both
+    // writes are admitted to the same owner namespace at once.
+    const [first, second] = await Promise.all([
+      registry.upsertDeclaredTypescriptAliases(news, { service: "shared" }),
+      registry.upsertDeclaredTypescriptAliases(notes, { service: "shared" }),
+    ]);
+
+    const diagnostics = [...first.diagnostics, ...second.diagnostics];
+    const winners = [first, second].filter((result) => result.diagnostics.length === 0);
+    expect(winners).toHaveLength(1);
+    // Whichever writer lost re-read the winner's committed row: one bounded diagnostic
+    // naming its OWN canonical member and the contested name, never a failed registration.
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      family: "service",
+      typescriptName: "shared",
+      reason: "established",
+    });
+
+    // One row holds the name; the other app holds none — never two, and never none.
+    const newsRows = (await registry.typescriptReservationsFor(news)).reservations.filter(
+      (row) => row.typescriptName === "shared",
+    );
+    const notesRows = (await registry.typescriptReservationsFor(notes)).reservations.filter(
+      (row) => row.typescriptName === "shared",
+    );
+    expect(newsRows.length + notesRows.length).toBe(1);
+    expect(newsRows.length === 1 ? newsRows[0].active : notesRows[0].active).toBe(true);
+  });
+
+  it("§23.6 · a colliding owner-lane write is refused atomically even when the app is brand new — createApp stores neither the row nor a reservation, and the established name's holder is untouched", async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "first", kind: "tunnel", typescriptAliases: { service: "shared" } }],
+    });
+    const registry = new Registry(env.DB);
+    const first = await detail(registry, ns, "first");
+
+    await expect(
+      registry.createApp({
+        ownerId: ns.owner.userId,
+        slug: "second",
+        name: "second",
+        kind: "tunnel",
+        typescriptAliases: { service: "shared" },
+      }),
+    ).rejects.toThrow(RegistryRefusal);
+
+    // Neither half landed: no app row, and the holder's mapping is byte-identical.
+    expect(await registry.getApp(ns.owner.userId, "second")).toBeNull();
+    expect((await registry.typescriptReservationsFor(first.id)).reservations).toEqual([
+      { appId: first.id, family: "service", canonicalName: "first", typescriptName: "shared", source: "owner", active: true },
+    ]);
   });
 });

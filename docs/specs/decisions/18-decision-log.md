@@ -8,10 +8,9 @@
 2. **Namespaces are silos.** Each user fully controls their own namespace and can't see
    any other; there is no sharing, no global admin, no cross-namespace grants. Sharing a
    service between users would be a real design extension — out of scope until wanted.
-3. **Tunneled services' roles live in service code**, declared at registration — the
-   YAML only references them; central YAML definitions for tunneled roles were rejected
-   because only the service knows its tools. Proxied services are the exception: their
-   virtual roles are defined in config, because the upstream can't declare any.
+3. **Tunneled apps declare roles in service code at registration.** Owners may add
+   narrower roles beside them through the UI, admin wire, or provider; an app-declared
+   name wins a collision. Proxied apps have only owner-defined roles.
 4. ~~**v1 proxies tools only** — no resources, prompts, or push notification streams.~~
    **Revised 2026-08-26 (§20): the hub proxies the MCP data model.** Prompts,
    resources, resource templates and completions are served; MRTR (elicitation,
@@ -26,8 +25,8 @@
    and `resources/subscribe`/`updated`; decision 28 carries the call and the probe
    economics. Nothing of the original sentence survives.)*
 5. **Usernames, not emails**, with synthesized placeholder emails internally.
-6. **`apply` deletes by default** (after showing the diff and confirming) — the YAML is
-   desired state, not additive patches.
+6. **OpenTofu is the sole declarative owner of hub contents.** Its state is additive:
+   imperative UI and CLI changes coexist, and destroy reaches only managed objects.
 7. Naming: repo `personal-mcps`, CLI/binary `pmcp`, packages `@personal-mcps/*` /
    `pmcp-client`.
 8. **Service/service-account tokens are our own hashed-token table**, not the
@@ -38,8 +37,7 @@
    language everywhere, and regex was wanted for virtual roles anyway.
    **Revised 2026-08-26 (§20): the same language, now over three keyspaces.** A role
    holds a pattern list per family (tools, prompts, resources); a bare list is the tools
-   list, so every existing declaration, YAML file and `serve({roles})` call keeps its
-   exact meaning. The one addition the regex language needed is a second literal fast
+   list, so every existing declaration and `serve({roles})` call keeps its exact meaning.
    path: the tool/prompt rule (`^[A-Za-z0-9._-]+$` → compared as a string) cannot cover
    URIs, whose `:` and `/` would drop every resource pattern into regex compilation
    where `.` matches anything. Resource patterns are therefore compared literally when
@@ -52,10 +50,8 @@
     explicit), and is resolved at request time. Renamed from `*`, which read like a
     regex; `*` remains only as a pattern alias for `.*` (item 9).
 11. **Proxied upstream auth is static headers (default) or interactive OAuth**
-    (`auth: oauth`, §7) — connected from `/services`, tokens encrypted at rest (§5),
-    never in YAML (which declares only the mode; the mode is stored in its own
-    `upstream_auth_mode` column, distinct from the credential envelope, and flipping
-    it wipes stored credentials, §8).
+    (`auth: oauth`, §7). The mode is ordinary app configuration; the credential envelope
+    is write-only, encrypted at rest, and wiped when the mode flips (§8).
 12. **Token expiry defaults differ by kind**: 90 d for service-account tokens (they get
     pasted into agent configs), none for service tokens (telegram-bot model, bots on
     home servers shouldn't silently die) — both overridable at issue time.
@@ -141,14 +137,12 @@
     hub supports is a public client that sends no `Authorization` at all — §19.7 has both
     arguments.)* None of these endpoints gains an MCP tool (§8's exception list), and the
     door never treats "signed by the hub" as sufficient authority (§19.6 step 3).
-26. **Resources do not aggregate** (§20). Tools and prompts are addressed by name and
-    take the existing `<slug>_` prefix; resources are addressed by URI, and no prefix
-    can ride a URI without rewriting it — in listings, in templates, in read results,
-    and inside every `resource_link` or embedded resource block a *tool* result may
-    carry. Rewriting there would end "the response is relayed verbatim". So the
-    aggregated endpoint serves tools and prompts, the scoped endpoint
-    `/<user>/mcp/<slug>` serves everything, and a resource-heavy service is mounted
-    scoped — a shape the hub already supports first-class.
+26. **Application resources do not aggregate on the public MCP wire** (§20, narrowed
+    2026-09-18 by decision 33). A resource URI is canonical application data and is never
+    prefixed or rewritten. Direct clients therefore read it on the app's scoped endpoint.
+    A §23 program may read the same resource only through the separate structured
+    `(canonical service, raw URI)` API, which re-enters scoped authorization/audit; this
+    does not make the application resource catalog part of the aggregate wire surface.
 27. **Reads are audited, never approval-gated** (§20). Approvals stay a `tools/call`
     concern: `prompts/get` and `resources/read` write audit rows like a call, under the
     same `log_bodies` gate and redaction rules, but never open a pending approval. The
@@ -186,9 +180,8 @@
     column; admin tools `service_*` → `app_*` and `account_*` → `agent_*`, with their
     audit events following (`admin.app_create`, …) — while `grant_set`, `token_*`,
     `approval_*`, `audit_query` and `connection_*` keep their names and rename only their
-    fields; YAML keys `apps:` / `agents:` (§9); CLI nouns `pmcp app` / `pmcp agent` with
-    `--app` / `--agent` flags and `app/` / `agent/` refs (§10); routes `/apps`, `/agents`,
-    `/settings` (§13); the DO class `AppConnection` (§3). Deliberately unchanged: OAuth
+    fields; CLI nouns become `pmcp app` / `pmcp agent` with `--app` / `--agent` flags and
+    `app/` / `agent/` refs (§10); routes become `/apps`, `/agents`, `/settings` (§13);
     **clients** stay clients (§19), "MCP server" stays the protocol role a tunneled bot
     plays, better-auth's own `user`/`session`/`account` tables are untouched, and `pmcp`
     stays the reserved slug, the CLI name, and the package prefix. **No legacy aliases**:
@@ -198,19 +191,18 @@
 30. **Settings and the app page are panes behind a rail; a password is self-serve to
     *change* and script-only to *reset*; the connections list lives in Settings**
     (2026-09-02, owner-reviewed design; §13, §4, §12, §8, §19, §20.6). Three calls in one
-    redesign. **(a) Panes.** `/settings` had grown past one scroll, so it is six panes
-    behind a left rail — Sign-in (Password, Two-factor, Passkeys) and Access (Sessions,
-    Tokens, Connected clients) — one route per pane (`/settings/<pane>`, Password landing
-    at the root, no alias), every rail entry carrying an at-a-glance marker (a count, or
-    the Two-factor status dot), and a horizontally scrolling pill row where 390 px has no
-    room for a rail. `/apps/<slug>`, a page §13 never had, gets the same rail: App (Tools,
-    Prompts, Resources, Roles, Overview), Access (Agents, Token), Danger zone last as a
-    neutral entry; Tools lands so the app's real tool list is the first thing seen, a §20
-    family the app does not advertise dims its entry to `—`, and a tool row expands to its
-    input schema plus what only the hub knows — the `<slug>_<tool>` name, which agents
-    reach it through which role, approval and redaction posture — computed by the door's
-    own matcher, never a second one. **(b) Password.** The Password pane **reverses §4's
-    "no self-serve password change" — for the change half only.** An owner who knows the
+    redesign. **(a) Panes.** `/settings` first became six panes behind a left rail —
+    Sign-in (Password, Two-factor, Passkeys) and Access (Sessions, Tokens, Connected
+    clients) — with one route per pane and at-a-glance markers. Decision 33 later adds
+    Runtime / Execution as the seventh pane without changing this layout or the
+    credential-family decisions below.
+    `/apps/<slug>` gained the same rail for catalog/access/configuration; decision 32
+    later replaced its family panes with the three-pane Catalog design. Decision 33
+    replaces the old displayed aggregate prefixed name with separate canonical scoped
+    and hub-local TypeScript identities. Reach, approval, and redaction remain computed
+    by the door's own matcher, never a second one. **(b) Password.** The Password pane
+    **reverses §4's "no self-serve password change" — for the change half only.** An owner
+    who knows the
     password changes it on `/settings`, behind the recent-authentication gate, current
     password required, "sign out my other sessions" on by default: core better-auth's
     `/change-password`, verified against 1.7.1, which on that flag deletes every session
@@ -281,9 +273,8 @@
     tool can be granted or asked on its own row and a pattern typed into the filter can be
     added as an entry. Role names never contain `/`, so the two kinds never collide; mode
     is the `:approval` **suffix**, read from the end, because a resource URI carries colons
-    of its own. `grant_set`, the YAML `apply` grammar (§9) and the provider's `pmcp_grant`
-    (§22) all take the same list; an inline entry needs no declaration and is therefore
-    never "undeclared".
+    of its own. `grant_set` and the provider's `pmcp_grant` (§22) take the same list; an
+    inline entry needs no declaration and is therefore never "undeclared".
     **Alternatives the owner rejected across the design rounds.** *A separate grant-editor
     page* (`/agents/<slug>/grants/<app>`, shipped 2026-09-03): kept as a route it would be
     a second place to edit the same set, and as a page it could not show the app's catalog
@@ -361,10 +352,9 @@
     pill row is now `/settings`'s alone.
 
 32. **The app page is three panes; a tunneled app's owner defines roles of their own**
-    (2026-09-17, owner-reviewed design; §13, §5, §8, §9, §20.3, §22). The owner asked for
-    `design/concepts/AppThreePaneDemo.html` — the clickable prototype drawn 2026-09-16
-    after the agent page landed and refined with the owner through that day — boarded,
-    specced, implemented and deployed **whole**. Three calls came with it.
+    (2026-09-17, owner-reviewed design; §13, §5, §8, §20.3, §22). The owner asked for
+    `design/concepts/AppThreePaneDemo.html`, the clickable prototype drawn after the agent
+    page landed and refined with the owner through that day, then shipped whole.
     **(a) Three panes, and seven of them.** `/apps/<slug>` stops being a rail beside one
     region and becomes **rail · listing · details**, the shape decision 31 gave the agent
     page, in the framed workspace box all three paned pages now share. The eight panes
@@ -401,10 +391,10 @@
     owner could previously only read them — so the one thing an owner could not do was carve
     a narrower set out of what an app offers, which is the whole point of a role. The fix is
     storage beside the declaration, not instead of it: `app.owner_roles_json` (§5) in
-    §20.3's normalized per-family shape, `owner_roles` on `app_create` / `app_update` and in
-    the YAML and the provider, `ownerRoles` on the tunnel row, and one merge rule — **the
-    owner's, then the app's declaration on top; a name the app declares replaces the owner's
-    definition of it, whole**. Every gate-side reader takes that effective map and no other
+    §20.3's normalized per-family shape, `owner_roles` on `app_create` / `app_update` and
+    the provider, `ownerRoles` on the tunnel row, and one merge rule — **the owner's, then
+    the app's declaration on top; a name the app declares replaces the owner's definition
+    of it, whole**. Every gate-side reader takes that effective map and no other
     (the door's filter, `setGrants`'s undeclared check, reachability), so a page can never
     disagree with the door about what a role grants. Resolving the collision at **read**
     time rather than at write time is the load-bearing half: `hub/register` keeps replacing
@@ -430,3 +420,35 @@
     checkbox, so no save can silently clear a partial state — and every stored entry the
     rows cannot represent (a tool or path no schema declares) rides back as a hidden `keep`
     field, so a save never drops what evidence put there.
+
+33. **The aggregate endpoint is a hub-owned synchronous TypeScript orchestrator**
+    *(2026-09-18, §23)*. The old aggregate application tools/prompts and generic
+    first-underscore dispatch are removed in one clean cutover; scoped applications keep
+    their canonical surfaces. Aggregate `hub_execute`/`hub_search_types` and scoped
+    `/mcp/hub` use hub-owned declaration resources and one explicit TypeScript-to-
+    canonical map. Programs call tools and read resources only through the existing
+    scoped dispatch chokepoints, so grants, archive, availability-first approval,
+    redaction, metadata hygiene, backend behavior, and audit do not fork.
+
+    The execution authority is the exact invoking credential, not merely its principal:
+    owner sessions receive full owner `pmcp`, admin tokens receive `adminOpsFor`, and
+    agents/OAuth receive no `pmcp`. Exact bearer bytes select a Sandbox; a
+    domain-separated digest is identity only and the bearer never enters untrusted state.
+    Reauthorization happens on every inner operation and before publication.
+
+    TypeScript aliases are hub-local, sticky reservations. Owners configure either app
+    kind through admin/UI/CLI/provider; tunneled SDKs may send lower-precedence hints.
+    Proxied upstreams need no SDK and never rename a canonical MCP method. Established
+    paths survive later collision; simultaneous first collisions omit all; removal and
+    app deletion tombstone names. Recreating a slug is a new app identity and cannot
+    inherit the old TypeScript service path. This stronger stability is intentionally
+    easier to adopt than undo, so no release/reuse escape hatch is introduced.
+
+    Execution remains synchronous and non-transactional. Owner settings choose a default
+    and maximum from 1–300 seconds (initially 30/30); each call may request a duration
+    within that maximum. Inner count/concurrency/deadline limits do not grow with wall
+    time. There is no job/resume, package installation, workspace, rollback, or automatic
+    approval continuation. Cloudflare's exact-pinned Sandbox preview is the one narrowly
+    admitted Worker runtime dependency; a bounded in-repo schema renderer avoids a second
+    dependency. Container idle sleep is six minutes so it cannot interrupt the five-
+    minute ceiling, accepting longer idle residency instead of a heartbeat lifecycle.

@@ -797,7 +797,7 @@ export async function disconnect(app: App): Promise<void> {
 /**
  * Stores static upstream headers for an `auth: headers` proxied app — sealed into
  * the credential envelope, replacing any previous set wholesale. Write-only, like
- * `token_issue`: no read path exists, and headers never appear in YAML or read tools.
+ * `token_issue`: no read path exists and the provider never stores the value in state.
  * Rejects (`HubError`) oauth-mode or non-proxied apps — each mode has exactly one
  * credential path.
  */

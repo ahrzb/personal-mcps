@@ -19,6 +19,13 @@
 // /internal/users. Authorization is deliberately absent: what a resolved principal
 // may do belongs to registry (grants, roles) and the gateway pipeline.
 //
+// The door hands back more than a principal. `resolveCaller` answers an AuthenticatedCaller
+// whose `credential` carries a per-bearer Sandbox digest and a non-secret
+// CredentialReference, and `reauthorize` is the ONLY way that reference turns back into
+// authority — the check every operation an admitted execution later dispatches must pass
+// again. Both live here because one module owning a credential's whole life is the point:
+// an execution plane may hold references, never bearers.
+//
 // Failure convention: identity fails at the HTTP layer, before any JSON-RPC exists —
 // its guards throw bare Response objects (401 with WWW-Authenticate, anonymous 404,
 // login redirects) that the composition root returns verbatim. HubError never
@@ -37,7 +44,7 @@ import { passkey } from "@better-auth/passkey";
 import { Hono } from "hono";
 import { deleteUser, provisionUser } from "./admin";
 import { record } from "./audit";
-import { PROTECTED_RESOURCE_PATH, resolveOAuthPrincipal } from "./oauth";
+import { PROTECTED_RESOURCE_PATH, reauthorizeOAuthBinding, resolveOAuthPrincipal } from "./oauth";
 import { ADMIN_TOKEN_PREFIX, formatPrincipal, TOKEN_PREFIX } from "./principal";
 import type { Principal } from "./principal";
 import {
@@ -210,7 +217,7 @@ function buildAuth() {
 
 /**
  * The resolved caller identity that every downstream decision keys on — PRODUCED by
- * resolvePrincipal here, plus §19's one delegated producer: oauth.ts's binding leg, which
+ * resolveCaller here, plus §19's one delegated producer: oauth.ts's binding leg, which
  * resolveCredential routes every JWT-shaped bearer through and which yields only
  * `agent` principals (never a user). The type and its canonical string live in
  * principal.ts, a leaf, so a module that only has to name a caller does not inherit
@@ -248,13 +255,65 @@ export type TokenInfo = {
 };
 
 /**
+ * The non-secret, serializable facts a caller's later reauthorization is decided from —
+ * one member per credential family, each naming only the immutable row ids and expiry
+ * facts its family's liveness check re-reads. A reference is what a consumer of
+ * `resolveCaller` may hold across an execution's lifetime (the Sandbox coordinator does),
+ * so it deliberately carries no bearer, no hash and no signature: authority is re-derived
+ * by `reauthorize`, never carried. Units are each source's own — this union records what
+ * the row actually stores rather than converting between the three clocks.
+ */
+export type CredentialReference =
+  /**
+   * A local `pmcp_agt_` token: the `token` row it hashed to, and the agent row that row's
+   * `ref_id` named. Both are re-read (the reference has no FK, so a token can outlive the
+   * agent it resolved).
+   */
+  | { kind: "agentToken"; tokenId: string; agentId: string }
+  /**
+   * A better-auth bearer session: the `session` row, its `userId` column, and the raw
+   * `expiresAt` cell as better-auth's Kysely/D1 adapter stores it — ISO-8601 `DATE` text,
+   * decoded with `Date.parse` (a different representation from every epoch-ms integer in
+   * this repo, and treated accordingly).
+   */
+  | { kind: "session"; sessionId: string; userId: string; expiresAt: string }
+  /**
+   * An OAuth access token: the `oauth_binding` row the door resolved, the agent that row
+   * bound, the owner whose namespace the token addressed, and the verified JWT `exp` claim
+   * in epoch SECONDS (JWT's own unit — the one expiry the binding row does not carry).
+   */
+  | { kind: "oauth"; bindingId: string; agentId: string; ownerId: string; expiresAt: number }
+  /**
+   * An admin token: the `admin_token` row, its owner, and that row's `expires_at` in epoch
+   * milliseconds — `null` meaning the token never expires, exactly as §22.1's issuance
+   * writes it.
+   */
+  | { kind: "adminToken"; tokenId: string; ownerId: string; expiresAt: number | null };
+
+/**
+ * The resolved caller a consumer request admitted, plus what a Sandbox-scoped execution is
+ * keyed and re-authorized by: `sandboxKey`, a domain-separated digest of the EXACT presented
+ * bearer, and `reference`, the non-secret facts `reauthorize` re-checks. Two credentials
+ * that resolve to the same principal name two different sandbox keys — the execution plane
+ * scopes a container to the credential, never to the person behind it.
+ */
+export type AuthenticatedCaller = {
+  principal: Principal;
+  credential: {
+    sandboxKey: string;
+    reference: CredentialReference;
+  };
+};
+
+/**
  * Authenticates a consumer request on `/<user>/mcp*` and proves the caller may act
  * in the URL's namespace — the whole §7-step-1 matrix in one call. Bearer-only:
  * session cookies are never consulted (that single rule removes the browser-CSRF
  * surface) and query-string tokens are rejected. Resolution dispatches on prefix:
  * `pmcp_agt_` → token lookup (explicit kind column check; unrevoked, unexpired, live
  * agent row) → agent; `pmcp_app_` → always 401, never a session
- * fallthrough (an app credential means nothing here); anything else → better-auth
+ * fallthrough (an app credential means nothing here); `pmcp_adm_` → its own table → admin;
+ * a JWT-shaped bearer → the OAuth leg alone, terminally; anything else → better-auth
  * session → user. Failures throw a Response: 401 + `WWW-Authenticate: Bearer` when
  * no valid principal resolves — identical whether or not `<user>` exists — and 404
  * when a *resolved* principal names another user's namespace or a nonexistent one,
@@ -263,12 +322,15 @@ export type TokenInfo = {
  * last_used_at. Transport hygiene (Content-Type, Origin-if-present) is the gateway's
  * job, not this function's.
  *
+ * The answer's `credential` is produced here and nowhere else: the bearer is read once,
+ * turned into a sandbox key and a reference, and never retained, returned or logged.
+ *
  * `now` is the injected clock (epoch ms) every expiry judgment and last_used_at
  * stamp reads — same rationale as ApprovalsConfig.now: workerd tests cannot fake
  * global timers, and the expired-token refusal must be seedable beside its live
  * twin. Production callers omit it.
  */
-export async function resolvePrincipal(req: Request, now?: () => number): Promise<Principal> {
+export async function resolveCaller(req: Request, now?: () => number): Promise<AuthenticatedCaller> {
   // deps: better-auth · oauth.resolveOAuthPrincipal · D1 `token` · D1 `agent` · D1 `user` · crypto.subtle
   // Credential FIRST, namespace second — that order IS the anti-enumeration rule: an
   // unauthenticated probe never reaches a lookup that could answer differently for a
@@ -276,33 +338,156 @@ export async function resolvePrincipal(req: Request, now?: () => number): Promis
   // here: the OAuth leg checks the token's `aud` against it (§19.6), and the 401 challenge
   // names its per-namespace resource_metadata (§19.2) — both from the path, never a lookup.
   const namespace = namespaceOf(req);
-  const principal = await resolveCredential(req, now ?? Date.now, namespace);
-  if (principal === null) throw unauthorized(namespace);
+  const presented = bearerToken(req);
+  if (presented === null) throw unauthorized(namespace);
+  const resolved = await resolveCredential(presented, now ?? Date.now, namespace);
+  if (resolved === null) throw unauthorized(namespace);
   const owner = await ownerIdFor(namespace);
   // One `throw` for "the namespace is someone else's" and "the namespace is nobody's":
   // a resolved caller learns only that there is nothing here for them.
-  if (owner === null || owner !== namespaceIdOf(principal)) throw anonymousNotFound();
-  return principal;
+  if (owner === null || owner !== namespaceIdOf(resolved.principal)) throw anonymousNotFound();
+  return {
+    principal: resolved.principal,
+    credential: {
+      sandboxKey: await sha256Hex(`${SANDBOX_KEY_DOMAIN}${presented}`),
+      reference: resolved.reference,
+    },
+  };
 }
 
 /**
+ * Re-authorizes a credential resolved earlier against live state, from its non-secret
+ * `CredentialReference` alone — the check every operation an admitted execution later
+ * dispatches passes again, and the reason a revocation, expiry, deletion or rebinding bites
+ * mid-execution even though the credential itself is long gone from memory.
+ *
+ * Answers the CURRENT principal the credential names, or `null` for every refusal; callers
+ * compare `principalKey` against the key they admitted, so a reference that was rebound to
+ * another agent or user answers null rather than that other principal. Read-only by design:
+ * nothing here stamps `last_used_at`, refreshes a session or touches better-auth's
+ * `updateAge`, so a liveness check can never silently renew what it checks — and absence,
+ * expiry, revocation and a missing joined referent are one answer, exactly like the door's.
+ *
+ * `now` is the injected clock (epoch ms) every expiry judgment reads, the same seam
+ * `resolveCaller` carries; production callers omit it.
+ */
+export async function reauthorize(reference: CredentialReference, now?: () => number): Promise<Principal | null> {
+  // deps: D1 `token` · D1 `agent` · D1 `admin_token` · D1 `user` · D1 `session` · oauth.reauthorizeOAuthBinding
+  const at = now ?? Date.now;
+  switch (reference.kind) {
+    case "agentToken":
+      return reauthorizeAgentToken(reference, at);
+    case "session":
+      return reauthorizeSession(reference, at);
+    case "oauth":
+      return reauthorizeOAuthBinding(reference, at);
+    case "adminToken":
+      return reauthorizeAdminToken(reference, at);
+  }
+}
+
+/**
+ * The `pmcp_agt_` family's reauthorization: the `token` row must still exist, still be kind
+ * `agent`, still be unrevoked and unexpired, and still name the agent the reference
+ * captured — that last comparison is what refuses a token row repointed at another agent
+ * (no production path rewrites `ref_id`, but a reference that followed one would otherwise
+ * hand out another principal's key). The agent row must still exist; its fresh slug is what
+ * the answer carries, exactly as the original resolve read it.
+ */
+async function reauthorizeAgentToken(
+  reference: Extract<CredentialReference, { kind: "agentToken" }>,
+  now: () => number,
+): Promise<Principal | null> {
+  const row = await db()
+    .prepare(`SELECT "id", "kind", "ref_id", "expires_at", "revoked_at" FROM token WHERE "id" = ?`)
+    .bind(reference.tokenId)
+    .first<Omit<TokenRow, "last_used_at">>();
+  if (row === null || row.kind !== "agent" || row.revoked_at != null) return null;
+  if (row.ref_id !== reference.agentId) return null;
+  if (row.expires_at != null && row.expires_at <= now()) return null;
+  const agent = await db()
+    .prepare(`SELECT "id", "owner_id", "slug" FROM agent WHERE "id" = ?`)
+    .bind(reference.agentId)
+    .first<{ id: string; owner_id: string; slug: string }>();
+  if (agent === null) return null;
+  return { kind: "agent", agentId: agent.id, ownerId: agent.owner_id, slug: agent.slug };
+}
+
+/**
+ * The session family's reauthorization: the `session` row must still exist, still belong to
+ * the captured `userId` (a row repointed at another user is a rebinding, refused), and its
+ * `expiresAt` — ISO-8601 `DATE` text, decoded by `sessionExpiryInstant` — must still name
+ * an instant in the future. The joined `user` row is read fresh: absence is account
+ * deletion, which this repo's cascades usually make unreachable, and a username-less row
+ * names nobody. The ROW's expiry is the authority, not the reference's copy of it:
+ * better-auth legitimately pushes `expiresAt` forward on activity, and this read must not
+ * (and does not) trigger that refresh itself.
+ */
+async function reauthorizeSession(
+  reference: Extract<CredentialReference, { kind: "session" }>,
+  now: () => number,
+): Promise<Principal | null> {
+  const row = await db()
+    .prepare(
+      `SELECT s."userId" AS user_id, s."expiresAt" AS expires_at, u."username" AS username
+         FROM "session" s JOIN "user" u ON u."id" = s."userId"
+        WHERE s."id" = ?`,
+    )
+    .bind(reference.sessionId)
+    .first<{ user_id: string; expires_at: string | null; username: string | null }>();
+  if (row === null || row.user_id !== reference.userId) return null;
+  const expiresAt = sessionExpiryInstant(row.expires_at);
+  if (expiresAt === null || expiresAt <= now()) return null;
+  if (row.username === null || row.username === "") return null;
+  return { kind: "user", userId: row.user_id, username: row.username };
+}
+
+/**
+ * The `pmcp_adm_` family's reauthorization: the `admin_token` row must still exist,
+ * unrevoked, under the same owner, with the same `expires_at` it had at admission, and its
+ * owning `user` row must still exist. No production path rewrites an admin token's owner or
+ * expiry, so inequality is a rewritten row — a rebinding — and failing closed is the only
+ * safe reading of one.
+ */
+async function reauthorizeAdminToken(
+  reference: Extract<CredentialReference, { kind: "adminToken" }>,
+  now: () => number,
+): Promise<Principal | null> {
+  const row = await db()
+    .prepare(`SELECT "id", "owner_id", "expires_at", "revoked_at" FROM admin_token WHERE "id" = ?`)
+    .bind(reference.tokenId)
+    .first<Omit<AdminTokenRow, "last_used_at">>();
+  if (row === null || row.revoked_at != null || row.owner_id !== reference.ownerId) return null;
+  if (row.expires_at !== reference.expiresAt) return null;
+  if (row.expires_at != null && row.expires_at <= now()) return null;
+  const user = await db()
+    .prepare(`SELECT "id", "username" FROM "user" WHERE "id" = ?`)
+    .bind(row.owner_id)
+    .first<{ id: string; username: string }>();
+  if (user === null) return null;
+  return { kind: "admin", userId: user.id, username: user.username };
+}
+
+/** What every credential leg answers: the principal, and the reference that re-authorizes
+ *  it. One shape for all four legs, so the door and `/api/whoami` cannot drift. */
+type ResolvedCredential = { principal: Principal; reference: CredentialReference };
+
+/**
  * §7 step 1's resolution proper, with no namespace judgment: the prefix dispatch, and
- * nothing else. Shared by resolvePrincipal — which adds the namespace judgment — and by
- * `/api/whoami`, whose URL carries no namespace to add (§8: "Resolution mirrors §7
- * step 1"). Answers null for every way a request fails to name somebody, so no caller
- * can accidentally tell two failures apart.
+ * nothing else. Shared by resolveCaller — which adds the namespace judgment and the
+ * credential half — and by `/api/whoami`, whose URL carries no namespace to add (§8:
+ * "Resolution mirrors §7 step 1"). Answers null for every way a request fails to name
+ * somebody, so no caller can accidentally tell two failures apart.
  *
  * `namespace` is the addressed username on `/<user>/mcp*` and `null` on the namespaceless
  * `/api/whoami` — the OAuth leg (§19.6) needs it to bind a token's audience, so where there
  * is no namespace a JWT-shaped bearer names nobody and is refused without either leg running.
  */
 async function resolveCredential(
-  req: Request,
+  presented: string,
   now: () => number,
   namespace: string | null,
-): Promise<Principal | null> {
-  const presented = bearerToken(req);
-  if (presented === null) return null;
+): Promise<ResolvedCredential | null> {
   // An app credential means nothing on a consumer surface, and — the mutation this
   // guards against — a `pmcp_`-prefixed token whose lookup MISSES must not fall through
   // to the session lookup below either. Both prefixes answer here, whatever the row says.
@@ -323,7 +508,20 @@ async function resolveCredential(
   // would promote a refused token to the OWNER, the exact §18-decision-23 inversion §19.6
   // step 3 forbids. Fail closed by STRUCTURE: every OAuth outcome returns from this branch.
   if (isJwtShaped(presented)) {
-    return namespace === null ? null : resolveOAuthPrincipal(presented, namespace, now);
+    if (namespace === null) return null;
+    const leg = await resolveOAuthPrincipal(presented, namespace, now);
+    return leg === null
+      ? null
+      : {
+          principal: leg.principal,
+          reference: {
+            kind: "oauth",
+            bindingId: leg.bindingId,
+            agentId: leg.principal.agentId,
+            ownerId: leg.principal.ownerId,
+            expiresAt: leg.expiresAt,
+          },
+        };
   }
   return sessionUserFor(presented);
 }
@@ -349,15 +547,16 @@ const JWT_SEGMENT = /^[A-Za-z0-9_-]+$/;
  * The `pmcp_agt_` leg: the token row must be of kind `agent` BY COLUMN,
  * unrevoked and unexpired, and its `ref_id` must still resolve to a live agent row
  * (§5 gives that reference no FK, so a deleted agent leaves the token dangling —
- * a live credential for nobody, which is nobody).
+ * a live credential for nobody, which is nobody). The reference captures the row and the
+ * agent it named; both are what `reauthorizeAgentToken` re-checks later.
  */
-async function agentFor(presented: string, now: () => number): Promise<Principal | null> {
+async function agentFor(presented: string, now: () => number): Promise<ResolvedCredential | null> {
   const row = await db()
     .prepare(
       `SELECT "id", "kind", "ref_id", "expires_at", "last_used_at", "revoked_at"
          FROM token WHERE "hash" = ?`,
     )
-    .bind(await hashToken(presented))
+    .bind(await sha256Hex(presented))
     .first<TokenRow>();
   if (row === null || row.kind !== "agent" || row.revoked_at != null) return null;
   const at = now();
@@ -368,7 +567,10 @@ async function agentFor(presented: string, now: () => number): Promise<Principal
     .first<{ id: string; owner_id: string; slug: string }>();
   if (agent === null) return null;
   await stampLastUsed(row, at);
-  return { kind: "agent", agentId: agent.id, ownerId: agent.owner_id, slug: agent.slug };
+  return {
+    principal: { kind: "agent", agentId: agent.id, ownerId: agent.owner_id, slug: agent.slug },
+    reference: { kind: "agentToken", tokenId: row.id, agentId: agent.id },
+  };
 }
 
 /**
@@ -381,14 +583,16 @@ async function agentFor(presented: string, now: () => number): Promise<Principal
  * shape a session yields — `formatPrincipal`/`principalKey` are deliberately blind to
  * which of the two produced it — tagged `admin` so authorization (index.visibleOnScoped,
  * registry.resolveAccess, admin.adminOpsFor) can still tell them apart where it matters.
+ * The reference captures the row, its owner and its expiry, which is everything
+ * `reauthorizeAdminToken` re-checks.
  */
-async function adminFor(presented: string, now: () => number): Promise<Principal | null> {
+async function adminFor(presented: string, now: () => number): Promise<ResolvedCredential | null> {
   const row = await db()
     .prepare(
       `SELECT "id", "owner_id", "expires_at", "last_used_at", "revoked_at"
          FROM admin_token WHERE "hash" = ?`,
     )
-    .bind(await hashToken(presented))
+    .bind(await sha256Hex(presented))
     .first<AdminTokenRow>();
   if (row === null || row.revoked_at != null) return null;
   const at = now();
@@ -399,7 +603,15 @@ async function adminFor(presented: string, now: () => number): Promise<Principal
     .first<{ id: string; username: string }>();
   if (user === null) return null;
   await stampAdminTokenLastUsed(row, at);
-  return { kind: "admin", userId: user.id, username: user.username };
+  return {
+    principal: { kind: "admin", userId: user.id, username: user.username },
+    reference: {
+      kind: "adminToken",
+      tokenId: row.id,
+      ownerId: row.owner_id,
+      expiresAt: row.expires_at,
+    },
+  };
 }
 
 /**
@@ -407,14 +619,47 @@ async function adminFor(presented: string, now: () => number): Promise<Principal
  * The Authorization header is rebuilt into a bare Headers rather than passed through,
  * because better-auth would happily read a Cookie from the original — and on `/<user>/mcp*`
  * a cookie is never a credential (§7 step 1, the whole browser-CSRF surface).
+ *
+ * The session row's `expiresAt` is captured as the ISO-8601 text the Kysely/D1 adapter
+ * stores (`Date.toISOString()` on write, `new Date(...)` on read — so the round trip is
+ * the row's own bytes), NOT as an epoch-ms integer: `reauthorizeSession` decodes exactly
+ * that text, and a representation that silently became a number would fail its parse
+ * closed rather than compare the wrong clock. The row may be refreshed by better-auth on
+ * activity after this point; the reference records admission's value, and reauthorization
+ * reads the row.
  */
-async function sessionUserFor(presented: string): Promise<Principal | null> {
+async function sessionUserFor(presented: string): Promise<ResolvedCredential | null> {
   const session = await auth().api.getSession({
     headers: new Headers({ authorization: `Bearer ${presented}` }),
   });
   const user = session?.user as { id: string; username?: string | null } | undefined;
-  if (!user?.username) return null;
-  return { kind: "user", userId: user.id, username: user.username };
+  const row = session?.session as
+    | { id?: string; userId?: string; expiresAt?: Date | string }
+    | undefined;
+  if (!user?.username || !row?.id || !row.userId) return null;
+  const expiresAt =
+    row.expiresAt instanceof Date
+      ? row.expiresAt.toISOString()
+      : typeof row.expiresAt === "string"
+        ? row.expiresAt
+        : null;
+  if (expiresAt === null) return null;
+  return {
+    principal: { kind: "user", userId: user.id, username: user.username },
+    reference: { kind: "session", sessionId: row.id, userId: row.userId, expiresAt },
+  };
+}
+
+/**
+ * The absolute instant a better-auth `session.expiresAt` cell names, from the ISO-8601
+ * `DATE` text the adapter stores. `null` for an absent cell or text `Date.parse` cannot
+ * read — a representation the adapter never writes, and every caller treats a refusal as
+ * revocation rather than guessing an instant.
+ */
+function sessionExpiryInstant(raw: string | null): number | null {
+  if (raw === null) return null;
+  const instant = Date.parse(raw);
+  return Number.isFinite(instant) ? instant : null;
 }
 
 /** The namespace a consumer request addresses: the first path segment of `/<user>/mcp*`. */
@@ -503,7 +748,7 @@ export function anonymousNotFound(): Response {
  * severing a live socket on revoke is the admin op's cascade, never this
  * function's). Row-level verdicts stay with the upgrade handler, which fetches the
  * app anyway: row gone or kind proxy → 401, archived → 403. Success coarsely
- * stamps last_used_at. `now` is the injected clock (see resolvePrincipal);
+ * stamps last_used_at. `now` is the injected clock (see resolveCaller);
  * production callers omit it.
  */
 export async function resolveAppToken(
@@ -521,7 +766,7 @@ export async function resolveAppToken(
       `SELECT "id", "kind", "ref_id", "expires_at", "last_used_at", "revoked_at"
          FROM token WHERE "hash" = ?`,
     )
-    .bind(await hashToken(presented))
+    .bind(await sha256Hex(presented))
     .first<TokenRow>();
   if (row === null) return null;
   // kind from the COLUMN, never the prefix (§6): the two can disagree.
@@ -568,11 +813,24 @@ function bearerToken(req: Request): string | null {
 }
 
 /**
- * Unsalted SHA-256, hex — deliberate for 256-bit random secrets (§4: do not "fix" this
- * into bcrypt). The hash is what the table stores; the plaintext never returns.
+ * The domain-separation prefix for a caller's Sandbox identity. A sandbox key is
+ * `SHA-256` over this prefix + the EXACT presented bearer, so it can never equal the
+ * unsalted digest of the same bearer that `token.hash`/`admin_token.hash` store: the two
+ * derivations answer different questions ("which credential is at rest here" vs "which
+ * container may this live presentation reuse"), and sharing one domain would let a
+ * database read name a live execution identity. The version suffix retires old
+ * derivations without colliding with identifiers minted under them.
  */
-async function hashToken(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+const SANDBOX_KEY_DOMAIN = "pmcp.hub.sandbox.v1:";
+
+/**
+ * Unsalted SHA-256, lowercase hex — deliberate for 256-bit random secrets (§4: do not
+ * "fix" this into bcrypt); the plaintext never returns. Used for both at-rest token hashes
+ * and sandbox keys, so callers own their domain separation (SANDBOX_KEY_DOMAIN above)
+ * rather than this function inventing one.
+ */
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -766,7 +1024,7 @@ function loginRedirect(req: Request): Response {
  * and rejecting app tokens on proxied apps are the admin op's validations.
  * The returned `id` is the handle for revokeToken and the row listTokens shows.
  * `now` is the injected clock stamping created_at/expires_at (see
- * resolvePrincipal) — issuing at a fake t0 and resolving past t0+expiry is how the
+ * resolveCaller) — issuing at a fake t0 and resolving past t0+expiry is how the
  * expired-refusal row gets its live allow-twin without sleeping or a test-only
  * "mint dead token" affordance. Production callers omit it.
  */
@@ -791,7 +1049,7 @@ export async function issueToken(
       id,
       input.kind,
       input.refId,
-      await hashToken(token),
+      await sha256Hex(token),
       token.slice(0, PREFIX_DISPLAY_LENGTH),
       expiryFor(input.kind, input.expiresIn, createdAt),
       createdAt,
@@ -954,7 +1212,7 @@ export async function issueAdminToken(
       `INSERT INTO admin_token ("id", "owner_id", "hash", "prefix", "expires_at", "created_at")
        VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .bind(id, ownerId, await hashToken(token), prefix, expiresAt, createdAt)
+    .bind(id, ownerId, await sha256Hex(token), prefix, expiresAt, createdAt)
     .run();
   // The one and only time the plaintext exists outside the caller's hand.
   return { id, token, prefix, createdAt, expiresAt };
@@ -1295,15 +1553,16 @@ export function whoamiRoute(): unknown {
   // deps: better-auth · D1 `token` · D1 `agent` · D1 `user` · crypto.subtle
   const app = new Hono();
   app.get("/whoami", async (c) => {
-    // resolveCredential, not resolvePrincipal: there is no `<user>` in this URL to prove
+    // resolveCredential, not resolveCaller: there is no `<user>` in this URL to prove
     // anything about — which is the whole reason whoami exists (§8). `namespace: null` is
     // that absence made explicit: a JWT-shaped bearer has no audience to bind here, so it is
     // refused without running the OAuth leg, and the 401 carries the bare `Bearer` challenge.
-    const principal = await resolveCredential(c.req.raw, Date.now, null);
-    if (principal === null) return unauthorized();
+    const presented = bearerToken(c.req.raw);
+    const resolved = presented === null ? null : await resolveCredential(presented, Date.now, null);
+    if (resolved === null) return unauthorized();
     return c.json({
-      principal: formatPrincipal(principal),
-      namespace: await namespaceNameOf(principal),
+      principal: formatPrincipal(resolved.principal),
+      namespace: await namespaceNameOf(resolved.principal),
     });
   });
   return app;

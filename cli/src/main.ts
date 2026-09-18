@@ -1,22 +1,13 @@
 /**
  * cli/src/main.ts — the pmcp command surface (§10): argv in, exit code out.
  *
- * This module OWNS the CLI's presentation layer: the argv grammar (commander 15 program,
- * the global `--profile`/`--json`/`--no-color`/`--yes` flags, `--args '{…}'` vs
- * `key=value` tool arguments, the `<slug>_<tool>` aggregated-name split, the path-style
- * refs `describe`/`get` take), every table/plan/confirmation rendering and exit-code
- * decision, and the CLI's copies of the pinned wire shapes below. It HIDES the transport:
- * every command except the auth and profile families is presentation sugar over MCP
- * tools/call, so no command is a capability an agent holding the same token lacks (§8's
- * parity invariant — only the UX differs). plan.ts stays pure: this module performs all
- * I/O — file reads, tool calls, prompts — and hands the planner plain data. Grants have no
- * imperative family on purpose: they are managed declaratively via diff/apply, or through
- * `pmcp call pmcp grant_set` like any other tool.
+ * This module owns the CLI's presentation layer: argv parsing, global switches,
+ * rendering, exit codes, and the copied wire shapes below. It hides transport behind
+ * the MCP request helpers: every command except authentication and profiles is
+ * presentation sugar over the same MCP methods available to an authenticated caller.
  *
- * Three modules carry what used to live here: config.ts owns the profile store and the
- * precedence, render.ts owns column/schema/JSON rendering, errors.ts owns the frozen error
- * grammar. This file is the composition — argv, network, and which of the two renderings
- * (human or `--json`) each command emits.
+ * config.ts owns the profile store and precedence, render.ts owns table/schema/JSON
+ * rendering, and errors.ts owns the stable error grammar. This file composes them.
  *
  * ponytail: the "official MCP client" is not installed, so the two seams below speak the
  * hub's stateless POST endpoint with `fetch` — one JSON-RPC message per request, exactly
@@ -24,9 +15,8 @@
  * them knows the difference.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { Command, CommanderError } from "commander";
-import { parse as parseYaml } from "yaml";
 // The extension is spelled out so `node --experimental-strip-types cli/src/main.ts` can
 // resolve it — Node's own type stripping resolves a relative import only WITH one.
 import {
@@ -38,8 +28,6 @@ import {
   writeConfig,
 } from "./config.ts";
 import { CliError, didYouMean, emitError } from "./errors.ts";
-import { parseDesired, planChanges } from "./plan.ts";
-import type { CurrentAgent, CurrentApp, CurrentState, DesiredGrant, Plan, RoleDeclaration } from "./plan.ts";
 import { catalogLine, columnize, renderJson, schemaTable, styling, wrapText } from "./render.ts";
 
 /** Printed by `--version`. Duplicated from cli/package.json because the dist build is a
@@ -69,13 +57,16 @@ export type ApprovalRequiredData = {
 };
 
 /**
+ * A role declaration in the canonical `app_list` / `app_get` wire shape: tools-only
+ * roles use a bare pattern list; multi-family roles use a family-to-patterns object.
+ */
+type RoleDeclaration = Record<string, string[] | Record<string, string[]>>;
+
+/**
  * COPIED wire shape — one `app_list` / `app_get` row (§8's pinned cross-front
- * shape, the server's own `AppRow`; contracts/app-list.json is the lock).
- * Deliberately duplicated (no shared package) and deliberately FLAT where the server's is
- * a discriminated union: the CLI branches on `kind` at runtime, so the per-kind fields are
- * optional here rather than three types. Declared once so `ls`, `agent`, and the diff
- * planner's read share one decoding instead of three private ones — a field renamed
- * server-side then fails to compile here rather than emptying a column.
+ * shape, the server's own `AppRow`). Deliberately duplicated (no shared package) and
+ * flat where the server's is a discriminated union: the CLI branches on `kind` at
+ * runtime, so per-kind fields are optional here.
  */
 export type AppRow = {
   slug: string;
@@ -87,7 +78,7 @@ export type AppRow = {
   redact: Record<string, string[]>;
   redactResults: Record<string, string[]>;
   kind: "tunnel" | "proxy" | "builtin";
-  /** builtin rows only — the virtual `pmcp` app, which the planner never plans against */
+  /** builtin rows only — the virtual `pmcp` app */
   builtin?: boolean;
   /** tunneled rows only */
   status?: "online" | "offline";
@@ -104,9 +95,8 @@ export type AppRow = {
 };
 
 /**
- * COPIED wire shape — one `agent_list` row, grants inline as the flat
- * `role[:approval]` strings `grant_set` takes (§8 pins that there is no separate
- * grant-read tool; contracts/agent-list.json is the lock).
+ * COPIED wire shape — one `agent_list` row, with grants inline as the flat
+ * `role[:approval]` strings accepted by `grant_set`.
  */
 export type AgentRow = {
   slug: string;
@@ -325,20 +315,15 @@ async function adminOp(ctx: CliContext, name: string, args: Record<string, unkno
 
 /**
  * §22.1's CLI-side half of the acceptance table: a `pmcp_adm_` admin token administers
- * the hub and reaches no single app's own tools, so the commands that would otherwise
- * address one — `call`, `get`, `read`, and the hidden `tools`/`prompts`/`resources` —
- * refuse it client-side, before any request, the same way resolveContext's `pmcp_app_`
- * check does: failing locally beats a confusing server refusal. The refusal is keyed on
- * the ADDRESSED SLUG, not blanket: when that slug is the builtin `PMCP_SLUG` itself, the
- * surface being reached IS the hub's own admin surface — the same one `ls` already fronts
- * unconditionally — so an admin token must reach it exactly as `admin-token`/`token`/`app`/
- * `agent`/`approvals`/`connections`/`audit`/`diff`/`apply` do (minus `approval_decide` and
- * `admin_token_issue`, refused server-side). Every non-`pmcp` slug is still refused with
- * its original message: that surface stays closed to admin tokens.
+ * the hub and reaches no single app's own tools, so commands that address one refuse it
+ * before any request. The refusal is target-based: the builtin `pmcp` app is the admin
+ * surface itself, and the virtual `hub` app's scoped endpoint is explicitly admitted —
+ * §23.1 has the hub's program snapshot carry only the `adminOpsFor` subset there, so the
+ * admission grants nothing an admin token could not already reach.
  */
 function refuseAdminToken(ctx: CliContext, app: string): void {
   if (!ctx.token.startsWith("pmcp_adm_")) return;
-  if (app === PMCP_SLUG) return;
+  if (app === PMCP_SLUG || app === HUB_SLUG) return;
   throw new CliError(
     "unauthenticated",
     "a pmcp_adm_ admin token administers the hub and cannot reach a single app's tools",
@@ -357,86 +342,11 @@ function rows<T>(result: Record<string, unknown>, key: string): T[] {
 /** The reserved slug §8 pins for the hub's own tools. */
 const PMCP_SLUG = "pmcp";
 
-/**
- * The diff planner's entire view of the server, read in exactly two calls —
- * app_list plus agent_list (§8 pins that grants ride agent_list
- * inline; there is no separate grant-read tool) — reshaped into
- * plan.CurrentState. Read-only.
- */
-async function readCurrentState(ctx: CliContext): Promise<CurrentState> {
-  // deps: mcpCall
-  const apps = rows<AppRow>(await adminOp(ctx, "app_list"), "apps");
-  const agents = rows<AgentRow>(await adminOp(ctx, "agent_list"), "agents");
-  return {
-    apps: apps.map(
-      (row): CurrentApp => ({
-        slug: row.slug,
-        // The builtin row reports `kind: "builtin"`; the planner only ever needs to know
-        // that it is not plannable.
-        kind: row.kind === "proxy" ? "proxy" : "tunnel",
-        name: row.name,
-        description: row.description,
-        archived: row.archived,
-        builtin: row.builtin === true,
-        roles: row.roles,
-        redact: row.redact,
-        redactResults: row.redactResults,
-        logBodies: row.logBodies,
-        ...(row.kind === "proxy"
-          ? {
-              endpoint: row.endpoint ?? "",
-              auth: row.auth ?? "headers",
-              forwardIdentity: row.forwardIdentity === true,
-              // Passed through UNDEFAULTED: absent on the row means the app declared
-              // nothing, which is a value the planner compares (§20.2's default is applied
-              // by plan.canonicalCapabilities, in one place, on both sides at once).
-              ...(row.capabilities === undefined ? {} : { capabilities: row.capabilities }),
-            }
-          : // §20.3's owner map, passed through UNDEFAULTED like `capabilities` above:
-            // absent and `{}` mean the same thing, and `plan.changedFields` canonicalizes
-            // both sides, so nothing is invented here.
-            { ...(row.ownerRoles === undefined ? {} : { ownerRoles: row.ownerRoles }) }),
-      }),
-    ),
-    agents: agents.map(
-      (row): CurrentAgent => ({
-        slug: row.slug,
-        name: row.name,
-        description: row.description,
-        // agent_list carries grants inline, as the flat `role[:approval]` strings
-        // grant_set takes — the planner works in the split shape.
-        grants: Object.fromEntries(
-          Object.entries(row.grants).map(([app, roles]) => [app, roles.map(splitGrant)]),
-        ),
-      }),
-    ),
-  };
-}
+/** The reserved virtual slug §23.1 pins beside `pmcp`: the hub's own execution service,
+ *  with no app row, never archived, and addressable by every credential kind the CLI holds
+ *  — including admin tokens, which the real-app refusal above must not catch. */
+const HUB_SLUG = "hub";
 
-/** `reader:approval` → approval mode; anything else is an allow grant of that name. */
-function splitGrant(role: string): DesiredGrant {
-  return role.endsWith(":approval")
-    ? { role: role.slice(0, -":approval".length), mode: "approval" }
-    : { role, mode: "allow" };
-}
-
-/**
- * The one human rendering of a Plan, shared by diff and apply so the two can
- * never disagree about what a plan looks like: one summary line per step with
- * destructive steps flagged, then warnings, then hard errors. Pure string
- * building; printing is the caller's.
- */
-function renderPlan(p: Plan): string {
-  // deps: render.styling
-  const c = styling(decorated());
-  const lines = p.steps.map((step) =>
-    step.destructive ? `  ${c.red("!")} ${step.summary}` : `  ${c.green("+")} ${step.summary}`,
-  );
-  if (lines.length === 0) lines.push("  (no changes)");
-  for (const warning of p.warnings) lines.push(`  ${c.yellow(`warning: ${warning}`)}`);
-  for (const error of p.errors) lines.push(`  ${c.red(`ERROR: ${error}`)}`);
-  return lines.join("\n");
-}
 
 // ── the auth family: the only commands that are not MCP-tool sugar ─────────────────────
 
@@ -761,11 +671,12 @@ export async function tools(ctx: CliContext, app: string): Promise<number> {
 
 /**
  * `pmcp call` — one tools/call against the scoped endpoint, result JSON to
- * stdout. `target` arrives already split by main (`<slug>_<tool>` aggregated
- * names split at the first `_`, unambiguous because slugs contain no
- * underscore, §7); `args` is the parsed `--args`/`key=value` object, sent
- * verbatim. A result carrying `isError: true` is still PRINTED and exits 1 (§10). A hub
- * refusal is enriched once, on the error path only, with what the caller should have sent.
+ * stdout. `target` is exactly the two positionals main parsed (`<app> <tool>`;
+ * the aggregate endpoint serves no application tools since §23.1, so the old
+ * `<slug>_<tool>` split has no destination and is gone); `args` is the parsed
+ * `--args`/`key=value` object, sent verbatim. A result carrying `isError: true` is still
+ * PRINTED and exits 1 (§10). A hub refusal is enriched once, on the error path only, with
+ * what the caller should have sent.
  */
 export async function call(
   ctx: CliContext,
@@ -942,6 +853,87 @@ export async function read(ctx: CliContext, app: string, uri: string): Promise<n
   refuseAdminToken(ctx, app);
   const result = await rpc(ctx, scoped(ctx, app), "resources/read", { uri });
   write(`${renderJson(result, documentColor())}\n`);
+  return 0;
+}
+
+// ── §23: the hub's own surface — the two hub tools on the scoped /mcp/hub endpoint, and
+//    the owner execution settings they are bounded by ─────────────────────────────────────
+
+/**
+ * `pmcp hub execute --args '<json>'` / `pmcp hub search-types --args '<json>'` — one
+ * `tools/call` against the virtual hub app's SCOPED mount `/<namespace>/mcp/hub` (§23.1),
+ * where the canonical unprefixed names are exactly `execute` and `search_types`. The
+ * aggregate `hub_execute`/`hub_search_types` spelling belongs to the consumer endpoint and
+ * is deliberately not what the CLI addresses: `/mcp/hub` is reachable by every credential
+ * kind the CLI can hold, admin tokens included. `args` is the parsed `--args` payload, sent
+ * verbatim, so `timeout_ms` reaches the sandbox as the JSON integer the operator wrote.
+ * Rendering, the `isError: true` → exit 1 rule, and error-path enrichment follow
+ * `pmcp call` exactly — this is the same one-tools/call-on-a-scoped-mount shape, so the
+ * two commands have no reason to read differently.
+ */
+export async function hubCall(
+  ctx: CliContext,
+  tool: "execute" | "search_types",
+  args: Record<string, unknown>,
+): Promise<number> {
+  // deps: mcpCall · enrichCallFailure
+  refuseAdminToken(ctx, HUB_SLUG);
+  try {
+    const result = (await mcpCall(ctx, HUB_SLUG, tool, args)) as { isError?: boolean };
+    write(`${renderJson(result, documentColor())}\n`);
+    return result?.isError === true ? 1 : 0;
+  } catch (error) {
+    throw await enrichCallFailure(ctx, { app: HUB_SLUG, tool }, args, error);
+  }
+}
+
+/** §23.3's compiled bounds for the owner pair, `1_000 <= default <= max <= 300_000` — the
+ *  same predicate the hub enforces. The CLI checks it locally so a pair outside the bounds
+ *  is argv (§10: a frame the hub is known to refuse is never sent), never a -32602. */
+const HUB_TIMEOUT_MIN_MS = 1_000;
+const HUB_TIMEOUT_MAX_MS = 300_000;
+
+/** The one usage line the settings verbs and their flag parsers quote back. */
+const HUB_SETTINGS_USAGE = "pmcp hub settings set --default-timeout-ms <int> --max-timeout-ms <int>";
+
+/**
+ * `pmcp hub settings get` — `hub_settings_get` through the builtin `pmcp` app (§23.3). The
+ * pair is OWNER-scoped, not bearer-scoped: every credential that can reach the admin
+ * surface reads the same row, and an absent row reads the pinned 30_000/30_000 default.
+ */
+export async function hubSettingsGet(ctx: CliContext): Promise<number> {
+  // deps: adminOp
+  return writeHubSettings(await adminOp(ctx, "hub_settings_get"));
+}
+
+/**
+ * `pmcp hub settings set --default-timeout-ms <int> --max-timeout-ms <int>` —
+ * `hub_settings_update` (§23.3): both integers, one atomic upsert, the same read shape
+ * back. The dispatcher has already parsed the pair as bounded integers, so nothing here
+ * coerces a string; the hub re-validates the pair authoritatively.
+ */
+export async function hubSettingsSet(
+  ctx: CliContext,
+  pair: { defaultTimeoutMs: number; maxTimeoutMs: number },
+): Promise<number> {
+  // deps: adminOp
+  return writeHubSettings(
+    await adminOp(ctx, "hub_settings_update", { default_timeout_ms: pair.defaultTimeoutMs, max_timeout_ms: pair.maxTimeoutMs }),
+  );
+}
+
+/**
+ * The rendering both settings verbs share: `--json` emits the op's own document
+ * (`{ settings: { defaultTimeoutMs, maxTimeoutMs } }`, §23.3) untouched — wire shapes and
+ * vocabulary verbatim, §10 — and a human reads the same pair as two lines. A field the hub
+ * did not send prints empty rather than as the word `undefined`; the hub's shape always
+ * carries both, so this is presentation slack, not a fourth state.
+ */
+function writeHubSettings(result: Record<string, unknown>): number {
+  if (globals.json) return emitDocument(result);
+  const settings = (result.settings ?? {}) as Record<string, unknown>;
+  write(`default timeout  ${String(settings.defaultTimeoutMs ?? "")} ms\n`);
+  write(`max timeout      ${String(settings.maxTimeoutMs ?? "")} ms\n`);
   return 0;
 }
 
@@ -1133,6 +1125,14 @@ function describeItem(slug: string, item: string, catalog: Catalog): number {
   return 0;
 }
 
+/** Split the wire's trailing `:approval` mode suffix without touching colons inside an inline URI. */
+function splitGrant(entry: string): { role: string; mode: "allow" | "approval" } {
+  const suffix = ":approval";
+  return entry.endsWith(suffix)
+    ? { role: entry.slice(0, -suffix.length), mode: "approval" }
+    : { role: entry, mode: "allow" };
+}
+
 /** `describe agent/<slug>` — agent_list + token_list, the same reads admin already makes. */
 async function describeAgent(ctx: CliContext, slug: string): Promise<number> {
   const found = rows<AgentRow>(await adminOp(ctx, "agent_list"), "agents").find((row) => row.slug === slug);
@@ -1169,13 +1169,24 @@ async function describeAgent(ctx: CliContext, slug: string): Promise<number> {
  * main. `create` of a tunneled app is two tool calls — app_create,
  * then token_issue — because a tunneled app is unusable without its token
  * (§6 lifecycle); proxied create carries endpoint + auth mode instead.
+ * `typescriptAliases` is §23.6's owner lane, passed through verbatim on create;
+ * `set-aliases` is the same object through `app_update`, the only write that
+ * can change an established assignment (omission there preserves it).
  * `set-auth` holds the full replacement header set (repeatable `--header`
  * flags, write-only, headers-mode apps only, §8); `disconnect` wipes an
  * OAuth bundle (`auth: oauth` only).
  */
 export type AppCommand =
-  | { sub: "create"; slug: string; kind: "tunnel" }
-  | { sub: "create"; slug: string; kind: "proxy"; endpoint: string; auth: "headers" | "oauth" }
+  | { sub: "create"; slug: string; kind: "tunnel"; typescriptAliases?: Record<string, unknown> }
+  | {
+      sub: "create";
+      slug: string;
+      kind: "proxy";
+      endpoint: string;
+      auth: "headers" | "oauth";
+      typescriptAliases?: Record<string, unknown>;
+    }
+  | { sub: "set-aliases"; slug: string; typescriptAliases: Record<string, unknown> }
   | { sub: "archive" | "unarchive" | "delete" | "disconnect"; slug: string }
   | { sub: "set-auth"; slug: string; headers: Record<string, string> };
 
@@ -1195,12 +1206,25 @@ export async function app(ctx: CliContext, cmd: AppCommand): Promise<number> {
       slug: cmd.slug,
       kind: cmd.kind,
       ...(cmd.kind === "proxy" ? { endpoint: cmd.endpoint, auth: cmd.auth } : {}),
+      // Absent flag = absent field: §23.6's omission rule is the hub's to enforce, and an
+      // empty object invented here would read as a deliberate clear.
+      ...(cmd.typescriptAliases === undefined ? {} : { typescript_aliases: cmd.typescriptAliases }),
     });
     // A tunneled app is unusable without its credential (§6): mint it here, print once.
     const minted = cmd.kind === "tunnel" ? await adminOp(ctx, "token_issue", { kind: "app", slug: cmd.slug }) : undefined;
     if (globals.json) return emitDocument({ app: created.app ?? { slug: cmd.slug }, ...(minted === undefined ? {} : { token: minted }) });
     write(`created ${String((created.app as Record<string, unknown>)?.slug ?? cmd.slug)}\n`);
     if (minted !== undefined) write(`app token (shown once): ${String(minted.token)}\n`);
+    return 0;
+  }
+  if (cmd.sub === "set-aliases") {
+    const updated = await adminOp(ctx, "app_update", { slug: cmd.slug, typescript_aliases: cmd.typescriptAliases });
+    // `--json` is the op's own document (`{ app }`, §08) — the row carries the owner
+    // configuration, the resolved map, and the diagnostics, so the machine stream is the
+    // whole answer rather than an echo of what was typed.
+    if (globals.json) return emitDocument(updated);
+    write(`typescript aliases set for ${cmd.slug}\n`);
+    writeAliasMapping((updated.app ?? {}) as Record<string, unknown>);
     return 0;
   }
   if (cmd.sub === "set-auth") {
@@ -1221,6 +1245,34 @@ export async function app(ctx: CliContext, cmd: AppCommand): Promise<number> {
   return 0;
 }
 
+/**
+ * The mapping body §10 asks alias commands for: every resolved reservation as
+ * `family  canonical → TypeScript (source)`, tombstones marked `superseded` — the old path
+ * stays reserved (§23.6), so the operator needs to see why it is still listed — followed by
+ * the bounded collision/omission diagnostics the hub attached. Both lists are read from the
+ * `app_update` row (§08 exposes owner configuration separately from the resolved map); a
+ * row carrying neither prints nothing rather than guessing at a shape.
+ */
+function writeAliasMapping(row: Record<string, unknown>): void {
+  // `Array.isArray` narrows each read to `any[]` before the named const, so a shape the hub
+  // did not send renders as an empty list rather than as an unchecked member access.
+  const reservations: Record<string, any>[] = Array.isArray(row.typescriptReservations) ? row.typescriptReservations : [];
+  if (reservations.length > 0) {
+    const lines = reservations.map((entry) => [
+      String(entry.family ?? ""),
+      String(entry.canonicalName ?? ""),
+      "→",
+      String(entry.typescriptName ?? ""),
+      `(${entry.active === false ? "superseded" : String(entry.source ?? "")})`,
+    ]);
+    write(`${indent(columnize(lines, { tty: decorated() }), 2)}\n`);
+  }
+  const diagnostics: Record<string, any>[] = Array.isArray(row.typescriptDiagnostics) ? row.typescriptDiagnostics : [];
+  for (const entry of diagnostics) {
+    write(`  ${String(entry.reason ?? "alias")}: ${String(entry.family ?? "")} ${String(entry.canonicalName ?? "")} — ${String(entry.message ?? "")}\n`);
+  }
+}
+
 /** One agent command, normalized from `pmcp agent …` argv. */
 export type AgentCommand =
   | { sub: "list" }
@@ -1231,10 +1283,9 @@ export type AgentCommand =
 /**
  * `pmcp agent …` — sugar over agent_list / agent_create / agent_update /
  * agent_delete (§8). `list` prints each agent with its grants inline (per
- * app: role names and modes) — the same single read the diff planner
- * rides. `update` patches `name`/`description`; `slug` is immutable (§22.4).
- * `delete` is destructive — grants cascade and the agent's tokens are
- * deleted server-side — and asks for confirmation unless `--yes`.
+ * app: role names and modes). `update` patches `name`/`description`; `slug`
+ * is immutable (§22.4). `delete` is destructive — grants cascade and the
+ * agent's tokens are deleted server-side — and asks for confirmation unless `--yes`.
  */
 export async function agent(ctx: CliContext, cmd: AgentCommand): Promise<number> {
   // deps: mcpCall · confirm
@@ -1603,101 +1654,6 @@ function formatDateTime(ms: number): string {
   return new Date(ms).toISOString().slice(0, 16).replace("T", " ");
 }
 
-/**
- * `pmcp diff -f mcps.yaml` — read the file, read the server (one app_list
- * plus one agent_list), print the plan: creates/updates/deletes and
- * archive transitions with destructive steps flagged, then warnings, then
- * hard errors (§9). Exit 0 whenever the plan COMPUTES — empty or not, since drift
- * detection is `--json` + `steps.length` (§10) — and 1 when the file has hard errors.
- * Never mutates anything.
- */
-export async function diff(ctx: CliContext, opts: { file: string }): Promise<number> {
-  // deps: yaml.parse · node:fs · plan.parseDesired · plan.planChanges · readCurrentState · renderPlan
-  const plan = planChanges(desiredFrom(opts.file), await readCurrentState(ctx));
-  if (globals.json) {
-    emitDocument(plan);
-    return plan.errors.length === 0 ? 0 : 1;
-  }
-  write(`${renderPlan(plan)}\n`);
-  return plan.errors.length === 0 ? 0 : 1;
-}
-
-/**
- * `pmcp apply -f mcps.yaml [--yes]` — shows exactly the plan diff prints,
- * refuses outright while it carries hard errors, asks for confirmation
- * (skipped by `--yes`), then executes the steps strictly in plan order, one
- * tool call each, stopping at the first failure and reporting the completed
- * prefix — steps are individual admin calls; there is no transaction to roll
- * back. `--json` carries the same steps with a per-step
- * `status: applied | skipped | failed` so CI never parses colored prose (§10).
- * Exit 0 only when every step succeeded.
- */
-export async function apply(ctx: CliContext, opts: { file: string }): Promise<number> {
-  // deps: yaml.parse · node:fs · confirm · plan.* · readCurrentState · renderPlan · mcpCall
-  const plan = planChanges(desiredFrom(opts.file), await readCurrentState(ctx));
-  const outcomes = plan.steps.map((step) => ({ ...step, status: "skipped" as "applied" | "skipped" | "failed", error: undefined as string | undefined }));
-  if (!globals.json) write(`${renderPlan(plan)}\n`);
-  if (plan.errors.length > 0) {
-    if (globals.json) emitDocument({ steps: outcomes, warnings: plan.warnings, errors: plan.errors });
-    return 1;
-  }
-  if (plan.steps.length === 0) {
-    if (globals.json) emitDocument({ steps: outcomes, warnings: plan.warnings, errors: plan.errors });
-    return 0;
-  }
-  if (!globals.yes && !(await confirm(`apply ${plan.steps.length} step(s)?`))) return 1;
-  let failed = false;
-  for (const outcome of outcomes) {
-    if (failed) break;
-    try {
-      await adminOp(ctx, outcome.tool, outcome.args);
-      outcome.status = "applied";
-      if (!globals.json) write(`  ok ${outcome.summary}\n`);
-    } catch (error) {
-      // No transaction to roll back: report the completed prefix and stop.
-      outcome.status = "failed";
-      outcome.error = error instanceof Error ? error.message : String(error);
-      failed = true;
-      if (!globals.json) write(`  FAILED ${outcome.summary}: ${outcome.error}\n`);
-    }
-  }
-  const applied = outcomes.filter((outcome) => outcome.status === "applied").length;
-  if (globals.json) emitDocument({ steps: outcomes, warnings: plan.warnings, errors: plan.errors });
-  else write(`${applied}/${plan.steps.length} steps applied\n`);
-  return failed ? 1 : 0;
-}
-
-/**
- * §9's file, through the `yaml` package (YAML 1.2 core schema): anchors, multi-line
- * scalars, flow mappings and multi-document files work; duplicate keys and tabs, which the
- * retired subset parser tolerated, are parse errors. A parse failure is the operator's
- * typo, not a runtime fault — it becomes a `usage` error naming the file.
- */
-function desiredFrom(file: string) {
-  try {
-    return parseDesired(readYamlFile(file));
-  } catch (error) {
-    if (error instanceof CliError) throw error;
-    // parseDesired's grammar refusals ("… is not a key of this grammar") are plain Errors,
-    // and an uncaught one is labelled `remote_error` by errors.toCliError — telling an agent
-    // the hub refused when the operator mistyped a key in their own file (§10's vocabulary).
-    throw new CliError("usage", `${file}: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-function readYamlFile(file: string): unknown {
-  let text: string;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch {
-    throw new CliError("usage", `cannot read ${file}`, { hints: ["-f <file> names the YAML file (default mcps.yaml)"] });
-  }
-  try {
-    return parseYaml(text);
-  } catch (error) {
-    throw new CliError("usage", `${file}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`);
-  }
-}
 
 /**
  * `pmcp connect <app>` — prints the /apps OAuth connect URL for an
@@ -1801,6 +1757,10 @@ Invoke
   get prompt/<app>/<name> [key=value … | --args '{…}']
   get resource/<app>/<uri>
 
+Hub
+  hub execute --args '{…}' · hub search-types --args '{…}'
+  hub settings get | set --default-timeout-ms <int> --max-timeout-ms <int>
+
 Auth & profiles
   login [--profile <name>] [--url <origin>]
   logout · whoami
@@ -1808,14 +1768,12 @@ Auth & profiles
 
 Admin
   app create|archive|unarchive|delete|disconnect|set-auth
+  app aliases set <slug> [--args '{…}']
   agent list|create|update|delete
   approvals · approve <id> · reject <id>
   token issue|list|revoke · admin-token issue|list|revoke
   connect <app> · connections · connection revoke <id>
   audit [--export jsonl]
-
-Declarative
-  diff [-f <file>] · apply [-f <file>] [--yes]
 
 Global: --profile <name>, --json, --no-color, --yes, --version, -h
 `;
@@ -2035,25 +1993,27 @@ function buildProgram(): Command {
       pendingExit = (await prompt(await context(), parsed.slug, parsed.item, args)) as 0 | 1;
     });
 
-  on("call [words...]", "call a tool: <app> <tool> or <slug>_<tool>, plus key=value args", "pmcp call mcp-tools paper_fetch url=https://arxiv.org/abs/2408.00001")
+  on("call [words...]", "call a tool: <app> <tool>, plus key=value args", "pmcp call mcp-tools paper_fetch url=https://arxiv.org/abs/2408.00001")
     .option("--args <json>", "the arguments object, as JSON")
     .action(async (words: string[], opts: { args?: string }) => {
       // Partitioned by SHAPE, never by count: a word carrying `=` is an argument wherever
-      // it sits, so `pmcp call news_echo text=hi` is the aggregated name plus an argument
-      // and not an app called `news_echo` with a tool called `text=hi`.
+      // it sits, so `pmcp call news echo text=hi` is two positionals plus an argument. The
+      // target is exactly `<app> <tool>`: the aggregate endpoint no longer serves
+      // application tools (§23.1), so an aggregated `<slug>_<tool>` name has no destination
+      // and is reported as the missing half of the pair it looks like.
       const positionals = words.filter((word) => !word.includes("="));
       if (positionals.length > 2) {
         throw new CliError("usage", `"${positionals[2]}" is neither an app, a tool, nor key=value`, {
           usage: "pmcp call <app> <tool> [key=value … | --args '{…}']",
         });
       }
-      const target = requireWord(positionals[0], "app", "pmcp call <app> <tool> [key=value … | --args '{…}']");
-      const split = positionals.length > 1 ? { app: target, tool: positionals[1] } : splitAggregated(target);
+      const app = requireWord(positionals[0], "app", "pmcp call <app> <tool> [key=value … | --args '{…}']");
+      const tool = requireWord(positionals[1], "tool", "pmcp call <app> <tool> [key=value … | --args '{…}']");
       // Before the context, deliberately: `await context()` is a network whoami, and an
       // argument list evaluates left to right — a malformed `--args` resolved after it would
       // be reported as a hub failure on an unreachable hub (§10's local-first rule).
       const args = toolArguments(words.filter((word) => word.includes("=")), opts.args);
-      pendingExit = (await call(await context(), split, args)) as 0 | 1;
+      pendingExit = (await call(await context(), { app, tool }, args)) as 0 | 1;
     });
 
   on("tools <app>", "list an app's tools", undefined, true).action(async (slug: string) => {
@@ -2105,11 +2065,17 @@ function buildProgram(): Command {
     .option("--tunneled", "a tunneled app (the default)")
     .option("--proxied <endpoint>", "a proxied app at this endpoint")
     .option("--auth <mode>", "headers | oauth (proxied only)")
-    .action(async (slug: string, opts: { proxied?: string; auth?: string }) => {
+    .option("--typescript-aliases <json>", "owner hub-local service/tool names, as a JSON object")
+    .action(async (slug: string, opts: { proxied?: string; auth?: string; typescriptAliases?: string }) => {
+      // Parsed before the context: a malformed alias object is argv (§10's local-first
+      // rule), and the object travels verbatim — identifier syntax and reservation
+      // collisions are the hub's atomic refusal, not a second validator here.
+      const typescriptAliases =
+        opts.typescriptAliases === undefined ? undefined : jsonObject("--typescript-aliases", opts.typescriptAliases);
       const cmd: AppCommand =
         opts.proxied === undefined
-          ? { sub: "create", slug, kind: "tunnel" }
-          : { sub: "create", slug, kind: "proxy", endpoint: opts.proxied, auth: opts.auth === "oauth" ? "oauth" : "headers" };
+          ? { sub: "create", slug, kind: "tunnel", typescriptAliases }
+          : { sub: "create", slug, kind: "proxy", endpoint: opts.proxied, auth: opts.auth === "oauth" ? "oauth" : "headers", typescriptAliases };
       pendingExit = (await app(await context(), cmd)) as 0 | 1;
     });
   for (const sub of ["archive", "unarchive", "delete", "disconnect"] as const) {
@@ -2140,6 +2106,75 @@ function buildProgram(): Command {
     .action(async () => {
       pendingExit = (await ls(await context())) as 0 | 1;
     });
+  // §23.6's owner lane, on the update side: one `app_update` carrying `typescript_aliases`.
+  // Omission preserves an established assignment, so this verb exists precisely because
+  // create cannot change one — and it never renames the upstream's canonical MCP names.
+  apps
+    .command("aliases")
+    .description("hub-local TypeScript names for an app")
+    .command("set <slug> [words...]")
+    .description("set an app's owner TypeScript aliases")
+    .option("--args <json>", "the aliases object {service?, tools?}, as JSON")
+    .action(async (slug: string, words: string[], opts: { args?: string }) => {
+      const aliases = payloadArguments(
+        opts.args,
+        words,
+        `pmcp app aliases set <slug> --args '{"service":"news","tools":{"get-news":"getNews"}}'`,
+      );
+      pendingExit = (await app(await context(), { sub: "set-aliases", slug, typescriptAliases: aliases })) as 0 | 1;
+    });
+
+  // ── §23: the hub's own surface ────────────────────────────────────────────────────────
+  // `execute`/`search-types` address the virtual hub app's scoped mount; `settings` reads
+  // and writes the owner-scoped pair the sandbox deadline is chosen from. Registered here
+  // as ONE family because §23.1 makes them one surface: a caller who can run a program is
+  // the caller those settings bound.
+  const hub = on("hub", "run TypeScript in the hub sandbox, and read or set its execution timeouts");
+  hub
+    .command("execute [words...]")
+    .description("run one TypeScript program against your authorized catalog (scoped /mcp/hub)")
+    .option("--args <json>", "the execute arguments object, as JSON")
+    .action(async (words: string[], opts: { args?: string }) => {
+      const args = payloadArguments(opts.args, words, `pmcp hub execute --args '{"code":"export default 1","timeout_ms":5000}'`);
+      pendingExit = (await hubCall(await context(), "execute", args)) as 0 | 1;
+    });
+  hub
+    .command("search-types [words...]")
+    .description("search the TypeScript declarations your credential can see")
+    .option("--args <json>", "the search arguments object, as JSON")
+    .action(async (words: string[], opts: { args?: string }) => {
+      const args = payloadArguments(opts.args, words, `pmcp hub search-types --args '{"query":"news"}'`);
+      pendingExit = (await hubCall(await context(), "search_types", args)) as 0 | 1;
+    });
+  const hubSettings = hub.command("settings").description("owner execution settings, in milliseconds");
+  hubSettings
+    .command("get")
+    .description("read the default and maximum execution timeout")
+    .action(async () => {
+      pendingExit = (await hubSettingsGet(await context())) as 0 | 1;
+    });
+  hubSettings
+    .command("set")
+    .description("set the default and maximum execution timeout")
+    .option("--default-timeout-ms <int>", "the timeout execute uses when it omits timeout_ms")
+    .option("--max-timeout-ms <int>", "the ceiling an execute request may ask for")
+    .action(async (opts: { defaultTimeoutMs?: string; maxTimeoutMs?: string }) => {
+      // Both flags resolve before the context: an untranslatable pair is malformed argv, and
+      // §10's local-first rule forbids reporting it as whatever the hub says about the token
+      // — §23.3's bounds are the hub's own predicate, and they are checked identically here.
+      const defaultTimeoutMs = timeoutFlagMs("--default-timeout-ms", opts.defaultTimeoutMs);
+      const maxTimeoutMs = timeoutFlagMs("--max-timeout-ms", opts.maxTimeoutMs);
+      if (defaultTimeoutMs > maxTimeoutMs) {
+        throw new CliError("usage", `--default-timeout-ms (${defaultTimeoutMs}) must not exceed --max-timeout-ms (${maxTimeoutMs})`, {
+          usage: HUB_SETTINGS_USAGE,
+        });
+      }
+      pendingExit = (await hubSettingsSet(await context(), { defaultTimeoutMs, maxTimeoutMs })) as 0 | 1;
+    });
+  for (const sub of hub.commands) {
+    sub.addHelpText("after", GLOBAL_HELP);
+    for (const leaf of sub.commands) leaf.addHelpText("after", GLOBAL_HELP);
+  }
 
   const agents = on("agent", "agents and their grants");
   agents
@@ -2299,16 +2334,6 @@ function buildProgram(): Command {
       pendingExit = (await connection(await context(), { sub: "list" })) as 0 | 1;
     });
 
-  on("diff", "plan the changes a YAML file would make", "pmcp diff -f mcps.yaml --json")
-    .option("-f, --file <file>", "the YAML file", "mcps.yaml")
-    .action(async (opts: { file: string }) => {
-      pendingExit = (await diff(await context(), { file: opts.file })) as 0 | 1;
-    });
-  on("apply", "apply the plan a YAML file describes", "pmcp apply -f mcps.yaml --yes")
-    .option("-f, --file <file>", "the YAML file", "mcps.yaml")
-    .action(async (opts: { file: string }) => {
-      pendingExit = (await apply(await context(), { file: opts.file })) as 0 | 1;
-    });
 
   return program;
 }
@@ -2371,16 +2396,68 @@ function expiresIn(value: string | undefined): number | "never" | undefined {
   throw new CliError("usage", `--expires wants a duration (90d, 12h, 30m, 45s), a count of seconds, or "never" — got "${value}"`);
 }
 
-/** `<slug>_<tool>` → its two halves; the first underscore is the split (§7). */
-function splitAggregated(target: string): { app: string; tool: string } {
-  const underscore = target.indexOf("_");
-  if (underscore === -1) {
-    throw new CliError("usage", `"${target}" is not <app> <tool> or <slug>_<tool>`, {
-      usage: "pmcp call <app> <tool> [key=value … | --args '{…}']",
-      hints: [`pmcp describe app/${target} lists its tools`],
+/**
+ * One `--args`/`--typescript-aliases` value as the JSON OBJECT it has to be. Shared by
+ * `toolArguments`' `--args` branch and the whole-payload parsers (the two hub tools, the
+ * alias verbs, `--typescript-aliases`) so none of them can drift on what "valid JSON"
+ * means; a value that parses but is not an object (an array, a bare string, a number) is
+ * malformed argv — every schema these reach declares an object, and a cast would put the
+ * wrong JSON type on the wire under the right flag.
+ */
+function jsonObject(flag: string, json: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (error) {
+    throw new CliError("usage", `${flag} is not valid JSON (${error instanceof Error ? error.message : String(error)})`, {
+      hints: [`quote the keys: ${flag} '{"…":"…"}'`],
     });
   }
-  return { app: target.slice(0, underscore), tool: target.slice(underscore + 1) };
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new CliError("usage", `${flag} must be one JSON object`, { hints: [`quote the keys: ${flag} '{"…":"…"}'`] });
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * The whole-payload spelling of `--args`, spoken by `hub execute`, `hub search-types` and
+ * `app aliases set`: ALL input is one JSON object, because the schemas behind these carry a
+ * JSON integer and/or a nested object (`timeout_ms`, `tools`) that `key=value` cannot
+ * express without a coercion — and §10 forbids passing a numeric `key=value` string as a
+ * schema integer. A positional word is therefore refused rather than parsed, and a missing
+ * payload is malformed argv: both before `await context()` and before any request (§10's
+ * local-first rule).
+ */
+function payloadArguments(argsJson: string | undefined, words: readonly string[], usage: string): Record<string, unknown> {
+  if (words.length > 0) {
+    throw new CliError("usage", `"${words[0]}" is not a separate argument — this payload is one JSON object`, {
+      usage,
+      hints: ["pass the payload as --args '{…}'"],
+    });
+  }
+  if (argsJson === undefined) throw new CliError("usage", "missing --args", { usage });
+  return jsonObject("--args", argsJson);
+}
+
+/**
+ * One settings flag as §23.3's bounded integer: a plain decimal count of milliseconds
+ * between 1_000 and 300_000. `Number` is only ever called on a pure digit run, so `30s`,
+ * `3e4`, `0x1d4c` and any `key=value` residue fail as the malformed argv they are — never
+ * a silent `NaN`, and never an integer coerced out of a string the operator did not type
+ * as one.
+ */
+function timeoutFlagMs(flag: string, value: string | undefined): number {
+  if (value === undefined) throw new CliError("usage", `missing ${flag}`, { usage: HUB_SETTINGS_USAGE });
+  if (!/^\d+$/.test(value)) {
+    throw new CliError("usage", `${flag} wants a whole number of milliseconds, got "${value}"`, { usage: HUB_SETTINGS_USAGE });
+  }
+  const ms = Number(value);
+  if (ms < HUB_TIMEOUT_MIN_MS || ms > HUB_TIMEOUT_MAX_MS) {
+    throw new CliError("usage", `${flag} must be between ${HUB_TIMEOUT_MIN_MS} and ${HUB_TIMEOUT_MAX_MS} ms, got ${ms}`, {
+      usage: HUB_SETTINGS_USAGE,
+    });
+  }
+  return ms;
 }
 
 /**
@@ -2394,15 +2471,7 @@ function toolArguments(words: string[], argsJson: string | undefined): Record<st
   if (argsJson !== undefined && words.length > 0) {
     throw new CliError("usage", "--args and key=value are two spellings of the same arguments object — pick one");
   }
-  if (argsJson !== undefined) {
-    try {
-      return JSON.parse(argsJson) as Record<string, unknown>;
-    } catch (error) {
-      throw new CliError("usage", `--args is not valid JSON (${error instanceof Error ? error.message : String(error)})`, {
-        hints: [`quote the keys: --args '{"url":"…"}'`],
-      });
-    }
-  }
+  if (argsJson !== undefined) return jsonObject("--args", argsJson);
   const args: Record<string, unknown> = {};
   for (const word of words) {
     const equals = word.indexOf("=");
@@ -2415,10 +2484,9 @@ function toolArguments(words: string[], argsJson: string | undefined): Record<st
 }
 
 /**
- * One y/N prompt on stdin; anything but y/yes is a refusal — and so is having nobody to
- * ask. A non-interactive stdin (CI, cron, `pmcp apply < /dev/null`) refuses immediately
- * ON STDERR instead of waiting for a `data` event that can never come: a destructive
- * command that silently applied nothing and exited 0 is the worst failure `apply` has.
+ * One y/N prompt on stdin; anything but y/yes is a refusal, as is having nobody to ask.
+ * A non-interactive stdin refuses immediately on stderr instead of waiting for input that
+ * cannot arrive.
  */
 function confirm(question: string): Promise<boolean> {
   if (process.stdin.isTTY !== true) {
@@ -2428,9 +2496,7 @@ function confirm(question: string): Promise<boolean> {
     );
     return Promise.resolve(false);
   }
-  // The question goes to STDERR: the answer comes from stdin either way, and stdout belongs
-  // to the command's output alone — `pmcp apply --json` without `--yes` would otherwise put
-  // human chatter in front of the document §10 promises is the only thing there.
+  // Prompts use stderr so stdout remains exclusively the command's result stream.
   process.stderr.write(`${question} [y/N] `);
   return new Promise<boolean>((resolve) => {
     process.stdin.setEncoding("utf8");

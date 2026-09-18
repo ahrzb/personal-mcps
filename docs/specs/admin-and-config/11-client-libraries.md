@@ -20,33 +20,28 @@ serve(  # blocks; connects, registers, reconnects forever
     url="https://mcp.example.com",   # or PMCP_URL; wss://<origin>/connect is derived
     token=...,                        # or PMCP_APP_TOKEN
     roles={"reader": ["get_news", "search_.*"]},
-    # per-family form, §20 (added 2026-08-26) — a bare list still means tools:
-    # roles={"reader": {"tools": ["get_news"], "prompts": ["digest_.*"],
-    #                   "resources": ["news://feed/*"]}},
+    # Optional hub-local hints; canonical MCP names remain unchanged:
+    typescript_aliases={"service": "news", "tools": {"get-news": "getNews"}},
 )
 ```
 
-JS (`@personal-mcps/client` on npm): identical shape — `serve(server, { url, token, roles })`,
-with the same two spellings (`Roles = Record<string, string[] | { tools?: string[];
-prompts?: string[]; resources?: string[] }>`).
+JS (`@personal-mcps/client` on npm) has the same shape:
+`serve(server, { url, token, roles, typescriptAliases })`. Python spells the option
+`typescript_aliases` at its public API and emits wire `typescriptAliases`.
 
-Go (`github.com/ahrzb/personal-mcps/clients/go`): the same semantics through
-`pmcp.Serve(ctx, server, pmcp.Options{URL, Token, Roles})`; `pmcp.Patterns` is the
-bare tools list and `pmcp.Families` is the per-family form. All three libraries
-pass the declaration through verbatim: normalization and validation are the
-hub's (§6), so no library gains a rule that could disagree with it.
+Go carries the same semantics in
+`pmcp.Options{URL, Token, Roles, TypeScriptAliases}`. All three transports copy the
+optional `{service, tools}` shape into `hub/register`; they validate no alias policy
+locally, because the hub must be the single syntax/collision authority. SDK hints rank
+below owner configuration and a collision does not disconnect the tunnel.
 
-Library responsibilities: dial + authenticate, `hub/register`, answer the hub's
-`server/discover`, bridge WS frames to the SDK's server session, pass through
-list-changed/resource-updated notifications, protocol pings, reconnect with
-backoff (403 at upgrade / close `4002` = archived → keep retrying at max
-backoff, §6), and stop on `hub/replaced`. Python and JS answer
-`server/discover` inside their transport because their SDK adapters predate the
-method. The Go transport restricts the protocol to `2026-07-28` and lets the
-official Go SDK ≥ 1.7 answer it from the server's real registered capabilities;
-the observable wire contract is identical. A client boundary that cannot
-answer sends `-32601`, the hub's “capabilities unknown” signal, and the hub
-falls back to warming tools only (§6).
+Library responsibilities remain dial/authenticate, `hub/register`, answer
+`server/discover`, bridge frames, pass notifications, ping, reconnect/backoff, and stop
+on `hub/replaced`. Alias hints change only the registration control object. Python/JS
+continue answering discover in transport; Go continues using the official SDK. A
+boundary that cannot answer discover returns `-32601`, preserving the tools-only warm
+fallback.
+
 
 The packages also expose two in-handler affordances (§7): caller identity —
 principal, roles, and a role predicate read from forwarded `_meta` — and

@@ -33,8 +33,10 @@
  * derived from the constant) is a change to this sentence and to that suite, never a
  * silent one.
  *
- * Role declarations pass straight through registry.upsertDeclaredRoles — the roles_json
- * format never enters this module. The worker half reaches its DO namespace binding
+ * Role declarations pass straight through registry.upsertDeclaredRoles, and §23's optional
+ * SDK alias hints through registry.upsertDeclaredTypescriptAliases — the roles_json format
+ * and the reservation table never enter this module; syntax judgement is hub-types'.
+ * The worker half reaches its DO namespace binding
  * (APP_CONNECTION) via the importable env of `cloudflare:workers`, so callers never
  * thread an env object; the composition root owns the binding name.
  *
@@ -72,12 +74,15 @@ import {
 } from "./capabilities";
 import { CODES, HubError, unavailable } from "./errors";
 import type { BackendCtx, JsonRpcRequest, JsonRpcResponse, AppBackend, Tool } from "./gateway";
+import { aliasViolations } from "./hub-types";
+import type { AliasDiagnostic, TypescriptAliases } from "./hub-types";
 import { formatPrincipal } from "./principal";
 import { resolveAppToken } from "./identity";
 import { deadlines } from "./limits";
 import {
   patternFamilyOf,
   Registry,
+  RegistryRefusal,
   APP_CAPABILITIES,
   subjectKeyOf,
   validateRoles,
@@ -125,6 +130,17 @@ export const CLOSE_PROTOCOL = 4004;
  * `replaced` the hub's step-aside notification before CLOSE_REPLACED.
  */
 export const HUB_METHODS = { register: "hub/register", replaced: "hub/replaced" } as const;
+
+/**
+ * The wire key of `hub/register`'s optional alias-hint member (§23) — the fourth params
+ * member beside §6's `clientVersion`/`protocolVersion`/`roles`. Its value is hub-types'
+ * `{service?, tools?}` shape; the KEY is published vocabulary for the same single
+ * consumer as HUB_METHODS: the contracts fixture producer pins the accepted request from
+ * this export, while both client libraries copy the spelling the way they copy every
+ * other wire name (they cannot import it, and §4's fixtures are what keep the copies
+ * honest).
+ */
+export const TYPESCRIPT_ALIASES_PARAM = "typescriptAliases";
 
 /**
  * What a client library must DO about a close — the third piece of published vocabulary,
@@ -893,7 +909,9 @@ export class AppConnection extends DurableObject {
   /**
    * One JSON-RPC message per WS text frame, routed by namespace. hub/register: the
    * declaration is handed to registry.upsertDeclaredRoles (which owns validation and
-   * drift auditing); a rejected declaration gets a JSON-RPC error reply and close 4004,
+   * drift auditing) and §23's optional alias hints to
+   * registry.upsertDeclaredTypescriptAliases (which owns reservation and conflict
+   * policy); a rejected declaration gets a JSON-RPC error reply and close 4004,
    * a vanished app row closes 4003, success replies {ok:true}, writes the
    * connect.register audit row, and immediately runs the §6 capability warm — one
    * server/discover, then the catalogs its answer declared.
@@ -941,8 +959,12 @@ export class AppConnection extends DurableObject {
 
   /**
    * §6's one pre-traffic obligation, and the only frame an unregistered socket may send.
-   * The declaration's rules are registry's (validateRoles); what a violation COSTS is
-   * this module's: an error reply, then 4004.
+   * The declaration's rules are registry's (validateRoles) and the optional §23 alias
+   * hints' are hub-types' (aliasViolations); both are judged BEFORE any write. What a
+   * violation COSTS is this module's: a payload-free invalid-params error reply, then
+   * 4004. A syntactically valid hint that merely COLLIDES is not a violation (§23): the
+   * registry lane keeps established assignments and omits the newcomer, and the bounded
+   * diagnostics ride this registration's own audit row.
    */
   private async register(
     ws: WebSocket,
@@ -957,16 +979,47 @@ export class AppConnection extends DurableObject {
     // The payload carries no app field, and this is where that is true: identity comes
     // from `attachment`, which the worker half built from the token alone (§6).
     const roles = declarationOf(frame);
-    const violations = roles === null ? ["roles must be an object of pattern lists"] : validateRoles(roles);
+    // §23's optional member, read as UNKNOWN: only an absent member means "no hints".
+    // A present null is malformed like any other non-object; hub-types.aliasViolations
+    // owns that syntax judgement, exactly as declarationOf leaves pattern rules to
+    // registry.validateRoles.
+    const params =
+      typeof frame.params === "object" && frame.params !== null
+        ? (frame.params as Record<string, unknown>)
+        : {};
+    const hints = params[TYPESCRIPT_ALIASES_PARAM];
+    const violations = [
+      ...(roles === null ? ["roles must be an object of pattern lists"] : validateRoles(roles)),
+      ...aliasViolations(hints),
+    ];
     if (roles === null || violations.length > 0) {
       this.send(ws, errorFrame(id, CODES.invalidParams, `invalid declaration: ${violations.join("; ")}`));
       return this.drop(ws, CLOSE_PROTOCOL, "invalid declaration");
     }
     const registry = new Registry(env.DB);
     let drift;
+    let diagnostics: readonly AliasDiagnostic[] = [];
     try {
       drift = await registry.upsertDeclaredRoles(attachment.appId, roles);
+      // §23's second lane, and the ONE place SDK hints enter D1: judged above (syntax),
+      // allocated here (collisions are a mapping decision, never a refusal) — the call
+      // keeps established reservations, omits a conflicting newcomer, and hands back the
+      // bounded diagnostics this registration's audit row carries. Hints omitted? The
+      // call is skipped entirely, so an app that declares none does no alias work on any
+      // reconnect. The cast is safe and is the type-only half of the judgement above:
+      // aliasViolations returned empty for this exact value, so it IS a TypeScriptAliases.
+      if (hints !== undefined) {
+        diagnostics = (await registry.upsertDeclaredTypescriptAliases(attachment.appId, hints as TypescriptAliases))
+          .diagnostics;
+      }
     } catch (err) {
+      // A refusal from the alias lane is the same owner mistake as a bad declaration —
+      // it can only fire for a rule aliasViolations enforces too — and costs the same:
+      // payload-free invalid params, then 4004.
+      if (err instanceof RegistryRefusal) {
+        this.send(ws, errorFrame(id, CODES.invalidParams, `invalid declaration: ${err.message}`));
+        return this.drop(ws, CLOSE_PROTOCOL, "invalid declaration");
+      }
       // WHICH refusal, asked rather than assumed. §6's reconnect race is the one this
       // socket answers 4003 to — told apart from a violation by carrying no reply at all.
       // Everything else registry or D1 can fail with is a hub defect or somebody's
@@ -982,7 +1035,13 @@ export class AppConnection extends DurableObject {
     // stored purpose, and a purpose nobody owns must not linger).
     await this.ctx.storage.delete(ALARM_DEADLINE_KEY);
     this.send(ws, { jsonrpc: "2.0", id, result: { ok: true } });
-    await this.audit(attachment, "connect.register", { roles: Object.keys(roles) });
+    await this.audit(attachment, "connect.register", {
+      roles: Object.keys(roles),
+      // §23: the collision DECISIONS ride the registration's own row and no extra progress
+      // row is written; a registration with no conflicts keeps this row's shape byte for
+      // byte, since the empty list is simply not carried.
+      ...(diagnostics.length > 0 ? { aliasConflict: diagnostics } : {}),
+    });
     if (drift.widened.length > 0) {
       await this.audit(attachment, "connect.roles_widened", { widened: drift.widened });
     }

@@ -1,0 +1,401 @@
+{
+  "tools": [
+    {
+      "name": "execute",
+      "aggregateName": "hub_execute",
+      "description": "Run one TypeScript ES module in a sandbox keyed to this credential and return its default export. Typechecked before evaluation; completed operations may already have effects and are never replayed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "writeOnly": true,
+            "description": "The submitted module: one TypeScript ES module with top-level await and a required default export. At most 64 KiB after UTF-8 encoding; a shape or source-size failure is -32602."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 300000,
+            "description": "Whole-call wall clock in milliseconds: at least 1,000, never above the compiled 300,000 ceiling, and never above the owner's configured maximum. A request over the configured maximum is refused -32602; it is never clamped."
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "The bounded execute result, discriminated by `kind`. Failures of the request itself (shape, source size, requested timeout above the configured maximum) are -32602 and never appear here.",
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The module evaluated and its default export was accepted.",
+            "properties": {
+              "kind": {
+                "const": "completed"
+              },
+              "value": {
+                "description": "The module's default export: acyclic JSON (null, booleans, strings, finite numbers, arrays, plain string-keyed objects) under the result byte cap."
+              },
+              "stdout": {
+                "type": "string",
+                "description": "Captured user stdout, live-return only and byte-capped; never logged or persisted."
+              },
+              "stderr": {
+                "type": "string",
+                "description": "Captured user stderr, live-return only and byte-capped; never logged or persisted."
+              },
+              "stdoutTruncated": {
+                "type": "boolean",
+                "description": "True when stdout hit its byte cap and was cut."
+              },
+              "stderrTruncated": {
+                "type": "boolean",
+                "description": "True when stderr hit its byte cap and was cut."
+              },
+              "operations": {
+                "type": "object",
+                "description": "Inner operations that completed during the run.",
+                "properties": {
+                  "calls": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Completed inner tools/call operations."
+                  },
+                  "reads": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Completed inner resources/read operations."
+                  }
+                },
+                "required": [
+                  "calls",
+                  "reads"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "kind",
+              "value",
+              "stdout",
+              "stderr",
+              "stdoutTruncated",
+              "stderrTruncated",
+              "operations"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The TypeScript checker rejected the module; no user module evaluated and no inner operation dispatched.",
+            "properties": {
+              "kind": {
+                "const": "type_error"
+              },
+              "diagnostics": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Deterministic, bounded checker diagnostics."
+              },
+              "transient": {
+                "const": false,
+                "description": "Never transient: identical source cannot pass later."
+              },
+              "mayHaveRun": {
+                "const": false,
+                "description": "No user module evaluated, so no inner operation ran."
+              }
+            },
+            "required": [
+              "kind",
+              "diagnostics",
+              "transient",
+              "mayHaveRun"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "The run failed after evaluation began; the failure is never replayed.",
+            "properties": {
+              "kind": {
+                "const": "runtime_error"
+              },
+              "cause": {
+                "type": "string",
+                "description": "Sanitized bounded failure class; never source, credentials, nonces, or raw SDK text."
+              },
+              "stdout": {
+                "type": "string",
+                "description": "Captured user stdout, live-return only and byte-capped; never logged or persisted."
+              },
+              "stderr": {
+                "type": "string",
+                "description": "Captured user stderr, live-return only and byte-capped; never logged or persisted."
+              },
+              "stdoutTruncated": {
+                "type": "boolean",
+                "description": "True when stdout hit its byte cap and was cut."
+              },
+              "stderrTruncated": {
+                "type": "boolean",
+                "description": "True when stderr hit its byte cap and was cut."
+              },
+              "transient": {
+                "type": "boolean",
+                "description": "Whether a retry could plausibly succeed; false for failures after possible launch."
+              },
+              "mayHaveRun": {
+                "type": "boolean",
+                "description": "Whether an inner operation could have dispatched before the failure."
+              },
+              "containerReplaced": {
+                "type": "boolean",
+                "description": "True when uncertain cleanup destroyed and replaced the container."
+              }
+            },
+            "required": [
+              "kind",
+              "cause",
+              "stdout",
+              "stderr",
+              "stdoutTruncated",
+              "stderrTruncated",
+              "transient",
+              "mayHaveRun",
+              "containerReplaced"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A named limit stopped the execution.",
+            "properties": {
+              "kind": {
+                "const": "limit_exceeded"
+              },
+              "limit": {
+                "type": "string",
+                "description": "The violated limit's name (§23.11's caps, e.g. `active_execution`, `check_time`, `wall_clock`, `inner_operations`)."
+              },
+              "observed": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "The observed quantity in that limit's own unit — bytes, count, or milliseconds; never source text or a credential."
+              },
+              "transient": {
+                "type": "boolean",
+                "description": "Whether a retry could plausibly succeed: active-execution and pre-launch capacity exhaustion are transient, deterministic caps and post-evaluation wall clock are not."
+              },
+              "mayHaveRun": {
+                "type": "boolean",
+                "description": "Whether an inner operation could have dispatched before the limit stopped the run."
+              }
+            },
+            "required": [
+              "kind",
+              "limit",
+              "observed",
+              "transient",
+              "mayHaveRun"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "search_types",
+      "aggregateName": "hub_search_types",
+      "description": "Search this credential's hub TypeScript declarations and canonical catalog. Case-insensitive, non-fuzzy, ranked; starts no sandbox.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "Case-insensitive, non-fuzzy search text: non-empty after trimming and at most 256 UTF-8 bytes before trimming. The `maxLength` keyword counts UTF-16 code units; the byte cap is enforced on the bytes."
+          },
+          "surface": {
+            "type": "string",
+            "enum": [
+              "program",
+              "client"
+            ],
+            "default": "program",
+            "description": "Which declaration surface to search; defaults to `program`."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 10,
+            "description": "Maximum matches to return; defaults to 10."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "matches": {
+            "type": "array",
+            "description": "Ranked matches: exact TypeScript path/canonical identity, then prefix, then substring, then description substring; ties by kind, canonical service, then canonical subject.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "tool",
+                    "resource",
+                    "resourceTemplate",
+                    "hubTool"
+                  ]
+                },
+                "surface": {
+                  "type": "string",
+                  "enum": [
+                    "program",
+                    "client"
+                  ]
+                },
+                "path": {
+                  "type": "string",
+                  "description": "TypeScript path the entry is reachable through."
+                },
+                "service": {
+                  "type": "string",
+                  "description": "Canonical service name; never a TypeScript alias."
+                },
+                "subject": {
+                  "type": "string",
+                  "description": "Canonical tool name, raw resource URI, or raw resource-template URI; never an alias."
+                },
+                "signature": {
+                  "type": "string",
+                  "description": "Rendered TypeScript signature for the entry."
+                },
+                "uri": {
+                  "type": "string",
+                  "description": "Direct declaration resource URI for this match."
+                },
+                "diagnostics": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Bounded mapping/catalog diagnostics attached to this match."
+                }
+              },
+              "required": [
+                "kind",
+                "surface",
+                "path",
+                "service",
+                "subject",
+                "signature",
+                "uri"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "incomplete": {
+            "type": "boolean",
+            "description": "True when a limit cut the ranked list to its canonical prefix; the missing tail is never guessed at."
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Bounded limit/catalog diagnostics."
+          }
+        },
+        "required": [
+          "matches",
+          "incomplete"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "resources": [
+    {
+      "uri": "pmcp://hub/types/client.d.ts",
+      "name": "client.d.ts",
+      "description": "The external hub facade declarations: mcp.hub.execute and mcp.hub.searchTypes. A declaration surface only; never loaded into the program checker.",
+      "mimeType": "text/typescript"
+    },
+    {
+      "uri": "pmcp://hub/types/program.d.ts",
+      "name": "program.d.ts",
+      "description": "The program global mcp declarations: authorized canonical service tools, structured resource reads, and the local searchTypes helper. Deliberately no mcp.hub.execute.",
+      "mimeType": "text/typescript"
+    }
+  ],
+  "resourceTemplates": [
+    {
+      "uriTemplate": "pmcp://hub/types/services/{service}.d.ts",
+      "name": "Service declarations",
+      "description": "TypeScript declarations for one canonical service. `{service}` is exactly one `encodeURIComponent`-encoded segment.",
+      "mimeType": "text/typescript"
+    },
+    {
+      "uriTemplate": "pmcp://hub/types/tools/{service}/{tool}.d.ts",
+      "name": "Tool declarations",
+      "description": "TypeScript declarations for one canonical tool within one canonical service. `{service}` and `{tool}` are each exactly one `encodeURIComponent`-encoded segment.",
+      "mimeType": "text/typescript"
+    },
+    {
+      "uriTemplate": "pmcp://hub/types/resources/{service}/{uri}.d.ts",
+      "name": "Resource declarations",
+      "description": "TypeScript declarations for one raw resource URI within one canonical service. `{uri}` is exactly one `encodeURIComponent`-encoded segment and never becomes path structure.",
+      "mimeType": "text/typescript"
+    },
+    {
+      "uriTemplate": "pmcp://hub/types/resource-templates/{service}/{uriTemplate}.d.ts",
+      "name": "Resource-template declarations",
+      "description": "TypeScript declarations for one raw resource-template URI within one canonical service. `{uriTemplate}` is exactly one `encodeURIComponent`-encoded segment and never becomes path structure.",
+      "mimeType": "text/typescript"
+    }
+  ],
+  "limits": {
+    "minTimeoutMs": 1000,
+    "defaultTimeoutMs": 30000,
+    "initialMaxTimeoutMs": 30000,
+    "hardMaxTimeoutMs": 300000,
+    "checkTimeoutMs": 5000,
+    "innerOperationTimeoutMs": 10000,
+    "sourceMaxBytes": 65536,
+    "queryMaxBytes": 256,
+    "catalogMaxEntries": 256,
+    "catalogMaxBytes": 2097152,
+    "subjectMaxBytes": 8192,
+    "descriptionMaxBytes": 4096,
+    "schemaMaxBytes": 65536,
+    "schemaMaxDepth": 64,
+    "schemaMaxNodes": 10000,
+    "declarationMaxBytes": 1048576,
+    "innerOperationsMax": 32,
+    "innerConcurrencyMax": 4,
+    "bridgeArgumentsMaxBytes": 262144,
+    "bridgeResponseMaxBytes": 1048576,
+    "stdoutMaxBytes": 65536,
+    "stderrMaxBytes": 65536,
+    "resultMaxBytes": 262144,
+    "searchLimitDefault": 10,
+    "searchLimitMax": 50,
+    "searchResponseMaxBytes": 262144,
+    "activeExecutionsPerToken": 1,
+    "sandboxContainersMax": 10
+  }
+}

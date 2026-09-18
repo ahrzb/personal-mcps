@@ -361,9 +361,9 @@ export type FamilyFilterScenario = {
 
 /** OWNER-AUTHORED, separate commit, before implementation (strategy §9 rule 1). */
 export const familyFilterScenarios: readonly FamilyFilterScenario[] = [
-  // §20.3: "A bare list is normalized to `{ tools: [...] }` — so every app in the
-  // field, every YAML file, and every `serve({roles})` call keeps its exact current
-  // meaning, and a role that grants tools grants *nothing* in another family." The two
+  // §20.3: "A bare list is normalized to `{ tools: [...] }`, so every deployed app and
+  // every `serve({roles})` call keeps its exact current meaning, and a role that grants
+  // tools grants *nothing* in another family." The two
   // `get_news` deny verdicts are the second half of that sentence, and they are the half a
   // family-blind filter (one that ignores its new argument) fails.
   //

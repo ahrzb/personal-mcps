@@ -27,6 +27,7 @@
     "@better-auth/oauth-provider": "1.7.1",
     "@better-auth/passkey": "1.7.1",
     "@block65/webcrypto-web-push": "2.0.0",
+    "@cloudflare/sandbox": "0.13.0-next.751.1",
     "@sentry/cloudflare": "^10.71.0",
     "better-auth": "^1.7.1",
     "hono": "^4.13.3",

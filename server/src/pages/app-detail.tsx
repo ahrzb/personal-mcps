@@ -26,10 +26,10 @@
 // scripting off, exactly as the agent page dropped them.
 
 import type { FC } from "hono/jsx";
-import { ConfirmShell, Copyable, Layout, LevelHeader, PaneRail, TokenReveal, paneGroups } from "./layout";
+import { AliasRows, ConfirmShell, Copyable, Layout, LevelHeader, PaneRail, TokenReveal, paneGroups } from "./layout";
 import type { PaneEntry } from "./layout";
 import { alertClass, formatLastSeen, formatStamp } from "./format";
-import { APP_CONFIRM_PANE, DIMMED, paths } from "./model";
+import { ALIAS_SERVICE_FIELD, aliasRowsFor, APP_CONFIRM_PANE, DIMMED, paths } from "./model";
 import type {
   AgentBadge,
   AppAccessDetails,
@@ -295,7 +295,7 @@ const CatalogDetailsView: FC<{ view: AppCatalogDetails; slug: string }> = ({ vie
               </Kv>
               <Kv k="Type">{view.resource.type === "" ? "—" : view.resource.type}</Kv>
               <Kv k="Served on">
-                <Copyable value={view.resource.servedOn} />
+                the scoped endpoint only — <Copyable value={view.resource.servedOn} />
               </Kv>
               <Kv k="Matched">by URI, never by name</Kv>
             </div>
@@ -306,9 +306,27 @@ const CatalogDetailsView: FC<{ view: AppCatalogDetails; slug: string }> = ({ vie
         <section class="card card--pad">
           <div class="eyebrow">What only the hub knows</div>
           <div class="kv">
-            {view.calledAs === null ? null : (
-              <Kv k="Called as">
-                <span class="mono">{view.calledAs}</span>
+            <Kv k="Scoped MCP identity">
+              <div>
+                <span class="mono">{view.identity.scoped.service}</span>
+                {" / "}
+                <span class="mono">{view.identity.scoped.member}</span>
+              </div>
+              <Copyable value={view.identity.scoped.endpoint} />
+            </Kv>
+            {view.identity.typescript === null ? null : (
+              <Kv k="TypeScript identity">
+                <div>
+                  {view.identity.typescript.path === null ? (
+                    "unavailable"
+                  ) : (
+                    <span class="mono">{view.identity.typescript.path}</span>
+                  )}
+                  {view.identity.typescript.source === null ? null : ` · ${view.identity.typescript.source}`}
+                </div>
+                {view.identity.typescript.diagnostic === null ? null : (
+                  <div class="field-error">{view.identity.typescript.diagnostic}</div>
+                )}
               </Kv>
             )}
             <Kv k="Reachable by">
@@ -855,23 +873,132 @@ const RecordingPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "re
 
 /* ------------------------------------------------------------- Overview --- */
 
-const OverviewPane: FC<{ pane: AppPaneView & { kind: "overview" } }> = ({ pane }) => (
-  <div class="listing listing--wide">
-    <div class="lh">
-      <span class="listing-title">Overview</span>
-    </div>
-    <div class="scroll">
-      <div class="kv kv--pad">
-        {pane.rows.map((row) => (
-          <div class="kv-row">
-            <div class="kv-key">{row.key}</div>
-            <div class={row.mono ? "mono" : undefined}>{row.value}</div>
-          </div>
-        ))}
+/**
+ * The Overview pane — `app_get`'s row as a definition list, plus §23.6's alias surface:
+ * the ONE place the owner configures the hub-local TypeScript names, with the committed
+ * reservation map (tombstones included) and the bounded diagnostics beside it. The editor
+ * posts ONE `app_update { typescript_aliases }` (web.ts's `alias_set` route); it never
+ * renames the upstream, and a blank field keeps whatever name is established, which is why
+ * an untouched section changes nothing.
+ */
+const OverviewPane: FC<{ props: AppDetailProps; pane: AppPaneView & { kind: "overview" } }> = ({
+  props,
+  pane,
+}) => {
+  const view = pane.aliases;
+  const rows = aliasRowsFor(view.tools, view.draft);
+  return (
+    <div class="listing listing--wide">
+      <div class="lh">
+        <span class="listing-title">Overview</span>
+      </div>
+      <div class="scroll">
+        <div class="kv kv--pad">
+          {pane.rows.map((row) => (
+            <div class="kv-row">
+              <div class="kv-key">{row.key}</div>
+              <div class={row.mono ? "mono" : undefined}>{row.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div class="alias-block">
+          <section class="card card--pad">
+            <div class="eyebrow">TypeScript aliases</div>
+            <p class="note">
+              Generated programs address this app through hub-local TypeScript names. The upstream
+              keeps its canonical names — an alias never renames it — and a blank field keeps
+              whatever name is already established.
+            </p>
+            <Refusal error={view.error} />
+            <form method="post" action={paths.appAliasSet(props.header.slug)} class="form">
+              <input type="hidden" name="csrf" value={props.csrfToken} />
+              <label class="field">
+                <span class="label">Service name</span>
+                <input
+                  class="input--mono"
+                  type="text"
+                  name={ALIAS_SERVICE_FIELD}
+                  value={view.service}
+                />
+                <span class="field-hint">Names this app's namespace in generated programs.</span>
+              </label>
+              <div class="field">
+                <span class="label">Tool aliases</span>
+                <AliasRows rows={rows} />
+                <span class="field-hint">
+                  One row per canonical tool. A name the hub has not listed yet is fine — it is
+                  reserved for when it appears.
+                </span>
+              </div>
+              <div class="actions actions--start">
+                <button type="submit" class="btn btn--primary">
+                  Save aliases
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section class="card card--pad">
+            <div class="eyebrow">Reserved names</div>
+            {view.reservations.length === 0 ? (
+              <p class="note">
+                Nothing reserved yet — the hub reserves a name for every canonical member when it
+                first reads this app's catalog.
+              </p>
+            ) : (
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Member</th>
+                    <th>TypeScript name</th>
+                    <th>Source</th>
+                    <th>State</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {view.reservations.map((row) => (
+                    <tr>
+                      <td>
+                        <span class="badge badge--muted badge--xs">{row.family}</span>{" "}
+                        <span class="cell-mono">{row.canonicalName}</span>
+                      </td>
+                      <td class="cell-mono">{row.typescriptName}</td>
+                      <td class="cell-muted">{row.source}</td>
+                      <td>
+                        {row.active ? (
+                          <span class="badge badge--success badge--xs">
+                            <span class="dot" />
+                            active
+                          </span>
+                        ) : (
+                          <span class="badge badge--muted badge--xs">retired</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {view.diagnostics.length === 0 ? null : (
+              <div>
+                <div class="eyebrow">Diagnostics</div>
+                {view.diagnostics.map((line) => (
+                  <p class="note">{line}</p>
+                ))}
+              </div>
+            )}
+            <p class="note">
+              A retired name stays reserved, so a later member can never claim a path code was
+              written against — and deleting then recreating an app keeps its old names, so a
+              recreated app needs a new service alias.
+            </p>
+          </section>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 /* --------------------------------------------------------------- Agents --- */
 
@@ -1253,7 +1380,7 @@ const Pane: FC<{ props: AppDetailProps }> = ({ props }) => {
   if (pane.kind === "catalog") return <CatalogPane props={props} pane={pane} />;
   if (pane.kind === "roles") return <RolesPane props={props} pane={pane} />;
   if (pane.kind === "recording") return <RecordingPane props={props} pane={pane} />;
-  if (pane.kind === "overview") return <OverviewPane pane={pane} />;
+  if (pane.kind === "overview") return <OverviewPane props={props} pane={pane} />;
   if (pane.kind === "access") return <AccessPane props={props} pane={pane} />;
   if (pane.kind === "token") return <TokenPane props={props} pane={pane} />;
   return <DangerPane props={props} pane={pane} />;

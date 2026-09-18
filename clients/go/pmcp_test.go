@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -109,12 +110,35 @@ func TestContractFixtures(t *testing.T) {
 	var fixture struct {
 		ProtocolVersion string            `json:"protocolVersion"`
 		Methods         map[string]string `json:"methods"`
+		Register        struct {
+			Request struct {
+				Params map[string]any `json:"params"`
+			} `json:"request"`
+		} `json:"register"`
 	}
 	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
 	}
 	if fixture.ProtocolVersion != ProtocolVersion || fixture.Methods["register"] != registerMethod || fixture.Methods["replaced"] != replacedMethod {
 		t.Fatalf("Go tunnel constants drifted from fixture: %#v", fixture)
+	}
+	// §23's optional member: the fixture shows the ACCEPTED shape, and this package's
+	// struct/JSON tags must keep producing it — service a string, tools a canonical→alias
+	// map. A rename on either side fails here rather than on the wire.
+	aliases, ok := fixture.Register.Request.Params["typescriptAliases"].(map[string]any)
+	if !ok {
+		t.Fatalf("fixture register params carry no typescriptAliases object: %#v", fixture.Register.Request.Params)
+	}
+	if _, ok := aliases["service"].(string); !ok {
+		t.Fatalf("fixture typescriptAliases.service is not a string: %#v", aliases)
+	}
+	if _, ok := aliases["tools"].(map[string]any); !ok {
+		t.Fatalf("fixture typescriptAliases.tools is not an object: %#v", aliases)
+	}
+	tools, _ := json.Marshal(aliases["tools"])
+	var aliasMap map[string]string
+	if err := json.Unmarshal(tools, &aliasMap); err != nil {
+		t.Fatalf("fixture typescriptAliases.tools is not a canonical→alias map: %v", err)
 	}
 
 	data, err = os.ReadFile(filepath.Join("..", "..", "contracts", "close-codes.json"))
@@ -176,6 +200,19 @@ func TestServeBridgesOfficialSDK(t *testing.T) {
 		params, _ := register["params"].(map[string]any)
 		if register["method"] != registerMethod || params["protocolVersion"] != ProtocolVersion {
 			hubDone <- errors.New("invalid hub/register request")
+			return
+		}
+		// §23: the alias hints the caller configured must ride the registration verbatim,
+		// under the fixture's wire key and shape — service a string, tools a
+		// canonical→alias map. A transport that dropped or renamed the member fails here.
+		aliases, ok := params["typescriptAliases"].(map[string]any)
+		if !ok || aliases["service"] != "news" {
+			hubDone <- fmt.Errorf("typescriptAliases missing from hub/register: %#v", params)
+			return
+		}
+		aliasTools, ok := aliases["tools"].(map[string]any)
+		if !ok || aliasTools["greet"] != "greetSomeone" {
+			hubDone <- fmt.Errorf("typescriptAliases.tools = %#v", aliases["tools"])
 			return
 		}
 		if err := writeJSON(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": registerID, "result": map[string]any{"ok": true}}); err != nil {
@@ -269,6 +306,11 @@ func TestServeBridgesOfficialSDK(t *testing.T) {
 			URL:   hub.URL,
 			Token: "pmcp_app_test",
 			Roles: Roles{"reader": Patterns{"greet"}},
+			// §23: configured hints must reach the wire; the hub handler above asserts them.
+			TypeScriptAliases: &TypeScriptAliases{
+				Service: "news",
+				Tools:   map[string]string{"greet": "greetSomeone"},
+			},
 		})
 	}()
 
@@ -324,6 +366,13 @@ func TestTransportReconnectsAfterSocketDrop(t *testing.T) {
 		var register map[string]any
 		if err := readJSON(ctx, ws, &register); err != nil {
 			hubDone <- err
+			return
+		}
+		// §23: no hints configured means the member is ABSENT — the historical three-key
+		// frame is what every transport built without aliases must keep sending.
+		params, _ := register["params"].(map[string]any)
+		if _, present := params["typescriptAliases"]; present {
+			hubDone <- errors.New("typescriptAliases sent without being configured")
 			return
 		}
 		if err := writeJSON(ctx, ws, map[string]any{"jsonrpc": "2.0", "id": registerID, "result": map[string]any{"ok": true}}); err != nil {

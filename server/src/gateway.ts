@@ -1,15 +1,26 @@
 // gateway.ts — the consumer-facing MCP pipeline (§7): every /:user/mcp message is answered
-// by this module. It OWNS the JSON-RPC half of both endpoint shapes (POST /:user/mcp
-// aggregated, POST /:user/mcp/:slug scoped) and their SDK wiring (createMcpHandler with
-// a per-request low-level Server, legacy-stateless lane included — comment-level only,
-// the SDK never appears in sibling modules); the aggregated `<slug>_<tool>` split; the
-// pinned check order filter → archived → approval → availability (§7's list, with the
-// availability-first decision folding its last two into one test — see callTool);
+// by this module. It OWNS the JSON-RPC half of both endpoint shapes (POST /:user/mcp, the
+// aggregate hub endpoint §23.1 defines, and POST /:user/mcp/:slug scoped) and their SDK
+// wiring (createMcpHandler with a per-request low-level Server, legacy-stateless lane
+// included — comment-level only, the SDK never appears in sibling modules); the pinned
+// check order filter → archived → approval → availability (§7's list, with the
+// availability-first decision folding its last two into one test — see dispatchTool);
 // server/discover and the `initialize` handshake; `_meta` hygiene and client-metadata
 // capture; the ONE redaction map per call; and the ONE mapping from HubError to JSON-RPC
 // wire errors. It HIDES the wire entirely: sibling modules throw the HubError vocabulary
 // errors.ts owns and never see a JSON-RPC error code, and backends never see an
 // unfiltered tool name, an archived app, or an unapproved gated call.
+//
+// §23.1 REPLACED the aggregate application catalog: `/mcp` and `/mcp/hub` are one virtual
+// hub, answering the same two tools and declaration resources (hub-backend.ts owns their
+// wire vocabulary, the declaration reader and the execution seam) on either shape. The
+// aggregate `<slug>_<tool>` split, the prompt/resource fan-out and every aggregate app
+// listing are GONE — application tools/prompts/resources live on `/mcp/<app>` alone. What
+// stays here is what the hub shares with every other request: the virtual hub's App row and
+// synthetic access filter, the caller-visible catalog COLLECTOR (per-family deadlines,
+// durable TypeScript-name allocation before filtering, grant filtering, bounded
+// diagnostics) that declarations, search and `execute` all read, the two trusted dispatch
+// seams a Sandbox bridge reuses, and the metadata-only outer audit of a hub tool call.
 //
 // It also owns §21's ONE carve-out from statelessness: `subscriptions/listen`'s held
 // `text/event-stream`, the session id the hub mints for it, its re-authorization tick and
@@ -40,7 +51,7 @@ import { record, REDACTED_QUERY } from "./audit";
 import type { BodyStub } from "./audit";
 import {
   admits,
-  AGGREGATED_CAPABILITIES,
+  HUB_CAPABILITIES,
   bellFrame,
   capabilityShape,
   DEFAULT_APP_CAPABILITIES,
@@ -50,9 +61,38 @@ import type { CapabilityKind, EndpointShape } from "./capabilities";
 import { archived, CODES, HubError, invalidParams, methodNotFound, notPermitted, unavailable } from "./errors";
 import { formatPrincipal, principalKey, tokenPattern } from "./principal";
 import type { Principal } from "./principal";
+import type { AuthenticatedCaller } from "./identity";
+import { reauthorize } from "./identity";
 import { pushSender } from "./push";
-import { applyRedaction, PMCP_SLUG, REDACTED, Registry } from "./registry";
-import type { ListKind, RoleFamily, App } from "./registry";
+import { applyRedaction, HUB_SLUG, PMCP_SLUG, patternFamilyOf, REDACTED, Registry, subjectKeyOf } from "./registry";
+import type {
+  AccessMode,
+  App,
+  AppCapability,
+  AppDetail,
+  ListKind,
+  RoleFamily,
+  ToolFilter,
+} from "./registry";
+import { buildCatalogSnapshot } from "./hub-catalog";
+import type { CatalogServiceInput, CatalogSnapshot } from "./hub-catalog";
+import { HUB_TOOLS } from "./hub-contract";
+import {
+  HubCredentialRevokedError,
+  HubExecutionAbortedError,
+  hubDeclarationText,
+  hubExecuteRequest,
+  hubResourceList,
+  hubResourceTemplates,
+  hubSearchTypes,
+  hubToolFor,
+  hubToolsFor,
+  parseHubDeclarationUri,
+  runHubExecution,
+} from "./hub-backend";
+import type { HubRequestLifecycle } from "./hub-backend";
+import { aliasDiagnosticMessage, aliasNameViolations, generatedAlias } from "./hub-types";
+import type { AliasPlan, AliasServiceMembers } from "./hub-types";
 import {
   capabilities as tunnelCapabilities,
   openSubscriber,
@@ -64,7 +104,7 @@ import {
 import { availability, upstreamBackend } from "./upstream";
 import { approvalsFromEnv, vapidFromEnv } from "./wiring";
 import type { Env } from "./index";
-import { AUDIT_URI_CAP_BYTES, deadlines, LISTEN_FANOUT_MAX } from "./limits";
+import { AUDIT_URI_CAP_BYTES, deadlines, HUB_INNER_OPERATION_TIMEOUT_MS } from "./limits";
 
 /**
  * A JSON-RPC 2.0 id as the hub accepts it on requests. `null` ids are never accepted
@@ -103,8 +143,9 @@ export type JsonRpcResponse = {
  * (present when the app declares one) is different: the hub co-opts `writeOnly`
  * there as its internal result-secret marker, so the listing paths below strip it
  * from every outputSchema before a consumer sees it (§7) — backends return the
- * catalog verbatim and never strip. On the aggregated endpoint `name` carries the
- * `<slug>_` prefix; on the scoped endpoint it never does.
+ * catalog verbatim and never strip. `name` is always the app's own canonical tool name:
+ * §23.1 removed the only rewriting this type ever saw (the aggregate `<slug>_` prefix),
+ * and the hub's own two tools carry their endpoint-specific spellings instead.
  */
 export type Tool = {
   name: string;
@@ -118,12 +159,18 @@ export type Tool = {
  * the key registry.ToolFilter reads: a prompt by `name`, a resource by `uri`, a template
  * by its raw `uriTemplate`. Deliberately minimal: the hub relays whatever else an app
  * attaches (a resource's `mimeType`, a prompt's `arguments`) untouched, so these types name
- * only the field the door itself reads or rewrites (the aggregated `<slug>_` prefix lands
- * on `name` alone).
+ * only the fields the door itself reads: the filter's subject key, and — since §23.5 — the
+ * `description` the catalog collector indexes as bounded search metadata. Every other extra
+ * field still rides through untouched.
  */
 export type Prompt = { name: string; description?: string };
-export type Resource = { uri: string; name?: string };
-export type ResourceTemplate = { uriTemplate: string; name?: string };
+export type Resource = { uri: string; name?: string; description?: string; mimeType?: string };
+export type ResourceTemplate = {
+  uriTemplate: string;
+  name?: string;
+  description?: string;
+  mimeType?: string;
+};
 
 /**
  * Per-request caller context handed to every backend: the resolved principal, the
@@ -131,11 +178,18 @@ export type ResourceTemplate = { uriTemplate: string; name?: string };
  * literal, never expanded; owners get `["all"]`), and untrusted display-only client
  * metadata (128-char-truncated, §7). Informational downstream — every authorization
  * decision has already run in the pipeline before a backend sees this.
+ *
+ * `deadlineAt` is §23.10's optional EARLIER deadline, set only for a Sandbox-originated
+ * operation: an absolute epoch-ms instant after which the operation must not run (and must
+ * not still be running). Absent on every direct consumer call, where the backend's own
+ * `CALL_TIMEOUT_MS` is the whole budget; the dispatch seams enforce it around
+ * `AppBackend.call`, and a backend that reads it may shorten its own transport timeout.
  */
 export type BackendCtx = {
   principal: Principal;
   roles: string[];
   clientMeta?: { name?: string; version?: string; sessionId?: string };
+  deadlineAt?: number;
 };
 
 /**
@@ -148,10 +202,10 @@ export interface AppBackend {
   /**
    * The app's full tool catalog as this backend knows it (tunnel: the DO's cached
    * list, populated even while offline; upstream: fetched live; admin: the ops table).
-   * Unfiltered — the gateway applies the caller's grant patterns and any prefixing.
+   * Unfiltered — the gateway applies the caller's grant patterns.
    * Throws HubError -32000 when the catalog is unreachable (proxied upstream down or
-   * needs-reconnect); the aggregated fan-out catches that per slug, the scoped list
-   * surfaces it.
+   * needs-reconnect); the hub's catalog collector catches that per service, the scoped
+   * list surfaces it.
    */
   listTools(app: App, ctx: BackendCtx): Promise<Tool[]>;
   /**
@@ -216,13 +270,21 @@ function approvalRequired(check: Extract<CheckResult, { outcome: "required" }>):
 }
 
 /**
+ * §23.10/§23.12's narrow request lifecycle, as the composition root hands it in: the one
+ * thing the gateway cannot read off the `Request` is the invocation's `ExecutionContext`.
+ * Hub execution uses it for background abort cleanup and to keep the continuation alive
+ * through its outer audit after disconnect. Absent is legitimate — a direct caller (a
+ * test) has no background lifetime to register — and every non-hub path ignores it.
+ */
+export type RequestLifecycle = { waitUntil?: (work: Promise<unknown>) => void };
+
+/**
  * The consumer MCP pipeline as one entry point: §7 steps 2–3 for one already-admitted
  * message, from bytes to bytes. `slug` present ⇔ the scoped shape.
  *
- * The door is index.mcpEntry's, not this function's, and `principal` is the proof: by the
- * time a request arrives here Content-Type, the Origin rule, the caller's resolution and
- * (scoped) the app's visibility to that caller have all been decided ONCE, at the
- * composition root. What is left is JSON-RPC — this function answers `server/discover` and
+ * The door is index.mcpEntry's, not this function's, and `caller` is its proof: Content-Type,
+ * Origin, credential resolution and scoped visibility were decided once at the composition
+ * root. What remains is JSON-RPC: this function answers `server/discover` and
  * the `initialize` handshake itself, routes tools/list and tools/call into the pipeline
  * below, refuses every other method with -32601, absorbs every notification with a 202
  * (`notifications/initialized` included), and answers 200 whether or not it refused. (The
@@ -234,31 +296,34 @@ function approvalRequired(check: Extract<CheckResult, { outcome: "required" }>):
  * ahead of `route`, rather than by a case that cannot express its return type. Everything
  * else about it is ordinary: the same door admitted it, and a refusal on the way to
  * opening it (a scoped archived app, -32002) leaves through the same mapping below.
- * `reauthorize` is the door's own verdict, handed in because the held stream must re-run
- * §7 step 1 on every keepalive (§21.2) and a second implementation of step 1 is the one
- * thing §21 forbids.
+ * `reauthorize` is the door's current-state verdict: the held stream re-reads the
+ * non-secret credential reference and scoped visibility on every keepalive (§21.2),
+ * rather than retaining or replaying the bearer.
  */
 export async function mcpMessage(
   request: Request,
   env: Env,
-  principal: Principal,
+  caller: AuthenticatedCaller,
   slug: string | undefined,
   reauthorize: Reauthorize,
+  lifecycle?: RequestLifecycle,
 ): Promise<Response> {
-  // deps: splitAggregatedName · captureClientMeta · callTool · listScoped · listAggregated · listenStream · toWire
+  // deps: captureClientMeta · dispatchTool · listScoped · hubCall · hubRead · listenStream · toWire
   const msg = await readMessage(request);
   if (msg === null) {
     return jsonRpc(toWire(new HubError(CODES.invalidRequest, "invalid request"), null));
   }
   // A notification carries no id, so there is nothing to answer to (§ JSON-RPC 2.0).
   if (msg.id === undefined) return new Response(null, { status: 202 });
+  const principal = caller.principal;
   const ctx: BackendCtx = { principal, roles: [], clientMeta: captureClientMeta(msg) };
   const ownerId = principal.kind === "agent" ? principal.ownerId : principal.userId;
   // §22.1: the aggregate has no slug to check visibility against (index.visibleOnScoped
   // only runs when one is addressed), so an admin token that resolved past the door —
   // it carries a real session's credential shape — would otherwise reach every method
   // here undistinguished from its owner. Refused explicitly, before ANY method
-  // dispatches: the scoped `pmcp` endpoint is the only door this credential opens.
+  // dispatches: the scoped `pmcp` and `hub` endpoints are the only doors this credential
+  // opens (§23.1 admits it to `/mcp/hub`, never to `/mcp`).
   if (slug === undefined && principal.kind === "admin") {
     return jsonRpc(toWire(notPermitted(), msg.id ?? null));
   }
@@ -267,83 +332,148 @@ export async function mcpMessage(
     // §21.4: the session id a subscribe names its stream with is a REQUEST header, and this
     // is the only place a consumer-supplied one is ever read (§21.1 — correlation, never
     // authentication: the bearer above decided everything).
-    return jsonRpc(await route(env, ownerId, slug, msg, ctx, request.headers.get(MCP_SESSION_HEADER)));
+    const requestLifecycle: HubRequestLifecycle = { signal: request.signal, waitUntil: lifecycle?.waitUntil };
+    return jsonRpc(
+      await route(env, ownerId, caller, slug, msg, ctx, request.headers.get(MCP_SESSION_HEADER), requestLifecycle),
+    );
   } catch (err) {
     if (err instanceof Response) throw err; // identity's convention, never ours to swallow
     return jsonRpc(toWire(err, msg.id ?? null));
   }
 }
 
-/** §7 step 3's method table, widened by §20's seven entries and §21's three: served
- *  methods, everything else -32601. `resources/*` and `completion/complete` are refused on
- *  the AGGREGATED shape by name (§20.2) rather than falling to the default case, so the
- *  refusal is a method-table entry and not an accident of what nobody implemented.
- *  `subscriptions/listen` never reaches here — its answer is a held response, so mcpMessage
- *  answers it above (§21.1). */
+/** §7 step 3's method table, widened by §20's seven entries, §21's three and §23's hub:
+ *  served methods, everything else -32601. The handshake is answered first, by the hub
+ *  itself, on both shapes; then the shape splits — §23.1's virtual hub (the aggregate
+ *  endpoint and the scoped `hub` slug, ONE surface) is `hubRoute` below, and every other
+ *  scoped slug keeps §7/§20/§21 unchanged. `subscriptions/listen` never reaches here — its
+ *  answer is a held response, so mcpMessage answers it above (§21.1). */
 async function route(
   env: Env,
   ownerId: string,
+  caller: AuthenticatedCaller,
   slug: string | undefined,
   msg: JsonRpcRequest,
   ctx: BackendCtx,
   sessionId: string | null,
+  lifecycle: HubRequestLifecycle,
 ): Promise<JsonRpcResponse> {
   const id = msg.id ?? null;
+  // Answered by the hub on BOTH shapes: a slug in the URL is not resolved, dialed, or
+  // filtered for either of them.
   switch (msg.method) {
-    // Answered by the hub on BOTH shapes: a slug in the URL is not resolved, dialed, or
-    // filtered for either of them.
     case "server/discover":
       return { jsonrpc: "2.0", id, result: await discoverResult(env, ownerId, slug) };
     case "initialize":
       return { jsonrpc: "2.0", id, result: await initializeResult(env, ownerId, slug) };
-    // §20.2's four listings, answered from LIST_METHODS: the scoped shape serves every
-    // family, the aggregated shape the two it can prefix — one branch, so `prompts/list`
-    // obeys "tools/list's whole bullet" by construction rather than by inspection.
+  }
+  // §23.1: the aggregate endpoint and the scoped `hub` slug are the same virtual surface,
+  // and neither resolves an app for any other method.
+  if (slug === undefined || slug === HUB_SLUG) {
+    return hubRoute(env, ownerId, caller, slug, msg, ctx, lifecycle);
+  }
+  switch (msg.method) {
+    // §20.2's four listings, answered from the addressed app's catalog under the caller's
+    // grants. The hub shapes never reach this table — they list the hub's own tools and
+    // declarations instead, and refuse the families they do not serve.
     case "tools/list":
+      return { jsonrpc: "2.0", id, result: familyResult("tools", await listScoped(env, ownerId, slug, ctx, "tools")) };
     case "prompts/list":
+      return { jsonrpc: "2.0", id, result: familyResult("prompts", await listScoped(env, ownerId, slug, ctx, "prompts")) };
     case "resources/list":
+      return { jsonrpc: "2.0", id, result: familyResult("resources", await listScoped(env, ownerId, slug, ctx, "resources")) };
     case "resources/templates/list":
-      return { jsonrpc: "2.0", id, result: await listResult(env, ownerId, slug, ctx, LIST_METHODS[msg.method]) };
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: familyResult("resourceTemplates", await listScoped(env, ownerId, slug, ctx, "resourceTemplates")),
+      };
     case "tools/call": {
       const name = typeof msg.params?.name === "string" ? msg.params.name : "";
-      if (slug !== undefined) return callTool(env, ownerId, slug, name, msg, ctx);
-      const split = splitAggregatedName(name);
-      // A name with no `_` at all names no app — the same -32001 as not-permitted,
-      // never a distinct "malformed name" signal (§7).
-      if (split === null) throw notPermitted();
-      return callTool(env, ownerId, split.slug, split.tool, msg, ctx);
+      return dispatchTool(env, {
+        caller,
+        slug,
+        tool: name,
+        args: argumentsOf(msg),
+        clientMeta: ctx.clientMeta,
+        meta: metaOf(msg),
+        ...("inputResponses" in (msg.params ?? {}) ? { inputResponses: msg.params?.inputResponses } : {}),
+        ...("requestState" in (msg.params ?? {}) ? { requestState: msg.params?.requestState } : {}),
+        id: msg.id,
+      });
     }
     case "prompts/get": {
       const name = typeof msg.params?.name === "string" ? msg.params.name : "";
-      if (slug !== undefined) return getPrompt(env, ownerId, slug, name, msg, ctx);
-      const split = splitAggregatedName(name);
-      if (split === null) throw notPermitted();
-      return getPrompt(env, ownerId, split.slug, split.tool, msg, ctx);
+      return getPrompt(env, ownerId, slug, name, msg, ctx);
     }
-    // §20.2/§18 decision 26: resources and completions are scoped-only — the aggregated
-    // shape does not resolve a slug for them at all, refusing before any app exists.
+    // §20.2/§18 decision 26: application resources are scoped-only; on the hub shapes
+    // `resources/read` serves the hub's own declarations instead (§23.1/§23.2).
     case "resources/read": {
-      if (slug === undefined) throw methodNotFound();
       const uri = typeof msg.params?.uri === "string" ? msg.params.uri : "";
-      return readResource(env, ownerId, slug, uri, msg, ctx);
+      return dispatchResourceRead(env, {
+        caller,
+        slug,
+        uri,
+        clientMeta: ctx.clientMeta,
+        meta: metaOf(msg),
+        id: msg.id,
+      });
     }
-    case "completion/complete": {
-      if (slug === undefined) throw methodNotFound();
+    case "completion/complete":
       return completeRef(env, ownerId, slug, msg, ctx);
-    }
     // §21.4's two per-URI methods, scoped-only for §18 decision 26's reason and
     // tunneled-only for §21.2's: a proxied app has no channel to ring from and the
     // builtin never changes, so neither ADVERTISES subscribe and neither has anywhere to
-    // forward — refused inside, by kind, on the same -32601 this shape check gives.
+    // forward — refused inside, by kind, on the same -32601 this shape check gives. The
+    // hub refuses them in `hubRoute` above: it has no app socket to mutate.
     case "resources/subscribe":
-    case "resources/unsubscribe": {
-      if (slug === undefined) throw methodNotFound();
+    case "resources/unsubscribe":
       return subscription(env, ownerId, slug, msg.method, sessionId, msg, ctx);
-    }
     default:
       // §7's 2026-09-01 amendment: with `subscriptions/listen` and the two per-URI methods
       // served, the leftover set is `logging/*` and every server-initiated request — both
       // dead in 2026-07-28 itself — and it falls here on both endpoint shapes alike.
+      throw methodNotFound();
+  }
+}
+
+/**
+ * §23.1's hub method table, on BOTH hub shapes — the aggregate endpoint and the scoped
+ * `/mcp/hub` slug are one surface differing only in tool spellings. It serves the two hub
+ * tools (`hubToolsFor`/`hubToolFor`), the hub's own declaration resources and templates,
+ * and hub declaration reads; every other method — `prompts/*`, `completion/complete`,
+ * `resources/subscribe`, `resources/unsubscribe` — is -32601, because the hub advertises
+ * none of those capabilities and holds no application subscriber socket.
+ *
+ * Nothing here resolves an app, dials a backend, or opens a socket: the only I/O behind
+ * these methods is the catalog collector (`hubCall`'s snapshot), which reads each
+ * caller-visible app's cached or declared families under its own deadline.
+ */
+async function hubRoute(
+  env: Env,
+  ownerId: string,
+  caller: AuthenticatedCaller,
+  slug: string | undefined,
+  msg: JsonRpcRequest,
+  ctx: BackendCtx,
+  lifecycle: HubRequestLifecycle,
+): Promise<JsonRpcResponse> {
+  const id = msg.id ?? null;
+  const shape: EndpointShape = slug === undefined ? "aggregated" : "scoped";
+  switch (msg.method) {
+    case "tools/list":
+      return { jsonrpc: "2.0", id, result: familyResult("tools", hubToolsFor(shape)) };
+    case "resources/list":
+      return { jsonrpc: "2.0", id, result: familyResult("resources", hubResourceList()) };
+    case "resources/templates/list":
+      return { jsonrpc: "2.0", id, result: familyResult("resourceTemplates", hubResourceTemplates()) };
+    case "tools/call": {
+      const name = typeof msg.params?.name === "string" ? msg.params.name : "";
+      return hubCall(env, caller, ownerId, shape, name, msg, ctx, lifecycle);
+    }
+    case "resources/read":
+      return hubRead(env, ownerId, msg, ctx);
+    default:
       throw methodNotFound();
   }
 }
@@ -384,48 +514,6 @@ export const FORWARDED_METHODS: Readonly<Record<string, ForwardedCarrier>> = {
 };
 
 /**
- * §20.2's four listings as data: which catalog each method serves, and whether the
- * AGGREGATED shape answers it at all. Resources and templates are scoped-only (§18
- * decision 26: a URI cannot take a `<slug>_` prefix and still be the URI the app
- * knows), so their refusal is an entry in this table rather than an accident of what
- * nobody implemented. A fifth family is one row here and one row in tunnel's catalog
- * tables.
- */
-const LIST_METHODS = {
-  "tools/list": { kind: "tools", aggregated: true },
-  "prompts/list": { kind: "prompts", aggregated: true },
-  "resources/list": { kind: "resources", aggregated: false },
-  "resources/templates/list": { kind: "resourceTemplates", aggregated: false },
-} as const satisfies Record<string, { kind: ListKind; aggregated: boolean }>;
-
-/**
- * One listing answer, on whichever shape asked for it (§7, widened by §20.2 to every
- * family). Scoped: the family's catalog, filtered by the caller's grants. Aggregated: the
- * fan-out, with the apps it could not reach named in the result's `_meta` — and a
- * family the aggregated shape does not serve refused -32601 before any app exists.
- */
-async function listResult(
-  env: Env,
-  ownerId: string,
-  slug: string | undefined,
-  ctx: BackendCtx,
-  method: (typeof LIST_METHODS)[keyof typeof LIST_METHODS],
-): Promise<Record<string, unknown>> {
-  // deps: listScoped · listAggregated
-  if (slug !== undefined) return familyResult(method.kind, await listScoped(env, ownerId, slug, ctx, method.kind));
-  if (!method.aggregated) throw methodNotFound();
-  const { items, unavailable: omitted } = await listAggregated(env, ownerId, ctx, method.kind);
-  const result = familyResult(method.kind, items);
-  // §7: the omitted slugs are reported in the result's `_meta`, and logged as an ops
-  // event — never an audit row (§15 keeps every listing out of audit entirely).
-  if (omitted.length > 0) {
-    console.warn(`pmcp/unavailable: ${omitted.join(",")}`);
-    result._meta = { "pmcp/unavailable": omitted };
-  }
-  return result;
-}
-
-/**
  * The `server/discover` answer (§7, amended by §20.2): the same two static capability
  * pictures `initialize` publishes — "one source, two spellings" — so a divergence between
  * this and `initializeResult` is a bug this function's own body cannot introduce.
@@ -460,27 +548,24 @@ async function initializeResult(env: Env, ownerId: string, slug: string | undefi
 }
 
 /**
- * §20.2's capabilities question — reversed in one direction by §21.5 — answered once for
- * both `initialize` and `server/discover` on both endpoint shapes. Aggregated (`slug`
- * absent): the fixed two-family constant, whatever the namespace holds, now with
- * `listChanged: true` on both, because the transport that honors it flipped in the same
- * deploy (§21.5's lockstep rule). Scoped: derived from what the hub already STORES for that
- * app — the capability set §6's registration-time `server/discover` learned (tunneled),
- * or the owner-declared `capabilities` config (proxied, absent means tools only) — NEVER a
- * live upstream call, which is what lets a hung app answer the handshake at full speed.
+ * §20.2's real-app capability question and §23.1's virtual-hub answer, produced once
+ * for both `initialize` and `server/discover`. Aggregate and scoped `hub` requests
+ * return the fixed HUB_CAPABILITIES literal: tools then resources, both push flags
+ * false. Other scoped requests derive their answer from what the hub already stores
+ * for that app — the capability set §6's registration-time `server/discover` learned
+ * (tunneled), or the owner-declared `capabilities` config (proxied, absent means tools
+ * only) — never a live upstream call, which lets a hung app answer the handshake at
+ * full speed.
  *
- * The KIND is the second input, and the one §21.5 added: a proxied app has no DO to
- * ring from and the builtin's tools never change, so both declare every push flag false
- * whatever their stored set says, while a tunneled app declares `listChanged` on each
- * family it stores and `subscribe` on its resources. The three are named, never inferred
- * from "is not proxied" (capabilities.CapabilityKind), which is what keeps the builtin off
- * the tunneled branch. An app the caller cannot even resolve answers the NEVER-CONNECTED
- * tunneled shape — the handshake must not become an app-existence oracle (§20.2's
- * anti-enumeration posture, and §21.5's own sentence about it).
+ * The KIND is §21.5's second input for real apps: a proxied app has no DO to ring from
+ * and the builtin's tools never change, so both declare every push flag false whatever
+ * their stored set says, while a tunneled app declares `listChanged` on each family it
+ * stores and `subscribe` on its resources. An app the caller cannot resolve answers the
+ * never-connected tunneled shape so the handshake is not an app-existence oracle.
  */
 async function capabilitiesFor(env: Env, ownerId: string, slug: string | undefined): Promise<Record<string, unknown>> {
   // deps: registry.getApp · tunnel.capabilities · capabilities.capabilityShape
-  if (slug === undefined) return AGGREGATED_CAPABILITIES;
+  if (slug === undefined || slug === HUB_SLUG) return HUB_CAPABILITIES;
   if (slug === PMCP_SLUG) return capabilityShape(DEFAULT_APP_CAPABILITIES, "builtin");
   const app = await new Registry(env.DB).getApp(ownerId, slug);
   if (app === null) return capabilityShape(DEFAULT_APP_CAPABILITIES, "tunnel");
@@ -497,14 +582,11 @@ const CAPABILITY_KINDS = { tunnel: "tunnel", proxy: "proxy" } as const satisfies
 >;
 
 /**
- * Constraint 4's seam, spelled once: the pure capability core lives in a Node-clean module
- * (`capabilities.ts`, which must never gain a `cloudflare:workers` import — this module has
- * one, through admin.ts), and the DOOR is where a fixture producer or a sibling reads it
- * from. §21.5's four-picture split landed with it, so the pre-flip `CAPABILITY_SHAPE`
- * constant that used to sit here is gone: `capabilityShape` answers both handshakes and
- * emits every fixture picture.
+ * The pure capability producers re-exported at the gateway seam. Keeping them in
+ * `capabilities.ts` lets fixture producers import the wire verdicts without pulling
+ * `cloudflare:workers`, admin, or tunnel into the Node test pool.
  */
-export { AGGREGATED_CAPABILITIES, capabilityShape } from "./capabilities";
+export { HUB_CAPABILITIES, capabilityShape } from "./capabilities";
 
 /** The one MCP revision this hub speaks (§7: stateless 2026-07-28 endpoints). */
 const PROTOCOL_VERSION = "2026-07-28";
@@ -537,19 +619,6 @@ async function readMessage(request: Request): Promise<JsonRpcRequest | null> {
   const body = (await request.json().catch(() => null)) as JsonRpcRequest | null;
   if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
   return typeof body.method === "string" ? body : null;
-}
-
-/**
- * Splits an aggregated tool name at its first `_` (§7: slugs contain no underscore, so
- * the split is unambiguous). Returns null for a name with no `_` at all; the pipeline
- * maps both that and a slug matching no visible app to -32001 — indistinguishable
- * from not-permitted, so nothing about the namespace leaks.
- */
-function splitAggregatedName(name: string): { slug: string; tool: string } | null {
-  // deps: none
-  const at = name.indexOf("_");
-  if (at <= 0 || at === name.length - 1) return null;
-  return { slug: name.slice(0, at), tool: name.slice(at + 1) };
 }
 
 /**
@@ -654,15 +723,15 @@ function metaOf(msg: JsonRpcRequest): Record<string, unknown> {
   const meta = msg.params?._meta;
   return typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>) : {};
 }
-
 /**
  * `_meta` hygiene on every forwarded tools/call (§7): deletes every consumer-supplied
  * `hub/*` key, then sets `hub/principal` and `hub/roles` — overwrite, never merge, so
  * any `hub/*` value an app sees was written by the hub — and mirrors the consumer's
  * `io.modelcontextprotocol/clientCapabilities` (`{}` when the consumer declared none,
- * so apps refrain from elicitation/sampling for legacy callers). Everything else —
- * progressToken, vendor keys, MRTR inputResponses/requestState — passes untouched.
- * Pure: returns a new message, never mutates the input.
+ * so apps refrain from elicitation/sampling for legacy callers). Other `_meta` keys,
+ * including progress tokens and vendor keys, pass untouched. `dispatchTool` separately
+ * preserves MRTR's params-level `inputResponses` and `requestState` siblings. Pure: returns
+ * a new message and never mutates the input.
  */
 function prepareForward(msg: JsonRpcRequest, ctx: BackendCtx): JsonRpcRequest {
   // deps: principal.formatPrincipal
@@ -699,12 +768,12 @@ const LIST_CATALOG: Record<
 
 /**
  * Scoped listing (§7, widened by §20.2 to every family): the backend's catalog for `kind`,
- * filtered by the caller's grant patterns, names unprefixed and every outputSchema served
- * with its `writeOnly` markers stripped (§7 — the hub's internal result-secret co-opt never
- * reaches the wire; the `owner` flag below is the one read that is not a serving).
+ * filtered by the caller's grant patterns, every outputSchema served with its `writeOnly`
+ * markers stripped (§7 — the hub's internal result-secret co-opt never reaches the wire;
+ * the `owner` flag below is the one read that is not a serving).
  * Archived → -32002; an unreachable or needs-reconnect proxied upstream
- * → -32000 (the backend's own throw) — the scoped endpoint is where the aggregate's silent
- * omissions surface. Never audited (§15).
+ * → -32000 (the backend's own throw) — the scoped endpoint is where a failure surfaces
+ * instead of being omitted from a hub snapshot. Never audited (§15).
  */
 async function listScoped(
   env: Env,
@@ -761,13 +830,30 @@ export async function ownerCatalog(
   slug: string,
   kind: ListKind,
 ): Promise<{ ok: true; items: ListedItem[] } | { ok: false; failure: HubError }> {
-  // deps: admin.owner · listScoped
+  // deps: admin.owner · listScoped · registry.allocateTypescriptNames
   try {
     // Inside the try because the username is READ, never synthesized — a forwarded
     // identity header must never carry an internal id (§7) — so a namespace with no user
     // row leaves as an unreadable catalog like any other, not as a crashed page render.
     const ctx: BackendCtx = { principal: await namespaceOwner(ownerId), roles: [] };
-    return { ok: true, items: await listScoped(env, ownerId, slug, ctx, kind, true) };
+    const items = await listScoped(env, ownerId, slug, ctx, kind, true);
+    // A successful canonical tools listing is also the discovery boundary for §23.6's
+    // stable names. The page and runtime therefore consume one reservation map rather than
+    // independently deriving TypeScript paths.
+    if (kind === "tools") {
+      const registry = new Registry(env.DB);
+      const app = await registry.getApp(ownerId, slug);
+      if (app !== null) {
+        await registry.allocateTypescriptNames([
+          {
+            appId: app.id,
+            service: slug,
+            tools: items.flatMap((item) => (typeof item.name === "string" ? [item.name] : [])),
+          },
+        ]);
+      }
+    }
+    return { ok: true, items };
   } catch (err) {
     // identity's convention: a thrown Response is never ours to swallow.
     if (err instanceof Response) throw err;
@@ -778,105 +864,17 @@ export async function ownerCatalog(
   }
 }
 
-/**
- * Aggregated fan-out (§7, widened by §20.2 to `prompts/list` — same cache, same live
- * fetch, same filter, same `<slug>_` prefix, same fan-out, same `_meta`): every app
- * the caller can see (owner: all non-archived, including `pmcp`; agent:
- * apps holding ≥1 grant, never `pmcp`), queried in parallel under a 10 s per-upstream
- * deadline, names prefixed `<slug>_`. A failing or hanging upstream contributes zero
- * items and its slug is returned in `unavailable` — surfaced to the consumer as
- * `_meta["pmcp/unavailable"]` and logged as an ops event, never an audit row — while the
- * aggregate itself always succeeds. Tunneled lists come from DO cache and cannot miss the
- * deadline.
- *
- * The composed name is also the one name the HUB mints, so this is where it is checked:
- * a `<slug>_<item>` outside CONSUMER_TOOL_NAME is dropped from the listing and named once
- * on the ops log as `pmcp/unlistable` (a name is catalog metadata, not a secret, §15). The
- * cost stays proportional — an out-of-charset item costs only itself, never its app's
- * other nine, and never the aggregate. Two ceilings, deliberate: the SCOPED listing serves
- * the upstream's own names unvalidated, because nothing is composed there and the name is
- * the app's to answer for; and `tools/call`/`prompts/get` are untouched, so an
- * unlisted name that still resolves upstream keeps working — real consumers refuse the
- * listing ENTRY, not the call, and the contract governs what the listing serves.
- */
-async function listAggregated(
-  env: Env,
-  ownerId: string,
-  ctx: BackendCtx,
-  kind: ListKind,
-): Promise<{ items: ListedItem[]; unavailable: string[] }> {
-  // deps: registry.listAppsFor · registry.resolveAccess · selectBackend · virtualPmcpApp
-  const registry = new Registry(env.DB);
-  const visible: App[] = (await registry.listAppsFor(ctx.principal)).filter((s) => !s.archived);
-  // The builtin participates like any other app for its owner; an agent can
-  // hold no grants on it (§8), so it is never added for one.
-  if (ctx.principal.kind === "user") visible.push(virtualPmcpApp(ownerId));
-
-  const listed: ListedFamily[] = await Promise.all(
-    visible.map(async (app): Promise<ListedFamily> => {
-      const filter = await registry.resolveAccess(ctx.principal, app);
-      try {
-        const catalog = await withDeadline(
-          LIST_CATALOG[kind](selectBackend(app), app, { ...ctx, roles: filter.roleNames }),
-          deadlines(env).aggregatedListDeadlineMs,
-        );
-        return {
-          slug: app.slug,
-          items: filter.filterList(catalog, kind).flatMap((item) => {
-            // filterList already dropped anything without the key its family is matched
-            // on, so an aggregated item always has the `name` this composes.
-            const name = `${app.slug}_${item.name}`;
-            if (CONSUMER_TOOL_NAME.test(name)) return [{ ...item, name }];
-            console.warn(`pmcp/unlistable: ${name}`);
-            return [];
-          }),
-        };
-      } catch (err) {
-        // Two failure classes, two OPERATOR signals. A HubError is somebody else's
-        // downtime — errored, timed out, needs-reconnect — and `pmcp/unavailable` is the
-        // line an operator reads before going to look at that upstream. A TypeError in
-        // filterList is a HUB defect: it is logged as one, against this module, so it can
-        // never send anybody to a perfectly healthy upstream.
-        //
-        // Both still contribute zero items, because §7 pins that the aggregate itself
-        // always succeeds: one app's failure — ours or theirs — may not cost the
-        // consumer the other nine, which is exactly what rethrowing here would do.
-        if (!(err instanceof HubError)) {
-          console.error(`pmcp/fan-out: hub defect listing "${app.slug}"`, err);
-        }
-        return { slug: app.slug, unavailable: true };
-      }
-    }),
-  );
-  return {
-    // `served` maps over the assembled listing, exactly as the scoped path applies it to
-    // its own — one position for the transform, so the two shapes cannot present a tool
-    // differently.
-    items: listed.flatMap((entry) => ("items" in entry ? entry.items : [])).map(served),
-    unavailable: listed.filter((entry) => "unavailable" in entry).map((entry) => entry.slug),
-  };
-}
-
-/**
- * The tool-name charset real consumers accept (strategy §10 — the spec's own `get.news`
- * example violates it). Not a hub limit, which is why it is not in limits.ts: it is the
- * CONSUMER's rule, and the aggregated composition above is the only place the hub mints a
- * name that has to satisfy it.
- */
-const CONSUMER_TOOL_NAME = /^[a-zA-Z0-9_-]{1,128}$/;
-
-/** One app's contribution to the fan-out: what it served, or that it could not. The
- *  union is the partition — no caller re-derives which is which from a container shape. */
-type ListedFamily = { slug: string; items: ListedItem[] } | { slug: string; unavailable: true };
-
-/** §7's per-upstream deadline inside the fan-out; the timer never outlives the race. */
-async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+/** §7's per-upstream deadline inside a catalog read or a bounded inner operation; the timer
+ *  never outlives the race. `failureClass` names the cause for the ledger (`unavailable`'s
+ *  at-most-once table decides what the consumer is told), absent for the collector's own
+ *  omission path, which never surfaces as a wire error at all. */
+async function withDeadline<T>(work: Promise<T>, ms: number, failureClass?: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       work,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(unavailable()), ms);
+        timer = setTimeout(() => reject(unavailable(failureClass)), ms);
       }),
     ]);
   } finally {
@@ -909,18 +907,477 @@ function withoutWriteOnly(node: unknown): unknown {
   return out;
 }
 
+// ══ §23 — the virtual hub: access, the catalog collector, and its two calls ════════════
+//
+// §23.1's `hub` is a virtual service: no D1 row, never archived, always availability-
+// probeable, `logBodies: false`, and — like `pmcp` — reachable only through the namespace's
+// own credentials. It has no backend, so nothing here dials one: `search_types` is computed
+// from the caller-visible snapshot below, `execute` is handed to the injected Sandbox plane
+// (hub-backend.ts's seam), and its resources are its own declarations. What it SHARES with
+// every other request is the outer exit: one metadata-only audit row per tools/call, written
+// by the same `recordDispatch`, under app `hub` and the canonical tool name.
+
 /**
- * The one tools/call pipeline, identical for both endpoint shapes — `slug` and `tool`
- * arrive already split and unprefixed, so approvals bind to the same row either way.
- * Runs the pinned order: filter (-32001 — an ungranted agent learns nothing more),
- * archived (-32002), availability (-32000 — §7 lists it last but the availability-first
- * decision puts it ahead of the approval gate, and one test serves both), the call's
- * redaction map (-32001 when no sound one exists, §7), then the approval gate —
- * approvals.check, the atomic claim, dispatch, settle: `-32003` with
+ * §23.1's synthetic access filter: the virtual hub's whole admitted surface — its two tools
+ * (both endpoint spellings) and its own declaration URIs/templates — never built from
+ * grants, never persisted, and never consulted for a real app. `check` is the admission
+ * authority the two hub methods use, which is what makes an unknown name, a malformed name
+ * and a URI the hub does not publish all the same indistinguishable -32001.
+ *
+ * `roleNames` is `["all"]` because the hub's surface is the hub's own (the filter is never
+ * forwarded anywhere: a hub tool's inner operations resolve THEIR app's filter through the
+ * dispatch seam). `filterList` mirrors `buildToolFilter`'s shape — the same subject key per
+ * family, the same family-to-patterns mapping — so it cannot disagree with it about which
+ * key a family is matched on.
+ */
+function hubAccess(): ToolFilter {
+  function check(subject: string, family: RoleFamily = "tools"): AccessMode {
+    if (family === "resources") return parseHubDeclarationUri(subject) === null ? "deny" : "allow";
+    return HUB_TOOLS.some((tool) => tool.name === subject || tool.aggregateName === subject) ? "allow" : "deny";
+  }
+  return {
+    check,
+    filterList: (items, kind = "tools") =>
+      items.filter((item) => {
+        const subject = item[subjectKeyOf(kind)];
+        return typeof subject === "string" && check(subject, patternFamilyOf(kind)) !== "deny";
+      }),
+    roleNames: ["all"],
+  };
+}
+
+/** One app the collector is about to read, plus the families the hub was TOLD it serves —
+ *  a proxied app's owner configuration, or the builtin's fixed tools-only answer. A tunneled
+ *  app's declaration is read from its DO inside the read: only the DO knows it. */
+type HubServiceTarget = { app: App; capabilities: readonly AppCapability[] };
+
+/** One service's fetched families and its caller-visible diagnostics, before the snapshot
+ *  is built. `null` marks a family that could not be read (or was never fetched because the
+ *  app does not declare it) — an omission, never an empty catalog. */
+type HubServiceRead = {
+  app: App;
+  filter: ToolFilter;
+  tools: Tool[] | null;
+  resources: Resource[] | null;
+  resourceTemplates: ResourceTemplate[] | null;
+  diagnostics: string[];
+};
+
+/**
+ * §23.5 — the caller-visible catalog snapshot: the immutable value declarations, search and
+ * `execute` all read, built fresh per request and never persisted. In canonical service
+ * order it selects the apps this caller may see (excluding the virtual hub), adds the
+ * virtual `pmcp` builtin for user/admin credentials alone, skips archived rows, reads each
+ * declared family under its own deadline, ALLOCATES durable TypeScript names from the
+ * unfiltered canonical families before applying the caller's grant filter, and records
+ * bounded diagnostics for everything omitted.
+ *
+ * "Caller-visible" means exactly what a scoped listing would serve: `listAppsFor` (an agent
+ * sees only apps it holds grants on, an admin sees no real apps at all) and
+ * `resolveAccess`'s `filterList` per family. The snapshot is a moment, not an authority: a
+ * revoked grant still refuses the next inner operation, and a name a program already saw
+ * lives at most one execution deadline.
+ */
+async function collectHubCatalog(env: Env, principal: Principal, ownerId: string): Promise<CatalogSnapshot> {
+  const registry = new Registry(env.DB);
+  // §23.5.2: an admin token's program catalog is its `pmcp` subset and nothing else — the
+  // owner's own rows are not its business, and `listAppsFor` would happily return them.
+  const visible: AppDetail[] = principal.kind === "admin" ? [] : await registry.listAppsFor(principal);
+  const targets: HubServiceTarget[] = visible
+    .filter((app) => !app.archived && app.slug !== HUB_SLUG)
+    .map((app) => ({ app, capabilities: app.capabilities ?? DEFAULT_APP_CAPABILITIES }));
+  // The builtin joins for user/admin credentials; an agent can hold no grants on it (§8).
+  if (principal.kind !== "agent") targets.push({ app: virtualPmcpApp(ownerId), capabilities: ["tools"] });
+  targets.sort((left, right) => (left.app.slug < right.app.slug ? -1 : left.app.slug > right.app.slug ? 1 : 0));
+
+  const reads = await Promise.all(targets.map((target) => readHubService(env, registry, target, principal)));
+  const plan = await allocateHubNames(registry, reads);
+  return buildCatalogSnapshot({ services: reads.map((read) => hubServiceInput(read, plan)) });
+}
+
+/**
+ * One service's families, under §23.5's per-family deadline. The filter is resolved FIRST
+ * and passed to the backend as `roles`, so a family read is scoped the same way a scoped
+ * listing scopes it; the FETCHED list stays unfiltered, because alias allocation runs over
+ * the canonical family and only the published snapshot is filtered.
+ */
+async function readHubService(
+  env: Env,
+  registry: Registry,
+  target: HubServiceTarget,
+  principal: Principal,
+): Promise<HubServiceRead> {
+  const { app } = target;
+  const filter = await registry.resolveAccess(principal, app);
+  const ctx: BackendCtx = { principal, roles: filter.roleNames };
+  const backend = selectBackend(app);
+  // A tunneled app's declaration lives in its DO, and only the DO knows it; every other
+  // target (a proxied app's owner configuration, the builtin's fixed tools-only answer)
+  // carries its own — the builtin is NOT dialed, because no DO row exists for it.
+  const declared =
+    app.kind === "tunnel" && app.slug !== PMCP_SLUG ? await tunnelCapabilities(app.id) : target.capabilities;
+  const diagnostics: string[] = [];
+  const tools = await readFamily(env, () => backend.listTools(app, ctx), app.slug, "tools", diagnostics);
+  // §23.5.4: resource families are read only for an app that DECLARED the capability —
+  // dialing a proxied upstream for a family its owner never declared is a wasted round trip
+  // and a spurious failure diagnostic.
+  const resourceCapable = declared.includes("resources");
+  const resources = resourceCapable
+    ? await readFamily(env, () => backend.listResources(app, ctx), app.slug, "resources", diagnostics)
+    : [];
+  const resourceTemplates = resourceCapable
+    ? await readFamily(env, () => backend.listResourceTemplates(app, ctx), app.slug, "resource templates", diagnostics)
+    : [];
+  return { app, filter, tools, resources, resourceTemplates, diagnostics };
+}
+
+/**
+ * One family of one app's catalog, bounded by the hub's per-family deadline. A failure — a
+ * slow or failing upstream, a DO that cannot be reached — omits the family with one bounded
+ * diagnostic naming the service and the family, and NOTHING of the backend's own error: a
+ * refusal's class can carry an upstream status or a credential state, and neither belongs in
+ * a value an untrusted program reads. The family's entries never partially survive: a read
+ * either answered whole or is an omission.
+ */
+async function readFamily<T>(
+  env: Env,
+  read: () => Promise<T[]>,
+  slug: string,
+  family: string,
+  diagnostics: string[],
+): Promise<T[] | null> {
+  try {
+    return await withDeadline(read(), deadlines(env).hubCatalogDeadlineMs);
+  } catch {
+    diagnostics.push(`the ${family} catalog of service "${slug}" could not be read`);
+    return null;
+  }
+}
+
+/**
+ * §23.5/§23.6 — allocates durable TypeScript names from the UNFILTERED fetched families,
+ * before caller filtering, and answers the committed plan (null when the write could not
+ * commit). `tools: null` disables disappearance retirement for that app: an unreachable
+ * family and an empty one are not the same fact, and only a fetched list may retire a name.
+ *
+ * The virtual builtin is excluded: it has no row, so no reservation can hang from it — its
+ * fixed root name and generated tool names are allocated locally by `hubServiceInput`.
+ */
+async function allocateHubNames(registry: Registry, reads: readonly HubServiceRead[]): Promise<AliasPlan | null> {
+  const members: AliasServiceMembers[] = reads
+    .filter((read) => read.app.slug !== PMCP_SLUG)
+    .map((read) => ({
+      appId: read.app.id,
+      service: read.app.slug,
+      tools: read.tools === null ? null : read.tools.map((tool) => tool.name),
+    }));
+  try {
+    return await registry.allocateTypescriptNames(members);
+  } catch {
+    // The realistic failure is a race with deletion or recreation between the listing read
+    // and this write. The snapshot then degrades to "no TypeScript names" — declarations
+    // render their diagnostic banner, search matches no application entry — rather than
+    // failing the whole request, and nothing is published for a name that did not commit.
+    return null;
+  }
+}
+
+/**
+ * §23.6 — the builtin `pmcp` service's TypeScript identity, allocated locally because the
+ * virtual app has no row for a reservation to hang from. `pmcp` is a fixed ROOT member the
+ * hub owns (no real app may claim it); its tools are the generated candidates over the
+ * builtin's own stable op names, under the same rules the durable planner applies to real
+ * apps — including the omission of a candidate two members would share.
+ */
+function pmcpTypeNames(tools: readonly string[]): { names: Map<string, string | null>; diagnostics: string[] } {
+  const names = new Map<string, string | null>();
+  const diagnostics: string[] = [];
+  const contenders = new Map<string, string[]>();
+  for (const tool of tools) {
+    const candidate = generatedAlias(tool, "tool");
+    if (candidate === null) {
+      diagnostics.push(aliasDiagnosticMessage({ family: "tool", canonicalName: tool, typescriptName: null, reason: "no_segment" }));
+      names.set(tool, null);
+      continue;
+    }
+    if (aliasNameViolations(candidate, "tool").length > 0) {
+      diagnostics.push(aliasDiagnosticMessage({ family: "tool", canonicalName: tool, typescriptName: candidate, reason: "too_long" }));
+      names.set(tool, null);
+      continue;
+    }
+    contenders.set(candidate, [...(contenders.get(candidate) ?? []), tool]);
+  }
+  for (const [candidate, members] of contenders) {
+    if (members.length > 1) {
+      for (const member of members) {
+        diagnostics.push(
+          aliasDiagnosticMessage({ family: "tool", canonicalName: member, typescriptName: candidate, reason: "simultaneous" }),
+        );
+        names.set(member, null);
+      }
+      continue;
+    }
+    names.set(members[0], candidate);
+  }
+  return { names, diagnostics };
+}
+
+/**
+ * One service's contribution to the snapshot: its resolved TypeScript names, its entries
+ * filtered by the caller's own access verdict, and the diagnostics the caller may see.
+ *
+ * Two visibility rules, both about not leaking what the caller cannot see. A PLAN
+ * diagnostic names the member it is about, so only the members that survived filtering keep
+ * theirs — an omitted contender the caller cannot see never surfaces through the service
+ * that happened to hold it. And an entry the filter dropped is simply absent: no name, no
+ * canonical identity, no diagnostic.
+ */
+function hubServiceInput(read: HubServiceRead, plan: AliasPlan | null): CatalogServiceInput {
+  const { app, filter } = read;
+  const resolved = plan?.services.find((service) => service.appId === app.id);
+  const tools = filter.filterList(read.tools ?? [], "tools");
+  const resources = filter.filterList(read.resources ?? [], "resources");
+  const resourceTemplates = filter.filterList(read.resourceTemplates ?? [], "resourceTemplates");
+  const builtin = app.slug === PMCP_SLUG ? pmcpTypeNames(tools.map((tool) => tool.name)) : null;
+  const visibleTools = new Set(tools.map((tool) => tool.name));
+  const planDiagnostics = (plan?.diagnostics ?? []).filter((diagnostic) =>
+    diagnostic.family === "service"
+      ? diagnostic.canonicalName === app.slug
+      : visibleTools.has(diagnostic.canonicalName),
+  );
+  return {
+    appId: app.id,
+    service: app.slug,
+    // The builtin's service name is the fixed root member; a real app's is the plan's.
+    typescriptName: builtin === null ? resolved?.typescriptName ?? null : PMCP_SLUG,
+    kind: app.slug === PMCP_SLUG ? "builtin" : app.kind,
+    tools: tools.map((tool) => ({
+      canonicalName: tool.name,
+      typescriptName: builtin === null
+        ? resolved?.tools.find((member) => member.canonicalName === tool.name)?.typescriptName ?? null
+        : builtin.names.get(tool.name) ?? null,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      // §7's result-secret co-opt: the OUTPUT schema is served with `writeOnly` stripped,
+      // exactly as the scoped listing serves it — the snapshot is consumer-facing data.
+      outputSchema: tool.outputSchema === undefined ? undefined : withoutWriteOnly(tool.outputSchema),
+    })),
+    resources: resources.map((resource) => ({ uri: resource.uri, description: resource.description })),
+    resourceTemplates: resourceTemplates.map((template) => ({
+      uriTemplate: template.uriTemplate,
+      description: template.description,
+    })),
+    diagnostics: [...read.diagnostics, ...planDiagnostics.map(aliasDiagnosticMessage), ...(builtin?.diagnostics ?? [])],
+  };
+}
+
+/**
+ * §23.1's `tools/call` on the hub: the two tools, and nothing else. The name is admitted by
+ * the hub's own filter and resolved to its descriptor; an unknown or malformed name is the
+ * same -32001 as not-permitted, refused BEFORE the audit path — there is no canonical tool
+ * to record, and §15's `tool` column is not a place for unbounded caller text.
+ *
+ * One metadata-only row leaves this function, written after the try/catch like every other
+ * dispatching method: app `hub`, the canonical tool name, the outcome and the duration. No
+ * body is ever recorded — no source, query, snapshot, diagnostic or result — which is what
+ * `logBodies: false` means for the virtual app and what §23.12 pins.
+ *
+ * `search_types` reads the snapshot and answers; `execute` validates against the owner's
+ * settings, builds the same snapshot, refuses before launch on a catalog overflow, and hands
+ * the run to the injected Sandbox plane. Nothing here starts a container itself.
+ */
+async function hubCall(
+  env: Env,
+  caller: AuthenticatedCaller,
+  ownerId: string,
+  shape: EndpointShape,
+  name: string,
+  msg: JsonRpcRequest,
+  ctx: BackendCtx,
+  lifecycle: HubRequestLifecycle,
+): Promise<JsonRpcResponse> {
+  if (hubAccess().check(name, "tools") === "deny") throw notPermitted();
+  const tool = hubToolFor(shape, name);
+  if (tool === null) throw notPermitted();
+
+  const startedAt = Date.now();
+  let outcome = "error";
+  let value: unknown;
+  let refusal: unknown;
+  let detail: Record<string, unknown> | undefined;
+  let finishAuditLifetime: (() => void) | undefined;
+  if (tool.name === "execute" && lifecycle.waitUntil !== undefined) {
+    // Keep the gateway continuation alive through its outer audit, not merely until the
+    // Durable Object's cancellation and run promises have settled.
+    const auditLifetime = new Promise<void>((resolve) => {
+      finishAuditLifetime = resolve;
+    });
+    lifecycle.waitUntil(auditLifetime);
+  }
+  try {
+    if (tool.name === "search_types") {
+      value = hubSearchTypes(await collectHubCatalog(env, caller.principal, ownerId), msg.params?.arguments);
+    } else {
+      const settings = await new Registry(env.DB).hubExecutionSettings(ownerId);
+      const request = hubExecuteRequest(msg.params?.arguments, settings);
+      const snapshot = await collectHubCatalog(env, caller.principal, ownerId);
+      // §23.5: an overflowing catalog refuses BEFORE Sandbox start — a deterministic,
+      // non-transient limit, and nothing ran.
+      value = snapshot.truncated
+        ? { kind: "limit_exceeded", limit: "catalog", observed: snapshot.entryCount, transient: false, mayHaveRun: false }
+        : await runHubExecution({
+            caller,
+            ownerId,
+            code: request.code,
+            timeoutMs: request.timeoutMs,
+            // §23.8: the admitted budget is an ABSOLUTE instant, so it bounds the whole
+            // path — the collection above included — and a later settings change cannot
+            // extend it.
+            deadlineAt: startedAt + request.timeoutMs,
+            settings,
+            snapshot,
+            clientMeta: ctx.clientMeta,
+            lifecycle,
+          });
+    }
+    outcome = "ok";
+  } catch (err) {
+    // §23.4/§23.10: the executor's two out-of-band signals are mapped BEFORE the generic
+    // handling. A revoked credential becomes the existing metadata-only -32001, with
+    // nothing of the run published; an aborted request becomes a class-carrying -32000
+    // (may-have-executed is the truth here) whose response nobody is reading.
+    refusal = err instanceof HubCredentialRevokedError
+      ? notPermitted()
+      : err instanceof HubExecutionAbortedError
+        ? unavailable("execution_aborted")
+        : err;
+    outcome = refusal instanceof HubError ? String(refusal.code) : "error";
+    if (refusal instanceof HubError) detail = refusal.auditDetail;
+  }
+  try {
+    await recordDispatch(env, {
+      ownerId,
+      ctx,
+      event: "tools/call",
+      slug: HUB_SLUG,
+      tool: tool.name,
+      outcome,
+      durationMs: Date.now() - startedAt,
+      bodies: {},
+      detail,
+    });
+    if (value === undefined) throw refusal;
+    return {
+      jsonrpc: "2.0",
+      id: msg.id ?? null,
+      // The wire shape every tool result takes here: the structured half is the contract
+      // (`outputSchema` pins it) and the text half is what a client without a schema reads —
+      // the builtin's own result shape, for the same reason.
+      result: { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value },
+    };
+  } finally {
+    finishAuditLifetime?.();
+  }
+}
+
+/**
+ * §23.1/§23.2's hub `resources/read`: the hub's own declaration URIs and nothing else. The
+ * filter decides whether the URI is a hub declaration at all; the caller's snapshot then
+ * decides whether it names a record this caller's catalog contains — so a URI for a service
+ * or member the caller cannot see is refused exactly like a URI the hub never publishes
+ * (-32001, indistinguishable from not-permitted).
+ *
+ * Exactly one audit row leaves, like every other read: the row's `tool` column is the URI
+ * under §20.4's hygiene and the declaration TEXT is recorded nowhere.
+ */
+async function hubRead(env: Env, ownerId: string, msg: JsonRpcRequest, ctx: BackendCtx): Promise<JsonRpcResponse> {
+  const startedAt = Date.now();
+  const uri = typeof msg.params?.uri === "string" ? msg.params.uri : "";
+  let outcome = "error";
+  let answer: JsonRpcResponse | undefined;
+  let refusal: unknown;
+  try {
+    if (hubAccess().check(uri, "resources") === "deny") throw notPermitted();
+    const text = hubDeclarationText(await collectHubCatalog(env, ctx.principal, ownerId), uri);
+    if (text === null) throw notPermitted();
+    answer = {
+      jsonrpc: "2.0",
+      id: msg.id ?? null,
+      result: { contents: [{ uri, mimeType: "text/typescript", text }] },
+    };
+    outcome = "ok";
+  } catch (err) {
+    refusal = err;
+    outcome = err instanceof HubError ? String(err.code) : "error";
+  }
+  await recordDispatch(env, {
+    ownerId,
+    ctx,
+    event: "resources/read",
+    slug: HUB_SLUG,
+    tool: auditableUri(uri),
+    outcome,
+    durationMs: Date.now() - startedAt,
+    bodies: {},
+  });
+  if (answer === undefined) throw refusal;
+  return answer;
+}
+
+/**
+ * §23.10's trusted input to one `tools/call`: identity and addressing that arrived already
+ * resolved, never a raw JSON-RPC message. The scoped route builds it from the consumer's
+ * message; the Sandbox bridge (§23.10's DO-to-gateway hop, implemented in hub-sandbox.ts)
+ * builds it from a program's call, where `clientMeta`/`meta` are the admitted execution's
+ * stored display data and the ordinary arguments alone.
+ */
+export type ToolDispatch = {
+  /** The caller the door admitted (§7 step 1); its `principal` decides the owner, and its
+   *  `credential` is what `reauthorizeCredential` re-proves. */
+  caller: AuthenticatedCaller;
+  /** The canonical app slug, addressed by the consumer or pinned in a snapshot. */
+  slug: string;
+  /** The canonical tool name — never a TypeScript alias. */
+  tool: string;
+  /** `params.arguments`, verbatim. */
+  args?: Record<string, unknown>;
+  /** Untrusted display-only client metadata for the audit row (§7). */
+  clientMeta?: BackendCtx["clientMeta"];
+  /** The consumer's `_meta`, carried for direct calls; absent for Sandbox-originated ones,
+   *  which inherit no arbitrary outer `_meta` (§23.10). */
+  meta?: Record<string, unknown>;
+  /** MRTR answers from the consumer, preserved as a params-level sibling of `arguments`. */
+  inputResponses?: unknown;
+  /** MRTR continuation state from the consumer, preserved as a params-level sibling of `arguments`. */
+  requestState?: unknown;
+  /** The consumer's JSON-RPC id; absent for a bridge call, whose answer is not a consumer's. */
+  id?: JsonRpcId;
+  /** Absolute epoch-ms deadline for THIS operation (§23.10). Absent for direct calls. */
+  deadlineAt?: number;
+  /** §23.6 — the immutable app id a Sandbox snapshot pinned: a slug that now resolves to a
+   *  different app is refused -32001, so a deleted-and-recreated slug cannot redirect old
+   *  code. */
+  expectAppId?: string;
+  /** §23.4 — Sandbox-originated dispatches set this: re-authorize the credential from its
+   *  non-secret reference and refuse -32001 unless the live principal key is unchanged,
+   *  BEFORE the app is resolved. A direct consumer call omits it: the door resolved this
+   *  very credential for this very request. */
+  reauthorizeCredential?: boolean;
+};
+
+/**
+ * The one tools/call pipeline — the scoped route's and §23.10's Sandbox bridge's alike, so a
+ * program's operation crosses exactly the checks a direct consumer call crosses. `slug` and
+ * `tool` arrive already resolved and canonical, so approvals bind to the same row either way.
+ * Runs the pinned order: resolve app → pinned-app-id check → filter (-32001 — an ungranted
+ * agent learns nothing more), archived (-32002), availability (-32000 — §7 lists it last but
+ * the availability-first decision puts it ahead of the approval gate, and one test serves
+ * both), the call's redaction map (-32001 when no sound one exists, §7), then the approval
+ * gate — approvals.check, the atomic claim, dispatch, settle: `-32003` with
  * { approvalId, approvalUrl, expiresAt } when a decision is still owed, and an MRTR
- * input_required leg restores the claim. A passing call
- * is forwarded post-hygiene with identity attached and relayed verbatim — what the
- * CONSUMER receives is never redacted; masking exists for persistence only.
+ * input_required leg restores the claim. A passing call is forwarded post-hygiene with
+ * identity attached and relayed verbatim — what the CONSUMER receives is never redacted;
+ * masking exists for persistence only.
  *
  * Exactly one audit row leaves this function, written after the try/catch: audit.record
  * is AWAITED with hub-measured duration — a failed audit write fails the call. When
@@ -932,13 +1389,36 @@ function withoutWriteOnly(node: unknown): unknown {
  * audit.record itself enforces the size cap. All
  * failures leave as HubError; only the caller of this seam maps them to the wire.
  */
-async function callTool(env: Env, ownerId: string, slug: string, tool: string, msg: JsonRpcRequest, ctx: BackendCtx): Promise<JsonRpcResponse> {
-  // deps: registry.getApp · registry.resolveAccess · registry.redactPathsFor · registry.applyRedaction · approvals.check · approvals.claim · approvals.settle · audit.record · selectBackend · virtualPmcpApp · probeAvailability · prepareForward
+export async function dispatchTool(env: Env, input: ToolDispatch): Promise<JsonRpcResponse> {
+  // deps: identity.reauthorize · registry.getApp · registry.resolveAccess · registry.redactPathsFor · registry.applyRedaction · approvals.check · approvals.claim · approvals.settle · audit.record · selectBackend · virtualPmcpApp · probeAvailability · prepareForward
+  const principal = input.caller.principal;
+  const ownerId = principal.kind === "agent" ? principal.ownerId : principal.userId;
   const startedAt = Date.now();
+  // The forwarded message is rebuilt from trusted addressing plus the ordinary fields this
+  // method owns. MRTR continuations remain params-level siblings of `arguments`; neither is
+  // allowed to disappear into `_meta` or the approval binding.
+  const msg: JsonRpcRequest = {
+    jsonrpc: "2.0",
+    method: "tools/call",
+    ...(input.id === undefined ? {} : { id: input.id }),
+    params: {
+      name: input.tool,
+      ...(input.args === undefined ? {} : { arguments: input.args }),
+      ...(input.inputResponses === undefined ? {} : { inputResponses: input.inputResponses }),
+      ...(input.requestState === undefined ? {} : { requestState: input.requestState }),
+      ...(input.meta === undefined ? {} : { _meta: input.meta }),
+    },
+  };
+  const ctx: BackendCtx = {
+    principal,
+    roles: [],
+    clientMeta: input.clientMeta,
+    deadlineAt: input.deadlineAt,
+  };
   const registry = new Registry(env.DB);
   // The row this call will leave, filled in by whichever branch below reaches an answer.
   // ONE exit: `recordDispatch` is invoked after the try/catch and nowhere else, which is what
-  // makes "every path through callTool ends in exactly one audit row" readable off the
+  // makes "every path through dispatchTool ends in exactly one audit row" readable off the
   // control flow instead of inferred from which statements can throw. It also means a
   // failure in the ledger path can never masquerade as a refusal of the call it is
   // recording — a second, refusal-shaped row for a call that actually dispatched.
@@ -946,20 +1426,26 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
   let bodies: CallBodies = {};
   let answer: JsonRpcResponse | undefined;
   let refusal: unknown;
-  let recordedSlug = slug;
+  let recordedSlug = input.slug;
   let detail: Record<string, unknown> | undefined;
   try {
+    // A bridge dispatch re-proves the credential inside the single audited path. The
+    // refusal remains -32001, but now leaves the same canonical row as every other denial.
+    if (input.reauthorizeCredential === true) await requireSamePrincipal(input.caller);
     const app =
-      slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, slug);
-    // An aggregated prefix matching no visible app: -32001, indistinguishable from
+      input.slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, input.slug);
+    // A slug that resolves to no visible app: -32001, indistinguishable from
     // not-permitted, so tool names cannot enumerate a namespace (§7 step 3).
     if (app === null) throw notPermitted();
     recordedSlug = app.slug;
+    // §23.6: the snapshot pinned an immutable app id, and a slug that now resolves to
+    // another one is refused exactly like an app the caller cannot see.
+    if (input.expectAppId !== undefined && app.id !== input.expectAppId) throw notPermitted();
 
     // 1 — filter. First, always: an ungranted agent may not learn that an app is
     // archived, unreachable, or even real.
     const filter = await registry.resolveAccess(ctx.principal, app);
-    const mode = filter.check(tool);
+    const mode = filter.check(input.tool);
     if (mode === "deny") throw notPermitted();
 
     // 2 — archived.
@@ -981,19 +1467,19 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
     // call can never be masked under different maps (§15). Null means no sound map exists
     // for this tool and nothing downstream may run — -32001, the same code as
     // not-permitted, so the refusal cannot be used to map grant patterns (§7).
-    const redaction = await redactionMapFor(registry, backend, app, tool);
+    const redaction = await redactionMapFor(registry, backend, app, input.tool);
     if (redaction === null) throw notPermitted();
 
     // 4 — the approval gate (owners are never routed into it; the filter answered
     // `allow` for them via the built-in `all`).
     const claim = mode === "approval"
-      ? await passGate(env, app, tool, msg, redaction.args, ctx.principal)
+      ? await passGate(env, app, input.tool, msg, redaction.args, ctx.principal)
       : undefined;
 
-    // The forwarded message carries the UNPREFIXED name; the aggregated prefix is the
-    // hub's addressing, never the app's business.
-    const forwarded = prepareForward({ ...msg, params: { ...msg.params, name: tool } }, appCtx);
-    const relayed = await backend.call(app, forwarded, appCtx);
+    // The forwarded message carries the canonical name, never a hub-local alias: the
+    // address a consumer wrote is not the app's business.
+    const forwarded = prepareForward(msg, appCtx);
+    const relayed = await boundedCall(backend, app, forwarded, appCtx);
     // An MRTR input_required leg restores the pass; anything else leaves it spent.
     if (claim) await approvalsFor().settle(claim, relayed);
     // The hub's own outcome vocabulary (§15): an app that answered with a JSON-RPC
@@ -1022,7 +1508,7 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
     ctx,
     event: "tools/call",
     slug: recordedSlug,
-    tool,
+    tool: input.tool,
     outcome,
     durationMs: Date.now() - startedAt,
     bodies,
@@ -1032,9 +1518,50 @@ async function callTool(env: Env, ownerId: string, slug: string, tool: string, m
   return answer;
 }
 
+/** §23.4 — the one liveness check a mid-execution operation adds to a door-resolved caller:
+ *  re-authorize the non-secret reference and require the same principal key. Refuses -32001
+ *  (never a distinct code), so a revoked credential is indistinguishable from an ungranted
+ *  one at this seam. */
+async function requireSamePrincipal(caller: AuthenticatedCaller): Promise<void> {
+  if (!(await reauthorizeCaller(caller))) throw notPermitted();
+}
+
+/**
+ * §23.4 — `requireSamePrincipal` as a verdict rather than a refusal, for the Sandbox plane's
+ * own two call sites: the per-bridge-operation check (which the dispatch seams do
+ * themselves, via `reauthorizeCredential`) and the pre-PUBLICATION check, whose failure
+ * discards a finished run's value, diagnostics, stdout and stderr. Answers false for every
+ * refusal and never leaks which one — a revoked row, an expired reference, a deleted agent
+ * and a rebound principal are one answer, exactly like the door's.
+ */
+export async function reauthorizeCaller(caller: AuthenticatedCaller): Promise<boolean> {
+  const current = await reauthorize(caller.credential.reference);
+  return current !== null && principalKey(current) === principalKey(caller.principal);
+}
+
+/**
+ * §23.10 — one backend call under the effective inner deadline: the earlier of the caller's
+ * absolute deadline and the hub-inner cap. A direct call (`deadlineAt` absent) is unchanged —
+ * the backend's own `CALL_TIMEOUT_MS` is the whole budget — and an operation whose deadline
+ * has already passed never starts at all. The timeout class rides `auditDetail` like every
+ * other class; the message's at-most-once warning is correct here, because a call that timed
+ * out may have reached the app.
+ */
+async function boundedCall(
+  backend: AppBackend,
+  app: App,
+  msg: JsonRpcRequest,
+  ctx: BackendCtx,
+): Promise<JsonRpcResponse> {
+  if (ctx.deadlineAt === undefined) return backend.call(app, msg, ctx);
+  const remaining = ctx.deadlineAt - Date.now();
+  if (remaining <= 0) throw unavailable("deadline_passed");
+  return withDeadline(backend.call(app, msg, ctx), Math.min(remaining, HUB_INNER_OPERATION_TIMEOUT_MS), "timeout");
+}
+
 /**
  * §7's approval gate: check → claim, and nothing before them. Its two preconditions are
- * the caller's, tested once each in callTool above — the app is available (§7's
+ * the caller's, tested once each in dispatchTool above — the app is available (§7's
  * availability-first clause: no pending row, no push, no existing pass touched for a
  * app the hub already knows cannot execute) and the call's redaction map is derived,
  * so the approval row and the audit row of the same call cannot be masked differently
@@ -1071,7 +1598,7 @@ async function passGate(
  *
  * Null has ONE meaning here — no sound map can exist for this tool (unknown to the
  * backend, or its cached schema tripped registry.validateSchemaIndirection) — and one
- * consequence, taken by callTool at the gate: -32001, the same code as not-permitted, so
+ * consequence, taken by dispatchTool at the gate: -32001, the same code as not-permitted, so
  * the refusal cannot be used to map grant patterns (§7). Nothing downstream runs, and no
  * body is ever recorded for such a tool (§15).
  */
@@ -1109,7 +1636,7 @@ type CallBodies = { args?: Record<string, unknown>; result?: Record<string, unkn
  * masked under the args union, `structuredContent` under the results union, and every
  * unstructured content block replaced by a blob stub — bytes never stored. `redaction` is
  * the call's ONE map (redactionMapFor), which is why a tool with no derivable map cannot
- * reach here at all: callTool refused it at the gate.
+ * reach here at all: dispatchTool refused it at the gate.
  */
 function callBodies(
   redaction: { args: string[]; results: string[] },
@@ -1194,17 +1721,18 @@ async function recordDispatch(
 
 // ══ §20.2 — prompts/get and resources/read: the two audited reads ═════════════════════
 //
-// Both share the pipeline `callTool` runs, minus two things: NO approval gate (§18
+// Both share the pipeline `dispatchTool` runs, minus two things: NO approval gate (§18
 // decision 27 — a read is never gated), and no redaction-map-required gate either — a
 // prompt or a resource has no catalog-miss concept, because neither carries a schema for
 // `sensitivePaths` to walk in the first place (§20.3). What is left is exactly §7's other
 // three checks, in order: filter (-32001) → archived (-32002) → availability (-32000).
 // Each ends in exactly one audit row, like a call (§20.4) — the same `recordDispatch`,
-// invoked after the try/catch and nowhere else, for the same reason `callTool` does it.
+// invoked after the try/catch and nowhere else, for the same reason `dispatchTool` does it.
 
 /**
- * §20.2's `prompts/get` pipeline, identical on both endpoint shapes once `slug`/`name`
- * arrive already split and unprefixed. Bodies (§20.3/§20.4): arguments are recorded ONLY
+ * §20.2's `prompts/get` pipeline, scoped-only (the hub shapes list no prompts and refuse
+ * this method in `hubRoute`) and reached with `slug`/`name` already read off the message.
+ * Bodies (§20.3/§20.4): arguments are recorded ONLY
  * when the app's `redact` map names this prompt — with no entry, prompts carry no
  * writeOnly channel to earn §15's tunneled default, so nothing is recorded regardless of
  * `log_bodies` or the backend's kind; the result's message content blocks are always
@@ -1298,44 +1826,87 @@ function stubMessage(message: unknown): Record<string, unknown> {
 }
 
 /**
- * §20.2's `resources/read` pipeline — the twin of `getPrompt` above, matched by `uri`
- * (never `name`, §20.2) against the caller's resource patterns. Two things it alone does:
- * the outgoing result is decorated (§20.4 — `cacheScope: "public"` downgraded to
- * `"private"`, and a still-pending MRTR exchange never given a `ttlMs`), and the audited
- * `tool` column is the URI itself, put through §20.4's own hygiene (auditableUri) before
- * it ever reaches `record` — dropped query, capped length, §15's token grammar scrubbed.
- * Resource reads carry no argument body at all (§20.4); only the result is ever recorded.
+ * §23.10's trusted input to one `resources/read`, the twin of `ToolDispatch`: identity and
+ * addressing arrive resolved, and the URI is the app's OWN raw URI — never prefixed,
+ * normalized or reverse-translated from a hub alias (§23.7).
  */
-async function readResource(
-  env: Env,
-  ownerId: string,
-  slug: string,
-  uri: string,
-  msg: JsonRpcRequest,
-  ctx: BackendCtx,
-): Promise<JsonRpcResponse> {
-  // deps: registry.getApp · registry.resolveAccess · selectBackend · virtualPmcpApp · probeAvailability · prepareForward · audit.record
+export type ResourceDispatch = {
+  /** The caller the door admitted. */
+  caller: AuthenticatedCaller;
+  /** The canonical app slug the read is addressed to. */
+  slug: string;
+  /** The raw resource URI, exactly as the application serves it. */
+  uri: string;
+  /** Untrusted display-only client metadata for the audit row (§7). */
+  clientMeta?: BackendCtx["clientMeta"];
+  /** The consumer's `_meta`, carried for direct calls; absent for Sandbox-originated ones. */
+  meta?: Record<string, unknown>;
+  /** The consumer's JSON-RPC id; absent for a bridge call. */
+  id?: JsonRpcId;
+  /** Absolute epoch-ms deadline for THIS read (§23.10). Absent for direct calls. */
+  deadlineAt?: number;
+  /** §23.6 — the immutable app id a Sandbox snapshot pinned; a slug resolving elsewhere is
+   *  refused -32001. */
+  expectAppId?: string;
+  /** §23.4 — see `ToolDispatch.reauthorizeCredential`; identical here. */
+  reauthorizeCredential?: boolean;
+};
+
+/**
+ * §20.2's `resources/read` pipeline and §23.10's second dispatch seam — the scoped route's
+ * and the Sandbox bridge's alike — matched by `uri` (never `name`, §20.2) against the
+ * caller's resource patterns. Two things it alone does: the outgoing result is decorated
+ * (§20.4 — `cacheScope: "public"` downgraded to `"private"`, and a still-pending MRTR
+ * exchange never given a `ttlMs`), and the audited `tool` column is the URI itself, put
+ * through §20.4's own hygiene (auditableUri) before it ever reaches `record` — dropped
+ * query, capped length, §15's token grammar scrubbed. Resource reads carry no argument body
+ * at all (§20.4); only the result is ever recorded.
+ */
+export async function dispatchResourceRead(env: Env, input: ResourceDispatch): Promise<JsonRpcResponse> {
+  // deps: identity.reauthorize · registry.getApp · registry.resolveAccess · selectBackend · virtualPmcpApp · probeAvailability · prepareForward · audit.record
+  const principal = input.caller.principal;
+  const ownerId = principal.kind === "agent" ? principal.ownerId : principal.userId;
   const startedAt = Date.now();
+  const msg: JsonRpcRequest = {
+    jsonrpc: "2.0",
+    method: "resources/read",
+    ...(input.id === undefined ? {} : { id: input.id }),
+    params: {
+      uri: input.uri,
+      ...(input.meta === undefined ? {} : { _meta: input.meta }),
+    },
+  };
+  const ctx: BackendCtx = {
+    principal,
+    roles: [],
+    clientMeta: input.clientMeta,
+    deadlineAt: input.deadlineAt,
+  };
   const registry = new Registry(env.DB);
   let outcome = "error";
   let bodies: CallBodies = {};
   let answer: JsonRpcResponse | undefined;
   let refusal: unknown;
-  let recordedSlug = slug;
+  let recordedSlug = input.slug;
   try {
-    const app = slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, slug);
+    // Revocation is itself a dispatch decision and therefore belongs inside the one
+    // audited path rather than escaping before the row is initialized.
+    if (input.reauthorizeCredential === true) await requireSamePrincipal(input.caller);
+    const app =
+      input.slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, input.slug);
     if (app === null) throw notPermitted();
     recordedSlug = app.slug;
+    if (input.expectAppId !== undefined && app.id !== input.expectAppId) throw notPermitted();
 
     const filter = await registry.resolveAccess(ctx.principal, app);
-    if (filter.check(uri, "resources") === "deny") throw notPermitted();
+    if (filter.check(input.uri, "resources") === "deny") throw notPermitted();
     if (app.archived) throw archived();
     const unavailableAs = await probeAvailability(app);
     if (unavailableAs !== null) throw unavailableAs;
 
     const appCtx: BackendCtx = { ...ctx, roles: filter.roleNames };
-    const forwarded = prepareForward({ ...msg, params: { ...msg.params, uri } }, appCtx);
-    const relayed = await selectBackend(app).call(app, forwarded, appCtx);
+    const forwarded = prepareForward(msg, appCtx);
+    const relayed = await boundedCall(selectBackend(app), app, forwarded, appCtx);
     outcome = relayed.error === undefined ? "ok" : "error";
     const result = relayed.result as Record<string, unknown> | undefined;
     if (app.logBodies && result !== undefined) bodies.result = resourceReadBody(result);
@@ -1354,7 +1925,7 @@ async function readResource(
     ctx,
     event: "resources/read",
     slug: recordedSlug,
-    tool: auditableUri(uri),
+    tool: auditableUri(input.uri),
     outcome,
     durationMs: Date.now() - startedAt,
     bodies,
@@ -1428,9 +1999,9 @@ function capUtf8Bytes(value: string, capBytes: number): string {
 // polling noise from a method a client calls on every one.
 
 /**
- * §20.2's `completion/complete` pipeline, scoped-only (the aggregated shape refuses this
- * method in `route` before a slug is ever resolved). Filter → archived → availability,
- * exactly like `getPrompt`/`readResource`; no redaction, no bodies, no audit row.
+ * §20.2's `completion/complete` pipeline, scoped-only (both hub shapes refuse this
+ * method in `hubRoute` before a slug is ever resolved). Filter → archived → availability,
+ * exactly like `getPrompt`/`dispatchResourceRead`; no redaction, no bodies, no audit row.
  */
 async function completeRef(
   env: Env,
@@ -1480,10 +2051,10 @@ function refTarget(msg: JsonRpcRequest): { subject: string; family: RoleFamily }
 //
 // What makes this the SAME door and not a second one: the open resolves nothing itself —
 // it is handed the principal index.mcpEntry already resolved — reads the grant set through
-// the very calls the aggregated fan-out makes (`listAppsFor` / `getApp`), and its
-// re-authorization tick re-runs §7 step 1 by CALLING the door's verdict (`Reauthorize`,
-// constructed once in index.ts) rather than re-deciding it here. The only things this
-// section decides for itself are what a stream writes and when it stops.
+// the very calls every other scoped method makes (`getApp`), and its re-authorization tick
+// re-runs §7 step 1 by CALLING the door's verdict (`Reauthorize`, constructed once in
+// index.ts) rather than re-deciding it here. The only things this section decides for
+// itself are what a stream writes and when it stops.
 //
 // NOT here: what rings (the DO's, tunnel.ts — it rings every subscriber socket it holds and
 // knows no endpoint shapes), nor what a bell frame looks like or which shape serves it
@@ -1529,15 +2100,15 @@ async function listenStream(
 ): Promise<Response> {
   // deps: registry.getApp · registry.listAppsFor · tunnel.openSubscriber · tunnel.capabilities
   // The refusal comes first, whole: a -32002 must leave no half-opened stream behind it.
-  const apps = await subscribable(new Registry(env.DB), ownerId, ctx.principal, slug);
+  const apps = await subscribable(new Registry(env.DB), ownerId, slug);
   const stream = new ListenStream(slug === undefined ? "aggregated" : "scoped");
   try {
     await stream.begin(apps, principalKey(ctx.principal));
   } catch (err) {
     // A DO that cannot be reached is the same failure class here as on any other method, so
     // it answers -32000 like every other one (never a generic internal error) — and the
-    // sockets the fan-out DID open are closed before the refusal goes out, because an open
-    // that failed must leave no stream behind it either.
+    // sockets the open DID establish are closed before the refusal goes out, because an
+    // open that failed must leave no stream behind it either.
     await stream.abandon();
     if (err instanceof HubError) throw err;
     throw unavailable("do_unreachable");
@@ -1553,55 +2124,53 @@ async function listenStream(
 }
 
 /**
- * The apps one stream subscribes (§21.2) — the SAME reads every other shape performs,
- * and on the scoped shape the same access verdict every other scoped method gets: an app
- * this caller cannot see was already 404'd at the door, an ARCHIVED one refuses -32002
- * before the stream opens, and availability is never asked.
+ * The apps one stream subscribes (§21.2) — the SAME reads every other scoped method
+ * performs, and the same access verdict: an app this caller cannot see was already 404'd at
+ * the door, an ARCHIVED one refuses -32002 before the stream opens, and availability is
+ * never asked.
  *
- * TUNNELED apps only. A proxied app has no DO to ring from (a Worker cannot hold an
- * outbound stream to an upstream past its own invocation) and the builtin's tools never
- * change, so neither is dialed at all — which is also why neither advertises push (§21.5).
- * Deterministic SLUG order, capped at LISTEN_FANOUT_MAX: the platform bounds an
- * invocation's simultaneous connections, and the excess is silent until the client reopens
- * (§21.7's recorded ceiling). Slug order rather than any other is what makes two concurrent
- * streams over one namespace — and one reopened stream — choose the same set.
+ * TWO shapes subscribe to nothing: §23.1's virtual hub (the aggregate endpoint and scoped
+ * `/mcp/hub`, whose push flags are false and which opens no application subscriber socket),
+ * and the builtin `pmcp` (a legal, permanently quiet stream — no row exists to read).
  *
- * No FILTER runs here, and that is §21.1's listing-class sentence rather than an omission:
- * a stream serves no items, so there is nothing for the caller's patterns to match; a
- * caller the door admits whose patterns match nothing gets the never-ringing stream.
+ * Real scoped apps: TUNNELED only. A proxied app has no DO to ring from (a Worker cannot
+ * hold an outbound stream to an upstream past its own invocation) and the builtin's tools
+ * never change, so neither is dialed at all — which is also why neither advertises push
+ * (§21.5). No FILTER runs here, and that is §21.1's listing-class sentence rather than an
+ * omission: a stream serves no items, so there is nothing for the caller's patterns to
+ * match; a caller the door admits whose patterns match nothing gets the never-ringing
+ * stream. Deterministic SLUG order is what makes one client's own streams address one set.
  */
 async function subscribable(
   registry: Registry,
   ownerId: string,
-  principal: Principal,
   slug: string | undefined,
 ): Promise<App[]> {
-  // deps: registry.getApp · registry.listAppsFor
-  if (slug !== undefined) {
-    // The builtin is addressable by its owner and rings nothing: a legal, permanently quiet
-    // stream, answered before any registry read (no D1 row for `pmcp` exists to read).
-    if (slug === PMCP_SLUG) return [];
-    const app = await registry.getApp(ownerId, slug);
-    if (app === null) throw notPermitted();
-    if (app.archived) throw archived();
-    return app.kind === "tunnel" ? [app] : [];
-  }
-  const visible = await registry.listAppsFor(principal);
-  return visible
-    .filter((app) => !app.archived && app.kind === "tunnel")
-    .sort((left, right) => (left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0))
-    .slice(0, LISTEN_FANOUT_MAX);
+  // deps: registry.getApp
+  // §23.1: the virtual hub — the aggregate endpoint and scoped `/mcp/hub` alike — opens no
+  // application subscriber sockets. The stream itself stays available (authenticated SSE
+  // keepalives, §21's reauthorization tick), which is all a surface whose push flags are
+  // false can promise: there is nothing to ring.
+  if (slug === undefined || slug === HUB_SLUG) return [];
+  // The builtin is addressable by its owner and rings nothing: a legal, permanently quiet
+  // stream, answered before any registry read (no D1 row for `pmcp` exists to read).
+  if (slug === PMCP_SLUG) return [];
+  const app = await registry.getApp(ownerId, slug);
+  if (app === null) throw notPermitted();
+  if (app.archived) throw archived();
+  return app.kind === "tunnel" ? [app] : [];
 }
 
 /**
- * One held listen stream: the SSE writer this invocation owns, the subscriber sockets it
- * opened (keyed by app id — its own fan-out), and whether it has ended. Every §21.2
- * delivery rule lives in these methods and nowhere else:
+ * One held listen stream: the SSE writer this invocation owns, its optional scoped-app
+ * subscriber socket, and whether it has ended. Every §21.2 delivery rule lives in these
+ * methods and nowhere else:
  *
  * - a frame a socket delivers is written PAYLOAD-VERBATIM and admission-filtered by the
  *   endpoint shape (`admits`): the DO rang every subscriber socket it holds and knows no
- *   shapes, so this is the only party that can drop the resources bell an aggregated stream
- *   does not serve;
+ *   shapes, so this is the only party that can drop a bell the addressed endpoint shape
+ *   does not serve (the scoped shape serves all three; §23.1's hub shapes open no socket
+ *   at all, so nothing ever arrives to filter);
  * - a socket close the Worker did not initiate ends the WHOLE stream — fail loud, not deaf,
  *   because a stream that silently stopped hearing one app is the one failure a doorbell
  *   design cannot afford. A close this stream DID initiate is told from it by the socket
@@ -1659,10 +2228,9 @@ class ListenStream {
    * into a stream that has already ended.
    */
   async begin(apps: readonly App[], principal: string): Promise<void> {
-    // Concurrently, like the aggregated fan-out's listing (`listAggregated`): these are up
-    // to LISTEN_FANOUT_MAX round trips on the latency-critical path of a held response, and
-    // the subscribed SET is already fixed by `subscribable`'s slug order, so nothing here
-    // depends on the order the sockets come up in.
+    // Concurrently: these are one round trip per subscribed app on the latency-critical path
+    // of a held response (today's shapes yield at most one), and the subscribed SET is
+    // already fixed by `subscribable`, so nothing here depends on the order they come up in.
     await Promise.all(apps.map((app) => this.subscribe(app, principal)));
     void this.write(KEEPALIVE, true);
   }
@@ -1709,24 +2277,16 @@ class ListenStream {
       if (!(await this.retick(env, ownerId, slug, reauthorize))) return;
     }
   }
-
   /**
-   * One re-authorization (§21.2). The door's verdict first: a revoked or expired bearer, a
-   * deleted agent, another user's namespace, or (scoped) an app the caller can no
-   * longer see CLOSES the stream — the tick answers exactly as a fresh open would, which is
-   * what makes "a fresh open would now 404" and "the stream closed" the same sentence.
+   * One re-authorization (§21.2). The door's verdict comes first: a revoked or expired
+   * bearer, deleted agent, another user's namespace, or scoped app the caller can no
+   * longer see closes the stream. A tick therefore answers exactly as a fresh open would.
    *
-   * Then the grant set, re-read: an app that left it has its socket dropped and its
-   * subscriptions die with the socket, so no `resources/updated` outlives the grant that
-   * authorized it; an app that joined it is subscribed and rung — the Worker is the party
-   * that knows the set changed, and it rings exactly the family bells its endpoint shape
-   * serves that the app's STORED capability set contains (a tools-only app granted
-   * mid-stream rings the tools bell alone, because no other family of the caller's view
-   * changed). On the aggregated shape the stream narrows and stays open; on the scoped shape
-   * losing the app is losing the stream, which the door's verdict above already said.
+   * Then the addressed app is re-read. A real scoped tunneled app keeps exactly one socket;
+   * the virtual hub shapes and builtin `pmcp` keep none. The small reconciliation below
+   * closes stale authority before opening any newly required socket.
    *
-   * Any failure reaching a DO ends the stream rather than leaving it deaf to one app —
-   * §21.2's rule for every subscriber-socket failure the Worker did not initiate.
+   * Any failure reaching a DO ends the stream rather than leaving it deaf to its app.
    */
   private async retick(
     env: Env,
@@ -1740,7 +2300,7 @@ class ListenStream {
         await this.end();
         return false;
       }
-      const next = await subscribable(new Registry(env.DB), ownerId, principal, slug);
+      const next = await subscribable(new Registry(env.DB), ownerId, slug);
       for (const appId of [...this.sockets.keys()]) {
         if (!next.some((app) => app.id === appId)) this.drop(appId);
       }
@@ -1754,10 +2314,10 @@ class ListenStream {
       // refuses by throwing, or a DO that could not be reached: every one of them is a
       // stream that can no longer answer for itself, and §21.2 closes rather than deafens.
       //
-      // Two failure classes, two OPERATOR signals, exactly as `listAggregated` splits them:
-      // a HubError is the door or somebody's downtime answering as designed, and a stream
-      // closing on it is the specified outcome rather than news. Anything else is a HUB
-      // defect, and a stream that vanished with nothing in the logs is the one way this
+      // Two failure classes, two OPERATOR signals, the same split the catalog collector
+      // makes: a HubError is the door or somebody's downtime answering as designed, and a
+      // stream closing on it is the specified outcome rather than news. Anything else is a
+      // HUB defect, and a stream that vanished with nothing in the logs is the one way this
       // design fails invisibly — so it is logged against this module.
       if (!(err instanceof HubError)) {
         console.error("pmcp/listen: hub defect on the re-authorization tick", err);
@@ -1792,7 +2352,7 @@ class ListenStream {
     });
     socket.addEventListener("close", () => {
       // Still in the map ⇒ nobody here closed it: the DO, a deploy, or a restart did, and
-      // §21.2 ends the whole stream so the client's ordinary reopen rebuilds the fan-out.
+      // §21.2 ends the stream so the client's ordinary reopen rebuilds the scoped channel.
       if (this.sockets.get(app.id) === socket) void this.end();
     });
   }
@@ -1872,7 +2432,8 @@ const KEEPALIVE = ": keepalive\n\n";
  * §21.4's two per-URI methods, in one pipeline because they differ in one line. Scoped and
  * TUNNELED-only: the builtin and a proxied app answer -32601 (the capability is never
  * advertised for them and there is nowhere to forward), which is decided before the audited
- * body below, exactly as the aggregated shape's refusal is decided in `route`.
+ * body below, exactly as the hub shapes' refusal is decided in `hubRoute` (the hub has no
+ * app socket to mutate, and never advertises the capability).
  *
  * Then §7's order, with §21.4's own step in it: the URI is matched against the caller's
  * resource patterns FIRST (-32001 — an unfiltered subscribe is a standing read past the

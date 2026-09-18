@@ -46,7 +46,7 @@ and `AppNewProxiedStates · ENDPOINT ERROR` draws the endpoint field's refusal.
   `-32000` and the row grows a **Reconnect** button (same Connect flow) (§7).
 - **Disconnect** wipes the token bundle; connect/disconnect/refresh-failure all
   write `upstream.oauth_*` audit rows (§7).
-- The YAML config declares only `auth: oauth` — tokens never appear in it, so
-  `diff`/`apply` never touch the bundle (§7, §9).
+- The app declares only `auth: oauth`; token bundles are write-only and never returned
+  or stored in provider state (§7, §8, §22).
 - Future form work pinned in §13: probe the endpoint to suggest the auth type;
   accept pre-registered client credentials for providers without DCR.

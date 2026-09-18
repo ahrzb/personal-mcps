@@ -5,38 +5,20 @@ implemented locally instead of forwarded to a DO, and every tool operates on the
 namespace of the `<user>` in the URL (which step 1 already proved is the caller's own).
 Tools (names final, shapes reviewed at implementation time):
 
-- `app_list` / `app_get` — includes kind, declared roles *(amended 2026-08-26,
-  §20.3: returned in the **canonical read shape** — a bare pattern list iff the role is
-  tools-only, the per-family object otherwise, whichever spelling registered it. Pinned
-  because `pmcp diff`'s stability depends on this response, not on how an app happened
-  to declare itself)*, a proxied app's stored `capabilities` list *(amended
-  2026-08-27: part of the row, absent when never configured — pinned for the same
-  reason as roles; until this amendment the field was create-only and invisible to
-  `pmcp diff`)*, redact paths
-  (`redact` and `redact_results`), `log_bodies`, archived status, and for proxied
-  apps the endpoint, the `auth` mode, and
-  `forward_identity`; connection status and last seen apply to tunneled apps only
-  (proxied rows report `kind: proxy` in their place). diff/apply depend on kind,
-  endpoint, auth, forward_identity, roles, redact, redact_results, log_bodies, and
-  archived all being readable here. *(2026-09-17, decision 32: a **tunneled** row
-  additionally carries `ownerRoles` — the owner-defined roles of §20.3's "two sources, one
-  rule", in the same canonical read shape as `roles`, `{}` when none — beside the app's
-  declared `roles`. The two are reported separately and never pre-merged: a reader that saw
-  only the effective map could not tell which source a name came from, and the Roles pane's
-  `app · replaced yours` badge and `pmcp diff`'s comparison both need to. The tunnel row is
-  the only place it appears; a proxied row has no such field, its `roles` being the owner's
-  already.)*
-- `app_create` / `app_update` / `app_delete` — create takes `kind`,
-  `redact` / `redact_results` (sensitive-field paths, §7 — either kind),
-  `log_bodies` (audit body logging, §15 — either kind; absent defaults by kind,
-  tunneled on / proxied off) and, for proxied apps,
-  `endpoint` (an `https://` URL — `http://` only for `localhost`, `127.0.0.1` and
-  `[::1]`; anything else is refused, at create and update alike, before anything is
-  stored or dialed *(2026-09-03, step 11)*), `roles` (the virtual role definitions),
-  `auth` (`headers` | `oauth`,
-  §7), and `forward_identity` (identity headers, §7; default false); update takes the
-  same minus `kind`, which is **immutable** (recreate to convert — conversion would
-  orphan app tokens and DO state).
+- `app_list` / `app_get` — includes kind, canonical slug, declared roles in the
+  canonical read shape, redact paths, `log_bodies`, archive/connection state, proxied
+  endpoint/auth/identity settings, and tunneled `ownerRoles`. It additionally exposes
+  owner `typescriptAliases` separately from the resolved §23 reservation map and bounded
+  alias diagnostics. Canonical upstream identities are never replaced in these rows.
+- `app_create` / `app_update` — retain the existing kind, endpoint, auth,
+  `forward_identity`, capabilities, roles/owner_roles, redaction, and body-logging
+  fields and validation. Both additionally accept optional
+  `typescript_aliases: { service?: string, tools?: Record<canonicalName, alias> }`.
+  The owner lane is authoritative over SDK hints. Syntax is validated with §23's exact
+  identifier rules; any reservation collision refuses the entire write atomically with
+  payload-free `-32602`. Omission preserves established configuration. Setup preflights a
+  reachable live catalog, but proxied apps need no SDK and retain canonical upstream
+  names. `kind` remains immutable.
   *(2026-09-17, decision 32: both ops also take `owner_roles`, optional and `roles`-shaped
   — described to the model as "Owner-defined roles on a tunneled app — the app's own
   declaration wins on a name collision." — validated by exactly the same rules as `roles`
@@ -47,17 +29,12 @@ Tools (names final, shapes reviewed at implementation time):
   The Roles pane of §13 posts one `app_update` carrying whichever of the two fields the
   app's kind names, never both. The audit trail is unchanged — the existing
   `admin.app_update` row's `fields` list names `owner_roles` like any other field, and no
-  new event type exists.)* Changing `auth` in either direction is accepted
-  but destructive: any stored `upstream_auth_json` is wiped (audit row
-  `upstream.auth_mode_changed`), leaving the app not-connected until the owner
-  runs Connect (`auth: oauth`) or `app_set_upstream_auth` (`auth: headers`);
-  `pmcp diff` flags a mode flip as destructive in the plan. *(2026-09-03, step 11:)* A
-  refused create or update reports **every** violation at once, not the first: the
-  `-32602` error carries a `violations` list of `{ field, reason }` — the op's own field
-  names (`slug`, `endpoint`, `roles`, …) — on the error object its in-process callers read
-  (the add-app page places each under its control, §13), and its `message` joins the same
-  sentences with `; `, which is all the wire carries: `data` stays `-32003`'s alone (§7),
-  so `pmcp` prints every sentence and no refusal is distinguishable by shape.
+  new event type exists.)* Changing `auth` in either direction is accepted but
+  destructive: any stored `upstream_auth_json` is wiped (audit row
+  `upstream.auth_mode_changed`), leaving the app not-connected until the owner runs
+  Connect (`auth: oauth`) or `app_set_upstream_auth` (`auth: headers`). A refused create
+  or update reports every violation at once in a `-32602` error whose message joins the
+  field-specific causes.
   `app_set_upstream_auth`
   is rejected on `auth: oauth` apps, and the Connect flow (§7) is rejected on
   `auth: headers` ones — each mode has exactly one credential path. `app_list` /
@@ -68,8 +45,8 @@ Tools (names final, shapes reviewed at implementation time):
   `4001`) and drop cached state (DO side effects apply to tunneled apps only —
   proxied apps have no DO and no tokens).
 - `app_set_upstream_auth` — proxied only: stores the headers (e.g. a bearer token)
-  the hub sends upstream. Imperative and write-only, like `token_issue` — secrets never
-  appear in YAML or in read tools.
+  the hub sends upstream. Write-only, like `token_issue`: secrets never appear in read
+  tools or provider state.
 - `app_disconnect` — `auth: oauth` proxied apps only: wipes the stored token
   bundle (audit row `upstream.disconnected`), leaving the app not-connected until
   Connect runs again (§7). The web Disconnect button fronts this tool. Connect/Reconnect
@@ -79,12 +56,10 @@ Tools (names final, shapes reviewed at implementation time):
   `4002`) and hides the app from consumers; everything is retained for unarchive
   (§6, "App lifecycle").
 - `agent_list` / `agent_create` / `agent_delete` — delete also deletes the
-  agent's `token` rows. `agent_list` returns each agent's grants inline
-  (per app: role names and modes), so reading the full desired-state picture
-  is one `app_list` plus one `agent_list` — the CLI diff planner depends on
-  this; there is no separate grant-read tool.
+  agent's `token` rows. `agent_list` returns each agent's grants inline; there is no
+  separate grant-read tool.
 - `grant_set` — replaces the full grant set for (agent, app); each entry is a
-  role name plus optional mode (`reader` or `reader:approval`, the same syntax as §9).
+  role name plus optional mode (`reader` or `reader:approval`).
   *(2026-09-16, decision 31: an entry is a role name **or an inline item** —
   `tool/<pattern>`, `prompt/<pattern>` or `resource/<uri-pattern>`, the pattern being §7's
   language for that family and the family being §20.3's keyspace for it. Role names never
@@ -98,9 +73,9 @@ Tools (names final, shapes reviewed at implementation time):
   description reads, verbatim: `Entries: a role name, or tool/<pattern>, prompt/<pattern>,
   resource/<uri-pattern>; each optionally suffixed ":approval".` The entry string is
   stored unchanged in `grant_.role` (§5) and relayed unchanged by `agent_list`.)*
-  Applies the same role validation as the YAML layer (§9): undeclared roles warn for
-  tunneled apps, hard-error for proxied ones; a role literally named `all` is never
-  declarable, only grantable (it's the built-in).
+  Applies the app declaration's role validation: undeclared roles warn for tunneled apps,
+  hard-error for proxied ones; a role literally named `all` is never declarable, only
+  grantable (it is the built-in).
 - `approval_list` — `{ status?, limit? }` → approval requests, newest first (pending
   and history alike).
 - `approval_decide` — `{ id, decision: "approve" | "reject" }`. The web approval page
@@ -126,6 +101,13 @@ Tools (names final, shapes reviewed at implementation time):
   are grants-shaped, not credential-shaped: the parity invariant below applies to them
   in full, and the consent SCREEN — not the binding it writes — is the browser-only part.
 
+- `hub_settings_get` — `{}` → `{ settings: { defaultTimeoutMs, maxTimeoutMs } }`,
+  reading the absent-row default pair `30_000/30_000`.
+- `hub_settings_update` — requires both `{ default_timeout_ms, max_timeout_ms }`,
+  validates `1_000 <= default <= max <= 300_000`, atomically upserts, and returns the
+  same settings shape. `adminOpsFor` applies unchanged, so owner sessions and admin
+  tokens may call both.
+
 - `audit_query` — `{ principal?, app?, event?, tool?, session?, since?, until?,
   limit? (default 100), offset? (default 0) }` → `{ rows, total }`, newest first
   (`session` matches `client_session_id`, §5); `total`
@@ -135,19 +117,17 @@ Tools (names final, shapes reviewed at implementation time):
   like everything persisted. Read-only;
   like everything else, `pmcp audit` is sugar over this tool.
 
-Every tool that takes an app slug rejects `pmcp` with the same error (`grant_set`,
-`app_*`, `token_issue` alike) — the reservation is uniform, not per-tool. *(Amended
-2026-09-02, decision 30:)* `app_create` additionally refuses the static segments the router
-mounts directly under `/apps/` — `new` and `connect` today — because `/apps/<slug>` is a
-page (§13); the set is derived from the route table like §2's reserved usernames, never
-hand-kept. Every
-mutating `pmcp` tool writes an `admin.<tool>` audit row with a summary of the change
-(never secrets — `token_issue` logs that a token was issued and for whom, not the key).
+Every tool that takes an app slug rejects both virtual slugs `pmcp` and `hub` uniformly.
+`app_create` additionally refuses static `/apps/` route segments. Mutating tools write
+one bounded `admin.<tool>` decision row; alias writes use the existing `admin.app_update`
+summary and never log a discovery-progress row.
 
-The `pmcp` slug is **reserved and virtual**: no `app` row exists for it.
-`app_list` includes it flagged `builtin: true`. Access is admin (user) tokens only in v1 —
-agents can't hold `pmcp` grants. Turning `pmcp` into a grantable app later
-is a config change, not a design change.
+`pmcp` and `hub` are reserved virtual slugs with no `app` rows. `app_list` includes
+`pmcp` as the existing `builtin: true` inventory row and never includes `hub`. Agents
+cannot hold `pmcp` grants. Admin credentials remain unable to address aggregate or real
+app endpoints, but may address scoped `/mcp/hub`; their program snapshot contains only
+the operations returned by `adminOpsFor`, still excluding `approval_decide` and
+`admin_token_issue`.
 
 **Parity invariant, pinned**: anything the web UI or CLI can do has an equivalent
 `pmcp` tool — UI and CLI are presentation layers, so an AI agent holding an admin
@@ -162,11 +142,11 @@ are a browser interaction that mints authority, so they get no tool, while
 and `/audit`'s JSONL export (a streaming serialization of `audit_query` — same
 rows, different framing).
 
-The CLI performs every admin operation by calling these tools — the CLI has no private
-admin API. (`diff`/`apply` are CLI-side compositions of `*_list` reads and `*_create` /
-`*_delete` / `*_archive` / `*_unarchive` / `grant_set` writes.) The only non-MCP
-traffic the CLI ever sends is the auth-session family: `login` and `logout` ride
-better-auth's endpoints unchanged, while `whoami` is a hub-owned route,
+The CLI performs admin operations on scoped `/mcp/pmcp`; there is no aggregate admin
+alias. Its generic `pmcp call pmcp <operation>` form reaches every operation admitted by
+the presented credential. The only non-MCP traffic is the auth-session family:
+`login` and `logout` ride better-auth's endpoints unchanged, while `whoami` is a
+hub-owned route,
 `GET /api/whoami` (`whoami` can't be MCP even in principle: endpoint URLs embed the
 username, which is exactly what `whoami` discovers — and it must also resolve
 `pmcp_agt_` keys, which better-auth cannot, §4). Resolution mirrors §7 step 1: a

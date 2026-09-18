@@ -1,19 +1,13 @@
 ## 16. Testing
 
-- **server**: vitest + `@cloudflare/vitest-pool-workers`. Core integration test: fake
-  app connects over WS to the DO, consumer POSTs `tools/list`/`tools/call` through
-  both the aggregated and scoped endpoints, asserts role filtering, prefix routing,
-  namespace isolation (cross-user 404), offline/archived errors, timeout behavior,
-  connection replacement; a proxied app backed by an in-test fake upstream asserts
-  forwarding, virtual-role filtering, and upstream-failure mapping (unreachable, HTTP
-  401/500, non-JSON-RPC body — all `-32000`, upstream body never echoed) — including
-  aggregated `tools/list` with one failing or hanging upstream: the aggregate succeeds
-  without that app's tools (slug listed in `_meta.pmcp/unavailable`) while the
-  scoped list fails `-32000`.
+- **server**: vitest + `@cloudflare/vitest-plugin`. Core scoped tunnel/proxy tests retain
+  role filtering, identity metadata, check ordering, approval, failures, audit, push, and
+  hibernation. New hub rows assert aggregate/scoped-hub expose only two tools and type
+  resources, while every real scoped application method remains unchanged.
 - **clients/py**: pytest; the WS↔anyio bridge tested against an in-process websocket
   server; reconnect/backoff logic unit-tested with a fake clock.
 - **clients/js**: vitest; same shape.
-- **cli**: unit tests for YAML diff (pure function: desired + current → plan).
+- **cli**: command parsing, profile precedence, output/error contracts, and admin/MCP dispatch.
 - **pattern matching**: regression tests pinned by §7 — `foo|bar` must NOT match
   `foox` (naive `^foo|bar$` parses as `(^foo)|(bar$)` and matches it via the `^foo`
   branch; correct `^(?:foo|bar)$` rejects it) but must match `foo` and `bar` exactly;
@@ -74,29 +68,25 @@
   walk's table, not a special case in its logic — every future mount that serves only
   exact paths needs the same thing, and the alternative (a distinguishable segment-404 so
   the walk can tell) would spend the one-404 doctrine to buy a test convenience.
-- **data model beyond tools** (§20): per-family door cases on both endpoint shapes
-  (aggregated prompts prefixed and split, resources scoped-only, `-32601` where a family
-  is not served); a bare role list still means tools and grants nothing in another
-  family; a resource pattern matches by the family's literal rule, and matches the
-  resource's **`uri`** — a resource whose *name* matches a granted pattern while its URI
-  matches none is neither listed nor readable; `completion/complete` refuses a `ref` no
-  pattern matches; a role that gains a family under live grants writes
-  `connect.roles_widened`; an app that stops declaring a family has that catalog
-  cleared while a merely *failed* warm still leaves the previous one; a public
-  `cacheScope` from an app is downgraded to private; read rows land in audit with the
-  prompt name / query-redacted resource URI and their contents stubbed.
+- **data model beyond tools** (§20/§23): application prompts/resources/completions remain
+  scoped, raw resource URIs route by explicit service, and the program snapshot cannot
+  create a generic dispatch escape. Pure tests compile hostile/recursive declarations,
+  exercise stable alias reservations/collisions/tombstones/concurrency, and prove
+  unsupported/external schemas become `unknown`. Worker rows cover exact credential
+  authority, reauthorization, settings, limits, declaration reads, and shared
+  dispatch/audit ordering.
 - **push** (§21): the listen stream on both shapes (ungranted → a stream that never
   rings; scoped archived → `-32002`; availability never checked); the bell-at-the-write
   rule (no-op `list_changed` rings nothing; undeclare of a non-empty family rings;
   absent ≡ `[]`; either resource catalog rings the one resources bell, once per warm;
-  the floor coalesces to a final ring); the Worker-side shape filter (no resources bell
-  on an aggregated stream); subscribe/unsubscribe (grant-filtered by URI,
-  principal-equality match, caps → `-32602`, exact-match `updated` routing — a rogue
-  frame for an unsubscribed URI rings nobody); the re-auth tick (revoked token closes
-  the stream, revoked grant drops the socket and its subscriptions); capability flags
-  flip with the transport, fixture in the same commit; a `sub:`-tagged socket never
-  answers a `getWebSockets(app.id)` lookup. The held-stream economics and the real
-  fan-out width are out-of-process obligations (strategy §10).
+  the floor coalesces to a final ring); scoped shape filtering; subscribe/unsubscribe;
+  reauthorization; and tagged-socket separation. Aggregate/hub listen tests assert
+  keepalives with zero app fan-out and false push flags. Held-stream economics and real
+  fan-out remain out-of-process obligations.
 - One `scripts/e2e.md` runbook (manual): deploy to a dev worker, run the example app,
   `pmcp call` round-trip.
+- **Sandbox deployed proof** (§23): workerd fakes only the narrow adapter. A staging
+  container must prove Deno permissions, no Internet/package import, fixed bridge
+  identity, remote timeout/abort kill, exact-token reuse/isolation, output caps, six-minute
+  idle policy, package/image parity, and classified non-replayed replacement failures.
 

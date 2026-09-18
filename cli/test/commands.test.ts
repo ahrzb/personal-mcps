@@ -1,51 +1,21 @@
 /**
  * cli/test/commands.test.ts — the witness behind `COMMANDS[].ops`.
  *
- * §4's parity direction D asks "does every CLI subcommand front an §8 admin op", and
- * `server/test/worker/contracts.test.ts` answers it from `cli/src/commands.ts`'s table.
- * That table is DATA main.ts only prints, so nothing there ties a row's `ops` to what the
- * dispatcher actually calls: drop `token_issue` from the `app create` row, or point
- * `app()` at a different op, and both direction-D cases stay green. Direction C has no
- * such gap — it runs the real planner and reads the steps it emitted — and this file closes
- * the asymmetry: it runs the real `main(argv)` for every row and asserts the admin ops the
- * dispatcher REACHED FOR equal the row's. The table stops being its own oracle.
+ * The recording seam is the wire: main.ts speaks the hub's stateless POST endpoint with
+ * fetch, so a stub sees the same tools/call frames as a real hub. Each table row is driven
+ * through the real argv dispatcher and must reach exactly the operations it declares.
  *
- * The recording seam is the wire, not an injected function: main.ts speaks the hub's
- * stateless POST endpoint with `fetch`, so a stubbed `fetch` sees exactly the tools/call
- * frames a real hub would, op name and all. Nothing about the CLI is mocked — argv parsing,
- * the whoami handshake, the confirmation prompts, the planner and its step ORDER all run.
+ * Scope is deliberately narrow: command-to-operation mapping and the CLI's observable
+ * argv/output contracts. Server operation behavior belongs to the worker suites.
  *
- * Scope, deliberately narrow: which ops a subcommand calls. What each op DOES is the
- * server's (server/test/worker/admin.test.ts), what a plan contains is plan.test.ts's, and
- * whether an op exists at all is direction D's other half in the parity suite. No case here
- * asserts a rendered line: the output is presentation and would make this file a golden-file
- * test of padding.
- *
- * Amended 2026-08-26 (§20.6): the four data-model commands front an MCP METHOD rather than
- * an admin op — exactly as `tools` and `call` already do — so their block at the end
- * records the whole frame, endpoint path and params included, instead of only an op name.
- * The path is half of what those rows assert because §20.2 routes a read by the ADDRESSED
- * SLUG and never by the URI it names. The no-rendered-line rule above still holds: the one
- * row that mentions printing asserts how MANY lines were written and which name each
- * carries, never their padding.
- *
- * Amended 2026-09-01 (the CLI DX redesign, §10): the exit-code vocabulary split, so the
- * malformed-argv cases below assert 2 where they used to assert 1 — §10 pins `2` for
- * malformed argv ALONE and `1` for every runtime/remote failure, and a `--since` value with
- * no duration grammar, a third positional on `call`, and a `read` missing its slug are all
- * argv. Nothing about WHICH ops each row reaches changed.
- *
- * Project: `cli` — plain Node, parallel. Every case owns its own stub and its own temp
- * file; nothing here reaches the network, the real config file, or the user's terminal.
+ * Project: `cli` — plain Node, parallel. Nothing reaches the network or the developer's
+ * own profile store.
  */
 
-// deps: cli/src/main.ts (main — the real dispatcher) · cli/src/commands.ts (COMMANDS, the
-//   table under test) · node:fs + node:os (the one YAML file `diff`/`apply` read) · a
-//   stubbed global fetch (the recording seam) · vitest
+// deps: cli/src/main.ts (dispatcher) · cli/src/commands.ts (COMMANDS) · a stubbed
+//   global fetch (the recording seam) · vitest
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COMMANDS } from "../src/commands";
@@ -56,25 +26,6 @@ const TOKEN = "pmcp_agt_FAKE0000000000000000000000000000";
 const ORIGIN = "https://hub.invalid";
 const NAMESPACE = "owner";
 
-/**
- * The namespace `diff` and `apply` are driven against, chosen — like direction C's own
- * fixture — to provoke every step kind the planner has: a server-only app and agent
- * (deletes), a file-only pair (creates), a changed field (update), and both archive
- * transitions, plus a grant. `apply` is the only front for app_update and grant_set,
- * so a thinner file would leave two of its ten ops unwitnessed.
- */
-const CONFIG = `apps:
-  fresh:
-  keep:
-    name: Renamed
-  parked:
-    archived: true
-  revived:
-agents:
-  agent:
-    grants:
-      keep: [reader]
-`;
 
 const serverApp = (slug: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
   slug,
@@ -107,6 +58,32 @@ function replyFor(op: string): Record<string, unknown> {
       return { agents: [{ slug: "stale", name: "stale", description: "", grants: {} }] };
     case "app_create":
       return { app: { slug: "news" } };
+    case "app_update":
+      // §23.6's row: owner configuration, the resolved reservation map (one active owner
+      // assignment, one superseded tombstone), and one bounded collision diagnostic — the
+      // three keys `app aliases set` renders human-side and emits machine-side.
+      return {
+        app: {
+          slug: "news",
+          typescriptAliases: { service: "news" },
+          typescriptReservations: [
+            { family: "service", canonicalName: "news", typescriptName: "news", source: "owner", active: true, supersededAt: null },
+            { family: "tool", canonicalName: "old-name", typescriptName: "oldName", source: "generated", active: false, supersededAt: 0 },
+          ],
+          typescriptDiagnostics: [
+            {
+              family: "tool",
+              canonicalName: "ping",
+              typescriptName: "ping",
+              reason: "alias_conflict",
+              message: 'TypeScript name "ping" is already held by another canonical member',
+            },
+          ],
+        },
+      };
+    case "hub_settings_get":
+    case "hub_settings_update":
+      return { settings: { defaultTimeoutMs: 30_000, maxTimeoutMs: 60_000 } };
     case "app_get":
       // `connect` refuses anything but an `auth: oauth` proxied app before printing.
       return { app: { slug: "notion", kind: "proxy", auth: "oauth" } };
@@ -151,14 +128,9 @@ function replyFor(op: string): Record<string, unknown> {
 
 /** Every admin op name the stubbed hub saw, in call order — the whole oracle of this file. */
 let recorded: string[] = [];
-let configPath = "";
-let workdir = "";
 
 beforeEach(() => {
   recorded = [];
-  workdir = mkdtempSync(join(tmpdir(), "pmcp-cli-"));
-  configPath = join(workdir, "mcps.yaml");
-  writeFileSync(configPath, CONFIG);
   // The env overrides win over ~/.config/pmcp/config.json, so no case can read — or
   // write — the developer's own session.
   vi.stubEnv("PMCP_URL", ORIGIN);
@@ -185,7 +157,6 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  rmSync(workdir, { recursive: true, force: true });
 });
 
 function json(body: unknown): { ok: boolean; status: number; json: () => Promise<unknown> } {
@@ -218,6 +189,15 @@ const ARGV: Record<string, string[]> = {
   ls: ["ls"],
   tools: ["tools", "news"],
   call: ["call", "news", "echo", "text=hi"],
+  // §23's hub surface. The two tool rows address the virtual `hub` app's scoped mount and
+  // reach zero admin ops — like the §20.6 four, the row-driven case witnesses only the
+  // zero half, and the method/endpoint half is pinned by the §23 block below. The two
+  // settings rows are real ops behind `pmcp`; `app aliases set` is one `app_update`.
+  "hub execute": ["hub", "execute", "--args", '{"code":"export default 1","timeout_ms":5000}'],
+  "hub search-types": ["hub", "search-types", "--args", '{"query":"news"}'],
+  "hub settings get": ["hub", "settings", "get"],
+  "hub settings set": ["hub", "settings", "set", "--default-timeout-ms", "30000", "--max-timeout-ms", "60000"],
+  "app aliases set": ["app", "aliases", "set", "news", "--args", '{"service":"news"}'],
   // §20.6's four. They front an MCP method rather than an admin op, so each one reaches
   // exactly zero ops — which is the half of direction D the row-driven case witnesses, and
   // the half a table row claiming `ops: []` cannot witness about itself. The other half is
@@ -252,8 +232,6 @@ const ARGV: Record<string, string[]> = {
   audit: ["audit", "--app", "news"],
   "audit --export jsonl": ["audit", "--export", "jsonl"],
   connect: ["connect", "notion"],
-  diff: ["diff", "-f", "PATH"],
-  apply: ["apply", "-f", "PATH", "--yes"],
 };
 
 /** The auth family reaches no op by definition (§8's first pinned exception). */
@@ -266,8 +244,7 @@ describe("§4 direction D · the dispatcher answers to the command table", () =>
 
   for (const command of driven) {
     it(`§4 · \`pmcp ${command.name}\` calls exactly the ops its row claims`, async () => {
-      const argv = (ARGV[command.name] ?? []).map((word) => (word === "PATH" ? configPath : word));
-      const code = await main(argv);
+      const code = await main(ARGV[command.name] ?? []);
       expect(code, `pmcp ${command.name} exited non-zero`).toBe(0);
       // Both directions at once: an op the dispatcher calls and the row omits, and an op
       // the row claims and the dispatcher never makes.
@@ -275,31 +252,9 @@ describe("§4 direction D · the dispatcher answers to the command table", () =>
     });
   }
 
-  it("§9 · `apply` executes the planner's steps in plan order — deletes before creates before updates before grants — so the ops its row claims are also the sequence a namespace actually receives", async () => {
-    await main(["apply", "-f", configPath, "--yes"]);
-    expect(recorded).toEqual([
-      "app_list",
-      "agent_list",
-      "app_delete",
-      "agent_delete",
-      "app_create",
-      "agent_create",
-      "app_update",
-      "app_archive",
-      "app_unarchive",
-      "grant_set",
-    ]);
-  });
 });
 
 describe("§10 · the argv grammar, where a misreading is silent", () => {
-  it("§10 · `-f` selects the file `apply` acts on: the short spelling both interface comments document reaches the planner, and never the `mcps.yaml` default in the working directory", async () => {
-    // The default file does not exist here, so a `-f` that silently fell through to it
-    // would fail to read rather than plan.
-    const code = await main(["diff", "-f", configPath]);
-    expect(code).toBe(0);
-    expect(recorded).toEqual(["app_list", "agent_list"]);
-  });
 
   it("§10 · a boolean flag never swallows the word after it: `pmcp app --yes delete news` deletes, rather than reading `delete` as the value of `--yes` and failing with a usage error", async () => {
     const code = await main(["app", "--yes", "delete", "news"]);
@@ -474,20 +429,27 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
     expect(frames.map((frame) => frame.name)).toEqual(["grant_set"]);
   });
 
-  it("§7 · `pmcp call` partitions its words by SHAPE: the aggregated `<slug>_<tool>` name composes with key=value arguments, and a word that is neither is an error rather than a silently dropped argument", async () => {
+  it("§23.1 · `pmcp call` no longer splits `<slug>_<tool>`: the aggregate endpoint serves no application tools, so a one-word target is the missing half of the pair — exit 2 with nothing on the wire, never an app called `news_echo`", async () => {
     const sent: unknown[] = [];
     vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
       if (String(url).endsWith("/api/whoami")) return json({ principal: "user:owner", namespace: NAMESPACE });
       sent.push(JSON.parse(init?.body ?? "{}"));
       return json({ jsonrpc: "2.0", id: 1, result: {} });
     });
-    expect(await main(["call", "news_echo", "text=hi"])).toBe(0);
+    // The split that used to make this an aggregated name is gone with the aggregate
+    // dispatch itself (§23.1), and it must fail LOCALLY: an aggregated frame would reach a
+    // service that answers every application call with -32601.
+    expect(await main(["call", "news_echo", "text=hi"])).toBe(2);
+    expect(sent).toEqual([]);
+    // A word that is neither an app, a tool, nor key=value is an error rather than a
+    // silently dropped argument — the rule the partition-by-shape has always had.
+    expect(await main(["call", "news", "echo", "hello"])).toBe(2);
+    expect(sent).toEqual([]);
+    // The two-positional form is the whole grammar now, and it reaches the wire verbatim.
+    expect(await main(["call", "news", "echo", "text=hi"])).toBe(0);
     expect(sent).toEqual([
       { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "echo", arguments: { text: "hi" } } },
     ]);
-    // The app is `news` and the tool `echo` — never an app called `news_echo`.
-    expect(await main(["call", "news", "echo", "hello"])).toBe(2);
-    expect(sent).toHaveLength(1);
   });
 });
 
@@ -683,6 +645,258 @@ describe("§20.6 · the data-model commands, gateway sugar over an MCP method", 
     const usage = [...printed(), ...errored()].filter((line) => !refusal.includes(line)).join(" ");
     expect(usage).toMatch(/uri/i);
     expect(usage).not.toMatch(/scoped/i);
+  });
+});
+
+/**
+ * §23's hub surface (2026-09-17) — the two hub tools on the virtual app's scoped mount, the
+ * owner execution settings behind `pmcp`, and the owner alias lane on app create/update.
+ * The oracle is the same one the §20.6 block uses — which endpoint, which method, and the
+ * exact arguments built — plus what must NOT reach the wire when the argv is wrong: the
+ * payloads here are JSON-only, because `timeout_ms` is a schema integer and the settings
+ * flags are bounded integers, neither of which `key=value` can express without a coercion
+ * (§10 forbids exactly that).
+ */
+describe("§23 · the hub surface: execute, search-types, settings, and app aliases", () => {
+  /** One `tools/call` frame a run put on the wire, with the mount it was addressed to. */
+  type HubFrame = { path: string; name: string; arguments: Record<string, unknown> };
+
+  /**
+   * A stubbed hub that records every tools/call frame WHOLE. `hubResult` answers the two
+   * hub tools (a real result is the structured union §23.11 pins); the `pmcp` mount keeps
+   * answering through `replyFor`, so the settings and alias rows read the same documents
+   * the row-driven case does. Nothing about the CLI is mocked — argv parsing and the whoami
+   * handshake run.
+   */
+  function recordingHub(hubResult: Record<string, unknown> = {}): HubFrame[] {
+    const frames: HubFrame[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+      if (String(url).endsWith("/api/whoami")) {
+        return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+      }
+      const message = JSON.parse(init?.body ?? "{}") as {
+        method?: string;
+        params?: { name?: string; arguments?: Record<string, unknown> };
+      };
+      const path = new URL(String(url)).pathname;
+      const name = String(message.params?.name);
+      frames.push({ path, name, arguments: message.params?.arguments ?? {} });
+      const result = path.endsWith("/mcp/hub") ? { structuredContent: hubResult } : { structuredContent: replyFor(name) };
+      return json({ jsonrpc: "2.0", id: 1, result });
+    });
+    return frames;
+  }
+
+  /** Whatever one run wrote to one of the two streams the shared beforeEach spies on. */
+  function written(stream: { write: unknown }): string[] {
+    // The spies the shared beforeEach installed: `stream.write` is that spy, whose mock
+    // record holds the calls. Named once here rather than asserted at each read.
+    const spy = stream.write as { mock: { calls: unknown[][] } };
+    return spy.mock.calls
+      .map((call) => String(call[0]))
+      .join("")
+      .split("\n")
+      .filter((line) => line !== "");
+  }
+  const printed = (): string[] => written(process.stdout);
+  const stdoutText = (): string => printed().join("\n");
+  const stderrText = (): string => written(process.stderr).join("\n");
+
+  /** §23.1's scoped mount for the virtual hub app — the only mount the hub tools may use. */
+  const SCOPED_HUB = `/${NAMESPACE}/mcp/hub`;
+  /** The builtin admin mount every `pmcp` sugar rides, settings included. */
+  const SCOPED_PMCP = `/${NAMESPACE}/mcp/pmcp`;
+
+  /** §23.11's success variant, in the exact shape `hub-contract.ts` pins. */
+  const COMPLETED = {
+    kind: "completed",
+    value: { answer: 1 },
+    stdout: "",
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    operations: { calls: 0, reads: 0 },
+  };
+
+  it("§23.1 · `pmcp hub execute` is one tools/call on the SCOPED `/<namespace>/mcp/hub` mount with the --args payload verbatim — never the aggregate `hub_execute` spelling, and `timeout_ms` stays a JSON integer", async () => {
+    const frames = recordingHub(COMPLETED);
+    expect(await main(["hub", "execute", "--args", '{"code":"export default 1","timeout_ms":5000}'])).toBe(0);
+    expect(frames).toEqual([
+      { path: SCOPED_HUB, name: "execute", arguments: { code: "export default 1", timeout_ms: 5000 } },
+    ]);
+    // An integer on the wire, not a digit string: a payload run through the key=value
+    // grammar would send "5000", and the hub would refuse the frame with -32602.
+    expect(typeof frames[0].arguments.timeout_ms).toBe("number");
+
+    // `--json` is the tool result itself — one parseable document, wire shapes verbatim.
+    const machine = recordingHub(COMPLETED);
+    const before = printed().length;
+    expect(await main(["hub", "execute", "--args", '{"code":"export default 1"}', "--json"])).toBe(0);
+    expect(machine).toHaveLength(1);
+    expect(JSON.parse(printed().slice(before).join("\n"))).toEqual({ structuredContent: COMPLETED });
+  });
+
+  it("§23.1 · `pmcp hub search-types` is tools/call `search_types` on the same mount — the canonical scoped name, never `hub_search_types`", async () => {
+    const frames = recordingHub();
+    expect(await main(["hub", "search-types", "--args", '{"query":"news"}'])).toBe(0);
+    expect(frames).toEqual([{ path: SCOPED_HUB, name: "search_types", arguments: { query: "news" } }]);
+  });
+
+  it("§10/§23.2 · the hub payload is JSON-only: a numeric key=value word is refused before any request (never coerced into a schema integer), as are a missing --args and a payload that is not one JSON object", async () => {
+    const hub = countingHub();
+    expect(await main(["hub", "execute", "code=export default 1", "timeout_ms=5000"])).toBe(2);
+    expect(await main(["hub", "search-types", "query=news"])).toBe(2);
+    expect(await main(["hub", "execute"])).toBe(2);
+    expect(await main(["hub", "execute", "--args", "{oops}"])).toBe(2);
+    expect(await main(["hub", "execute", "--args", "[1]"])).toBe(2);
+    expect(await main(["hub", "search-types", "--args", '"news"'])).toBe(2);
+    // Counted at the FETCH, not at the tools/call frame: the whoami handshake is a request
+    // too, and a payload resolved after `await context()` would reach the network first.
+    expect(hub.calls, "malformed payloads must be caught before any request, whoami included").toBe(0);
+    const refusal = stderrText();
+    expect(refusal).toMatch(/--args/);
+  });
+
+  it("§10 · the exit code follows the tool result's own `isError` flag, exactly like `pmcp call` — the result is printed either way, and a structured union with no flag is a 0", async () => {
+    // The §23.11 union is `structuredContent`; `isError` is the tool result's own failure
+    // signal, and the CLI reads exactly that one bit — the same rule `pmcp call` applies to
+    // every other tool, so the generic path and this one cannot disagree about one frame.
+    const union = recordingHub({ kind: "runtime_error", cause: "program threw", mayHaveRun: true, transient: false });
+    expect(await main(["hub", "execute", "--args", '{"code":"throw new Error()"}'])).toBe(0);
+    expect(union).toHaveLength(1);
+
+    // A result the hub DID mark is exit 1 with the result still printed (§10).
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (String(url).endsWith("/api/whoami")) return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+      return json({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: "limit exceeded" }] } });
+    });
+    expect(await main(["hub", "execute", "--args", '{"code":"export default 1"}'])).toBe(1);
+    expect(stdoutText()).toContain("limit exceeded");
+  });
+
+  it("§23.3 · `pmcp hub settings get` reads hub_settings_get through the builtin `pmcp` app; the human pair and the --json document both carry the wire's names and values", async () => {
+    const frames = recordingHub();
+    expect(await main(["hub", "settings", "get"])).toBe(0);
+    expect(frames).toEqual([{ path: SCOPED_PMCP, name: "hub_settings_get", arguments: {} }]);
+    expect(printed()).toEqual(["default timeout  30000 ms", "max timeout      60000 ms"]);
+
+    const machine = recordingHub();
+    const before = printed().length;
+    expect(await main(["hub", "settings", "get", "--json"])).toBe(0);
+    expect(machine).toHaveLength(1);
+    expect(JSON.parse(printed().slice(before).join("\n"))).toEqual({
+      settings: { defaultTimeoutMs: 30_000, maxTimeoutMs: 60_000 },
+    });
+  });
+
+  it("§23.3 · `pmcp hub settings set` sends the pair as hub_settings_update's two schema INTEGERS — flag order does not matter, and no digit string is ever passed through", async () => {
+    const frames = recordingHub();
+    expect(await main(["hub", "settings", "set", "--default-timeout-ms", "30000", "--max-timeout-ms", "60000"])).toBe(0);
+    expect(frames).toEqual([
+      { path: SCOPED_PMCP, name: "hub_settings_update", arguments: { default_timeout_ms: 30000, max_timeout_ms: 60000 } },
+    ]);
+    for (const value of Object.values(frames[0].arguments)) expect(typeof value).toBe("number");
+
+    const reversed = recordingHub();
+    expect(await main(["hub", "settings", "set", "--max-timeout-ms", "60000", "--default-timeout-ms", "30000"])).toBe(0);
+    expect(reversed[0].arguments).toEqual({ default_timeout_ms: 30000, max_timeout_ms: 60000 });
+  });
+
+  it("§23.3 · every pair outside `1_000 <= default <= max <= 300_000` fails LOCALLY — exit 2, nothing on the wire — while both inclusive edges are legal and are sent", async () => {
+    const hub = countingHub();
+    for (const argv of [
+      ["hub", "settings", "set", "--default-timeout-ms", "999", "--max-timeout-ms", "60000"],
+      ["hub", "settings", "set", "--default-timeout-ms", "30000", "--max-timeout-ms", "300001"],
+      ["hub", "settings", "set", "--default-timeout-ms", "60000", "--max-timeout-ms", "30000"],
+      ["hub", "settings", "set", "--default-timeout-ms", "30000"],
+      ["hub", "settings", "set", "--max-timeout-ms", "60000"],
+      ["hub", "settings", "set", "--default-timeout-ms", "30s", "--max-timeout-ms", "60000"],
+      ["hub", "settings", "set", "--default-timeout-ms", "3e4", "--max-timeout-ms", "60000"],
+      ["hub", "settings", "set", "--default-timeout-ms", "-1000", "--max-timeout-ms", "60000"],
+    ]) {
+      expect(await main(argv), argv.join(" ")).toBe(2);
+    }
+    expect(hub.calls, "an out-of-bounds or mistyped pair must never become a request").toBe(0);
+
+    const edges = recordingHub();
+    expect(await main(["hub", "settings", "set", "--default-timeout-ms", "1000", "--max-timeout-ms", "300000"])).toBe(0);
+    expect(edges[0].arguments).toEqual({ default_timeout_ms: 1000, max_timeout_ms: 300000 });
+  });
+
+  it("§23.1/§22.1 · an admin token is ADMITTED to the scoped hub surface — execute/search-types reach /mcp/hub and the settings op reaches `pmcp` — while the same token still cannot address a real app", async () => {
+    vi.stubEnv("PMCP_TOKEN", "pmcp_adm_FAKE0000000000000000000000000000");
+    const frames = recordingHub();
+    expect(await main(["hub", "execute", "--args", '{"code":"export default 1"}'])).toBe(0);
+    expect(await main(["hub", "search-types", "--args", '{"query":"news"}'])).toBe(0);
+    expect(await main(["hub", "settings", "get"])).toBe(0);
+    expect(frames.map((frame) => `${frame.path} ${frame.name}`)).toEqual([
+      `${SCOPED_HUB} execute`,
+      `${SCOPED_HUB} search_types`,
+      `${SCOPED_PMCP} hub_settings_get`,
+    ]);
+
+    // The target-based refusal is intact: an ordinary app is closed to this token, and the
+    // refusal fires after whoami resolves the token kind, before any app-facing request.
+    const refused = countingHub();
+    expect(await main(["call", "news", "echo"])).toBe(1);
+    expect(refused.calls, "the refusal fires after whoami resolves the token kind, before any app-facing request").toBe(1);
+    expect(stderrText()).toContain("a pmcp_adm_ admin token administers the hub and cannot reach a single app's tools");
+  });
+
+  it("§23.6 · `pmcp app create --typescript-aliases '<json>'` carries the object as `typescript_aliases` on app_create — and omitting the flag sends NO field at all, so an established assignment is preserved rather than cleared", async () => {
+    const frames = recordingHub();
+    expect(
+      await main(["app", "create", "news", "--typescript-aliases", '{"service":"news","tools":{"get-news":"getNews"}}']),
+    ).toBe(0);
+    expect(frames.map((frame) => `${frame.path} ${frame.name}`)).toEqual([
+      `${SCOPED_PMCP} app_create`,
+      `${SCOPED_PMCP} token_issue`,
+    ]);
+    expect(frames[0].arguments).toEqual({
+      slug: "news",
+      kind: "tunnel",
+      typescript_aliases: { service: "news", tools: { "get-news": "getNews" } },
+    });
+
+    const omitted = recordingHub();
+    expect(await main(["app", "create", "news"])).toBe(0);
+    expect(Object.keys(omitted[0].arguments)).toEqual(["slug", "kind"]);
+  });
+
+  it("§23.6 · `pmcp app aliases set` sends the alias object as `typescript_aliases` on app_update; the human body shows canonical identities beside the resolved TypeScript paths and the collision diagnostics, and --json is the op's own document", async () => {
+    const frames = recordingHub();
+    expect(await main(["app", "aliases", "set", "news", "--args", '{"service":"news"}'])).toBe(0);
+    expect(frames).toEqual([
+      { path: SCOPED_PMCP, name: "app_update", arguments: { slug: "news", typescript_aliases: { service: "news" } } },
+    ]);
+    const out = stdoutText();
+    expect(out).toContain("typescript aliases set for news");
+    // The resolved map: canonical identity, resolved path, and the source that won the name
+    // — plus the tombstone marker, because a superseded path stays reserved (§23.6).
+    expect(out).toContain("oldName");
+    expect(out).toContain("superseded");
+    // …and the bounded diagnostic, which is what tells an owner why a member is missing.
+    expect(out).toContain("alias_conflict");
+    expect(out).toContain("already held by another canonical member");
+
+    const machine = recordingHub();
+    const before = printed().length;
+    expect(await main(["app", "aliases", "set", "news", "--args", '{"service":"news"}', "--json"])).toBe(0);
+    expect(machine).toHaveLength(1);
+    expect(JSON.parse(printed().slice(before).join("\n"))).toEqual({
+      app: expect.objectContaining({ slug: "news", typescriptAliases: { service: "news" } }),
+    });
+  });
+
+  it("§10/§23.6 · alias input is validated locally: a value that is not one JSON object fails before any request, on create and on update alike", async () => {
+    const hub = countingHub();
+    expect(await main(["app", "create", "news", "--typescript-aliases", "{oops}"])).toBe(2);
+    expect(await main(["app", "create", "news", "--typescript-aliases", '["news"]'])).toBe(2);
+    expect(await main(["app", "aliases", "set", "news"])).toBe(2);
+    expect(await main(["app", "aliases", "set", "news", "--args", "{oops}"])).toBe(2);
+    expect(await main(["app", "aliases", "set", "news", "--args", "[1]"])).toBe(2);
+    expect(await main(["app", "aliases", "set", "news", "service=news"])).toBe(2);
+    expect(hub.calls, "malformed alias input must be caught before any request").toBe(0);
   });
 });
 
@@ -905,35 +1119,6 @@ describe("§10 · the output contract and the code vocabulary", () => {
     });
   });
 
-  it("§10 · the destructive y/N question goes to stderr — stdout belongs to the command's output alone, so `apply --json` never puts prose in front of its document", async () => {
-    const originalTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
-    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
-    vi.spyOn(process.stdin, "setEncoding").mockReturnValue(process.stdin);
-    vi.spyOn(process.stdin, "resume").mockReturnValue(process.stdin);
-    vi.spyOn(process.stdin, "pause").mockReturnValue(process.stdin);
-    vi.spyOn(process.stdin, "once").mockImplementation((event: string | symbol, handler: (...args: any[]) => void) => {
-      if (event === "data") handler("n\n");
-      return process.stdin;
-    });
-    try {
-      // Answered "n", so the plan is refused: exit 1, and NOTHING on stdout either way.
-      expect(await main(["apply", "-f", configPath, "--json"])).toBe(1);
-      expect(stderrText()).toContain("[y/N]");
-      expect(stdoutText()).toBe("");
-    } finally {
-      if (originalTty === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
-      else Object.defineProperty(process.stdin, "isTTY", originalTty);
-    }
-  });
-
-  it("§10 · a typo in mcps.yaml is `usage` (exit 2) — the file is the operator's, and `remote_error` would send an agent looking for a hub outage", async () => {
-    writeFileSync(configPath, "apps:\n  notes:\n    rols: [reader]\n");
-    expect(await main(["diff", "-f", configPath])).toBe(2);
-    const written = stderrText();
-    expect(written).toContain("error: usage:");
-    expect(written).toContain("rols");
-    expect(written).not.toContain("remote_error");
-  });
 
   it("§10 · `approvals --history` is a CLIENT-side selection: `approval_list.status` is the wire enum and has no \"decided\" member, so the hub is asked for everything and the pending rows are dropped here", async () => {
     const frames: { name: string; arguments: Record<string, unknown> }[] = [];
@@ -1041,7 +1226,7 @@ describe("§10 · help and --version, answered before anything is resolved", () 
     return counter;
   }
 
-  for (const argv of [[], ["help"], ["--help"], ["-h"], ["--version"], ["tools", "--help"], ["describe", "-h"], ["token"]]) {
+  for (const argv of [[], ["help"], ["--help"], ["-h"], ["--version"], ["tools", "--help"], ["describe", "-h"], ["token"], ["hub"], ["hub", "settings"], ["app", "aliases"]]) {
     it(`§10 · \`pmcp ${argv.join(" ")}\` prints and exits 0 without reaching the hub`, async () => {
       const hub = countingHub();
       expect(await main(argv)).toBe(0);

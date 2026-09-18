@@ -11,9 +11,8 @@
 | Law/property tests | after first green is fine — hardening, not design | either |
 
 Vertical slices so the outer loop is never red for weeks: (1) identity + registry
-+ gateway + `app_list` + fake tunnel → auth and order tables green; (2)
-approvals + CAS; (3) upstream/OAuth; (4) the CLI planner (pure, independent, any
-time); (5) client libraries.
+auth and order tables green; (2) approvals + CAS; (3) upstream/OAuth; (4) CLI command
+contracts; (5) client libraries.
 
 Where fail-first genuinely pays: the CAS test, and anywhere the spec is ambiguous
 — writing the assertion is the moment ambiguity must resolve. Watching red

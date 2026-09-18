@@ -98,20 +98,15 @@
   `Transport` implementation over `ws`. Both SDKs dropped built-in WebSocket transports in
   v2, so this bridge is ours; it is small and the spec explicitly sanctions custom
   transports.
-- **Dependency policy** *(made explicit + amended 2026-09-01)*: the Worker adds
-  nothing beyond the list above — better-auth and its pinned companions are the
-  only runtime dependencies at the trust boundary (supply-chain surface,
-  cold-start cost). The **CLI is carved out**: `cli/` may take runtime
-  dependencies of its own (§10 pins the current list: commander,
-  @clack/prompts, picocolors, wrap-ansi, smol-toml, yaml). They are declared in
-  `cli/package.json` alone. *(Amended 2026-09-15: they used to be declared in the
-  root manifest **and** mirrored into `cli/`, because the workspace had no
-  `packages:` key and `cli/` was therefore not an importer — nothing resolved
-  without the root copy. Two declarations of one set drifted, with npm resolving
-  from `cli/` and local `pnpm pmcp` from the root. The workspace is now real and
-  the root copy is gone; `pnpm pmcp` resolves upward into `cli/node_modules`.)*
-  Clients (`clients/js`, `clients/py`) keep their own minimal,
-  separately-declared dependencies as before.
+- **Dependency policy** *(amended 2026-09-18, §23)*: the Worker runtime dependency
+  boundary admits the existing authentication/MCP packages and exactly one additional
+  platform-vendor package, the exact-pinned `@cloudflare/sandbox@next` preview plus its
+  lockfile-pinned transitive closure, solely for Cloudflare Container control. Its
+  matching control-binary/image version is checked at dry-run/build time. No general
+  schema renderer, ref resolver, execution framework, or other Worker runtime dependency
+  is added; §23's bounded renderer is in-repo. The CLI carve-out remains:
+  `cli/` may declare its own commander, @clack/prompts, picocolors, wrap-ansi, and
+  smol-toml dependencies. Clients keep their own minimal declarations.
 - **Monorepo**: pnpm workspaces with exactly two importers, `cli` and
   `clients/js` — the two published npm packages — plus a `uv` project
   (`clients/py`) and a standalone Go module (`clients/go`), neither of which is
@@ -125,4 +120,10 @@
   where a manifest or document disagrees with the flake the flake is correct.
   Wrangler stays an npm dependency so it matches the lockfile: its version
   decides how the Worker runs, and two sources for that is one too many.
+
+- **Untrusted TypeScript runtime** *(added 2026-09-18, §23)*: Cloudflare Sandbox
+  Containers run a pinned Deno version with offline/frozen resolution, a permissionless
+  user Worker, no public Internet, and one fixed internal bridge host. The worker enables
+  `enable_request_signal`; a remote process timeout and kill escalation, not merely an
+  observing AbortSignal, bound each synchronous run.
 

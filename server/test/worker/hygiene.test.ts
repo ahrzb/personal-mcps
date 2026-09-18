@@ -254,7 +254,7 @@ export const AUDIT_BODY_ROWS: readonly AuditBodyRow[] = [
   // to navigate rather than blanket a subtree.
   {
     spec:
-      "Config-declared (both kinds): the owner lists redaction paths per tool — `redact: { \"<tool-or-pattern>\": [\"password\", \"credentials.token\"] }` for arguments, and `redact_results:` (identical shape, applied to the result's `structuredContent`) — in the YAML / `app_update`.",
+      "Owner-declared (both kinds): redaction paths configured through `app_update` mask arguments and result `structuredContent` independently.",
     title:
       "proxied log_bodies ON · every configured `redact` / `redact_results` path is masked in the recorded bodies and every sibling path survives verbatim",
     kind: "proxy",
@@ -1389,23 +1389,6 @@ describe("§7 · served outputSchemas carry no writeOnly", () => {
       .not.toContain("writeOnly");
     expect(JSON.stringify(listed.inputSchema), "…and standard input usage was stripped too")
       .toContain("writeOnly");
-  }, CASE_BUDGET_MS);
-
-  it("18. §7 · aggregated tools/list strips it identically — one strip, both shapes", async () => {
-    const world = await seedProxyWorld({
-      kind: "proxy",
-      upstream: {
-        id: uniqueSlug("up"),
-        mode: { kind: "ok" },
-        tools: [toolMarking({ args: ["apiKey"], results: ["issuedKey"] })],
-      },
-      logBodies: true,
-    });
-
-    const listed = await servedTool(world, null, `${APP}_${TOOL}`);
-
-    expect(JSON.stringify(listed.outputSchema)).not.toContain("writeOnly");
-    expect(JSON.stringify(listed.inputSchema)).toContain("writeOnly");
   }, CASE_BUDGET_MS);
 
   it("19a. §7/§13 · the OWNER's own catalog read is not a serving: `gateway.ownerCatalog` returns the declaration WHOLE — the outputSchema keeps its `writeOnly` marks, as the inputSchema always did — because the page is the surface that shows an owner what their app declared, and a stripped schema leaves the Recording pane with no \"declared writeOnly by the app\" to draw · twin: the very same tool through the scoped wire listing, in the same world, is still stripped (case 17's rule, unmoved)", async () => {

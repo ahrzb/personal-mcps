@@ -2,11 +2,11 @@
 //
 // What this suite pins: that admin is not a special case. §8 makes the builtin a third
 // AppBackend riding the same pipeline as tunnel and upstream, and the only way to
-// pin "no special case" is to reach it the way a consumer does — `POST /<user>/mcp` and
-// `POST /<user>/mcp/pmcp` — rather than by calling `ops` directly. The pins: an owner
-// sees every op as a `pmcp_<op>` tool on the aggregated endpoint and unprefixed on the
-// scoped one; an agent sees NO `pmcp_*` tool anywhere and is refused with the
-// ordinary indistinguishable answers, structurally — the reservation means no `app`
+// pin "no special case" is to reach it the way a consumer does — `POST /<user>/mcp/pmcp` —
+// rather than by calling `ops` directly. The pins: an owner sees every op as a tool on the
+// scoped builtin (§23.1 removed the aggregated `pmcp_<op>` spelling along with the whole
+// aggregate application catalog); an agent sees NO `pmcp` tool anywhere and is refused with
+// the ordinary indistinguishable answers, structurally — the reservation means no `app`
 // row exists, so no grant can reference it (§8: "structural rather than checked"); an
 // owner is never approval-gated (["all"] resolves allow, so the gate is never entered);
 // `app_list` carries the virtual `builtin: true` row that no D1 row backs; and §7's
@@ -16,7 +16,7 @@
 // Parity direction A (§8's parity invariant) is OWNED by admin-ops.test.ts, which proves
 // the totality `Object.keys(ops)` ↔ the tools adminBackend renders from each op's one
 // schema. What this file adds is the endpoint face of it: that the same set arrives at a
-// consumer, correctly prefixed per endpoint shape. Direction B — the web form's fields
+// consumer, once, on the scoped builtin. Direction B — the web form's fields
 // against that same schema — is web-pages.test.ts's.
 //
 // Project: `worker` — real D1, every sibling real, driven through
@@ -55,13 +55,7 @@ import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
 
 describe("§8 — the builtin rides the ordinary pipeline", () => {
-  it("§8 · the owner's aggregated tools/list carries a `pmcp_<op>` tool for every ops key — the endpoint face of parity direction A", async () => {
-    const hub = await fixture();
-    const names = await toolNames(await hub.owner({ method: "tools/list", params: {} }));
-    expect(names).toEqual(expect.arrayContaining(Object.keys(ops).map((op) => `${PMCP_SLUG}_${op}`)));
-  });
-
-  it("§8 · the scoped /mcp/pmcp list carries the same tools with bare names, no prefix", async () => {
+  it("§8 · the scoped /mcp/pmcp list carries every op as a tool, with its own bare name — the endpoint face of parity direction A", async () => {
     const hub = await fixture();
     const names = await toolNames(await hub.owner({ method: "tools/list", params: {} }, PMCP_SLUG));
     expect(names.slice().sort()).toEqual(Object.keys(ops).sort());
@@ -133,20 +127,18 @@ describe("§8 — the builtin rides the ordinary pipeline", () => {
 });
 
 describe("§8 — agents and the builtin, structurally", () => {
-  it("§8 · an agent holding grants elsewhere sees no `pmcp_*` tool in its aggregated list", async () => {
+  it("§8 · a granted agent's scoped list carries its app's tools and can never carry a `pmcp` one (the allow-twin)", async () => {
     const hub = await fixture();
-    const names = await toolNames(await hub.agent({ method: "tools/list", params: {} }));
-    expect(names.filter((name) => name.startsWith(`${PMCP_SLUG}_`))).toEqual([]);
+    const names = await toolNames(await hub.agent({ method: "tools/list", params: {} }, NOTION));
+    expect(names).toContain(UPSTREAM_TOOL);
+    expect(names.filter((name) => name.startsWith(PMCP_SLUG))).toEqual([]);
   });
 
-  it("§8 · the same agent's aggregated list does carry its granted app's tools (the allow-twin)", async () => {
+  it("§23.1 · an agent's hub call with a name that is no hub tool gets -32001, byte-identical to any other non-hub name", async () => {
     const hub = await fixture();
-    const names = await toolNames(await hub.agent({ method: "tools/list", params: {} }));
-    expect(names).toContain(`${NOTION}_${UPSTREAM_TOOL}`);
-  });
-
-  it("§8 · an agent calling `pmcp_app_list` gets -32001, indistinguishable from an unknown tool", async () => {
-    const hub = await fixture();
+    // The aggregate carries the hub's two tools and no `pmcp_` namespace at all (§23.1), so
+    // the legacy spelling and a ghost are the same non-name — and the refusal must not be
+    // able to tell them apart.
     const builtin = await hub.agent(call(`${PMCP_SLUG}_app_list`, {}));
     const ghost = await hub.agent(call("ghost_whatever", {}));
     expect(builtin.error?.code).toBe(NOT_PERMITTED);
@@ -204,7 +196,8 @@ describe("§7 — the owner is never approval-gated", () => {
       PMCP_SLUG,
     );
     // `notion` declares a role and the owner holds none of it — they hold the built-in.
-    await hub.owner(call(`${NOTION}_${UPSTREAM_TOOL}`, { q: "x" }));
+    // §23.1: app calls live on the scoped endpoint and the app's own bare name.
+    await hub.owner(call(UPSTREAM_TOOL, { q: "x" }), NOTION);
     const forwarded = (await readObservations(hub.upstreamId)).filter((o) => o.rpcMethod === "tools/call");
     expect(forwarded.length, "the call reached the upstream").toBeGreaterThan(0);
     expect(forwarded.at(-1)?.pmcpHeaders["x-pmcp-roles"]).toBe("all");

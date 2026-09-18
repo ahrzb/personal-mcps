@@ -1,15 +1,17 @@
-// capabilities.test.ts — the kind-aware capability shape, as the D14 oracle rows pin it.
+// capabilities.test.ts — the capability pictures: the kind-aware app shape and the
+// fixed hub shape, whole-object deep equality on every row.
 //
-// PINS §21.5's capability picture, whole-object deep equality on every row: the shape
-// is a function of the app's KIND — "tunnel" | "proxy" | "builtin" — and of the
-// stored capability set only in WHICH families appear. Proxied apps keep every
+// PINS §21.5's app picture: the shape is a function of the app's KIND — "tunnel" |
+// "proxy" | "builtin" — and of the stored capability set only in WHICH families
+// appear. Proxied apps keep every
 // push flag false whatever their owner-declared list says (§21.2: no channel to ring
 // from), and so does the pmcp builtin (§21.2: no DO to ring at all); the kind-fallback
 // an is-not-proxy implementation gets wrong is the builtin reading as "tunnel".
 // Completions shapes as the empty object on every kind — only the three bell-ringing
 // families carry a listChanged flag, because no completions bell exists. And the
-// aggregated constant is pinned here as well as in the fixtures (§20.2/§21.5): tools
-// and prompts both {listChanged: true}, no resources, no completions, no subscribe.
+// §23.1 hub constant is pinned here as well as in the fixtures: tools then resources,
+// both {listChanged: false}, no prompts, no completions, no subscribe — the fixed
+// shape both hub endpoint shapes answer `initialize`/`server/discover` with.
 //
 // PROJECT: `unit` — plain Node, parallel, milliseconds. deps line `none`: no D1, no
 // DO, no crypto; the single transitive import outside this module is
@@ -24,14 +26,14 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  AGGREGATED_CAPABILITIES,
   DEFAULT_APP_CAPABILITIES,
+  HUB_CAPABILITIES,
   capabilityShape,
   type CapabilityKind,
 } from "../../src/capabilities";
 import type { AppCapability } from "../../src/registry";
 
-describe("§21.5 · capabilityShape — the kind-aware capability picture", () => {
+describe("§21.5/§23.1 · capabilityShape and HUB_CAPABILITIES — the kind-aware app picture and the fixed hub shape", () => {
   it("§21.5 · shape([\"tools\",\"resources\"], \"tunnel\") deep-equals {tools: {listChanged: true}, resources: {listChanged: true, subscribe: true}} — no subscribe key on a non-resources family, no family the stored set lacks", () => {
     const stored: AppCapability[] = ["tools", "resources"];
     expect(capabilityShape(stored, "tunnel")).toEqual({
@@ -79,13 +81,15 @@ describe("§21.5 · capabilityShape — the kind-aware capability picture", () =
     }
   });
 
-  it("§21.5/§20.2 · the aggregated constant is tools and prompts both {listChanged: true}, no resources, no completions, no subscribe — pinned here so the fixture regeneration is not the only guard", () => {
-    expect(AGGREGATED_CAPABILITIES).toEqual({
-      tools: { listChanged: true },
-      prompts: { listChanged: true },
+  it("§23.1 · the hub constant is tools then resources, both {listChanged: false}, no prompts, no completions, no subscribe — pinned here so the fixture regeneration is not the only guard", () => {
+    expect(HUB_CAPABILITIES).toEqual({
+      tools: { listChanged: false },
+      resources: { listChanged: false },
     });
-    // The same APP_CAPABILITIES order the scoped pictures render in, so the
-    // fixture emission cannot reorder it.
-    expect(Object.keys(AGGREGATED_CAPABILITIES)).toEqual(["tools", "prompts"]);
+    // Insertion order is the wire order the fixtures pin byte-for-byte: tools before
+    // resources, and listChanged as each family's only key — no subscribe, because the
+    // hub advertises no subscription surface.
+    expect(Object.keys(HUB_CAPABILITIES)).toEqual(["tools", "resources"]);
+    expect(Object.keys(HUB_CAPABILITIES.resources)).toEqual(["listChanged"]);
   });
 });

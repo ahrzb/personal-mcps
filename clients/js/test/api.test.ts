@@ -13,9 +13,8 @@
  * whose deps line reads `none`, which is that project's whole admission rule —
  * while §2's project table files the client libraries under `scripts` + clients.
  * Both are the same Node-parallel semantics, so the eventual config picks one;
- * nothing here depends on which, and cli/test/plan.test.ts records the identical
- * ambiguity. What the picked project must NOT be is `worker` or `tunnel`: this
- * suite deliberately never enters workerd.)
+ * nothing here depends on which, and the suite deliberately never enters workerd.
+ * What the picked project must NOT be is `worker` or `tunnel`.
  *
  * What this suite must NOT drift into: transport behavior. Whether the reconnect
  * loop actually waits backoffDelay's answer belongs to transport.test.ts against

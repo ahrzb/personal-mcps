@@ -1905,6 +1905,15 @@ dialog .actions {
   color: var(--muted-fg);
 }
 
+/* §23.6's alias editor — the add-app form and the Overview pane draw the same two-column
+   rows through layout.tsx's `AliasRows`. The table's own narrow treatment collapses the
+   cell padding to zero while stacking the two inputs, so the pair needs its gap back. */
+@media (max-width: 767px) {
+  .alias-table td + td {
+    margin-top: var(--space-4);
+  }
+}
+
 /* --------------------------------------------------- responsive switches ---- */
 
 /* Wide-only content collapses at the breakpoint; narrow-only content appears.
@@ -3469,6 +3478,17 @@ dialog .actions {
 /* Overview and the danger zone are the listing alone, so their content needs the padding
    the rows of every other listing carry themselves. */
 .kv--pad {
+  padding: var(--space-8);
+  max-width: 640px;
+}
+
+/* §23.6's Overview blocks — the alias editor and the reservation map, under the
+   definition list: the same padding and measure as `.kv--pad`, because they are the same
+   listing's content and the two must line up. */
+.alias-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
   padding: var(--space-8);
   max-width: 640px;
 }

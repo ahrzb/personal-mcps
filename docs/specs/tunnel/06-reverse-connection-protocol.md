@@ -26,24 +26,18 @@ Two message namespaces:
 1. **Control** — JSON-RPC methods prefixed `hub/`, handled by the client library, never
    reaching the user's MCP server:
    - `hub/register` (client → hub, first message):
-     `{ "clientVersion": "...", "protocolVersion": "2026-07-28", "roles": { "<role>": ["<regex>", …] } }`
-     *(amended 2026-08-26, §20: a role's value is **either** that bare pattern list —
-     which means tools, forever, so every app written against this spec keeps
-     registering unchanged — **or** the per-family object
-     `{ "tools": [...], "prompts": [...], "resources": [...] }`, each key optional and
-     defaulting to the empty list. Mixing the two spellings across roles in one
-     declaration is fine; the two forms are the same declaration after normalization.)*
-     The app identity comes **exclusively** from the authenticated token — the
-     payload carries no app field, so a token for one slug can never touch another
-     app's registration. The hub validates the declaration before accepting it:
-     role names must match `[a-z0-9_-]{1,64}` (`all` is rejected — it's the resolver's
-     built-in, §2), every pattern must compile as a regex, and pattern length (≤128 chars)
-     and per-role pattern count (≤64) are capped — *(amended 2026-08-26: the count cap
-     applies **per family list**, so the same two `limits.ts` constants bound a role's
-     tool, prompt, and resource patterns each; an unknown family key is a violation like
-     any other)* — violations get a JSON-RPC error reply
-     and the socket is closed. The hub verifies the app row still exists (close
-     `4003` if not), upserts `roles_json` in D1 and checks for **role drift**: both
+     `{ "clientVersion": "...", "protocolVersion": "2026-07-28", "roles": { ... }, "typescriptAliases": { "service": "...", "tools": { "<canonical>": "<alias>" } } }`
+     `typescriptAliases` and each inner field are optional. They are hub-local author
+     hints only: canonical names still cross the MCP wire. A role's value remains either
+     the backward-compatible bare tool-pattern list or the per-family object
+     `{ "tools": [...], "prompts": [...], "resources": [...] }`.
+     The app identity comes **exclusively** from the authenticated token — the payload
+     carries no app field. The hub validates roles and alias syntax before accepting:
+     role names match `[a-z0-9_-]{1,64}` (`all` reserved), patterns compile and obey the
+     existing length/count caps, and explicit aliases obey §23's bounded ASCII identifier
+     rule. Unknown fields or malformed syntax return payload-free invalid params and
+     close the socket. The hub verifies the app still exists (`4003` otherwise), upserts
+     `roles_json`, and checks **role drift**: both
      declarations are **normalized first** (§20.3 — a bare list becomes
      `{tools: [...]}`), and then, for each role name **and each family**, the old and new
      pattern lists are compared as sets of exact pattern strings, with a role *or a
@@ -65,7 +59,13 @@ Two message namespaces:
      `get_news` to `get_.*` is logged because the string changed, not because the hub
      reasons about the language). Self-declared roles mean a compromised bot can widen
      its own roles; the blast radius stays inside that app, but the drift must be
-     visible, not silent. The hub then replies `{ "ok": true }` and immediately issues
+     visible, not silent.
+     TypeScript aliases are validated separately from allocation. A syntactically valid
+     SDK hint that collides never fails registration: established reservations stay,
+     the unassigned contender is omitted, and one bounded `alias_conflict` decision is
+     included in the existing connect audit/mapping view. Owner aliases outrank SDK
+     hints. Canonical service/tool names and every forwarded frame remain unchanged.
+     The hub then replies `{ "ok": true }` and immediately issues
      `tools/list` to warm its cache — *(amended 2026-08-26, §20: preceded by one
      hub-originated `server/discover`, whose declared capabilities are cached beside the
      catalogs and decide which further lists are warmed. Warming blind would make every
@@ -91,14 +91,12 @@ Two message namespaces:
      at-most-one-connection invariant *(clarified 2026-09-01: the invariant counts
      app sockets; §21.2's subscriber sockets are a separately tagged class the DO
      holds in any number, never evicted by this rule and never carrying
-     consumer→app traffic)*. Accepted consequence: if the new socket's registration then fails
-     validation or never arrives, the old healthy connection is already gone and the
-     app stays offline until the bot reconnects (an app-token holder can already
-     deny service by connecting, so this adds no attacker capability). Client must NOT
-     reconnect automatically in this case (two copies of a bot fighting for the slot is
-     an operator error worth surfacing). The hub logs every replacement — with a stolen
-     app token, eviction-and-impersonation looks exactly like this, so it's a
-     security signal, not just noise.
+     consumer→app traffic)*. If registration syntax is invalid or never arrives, the
+     old healthy socket is already gone and the app remains offline until reconnect.
+     A syntactically valid TypeScript alias collision is not a registration failure and
+     leaves the new tunnel online. The client does not reconnect automatically after
+     `hub/replaced`; two bot copies fighting for the slot remains an operator error. The
+     hub logs the replacement as a security decision.
 2. **MCP** — everything else. The hub acts as the MCP *client*; the app is the MCP
    *server*. v1 forwarded `tools/list` and `tools/call`; *(amended 2026-08-26, §20:
    plus `server/discover`, `prompts/list`, `prompts/get`, `resources/list`,
@@ -160,7 +158,7 @@ which case the caller gets an error anyway and retries).
 
 ### App lifecycle
 
-1. **Provisioned** — the owner creates the row (`app_create` / `apply`) and mints an
+1. **Provisioned** — the owner creates the row (`app_create` or OpenTofu) and mints an
    app token (`token_issue`), which is handed to the bot. The token is the app's
    sole credential: it authenticates registration (the role declaration) and every
    (re)connection. Multiple tokens per app may be live at once, so rotation is
@@ -174,18 +172,15 @@ which case the caller gets an error anyway and retries).
    but not yet past `hub/register` is not online — the 10 s registration deadline
    bounds that window. Offline still serves the cached `tools/list`; only `tools/call`
    requires the connection.
-3. **Archived** — a reversible parking state set by the owner (`app_archive`, or
-   `archived: true` in YAML). While archived: connection attempts are rejected at the
-   WebSocket upgrade (HTTP 403), an existing connection is severed (close `4002`), the
-   app disappears from aggregated `tools/list`, and scoped calls fail with JSON-RPC
-   `-32002` ("app archived"). Roles, grants, tokens, and the cached catalog are all
-   retained — `app_unarchive` restores everything. The client library treats
-   403/4002 as "keep retrying at max backoff", so unarchiving heals within a minute
-   without touching the bot.
-4. **Deleted** — terminal (`app_delete` / removal from YAML): grants cascade, tokens
-   are deleted, the live socket is closed (`4001`), the DO's cached state is wiped.
+3. **Archived** — a reversible parking state set through admin, web, or provider.
+   Connection attempts receive 403 and the existing app socket is severed with `4002`;
+   §21 subscriber sockets remain until stream reauthorization. Scoped calls fail
+   `-32002`. The app is absent from new §23 catalogs, while roles, grants, tokens, cached
+   catalogs, and TypeScript reservations remain for unarchive.
+4. **Deleted** — terminal (`app_delete` or provider destroy): grants cascade, tokens are
+   deleted, the live socket is closed (`4001`), and the DO's cached state is wiped.
 
-Proxied apps skip the connection-related states: their lifecycle is provisioned
-(with `endpoint` + config-defined roles, no token) ↔ archived → deleted, with the same
-archived semantics on the consumer side (`-32002`, hidden from aggregation).
+Proxied apps skip connection states: provisioned (endpoint/configured roles and owner
+TypeScript aliases, no app token) ↔ archived → deleted. Scoped archive semantics stay
+`-32002`; archived apps are omitted from new §23 snapshots.
 

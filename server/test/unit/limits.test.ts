@@ -1,5 +1,5 @@
 /**
- * limits.deadlines — the five durations the hub reads from its env instead of from a
+ * limits.deadlines — the durations the hub reads from its env instead of from a
  * constant, so a test can shorten the one it watches without patching anything global.
  *
  * What is pinned here is the PARSE, which is the whole of the seam's logic: a binding is a
@@ -9,7 +9,7 @@
  * string from a shell that expanded nothing), which in production would turn a 30-second
  * budget into an instant timeout on every call, and in a test would turn a red row green.
  *
- * deps: src/limits (deadlines, DEADLINE_ENV, and the five constants it defaults to)
+ * deps: src/limits (deadlines, DEADLINE_ENV, and the constants it defaults to)
  */
 
 import { describe, expect, it } from "vitest";
@@ -17,19 +17,21 @@ import {
   AGGREGATED_LIST_DEADLINE_MS,
   CALL_TIMEOUT_MS,
   DEADLINE_ENV,
+  HUB_CATALOG_FAMILY_DEADLINE_MS,
   LISTEN_BELL_MIN_INTERVAL_MS,
   LISTEN_KEEPALIVE_MS,
   REGISTRATION_DEADLINE_MS,
   deadlines,
 } from "../../src/limits";
 
-/** The production answer: what an env with none of the five bindings must yield. */
+/** The production answer: what an env with none of the bindings must yield. */
 const DEFAULTS = {
   callTimeoutMs: CALL_TIMEOUT_MS,
   aggregatedListDeadlineMs: AGGREGATED_LIST_DEADLINE_MS,
   registrationDeadlineMs: REGISTRATION_DEADLINE_MS,
   listenKeepaliveMs: LISTEN_KEEPALIVE_MS,
   listenBellMinIntervalMs: LISTEN_BELL_MIN_INTERVAL_MS,
+  hubCatalogDeadlineMs: HUB_CATALOG_FAMILY_DEADLINE_MS,
 } as const;
 
 describe("limits.deadlines", () => {

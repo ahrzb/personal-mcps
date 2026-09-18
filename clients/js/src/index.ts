@@ -71,6 +71,20 @@ export type Roles = Record<
 >;
 
 /**
+ * Optional TypeScript alias hints sent beside `roles` in `hub/register` (§23, wire
+ * key `typescriptAliases`): a preferred service name and per-canonical-tool names
+ * for the hub's generated TypeScript surface. Hub-local author hints only — an
+ * alias never renames the app's MCP wire surface, and canonical names keep crossing
+ * the MCP wire untouched. Both members are optional; omitting the whole value sends
+ * no hints. Syntax and collision policy are the HUB's job, not this library's — it
+ * is the single allocation authority (§23) — so this library copies the hint map
+ * verbatim: a malformed one is refused at registration (RegistrationError, like a
+ * bad declaration), while a syntactically valid one that collides never disconnects
+ * the tunnel — the hub keeps the established assignment and omits the newcomer.
+ */
+export type TypescriptAliases = { service?: string; tools?: Record<string, string> };
+
+/**
  * The `hub/*` control-frame method names (contracts/tunnel-frames.json `methods`, the
  * hub's own `HUB_METHODS` export). Exported because it is exactly the set this transport
  * CONSUMES: a `hub/` method outside it is ordinary traffic and reaches the SDK session
@@ -113,12 +127,12 @@ const PING_INTERVAL_MS = 25_000;
  * jitter, so `max_only` and `exponential` overlap at every attempt and are told apart only
  * at a FIXED draw, and a suite that waited out a real 60 s window is a suite nobody runs.
  *
- * Here rather than on the constructor because §11 promises `{url, token, roles}` and
- * nothing else: an author reading `new HubTransport(…)` should not have to learn about
- * jitter injection to use the three options that matter. This is the same spelling the
- * Python twin uses (`pmcp_client._rng` / `._sleep`, replaced with monkeypatch), so the two
- * libraries state one contract in one shape; a suite replaces these members and restores
- * them afterwards.
+ * Here rather than on the constructor because §11 promises `{url, token, roles,
+ * typescriptAliases}` and nothing else: an author reading `new HubTransport(…)`
+ * should not have to learn about jitter injection to use the options that matter. This is
+ * the same spelling the Python twin uses (`pmcp_client._rng` / `._sleep`, replaced with
+ * monkeypatch), so the two libraries state one contract in one shape; a suite replaces
+ * these members and restores them afterwards.
  */
 export const seams = {
   rng: (): number => Math.random(),
@@ -145,6 +159,12 @@ export type ServeOptions = {
    * `all` role (§6).
    */
   roles?: Roles;
+  /**
+   * Optional hub-local TypeScript alias hints (§23). Omitted means none; a hint
+   * never renames the app's MCP wire surface, and a collision is resolved
+   * hub-side without disconnecting (see {@link TypescriptAliases}).
+   */
+  typescriptAliases?: TypescriptAliases;
 };
 
 /**
@@ -162,9 +182,9 @@ export class CredentialsError extends Error {}
 export class RegistrationError extends Error {}
 
 /**
- * Run `server` as a tunneled hub app: dial, register the role declaration,
- * and stay reachable until the hub says otherwise. The returned promise pends for
- * the life of the app — hours to months; treat it as the bot's main loop.
+ * Run `server` as a tunneled hub app: dial, register the role declaration and any
+ * TypeScript alias hints, and stay reachable until the hub says otherwise. The returned
+ * promise pends for the life of the app — hours to months; treat it as the bot's main loop.
  *
  * Terminal outcomes are the whole resolution contract:
  * - resolves quietly when the hub replaces this connection with a newer one for
@@ -189,7 +209,13 @@ export async function serve(server: McpServer, options?: ServeOptions): Promise<
   if (token === undefined || token === "") {
     throw new TypeError("no app token: pass options.token or set PMCP_APP_TOKEN");
   }
-  const transport = new HubTransport({ url, token, roles: options?.roles, discover: () => probeCapabilities(server) });
+  const transport = new HubTransport({
+    url,
+    token,
+    roles: options?.roles,
+    typescriptAliases: options?.typescriptAliases,
+    discover: () => probeCapabilities(server),
+  });
   // The SDK session owns the handshake and calls start() itself.
   await server.connect(transport);
   await transport.closed;
@@ -256,6 +282,12 @@ export class HubTransport {
   private readonly address: string;
   private readonly token: string;
   private readonly roles: Roles;
+  /** The author's optional alias hints, sent verbatim in each `hub/register` (§23)
+   *  and never interpreted here — the hub is the syntax/allocation authority.
+   *  `undefined` (the omitted option) sends the key not at all, so a historically
+   *  shaped registration frame is byte-for-byte preserved for authors who pass
+   *  nothing. */
+  private readonly typescriptAliases: TypescriptAliases | undefined;
   /** Answers the hub's `server/discover` (§11/§6, §20). `undefined` when the
    *  caller gave none — every `server/discover` then gets `-32601`, the same
    *  "capabilities unknown" a library that predates this method sends. */
@@ -273,15 +305,20 @@ export class HubTransport {
    * TypeError here, before any I/O. `token` is the `pmcp_app_` credential the
    * whole connection authenticates as. No network happens until start().
    *
-   * These three and nothing else (§11). The reconnect policy's two observation
+   * These four and nothing else (§11). The reconnect policy's two observation
    * seams are the module-level {@link seams}, not options here.
    */
   constructor(options: {
     url: string;
     token: string;
     roles?: Roles;
+    /**
+     * Optional alias hints (§23), sent verbatim on every registration; omitted
+     * means the `typescriptAliases` key is not sent at all.
+     */
+    typescriptAliases?: TypescriptAliases;
     /** Internal: serve()'s wiring for `server/discover` (§20). Not part of §11's
-     *  three public options — a hand-rolled session that wants to answer it
+     *  public options — a hand-rolled session that wants to answer it
      *  passes this directly; one that does not gets the `-32601` fallback. */
     discover?: () => Record<string, unknown> | undefined;
   }) {
@@ -289,6 +326,7 @@ export class HubTransport {
     this.address = connectAddress(options.url);
     this.token = options.token;
     this.roles = options.roles ?? {};
+    this.typescriptAliases = options.typescriptAliases;
     this.discover = options.discover ?? (() => undefined);
     const closed = deferred<void>();
     this.closed = closed.promise;
@@ -395,7 +433,15 @@ export class HubTransport {
           jsonrpc: "2.0",
           id: REGISTER_ID,
           method: HUB_METHODS.register,
-          params: { clientVersion: CLIENT_VERSION, protocolVersion: PROTOCOL_VERSION, roles: this.roles },
+          params: {
+            clientVersion: CLIENT_VERSION,
+            protocolVersion: PROTOCOL_VERSION,
+            roles: this.roles,
+            // §23's optional member: absent means the key is ABSENT — an author who
+            // declares no hints keeps sending exactly the three-key frame, and the hub
+            // reads a missing member as "no hints", never as a cleared map.
+            ...(this.typescriptAliases === undefined ? {} : { typescriptAliases: this.typescriptAliases }),
+          },
         });
       });
       socket.on("message", (data: unknown) => {

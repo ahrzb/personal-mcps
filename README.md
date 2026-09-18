@@ -1,20 +1,20 @@
 # personal-mcps
 
-A personal MCP hub on Cloudflare Workers. Long-running bots connect **out** to the
-hub over a reverse WebSocket tunnel (telegram-bot style) and become MCP apps;
-consumers — Claude Code, claude.ai, scripts — call them at a stable HTTPS endpoint
-with per-agent grants, human approvals, and an audit trail. One deploy, no ports
-opened anywhere.
+A personal MCP hub on Cloudflare Workers. Long-running bots connect **out** over a
+reverse WebSocket tunnel and proxied apps stay remote. Consumers call each app at a
+stable scoped HTTPS endpoint, or submit one typed TypeScript program to the aggregate
+hub orchestration endpoint. Per-agent grants, human approvals, exact-credential
+Sandbox isolation, and the audit trail apply end to end.
 
 ```
- bot (Python/JS/Go, anywhere)                  consumer (Claude Code, scripts)
-        │  wss://<hub>/connect                        │  POST https://<hub>/<user>/mcp
-        │  Authorization: Bearer pmcp_app_…           │  Authorization: Bearer pmcp_agt_…
-        ▼                                             ▼
-   ┌─────────────────────────── the hub (Cloudflare Worker) ───────────────────────────┐
-   │  reverse tunnel (Durable Object,      grants · approvals · audit · admin MCP      │
-   │  WebSocket hibernation)               web pages (Hono JSX) · better-auth · D1     │
-   └───────────────────────────────────────────────────────────────────────────────────┘
+ bot / proxied MCP                       consumer
+        │                               │ POST /<user>/mcp      (hub execute/search)
+        │ wss / upstream HTTP           │ POST /<user>/mcp/<app> (direct scoped MCP)
+        ▼                               ▼
+ ┌──────────────────────── Cloudflare Worker trust boundary ────────────────────────┐
+ │ D1 registry · grants · approvals · audit · AppConnection tunnel DO              │
+ │ hub catalog + declarations ──▶ exact-token HubSandbox container (pinned Deno)    │
+ └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## What's in the box
@@ -22,18 +22,19 @@ opened anywhere.
 - **Reverse tunnel** — apps dial `wss://<hub>/connect` with a `pmcp_app_` token
   and reconnect forever; the hub proxies consumer MCP calls to them and fails fast
   while they're offline. One `AppConnection` Durable Object holds the sockets.
-- **Consumer proxy** — each app is an MCP endpoint at
-  `https://<hub>/<user>/mcp` (streamable HTTP). Access is per agent, per
-  role; sensitive fields are masked before anything is stored or shown.
-- **Approvals** — tool calls can require a human yes, delivered as Web Push to the
-  hub's PWA and decided on the `/approvals` page or from the CLI.
-- **Admin MCP** — hub administration (apps, agents, grants, approvals, audit)
-  is itself exposed as a built-in MCP app, so Claude can operate the hub.
+- **Consumer proxy** — every app has a canonical scoped endpoint at
+  `https://<hub>/<user>/mcp/<app>`. The aggregate endpoint exposes only
+  `hub_execute`, `hub_search_types`, and TypeScript declarations; its programs compose
+  authorized scoped tool calls/resource reads without receiving the invoking bearer.
+- **Approvals** — gated tool calls require a human yes; programs never auto-resume or
+  replay around that decision.
+- **Admin MCP** — hub administration is the scoped virtual `pmcp` app and is available
+  inside a program only to the exact operations the invoking owner/admin credential has.
 - **Web surface** — login (password, TOTP, passkey), device approval for CLI login,
   app management, approvals dashboard, audit view. `/` redirects to `/apps`
   when signed in, `/login` otherwise.
 - **CLI** — `pmcp` covers login (RFC 8628 device flow), apps, agents, tokens,
-  approvals, audit, and a YAML access config with `diff`/`apply`.
+  approvals, audit, and generic MCP/admin operation invocation.
 - **Client libraries** — Python, TypeScript, and Go packages keep an ordinary MCP
   server object reachable through the tunnel. See the
   [client quickstart](docs/quickstart-clients.md).
@@ -42,13 +43,14 @@ opened anywhere.
 
 | Path | What it is |
 |---|---|
-| [server/src](server/src) | The Worker: router, tunnel, proxy, identity, approvals, web pages |
-| [server/test](server/test) | The suite (vitest, Workers pool + a real-tunnel project) |
-| [cli](cli) | The `pmcp` CLI (`cli/pmcp.mts`, TypeScript run via `--experimental-strip-types`) |
+| [server/src](server/src) | Worker trust boundary: router, identity, scoped dispatch, tunnel, hub catalog/types/Sandbox |
+| `server/sandbox/` | Pinned Deno parent/worker and minimal container image (§23; added with the execution runtime) |
+| [server/test](server/test) | Unit, workerd, tunnel, and adapter suites |
+| [cli](cli) | The `pmcp` CLI |
 | [clients/js](clients/js) | TypeScript app-author library |
-| [clients/py](clients/py) | Python app-author library (`pmcp-client`, standalone `uv` project) |
-| [clients/go](clients/go) | Go app-author library (official MCP Go SDK transport) |
-| [contracts](contracts) | Checked-in wire fixtures (close codes, tunnel frames) shared by hub and all clients |
+| [clients/py](clients/py) | Python app-author library |
+| [clients/go](clients/go) | Go app-author library |
+| [contracts](contracts) | Producer-generated wire fixtures shared by every consumer |
 | [scripts](scripts) | `users.mts` (bootstrap user management), `smoke.ts` (post-deploy probe), `test-inventory.mjs` |
 | [docs/specs](docs/specs/README.md) | **The source of truth.** The design spec (§-references throughout the code point here) and the testing strategy, one file per section — [docs/specs/README.md](docs/specs/README.md) is the index |
 | [docs/superpowers/plans](docs/superpowers/plans) | Implementation ledgers |

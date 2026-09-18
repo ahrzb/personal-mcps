@@ -1,4 +1,4 @@
-// settings.tsx — /settings: §13's six panes behind one rail.
+// settings.tsx — /settings: §13's seven panes behind one rail.
 //
 // Pure (props) => JSX per model.ts's contract: no fetching, no cookies, no
 // Date.now() — every relative timestamp below is a function of `now` and an
@@ -7,7 +7,7 @@
 // every destructive one goes through `confirm` (Dialogs.dc.html) as
 // server-rendered dialog state rather than firing on click.
 //
-// ONE component draws all six panes and the rail, because §13 makes them one page:
+// ONE component draws all seven panes and the rail, because §13 makes them one page:
 // the rail's markers are the LENGTHS of the lists the panes render, so they are read
 // off the same props — a marker computed any other way is a number that can disagree
 // with the pane beside it. `props.pane` says which pane the URL asked for; the rail
@@ -22,6 +22,7 @@ import type { Child, FC } from "hono/jsx";
 import type {
   ConnectionRow,
   SettingsConfirm,
+  SettingsExecutionForm,
   SettingsPane,
   SettingsProps,
   Notice,
@@ -32,7 +33,8 @@ import type {
   TotpEnrollment,
   TwoFactorSummary,
 } from "./model";
-import { PASSWORD_MIN_LENGTH, paths, SETTINGS_CONFIRM_PANE, SETTINGS_PANES } from "./model";
+import { PASSWORD_MIN_LENGTH, paths, SETTINGS_CONFIRM_PANE, SETTINGS_PANES, timeoutLabel } from "./model";
+import { HUB_HARD_MAX_TIMEOUT_MS, HUB_MIN_TIMEOUT_MS } from "../limits";
 import type { PaneEntry } from "./layout";
 import { ConfirmShell, Layout, OtpBoxes, PaneRail, PanePills, paneGroups } from "./layout";
 import { alertClass, formatDate, formatStamp, sessionLabel } from "./format";
@@ -130,7 +132,7 @@ function listedTokens(tokens: TokenRow[], kind: TokenRow["kind"] | null): TokenR
 }
 
 /**
- * §13's rail table, as data: the six panes in the one order both navigations draw, each
+ * §13's rail table, as data: the seven panes in the one order both navigations draw, each
  * with the marker its own pane's list produces. The Password entry's `null` is the
  * table's `none` cell, and Two-factor's is the one marker that is a status — said in
  * words as well as in colour, since a dot alone is a state only a sighted reader has.
@@ -145,6 +147,11 @@ function paneEntries(props: SettingsProps): PaneEntry[] {
     sessions: { text: String(props.sessions.length) },
     tokens: { text: String(listedTokens(props.tokens, props.tokenKind).length) },
     clients: { text: String(props.connections.length) },
+    // §13's Execution cell: "default/max seconds" — the pair in seconds, which is the one
+    // reading of it that fits a rail marker (the pane itself states the milliseconds).
+    execution: {
+      text: `${timeoutLabel(props.execution.defaultTimeoutMs)} / ${timeoutLabel(props.execution.maxTimeoutMs)}`,
+    },
   };
   return SETTINGS_PANES.map((entry) => ({
     href: entry.href,
@@ -899,6 +906,94 @@ const ClientsCard: FC<{ connections: ConnectionRow[] }> = ({ connections }) => (
   </div>
 );
 
+/* ------------------------------------------------------------------ *
+ * execution (§23)
+ * ------------------------------------------------------------------ */
+
+/**
+ * §23's Execution pane: the owner's hub execution timeout pair — `hub_settings_get`'s
+ * committed values as two integer millisecond fields, one Save, CSRF, and the op's own
+ * sentences under whichever control it named. A refused pair redraws at 400 (web.ts's
+ * route) with `form`'s values, so nothing the owner typed is lost; a successful save
+ * redirects back and this pane's readback IS the committed pair.
+ *
+ * The copy states the three facts §13 pins: settings are owner-wide, every execution
+ * snapshots them at admission, and a change never extends a run that is already going.
+ * `min`/`max` are the same constants the op's schema advertises — the browser's own
+ * affordance, never the enforcement.
+ */
+const ExecutionCard: FC<{ form: SettingsExecutionForm; csrfToken: string }> = ({ form, csrfToken }) => (
+  <div class="card card--pad">
+    <div>
+      <div class="card-title">Execution</div>
+      <div class="card-desc">
+        How long a program run through this namespace's hub endpoint may take. Owner-wide, and
+        measured in milliseconds.
+      </div>
+    </div>
+
+    <form method="post" action={paths.settingsExecutionUpdate} class="form">
+      <input type="hidden" name="csrf" value={csrfToken} />
+
+      {form.errors.form ? (
+        <div class="alert alert--danger" role="alert">
+          <div class="alert-text">{form.errors.form}</div>
+        </div>
+      ) : null}
+
+      <label class="field">
+        <span class="label">Default timeout</span>
+        <input
+          type="number"
+          name="default_timeout_ms"
+          value={form.defaults}
+          min={HUB_MIN_TIMEOUT_MS}
+          max={HUB_HARD_MAX_TIMEOUT_MS}
+          required
+          aria-invalid={form.errors.defaults ? "true" : undefined}
+        />
+        {form.errors.defaults ? (
+          <span class="field-error">{form.errors.defaults}</span>
+        ) : (
+          <span class="field-hint">Used when a program sends no timeout of its own.</span>
+        )}
+      </label>
+
+      <label class="field">
+        <span class="label">Maximum timeout</span>
+        <input
+          type="number"
+          name="max_timeout_ms"
+          value={form.maximum}
+          min={HUB_MIN_TIMEOUT_MS}
+          max={HUB_HARD_MAX_TIMEOUT_MS}
+          required
+          aria-invalid={form.errors.maximum ? "true" : undefined}
+        />
+        {form.errors.maximum ? (
+          <span class="field-error">{form.errors.maximum}</span>
+        ) : (
+          <span class="field-hint">
+            The largest a program may request — never below the default, and never above{" "}
+            {timeoutLabel(HUB_HARD_MAX_TIMEOUT_MS)}.
+          </span>
+        )}
+      </label>
+
+      <div class="actions actions--start">
+        <button type="submit" class="btn btn--primary">
+          Save
+        </button>
+      </div>
+    </form>
+
+    <p class="note">
+      Each execution snapshots this pair when it is admitted, so a change governs new runs
+      only — one already going keeps the deadline it started with.
+    </p>
+  </div>
+);
+
 /* ---------------------------------------------------------------- dialogs --- */
 
 const DIALOG_ID = "confirm-settings";
@@ -1043,6 +1138,8 @@ const Pane: FC<SettingsProps> = (props) => {
           </p>
         </>
       );
+    case "execution":
+      return <ExecutionCard form={props.executionForm} csrfToken={props.csrfToken} />;
     default:
       return (
         <>

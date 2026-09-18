@@ -24,24 +24,15 @@ broken**, and Claude Code opens the stream today.
 
 ### 21.1 The listen stream
 
-`subscriptions/listen` joins §7's method table on **both** endpoint shapes. It is
-**listing-class**: it always succeeds for an authenticated caller the door admits, and an
-empty stream is a legal answer exactly as an empty list is.
+`subscriptions/listen` remains on aggregate, virtual `hub`, and scoped endpoints. It is
+listing-class and reauthenticates on the keepalive cadence. Scoped real apps retain this
+section's filter → archived ordering and never check availability.
 
-- **Refusals mirror the listings, not the calls.** A caller whose grants match nothing
-  gets a stream that never rings — indistinguishable from a namespace where nothing
-  changes, the same anti-enumeration posture as an empty `tools/list`. That sentence is
-  shape-aware: on the **aggregated** endpoint it is literal (zero grants namespace-wide
-  still opens a stream); on the **scoped** endpoint §7's access rules run first — a
-  caller with no grant on the addressed app gets §7's **404** exactly as for any
-  other method (the stream must not become the one method that leaks an app's
-  existence), and the never-ringing stream belongs to the caller §7 admits whose
-  patterns match nothing. On the scoped
-  endpoint an archived app refuses `-32002` before the stream opens for a caller §7
-  admits — a 404-class caller stays 404 and never learns archived (every scoped
-  method's rule); on the aggregated endpoint archived apps are simply not subscribed.
-  **Availability is never checked**: a stream against an offline app is the point —
-  the bell rings when it comes back changed.
+The aggregate replacement changes its fan-out: aggregate and scoped `hub` open no
+application subscriber sockets because the hub capability flags are fixed false. Their
+streams emit authenticated SSE comment keepalives only. Real scoped tunneled apps retain
+their subscriber socket and notification behavior; proxied and `pmcp` scoped streams
+likewise remain non-ringing.
 - **The response is a `text/event-stream` held open by the Worker invocation**, carrying
   JSON-RPC notifications as SSE data frames and an SSE comment as keepalive every
   `LISTEN_KEEPALIVE_MS` (a `limits.ts` constant; the value is incidental, the existence
@@ -65,25 +56,11 @@ empty stream is a legal answer exactly as an empty list is.
 
 ### 21.2 Delivery: Worker holds the stream, DOs ring it
 
-On stream open the Worker resolves the principal and reads its grants — the same reads
-the aggregated fan-out already performs — and opens one outbound WebSocket to each
-granted **tunneled** app's DO, which the DO accepts via `ctx.acceptWebSocket`
-tagged **`sub:<session-id>`**, with the resolved principal stored in the socket's
-attachment. The `sub:` prefix is the class invariant, not a convention: a
-`getWebSockets(app.id)` lookup can never return a subscriber socket, because a
-prefixed tag never equals a bare id — and the prefix is the *only* thing separating the
-classes, since app ids are themselves UUIDs (§6 tags the app socket with the
-bare id), so nothing about an id's shape can carry the invariant. Every reader inside
-the DO therefore selects by **class, never by position**: the app socket is the one
-tagged with the bare app id, whatever else the DO holds and in whatever order the
-sockets were accepted. This is the mechanism behind every "subscriber sockets are
-different" claim below. Frames arriving on those sockets
-are pumped to the SSE stream **payload-verbatim, admission-filtered**: the invocation
-knows its endpoint shape and forwards only the frames that shape serves — tools and
-prompts bells on an aggregated stream; all three bells plus `resources/updated` on a
-scoped one. (The DO rings every subscriber socket it holds; the shape filter lives in
-the Worker, the only party that knows the shape.) The invocation ends when the consumer
-disconnects; the subscriber sockets close with it.
+On a real scoped tunneled stream the Worker opens the app's tagged subscriber WebSocket
+exactly as specified below. Aggregate and scoped-hub streams deliberately open none.
+For a real scoped stream, frames are admission-filtered to the app's three list-changed
+families plus exact-URI `resources/updated`. The invocation ends when the consumer
+disconnects.
 
 - **Subscriber sockets are a class of their own.** §6's at-most-one-connection invariant
   is about the *app* socket — the one the bot registers on. A DO holds at most one of
@@ -100,22 +77,12 @@ disconnects; the subscriber sockets close with it.
   Fail loud, not deaf: a stream that silently stopped hearing one of its apps is the
   one failure a doorbell design cannot afford, and the client's ordinary reopen rebuilds
   the fan-out against current state.
-- **The stream re-authorizes itself on the keepalive cadence.** A held stream is one
-  request, and §15's "revocation is immediate" is a per-request property — so on every
-  `LISTEN_KEEPALIVE_MS` tick the Worker re-resolves the bearer and re-reads the grant
-  set, the same reads the open performed. A revoked or expired token, a deleted agent,
-  or (scoped) an archived or deleted app **closes the stream**; a grant revoked
-  mid-stream **drops that app's subscriber socket**, and the subscriptions riding it
-  (§21.4) die with the socket, so no `resources/updated` outlives the grant that
-  authorized it — on the aggregated shape the stream narrows and stays open, while a
-  scoped stream whose caller lost its last grant on the app **closes** (a fresh open
-  would now 404, and the tick answers as the door would); a grant added mid-stream is
-  subscribed on the next tick, and the Worker itself rings once **the family bells its
-  endpoint shape serves that the changed app's stored capability set contains** — a
-  tools-only app granted mid-stream rings the tools bell alone, because no other
-  family of the caller's view changed. Between ticks the stale window is at most one
-  keepalive interval, and what fits in that window is a doorbell — content still
-  re-enters the filter-first pipeline on every re-list.
+- **The stream re-authorizes itself on the keepalive cadence.** It resolves the same
+  non-secret credential reference §23 uses. Revocation, expiry, account/agent deletion,
+  or principal-key change closes the stream. On a real scoped app, lost grant/archive/
+  deletion closes it as a fresh request would; changed grants narrow or widen on the next
+  tick and newly added grants ring only the supported family intersection. Aggregate/hub
+  have no app fan-out to reconcile, so the tick only preserves credential liveness.
 - **Fan-out width is capped, and must be measured before it is trusted.** The platform
   caps simultaneous open connections per invocation (documented at six), and the D14
   probe measured **one** held subscriber socket, not many. `LISTEN_FANOUT_MAX`
@@ -133,17 +100,11 @@ disconnects; the subscriber sockets close with it.
 
 ### 21.3 What rings: doorbell, not data
 
-The hub forwards the **fact** of change, never content. A consumer-facing
-`notifications/tools/list_changed` / `prompts/list_changed` / `resources/list_changed`
-frame carries nothing but its method — so the aggregated endpoint's `<slug>_` prefix
-question never arises (there is no name to prefix), and push adds **no second path to
-content past grants**: the only way to learn *what* changed is to re-list, and the
-re-list is grant-filtered like every read since §7. This is the security half of
-decision 28. The qualifier is deliberate: the bell is computed on the **whole** stored
-catalog, not the caller's filtered view, so a caller granted a sliver of an app can
-learn *that* something changed, and when, in parts it cannot see — a change-**timing**
-oracle, confined to apps the caller already holds some grant on, recorded as a
-ceiling in §21.7 with its upgrade path.
+The hub forwards the **fact** of change, never content. On real scoped tunneled streams,
+the three list-changed frames carry only `method`, and `resources/updated` carries the
+verbatim URI as §21.4 specifies. Aggregate/hub push flags are false and those streams
+forward none of these frames. Content always re-enters a current filtered list/read
+path; the remaining scoped timing oracle is confined to an app the caller already holds.
 
 **The bell rings when the hub's stored catalog changes, not when the app says
 something changed.** The DO already invalidates and re-warms on an app's
@@ -167,15 +128,9 @@ runs** — so a burst delivers at most two frames, the leading one and the final
 and **the final state always rings**. The coalescing alarm shares the DO's single alarm
 slot with §6's registration deadline: multiplexed, never clobbered — a socket accept
 cancels no pending ring, and a subscriber accept never arms the deadline. An app flipping
-its catalog at socket speed therefore drives each consumer to at most one re-list per
-interval — no more than any consumer could already inflict on the fan-out unprompted, so
-push hands a rogue app no lever a curious consumer didn't have. Aggregated streams
-ring the family's bell whichever granted app changed; bursts across *apps* are
-not coalesced (clients debounce their re-list).
-
-Families follow the endpoint shape of §20.2: an aggregated stream rings tools and
-prompts bells only; a scoped stream rings all three families for its app, plus
-`resources/updated` (§21.4).
+Catalog writes remain rate-limited and coalesced per app DO, preventing a rogue app from
+forcing unbounded scoped re-list traffic. Clients debounce their scoped re-list.
+Aggregate/hub streams subscribe to no app DO and have no cross-app coalescing question.
 
 **Hub-originated changes ring only through the re-auth tick** (§21.2): a grant added or
 revoked, an archive, or a delete changes the stream's subscribed-app set within one
@@ -234,25 +189,15 @@ stream is a client that never opens it (Claude Code registers `list_changed` han
 only per advertised capability — probe-verified), and a declared-but-unserved one burns
 the client's reopen budget (§20.1's original warning).
 
-- **Aggregated**: still one constant, still a byte-for-byte fixture
-  (`contracts/initialize.json`): `tools` and `prompts`, both `listChanged: true`.
-- **Scoped, tunneled**: `listChanged: true` on each family the stored capability set
-  contains; `resources.subscribe: true` when `resources` is among them. A never-connected
-  app advertises `tools` with `listChanged: true` — honest before the first
-  registration because the bell rings on the first write that **changes** a stored
-  catalog, which the first non-empty registration is (§21.3's absent ≡ `[]` keeps an
-  empty first warm silent, and an empty catalog has nothing to hear about). An
-  **unresolvable slug** answers this same never-connected shape — the handshake must not
-  become an app-existence oracle (§20.2's anti-enumeration posture).
-- **Scoped, proxied**: unchanged — `listChanged: false` everywhere, `subscribe` never;
-  §21.2 has the reason. The owner-declared `capabilities` list (§20.2) still gates only
-  which families are *advertised*, and none of it advertises push.
-- **Scoped, `pmcp` builtin**: `listChanged: false` everywhere, `subscribe` never — no
-  DO, no channel to ring from (§21.2), the same reason as proxied. The capability shape
-  is therefore a function of the app's *kind*, not only of its stored capability
-  list.
-- `server/discover` (consumer-facing) answers from the same two pictures — §20.2's
-  one-source-two-spellings rule carries the flip with no new rule.
+- **Aggregate and scoped `hub`**: one constant, byte-for-byte fixture:
+  `tools` then `resources`, both `listChanged: false`; no subscribe.
+- **Scoped, tunneled real app**: `listChanged: true` on each stored family and
+  `resources.subscribe: true` when resources are stored. Never-connected and
+  unresolvable slugs use tools with `listChanged: true`.
+- **Scoped, proxied**: owner-declared families, all push flags false.
+- **Scoped, `pmcp`**: tools with `listChanged: false`; no subscribe.
+- `server/discover` uses the same producer as `initialize`.
+
 
 ### 21.6 Audit
 

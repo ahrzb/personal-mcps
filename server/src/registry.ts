@@ -9,11 +9,14 @@
 // allow-beats-approval), role-declaration validation shared by hub/register and
 // proxied config, the §20.3 normalization of a declaration into its per-family
 // form and back into the canonical read shape, textual drift detection on
-// re-declaration, the proxied `capabilities` config (§20.2), the `pmcp` slug
-// reservation — and the redaction path grammar: writeOnlyPaths/applyRedaction are
+// re-declaration, the proxied `capabilities` config (§20.2), the reserved virtual
+// slugs `pmcp` and `hub` — and the redaction path grammar: writeOnlyPaths/applyRedaction are
 // the system's ONE definition of how sensitive paths are found and applied, in
 // BOTH directions (§7): tunnel walks cached input and output schemas with the
 // former; approvals and the gateway's audit-body path mask with the latter.
+// §23.3's owner execution settings and §23.6's durable TypeScript name
+// reservations live here too — one row per owner, and the name ledger whose
+// unique indexes arbitrate every alias write.
 //
 // HIDES: the roles_json / owner_roles_json / redact_json / redact_results_json /
 // log_bodies / capabilities_json column formats (the tunnel DO hands wire-shaped
@@ -28,18 +31,37 @@
 // touch is CLEARING the envelope column when updateApp flips the auth mode,
 // a row invariant (mode and envelope kind can never disagree), not a read.
 
+import type {
+  AliasDiagnostic,
+  AliasFamily,
+  AliasLaneInput,
+  AliasPlan,
+  AliasReservation,
+  AliasServiceMembers,
+  AliasSource,
+  TypescriptAliases,
+} from "./hub-types";
+import { HUB_SLUG, aliasViolations, planAliasReservations } from "./hub-types";
 import type { Principal } from "./identity";
-import { ROLE_NAME_MAX_LENGTH, ROLE_PATTERN_MAX_LENGTH, ROLE_PATTERNS_MAX } from "./limits";
+import {
+  HUB_DEFAULT_TIMEOUT_MS,
+  HUB_HARD_MAX_TIMEOUT_MS,
+  HUB_INITIAL_MAX_TIMEOUT_MS,
+  HUB_MIN_TIMEOUT_MS,
+  ROLE_NAME_MAX_LENGTH,
+  ROLE_PATTERN_MAX_LENGTH,
+  ROLE_PATTERNS_MAX,
+} from "./limits";
 
 /** The request-scoped Cloudflare D1 binding (`D1Database` from `@cloudflare/workers-types`). */
 type D1Database = unknown;
 
 /**
- * The two app shapes, in the wire vocabulary pinned by §5's CHECK constraint
- * and the YAML `kind:` field: `tunnel` dials in over the reverse WebSocket and
- * declares roles at registration; `proxy` is an upstream MCP endpoint the hub
- * forwards to, with roles defined in config. Immutable after create — a
- * conversion would orphan app tokens and DO state, so it's recreate-only.
+ * The two app shapes, in the wire vocabulary pinned by §5's CHECK constraint:
+ * `tunnel` dials in over the reverse WebSocket and declares roles at registration;
+ * `proxy` is an upstream MCP endpoint the hub forwards to, with owner-defined roles.
+ * Immutable after create — conversion would orphan app tokens and DO state, so it is
+ * recreate-only.
  */
 export type AppKind = "tunnel" | "proxy";
 
@@ -150,9 +172,7 @@ export type GrantMode = "allow" | "approval";
 export type GrantEntry = { role: string; mode: GrantMode };
 
 /**
- * An agent's grants on one app — the shape agent_list returns inline
- * and the CLI diff planner consumes, so desired state is readable in one
- * grantsFor call per agent.
+ * An agent's grants on one app, the shape `agent_list` returns inline.
  */
 export type AppGrants = {
   appId: string;
@@ -161,10 +181,9 @@ export type AppGrants = {
 };
 
 /**
- * The full owner-facing read of an app row — everything app_get and the
- * diff planner need. Timestamps are epoch milliseconds. The upstream credential
- * envelope is deliberately absent: credentials never surface through any
- * registry read.
+ * The full owner-facing read of an app row. Timestamps are epoch milliseconds.
+ * The upstream credential envelope is deliberately absent: credentials never surface
+ * through any registry read.
  */
 export type AppDetail = App & {
   name: string;
@@ -187,6 +206,16 @@ export type AppDetail = App & {
    * answer every proxied app in the field already gives.
    */
   capabilities: AppCapability[] | null;
+  /**
+   * §23.6's owner configuration lane for this app's hub-local TypeScript names —
+   * `{ service?, tools? }`, `{}` when the owner configured none. CONFIGURATION, never the
+   * resolved map: the durable reservations live in their own table and their read shape is
+   * `typescriptReservations`, so a front can show "what the owner asked for" and "what the
+   * hub committed" as the two separate facts §8 requires. Omission on update leaves this
+   * untouched; setting `{}` is a legal explicit value that clears nothing either (there is
+   * no release path for a committed name).
+   */
+  typescriptAliases: TypescriptAliases;
   redact: Record<string, string[]>;        // tool-or-pattern → argument paths (config-declared, §7)
   redactResults: Record<string, string[]>; // same shape, applied to result structuredContent (§7)
   createdAt: number;
@@ -219,8 +248,16 @@ export type AppDraft = {
   roles?: RoleDeclaration;
   /** §20.3, TUNNELED only — the owner's own roles, `roles`' mirror image by kind. */
   ownerRoles?: RoleDeclaration;
-  /** §20.2, proxied only; absent means `tools` only. Typed as strings: it arrives from YAML. */
+  /** §20.2, proxied only; absent means `tools` only. Validated at the admin boundary. */
   capabilities?: string[];
+  /**
+   * §23.6's owner alias lane, either kind — `{ service?, tools? }`. Validated here against
+   * the identifier grammar and, where the app's identity is already durable, against the
+   * owner's reservation namespace; the owner lane REFUSES a collision whole. Absent means
+   * "configure nothing", `{}` stores an explicit empty configuration (the two are the same
+   * read value: there is nothing an absent key preserves that a create could have set).
+   */
+  typescriptAliases?: TypescriptAliases;
   redact?: Record<string, string[]>;
   redactResults?: Record<string, string[]>;
   /** absent defaults by kind: tunnel true, proxy false (§15) */
@@ -241,6 +278,13 @@ export type AppPatch = Partial<{
   /** §20.3, TUNNELED only — refused on a proxied row, whose roles are already the owner's. */
   ownerRoles: RoleDeclaration;
   capabilities: string[];
+  /**
+   * §23.6's owner alias lane, either kind. Omission preserves established configuration;
+   * a supplied value replaces the stored map whole (§23.6's "deliberate alias change is a
+   * clean cutover"). A collision with another identity's reservation is refused
+   * atomically, in the same batch as the row write.
+   */
+  typescriptAliases: TypescriptAliases;
   redact: Record<string, string[]>;
   redactResults: Record<string, string[]>;
   logBodies: boolean;
@@ -283,6 +327,20 @@ export type AgentPatch = Partial<{
  * rather than checked.
  */
 export const PMCP_SLUG = "pmcp";
+
+/**
+ * §23.1's second reserved virtual slug, `hub` — the TypeScript execution surface. Same
+ * posture as `pmcp` and enforced through the same paths: no `app` row ever exists for it,
+ * every app-creation path and every slug-taking op refuses it, and reads answer null.
+ * DEFINED in hub-types (the pure module's reserved-name validator must know it without
+ * importing this one) and re-exported here so the hub's two virtual slugs have one import
+ * site, `registry`, for every consumer.
+ *
+ * A REAL app row with this slug is a deployment blocker, not something the hub shadows or
+ * renames (§23.1): the release preflight queries remote D1 for one and blocks the cutover
+ * with owner and app identifiers, because canonical identity is an owner decision.
+ */
+export { HUB_SLUG } from "./hub-types";
 
 /**
  * The one pattern-language decision point: does `pattern` match `subject` when
@@ -362,7 +420,7 @@ function compilePattern(pattern: string): RegExp | null {
  * declaration may mix them. Returns
  * human-readable violations, empty when valid ({} is valid — no roles
  * declared). Pure; callers decide whether violations become a JSON-RPC reply
- * (the tunnel DO) or a config error (admin/YAML).
+ * (the tunnel DO) or an admin configuration error.
  */
 export function validateRoles(decl: RoleDeclaration): string[] {
   // deps: none
@@ -426,12 +484,9 @@ function normalizeRoles(decl: RoleDeclaration): Record<string, FamilyPatterns> {
 }
 
 /**
- * §20.3's canonical READ shape, the inverse rendering every owner-facing surface
- * shows: a bare list when the role grants tools and nothing else, the per-family
- * object otherwise. A function of MEANING, not of history — the spelling a
- * app happened to register with is deliberately not recoverable, so
- * `pmcp diff` is stable for every YAML file written before §20.3 and noisy only
- * where a role genuinely spans families.
+ * §20.3's canonical read shape: a bare list when the role grants tools and nothing
+ * else, the per-family object otherwise. It is a function of meaning rather than
+ * storage history, so owner-facing reads have one stable representation.
  */
 function canonicalRoles(stored: RoleDeclaration): RoleDeclaration {
   return Object.fromEntries(
@@ -891,13 +946,76 @@ function maskPath(node: unknown, segments: string[]): void {
   else maskPath(node[head], rest);
 }
 
+// ── §23.3 owner execution settings ────────────────────────────────────────────────────
+//
+// One row per owner, and ABSENCE is the pinned default pair — the value the admission
+// path, the provider singleton and the ops all read through this module, so "no row"
+// and "explicitly the defaults" can never answer differently.
+
+/**
+ * §23.3's settings read shape — the exact object `hub_settings_get`/`hub_settings_update`
+ * return and the provider singleton stores. Milliseconds; `defaultTimeoutMs` is what an
+ * `execute` without `timeout_ms` gets, `maxTimeoutMs` the largest `timeout_ms` the owner
+ * may request (and the owner's ceiling is itself capped by the compiled hard maximum).
+ */
+export type HubExecutionSettings = {
+  defaultTimeoutMs: number;
+  maxTimeoutMs: number;
+};
+
+/**
+ * The pair an absent `hub_execution_setting` row MEANS (§23.3: "No row means the pinned
+ * defaults `30_000/30_000`"). Built from the same limits constants the range check and
+ * the admission path read, so "the default" has one definition.
+ */
+export const DEFAULT_HUB_EXECUTION_SETTINGS: HubExecutionSettings = {
+  defaultTimeoutMs: HUB_DEFAULT_TIMEOUT_MS,
+  maxTimeoutMs: HUB_INITIAL_MAX_TIMEOUT_MS,
+};
+
+/**
+ * §23.3's range rule as ONE list, applied by the op (before its write, so a refusal never
+ * reaches D1) and by the registry (before its upsert, so a raw caller cannot store what
+ * the CHECK would refuse). Field names are the OP's `default_timeout_ms` /
+ * `max_timeout_ms` spellings, so `hub_settings_update`'s refusal needs no translation;
+ * the three checks are exactly the table's three CHECKs, spelled over the read shape.
+ */
+export function executionSettingViolations(settings: {
+  defaultTimeoutMs: number;
+  maxTimeoutMs: number;
+}): Violation[] {
+  // deps: limits constants (the numbers the schema and the CHECK also carry)
+  const found: Violation[] = [];
+  const { defaultTimeoutMs, maxTimeoutMs } = settings;
+  if (defaultTimeoutMs < HUB_MIN_TIMEOUT_MS) {
+    found.push({
+      field: "default_timeout_ms",
+      reason: `"default_timeout_ms" must be at least ${HUB_MIN_TIMEOUT_MS}`,
+    });
+  }
+  if (maxTimeoutMs > HUB_HARD_MAX_TIMEOUT_MS) {
+    found.push({
+      field: "max_timeout_ms",
+      reason: `"max_timeout_ms" must be at most ${HUB_HARD_MAX_TIMEOUT_MS}`,
+    });
+  }
+  if (defaultTimeoutMs > maxTimeoutMs) {
+    found.push({
+      field: "default_timeout_ms",
+      reason: `"default_timeout_ms" must not exceed "max_timeout_ms"`,
+    });
+  }
+  return found;
+}
+
 /**
  * The domain model over the shared D1 control plane. Construct one per request
  * (D1 bindings are request-scoped); the tunnel DO constructs its own around the
- * same binding for upsertDeclaredRoles. Methods are row-level primitives: they
- * keep the row invariants (slug uniqueness, kind immutability, mode/envelope
- * agreement) but never orchestrate across modules — token deletion, DO
- * sever/wipe, and audit rows are the caller's choreography.
+ * same binding for upsertDeclaredRoles and upsertDeclaredTypescriptAliases. Methods are
+ * row-level primitives: they keep the row invariants (slug uniqueness, kind
+ * immutability, mode/envelope agreement, names reserved before they are published)
+ * but never orchestrate across modules — token deletion, DO sever/wipe, and audit rows
+ * are the caller's choreography.
  */
 export class Registry {
   private readonly db: D1Like;
@@ -915,15 +1033,15 @@ export class Registry {
   /**
    * Looks up one app row by (owner, slug), archived or not — the archived
    * check is a later pipeline stage, not a lookup filter. Returns null for a
-   * missing slug and for the reserved `pmcp` slug alike (the builtin is
-   * virtual; admin materializes it). Never throws for absence.
+   * missing slug and for either reserved virtual slug (`pmcp`, `hub`) alike: both are
+   * virtual, and admin materializes the builtin. Never throws for absence.
    */
   /**
    * The same row by its opaque id — the read the /connect upgrade makes, which knows only
    * the id resolveAppToken hands back, and the one the tunnel DO re-checks with when
    * a registration write fails. Registry's vocabulary, not the column format: `archived`
    * is a boolean and `kind` an AppKind, so the `archived_at` timestamp stays owned
-   * here. Null when the row is gone; the virtual `pmcp` builtin has none.
+   * here. Null when the row is gone; neither virtual slug has one.
    */
   async appById(appId: string): Promise<AppDetail | null> {
     // deps: D1 `app`
@@ -933,7 +1051,7 @@ export class Registry {
 
   async getApp(ownerId: string, slug: string): Promise<AppDetail | null> {
     // deps: D1 `app`
-    if (slug === PMCP_SLUG) return null;
+    if (slug === PMCP_SLUG || slug === HUB_SLUG) return null;
     const row = await this.db
       .prepare(`SELECT * FROM app WHERE owner_id = ? AND slug = ?`)
       .bind(ownerId, slug)
@@ -969,14 +1087,20 @@ export class Registry {
    * Creates an app row with a fresh opaque id (never derived from
    * user/slug, never reused — deleting and recreating a slug can never rebind
    * a stale DO). Rejects a malformed slug ([a-z0-9-] only — no underscore; §7's
-   * prefix split relies on it), the reserved `pmcp` slug, a duplicate (owner,
-   * slug), and kind/field mismatches: a proxied draft needs upstreamUrl and a
+   * prefix split relies on it), the reserved virtual slugs (`pmcp`, `hub`), a duplicate
+   * (owner, slug), and kind/field mismatches: a proxied draft needs upstreamUrl and a
    * declaration that passes validateRoles, and a tunneled draft carries none of
    * the PROXY_ONLY fields — the same set, and the same check, updateApp
    * refuses to patch. Either kind's `redact` / `redact_results` keys must compile
    * as patterns (assertRedactKeys): storing one that cannot is fail-open masking.
    * An absent `logBodies` resolves here, by kind (tunnel true, proxy false,
    * §15) — the stored column is always concrete, never "default".
+   *
+   * §23.6: the app's canonical service identity is allocated here, and any owner
+   * `typescript_aliases` are validated for syntax and arbitrated against the owner's
+   * committed names — a collision refuses the whole create (nothing is stored), while a
+   * generated candidate another app already holds omits this app's namespace with a
+   * diagnostic. The row and its reservations commit in ONE D1 batch.
    *
    * Every one of those rejections is found before any of them is thrown: the refusal
    * carries the WHOLE list (violationsOf), so an owner fixing a draft learns all of it at
@@ -1007,6 +1131,10 @@ export class Registry {
       roles_json: JSON.stringify(normalizeRoles(roles)),
       owner_roles_json: JSON.stringify(normalizeRoles(draft.ownerRoles ?? {})),
       capabilities_json: draft.capabilities === undefined ? null : JSON.stringify(draft.capabilities),
+      // §23.6's config lane, stored exactly as written — omission is `{}`, and the only
+      // reader that distinguishes "never configured" from "configured empty" is the
+      // durable reservation table, not this column.
+      typescript_aliases_json: JSON.stringify(draft.typescriptAliases ?? {}),
       redact_json: JSON.stringify(draft.redact ?? {}),
       redact_results_json: JSON.stringify(draft.redactResults ?? {}),
       // §15: resolved HERE, by kind, so the stored column is always concrete.
@@ -1015,32 +1143,45 @@ export class Registry {
       last_connected_at: null,
       archived_at: null,
     };
-    await this.db
-      .prepare(
-        `INSERT INTO app (id, owner_id, slug, name, description, kind, upstream_url,
-           upstream_auth_mode, forward_identity, roles_json, owner_roles_json, capabilities_json,
-           redact_json, redact_results_json, log_bodies, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        row.id,
-        row.owner_id,
-        row.slug,
-        row.name,
-        row.description,
-        row.kind,
-        row.upstream_url,
-        row.upstream_auth_mode,
-        row.forward_identity,
-        row.roles_json,
-        row.owner_roles_json,
-        row.capabilities_json,
-        row.redact_json,
-        row.redact_results_json,
-        row.log_bodies,
-        row.created_at,
-      )
-      .run();
+    await this.commitAliasLane({
+      ownerId: draft.ownerId,
+      appIds: [row.id],
+      // §23.6: the app's canonical service identity is its slug, and its service name is
+      // allocated EAGERLY at creation (owner config first, then the generated candidate) so
+      // a name is reserved before anything can publish it. `tools: null` — no family has
+      // been fetched at create, so nothing here may retire a catalog-discovered member.
+      services: [{ appId: row.id, service: draft.slug, tools: null }],
+      aliases: [{ appId: row.id, configured: draft.typescriptAliases ?? null, hints: null }],
+      lane: "owner",
+      lead: [
+        this.db
+          .prepare(
+            `INSERT INTO app (id, owner_id, slug, name, description, kind, upstream_url,
+               upstream_auth_mode, forward_identity, roles_json, owner_roles_json, capabilities_json,
+               typescript_aliases_json, redact_json, redact_results_json, log_bodies, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            row.id,
+            row.owner_id,
+            row.slug,
+            row.name,
+            row.description,
+            row.kind,
+            row.upstream_url,
+            row.upstream_auth_mode,
+            row.forward_identity,
+            row.roles_json,
+            row.owner_roles_json,
+            row.capabilities_json,
+            row.typescript_aliases_json,
+            row.redact_json,
+            row.redact_results_json,
+            row.log_bodies,
+            row.created_at,
+          ),
+      ],
+    });
     return toDetail(row);
   }
 
@@ -1063,6 +1204,9 @@ export class Registry {
       () => {
         if (draft.slug === PMCP_SLUG) {
           throw new RegistryRefusal("slug", `"${PMCP_SLUG}" is reserved for the builtin`);
+        }
+        if (draft.slug === HUB_SLUG) {
+          throw new RegistryRefusal("slug", `"${HUB_SLUG}" is reserved for the TypeScript execution surface`);
         }
       },
       () => {
@@ -1089,6 +1233,11 @@ export class Registry {
    * upstreamAuthMode clears the stored credential envelope in the same write —
    * the mode column and the envelope kind can never disagree; the audit row
    * for that wipe is the caller's. Throws on an unknown id.
+   *
+   * §23.6: a supplied `typescriptAliases` replaces the owner configuration whole — an
+   * ABSENT key leaves the stored map and every committed name alone — and the row write
+   * commits in ONE D1 batch with the reservation writes it implies, with any collision
+   * against another identity's reservation refusing the whole patch.
    */
   async updateApp(appId: string, patch: AppPatch): Promise<AppDetail> {
     // deps: patchViolations · D1 `app`
@@ -1110,6 +1259,8 @@ export class Registry {
     if (patch.roles !== undefined) set("roles_json", JSON.stringify(normalizeRoles(patch.roles)));
     if (patch.ownerRoles !== undefined) set("owner_roles_json", JSON.stringify(normalizeRoles(patch.ownerRoles)));
     if (patch.capabilities !== undefined) set("capabilities_json", JSON.stringify(patch.capabilities));
+    if (patch.typescriptAliases !== undefined)
+      set("typescript_aliases_json", JSON.stringify(patch.typescriptAliases));
     if (patch.redact !== undefined) set("redact_json", JSON.stringify(patch.redact));
     if (patch.redactResults !== undefined) set("redact_results_json", JSON.stringify(patch.redactResults));
     if (patch.logBodies !== undefined) set("log_bodies", patch.logBodies ? 1 : 0);
@@ -1120,11 +1271,24 @@ export class Registry {
       // an idempotent `apply` must not disconnect the app it is re-applying.
       if (patch.upstreamAuthMode !== row.upstream_auth_mode) set("upstream_auth_json", null);
     }
-    if (columns.length > 0) {
-      await this.db
-        .prepare(`UPDATE app SET ${columns.join(", ")} WHERE id = ?`)
-        .bind(...values, appId)
-        .run();
+    const update =
+      columns.length === 0
+        ? []
+        : [this.db.prepare(`UPDATE app SET ${columns.join(", ")} WHERE id = ?`).bind(...values, appId)];
+    if (patch.typescriptAliases !== undefined) {
+      // §23.6: the row write and the reservation writes commit TOGETHER — config stored
+      // without its names (or the reverse) would publish a mapping the configuration does
+      // not describe, and the owner lane refuses the whole batch on any collision.
+      await this.commitAliasLane({
+        ownerId: row.owner_id,
+        appIds: [appId],
+        services: [{ appId, service: row.slug, tools: null }],
+        aliases: [{ appId, configured: patch.typescriptAliases, hints: null }],
+        lane: "owner",
+        lead: update,
+      });
+    } else if (update.length > 0) {
+      await update[0].run();
     }
     const updated = await this.row(appId);
     if (!updated) throw new Error(`app "${appId}" vanished mid-update`);
@@ -1132,24 +1296,29 @@ export class Registry {
   }
 
   /**
-   * Deletes the row; grant and approval rows go with it via FK cascade. Token
-   * deletion and DO sever/wipe are admin's cascade, ordered D1-first — this
-   * method knows nothing of them. Deleting an already-absent id is a no-op.
+   * Deletes the app row; grant and approval rows go with it via FK cascade, and §23.6's
+   * reservations for the app flip to TOMBSTONES in the same batch — a name is never
+   * released, so an app later reusing the slug (necessarily a NEW id) can never claim code
+   * written against this one. Token deletion and DO sever/wipe are admin's cascade, ordered
+   * D1-first — this method knows nothing of them. Deleting an already-absent id is a no-op.
    */
   async deleteApp(appId: string): Promise<void> {
-    // deps: D1 `app`
-    await this.deleteAppStatement(appId).run();
+    // deps: D1 `app` · D1 `typescript_name_reservation`
+    await this.db.batch(this.deleteAppStatements(appId));
   }
 
   /**
-   * The same delete as a STATEMENT rather than a write, so admin's cascade can put it and
-   * the token delete into one `batch` — which is what §15 means by "one atomic D1 batch",
-   * and the only way to have it: D1 offers no interactive transaction. Nothing else
-   * differs; a caller with only this row to remove uses deleteApp.
+   * The same delete as STATEMENTS — the tombstone first, then the row — so admin's cascade
+   * can put them and the token delete into one `batch` (which is what §15 means by "one
+   * atomic D1 batch", and the only way to have it: D1 offers no interactive transaction).
+   * Nothing else differs; a caller with only this row to remove uses deleteApp.
    */
-  deleteAppStatement(appId: string): D1Stmt {
-    // deps: D1 `app`
-    return this.db.prepare(`DELETE FROM app WHERE id = ?`).bind(appId);
+  deleteAppStatements(appId: string): D1Stmt[] {
+    // deps: tombstoneTypescriptAliasesStatement · D1 `app`
+    return [
+      this.tombstoneTypescriptAliasesStatement(appId),
+      this.db.prepare(`DELETE FROM app WHERE id = ?`).bind(appId),
+    ];
   }
 
   /**
@@ -1348,9 +1517,8 @@ export class Registry {
   }
 
   /**
-   * Every grant the agent holds, grouped per app — the one read behind
-   * agent_list's inline grants and the CLI diff planner's current-state
-   * picture. Apps with no grants simply don't appear.
+   * Every grant the agent holds, grouped per app for `agent_list`'s inline grants.
+   * Apps with no grants simply don't appear.
    */
   async grantsFor(agentId: string): Promise<AppGrants[]> {
     // deps: D1 `grant_` · D1 `app`
@@ -1492,7 +1660,291 @@ export class Registry {
       .run();
     return { widened };
   }
+
+  // ─ §23.3 · owner execution settings ───────────────────────────────────────────────
+
+  /**
+   * §23.3's settings read. An absent row answers the pinned default pair; the value is
+   * owner-scoped, never bearer-scoped, so every credential of one owner reads one pair and
+   * a new credential never sees a different answer.
+   */
+  async hubExecutionSettings(ownerId: string): Promise<HubExecutionSettings> {
+    // deps: D1 `hub_execution_setting`
+    const row = await this.db
+      .prepare(`SELECT default_timeout_ms, max_timeout_ms FROM hub_execution_setting WHERE owner_id = ?`)
+      .bind(ownerId)
+      .first<{ default_timeout_ms: number; max_timeout_ms: number }>();
+    if (row === null) return { ...DEFAULT_HUB_EXECUTION_SETTINGS };
+    return { defaultTimeoutMs: row.default_timeout_ms, maxTimeoutMs: row.max_timeout_ms };
+  }
+
+  /**
+   * §23.3's pair write: ONE upsert of both columns, so no reader can observe a
+   * half-updated pair. The range rule is re-checked here even though the op checked it —
+   * a raw caller must not store what the table's CHECK would refuse, and a CHECK
+   * violation on a live write would be a defect rather than a refusal. Already-admitted
+   * executions keep the deadline they snapshotted (§23.3): this governs new admissions.
+   */
+  async updateHubExecutionSettings(
+    ownerId: string,
+    settings: HubExecutionSettings,
+  ): Promise<HubExecutionSettings> {
+    // deps: executionSettingViolations · D1 `hub_execution_setting`
+    const violations = executionSettingViolations(settings);
+    if (violations.length > 0) throw RegistryRefusal.of(violations);
+    await this.db
+      .prepare(
+        `INSERT INTO hub_execution_setting (owner_id, default_timeout_ms, max_timeout_ms)
+         VALUES (?, ?, ?)
+         ON CONFLICT (owner_id) DO UPDATE SET
+           default_timeout_ms = excluded.default_timeout_ms,
+           max_timeout_ms = excluded.max_timeout_ms`,
+      )
+      .bind(ownerId, settings.defaultTimeoutMs, settings.maxTimeoutMs)
+      .run();
+    return { defaultTimeoutMs: settings.defaultTimeoutMs, maxTimeoutMs: settings.maxTimeoutMs };
+  }
+
+  // ─ §23.6 · durable TypeScript names ───────────────────────────────────────────────
+
+  /**
+   * §23.6's SDK lane — the aliases a tunnel declares at `hub/register`. A hint never takes
+   * a healthy tunnel offline: the syntax is refused up front (`RegistryRefusal`, the
+   * caller's registration refusal), while an ESTABLISHED or contested name is omitted with
+   * a bounded diagnostic and every surviving hint is committed before this returns. Throws
+   * on a proxied row (aliases arrive at registration; a proxied app's owner configures
+   * them) and on a row that no longer exists (the caller's close-4003 signal), exactly like
+   * `upsertDeclaredRoles`.
+   *
+   * `diagnostics` names only this app's own members, so it is safe to carry verbatim in the
+   * connect audit decision the caller writes beside registration.
+   */
+  async upsertDeclaredTypescriptAliases(
+    appId: string,
+    aliases: TypescriptAliases,
+  ): Promise<{ diagnostics: readonly AliasDiagnostic[] }> {
+    // deps: planAliasReservations · D1 `app` · D1 `typescript_name_reservation`
+    const row = await this.row(appId);
+    if (!row) throw new Error(`app "${appId}" no longer exists`); // caller's close-4003
+    if (row.kind !== "tunnel") throw new Error(`proxied app "${row.slug}" configures aliases through its owner`);
+    assertTypescriptAliases(aliases);
+    const configured = JSON.parse(row.typescript_aliases_json) as TypescriptAliases;
+    const plan = await this.commitAliasLane({
+      ownerId: row.owner_id,
+      appIds: [appId],
+      aliases: [{ appId, configured, hints: aliases }],
+      services: [{ appId, service: row.slug, tools: null }],
+      lane: "sdk",
+    });
+    return { diagnostics: plan.diagnostics };
+  }
+
+  /**
+   * §23.5/§23.6's discovery write, behind the catalog collector: durable names for the
+   * canonical families it just fetched, committed BEFORE the snapshot that uses them is
+   * published (§23.6's "persisted before publication"). `tools: null` is a failed family
+   * fetch and disables disappearance retirement for that app — an empty list and an
+   * unreachable family are not the same fact — while a fetched list retires the members it
+   * no longer contains. The SDK lane never refuses: a lost race, a vanished app or an
+   * omitted member is a diagnostic, and one app's omission never erases another's healthy
+   * names. All apps must belong to one owner (the collector works per namespace).
+   */
+  async allocateTypescriptNames(services: readonly AliasServiceMembers[]): Promise<AliasPlan> {
+    // deps: planAliasReservations · D1 `app` · D1 `typescript_name_reservation`
+    if (services.length === 0) {
+      return { services: [], activate: [], retire: [], diagnostics: [], conflicts: [], refusals: [] };
+    }
+    const rows = await Promise.all(services.map((service) => this.row(service.appId)));
+    rows.forEach((row, index) => {
+      if (row === null) throw new Error(`no app with id "${services[index].appId}"`);
+      if (row.slug !== services[index].service) {
+        throw new Error(`app "${services[index].appId}" is "${row.slug}", not "${services[index].service}"`);
+      }
+    });
+    const ownerIds = new Set(rows.map((row) => row!.owner_id));
+    if (ownerIds.size !== 1) throw new Error("allocateTypescriptNames spans more than one owner");
+    const ownerId = [...ownerIds][0];
+    return this.commitAliasLane({
+      ownerId,
+      appIds: services.map((service) => service.appId),
+      aliases: services.map((service, index) => ({
+        appId: service.appId,
+        configured: JSON.parse(rows[index]!.typescript_aliases_json) as TypescriptAliases,
+        hints: null,
+      })),
+      services,
+      lane: "sdk",
+    });
+  }
+
+  /**
+   * §8/§13's owner view of ONE app's committed names, by app id: its durable rows
+   * (tombstones included, deterministic order) plus the planner's bounded diagnostics for
+   * its canonical identities. A READ — it writes nothing, so a name that is merely
+   * unallocated (an app older than this feature) reports as an empty map with no
+   * diagnostic until the next snapshot or configuration write commits one. Throws on an
+   * unknown id; the virtual builtin has no row and no reservations.
+   */
+  async typescriptReservationsFor(
+    appId: string,
+  ): Promise<{ reservations: readonly AliasReservation[]; diagnostics: readonly AliasDiagnostic[] }> {
+    // deps: planAliasReservations · D1 `app` · D1 `typescript_name_reservation`
+    const row = await this.row(appId);
+    if (!row) throw new Error(`no app with id "${appId}"`);
+    const rows = await this.aliasRows(row.owner_id, [appId]);
+    const plan = planAliasReservations({
+      services: [{ appId, service: row.slug, tools: null }],
+      existing: rows,
+      aliases: [{ appId, configured: JSON.parse(row.typescript_aliases_json) as TypescriptAliases, hints: null }],
+      lane: "sdk",
+    });
+    return { reservations: rows.filter((candidate) => candidate.appId === appId), diagnostics: plan.diagnostics };
+  }
+
+  /**
+   * §23.6's tombstone write for one deleted app: every reservation it holds flips to
+   * inactive rather than disappearing, so the name stays reserved against a later,
+   * different canonical identity. A statement rather than a write so admin's app_delete
+   * commits it in the SAME D1 batch as the row deletion and the token removal (§15).
+   */
+  tombstoneTypescriptAliasesStatement(appId: string, now = Date.now()): D1Stmt {
+    // deps: D1 `typescript_name_reservation`
+    return this.db
+      .prepare(`UPDATE typescript_name_reservation SET active = 0, superseded_at = ? WHERE app_id = ? AND active = 1`)
+      .bind(now, appId);
+  }
+
+  /**
+   * Every reservation row in an owner's service domain plus the apps' tool domains —
+   * exactly the `existing` set `planAliasReservations` requires, read fresh on every pass
+   * so a retry after a lost race plans against what actually committed.
+   */
+  private async aliasRows(ownerId: string, appIds: readonly string[]): Promise<AliasReservation[]> {
+    const ids = [...new Set(appIds)];
+    const toolScope = ids.length === 0 ? "" : ` OR app_id IN (${ids.map(() => "?").join(", ")})`;
+    const { results } = await this.db
+      .prepare(
+        `SELECT app_id, family, canonical_name, typescript_name, source, active
+         FROM typescript_name_reservation
+         WHERE owner_id = ? AND (family = 'service'${toolScope})
+         ORDER BY app_id, family, canonical_name, typescript_name`,
+      )
+      .bind(ownerId, ...ids)
+      .all<AliasReservationRow>();
+    return results.map((row) => ({
+      appId: row.app_id,
+      family: row.family,
+      canonicalName: row.canonical_name,
+      typescriptName: row.typescript_name,
+      source: row.source,
+      active: row.active !== 0,
+    }));
+  }
+
+  /**
+   * One planning pass over committed rows, in the lane's own semantics: the owner lane
+   * REFUSES (throwing away the whole write — the caller must apply nothing), the SDK lane
+   * diagnoses and keeps what it can. `existing` is re-read here, never cached across a
+   * caller's retry.
+   */
+  private async planAliasLane(request: {
+    ownerId: string;
+    appIds: readonly string[];
+    services: readonly AliasServiceMembers[];
+    aliases: readonly AliasLaneInput[];
+    lane: "owner" | "sdk";
+  }): Promise<AliasPlan> {
+    // deps: planAliasReservations
+    const existing = await this.aliasRows(request.ownerId, request.appIds);
+    const plan = planAliasReservations({
+      services: request.services,
+      existing,
+      aliases: request.aliases,
+      lane: request.lane,
+    });
+    if (plan.refusals.length > 0) {
+      throw RegistryRefusal.of(plan.refusals.map((reason) => ({ field: "typescript_aliases", reason })));
+    }
+    return plan;
+  }
+
+  /**
+   * One lane's write: plan, then apply every row in ONE batch, and on a refusal from the
+   * partial unique index re-read and re-plan ONCE — the loser of a concurrent claim
+   * converges on the committed rows instead of publishing a stale mapping (§23.6's "a
+   * conflicting writer re-reads committed reservations"). A re-plan that would write the
+   * same rows is not a retry, so the original error is rethrown: it was not a race.
+   */
+  private async commitAliasLane(request: {
+    ownerId: string;
+    appIds: readonly string[];
+    services: readonly AliasServiceMembers[];
+    aliases: readonly AliasLaneInput[];
+    lane: "owner" | "sdk";
+    lead?: readonly D1Stmt[];
+  }): Promise<AliasPlan> {
+    const plan = () => this.planAliasLane(request);
+    const first = await plan();
+    try {
+      await this.applyAliasPlan(request.ownerId, first, request.lead ?? []);
+      return first;
+    } catch (err) {
+      const retried = await plan();
+      // The planner's row order is deterministic for a given input, so equal serialized
+      // plans mean the retry would write exactly what just failed: the error was NOT the
+      // unique-index arbitration, and rethrowing keeps the real cause.
+      if (JSON.stringify([retried.activate, retried.retire]) === JSON.stringify([first.activate, first.retire])) {
+        throw err;
+      }
+      await this.applyAliasPlan(request.ownerId, retried, request.lead ?? []);
+      return retried;
+    }
+  }
+
+  /** The plan's rows as statements, in one batch with whatever the caller leads with. */
+  private async applyAliasPlan(ownerId: string, plan: AliasPlan, lead: readonly D1Stmt[]): Promise<void> {
+    const statements: D1Stmt[] = [...lead];
+    for (const row of plan.activate) {
+      // The PK is (owner, app, family, canonical, typescript) — so a reactivation of this
+      // identity's own tombstone is an update of the SAME row, and a name holds across
+      // active and tombstoned rows by the partial unique index (§23.6).
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO typescript_name_reservation
+               (owner_id, app_id, family, canonical_name, typescript_name, source, active, superseded_at)
+             VALUES (?, ?, ?, ?, ?, ?, 1, NULL)
+             ON CONFLICT (owner_id, app_id, family, canonical_name, typescript_name)
+               DO UPDATE SET source = excluded.source, active = 1, superseded_at = NULL`,
+          )
+          .bind(ownerId, row.appId, row.family, row.canonicalName, row.typescriptName, row.source),
+      );
+    }
+    for (const row of plan.retire) {
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE typescript_name_reservation SET active = 0, superseded_at = ?
+             WHERE owner_id = ? AND app_id = ? AND family = ? AND canonical_name = ? AND typescript_name = ?`,
+          )
+          .bind(Date.now(), ownerId, row.appId, row.family, row.canonicalName, row.typescriptName),
+      );
+    }
+    if (statements.length === 0) return;
+    await this.db.batch(statements);
+  }
 }
+
+/** The `typescript_name_reservation` row as §5 declares it — the column format this
+ *  module alone reads; `active` is the 0/1 column, translated at this one boundary. */
+type AliasReservationRow = {
+  app_id: string;
+  family: AliasFamily;
+  canonical_name: string;
+  typescript_name: string;
+  source: AliasSource;
+  active: number;
+};
 
 /** The `app` row as §5 declares it — the column format this module alone reads. */
 type AppRow = {
@@ -1509,6 +1961,7 @@ type AppRow = {
   roles_json: string;
   owner_roles_json: string;               // §20.3's owner map, tunnel kind only; '{}' on a proxy
   capabilities_json: string | null;       // proxy kind only; NULL = undeclared = tools only (§20.2)
+  typescript_aliases_json: string;        // §23.6's owner alias configuration; '{}' when none
   redact_json: string;
   redact_results_json: string;
   log_bodies: number;
@@ -1544,6 +1997,7 @@ function toDetail(row: AppRow): AppDetail {
     declaredRoles: canonicalRoles(JSON.parse(row.roles_json)),
     ownerRoles: canonicalRoles(JSON.parse(row.owner_roles_json)),
     capabilities: row.capabilities_json === null ? null : JSON.parse(row.capabilities_json),
+    typescriptAliases: JSON.parse(row.typescript_aliases_json),
     redact: JSON.parse(row.redact_json),
     redactResults: JSON.parse(row.redact_results_json),
     createdAt: row.created_at,
@@ -1612,8 +2066,8 @@ function assertOwnerRoles(kind: AppKind, ownerRoles: RoleDeclaration | undefined
  */
 function assertCapabilities(capabilities: string[] | undefined): void {
   if (capabilities === undefined) return;
-  // The value arrives from YAML and from the admin wire, so the list-ness is checked here
-  // rather than trusted from the type — a bare string would otherwise be stored per letter.
+  // Check list-ness at the runtime boundary: a bare string would otherwise be stored per
+  // character despite the TypeScript type.
   if (!Array.isArray(capabilities)) throw new RegistryRefusal("capabilities", "must be a list");
   const unknown = capabilities.filter((entry) => !(APP_CAPABILITIES as readonly string[]).includes(entry));
   if (unknown.length > 0) {
@@ -1621,6 +2075,23 @@ function assertCapabilities(capabilities: string[] | undefined): void {
       "capabilities",
       `names ${unknown.map((entry) => `"${entry}"`).join(", ")} — one of ${APP_CAPABILITIES.join(", ")}`,
     );
+  }
+}
+
+/**
+ * §23.6's alias SYNTAX half, as the throw both write paths owe their caller — the
+ * identifier grammar, the keyword/prototype/Promise exclusions and the fixed members
+ * (`hub`/`pmcp` roots, a service's `resources`) all live in hub-types' pure validator, so
+ * the wire shape the SDK sends, the admin field the owner types and this check read one
+ * grammar. Collisions are NOT this check's business: they need the reservation table, and
+ * they are decided by the planner inside the write (refused for the owner lane, diagnosed
+ * for the SDK lane). Field spelling is the OP's `typescript_aliases`.
+ */
+function assertTypescriptAliases(aliases: TypescriptAliases | undefined): void {
+  if (aliases === undefined) return;
+  const violations = aliasViolations(aliases);
+  if (violations.length > 0) {
+    throw RegistryRefusal.of(violations.map((reason) => ({ field: "typescript_aliases", reason })));
   }
 }
 
@@ -1730,6 +2201,7 @@ export function patchViolations(kind: AppKind, patch: AppPatch): Violation[] {
     },
     () => assertOwnerRoles(kind, patch.ownerRoles),
     () => assertCapabilities(patch.capabilities),
+    () => assertTypescriptAliases(patch.typescriptAliases),
     () => assertRedactKeys("redact", patch.redact),
     () => assertRedactKeys("redactResults", patch.redactResults),
   ]);

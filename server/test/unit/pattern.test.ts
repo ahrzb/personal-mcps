@@ -8,8 +8,8 @@
 // the same tool set; and totality — an uncompilable pattern matches nothing and never
 // throws, because compilation failures are reported by validateRoles, not by a match.
 // PINS §6 `hub/register`'s declaration validation as the one gate both a tunneled
-// registration and proxied YAML config pass through: the role-name charset, `all` as
-// the reserved built-in (§2 — the resolver's, never declarable), and the caps.
+// registration and proxied admin configuration pass through: the role-name charset,
+// `all` as the reserved built-in (§2 — the resolver's, never declarable), and the caps.
 //
 // PROJECT: `unit` — plain Node, parallel, milliseconds. Both functions' deps line is
 // `none`: no D1, no Durable Object, no workerd binding, nothing to isolate, so the

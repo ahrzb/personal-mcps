@@ -164,6 +164,13 @@ export type FakeAppOptions = {
   token: string;
   /** The declaration `hub/register` carries. Omitted or `{}` declares none (§6). */
   roles?: RoleDeclaration;
+  /**
+   * §23's optional alias hints, sent as the `typescriptAliases` member of `hub/register`
+   * under tunnel.ts's exported wire key. Absent sends no member at all — the historical
+   * three-key frame — and the value is passed through as written, malformed included, so a
+   * row can exercise the hub's syntax refusal through the real shape.
+   */
+  aliases?: unknown;
   /** The catalog answered to `tools/list` — schemas included, since redaction walks them (§7). */
   tools?: Tool[];
   /** The catalog answered to `prompts/list` (§20.5). Its PRESENCE is also what makes the
@@ -497,6 +504,12 @@ export class FakeApp {
         clientVersion: "fake-app/0",
         protocolVersion: "2026-07-28",
         roles: this.options.roles ?? {},
+        // §23's optional member: absent means ABSENT (the three-key frame), and the value
+        // is whatever the fixture wrote — the hub owns the syntax judgement, so the fake
+        // app must be able to send a malformed one. The wire name is SPELLED here like
+        // every other string in this file (see the header): importing tunnel.ts's export
+        // would make the protocol suite's lock on that spelling vacuous.
+        ...(this.options.aliases === undefined ? {} : { typescriptAliases: this.options.aliases }),
         ...extra,
       },
     });

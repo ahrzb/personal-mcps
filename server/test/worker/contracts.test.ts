@@ -1,47 +1,31 @@
 // contracts.test.ts — the L4 producer (strategy §4): the ONE writer of `contracts/*.json`.
 //
-// WHAT THIS SUITE PINS: that every wire shape the spec deliberately COPIES across a
-// language boundary — whoami, the error vocabulary, the tunnel frames, close code →
-// required client behavior, the bootstrap bodies, the admin op names and schemas, the two
-// rows the diff planner reads, the MCP handshake every standards-compliant consumer opens
-// with (§7's 2026-08-26 amendment), and the audit body stubs §15 defers to this directory
-// — is one shape, not several that happen to agree today.
-// The mechanism is deliberately dumb: the server's REAL emission is captured and
-// deep-equalled against a checked-in JSON fixture, and every consumer (cli, clients/js,
-// clients/py, scripts) reads that same file read-only. Plain JSON is the point — neither
-// side can import a type from it, so the copies stay copies while both answer to one
-// oracle. Governance, the commit-separation rule, and what a fixture may contain live in
-// `contracts/README.md`.
+// The suite pins deliberately copied wire shapes: whoami, error vocabulary, tunnel
+// frames, close-code behavior, bootstrap bodies, admin operations, MCP handshakes,
+// the hub wire surface, push frames, and audit body stubs. The server's real emission is
+// captured and compared with each checked-in fixture; consumer suites read the same files
+// without sharing types.
 //
-// It also carries parity directions C and D (§4): every planner-emitted step maps to an
-// ops key with that op's required fields present, and every non-auth CLI subcommand maps
-// to an ops key — total in both directions, so an op nobody can reach fails here too.
+// It also carries parity direction D: every non-auth CLI subcommand maps to a served
+// admin operation or a named MCP method.
 // Directions A and B live where their other halves live (admin-ops, web-pages).
 //
 // AMENDED 2026-08-26 (§20.3): the tunnel-frames family's `roles` value gains the family
-// dimension, so this file now pins the role declaration's TWO spellings — a bare pattern
-// list beside a per-family object, in one declaration — where all four copies of that shape
-// meet: the register frame both client libraries emit, the validation §6 judges it by, and
-// §8's canonical READ, which is a separate decision from how storage normalizes it and is
-// what `pmcp diff`'s stability rests on.
+// dimension, so this file pins both declaration spellings where the client emissions,
+// registration validation, and canonical admin read meet.
 //
-// PROJECT: `worker` — real D1, every sibling real, no sockets. Correct because eight of
-// the nine families are HTTP or in-process emissions (a whoami response, a JSON-RPC error
-// object, a handshake answer, an ops schema, a D1-backed row, a recorded audit body) and
-// because per-file storage isolation lets this file seed whatever namespace each emission
-// needs without coordinating with anyone. The ninth — the tunnel frames and close codes — is producible
-// here too, without a socket, because tunnel.ts exports its wire vocabulary
-// (CLOSE_REPLACED / CLOSE_ROW_GONE / CLOSE_PROTOCOL / HUB_METHODS beside the SeverCode
-// pair): the fixture is emitted from the exports, and `tunnel/protocol.test.ts` locks the
-// exports to what a live socket is observed to do. That is what keeps §4's single-writer
-// claim literally true rather than approximately (see FINDINGS 2).
+// PROJECT: `worker` — real D1, every sibling real, no sockets. HTTP and in-process
+// emissions are captured through the running worker. Tunnel frames and close codes are
+// emitted from tunnel.ts's exported wire vocabulary and locked to live socket behavior by
+// tunnel/protocol.test.ts.
 //
-// HONESTY (strategy §9): this file WRITES nothing of its own. Fixture CONTENT is
-// owner-authored and lands in its own commit before implementation; this suite only proves
-// the server matches it, and regenerates on the owner's explicit `pnpm contracts:update`.
-// Every refusal row below names its allow-twin in the same list.
+// HONESTY (strategy §9): this file writes no fixture content on its own. Fixtures are
+// owner-authored and regenerated only by an explicit `pnpm contracts:update`.
 //
-// deps: harness/seed · harness/fake-upstream (the recorded body the stub family is captured from) · cloudflare:workers exports.default.fetch (whoami, bootstrap, the mcp endpoints) · admin.ops · admin.adminBackend · audit.BodyStub/query · limits.AUDIT_BODY_CAP_BYTES · tunnel.CLOSE_REVOKED/CLOSE_ARCHIVED/CLOSE_REPLACED/CLOSE_ROW_GONE/CLOSE_PROTOCOL/HUB_METHODS · cli plan.PlanStep · cli main command table · scripts/users wire types · contracts/*.json fixtures
+// deps: harness/seed · harness/fake-upstream · cloudflare:workers exports.default.fetch ·
+// admin.ops/adminBackend · audit.BodyStub/query · limits · capabilities' hub shape ·
+// hub-contract producers · tunnel wire exports · CLI command table · scripts/users wire
+// types · contracts/*.json fixtures
 
 import { env } from "cloudflare:test";
 import { exports as workerExports } from "cloudflare:workers";
@@ -55,9 +39,6 @@ import { FORWARDED_METHODS } from "../../src/gateway";
 import type { JsonRpcRequest, JsonRpcResponse, Tool } from "../../src/gateway";
 import {
   AUDIT_BODY_CAP_BYTES,
-  ROLE_NAME_MAX_LENGTH,
-  ROLE_PATTERN_MAX_LENGTH,
-  ROLE_PATTERNS_MAX,
   LISTEN_SUBSCRIPTIONS_MAX,
   SUBSCRIBE_URI_MAX_BYTES,
 } from "../../src/limits";
@@ -68,10 +49,20 @@ import {
   bellFrame,
   capabilityShape,
   DEFAULT_APP_CAPABILITIES,
+  HUB_CAPABILITIES,
   RESOURCES_UPDATED,
 } from "../../src/capabilities";
+import {
+  HUB_CONTRACT_LIMITS,
+  HUB_DECLARATION_TEMPLATES,
+  HUB_DECLARATION_URIS,
+  HUB_TOOLS,
+  hubContractFixture,
+} from "../../src/hub-contract";
 import { principalKey, tokenPattern } from "../../src/principal";
-import { PMCP_SLUG, Registry, ROLE_FAMILIES as SERVER_ROLE_FAMILIES } from "../../src/registry";
+import { aliasViolations } from "../../src/hub-types";
+import type { TypescriptAliases } from "../../src/hub-types";
+import { PMCP_SLUG, Registry, ROLE_FAMILIES } from "../../src/registry";
 import type { App, AppCapability } from "../../src/registry";
 import { CODES } from "../../src/errors";
 import {
@@ -89,6 +80,7 @@ import {
   status,
   subscribe,
   unsubscribe,
+  TYPESCRIPT_ALIASES_PARAM,
 } from "../../src/tunnel";
 import type { SeverCode } from "../../src/tunnel";
 import { setHeaders } from "../../src/upstream";
@@ -101,17 +93,6 @@ import type { ApprovalRequiredData, WhoamiResponse } from "../../../cli/src/main
 // The command table is imported from its own module, not from main.ts: the mapping is
 // data, and this suite has no reason to pull the CLI's node:fs config reading into workerd.
 import { COMMANDS } from "../../../cli/src/commands";
-import {
-  canonicalCapabilities,
-  DEFAULT_CAPABILITIES,
-  parseDesired,
-  planChanges,
-  ROLE_FAMILIES as PLANNER_ROLE_FAMILIES,
-  ROLE_NAME_MAX_LENGTH as PLANNER_ROLE_NAME_MAX_LENGTH,
-  ROLE_PATTERN_MAX_LENGTH as PLANNER_ROLE_PATTERN_MAX_LENGTH,
-  ROLE_PATTERNS_MAX as PLANNER_ROLE_PATTERNS_MAX,
-} from "../../../cli/src/plan";
-import type { CurrentApp, PlanStep, RoleDeclaration } from "../../../cli/src/plan";
 import type { BootstrapRequest, BootstrapResponse } from "../../../scripts/users";
 
 /**
@@ -140,12 +121,6 @@ import type { BootstrapRequest, BootstrapResponse } from "../../../scripts/users
  *    it; `tunnel/protocol.test.ts` owns that lock (observed codes and method names equal
  *    the exports), and no other module imports them, so the vocabulary has exactly one
  *    definition, one emitter, and one behavioral witness.
- *
- * 3. `PlanStep.tool` is a bare `string`, so direction C's "maps to an ops key" is a
- *    runtime check with no compile-time half. Narrowing it to a union of ops keys would
- *    make half of direction C free — but it would also make plan.ts depend on the server,
- *    which §9 forbids for exactly the reason the fixture exists. Recorded as considered
- *    and rejected; the runtime check stands alone.
  */
 
 /**
@@ -189,24 +164,8 @@ export type ContractFamily = {
  * the oracle it is later measured by.
  */
 export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
-  // Ten families, ELEVEN rows: the planner-rows family names two boundaries
-  // the planner reads separately — `app_list` and `agent_list` — and this row type
-  // pins one file per row, which the "every fixture is claimed by exactly one row"
-  // governance case depends on. Splitting them here rather than fusing the fixtures keeps
-  // both properties true at once; contracts/README's table stays the count of FAMILIES.
-  //
-  // Strategy §4 and contracts/README.md both still say EIGHT: the ninth is the MCP
-  // handshake family below, added when §7's 2026-08-26 amendment made `initialize` an
-  // answer of ours rather than a -32601, and the tenth is §21's push-frames family (the
-  // consumer-facing notification wire), added when D14 served it. Both documents owe a
-  // line, and neither is this file's to write (§9 rule 1 — the strategy and the fixture
-  // governance are the owner's), so the disagreement is recorded here rather than
-  // silently reconciled.
-  //
-  // `consumers` is empty on four rows and that emptiness is the finding, not an omission:
-  // whoami, the error vocabulary, the admin ops and the planner rows are produced and
-  // type-pinned (see PinnedConsumerShapes) but no consumer suite opens the JSON yet.
-  // `cli/test/` is where that gap closes; until it does, the honest place for it is here.
+  // Ten families, one row apiece. `consumers` is empty where the fixture currently has
+  // only its producer-side and type-level pins; that emptiness is recorded, not hidden.
 
   {
     file: "contracts/whoami.json",
@@ -223,14 +182,14 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
   {
     file: "contracts/initialize.json",
     spec: "§7",
-    emission: "the initialize result POST /<user>/mcp really answers a live pmcp_agt_ key — protocolVersion, capabilities, serverInfo — beside the request a compliant client opens with, whose protocolVersion is read off the hub's own server/discover rather than transcribed, and beside the four kind-named scopedCapabilities pictures (tunneled-registered, tunneled-never-connected, proxied, builtin) emitted from capabilities' kind-aware capabilityShape: the per-family objects the SCOPED handshake derives its answer from, which is where a consumer meets resources, subscribe and completions",
+    emission: "the initialize result POST /<user>/mcp really answers a live pmcp_agt_ key — protocolVersion, capabilities (the hub's fixed answer, capabilities' HUB_CAPABILITIES: tools and resources, every push flag false), serverInfo — beside the request a compliant client opens with, whose protocolVersion is read off the hub's own server/discover rather than transcribed, and beside the four kind-named scopedCapabilities pictures (tunneled-registered, tunneled-never-connected, proxied, builtin) emitted from capabilities' kind-aware capabilityShape: the per-family objects the SCOPED APPLICATION handshake derives its answer from, which is where a consumer meets resources, subscribe and completions",
     consumers: [],
     producer: "worker",
   },
   {
     file: "contracts/errors.json",
     spec: "§7",
-    emission: "the JSON-RPC error objects the /<user>/mcp pipeline really returns for each of the five codes — including a live -32003's data keys and the two byte-identical -32001 causes",
+    emission: "the JSON-RPC error objects the /<user>/mcp pipeline really returns for each of the six codes — including a live -32003's data keys, a payload-free -32602, and the byte-identical -32001 causes",
     consumers: [],
     producer: "worker",
   },
@@ -265,20 +224,6 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
     consumers: [],
     producer: "worker",
   },
-  {
-    file: "contracts/app-list.json",
-    spec: "§8/§9",
-    emission: "a live app_list row for a tunneled app, a proxied app, and the builtin pmcp entry that has no D1 row behind it",
-    consumers: [],
-    producer: "worker",
-  },
-  {
-    file: "contracts/agent-list.json",
-    spec: "§8/§9",
-    emission: "a live agent_list row with its grants inline — the other half of the planner's entire current-state read",
-    consumers: [],
-    producer: "worker",
-  },
   // The one family whose consumer is inside this repository's own server (see the type's
   // doc): audit.ts writes the stub, the audit page, the JSONL export and hygiene.test.ts's
   // BodyColumnShape read it, and no declaration is shared between them.
@@ -296,6 +241,19 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
     consumers: [],
     producer: "worker",
   },
+  // §23's own family: the hub tools, declaration resources and limits are produced by
+  // `hub-contract.ts` — a Node-clean module whose exports ARE the wire vocabulary, the way
+  // tunnel.ts's CLOSE_* and HUB_METHODS are for their families — and this row changes when
+  // that vocabulary changes. The emission is the producer's own composed fixture, so a
+  // name, schema, URI or limit added there cannot skip this file; the `hub.json` cases
+  // below lock the composed value back to the individual exports.
+  {
+    file: "contracts/hub.json",
+    spec: "§23",
+    emission: "the hub's whole wire surface from hub-contract.ts's hubContractFixture(): the aggregate wire names hub_execute/hub_search_types beside the scoped execute/search_types, each tool's complete input and output JSON schema, the two declaration resources and four declaration templates the hub serves, and the numeric limits — no per-run value anywhere, because every byte is a source constant",
+    consumers: [],
+    producer: "worker",
+  },
 ];
 
 /**
@@ -305,7 +263,7 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
  * against `family.file`. In update mode it writes instead of comparing, which is the only
  * write path in the repository.
  *
- * Deliberately one function for all eight families: the alternative is eight bespoke
+ * Deliberately one function for all ten families: the alternative is ten bespoke
  * assertions that drift, and drift among the pinners is the exact disease the pins exist
  * to cure. A family whose emission cannot be captured through this seam is telling you
  * something about the module it came from (FINDINGS 2), not about this runner.
@@ -352,10 +310,15 @@ const EMISSIONS: Record<string, () => Promise<unknown>> = {
   "contracts/close-codes.json": closeCodesEmission,
   "contracts/bootstrap.json": bootstrapEmission,
   "contracts/admin-ops.json": adminOpsEmission,
-  "contracts/app-list.json": appListEmission,
-  "contracts/agent-list.json": agentListEmission,
   "contracts/audit-body-stubs.json": auditBodyStubsEmission,
   "contracts/push-frames.json": pushFramesEmission,
+  // §23's hub wire surface, inlined rather than a named thunk because there is nothing to
+  // capture: `hubContractFixture()` IS the composed value, from the module whose other
+  // exports (HUB_TOOLS, HUB_DECLARATION_URIS, HUB_DECLARATION_TEMPLATES,
+  // HUB_CONTRACT_LIMITS) the hub serves from. No namespace is seeded and no request is
+  // made, which is also why this family is byte-stable across two runs; the `hub.json`
+  // cases below re-read the composed value against those individual exports.
+  "contracts/hub.json": async () => hubContractFixture(),
 };
 
 /** One family's live emission, normalized. */
@@ -383,7 +346,7 @@ function emitted(file: string): Promise<Record<string, unknown>> {
 }
 
 /**
- * The fixtures on disk, read as data. A glob rather than nine imports because the
+ * The fixtures on disk, read as data. A glob rather than ten imports because the
  * governance case has to see EVERY file in the directory — including one no row claims,
  * which is the orphan it exists to catch. Eager, so a fixture read is a plain object.
  */
@@ -514,6 +477,20 @@ const FIXTURE_ROLE_DECLARATION = {
 };
 
 /**
+ * §23's optional SDK alias-hint member, in the shape hub-types allocates from: a service
+ * name beside a canonical→alias tool map. This is the value the accepted `hub/register`
+ * request carries — both client libraries copy the request shape, so the fixture has to
+ * SHOW the member rather than merely leave room for it. The value is judged by the hub's
+ * own validator in the register parity case below, so a spelling the hub would refuse
+ * cannot sit in the fixture unnoticed; canonical names stay canonical on the wire, which
+ * is what makes the alias a hub-local hint rather than a rename.
+ */
+const FIXTURE_TYPESCRIPT_ALIASES: TypescriptAliases = {
+  service: "news",
+  tools: { [FIXTURE_TOOL]: "searchNews" },
+};
+
+/**
  * A role whose MEANING is tools-only but whose SPELLING is the per-family object — the
  * "whichever spelling registered it" half of §20.3's canonical read shape, and the only
  * way to tell a read that renders meaning from one that renders history.
@@ -521,12 +498,9 @@ const FIXTURE_ROLE_DECLARATION = {
 const SPELLED_TOOLS_ONLY_ROLE = "publisher";
 
 /**
- * §20.2's owner-declared advertisement, spelled once for the three surfaces that read it:
- * the `app-list.json` proxy row, the read-back case, and the handshake case. It is
- * deliberately NOT the default — `tools` alone would make "the row carries what was stored"
- * indistinguishable from "the row invents the default", which is the whole subject of §8's
- * 2026-08-27 amendment — and it is deliberately not in declaration order either, so a reader
- * that sorted or a planner that compared as a list is visible.
+ * §20.2's owner-declared advertisement, spelled once for the app read-back and scoped
+ * handshake surfaces. It is deliberately not the default and not in declaration order,
+ * so a reader that sorts or invents the default remains visible.
  */
 const FIXTURE_CAPABILITIES = ["resources", "tools"];
 
@@ -547,15 +521,6 @@ const FIXTURE_CAPABILITIES_PROXIED: readonly AppCapability[] = [
  *  the absent-is-absent half of the read-back case, beside its declared twin. */
 const FIXTURE_UNDECLARED_PROXY = `${FIXTURE_PROXY}-undeclared`;
 
-/**
- * §20.3's family vocabulary, read off the fixture's OWN multi-family role — which names all
- * three deliberately (see above). Derived rather than transcribed because a literal here
- * would be a third copy beside registry's `ROLE_FAMILIES` and the planner's, and a
- * validator that hand-copies the vocabulary it is validating checks only that this file
- * agrees with itself. The fixture is the one home; the case below locks both
- * implementations to it.
- */
-const ROLE_FAMILIES = Object.keys(FIXTURE_ROLE_DECLARATION[FIXTURE_MULTI_FAMILY_ROLE]);
 
 /** An obviously fake app credential — the wrong KIND for every consumer surface, which
  *  is the whole point of the whoami 401 row. */
@@ -691,14 +656,16 @@ async function initializeEmission(): Promise<unknown> {
       ...answered,
       serverInfo: pinTypes(answered.serverInfo as Record<string, unknown>, ["version"]),
     },
-    // The SCOPED handshake's other half (§20.2/§21.5), emitted from the KIND-AWARE
-    // capabilityShape — the one place the scoped shape's four branches meet.
-    // `result.capabilities` above is the AGGREGATED answer (one constant, two families);
-    // a scoped endpoint's answer depends on the app's kind and its stored capability
-    // set, so a consumer meets `resources` (with a `subscribe` key that appears nowhere
-    // else), `completions` (which no bell serves, so it shapes as `{}`), and the never-
-    // connected/builtin fallbacks. Four pictures, named for what the handshake branches
-    // on, so a fifth kind — or one that inherits another's shape by accident — fails here.
+    // The SCOPED APPLICATION handshake's other half (§20.2/§21.5), emitted from the
+    // KIND-AWARE capabilityShape — the one place the scoped shape's four branches meet.
+    // `result.capabilities` above is the HUB's fixed answer for both hub endpoint shapes
+    // (capabilities' HUB_CAPABILITIES: tools and resources, every push flag false — §23.1);
+    // a scoped APPLICATION endpoint's answer depends on the app's kind and its stored
+    // capability set, so a consumer meets `resources` (with a `subscribe` key that appears
+    // nowhere else), `completions` (which no bell serves, so it shapes as `{}`), and the
+    // never-connected/builtin fallbacks. Four pictures, named for what the handshake
+    // branches on, so a fifth kind — or one that inherits another's shape by accident —
+    // fails here.
     scopedCapabilities: {
       "tunneled-registered": capabilityShape(FIXTURE_CAPABILITIES_REGISTERED, "tunnel"),
       "tunneled-never-connected": capabilityShape(DEFAULT_APP_CAPABILITIES, "tunnel"),
@@ -1132,8 +1099,11 @@ async function tunnelFramesEmission(): Promise<unknown> {
       // fixture has to SHOW it rather than merely leave room for it. (Before 2026-08-26
       // this was `{}`, on the reasoning that an empty declaration is a declaration (§6);
       // that stays true and is pinned where it is observable — both libraries send `{}`
-      // through unchanged when the author declares none.) The client's own version string
-      // varies, so its TYPE is pinned.
+      // through unchanged when the author declares none.) §23's optional
+      // `typescriptAliases` member rides beside them under the exported wire key, in the
+      // `{service, tools}` shape both libraries copy; absent means "no hints" and keeps
+      // the three-key frame, which is what the client suites pin for an author who
+      // declares none. The client's own version string varies, so its TYPE is pinned.
       request: {
         jsonrpc: "2.0",
         method: HUB_METHODS.register,
@@ -1141,6 +1111,7 @@ async function tunnelFramesEmission(): Promise<unknown> {
           clientVersion: TYPE_TOKEN.string,
           protocolVersion: revision,
           roles: FIXTURE_ROLE_DECLARATION,
+          [TYPESCRIPT_ALIASES_PARAM]: FIXTURE_TYPESCRIPT_ALIASES,
         },
       },
       // §6's sharpest privilege rule as data: identity comes exclusively from the token,
@@ -1409,71 +1380,6 @@ function servedOps(): Promise<Tool[]> {
   });
 }
 
-/** §8/§9's `app_list` rows — one per kind the planner can meet. */
-async function appListEmission(): Promise<unknown> {
-  return inNamespace(
-    {
-      apps: [
-        { slug: FIXTURE_TUNNEL, kind: "tunnel" },
-        {
-          slug: FIXTURE_PROXY,
-          kind: "proxy",
-          upstreamUrl: upstreamUrlFor(healthyUpstream()),
-          // oauth mode, so the row carries the connection state the planner must never
-          // plan against.
-          upstreamAuthMode: "oauth",
-        },
-      ],
-    },
-    async (ns) => {
-      // Declared rather than left default, because the row's SHAPE is what this family
-      // pins: an undeclared app carries no `capabilities` key at all (§8's 2026-08-27
-      // amendment, and the read-back case below), so a fixture built from one would pin the
-      // proxied row as the shape that happens to omit the field.
-      await ops.app_update.handler(ns.owner.userId, {
-        slug: FIXTURE_PROXY,
-        capabilities: FIXTURE_CAPABILITIES,
-      });
-      const listed = (await ops.app_list.handler(ns.owner.userId, {})) as {
-        apps: Record<string, unknown>[];
-      };
-      const row = (slug: string) => {
-        const found = listed.apps.find((app) => app.slug === slug);
-        if (found === undefined) throw new Error(`app_list served no "${slug}"`);
-        // createdAt and lastSeen are the row's own clock; `endpoint` is one deployment's
-        // URL (here the fake upstream's, which encodes its scenario). None is a shape.
-        return pinTypes(found, ["createdAt", "lastSeen", "endpoint"]);
-      };
-      return { tunnel: row(FIXTURE_TUNNEL), proxy: row(FIXTURE_PROXY), builtin: row(PMCP_SLUG) };
-    },
-  );
-}
-
-/** §8/§9's `agent_list` row, grants inline — the planner's other whole read. */
-async function agentListEmission(): Promise<unknown> {
-  return inNamespace(
-    {
-      apps: [{ slug: FIXTURE_TUNNEL, kind: "tunnel" }],
-      agents: [
-        {
-          slug: FIXTURE_AGENT,
-          grants: {
-            [FIXTURE_TUNNEL]: [
-              { role: "reader", mode: "allow" },
-              { role: "writer", mode: "approval" },
-            ],
-          },
-        },
-      ],
-    },
-    async (ns) => {
-      const listed = (await ops.agent_list.handler(ns.owner.userId, {})) as {
-        agents: Record<string, unknown>[];
-      };
-      return { agent: pinTypes(listed.agents[0], ["createdAt"]) };
-    },
-  );
-}
 
 /**
  * §15's two typed size stubs, as a real `tools/call` records them: the `blob` an
@@ -1597,10 +1503,9 @@ const TUNNEL_FRAMES = "contracts/tunnel-frames.json";
 const CLOSE_CODES = "contracts/close-codes.json";
 const BOOTSTRAP = "contracts/bootstrap.json";
 const ADMIN_OPS = "contracts/admin-ops.json";
-const APP_LIST = "contracts/app-list.json";
-const AGENT_LIST = "contracts/agent-list.json";
 const AUDIT_STUBS = "contracts/audit-body-stubs.json";
 const PUSH_FRAMES = "contracts/push-frames.json";
+const HUB = "contracts/hub.json";
 
 describe("§4 · the MCP handshake — the shape every consumer meets first", () => {
   it("§7 · initialize.json's result carries the revision the hub PUBLISHES on server/discover — one revision, read off a second surface, so a bump can never reach the handshake without reaching the fixture", async () => {
@@ -1615,24 +1520,26 @@ describe("§4 · the MCP handshake — the shape every consumer meets first", ()
     expect(request.params.protocolVersion).toBe(pinned.protocolVersion);
   }, CASE_BUDGET_MS);
 
-  it("§21.5/§20.2 · initialize.json pins the aggregated answer byte-for-byte: tools and prompts both listChanged TRUE, no resources, no completions (replaces :1252 and :1286, both of which carried the reversed reason)", async () => {
+  it("§23.1 · initialize.json pins the hub handshake byte-for-byte: tools and resources in that canonical order, both listChanged FALSE, no subscribe, no prompts and no completions — the fixed shape capabilities' HUB_CAPABILITIES publishes", async () => {
     const pinned = fixture(INITIALIZE).result as { capabilities: Record<string, unknown> };
-    // The whole aggregated answer (§20.2's constant, now §21.5's): two families and no
-    // third, both listChanged TRUE because the transport honoring them flipped in the same
-    // deploy that serves the stream (§21.5's lockstep rule). One owner per claim — a family
-    // added to the answer fails exactly this case and it is the one that says so. (This row
-    // replaces the pre-flip ':1252 and :1286', both of which pinned the reversed reason.)
-    expect(pinned.capabilities.tools).toEqual({ listChanged: true });
-    expect(pinned.capabilities.prompts).toEqual({ listChanged: true });
-    for (const family of Object.values(pinned.capabilities)) expect(family).toEqual({ listChanged: true });
-    // The two families §18 decision 26 keeps OFF this endpoint shape: a URI cannot take a
-    // `<slug>_` prefix and still be the URI the app knows, so `resources/*` and
-    // `completion/complete` answer -32601 here — and a handshake must not promise what the
-    // door refuses.
-    for (const absent of ["resources", "completions"]) {
+    // §23.1's canonical order: tools, then resources. Pinned by KEY ORDER rather than by
+    // toEqual alone, because the constant's insertion order is the wire order both hub
+    // endpoint shapes repeat — a reader that sorted the families would still deep-equal.
+    expect(Object.keys(pinned.capabilities)).toEqual(["tools", "resources"]);
+    // Both families false: the hub rings no catalog bells (§23.1's push flags), so each
+    // family carries `listChanged` and nothing else — an implementation that grew a
+    // `subscribe` key on resources, or flipped a flag, fails exactly this case.
+    expect(pinned.capabilities).toEqual(HUB_CAPABILITIES);
+    for (const family of Object.values(pinned.capabilities)) {
+      expect(family).toEqual({ listChanged: false });
+    }
+    // §23.1's two families the hub refuses outright: `prompts/*` and `completion/complete`
+    // answer -32601 on both endpoint shapes, and a handshake must not promise a door the
+    // hub does not open.
+    for (const absent of ["prompts", "completions"]) {
       expect(
         Object.keys(pinned.capabilities),
-        `the aggregated handshake promised ${absent}`,
+        `the hub handshake promised ${absent}`,
       ).not.toContain(absent);
     }
     // The hub's two published answers agree, because one constant serves both (§7).
@@ -1839,85 +1746,6 @@ async function captureClientMeta(): Promise<ClientMetaWorld> {
 /** The vendor session id a fixture client declares — obviously fake, never a real one. */
 const FIXTURE_CLIENT_SESSION_ID = "FAKE0000-client-session";
 
-/**
- * Strategy §10's aggregated tool-name code contract, at the seam that serves the names.
- *
- * §7 composes an aggregated name as `<slug>_<tool>`: the slug half is ours and pinned to
- * `[a-z0-9-]`, and the tool half is whatever an upstream or a registered app calls
- * itself. Real consumers refuse names outside `^[a-zA-Z0-9_-]{1,128}$`, so the composition
- * is where an otherwise-healthy app becomes a tool list a client rejects — §10 records
- * exactly that as a code contract, and notes that the spec's own `get.news` example
- * violates the charset.
- *
- * The fixture is that example: an upstream serving one in-charset tool and one dotted one.
- */
-describe("§4/§10 · aggregated tool names against the consumer charset", () => {
-  it("§10 · every name an aggregated tools/list serves matches ^[a-zA-Z0-9_-]{1,128}$ — the charset real consumers accept — while the in-charset tool beside it is still served, so \"serve nothing\" cannot satisfy this", async () => {
-    const served = await aggregatedNames();
-    // The allow half first: a hub that dropped the whole listing would otherwise pass.
-    expect(served).toContain(`${FIXTURE_PROXY}_${FIXTURE_TOOL}`);
-    const refusedByConsumers = served.filter((name) => !CONSUMER_TOOL_NAME.test(name));
-    expect(
-      refusedByConsumers,
-      "these names reach a consumer that will refuse them (strategy §10's code contract)",
-    ).toEqual([]);
-  }, CASE_BUDGET_MS);
-});
-
-/**
- * The charset a consumer accepts, from strategy §10 — spelled here rather than referenced
- * from limits.ts because no production constant exists: nothing validates these names
- * today, which is what the case above is measuring.
- */
-const CONSUMER_TOOL_NAME = /^[a-zA-Z0-9_-]{1,128}$/;
-
-/** §10's own example of a name that violates the consumer charset. */
-const OUT_OF_CHARSET_TOOL = "get.news";
-
-/** The names one aggregated tools/list really serves, over an upstream that offers both an
- *  in-charset tool and §10's dotted example. */
-async function aggregatedNames(): Promise<string[]> {
-  return inNamespace(
-    {
-      apps: [
-        {
-          slug: FIXTURE_PROXY,
-          kind: "proxy",
-          // `.*` rather than the two names, so the declaration is not what decides the
-          // outcome: everything the upstream offers reaches the composition.
-          roles: { reader: [".*"] },
-          upstreamUrl: upstreamUrlFor({
-            ...healthyUpstream(),
-            tools: [
-              { name: FIXTURE_TOOL, inputSchema: { type: "object", properties: {} } },
-              { name: OUT_OF_CHARSET_TOOL, inputSchema: { type: "object", properties: {} } },
-            ],
-          }),
-          upstreamAuthMode: "headers",
-        },
-      ],
-      agents: [
-        {
-          slug: FIXTURE_AGENT,
-          grants: { [FIXTURE_PROXY]: [{ role: "reader", mode: "allow" }] },
-          tokens: [{ as: "key" }],
-        },
-      ],
-    },
-    async (ns) => {
-      const proxied = await new Registry(env.DB).getApp(ns.owner.userId, FIXTURE_PROXY);
-      await setHeaders(proxied as App, { Authorization: "Bearer FAKE0000-upstream" });
-      const answer = await rpc(ns.owner.username, ns.tokens.key.token, null, {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/list",
-      });
-      const result = (answer.body as JsonRpcResponse).result as { tools?: { name: string }[] };
-      return (result.tools ?? []).map((tool) => tool.name);
-    },
-  );
-}
-
 describe("§4 · error vocabulary", () => {
   it("§21.4/§7 · errors.json gains -32602 captured from a real over-cap resources/subscribe (dataKeys null) beside its under-cap allow-twin — the totality row is six codes, and the -32601 entry is recaptured from logging/setLevel", async () => {
     const emitted = Object.keys((await errorsEmission()) as Record<string, unknown>).sort();
@@ -2010,7 +1838,7 @@ describe("§4 · tunnel frames and close codes", () => {
   });
 
   it("§6 · close-codes.json covers every code in the 4000–4004 vocabulary and the upgrade statuses, each with exactly one required client behavior", () => {
-    // File-vs-emission is the snapshot case's job, for this family and the other eight —
+    // File-vs-emission is the snapshot case's job, for this family and the other nine —
     // re-comparing a subtree of the same two values here could not fail while that case
     // passes. What this case adds is COVERAGE: the key set, and one behavior per entry.
     const entries = closeEntries();
@@ -2087,6 +1915,14 @@ describe("§4 · tunnel frames and close codes", () => {
       .forbiddenParamsKeys) {
       expect(Object.keys(params)).not.toContain(forbidden);
     }
+    // §23's optional alias member, keyed by the exported wire name and judged by the hub's
+    // own validator rather than by this file: the fixture shows the `{service, tools}`
+    // shape both client libraries copy, and a spelling the DO would refuse (unknown key,
+    // illegal identifier) fails HERE first — the same acceptance registry.validateRoles
+    // gives the roles declaration. Absent-member behavior is the client suites' pin: a
+    // transport built without hints emits the historical three-key frame.
+    expect(params[TYPESCRIPT_ALIASES_PARAM]).toEqual(FIXTURE_TYPESCRIPT_ALIASES);
+    expect(aliasViolations(params[TYPESCRIPT_ALIASES_PARAM])).toEqual([]);
   }, CASE_BUDGET_MS);
 
   it("§7 · tunnel-frames.json's forwarded-call _meta names are exactly hub/principal, hub/roles, and the mirrored clientCapabilities key — no other hub/* name exists", () => {
@@ -2165,11 +2001,126 @@ describe("§4 · §21.3/§21.4 push frames — the consumer-facing notification 
   });
 });
 
+/** One hub tool row as `contracts/hub.json` carries it: the canonical (scoped) wire name
+ *  the hub serves on `/mcp/hub`, the aggregate `hub_`-prefixed spelling the same tool
+ *  answers to on `/:user/mcp`, a bounded description, and the two JSON Schemas. Declared
+ *  here rather than imported from `hub-contract.ts`, for the reason the whole directory
+ *  exists: this suite pins the WIRE shape, and a consumer re-declares what it reads. */
+type HubToolRow = {
+  name: string;
+  aggregateName: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+};
+
 /**
- * §20.3's role declaration where every copy of it meets: the `hub/register` frame both
- * client libraries emit, the validation §6 judges it by, and §8's canonical READ — the
- * shape `pmcp diff` plans against, which storage being normalized does not by itself
- * decide.
+ * §23's own wire surface, emitted from `hub-contract.ts`'s `hubContractFixture()`. The
+ * snapshot case above already compares the checked-in file with the producer's composed
+ * value; these cases add the halves a single deep-equal cannot state: that the composed
+ * value still agrees with each INDIVIDUAL export, that the name/URI vocabulary and the
+ * numeric limits are the ones §23.2 spells, and that a hand-edit of the fixture cannot
+ * keep a stale name or schema alive behind a passing snapshot.
+ *
+ * No namespace is seeded, no request is made, and no case here waits on a clock: the
+ * hub's vocabulary is a source constant, so this block is pure file-vs-module pinning.
+ */
+describe("§4 · §23 hub contract — the hub's own wire surface", () => {
+  it("§23.2 · hub.json carries both spellings of each hub tool — the scoped wire name beside the aggregate hub_ name — with complete, closed input and output schemas", () => {
+    // The fixture's four sections, and no fifth: a section added to the producer that this
+    // table does not name would arrive here as a failed key comparison rather than silence.
+    expect(Object.keys(fixture(HUB))).toEqual(["tools", "resources", "resourceTemplates", "limits"]);
+    const tools = fixture(HUB).tools as HubToolRow[];
+    // The producer's own array — a name or schema that moved in hub-contract.ts cannot be
+    // held alive here by a stale file.
+    expect(tools).toEqual(HUB_TOOLS);
+    // §23.2's two canonical names, in canonical order.
+    expect(tools.map((tool) => tool.name)).toEqual(["execute", "search_types"]);
+    expect(tools.map((tool) => tool.aggregateName)).toEqual(["hub_execute", "hub_search_types"]);
+    for (const tool of tools) {
+      // The aggregate spelling is DERIVED from the scoped one — the fixed `hub_` prefix
+      // §23.1 gives the aggregate endpoint — so a tool whose aggregate name was typed by
+      // hand and skipped the rule fails here rather than on the live wire.
+      expect(tool.aggregateName).toBe(`hub_${tool.name}`);
+      // Closed objects, "complete input/output JSON schemas" in §23.2's sense: unknown
+      // arguments are refused by the schema rather than ignored by the implementation.
+      expect(tool.inputSchema.additionalProperties).toBe(false);
+      expect(tool.outputSchema, `${tool.name} carries no output schema`).toBeTruthy();
+    }
+    const [execute, search] = tools;
+    const executeArguments = execute.inputSchema.properties as Record<string, unknown>;
+    const searchArguments = search.inputSchema.properties as Record<string, unknown>;
+    // §23.2's argument names, whole and in order: `code` required, `timeout_ms` optional;
+    // `query` required, `surface` and `limit` optional.
+    expect(Object.keys(executeArguments)).toEqual(["code", "timeout_ms"]);
+    expect(execute.inputSchema.required).toEqual(["code"]);
+    expect(Object.keys(searchArguments)).toEqual(["query", "surface", "limit"]);
+    expect(search.inputSchema.required).toEqual(["query"]);
+    // §23.2's one result union, discriminated by `kind` and covering exactly the four
+    // outcome kinds — the vocabulary is the contract, not the union member's spelling.
+    const union = execute.outputSchema.oneOf as unknown[];
+    expect(union).toHaveLength(4);
+    const serialized = JSON.stringify(union);
+    for (const kind of ["completed", "type_error", "runtime_error", "limit_exceeded"]) {
+      expect(serialized, `the execute result union lost "${kind}"`).toContain(`"${kind}"`);
+    }
+  });
+
+  it("§23.11 · hub.json's limits are the producer's flat numbers, and the wire schemas enforce the contract's ranges: timeouts 1,000–300,000 ms, a surface enum of program/client, and a search limit 1–50 defaulting to 10", () => {
+    const limits = fixture(HUB).limits as Record<string, number>;
+    expect(limits).toEqual(HUB_CONTRACT_LIMITS);
+    for (const [name, value] of Object.entries(limits)) {
+      expect(typeof value, `limit ${name} is not a plain number`).toBe("number");
+    }
+    const [execute, search] = fixture(HUB).tools as HubToolRow[];
+    const executeArguments = execute.inputSchema.properties as Record<string, Record<string, unknown>>;
+    const searchArguments = search.inputSchema.properties as Record<string, Record<string, unknown>>;
+    // The declared range, as a consumer reads it off the wire: 1,000 minimum spelled out
+    // (§23.2's literal) and the hard maximum tied to the producer's own constant, so the
+    // schema cannot advertise a ceiling the runtime does not enforce.
+    expect(limits.minTimeoutMs).toBe(1_000);
+    expect(limits.hardMaxTimeoutMs).toBe(300_000);
+    expect(executeArguments.timeout_ms.minimum).toBe(1_000);
+    expect(executeArguments.timeout_ms.maximum).toBe(limits.hardMaxTimeoutMs);
+    // The two surfaces §23.2 admits, and the search window's own bounds/default.
+    expect(searchArguments.surface.enum).toEqual(["program", "client"]);
+    expect(searchArguments.limit.minimum).toBe(1);
+    expect(searchArguments.limit.maximum).toBe(limits.searchLimitMax);
+    expect(searchArguments.limit.default).toBe(limits.searchLimitDefault);
+    expect(limits.searchLimitDefault).toBe(10);
+  });
+
+  it("§23.2 · hub.json carries exactly the two declaration resources and four declaration templates — the whole resource surface either hub endpoint shape serves — each read as one text/typescript block", () => {
+    const resources = fixture(HUB).resources as { uri: string; mimeType: string }[];
+    const templates = fixture(HUB).resourceTemplates as { uriTemplate: string; mimeType: string }[];
+    // The producer's own descriptors, so the file cannot outlive a URI, name, or media type
+    // that moved in hub-contract.ts.
+    expect(resources).toEqual(HUB_DECLARATION_URIS);
+    expect(templates).toEqual(HUB_DECLARATION_TEMPLATES);
+    // …and §23.2's own spelling of them, spelled out because the toEqual above ties file to
+    // module and would pass even if BOTH moved together: these literals are the spec-side
+    // half, so a renamed, reordered, or dropped declaration fails here rather than becoming
+    // the standard by default.
+    expect(resources.map((resource) => resource.uri)).toEqual([
+      "pmcp://hub/types/client.d.ts",
+      "pmcp://hub/types/program.d.ts",
+    ]);
+    expect(templates.map((template) => template.uriTemplate)).toEqual([
+      "pmcp://hub/types/services/{service}.d.ts",
+      "pmcp://hub/types/tools/{service}/{tool}.d.ts",
+      "pmcp://hub/types/resources/{service}/{uri}.d.ts",
+      "pmcp://hub/types/resource-templates/{service}/{uriTemplate}.d.ts",
+    ]);
+    // Every declaration reads as one UTF-8 text block, on resources and templates alike.
+    for (const declaration of [...resources, ...templates]) {
+      expect(declaration.mimeType).toBe("text/typescript");
+    }
+  });
+});
+
+/**
+ * §20.3's role declaration where every copy meets: the `hub/register` frame both client
+ * libraries emit, registration validation, and §8's canonical admin read.
  */
 describe("§4 · the roles wire — one language, three keyspaces", () => {
   it("§6/§20.3 · tunnel-frames' register frame accepts a bare pattern list and a per-family object in the same declaration", async () => {
@@ -2234,10 +2185,8 @@ describe("§4 · the roles wire — one language, three keyspaces", () => {
     const rendered = await roundTripRoles({
       // Registered as a bare list…
       [FIXTURE_TOOLS_ONLY_ROLE]: [FIXTURE_TOOL],
-      // …and the same MEANING registered as an object. Both render the bare list, which is
-      // what makes the read a function of meaning rather than of history: always rendering
-      // the object would diff every YAML file written before §20.3 landed, and rendering
-      // whichever spelling registered would make `pmcp diff` stable or noisy by accident.
+      // …and the same meaning registered as an object. Both render the bare list, making
+      // the read a function of meaning rather than storage history.
       [SPELLED_TOOLS_ONLY_ROLE]: { tools: ["publish"] },
       [FIXTURE_MULTI_FAMILY_ROLE]: FIXTURE_ROLE_DECLARATION[FIXTURE_MULTI_FAMILY_ROLE],
     });
@@ -2289,13 +2238,9 @@ async function roundTripRoles(declaration: unknown): Promise<Record<string, unkn
 }
 
 /**
- * §20.2's proxied `capabilities`, where its two readers meet. Until §8's 2026-08-27
- * amendment the key was create-only: registry stored it, the scoped handshake read it, and
- * no read tool reported it — so `pmcp diff` had nothing to compare a file against and the
- * planner excluded the field by construction. These two cases are that gap closed, from
- * both ends: the row carries the STORED value (absent when nothing was ever configured, so
- * the planner can tell "undeclared" from "declared as the default"), and one `app_update`
- * moves both readers at once.
+ * §20.2's proxied `capabilities`, where its two readers meet. The admin read reports the
+ * stored declaration verbatim, while the scoped handshake derives its advertised shape
+ * from that declaration. An update must move both readers at once.
  */
 describe("§4 · the capabilities wire — one stored declaration, two readers", () => {
   it('§8/§20.2 · app_get returns a proxied app\'s stored capabilities list, and omits the field when none was ever configured — absent is absent, never ["tools"]', async () => {
@@ -2313,10 +2258,8 @@ describe("§4 · the capabilities wire — one stored declaration, two readers",
       // rendering of it, so a read that sorted or de-duplicated would be reporting its own
       // opinion of the config back to the owner who wrote it.
       expect((await appGetRow(ns, FIXTURE_PROXY)).capabilities).toEqual(FIXTURE_CAPABILITIES);
-      // The twin, and the half that is easy to get wrong: §20.2's default is what the
-      // HANDSHAKE answers for an undeclared app, never what the row claims was
-      // configured. A row that helpfully filled in `["tools"]` would make the planner plan a
-      // `app_update` against every file that omits the key — forever.
+      // The twin: §20.2's default belongs to the handshake answer for an undeclared app,
+      // not to the stored-declaration read.
       const undeclared = await appGetRow(ns, FIXTURE_UNDECLARED_PROXY);
       expect(undeclared.capabilities).toBeUndefined();
       expect(Object.keys(undeclared)).not.toContain("capabilities");
@@ -2483,75 +2426,6 @@ describe("§4 · admin op names and schemas", () => {
   });
 });
 
-describe("§4 · planner-facing rows", () => {
-  it("§8 · app-list.json row keys equal a live app_list row's, for tunnel, proxy, and the builtin pmcp entry (builtin: true, no D1 row behind it)", async () => {
-    const live = (await emitted(APP_LIST)) as Record<string, Record<string, unknown>>;
-    const pinned = fixture(APP_LIST) as Record<string, Record<string, unknown>>;
-    for (const kind of ["tunnel", "proxy", "builtin"]) {
-      expect(Object.keys(pinned[kind]).sort(), `the ${kind} row's keys drifted`).toEqual(
-        Object.keys(live[kind]).sort(),
-      );
-    }
-    // The builtin is the one row with no D1 row behind it, and it says so.
-    expect(pinned.builtin.builtin).toBe(true);
-    expect(pinned.builtin.slug).toBe(PMCP_SLUG);
-    expect(pinned.tunnel.builtin).toBeUndefined();
-  }, CASE_BUDGET_MS);
-
-  it("§8 · agent-list.json rows carry grants inline, so the planner's entire current-state read is these two families and nothing else", () => {
-    // File-vs-emission belongs to the snapshot case; what this one adds is the SHAPE of
-    // the grants cell — §9's own grant syntax, so what agent_list reads back is what
-    // grant_set takes.
-    const pinned = (fixture(AGENT_LIST) as { agent: Record<string, unknown> }).agent;
-    expect(pinned.grants).toEqual({ [FIXTURE_TUNNEL]: ["reader", "writer:approval"] });
-  });
-
-  it("§9 · plan.CurrentApp's keys equal app-list.json's minus exactly the runtime facts (status, oauth connection state, last seen) — a plan can never turn on status, and the two rows sit side by side so the omission is visible", () => {
-    const pinned = fixture(APP_LIST) as Record<string, Record<string, unknown>>;
-    const served = new Set(
-      ["tunnel", "proxy", "builtin"].flatMap((kind) => Object.keys(pinned[kind])),
-    );
-    const planned = Object.keys(CURRENT_APP_KEYS);
-    assertTotalMapping("CurrentApp ↔ app_list", planned, [...served], RUNTIME_FACTS);
-    // …and the omissions are those facts and nothing else: each is present on the served
-    // side and absent from the planner's.
-    for (const fact of RUNTIME_FACTS) {
-      expect(served.has(fact), `app_list serves no "${fact}"`).toBe(true);
-      expect(planned, `a plan can turn on "${fact}"`).not.toContain(fact);
-    }
-  });
-});
-
-/**
- * The runtime facts a plan may never carry. Three are the ones §9 names — a tunnel's
- * `status`, an oauth app's `connection`, and `lastSeen`. `createdAt` is the fourth and
- * belongs with them for the same reason: it is a fact about the row's LIFE, produced by the
- * server, and a plan that could set it would be planning history.
- */
-const RUNTIME_FACTS = ["status", "connection", "lastSeen", "createdAt"];
-
-/**
- * plan.CurrentApp's keys as a runtime value. Exhaustive by the type system — a field
- * added to the planner's projection without a key here is a compile error — which is what
- * makes the comparison above a real total mapping rather than a transcription.
- */
-const CURRENT_APP_KEYS = {
-  slug: true,
-  kind: true,
-  name: true,
-  description: true,
-  archived: true,
-  builtin: true,
-  roles: true,
-  ownerRoles: true,
-  redact: true,
-  redactResults: true,
-  logBodies: true,
-  endpoint: true,
-  auth: true,
-  forwardIdentity: true,
-  capabilities: true,
-} as const satisfies Record<keyof Required<CurrentApp>, true>;
 
 describe("§4 · audit body stubs — the spelling §15 defers to this directory", () => {
   it("§15 · audit-body-stubs.json's `blob` row deep-equals the stub a real tools/call records for an unstructured result block: the discriminator, the content type, and `bytes` present as a number — §15 names the stub but not its keys, so this row IS the naming", async () => {
@@ -2662,215 +2536,6 @@ async function captureUnderCap(): Promise<AuditRow> {
   );
 }
 
-/**
- * UNBLOCKED 2026-08-26 — the note this replaces recorded both directions as waiting on a
- * skeleton, and the refusals it recorded still hold: nothing below transcribes a mapping
- * into this file. Direction C runs the REAL planner over one file-and-server pair chosen
- * to exercise its whole vocabulary, and reads the steps it actually emitted; direction D
- * reads `cli/src/commands.ts`'s table, which is the value main.ts dispatches through.
- *
- * That table lives beside main.ts rather than in it so this suite reads DATA and not the
- * CLI: main.ts reads `~/.config/pmcp/config.json` through node:fs, which inside workerd is
- * a compatibility shim nothing here should depend on. `plan.ts` is pure and imports cleanly.
- *
- * The asymmetry that leaves — direction C runs the real planner while direction D reads a
- * table nothing ties to the dispatcher — is closed in the `cli` project, not here:
- * `cli/test/commands.test.ts` drives `main(argv)` per row against a recording `fetch` and
- * asserts the ops actually reached for equal the row's. Both halves are needed; this one
- * says the row names ops the hub serves, that one says the row is true of the CLI.
- */
-
-/**
- * One file-and-server pair that provokes every step kind the planner has: a server-only
- * app and agent (deletes), a file-only pair (creates), a changed field (update), and
- * both archive transitions — plus a grant. Written as the YAML shape rather than as
- * PlanStep literals on purpose: a literal here would be this file transcribing the
- * planner's output, which is exactly the drift direction C exists to catch.
- *
- * Both KINDS are here, and that is load-bearing rather than thorough: `endpoint`, `auth`,
- * `forward_identity` and `roles` are emitted only for a proxied app, so a tunnel-only
- * fixture would leave half of app_create's and app_update's argument surface
- * unmeasured against the real op schema — and `grant_set`'s `:approval` re-joining likewise
- * needs one grant that carries the suffix.
- */
-function plannerSteps(): PlanStep[] {
-  const desired = parseDesired({
-    apps: {
-      fresh: {},
-      keep: { name: "Renamed" },
-      parked: { archived: true },
-      revived: {},
-      // Created: the proxy half of app_create's arguments.
-      notion: {
-        kind: "proxy",
-        endpoint: "https://mcp.notion.com/mcp",
-        auth: "oauth",
-        forward_identity: true,
-        roles: { writer: ["create_.*"] },
-      },
-      // Updated: the same fields on the other op, reached by moving the endpoint.
-      linear: { kind: "proxy", endpoint: "https://mcp.linear.app/mcp", roles: { writer: ["create_.*"] } },
-    },
-    agents: { agent: { grants: { keep: ["reader"], notion: ["writer:approval"] } } },
-  });
-  const server = (slug: string, over: Partial<CurrentApp> = {}): CurrentApp => ({
-    slug,
-    kind: "tunnel",
-    name: slug,
-    description: "",
-    archived: false,
-    builtin: false,
-    roles: { reader: [".*"] },
-    redact: {},
-    redactResults: {},
-    logBodies: true,
-    ...over,
-  });
-  return planChanges(desired, {
-    apps: [
-      server("gone"),
-      server("keep"),
-      server("parked"),
-      server("revived", { archived: true }),
-      server("linear", {
-        kind: "proxy",
-        endpoint: "https://old.linear.app/mcp",
-        auth: "headers",
-        forwardIdentity: false,
-        logBodies: false,
-        roles: { writer: ["create_.*"] },
-      }),
-    ],
-    agents: [{ slug: "stale", name: "stale", description: "", grants: {} }],
-  }).steps;
-}
-
-describe("§4 direction C · planner steps → ops", () => {
-  it("§4 · every PlanStep.tool the planner can emit is a key of ops", () => {
-    const emitted = [...new Set(plannerSteps().map((step) => step.tool))].sort();
-    // The fixture provokes all eight, so this is a real cover and not a vacuous subset
-    // check — and every one of them must be a tool the hub actually serves.
-    expect(emitted).toEqual([
-      "agent_create",
-      "agent_delete",
-      "app_archive",
-      "app_create",
-      "app_delete",
-      "app_unarchive",
-      "app_update",
-      "grant_set",
-    ]);
-    for (const tool of emitted) expect(Object.keys(ops), `${tool} is not an op`).toContain(tool);
-  });
-
-  it("§4 · every emitted step's args cover its op schema's required fields", async () => {
-    const schemas = Object.fromEntries((await servedOps()).map((tool) => [tool.name, tool.inputSchema]));
-    for (const step of plannerSteps()) {
-      const schema = schemas[step.tool] as { required?: string[]; properties?: Record<string, unknown> };
-      for (const field of schema.required ?? []) {
-        expect(Object.keys(step.args), `${step.tool} omits the required ${field}`).toContain(field);
-      }
-      // The other half of "ready to forward verbatim": these schemas reject
-      // additionalProperties, so an argument the op does not declare is a refused call.
-      for (const key of Object.keys(step.args)) {
-        expect(Object.keys(schema.properties ?? {}), `${step.tool} sends an undeclared ${key}`).toContain(key);
-      }
-    }
-  }, CASE_BUDGET_MS);
-});
-
-describe("§9 · the planner's copy of the role-declaration rules", () => {
-  it("§9/§20.2 · the planner's DEFAULT_CAPABILITIES is the server's DEFAULT_APP_CAPABILITIES — one exported constant on each side compared here, so a widened default on one side fails by name instead of a plan that quietly diffs every proxied app", () => {
-    expect([...DEFAULT_CAPABILITIES]).toEqual([...DEFAULT_APP_CAPABILITIES]);
-    // WHY this constant exists at all: an absent `capabilities:` must canonicalize to
-    // exactly what the server reads for an app it was never told anything about, or
-    // `pmcp diff` never converges on a freshly-added proxied app.
-    expect(canonicalCapabilities(undefined)).toEqual([...DEFAULT_APP_CAPABILITIES].sort());
-  });
-
-  it("§6/§9 · the caps cli/src/plan.ts validates a proxy `roles:` block against are limits.ts's, by name — the planner's early refusal exists so `pmcp apply` never dies mid-plan, and a copy that drifted low would call a file valid that the hub then rejects AFTER the destructive delete phase has run", async () => {
-    // plan.ts deliberately re-implements registry.validateRoles rather than importing it
-    // (§9: the planner never depends on the server, which is why the fixtures exist at
-    // all). A second implementation is only safe with a lock, and this case is it — the
-    // same by-name reading server/test/unit/pattern.test.ts does on the server's side.
-    expect(PLANNER_ROLE_NAME_MAX_LENGTH).toBe(ROLE_NAME_MAX_LENGTH);
-    expect(PLANNER_ROLE_PATTERN_MAX_LENGTH).toBe(ROLE_PATTERN_MAX_LENGTH);
-    expect(PLANNER_ROLE_PATTERNS_MAX).toBe(ROLE_PATTERNS_MAX);
-    // The family VOCABULARY is a rule of exactly the same kind and needs the same lock:
-    // add a family to registry.ROLE_FAMILIES without this line and the whole suite stays
-    // green while `pmcp diff` hard-errors on a legal file with `"x" is not a role family`.
-    // Both copies answer to the fixture's own declaration, never to each other.
-    expect([...SERVER_ROLE_FAMILIES]).toEqual(ROLE_FAMILIES);
-    expect([...PLANNER_ROLE_FAMILIES]).toEqual(ROLE_FAMILIES);
-    // …and the copy still refuses what the server would: a declaration one pattern over
-    // the shared cap is a hard error in the plan, not a call the hub gets to reject.
-    const overCap = planChanges(
-      parseDesired({
-        apps: {
-          notion: {
-            kind: "proxy",
-            endpoint: "https://mcp.notion.com/mcp",
-            roles: { writer: Array.from({ length: ROLE_PATTERNS_MAX + 1 }, (_, index) => `t_${index}`) },
-          },
-        },
-      }),
-      { apps: [], agents: [] },
-    );
-    expect(overCap.errors.length).toBeGreaterThan(0);
-
-    // §20.3's canonical READ beside the planner's canonical COMPARE — the second copied
-    // rule in this pair, and the one whose drift is silent rather than loud: a planner that
-    // canonicalizes differently from the hub's read plans `app_update` on every run, so
-    // `pmcp diff` never comes back clean and `pmcp apply` never converges. The table is the
-    // declarations whose spelling and canonical form differ, empty families included —
-    // `docs: {tools: [publish], prompts: []}` and the bare `docs: {}` placeholder are files
-    // an owner plausibly writes, and neither is covered by the two spellings alone.
-    const declared: RoleDeclaration = {
-      bare: ["publish"],
-      spelled: { tools: ["publish"] },
-      trailing: { tools: ["publish"], prompts: [] },
-      placeholder: {},
-      hollow: { tools: [], prompts: [] },
-      spanning: { tools: ["publish"], prompts: ["digest_.*"], resources: [] },
-    };
-    // The hub's half of the table: what §8's read renders each declaration back as. An
-    // empty family is a family not declared, in every row — which is why the first five
-    // collapse and only the genuinely multi-family one keeps the object.
-    const rendered = (await roundTripRoles(declared)) as RoleDeclaration;
-    expect(rendered).toEqual({
-      bare: ["publish"],
-      spelled: ["publish"],
-      trailing: ["publish"],
-      placeholder: [],
-      hollow: [],
-      spanning: { tools: ["publish"], prompts: ["digest_.*"], resources: [] },
-    });
-    // …and the planner's half: the file that WROTE those declarations, diffed against the
-    // hub's rendering of them, plans nothing at all.
-    const endpoint = "https://mcp.notion.com/mcp";
-    const current: CurrentApp = {
-      slug: FIXTURE_PROXY,
-      kind: "proxy",
-      name: FIXTURE_PROXY,
-      description: "",
-      archived: false,
-      builtin: false,
-      roles: rendered,
-      redact: {},
-      redactResults: {},
-      logBodies: false,
-      endpoint,
-      auth: "headers",
-      forwardIdentity: false,
-    };
-    const settled = planChanges(
-      parseDesired({ apps: { [FIXTURE_PROXY]: { kind: "proxy", endpoint, roles: declared } } }),
-      { apps: [current], agents: [] },
-    );
-    expect(settled.errors).toEqual([]);
-    expect(settled.steps).toEqual([]);
-  }, CASE_BUDGET_MS);
-});
 
 /**
  * The MCP methods a CLI command may front INSTEAD of an admin op — §7's tool surface plus
@@ -2900,8 +2565,8 @@ const GATEWAY_METHODS = [
   "resources/read",
 ];
 
-describe("§4 direction D · CLI subcommands → ops", () => {
-  it("§4 · every non-auth CLI subcommand maps to an ops key", () => {
+describe("§4 direction D · CLI subcommands → operations and methods", () => {
+  it("§4 · every non-auth CLI subcommand maps to a served operation or MCP method", () => {
     for (const command of COMMANDS) {
       if (command.exception === "auth") continue;
       // Either it fronts admin ops, or it fronts a gateway method that IS the consumer
@@ -2915,9 +2580,11 @@ describe("§4 direction D · CLI subcommands → ops", () => {
     }
   });
 
-  it("§4 · every ops key is reachable from some CLI subcommand — the reverse direction, so an op nobody can run fails here", () => {
-    const reachable = [...new Set(COMMANDS.flatMap((command) => command.ops))];
-    assertTotalMapping("CLI subcommands ↔ ops", reachable, Object.keys(ops), []);
+  it("§4 · the generic call command reaches every admin operation through the builtin app", () => {
+    const call = COMMANDS.find((command) => command.name === "call");
+    expect(call?.method).toBe("tools/call");
+    expect(call?.ops).toEqual([]);
+    expect(Object.keys(ops).length).toBeGreaterThan(0);
   });
 
   it("§8 · the pinned parity exceptions (auth/credential family, the OAuth consent redirect, the JSONL export) are the ONLY unmapped names, listed explicitly rather than skipped", () => {
@@ -3029,7 +2696,6 @@ export type PinnedConsumerShapes = {
   approvalRequired: ApprovalRequiredData;
   bootstrapRequest: BootstrapRequest;
   bootstrapResponse: BootstrapResponse;
-  plannerStep: PlanStep;
   severCode: SeverCode;
   adminOp: AdminOp;
   wireResponse: JsonRpcResponse;

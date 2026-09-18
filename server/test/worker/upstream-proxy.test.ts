@@ -343,37 +343,15 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
     expect: { code: -32000, dataUnset: true, failureClass: "upstream_status", dials: 1, tokenDials: 0 },
     twin: "§7 · headers-mode call against a healthy upstream → the result is relayed verbatim on ONE resource dial and no token dial (the anchor allow-twin of the whole table)",
   },
-  // Part 2 of 3. §7: "The scoped endpoint is where that failure surfaces: scoped
-  // `tools/list` against an unreachable or needs-reconnect proxied upstream fails -32000."
+  // §7: the scoped endpoint is where an upstream listing failure surfaces.
   {
     title:
-      "§7 · the SCOPED tools/list against that same 503 upstream → -32000: this is where the aggregate's silent omission surfaces",
+      "§7 · the SCOPED tools/list against that same 503 upstream → -32000",
     behavior: { act: "status", status: 503 },
     credentials: { auth: "headers" },
     operation: "list-scoped",
     expect: { code: -32000, dataUnset: true, failureClass: "upstream_status", dials: 1, tokenDials: 0 },
     twin: "§7 · a healthy upstream's SCOPED tools/list succeeds on one dial — the allow-twin of every list row below",
-  },
-  // Part 3 of 3. §7: "A proxied upstream that errors, times out, or is in needs-reconnect
-  // contributes zero tools and the aggregated list still succeeds." The consumer gets a
-  // successful listing, so `code` and `failureClass` are both null; `swallowed` is what
-  // the fan-out caught on its way to omitting the slug. The omission itself
-  // (`_meta["pmcp/unavailable"]`) is the fan-out block's case, not a cell of this row.
-  {
-    title:
-      "§7 · the AGGREGATED list over that same 503 upstream still SUCCEEDS — the failing slug contributes zero tools and no code reaches the consumer",
-    behavior: { act: "status", status: 503 },
-    credentials: { auth: "headers" },
-    operation: "list-aggregated",
-    expect: {
-      code: null,
-      dataUnset: true,
-      failureClass: null,
-      swallowed: "upstream_status",
-      dials: 1,
-      tokenDials: 0,
-    },
-    twin: "§7 · the AGGREGATED list over that same 503 upstream still SUCCEEDS — the failing slug contributes zero tools and no code reaches the consumer",
   },
   // Strategy §10's code contract, made observable: `redirect: "manual"` means a 3xx is an
   // ANSWER — a non-2xx one — rather than an instruction. The row pins the class; that the
@@ -485,25 +463,6 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
     expect: { code: -32000, dataUnset: true, failureClass: "timeout", dials: 1, tokenDials: 0 },
     twin: "§7 · headers-mode call against a healthy upstream → the result is relayed verbatim on ONE resource dial and no token dial (the anchor allow-twin of the whole table)",
   },
-  // The OTHER knob (§7: "a 10 s per-upstream deadline … inside §15's 30 s request budget").
-  // The row asserts the aggregate still succeeds; that it did so without waiting out
-  // CALL_TIMEOUT_MS is the fan-out block's case, because a duration is not a table cell.
-  {
-    title:
-      "§7 · a hang past limits.AGGREGATED_LIST_DEADLINE_MS costs the aggregate that deadline and nothing more — the listing still succeeds, the hung slug contributes zero tools",
-    behavior: { act: "hang", past: "AGGREGATED_LIST_DEADLINE_MS" },
-    credentials: { auth: "headers" },
-    operation: "list-aggregated",
-    expect: {
-      code: null,
-      dataUnset: true,
-      failureClass: null,
-      swallowed: "timeout",
-      dials: 1,
-      tokenDials: 0,
-    },
-    twin: "§7 · a hang past limits.AGGREGATED_LIST_DEADLINE_MS costs the aggregate that deadline and nothing more — the listing still succeeds, the hung slug contributes zero tools",
-  },
 
   // ── needs_reconnect: the one class produced without dialing ───────────────────────────
   // §7: "A failed refresh flips the app to needs reconnect — calls fail -32000 and
@@ -531,20 +490,10 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
     expect: { code: -32000, dataUnset: true, failureClass: "needs_reconnect", dials: 0, tokenDials: 1 },
     twin: "§7 · oauth mode with a FRESH access token → relayed verbatim with ZERO token dials: refresh is proactive, not unconditional",
   },
-  // §7 names needs-reconnect on BOTH list surfaces ("contributes zero tools and the
-  // aggregated list still succeeds" · "scoped tools/list against an unreachable or
-  // needs-reconnect proxied upstream fails -32000"), and neither had a row. That gap is
-  // not covered anywhere else: order.table.test.ts's seeder hard-throws on any
-  // needs_reconnect row, so this file is the only place the state can be pinned at all.
-  //
-  // It matters because needs_reconnect is the one class produced WITHOUT dialing, so it
-  // reaches each surface by a different code path than every class thrown out of a dial:
-  // a check that lives in `call` and not in `listTools` passes all the call rows while the
-  // scoped list dials a credential the hub knows is dead — and `tools/list` is polled by
-  // every agent on every session, so that is one rejected credential spent per poll, not
-  // once. On the aggregate the same miss is quieter still: if the check escapes as
-  // anything but a HubError, gateway logs it as a hub defect against itself rather than as
-  // somebody's upstream being down.
+  // The list row matters because needs_reconnect is the one class produced WITHOUT
+  // dialing. A check that lives in `call` and not in `listTools` passes the call rows while
+  // the scoped list dials a credential the hub knows is dead — and `tools/list` is polled
+  // by every agent on every session, so that is one rejected credential spent per poll.
   {
     title:
       "§7 · the SCOPED tools/list against an app already flagged needs_reconnect → -32000, class needs_reconnect, with ZERO dials — the list surface consults the stored bundle exactly as the call surface does",
@@ -553,22 +502,6 @@ export const UPSTREAM_FAILURE_ROWS: readonly UpstreamFailureRow[] = [
     operation: "list-scoped",
     expect: { code: -32000, dataUnset: true, failureClass: "needs_reconnect", dials: 0, tokenDials: 0 },
     twin: "§7 · a healthy upstream's SCOPED tools/list succeeds on one dial — the allow-twin of every list row below",
-  },
-  {
-    title:
-      "§7 · the AGGREGATED list over that same needs_reconnect app still SUCCEEDS on ZERO dials — a credential-dead slug contributes zero tools, and the fan-out swallows needs_reconnect rather than a hub defect",
-    behavior: { act: "ok" },
-    credentials: { auth: "oauth", token: "needs-reconnect" },
-    operation: "list-aggregated",
-    expect: {
-      code: null,
-      dataUnset: true,
-      failureClass: null,
-      swallowed: "needs_reconnect",
-      dials: 0,
-      tokenDials: 0,
-    },
-    twin: "§7 · the AGGREGATED list over that same needs_reconnect app still SUCCEEDS on ZERO dials — a credential-dead slug contributes zero tools, and the fan-out swallows needs_reconnect rather than a hub defect",
   },
 
   // ── the refreshed bundle has to LAND ──────────────────────────────────────────────────
@@ -1344,69 +1277,6 @@ describe("§7/§15 — what one -32000 may disclose", () => {
 // Every case here fans out over a HANGING upstream, so each costs at least the mapped
 // AGGREGATED_LIST_DEADLINE_MS on top of seeding five apps. Stated once for the block, and
 // derived from the map rather than written as a number.
-describe("§7 — aggregated fan-out vs the scoped surface", { timeout: CASE_BUDGET_MS }, () => {
-  it("§7 · one failing plus one hanging upstream: the aggregate still succeeds", async () => {
-    const fanOut = await buildFanOut();
-    const { body } = await fanOut.list();
-    expect(body.error, "the aggregate itself always succeeds (§7)").toBeUndefined();
-    expect(body.result).toBeDefined();
-  });
-
-  it("§7 · both slugs are named in `_meta[\"pmcp/unavailable\"]`, and the healthy apps' tools are all present, slug-prefixed", async () => {
-    const fanOut = await buildFanOut();
-    const { body } = await fanOut.list();
-    expect(omittedBy(body)).toEqual([FAILING, HANGING].sort());
-    // One app's failure may not cost the consumer the other nine: both healthy
-    // catalogs arrive whole, and prefixed, while two slugs are quietly omitted.
-    expect(toolNames(body)).toEqual(
-      UPSTREAM_TOOLS.flatMap((tool) => [`${ALPHA}_${tool.name}`, `${BETA}_${tool.name}`]).sort(),
-    );
-  });
-
-  it("§7 · the scoped list against the same failing app → -32000 — where the aggregate's silent omission surfaces", async () => {
-    const fanOut = await buildFanOut();
-    expect(omittedBy((await fanOut.list()).body)).toContain(FAILING);
-    const scoped = await fanOut.list(FAILING);
-    expect(scoped.body.error?.code).toBe(-32000);
-    expect(scoped.body.error?.data, "nothing upstream-derived rides the refusal").toBeUndefined();
-  });
-
-  it("§7 · the fan-out honors AGGREGATED_LIST_DEADLINE_MS, not CALL_TIMEOUT_MS — a hang cannot hold the listing past it", async () => {
-    const fanOut = await buildFanOut();
-    const started = Date.now();
-    const { body } = await fanOut.list();
-    const elapsed = Date.now() - started;
-    expect(omittedBy(body)).toContain(HANGING);
-    // Both bounds, because either alone is met by a wrong implementation: an aggregate that
-    // gave up instantly would beat the ceiling, and one that waited out the call budget
-    // would still finish eventually. The two knobs are what this case exists for (§11).
-    expect(elapsed, "the hung upstream cost at least its own deadline").toBeGreaterThanOrEqual(
-      SHRUNK_LIST_DEADLINE_MS,
-    );
-    expect(elapsed, "and never the call budget").toBeLessThan(SHRUNK_CALL_TIMEOUT_MS);
-  });
-
-  it("§7 · a tunneled app in the same fan-out answers from DO cache and is unaffected by either deadline", async () => {
-    const fanOut = await buildFanOut();
-    const { body } = await fanOut.list();
-    // A tunneled app that has never connected lists no tools (§7) — but from CACHE, so
-    // it is not "unavailable": an empty catalog is an ANSWER, and the two states are the
-    // difference between a Reconnect button and an app nobody has registered yet.
-    expect(omittedBy(body)).not.toContain(TUNNELED);
-    expect(toolNames(body).filter((name) => name.startsWith(`${TUNNELED}_`))).toEqual([]);
-  });
-
-  it("§15 · none of these paths writes an audit row — `tools/list` is out of the vocabulary", async () => {
-    const fanOut = await buildFanOut();
-    const before = await query(env.DB, fanOut.ns.owner.userId, { limit: 200 });
-    await fanOut.list();
-    await fanOut.list(FAILING);
-    await fanOut.list(ALPHA);
-    const after = await query(env.DB, fanOut.ns.owner.userId, { limit: 200 });
-    // Three listings, one of them a refusal: agent polling noise never reaches the ledger.
-    expect(after.total).toBe(before.total);
-  });
-});
 
 describe("§7 — credentials at call time", () => {
   it("§7 · a stale oauth bundle is refreshed BEFORE the forward: the token endpoint is dialed first, the resource second", async () => {
@@ -1611,20 +1481,6 @@ describe("§10 — subrequest budgets asserted explicitly (workerd enforces none
     expect((await readObservations(upstream.id)).length).toBe(1);
   });
 
-  it("§10 · an aggregated list over N proxied apps is N dials, and a second list dials again (no proxied catalog cache in v1)", async () => {
-    const fanOut = await buildFanOut();
-    // Counted on the two HEALTHY slugs: what a failing or hung upstream costs is the
-    // failure table's business, and this case is about the fan, not the failures.
-    const before = await fanOut.healthyDials();
-    await fanOut.list();
-    const afterFirst = await fanOut.healthyDials();
-    expect(afterFirst - before, "one dial per proxied app in the fan").toBe(2);
-    await fanOut.list();
-    expect(
-      (await fanOut.healthyDials()) - afterFirst,
-      "and again next time — proxied catalogs are never cached in v1 (§7)",
-    ).toBe(2);
-  });
 
   it("§10 · an upstream redirect is not followed — `redirect: \"manual\"` keeps a bearer from walking off to another origin", async () => {
     const foreignId = uniqueSlug("foreign");
@@ -1759,44 +1615,7 @@ function resourceUrisOf(body: JsonRpcResponse): string[] {
 }
 
 describe("§20.2 — prompts and resources on the proxied backend", () => {
-  it("§20.2 · a proxied app's prompts are fetched live and contribute to the aggregated list", async () => {
-    const upstream: ServingScenario = { ...healthy(uniqueSlug("prompts")), prompts: UPSTREAM_PROMPTS };
-    const world = await buildFamilyWorld({ scenarios: { [SLUG]: upstream } });
 
-    const first = await world.send(null, "prompts/list");
-    expect(first.body.error, JSON.stringify(first.body.error)).toBeUndefined();
-    expect(promptNamesOf(first.body)).toEqual(
-      UPSTREAM_PROMPTS.map((prompt) => `${SLUG}_${prompt.name}`).sort(),
-    );
-
-    // LIVE, in the sense §20.5 pins for the proxied kind: nothing is cached, so a second
-    // listing costs a second dial. The tunneled half — a catalog read that never leaves
-    // the DO — is tunnel/**'s.
-    const dials = async () =>
-      (await readObservations(upstream.id)).filter((a) => a.rpcMethod === "prompts/list").length;
-    expect(await dials(), "one dial per listing").toBe(1);
-    await world.send(null, "prompts/list");
-    expect(await dials(), "and again next time — proxied catalogs are never cached").toBe(2);
-  });
-
-  it("§20.2 · a proxied upstream that fails a prompts/list contributes zero prompts and the aggregate still succeeds", async () => {
-    const healthySlug = "alive";
-    const world = await buildFamilyWorld({
-      scenarios: {
-        [healthySlug]: { ...healthy(uniqueSlug("alive")), prompts: UPSTREAM_PROMPTS },
-        [SLUG]: { id: uniqueSlug("dead"), mode: { kind: "status", status: 503 } },
-      },
-    });
-
-    const { body } = await world.send(null, "prompts/list");
-
-    expect(body.error, "the aggregate itself always succeeds (§7's rule, unchanged)").toBeUndefined();
-    expect(promptNamesOf(body), "one app's failure costs the consumer only its own").toEqual(
-      UPSTREAM_PROMPTS.map((prompt) => `${healthySlug}_${prompt.name}`).sort(),
-    );
-    const meta = (body.result as { _meta?: Record<string, unknown> } | undefined)?._meta;
-    expect(meta?.["pmcp/unavailable"], "and the omission is named, never silent").toEqual([SLUG]);
-  });
 
   it("§20.2 · a proxied app's resources are served on its scoped endpoint and filtered by its virtual roles", async () => {
     // A proxied app's declaration is its CONFIG (§8's virtual roles), and §20.3 gives

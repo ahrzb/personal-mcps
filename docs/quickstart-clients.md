@@ -178,15 +178,14 @@ For a hand-rolled SDK session, pass `pmcp.NewHubTransport(...)` to
 The `roles` declaration maps role names to anchored patterns over tool names
 (`get_*` matches `get_weather`; a bare name matches itself; `*` matches all).
 Declaring none means only owner tokens or grants of the built-in `all` role can
-reach the app. Grant a role to an agent:
+reach the app. Grant a role to an agent through the admin operation:
 
 ```bash
-pmcp diff      # preview against the YAML access config
+pmcp call pmcp grant_set \
+  --args '{"agent":"claude","app":"weather","roles":["reader"]}'
 ```
 
-```bash
-pmcp apply
-```
+For managed infrastructure, declare the same grant with `pmcp_grant` in OpenTofu.
 
 ## 5. Who is calling?
 

@@ -174,11 +174,22 @@ def test_behavior_words_map_onto_row_columns_both_ways() -> None:
 
 
 async def test_register_frame_matches_the_fixture_shape(registry) -> None:
-    """§6 · the hub/register frame the library emits equals the fixture's request
+    """§6/§23 · the hub/register frame the library emits equals the fixture's request
     shape: the method name and the params keys clientVersion, protocolVersion,
-    roles — and no app or slug field, ever."""
+    roles, and the optional typescriptAliases — and no app or slug field, ever.
+
+    The optional members come from the FIXTURE, so the key-set comparison is against
+    what an author who declares both hints and roles sends: a hub-side rename of
+    either key leaves this library emitting the old spelling and the sorted
+    comparison below fails first."""
     hub = await start_fake_hub()
-    transport = pmcp_client.HubTransport(hub.origin, TOKEN, {})
+    declared = _TUNNEL_FRAMES["register"]["request"]["params"]
+    transport = pmcp_client.HubTransport(
+        hub.origin,
+        TOKEN,
+        declared["roles"],
+        typescript_aliases=declared["typescriptAliases"],
+    )
     registry.append((hub, transport))
     await transport.__aenter__()
     emitted = (await hub.next_frame(1)).message
@@ -189,6 +200,27 @@ async def test_register_frame_matches_the_fixture_shape(registry) -> None:
     for forbidden in _TUNNEL_FRAMES["register"]["forbiddenParamsKeys"]:
         assert forbidden not in emitted["params"]
         assert f'"{forbidden}"' not in json.dumps(emitted)
+
+
+async def test_register_typescript_aliases_value_is_the_fixtures_hint_map(registry) -> None:
+    """§23 · the typescriptAliases VALUE the library sends is the fixture's own hint
+    map — the service name and the canonical-keyed tool aliases both verbatim,
+    because the hub is the single syntax/allocation authority and this library
+    normalizes nothing. A renamed or dropped fixture key would leave the value
+    comparison vacuously true, so the member's existence is asserted first."""
+    declared = _TUNNEL_FRAMES["register"]["request"]["params"]
+    assert declared["typescriptAliases"]
+    hub = await start_fake_hub()
+    transport = pmcp_client.HubTransport(
+        hub.origin,
+        TOKEN,
+        declared["roles"],
+        typescript_aliases=declared["typescriptAliases"],
+    )
+    registry.append((hub, transport))
+    await transport.__aenter__()
+    emitted = (await hub.next_frame(1)).message["params"]
+    assert emitted["typescriptAliases"] == declared["typescriptAliases"]
 
 
 async def test_register_roles_value_is_the_fixtures_declaration_verbatim(registry) -> None:

@@ -14,7 +14,7 @@ Ours, in D1:
 CREATE TABLE app (
   id TEXT PRIMARY KEY,
   owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
-  slug TEXT NOT NULL,                  -- [a-z0-9-], referenced in YAML and /<user>/mcp/<slug>
+  slug TEXT NOT NULL,                  -- [a-z0-9-], used in /<user>/mcp/<slug>
   name TEXT NOT NULL,
   description TEXT DEFAULT '',
   kind TEXT NOT NULL DEFAULT 'tunnel' CHECK (kind IN ('tunnel', 'proxy')),
@@ -22,21 +22,20 @@ CREATE TABLE app (
                                        -- changes; recreate to convert)
   upstream_url TEXT,                   -- proxy kind only
   upstream_auth_mode TEXT CHECK (upstream_auth_mode IN ('headers', 'oauth')),
-                                       -- proxy kind only; the declared `auth` mode (§7, §9),
-                                       -- default 'headers'. Deliberately separate from
-                                       -- upstream_auth_json: the mode is configuration and
-                                       -- survives Disconnect; the envelope is credentials and
-                                       -- exists only while connected/configured.
+                                       -- proxy kind only; default 'headers'. Deliberately
+                                       -- separate from upstream_auth_json: the mode is
+                                       -- configuration and survives Disconnect; the
+                                       -- credential envelope exists only while connected.
   forward_identity INTEGER NOT NULL DEFAULT 0,
                                        -- proxy kind only; send X-Pmcp-* identity headers
                                        -- upstream (§7, "Caller identity forwarding")
   upstream_auth_json TEXT,             -- proxy kind only; AES-GCM envelope-encrypted (WebCrypto,
                                        -- key in a wrangler secret) so D1 exports/dumps don't leak
                                        -- upstream credentials. Inside: {kind: 'headers', headers}
-                                       -- (set imperatively, §8) or {kind: 'oauth', tokens,
+                                       -- (set through app_set_upstream_auth or a provider
+                                       -- write-only argument) or {kind: 'oauth', tokens,
                                        -- as_metadata, client} (populated by the connect flow, §7).
-                                       -- Never via YAML either way. Envelope kind always matches
-                                       -- upstream_auth_mode.
+                                       -- Envelope kind always matches upstream_auth_mode.
   roles_json TEXT NOT NULL DEFAULT '{}',  -- {"reader": ["get_news","search_.*"], ...}
                                           -- tunnel: written at registration; proxy: via config
   owner_roles_json TEXT NOT NULL DEFAULT '{}',
@@ -49,6 +48,11 @@ CREATE TABLE app (
                                           -- declaration winning a name collision (§20.3); a
                                           -- reconnect rewrites roles_json alone, so owner roles
                                           -- survive it.
+  typescript_aliases_json TEXT NOT NULL DEFAULT '{}',
+                                          -- owner-set hub-local service/tool aliases (§23).
+                                          -- This configuration is separate from durable
+                                          -- resolved reservations; omission on update does
+                                          -- not clear it.
   redact_json TEXT NOT NULL DEFAULT '{}', -- config-declared sensitive ARGUMENT paths per
                                           -- tool-or-pattern (§7) — either kind
   redact_results_json TEXT NOT NULL DEFAULT '{}',
@@ -122,7 +126,44 @@ CREATE TABLE token (
                                          -- makes leaked-token use and rotation state observable
   revoked_at INTEGER
 );
+
+CREATE TABLE hub_execution_setting (
+  owner_id TEXT PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,
+  default_timeout_ms INTEGER NOT NULL,
+  max_timeout_ms INTEGER NOT NULL,
+  CHECK (default_timeout_ms >= 1000),
+  CHECK (default_timeout_ms <= max_timeout_ms),
+  CHECK (max_timeout_ms <= 300000)
+);
+
+CREATE TABLE typescript_name_reservation (
+  owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  app_id TEXT NOT NULL,                    -- immutable app identity; intentionally no FK so
+                                           -- app deletion can tombstone rather than erase
+  family TEXT NOT NULL CHECK (family IN ('service', 'tool')),
+  canonical_name TEXT NOT NULL,
+  typescript_name TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('owner', 'sdk', 'generated')),
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  superseded_at INTEGER,
+  PRIMARY KEY (owner_id, app_id, family, canonical_name, typescript_name)
+);
+CREATE UNIQUE INDEX typescript_service_name_reserved
+  ON typescript_name_reservation(owner_id, typescript_name)
+  WHERE family = 'service';
+CREATE UNIQUE INDEX typescript_tool_name_reserved
+  ON typescript_name_reservation(app_id, typescript_name)
+  WHERE family = 'tool';
+
+-- The absence of hub_execution_setting means default/max 30000 ms. Reservation rows
+-- remain after app deletion: a deleted/recreated slug receives a different app id and
+-- cannot claim the old service name. Owner deletion cascades both tables.
 ```
+
+The migrations enforce reservation ownership/identity consistency around these raw
+tables: registry writes resolve the app before batching, never publish a mapping before
+its unique constraints commit, and tombstone deleted/disappeared/superseded names.
+
 
 (`ref_id` can't be a foreign key to two tables; `app_delete` / `agent_delete`
 delete matching token rows as a server-side side effect (§8), and verification
@@ -200,9 +241,13 @@ CREATE TABLE upstream_oauth_state (    -- §7 upstream-OAuth connect flow's one-
 CREATE INDEX upstream_oauth_state_expires ON upstream_oauth_state(expires_at);
 ```
 
-The DO keeps per-app volatile/cached state in its own SQLite: cached `tools/list`
-result, connection metadata. Identity/auth facts for the socket ride in
-`serializeAttachment` (≤16 KB) *(amended 2026-09-01, §21.4: a subscriber socket's
-attachment additionally carries its principal and its capped subscription set —
-`LISTEN_SUBSCRIPTIONS_MAX` × `SUBSCRIBE_URI_MAX_BYTES` keeps it far inside the 16 KB)*.
+`AppConnection` keeps per-app volatile/cached state in its own SQLite: cached family
+catalogs, connection metadata, alarm purpose, ring timing and subscriber attachments.
+`HubSandbox` is a separate exact-token-named Durable Object (§23). Its active execution
+generation, nonce, counters, immutable catalog/map, credential reference and deadline are
+ephemeral coordination state, not D1 job/workspace state. Durable owner timeout settings
+and TypeScript reservations live in D1 tables above.
+
+App socket identity/auth facts ride in `serializeAttachment` (≤16 KB); subscriber
+attachments additionally carry principal and capped subscriptions as §21 requires.
 

@@ -92,7 +92,10 @@ const UNAVAILABLE = "app unavailable";
  * the disclosure rule in `unavailable`, and the reason each is in it: "offline" (a tunnel
  * with no live socket: nothing was sent and the hub has no outbox), "catalog_unreachable"
  * (a cached-catalog read, which never reaches the app at all), "needs_reconnect" (a
- * stored credential the hub already knows is dead, so no dial is attempted).
+ * stored credential the hub already knows is dead, so no dial is attempted),
+ * "deadline_passed" (§23.10: the operation's own deadline had already elapsed, so it was
+ * never sent — a LATER operation in the same execution may still dispatch), and
+ * "execution_unavailable" (no Sandbox plane is installed, so no program ever started).
  *
  * A SET rather than the inverse list, and that asymmetry is the safety rule: an unknown
  * class discloses. Over-warning costs a consumer one avoidable retry decision;
@@ -103,6 +106,8 @@ const DISPATCHED_NOTHING: ReadonlySet<string> = new Set([
   "offline",
   "catalog_unreachable",
   "needs_reconnect",
+  "deadline_passed",
+  "execution_unavailable",
 ]);
 
 /**

@@ -354,40 +354,6 @@ const SOCKET_TURNS = 250;
 // ── the rows ──────────────────────────────────────────────────────────────────────────
 
 describe("§21.1 the stream a caller gets", () => {
-  it("§21.1 · a granted caller's stream receives a doorbell when its app's catalog changes · an ungranted caller's aggregated stream, driven by the same provocation, receives nothing — same status, same content-type, same keepalive cadence, session ids differing by construction (the twin that makes silence evidence)", async () => {
-    await withDeadlines(env, SHORT_DEADLINES, async () => {
-      const slug = uniqueSlug("notes");
-      const ns = await seedNamespace(env.DB, {
-        username: uniqueSlug("stream"),
-        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
-        agents: [
-          { slug: "granted", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "granted" }] },
-          { slug: "ungranted", tokens: [{ as: "ungranted" }] },
-        ],
-      });
-      seeded.push(ns);
-      const app = await connect(ns.tokens.app.token);
-
-      const granted = await listen(ns, ns.tokens.granted.token, null);
-      const ungranted = await listen(ns, ns.tokens.ungranted.token, null);
-
-      expect(granted.status).toBe(200);
-      expect(ungranted.status).toBe(200);
-      expect(granted.contentType).toContain("text/event-stream");
-      expect(ungranted.contentType).toContain("text/event-stream");
-      expect(granted.sessionId).not.toBe(ungranted.sessionId);
-
-      await app.notifyToolsListChanged([TOOL]);
-      expect(await waitFor(() => granted.count(BELL_TOOLS) > 0)).toBe(true);
-
-      await ticks(2);
-      // The silence is evidence because the same provocation, the same cadence and the
-      // same shape produced a doorbell on the stream beside it.
-      expect(ungranted.notifications).toEqual([]);
-      expect(ungranted.comments.length).toBeGreaterThan(0);
-      expect(granted.comments.length).toBeGreaterThan(0);
-    });
-  });
 
   it("§21.1 · a reopened stream starts fresh — a bell rung while no stream was open is not replayed (Last-Event-ID honored nowhere), and the fresh change after reopen arrives as a data frame carrying no id: or event: lines", async () => {
     await withDeadlines(env, SHORT_DEADLINES, async () => {
@@ -468,93 +434,52 @@ describe("§21.2 the re-authorization tick", () => {
     });
   });
 
-  it("§21.2 · an app archived mid-stream closes its scoped stream on the next tick · the same archive narrows an aggregated stream — that app's subscriber socket is gone on the next tick and its bells stop, while the stream and its other apps' bells continue (the twin)", async () => {
+  it("§21.2 · archiving an app closes its scoped stream on the next tick", async () => {
     await withDeadlines(env, SHORT_DEADLINES, async () => {
-      const doomedSlug = uniqueSlug("a-doomed");
-      const otherSlug = uniqueSlug("b-other");
-      const grants = {
-        [doomedSlug]: [{ role: "all", mode: "allow" as const }],
-        [otherSlug]: [{ role: "all", mode: "allow" as const }],
-      };
+      const slug = uniqueSlug("doomed");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        apps: [
-          { slug: doomedSlug, kind: "tunnel", tokens: [{ as: "doomedApp" }] },
-          { slug: otherSlug, kind: "tunnel", tokens: [{ as: "otherApp" }] },
-        ],
-        agents: [{ slug: "reader", grants, tokens: [{ as: "reader" }] }],
-      });
-      seeded.push(ns);
-      const doomedApp = await connect(ns.tokens.doomedApp.token);
-      const otherApp = await connect(ns.tokens.otherApp.token);
-
-      const scoped = await listen(ns, ns.tokens.reader.token, doomedSlug);
-      const aggregated = await listen(ns, ns.tokens.reader.token, null);
-
-      await new Registry(env.DB).archiveApp(ns.apps[doomedSlug].id);
-
-      expect(await waitUntil(() => scoped.closed, SHRUNK_KEEPALIVE_MS * 4)).toBe(true);
-      expect(aggregated.closed).toBe(false);
-      // The aggregated stream narrows instead: the archived app's socket is dropped.
-      expect(await untilSockets(ns.apps[doomedSlug].id, 0)).toBe(0);
-
-      // The archived app's bells stop…
-      await doomedApp.notifyToolsListChanged([TOOL]);
-      await ticks(2);
-      expect(aggregated.count(BELL_TOOLS)).toBe(0);
-      // …while the stream and its other apps carry on.
-      await otherApp.notifyToolsListChanged([TOOL]);
-      expect(await waitFor(() => aggregated.count(BELL_TOOLS) > 0)).toBe(true);
-      expect(aggregated.closed).toBe(false);
-    });
-  });
-
-  it("§21.2 · a grant revoked mid-stream: aggregated narrows (socket dropped, subscriptions dead, other apps' bells continue) · scoped, the caller's last grant on the app, closes the stream — a fresh open would now 404 (the twin)", async () => {
-    await withDeadlines(env, SHORT_DEADLINES, async () => {
-      const lostSlug = uniqueSlug("a-lost");
-      const keptSlug = uniqueSlug("b-kept");
-      const ns = await seedNamespace(env.DB, {
-        username: uniqueSlug("stream"),
-        apps: [
-          { slug: lostSlug, kind: "tunnel", tokens: [{ as: "lostApp" }] },
-          { slug: keptSlug, kind: "tunnel", tokens: [{ as: "keptApp" }] },
-        ],
+        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
         agents: [
           {
             slug: "reader",
-            grants: {
-              [lostSlug]: [{ role: "all", mode: "allow" }],
-              [keptSlug]: [{ role: "all", mode: "allow" }],
-            },
+            grants: { [slug]: [{ role: "all", mode: "allow" }] },
             tokens: [{ as: "reader" }],
           },
         ],
       });
       seeded.push(ns);
-      const lostApp = await connect(ns.tokens.lostApp.token);
-      const keptApp = await connect(ns.tokens.keptApp.token);
+      await connect(ns.tokens.app.token);
+      const scoped = await listen(ns, ns.tokens.reader.token, slug);
 
-      const aggregated = await listen(ns, ns.tokens.reader.token, null);
-      const scoped = await listen(ns, ns.tokens.reader.token, lostSlug);
-
-      // The caller's LAST grant on that app, taken away.
-      await seedGrants(env.DB, ns.agents.reader.id, ns.apps[lostSlug].id, []);
+      await new Registry(env.DB).archiveApp(ns.apps[slug].id);
 
       expect(await waitUntil(() => scoped.closed, SHRUNK_KEEPALIVE_MS * 4)).toBe(true);
-      expect(
-        await waitUntil(() => aggregated.closed, SHRUNK_KEEPALIVE_MS * 4),
-        "the aggregated stream narrows rather than closing",
-      ).toBe(false);
-      expect(await untilSockets(ns.apps[lostSlug].id, 0)).toBe(0);
+    });
+  });
 
-      await lostApp.notifyToolsListChanged([TOOL]);
-      await ticks(2);
-      expect(aggregated.count(BELL_TOOLS)).toBe(0);
-      await keptApp.notifyToolsListChanged([TOOL]);
-      expect(await waitFor(() => aggregated.count(BELL_TOOLS) > 0)).toBe(true);
+  it("§21.2 · revoking the caller's last grant closes its scoped stream and a fresh open is 404", async () => {
+    await withDeadlines(env, SHORT_DEADLINES, async () => {
+      const slug = uniqueSlug("lost");
+      const ns = await seedNamespace(env.DB, {
+        username: uniqueSlug("stream"),
+        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
+        agents: [
+          {
+            slug: "reader",
+            grants: { [slug]: [{ role: "all", mode: "allow" }] },
+            tokens: [{ as: "reader" }],
+          },
+        ],
+      });
+      seeded.push(ns);
+      await connect(ns.tokens.app.token);
+      const scoped = await listen(ns, ns.tokens.reader.token, slug);
 
-      // …and a fresh scoped open is now the 404 §7 gives any ungranted caller.
-      const reopened = await rpc(ns, ns.tokens.reader.token, lostSlug, {
+      await seedGrants(env.DB, ns.agents.reader.id, ns.apps[slug].id, []);
+
+      expect(await waitUntil(() => scoped.closed, SHRUNK_KEEPALIVE_MS * 4)).toBe(true);
+      const reopened = await rpc(ns, ns.tokens.reader.token, slug, {
         jsonrpc: "2.0",
         id: CONSUMER_ID,
         method: "subscriptions/listen",
@@ -563,122 +488,64 @@ describe("§21.2 the re-authorization tick", () => {
     });
   });
 
-  it("§21.2/§21.3 · a grant added mid-stream is subscribed on the next tick and the Worker rings exactly the family bells its shape serves that the app's stored set contains — a tools-only app rings the tools bell alone · a further tick with no change rings nothing (the twin)", async () => {
+
+  it("§21.2 · a subscriber-socket close the Worker did not initiate ends its scoped stream", async () => {
     await withDeadlines(env, SHORT_DEADLINES, async () => {
-      const heldSlug = uniqueSlug("a-held");
-      const addedSlug = uniqueSlug("b-added");
+      const slug = uniqueSlug("restart");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
-        apps: [
-          { slug: heldSlug, kind: "tunnel", tokens: [{ as: "heldApp" }] },
-          { slug: addedSlug, kind: "tunnel", tokens: [{ as: "addedApp" }] },
-        ],
-        agents: [
-          { slug: "reader", grants: { [heldSlug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] },
-        ],
-      });
-      seeded.push(ns);
-      await connect(ns.tokens.heldApp.token);
-      // Tools only: the added app declares no prompts, so no prompts bell may ring.
-      await connect(ns.tokens.addedApp.token, { tools: [TOOL] });
-
-      const aggregated = await listen(ns, ns.tokens.reader.token, null);
-      await ticks(1);
-      expect(aggregated.notifications).toEqual([]);
-
-      await seedGrants(env.DB, ns.agents.reader.id, ns.apps[addedSlug].id, [
-        { role: "all", mode: "allow" },
-      ]);
-
-      expect(await waitUntil(() => aggregated.count(BELL_TOOLS) > 0, SHRUNK_KEEPALIVE_MS * 4)).toBe(
-        true,
-      );
-      expect(await untilSockets(ns.apps[addedSlug].id, 1)).toBe(1);
-      expect(aggregated.count(BELL_TOOLS)).toBe(1);
-      expect(aggregated.count(BELL_PROMPTS)).toBe(0);
-
-      // The twin: further ticks with nothing changing ring nothing at all — and "rang
-      // nothing" is told from "was suppressed" only after the coalescing alarm has run
-      // (constraint 10), so BOTH DOs drain theirs before this concludes.
-      await ticks(3);
-      await runDurableObjectAlarm(connectionStub(ns.apps[heldSlug].id));
-      await runDurableObjectAlarm(connectionStub(ns.apps[addedSlug].id));
-      await ticks(1);
-      expect(aggregated.count(BELL_TOOLS)).toBe(1);
-      expect(aggregated.closed).toBe(false);
-    });
-  });
-
-  it("§21.2 · a subscriber-socket close the Worker did not initiate — closed DO-side through runInDurableObject — ends the WHOLE stream rather than leaving it deaf to one app (deploy and restart stay out-of-process, strategy §10)", async () => {
-    await withDeadlines(env, SHORT_DEADLINES, async () => {
-      const firstSlug = uniqueSlug("a-first");
-      const secondSlug = uniqueSlug("b-second");
-      const ns = await seedNamespace(env.DB, {
-        username: uniqueSlug("stream"),
-        apps: [
-          { slug: firstSlug, kind: "tunnel", tokens: [{ as: "firstApp" }] },
-          { slug: secondSlug, kind: "tunnel", tokens: [{ as: "secondApp" }] },
-        ],
+        apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
         agents: [
           {
             slug: "reader",
-            grants: {
-              [firstSlug]: [{ role: "all", mode: "allow" }],
-              [secondSlug]: [{ role: "all", mode: "allow" }],
-            },
+            grants: { [slug]: [{ role: "all", mode: "allow" }] },
             tokens: [{ as: "reader" }],
           },
         ],
       });
       seeded.push(ns);
-      await connect(ns.tokens.firstApp.token);
-      await connect(ns.tokens.secondApp.token);
+      await connect(ns.tokens.app.token);
+      const scoped = await listen(ns, ns.tokens.reader.token, slug);
+      expect(await untilSockets(ns.apps[slug].id, 1)).toBe(1);
 
-      const aggregated = await listen(ns, ns.tokens.reader.token, null);
-      expect(await untilSockets(ns.apps[firstSlug].id, 1)).toBe(1);
-
-      // Not the Worker's doing: the DO drops one of the stream's sockets under it.
-      await runInDurableObject(connectionStub(ns.apps[firstSlug].id), (_instance, state) => {
+      await runInDurableObject(connectionStub(ns.apps[slug].id), (_instance, state) => {
         for (const ws of state.getWebSockets()) {
           if (state.getTags(ws).some((tag) => tag.startsWith("sub:"))) ws.close(1011, "restart");
         }
       });
 
-      // Fail loud, not deaf: the WHOLE stream ends, and the client's reopen rebuilds it.
-      expect(await waitUntil(() => aggregated.closed, SHRUNK_KEEPALIVE_MS * 8)).toBe(true);
+      expect(await waitUntil(() => scoped.closed, SHRUNK_KEEPALIVE_MS * 8)).toBe(true);
     });
   });
 });
 
 describe("§21.2/§21.4 what each shape forwards", () => {
-  it("§21.2/§21.3 · an aggregated stream forwards tools and prompts bells and NEVER the resources bell the DO also rang at it · a scoped stream forwards all three plus updated (the twin)", async () => {
+  it("§21.2/§21.3 · a scoped stream forwards all three catalog bells plus resources/updated", async () => {
     await withDeadlines(env, SHORT_DEADLINES, async () => {
       const slug = uniqueSlug("notes");
       const ns = await seedNamespace(env.DB, {
         username: uniqueSlug("stream"),
         apps: [{ slug, kind: "tunnel", tokens: [{ as: "app" }] }],
-        agents: [{ slug: "reader", grants: { [slug]: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "reader" }] }],
+        agents: [
+          {
+            slug: "reader",
+            grants: { [slug]: [{ role: "all", mode: "allow" }] },
+            tokens: [{ as: "reader" }],
+          },
+        ],
       });
       seeded.push(ns);
       const app = await connect(ns.tokens.app.token, { prompts: [], resources: [] });
-
-      const aggregated = await listen(ns, ns.tokens.reader.token, null);
       const scoped = await listen(ns, ns.tokens.reader.token, slug);
-      // The precondition its siblings wait for, not a fixed number of ticks: both
-      // subscriber sockets must be held by the DO before a bell can reach either — under
-      // load `settle()`'s five ticks were not always enough (3 of 8 runs, 2026-09-03).
-      expect(await untilSockets(ns.apps[slug].id, 2)).toBe(2);
+      expect(await untilSockets(ns.apps[slug].id, 1)).toBe(1);
 
+      await app.notifyToolsListChanged([TOOL]);
+      expect(await waitFor(() => scoped.count(BELL_TOOLS) > 0)).toBe(true);
+      await app.notifyPromptsListChanged([PROMPT]);
+      expect(await waitFor(() => scoped.count(BELL_PROMPTS) > 0)).toBe(true);
       await app.notifyResourcesListChanged([RESOURCE]);
       expect(await waitFor(() => scoped.count(BELL_RESOURCES) > 0)).toBe(true);
-      // The DO rang BOTH sockets; the aggregated shape simply does not serve this family.
-      expect(aggregated.count(BELL_RESOURCES)).toBe(0);
 
-      await app.notifyPromptsListChanged([PROMPT]);
-      expect(await waitFor(() => aggregated.count(BELL_PROMPTS) > 0)).toBe(true);
-      expect(await waitFor(() => scoped.count(BELL_PROMPTS) > 0)).toBe(true);
-
-      // …and the per-URI frame, which only the scoped shape carries at all.
       const subscribed = await rpc(
         ns,
         ns.tokens.reader.token,
@@ -689,7 +556,6 @@ describe("§21.2/§21.4 what each shape forwards", () => {
       expect(subscribed.status).toBe(200);
       await app.notifyResourcesUpdated(URI);
       expect(await waitFor(() => scoped.count(RESOURCES_UPDATED) > 0)).toBe(true);
-      expect(aggregated.count(RESOURCES_UPDATED)).toBe(0);
     });
   });
 
@@ -776,111 +642,8 @@ describe("§21.2/§21.4 what each shape forwards", () => {
   });
 });
 
-describe("§21.2 the fan-out", () => {
-  it("§21.2 · LISTEN_FANOUT_MAX bounds the subscribed set in deterministic slug order — the same apps chosen across two concurrent streams over one namespace and across a close-and-reopen, the excess silent with no time qualifier", async () => {
-    await withDeadlines(env, SHORT_DEADLINES, async () => {
-      const slugs = Array.from({ length: LISTEN_FANOUT_MAX + 2 }, (_, index) =>
-        uniqueSlug(`s${String(index).padStart(2, "0")}`),
-      ).sort();
-      const grants = Object.fromEntries(
-        slugs.map((slug) => [slug, [{ role: "all", mode: "allow" as const }]]),
-      );
-      const ns = await seedNamespace(env.DB, {
-        username: uniqueSlug("stream"),
-        apps: slugs.map((slug, index) => ({
-          slug,
-          kind: "tunnel" as const,
-          tokens: [{ as: `app${index}` }],
-        })),
-        agents: [{ slug: "reader", grants, tokens: [{ as: "reader" }] }],
-      });
-      seeded.push(ns);
-      const apps: FakeApp[] = [];
-      for (let index = 0; index < slugs.length; index++) {
-        apps.push(await connect(ns.tokens[`app${index}`].token));
-      }
+describe("§21.2 scoped stream deadline isolation", () => {
 
-      const first = await listen(ns, ns.tokens.reader.token, null);
-      const second = await listen(ns, ns.tokens.reader.token, null);
-      await settle();
-
-      const chosen = async (): Promise<string[]> => {
-        const held: string[] = [];
-        for (const slug of slugs) {
-          if ((await subscriberSockets(ns.apps[slug].id)) > 0) held.push(slug);
-        }
-        return held;
-      };
-
-      // Deterministic slug order, and the SAME choice for both streams: two sockets each on
-      // the first LISTEN_FANOUT_MAX apps, none at all on the excess.
-      expect(await chosen()).toEqual(slugs.slice(0, LISTEN_FANOUT_MAX));
-      expect(await untilSockets(ns.apps[slugs[0]].id, 2)).toBe(2);
-
-      // The excess is silent with no time qualifier: it never rings, not "not yet".
-      const excess = apps[slugs.length - 1];
-      await excess.notifyToolsListChanged([TOOL]);
-      await ticks(3);
-      expect(first.notifications).toEqual([]);
-      expect(second.notifications).toEqual([]);
-
-      // …and the same set is chosen after a close and reopen.
-      await first.cancel();
-      await settle();
-      const reopened = await listen(ns, ns.tokens.reader.token, null);
-      await settle();
-      expect(await chosen()).toEqual(slugs.slice(0, LISTEN_FANOUT_MAX));
-      expect(reopened.closed).toBe(false);
-    });
-  });
-
-  it("§21.2 · a mixed grant set discriminates: the tunneled app rings, the proxied app and the pmcp builtin never ring and no upstream is dialed", async () => {
-    await withDeadlines(env, SHORT_DEADLINES, async () => {
-      const tunneled = uniqueSlug("a-tunnel");
-      const proxied = uniqueSlug("b-proxy");
-      const ns = await seedNamespace(env.DB, {
-        username: uniqueSlug("stream"),
-        apps: [
-          { slug: tunneled, kind: "tunnel", tokens: [{ as: "app" }] },
-          {
-            slug: proxied,
-            kind: "proxy",
-            upstreamUrl: "https://upstream.invalid/mcp",
-            roles: { reader: ["*"] },
-          },
-        ],
-        agents: [
-          {
-            slug: "reader",
-            grants: {
-              [tunneled]: [{ role: "all", mode: "allow" }],
-              [proxied]: [{ role: "reader", mode: "allow" }],
-            },
-            tokens: [{ as: "reader" }],
-          },
-        ],
-      });
-      seeded.push(ns);
-      const app = await connect(ns.tokens.app.token);
-
-      const aggregated = await listen(ns, ns.tokens.reader.token, null);
-      await ticks(2);
-      // No DO, no channel, nothing dialled: a proxied app is not subscribed at all, and
-      // the invocation that would have dialled an unroutable upstream never ran.
-      expect(await subscriberSockets(ns.apps[proxied].id)).toBe(0);
-      expect(aggregated.notifications).toEqual([]);
-      expect(aggregated.closed).toBe(false);
-
-      // The tunneled one in the same grant set still rings.
-      await app.notifyToolsListChanged([TOOL]);
-      expect(await waitFor(() => aggregated.count(BELL_TOOLS) > 0)).toBe(true);
-
-      // …and the builtin, which every owner-scoped caller can address, rings nothing ever.
-      const builtin = await listen(ns, ns.tokens.reader.token, "pmcp");
-      await ticks(3);
-      expect(builtin.notifications).toEqual([]);
-    });
-  });
 
   it("§15/§21.1 · with CALL_TIMEOUT_MS set short through the hub's own binding, a forwarded call against a hanging tunneled app fails at the shrunk deadline while the stream on the same hub is still delivering keepalives past it — the 30 s budget governs forwarded requests, never the held response", async () => {
     await withDeadlines(env, SHORT_DEADLINES_AND_CALL, async () => {

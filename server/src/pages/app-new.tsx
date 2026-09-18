@@ -20,8 +20,8 @@
 
 import type { FC } from "hono/jsx";
 import { html } from "hono/html";
-import { TokenReveal } from "./layout";
-import { paths, type AppNewErrors, type AppNewForm, type AppNewProps, type AppNewStep } from "./model";
+import { AliasRows, TokenReveal } from "./layout";
+import { ALIAS_SERVICE_FIELD, paths, type AppNewErrors, type AppNewForm, type AppNewProps, type AppNewStep } from "./model";
 
 /** Not owned by `paths` (display-only asset routes) — same pattern as layout.tsx. */
 const STYLESHEET = "/styles.css";
@@ -149,6 +149,38 @@ const FormCard: FC<{ username: string; csrfToken: string; form: AppNewForm; erro
               </div>
             </label>
           </div>
+        </div>
+
+        {/* §23.6's optional hub-local TypeScript naming: the names generated programs call
+            this app's tools under. The upstream keeps its canonical names — an alias never
+            renames it — and a blank control keeps whatever name the hub establishes, so an
+            untouched section is not a statement about anything. */}
+        <div class="field">
+          <label for="app-typescript-service">TypeScript service name</label>
+          <input
+            id="app-typescript-service"
+            class="input--mono"
+            type="text"
+            name={ALIAS_SERVICE_FIELD}
+            value={form.aliases.service}
+          />
+          <div class="field-hint">
+            Optional. Names this app in generated programs, e.g. mcp.<span class="mono">linear</span>.…; blank
+            derives one from the slug.
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="label">Tool aliases</span>
+          <AliasRows rows={form.aliases.rows} />
+          <div class="field-hint">
+            Optional. Canonical upstream tool names keep working unchanged; an alias only changes what
+            generated programs call. Blank keeps the name already established.
+          </div>
+          {/* The op names `typescript_aliases` — the whole section — for a syntax refusal and
+              for a collision alike, so the sentence lands here rather than under one control
+              (no single input is the wrong one; the SET is). */}
+          {errors.aliases ? <div class="field-error">{errors.aliases}</div> : null}
         </div>
       </div>
 

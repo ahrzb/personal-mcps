@@ -86,12 +86,15 @@ import {
   agentNewProps,
   agentNewForm,
   agentDetailProps,
+  aliasDraftOf,
   composeOwnerRoles,
   composeRedaction,
   composeRoles,
+  composeTypescriptAliases,
   grantChoicesOf,
   drawnPaths,
   drawnRows,
+  ALIAS_SERVICE_FIELD,
 } from "./pages/model";
 import { ICON_192, ICON_512 } from "./pages/icon";
 import type {
@@ -101,6 +104,7 @@ import type {
   PageContext,
   AppNewErrors,
   PasswordField,
+  SettingsExecutionForm,
   SettingsProps,
 } from "./pages/model";
 // The one stylesheet, as bytes a worker can serve (see the *.css declaration in
@@ -280,7 +284,7 @@ export function pageRoutes(): PageRouter {
   app.use(paths.settings, settingsGate);
   app.use(`${paths.settings}/*`, settingsGate);
 
-  // §13's six panes, one URL each. The landing pane is Password and has no alias — the
+  // §13's seven panes, one URL each. The landing pane is Password and has no alias — the
   // `/settings/password` a reader might guess is answered by this app's own 404, because
   // no route claims it. Each handler differs from the next in one word, so the pane is a
   // parameter of the loader rather than of a page (pages/model's `settingsProps`).
@@ -476,6 +480,35 @@ export function pageRoutes(): PageRouter {
   app.post(`${paths.settingsTokens}/:op`, dispatch(paths.settingsTokens));
   app.post(`${paths.settingsClients}/:op`, dispatch(paths.settingsClients));
 
+  // §23.3's Execution pane Save. A route of its own rather than the generic dispatch for
+  // the same reason the app page's Saves have one: the two controls are integer
+  // milliseconds, and a refused pair must redraw the pane at 400 with the op's own
+  // sentence under the field it named — a redirect can carry one flash and no field.
+  app.post(
+    paths.settingsExecutionUpdate,
+    mutation(async (c, session, form) => {
+      const fields = formFields(form);
+      const ctx = await context(c.req.raw, session);
+      const answered = await attempt(() =>
+        ops.hub_settings_update.handler(session.user.userId, {
+          default_timeout_ms: executionField(fields.default_timeout_ms),
+          max_timeout_ms: executionField(fields.max_timeout_ms),
+        }),
+      );
+      if ("reason" in answered) {
+        const props = await settingsProps(ctx, c.req.raw, "execution", {
+          // The owner's own text, not the pair that was refused: the reason they are
+          // being shown must not cost them what they typed.
+          defaults: fields.default_timeout_ms ?? "",
+          maximum: fields.max_timeout_ms ?? "",
+          errors: executionErrors(answered.violations ?? [{ field: "", reason: answered.reason }]),
+        });
+        return render(SettingsPage(props), 400);
+      }
+      return c.redirect(noticeUrl(paths.settingsExecution, "hub_settings_update", answered), 303);
+    }),
+  );
+
   /* ---------------------------------- /audit ---------------------------------- */
 
   app.get(paths.audit, async (c) => {
@@ -585,19 +618,31 @@ export function pageRoutes(): PageRouter {
       const ctx = await context(c.req.raw, session);
       const draft = appNewForm(formQuery(form));
       const name = draft.name.trim() === "" ? draft.slug : draft.name;
-      const created = await attempt(() =>
-        ops.app_create.handler(session.user.userId, {
-          slug: draft.slug,
-          kind: draft.kind,
-          // A blank Name is not SENT, so the op defaults it to the slug (§8/§13) and the
-          // form has no Name error to draw.
-          ...(draft.name.trim() === "" ? {} : { name: draft.name }),
-          // Proxy-only fields are rejected on a tunneled create (§8), so they are sent
-          // only where they mean something. `authMode` is the control's name and `auth`
-          // is the op's — the one place the two spellings meet.
-          ...(draft.kind === "proxy" ? { endpoint: draft.endpoint, auth: draft.authMode } : {}),
-        }),
-      );
+      // §23.6's optional naming, composed before the call so the editor's own one refusal
+      // (an alias with no canonical name beside it) redraws the form rather than reaching
+      // the op as a value it would have to guess at.
+      const aliases = composeTypescriptAliases(formFields(form));
+      const created =
+        "error" in aliases
+          ? { reason: aliases.error }
+          : await attempt(() =>
+              ops.app_create.handler(session.user.userId, {
+                slug: draft.slug,
+                kind: draft.kind,
+                // A blank Name is not SENT, so the op defaults it to the slug (§8/§13) and
+                // the form has no Name error to draw.
+                ...(draft.name.trim() === "" ? {} : { name: draft.name }),
+                // Proxy-only fields are rejected on a tunneled create (§8), so they are sent
+                // only where they mean something. `authMode` is the control's name and `auth`
+                // is the op's — the one place the two spellings meet.
+                ...(draft.kind === "proxy" ? { endpoint: draft.endpoint, auth: draft.authMode } : {}),
+                // An untouched alias section composes to `{}`, which says exactly what an
+                // absent key says to a create — so it is not sent at all.
+                ...("error" in aliases || Object.keys(aliases.aliases).length === 0
+                  ? {}
+                  : { typescript_aliases: aliases.aliases }),
+              }),
+            );
       if ("reason" in created) {
         return render(
           AppNewPage(appNewProps(ctx, { kind: "form", form: draft, errors: createErrors(created) })),
@@ -772,6 +817,39 @@ export function pageRoutes(): PageRouter {
       const back = paths.appPane(slug, "recording");
       if (!("reason" in saved)) return c.redirect(noticeUrl(back, RECORDING_SET, saved), 303);
       const props = await appDetailProps(ctx, slug, "recording", { kind: "recording", error: saved.reason });
+      if (props === null) return noSuchPage();
+      return render(AppDetailPage(props), 400);
+    }),
+  );
+
+  // §23.6's Save — ONE `app_update { slug, typescript_aliases }` composed from the
+  // Overview editor's rows. A route of its own for the three above it's reason: the form's
+  // fields are not the op's keys, and a refusal redraws the editor on the very rows that
+  // caused it. The op is the authority for the identifier grammar and for collisions; the
+  // composed object is sent WHOLE (an omitted key keeps whatever name is established), so
+  // clearing every field clears the owner's CONFIGURATION and never a committed name.
+  app.post(
+    `/apps/:slug/${ALIAS_SET}`,
+    mutation(async (c, session, form) => {
+      const slug = c.req.param("slug") ?? "";
+      const fields = formFields(form);
+      const composed = composeTypescriptAliases(fields);
+      const saved =
+        "error" in composed
+          ? { reason: composed.error }
+          : await attempt(() =>
+              ops.app_update.handler(session.user.userId, { slug, typescript_aliases: composed.aliases }),
+            );
+      if (!("reason" in saved)) {
+        return c.redirect(noticeUrl(paths.appPane(slug, "overview"), ALIAS_SET, saved), 303);
+      }
+      const ctx = await context(c.req.raw, session);
+      const props = await appDetailProps(ctx, slug, "overview", {
+        kind: "alias",
+        service: fields[ALIAS_SERVICE_FIELD] ?? "",
+        rows: aliasDraftOf(Object.entries(fields)),
+        error: saved.reason,
+      });
       if (props === null) return noSuchPage();
       return render(AppDetailPage(props), 400);
     }),
@@ -999,7 +1077,7 @@ export function pageRoutes(): PageRouter {
   // Save — the ONE page form whose fields are not the op's keys: `roles` is a list
   // `stringList` takes only as an array, so this route composes it from the per-row
   // controls and calls the handler itself, the way the Issue target does rather than the
-  // generic dispatch. A refusal (a proxied app's undeclared role §9, an uncompilable
+  // generic dispatch. A refusal (a proxied app's undeclared role §8, an uncompilable
   // pattern §1) redraws the pane on the very choices that caused it — never a redirect,
   // or they would be lost. `clear=1` is Remove from <agent>: the same op with nothing to
   // compose, which lands on the agent page because the pane it came from is now empty.
@@ -1409,11 +1487,12 @@ const TOKEN_ISSUE = "token_issue";
  *  keys the ops table with it and names it back in the landing notice. */
 const GRANT_SET = "grant_set";
 
-/** The two Save targets that are op-SHAPED without being ops: each composes one
- *  `app_update` out of fields that are not its keys (§4/§5), and the final-segment
+/** The three Save targets that are op-SHAPED without being ops: each composes one
+ *  `app_update` out of fields that are not its keys (§4/§5/§23.6), and the final-segment
  *  convention still describes them, which is why they are spelled once here. */
 const ROLE_SET = "role_set";
 const RECORDING_SET = "recording_set";
+const ALIAS_SET = "alias_set";
 
 /**
  * ONE composer for `grant_set`, called by BOTH routes that post it — the agent page's and
@@ -1467,9 +1546,9 @@ const AGENT_OP_PANE: Record<string, AgentPane> = {
  *  knows the app, and `token_issue`, whose answer is a 200 carrying the plaintext. */
 const AGENT_OWN_ROUTE: ReadonlySet<string> = new Set([GRANT_SET, TOKEN_ISSUE]);
 
-/** The same, for `/apps/<slug>`: the three Save targets and the Issue whose answer is a
+/** The same, for `/apps/<slug>`: the four Save targets and the Issue whose answer is a
  *  200 carrying the plaintext. */
-const APP_OWN_ROUTE: ReadonlySet<string> = new Set([ROLE_SET, RECORDING_SET, GRANT_SET, TOKEN_ISSUE]);
+const APP_OWN_ROUTE: ReadonlySet<string> = new Set([ROLE_SET, RECORDING_SET, GRANT_SET, ALIAS_SET, TOKEN_ISSUE]);
 
 /**
  * §13's two mapped refusal codes, as the control each is drawn beside. A code that is not
@@ -1803,7 +1882,14 @@ function createErrors(refused: { reason: string; violations?: Violation[] }): Ap
   // A refusal that carries no list at all is still one sentence about this form.
   const violations = refused.violations ?? [{ field: "", reason: refused.reason }];
   for (const violation of violations) {
-    const key = violation.field === "slug" || violation.field === "endpoint" ? violation.field : "form";
+    const key =
+      violation.field === "slug" || violation.field === "endpoint"
+        ? violation.field
+        : // §23.6's refusals are about the whole alias section — the op names
+          // `typescript_aliases`, and the form draws one block of controls for it.
+          violation.field === "typescript_aliases"
+          ? "aliases"
+          : "form";
     const sentence = shownSentence(violation);
     errors[key] = errors[key] === undefined ? sentence : `${errors[key]} ${sentence}`;
   }
@@ -1821,6 +1907,39 @@ function shownSentence({ field, reason }: Violation): string {
   const said = reason.startsWith(prefix) ? reason.slice(prefix.length) : reason;
   const ended = said.endsWith(".") ? said : `${said}.`;
   return ended.charAt(0).toUpperCase() + ended.slice(1);
+}
+
+/**
+ * One Execution-pane control as the op's integer: a clean whole number, or the owner's own
+ * text so the op's own `count` check refuses it under the field it names (a second
+ * validator here would be a second set of words for the same mistake). An absent field
+ * stays absent, so the op says "is required" rather than reading "" as zero.
+ */
+function executionField(value: string | undefined): number | string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return /^-?\d+$/.test(trimmed) ? Number(trimmed) : value;
+}
+
+/**
+ * §23.3's pair refusals as the Execution pane draws them — `createErrors`' split, with
+ * this form's own control keys: each violation under the control it names, and anything
+ * else (a refusal that named no field at all) as the whole-form message. Two violations on
+ * one control join with a space, because the control has one place to say things.
+ */
+function executionErrors(violations: readonly Violation[]): SettingsExecutionForm["errors"] {
+  const errors: SettingsExecutionForm["errors"] = {};
+  for (const violation of violations) {
+    const key =
+      violation.field === "default_timeout_ms"
+        ? "defaults"
+        : violation.field === "max_timeout_ms"
+          ? "maximum"
+          : "form";
+    const sentence = shownSentence(violation);
+    errors[key] = errors[key] === undefined ? sentence : `${errors[key]} ${sentence}`;
+  }
+  return errors;
 }
 
 /** token_issue's plaintext, read out of the op's own result and never anywhere else. */

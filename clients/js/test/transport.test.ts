@@ -197,6 +197,26 @@ describe("handshake · §6 \"Transport\", \"Framing\", \"Handshake\"", () => {
     expect(Object.keys(params).sort()).toEqual(["clientVersion", "protocolVersion", "roles"]);
   });
 
+  it("§23 · the alias hints handed to the constructor ride hub/register verbatim under the one optional fourth key — twin of the three-key frame above, so a transported hint can never be dropped, renamed, or silently completed", async () => {
+    useSeams();
+    const aliases = { service: "news", tools: { search: "searchNews" } };
+    const hub = await startFakeHub();
+    const transport = new HubTransport({ url: hub.origin, token: TOKEN, roles: ROLES, typescriptAliases: aliases });
+    opened.push({ hub, transport });
+    void transport.start().catch(() => {});
+    const params = (await hub.nextFrame(1)).message.params as Record<string, unknown>;
+    expect(Object.keys(params).sort()).toEqual([
+      "clientVersion",
+      "protocolVersion",
+      "roles",
+      "typescriptAliases",
+    ]);
+    // The VALUE, not only the key: the hub is the syntax/allocation authority, so the
+    // library owes it the author's map byte for byte — no normalization, no renaming of
+    // canonical names, nothing filled in.
+    expect(params.typescriptAliases).toEqual(aliases);
+  });
+
   it("§6/§18 d13 · the derived address carries the token NOWHERE: no `?token=` query string and no Sec-WebSocket-Protocol fallback — the hub never accepts a query-string token, and Dial.path is recorded verbatim precisely to witness that the client never sends one", async () => {
     const { hub } = await connected();
     const dial = await hub.nextDial(1);

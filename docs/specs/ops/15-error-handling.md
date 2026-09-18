@@ -1,22 +1,20 @@
 ## 15. Error handling and operational behavior
 
-- Every forwarded request, both kinds: 30 s hard timeout → JSON-RPC error to the caller.
-  Tunneled: the DO's pending map is rejected on socket close. Proxied: the upstream
-  fetch is aborted at the same deadline. *(Amended 2026-09-01: §21's listen stream is
-  the one deliberately held-open response — the timeout governs forwarded requests,
-  never it.)*
-- Hub deploys terminate all WebSockets: apps reconnect (backoff), consumers retry.
-  Treat every `tools/call` as at-most-once.
+- Direct scoped forwarded requests retain the 30 s hard timeout and at-most-once
+  behavior. §23 hub execution has a separately admitted synchronous wall clock:
+  owner default/max initially 30 s, optional per-call duration, compiled ceiling 300 s,
+  and a mandatory remote process timeout. A request abort triggers process termination
+  and possible container replacement; an operation that may have launched is never
+  replayed. §21 listen streams remain the held-open exception.
 - Duplicate app connection: newest wins, oldest gets `hub/replaced` + close 4000.
 - Unavailable app (tunnel offline, proxied upstream unreachable, or proxied
   upstream HTTP/protocol failure — §7): `-32000` immediately, no queueing; archived
   apps return `-32002` instead (§6). (Queue-and-retry is a later feature if it
   ever hurts.)
-- Token revocation: consumer tokens are checked on every request, so revocation is
-  immediate there. *(Amended 2026-09-01, §21.2: for a held listen stream "every request"
-  becomes every keepalive tick — revocation lands within one `LISTEN_KEEPALIVE_MS`.)* A revoked *app* token (or a deleted app) additionally severs
-  the live reverse connection — the Worker tells the DO to close the socket with code
-  `4001` (§8); a racing re-register fails because the app row / token is gone.
+- Consumer credential revocation is checked on every request; §21 streams reauthorize on
+  each keepalive and §23 executions before every inner operation and final publication.
+  Revocation therefore withholds future bridge work/result without requiring a reverse
+  Sandbox index. Revoked app tokens still sever their app socket with `4001`.
 - User deletion (`/internal/users`) performs the same teardown as `app_delete` for
   every tunneled app in the namespace — close `4001`, wipe DO cached state — before
   the row cascade. (DOs are addressed by `app.id`, so even a missed teardown can
@@ -25,13 +23,10 @@
   `/login`, `/device`, `/api/auth/*`, and `/internal/users` — brute-force protection
   for passwords, TOTP challenges, and device codes lives there. better-auth's built-in
   limiter is in-memory (per-isolate — a no-op on Workers) and is not relied on.
-- Log hygiene: `Authorization` headers and anything matching `pmcp_(agt|app)_…` are
-  redacted from logs, error responses, and exception traces; `writeOnly`/config-declared
-  sensitive fields are masked before any storage or display (§7). The rule is uniform
-  across apps — the `pmcp` builtin needs no special case, because its one secret
-  (`token_issue`'s key) is a `writeOnly`-marked output field masked like any other
-  (§8). Every persisted body (approval `args_json`, the audit body columns) is
-  post-redaction and pruned by the same daily cron as audit.
+- Log hygiene: every hub credential prefix is scrubbed; authorization headers,
+  submitted program source, schemas/declarations, bridge bodies, outputs, stdout/stderr,
+  nonces, and Sandbox identifiers never enter product logs, errors, or audit. Existing
+  `writeOnly` and configured redaction applies uniformly to inner app/pmcp calls.
 - Audit trail: the D1 `audit` table (§5) is the record of record — structured,
   per-namespace, queryable (`audit_query` / `pmcp audit`); Workers Logs lines are ops
   debugging only. Recorded: every
@@ -47,12 +42,10 @@
   and the scrubbing grammar in this same bullet only knows the hub's own
   `pmcp_(agt|app)_` shape — §20.4 pins the exact rule — and §19's connection lifecycle,
   `oauth.consented` /
-  `oauth.rebound` / `oauth.revoked` / `oauth.client_registered`.)* Not recorded:
-  `tools/list` (agent polling noise) — *(and, by the same rule, every §20 LIST method
-  plus `completion/complete`, which is a listing of argument suggestions; and,
-  2026-09-01: §21's streams, doorbells and `updated` relays — while
-  `resources/subscribe`/`unsubscribe` ARE recorded like reads, §21.6)* — and token
-  material never, in any column.
+  `oauth.rebound` / `oauth.revoked` / `oauth.client_registered`.)* Listing/search/local
+  snapshot operations, listen streams, doorbells, and updated relays are not recorded.
+  Hub outer tool/read audit is metadata-only; inner calls/reads retain exactly one
+  canonical existing row. Token material never appears in any column.
 - Audit bodies: a `tools/call` row carries the call's bodies when the app's
   `log_bodies` flag is on AND the call was actually dispatched. Refusal rows
   (`-32000`/`-32001`/`-32002`/`-32003`) never carry bodies — several refusals happen
@@ -61,7 +54,7 @@
   **on** (our libraries
   declare secrets in both schema directions, §7/§11), proxied **off** (no trustworthy
   schema; the owner opts in per app and covers it with `redact` /
-  `redact_results` paths, §9); the virtual `pmcp` builtin has no app row and is
+  `redact_results` paths, §7/§8); the virtual `pmcp` builtin has no app row and is
   fixed **on** (its schemas are the hub's own, §8 — which is how `token_issue`'s key
   is "masked wherever bodies are recorded" rather than special-cased). What is
   stored: `params.arguments` post-redaction, and
@@ -91,4 +84,9 @@
   window — a quietly abused token must be noticed within it. The coarse
   `last_used_at` on tokens (§5) carries the rotation/staleness question past the
   window.
+
+- Hub structured failures (§23) always name a bounded cause and say whether it is
+  transient and whether an operation may have run. Only proven pre-launch container
+  unavailability is retried once. Logs record refusal/replacement decisions, never
+  execution progress.
 

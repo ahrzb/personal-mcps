@@ -147,11 +147,12 @@ async def _connected(
     upgrades: list[int] | None = None,
     registrations: list[RegisterOutcome] | None = None,
     roles: dict[str, list[str]] | None = ROLES,
+    typescript_aliases: pmcp_client.TypescriptAliases | None = None,
 ) -> tuple[FakeHub, HubTransport]:
     """One fresh hub plus one constructed (not yet entered) transport, torn down
     by the shared ``registry`` fixture."""
     hub = await start_fake_hub(upgrades=upgrades, registrations=registrations)
-    transport = HubTransport(hub.origin, TOKEN, roles)
+    transport = HubTransport(hub.origin, TOKEN, roles, typescript_aliases=typescript_aliases)
     registry.append((hub, transport))
     return hub, transport
 
@@ -192,6 +193,26 @@ async def test_dial_carries_the_app_token_and_no_slug(registry) -> None:
     register = await hub.next_frame(1)
     params = register.message["params"]
     assert sorted(params.keys()) == ["clientVersion", "protocolVersion", "roles"]
+
+
+async def test_typescript_aliases_hints_ride_registration_verbatim(registry) -> None:
+    """§23 · the alias hints handed to the transport ride hub/register verbatim
+    under the one optional fourth key — twin of the three-key frame above, so a
+    transported hint can never be dropped, renamed, or silently completed. The
+    VALUE is compared too: the hub is the syntax and allocation authority, so the
+    library owes it the author's map as written — no candidate generated here, no
+    canonical name repaired."""
+    aliases = {"service": "news", "tools": {"get-news": "getNews"}}
+    hub, transport = await _connected(registry, typescript_aliases=aliases)
+    await transport.__aenter__()
+    params = (await hub.next_frame(1)).message["params"]
+    assert sorted(params.keys()) == [
+        "clientVersion",
+        "protocolVersion",
+        "roles",
+        "typescriptAliases",
+    ]
+    assert params["typescriptAliases"] == aliases
 
 
 async def test_dial_never_carries_the_token_in_the_address(registry) -> None:
@@ -654,6 +675,7 @@ async def _serving_author(
     tg: Any,
     app: _AuthorApp,
     roles: dict[str, Any] | None = None,
+    typescript_aliases: pmcp_client.TypescriptAliases | None = None,
 ) -> FakeHub:
     """One author's app running against one fresh hub, registered — the shape
     every §20 row starts from. serve() owns the transport, so only the hub goes on
@@ -662,7 +684,13 @@ async def _serving_author(
     registry.append((hub, None))
     tg.start_soon(
         _watch,
-        pmcp_client.serve(app, url=hub.origin, token=TOKEN, roles=ROLES if roles is None else roles),
+        pmcp_client.serve(
+            app,
+            url=hub.origin,
+            token=TOKEN,
+            roles=ROLES if roles is None else roles,
+            typescript_aliases=typescript_aliases,
+        ),
         _Awaited(),
     )
     await hub.next_frame(1)
@@ -709,6 +737,29 @@ async def test_serve_passes_a_per_family_object_through_unchanged(registry, reco
         assert declared == _MIXED_ROLES
         assert declared["curator"] == _MIXED_ROLES["curator"]
         assert isinstance(declared["reader"], list)
+        tg.cancel_scope.cancel()
+
+
+async def test_serve_passes_typescript_alias_hints_through_unchanged(registry, recorded_sleep) -> None:
+    """§11/§23 · serve({typescript_aliases}) copies the hint map into the
+    typescriptAliases member of hub/register unchanged.
+
+    Unchanged means UNNORMALIZED: the canonical tool key stays the author's
+    spelling and no TypeScript candidate is generated in its place — allocation is
+    the hub's (§23). And, like roles, the value is never validated locally: the hub
+    is the single syntax and collision authority, so even a hint the hub would
+    refuse (a reserved root name here) is sent as written rather than pre-refused.
+    A library that pre-refused would be a second policy, and the day the two
+    disagreed the author would get a local error for a hint the hub accepts."""
+    aliases = {"service": "news", "tools": {"get-news": "getNews"}}
+    async with anyio.create_task_group() as tg:
+        hub = await _serving_author(registry, tg, _AuthorApp("tools/list"), typescript_aliases=aliases)
+        assert hub.frames[0].message["params"]["typescriptAliases"] == aliases
+        reserved = {"service": "hub"}
+        reserved_hub = await _serving_author(
+            registry, tg, _AuthorApp("tools/list"), typescript_aliases=reserved
+        )
+        assert reserved_hub.frames[0].message["params"]["typescriptAliases"] == reserved
         tg.cancel_scope.cancel()
 
 

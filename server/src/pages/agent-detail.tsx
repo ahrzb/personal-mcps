@@ -23,7 +23,7 @@
 // entry; model.ts's `AgentDetailsView` is the home of that decision.
 
 import type { FC } from "hono/jsx";
-import { ConfirmShell, Layout, PaneRail, TokenReveal, paneGroups, LevelHeader } from "./layout";
+import { ConfirmShell, Copyable, Layout, PaneRail, TokenReveal, paneGroups, LevelHeader } from "./layout";
 import type { PaneEntry } from "./layout";
 import { alertClass, formatLastSeen, formatStamp, formatUntil } from "./format";
 import { DIMMED, paths } from "./model";
@@ -337,18 +337,36 @@ const Details: FC<{ view: AgentDetailsView; agent: string }> = ({ view, agent })
             )}
           </section>
         )}
-        {view.hub === null ? null : (
-          <section class="card card--pad">
-            <div class="eyebrow">What only the hub knows</div>
-            <div class="kv">
-              <Kv k="Called as">
-                <span class="mono">{view.hub.aggregated}</span> on the aggregated endpoint
+        <section class="card card--pad">
+          <div class="eyebrow">What only the hub knows</div>
+          <div class="kv">
+            <Kv k="Scoped MCP identity">
+              <div>
+                <span class="mono">{view.hub.scoped.service}</span>
+                {" / "}
+                <span class="mono">{view.hub.scoped.member}</span>
+              </div>
+              <Copyable value={view.hub.scoped.endpoint} />
+            </Kv>
+            {view.hub.typescript === null ? null : (
+              <Kv k="TypeScript identity">
+                <div>
+                  {view.hub.typescript.path === null ? (
+                    "unavailable"
+                  ) : (
+                    <span class="mono">{view.hub.typescript.path}</span>
+                  )}
+                  {view.hub.typescript.source === null ? null : ` · ${view.hub.typescript.source}`}
+                </div>
+                {view.hub.typescript.diagnostic === null ? null : (
+                  <div class="field-error">{view.hub.typescript.diagnostic}</div>
+                )}
               </Kv>
-              <Kv k="Reachable by">{view.hub.reachableBy}</Kv>
-              <Kv k="Redaction">{view.hub.redaction}</Kv>
-            </div>
-          </section>
-        )}
+            )}
+            <Kv k="Reachable by">{view.hub.reachableBy}</Kv>
+            {view.hub.redaction === null ? null : <Kv k="Redaction">{view.hub.redaction}</Kv>}
+          </div>
+        </section>
       </div>
     </div>
   );

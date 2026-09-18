@@ -15,7 +15,14 @@
 
 import { html } from "hono/html";
 import type { Child, FC } from "hono/jsx";
-import { paths, type LevelHeader as LevelHeaderModel, type NavSection } from "./model";
+import {
+  ALIAS_ALIAS_PREFIX,
+  ALIAS_CANONICAL_PREFIX,
+  paths,
+  type AliasRow,
+  type LevelHeader as LevelHeaderModel,
+  type NavSection,
+} from "./model";
 
 export type LayoutProps = {
   /** Browser tab title for this page. */
@@ -360,6 +367,56 @@ export const OtpBoxes: FC<{ invalid: boolean }> = ({ invalid }) => (
     </div>
     <script dangerouslySetInnerHTML={{ __html: OTP_SCRIPT }} />
   </>
+);
+
+/**
+ * §23.6's alias rows, drawn by BOTH the add-app form and the app page's Overview editor:
+ * one `<tr>` per row, `canonical.<i>` beside `alias.<i>`, paired by index exactly as
+ * `composeTypescriptAliases` reads them — one definition, so the two surfaces cannot spell
+ * the field names differently. A row's canonical name is an editable input, not a label:
+ * a spare row is how the owner names a member the hub has not seen, and retargeting a
+ * prefilled row is the same statement. A row the owner leaves wholly blank composes to
+ * nothing, and a blank alias keeps whatever name is already established for that member.
+ *
+ * Each input carries its own `aria-label`: the `<th>`s name the columns on a wide screen,
+ * but the table's narrow treatment hides the header row, and a stacked pair of bare inputs
+ * with only a placeholder would leave a screen reader with no name at all.
+ */
+export const AliasRows: FC<{ rows: readonly AliasRow[] }> = ({ rows }) => (
+  <table class="table alias-table">
+    <thead>
+      <tr>
+        <th>Canonical tool name</th>
+        <th>TypeScript alias</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows.map((row, index) => (
+        <tr>
+          <td>
+            <input
+              class="input--mono"
+              type="text"
+              name={`${ALIAS_CANONICAL_PREFIX}${index}`}
+              value={row.canonicalName}
+              placeholder="canonical tool name"
+              aria-label={`Canonical tool name, row ${index + 1}`}
+            />
+          </td>
+          <td>
+            <input
+              class="input--mono"
+              type="text"
+              name={`${ALIAS_ALIAS_PREFIX}${index}`}
+              value={row.alias}
+              placeholder="alias"
+              aria-label={`TypeScript alias, row ${index + 1}`}
+            />
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
 );
 
 export const Layout: FC<LayoutProps> = ({ title, active, username, pendingApprovals, children }) => (

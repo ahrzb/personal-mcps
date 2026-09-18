@@ -4,12 +4,13 @@
 // filter (-32001) → archived (-32002) → the approval gate (-32003, availability-first) →
 // availability (-32000) — and that the order is observable, because only the order
 // decides which code a request that fails several checks receives. The regressions that
-// give the table its shape: ungranted + archived answers -32001, never -32002 (an
-// ungranted agent must not learn an app is archived); an unknown aggregated prefix
-// and a name with no `_` at all both answer -32001, indistinguishable from
-// not-permitted; the aggregated name splits at the FIRST `_` (slugs contain no
-// underscore, §7); `server/discover` is answered by the hub itself, and every other method
-// is -32601. Plus the 2026-08-25 availability-first
+// give the table its shape: an ungranted TOOL on an archived app answers -32001, never
+// -32002 (an ungranted caller must not learn an app is archived), and the same denial
+// outranks availability; a name that is no hub tool answers -32001 on the hub shapes,
+// indistinguishable from not-permitted (§23.1 removed the aggregated `<slug>_<tool>`
+// namespace this table's rows were once spelled in, so app calls are scoped and the
+// underscore is never structure); `server/discover` is answered by the hub itself, and
+// every other method is -32601. Plus the 2026-08-25 availability-first
 // decision: an app the hub already knows cannot execute fails -32000 with no pending
 // row, no push, and no pass consumed. §7's 2026-08-26 amendment (`initialize` and the
 // `notifications/initialized` behind it) is pinned by two cases BESIDE the table — neither
@@ -162,14 +163,14 @@ export type OrderRow = {
   inCatalog: boolean;
   pass: "none" | "pending" | "approved" | "rejected" | "expired" | "used";
   /**
-   * Which endpoint shape OPENED the stored pass, when that differs from the shape this
-   * row calls on. Absent means "the same shape as this row" — the ordinary case. It
-   * exists for one claim §7 step 2 makes and no other column can hold: `approval.tool`
-   * stores the unprefixed name, so a pass opened as `notion_search` on the aggregated
-   * shape is the row a bare `search` on the scoped shape must find. Without it that row
-   * is column-identical to the plain pending-dedup row and asserts nothing extra.
+   * Whether the stored pass must have been opened by a REAL earlier call rather than by the
+   * seeding gate. It exists for one claim §7 step 2 makes and no other column can hold:
+   * `approval.tool` stores the unprefixed name, so the pending row a retry meets is the one
+   * an earlier call through the SAME endpoint shape opened — the approval binding is the
+   * bare (app, tool, args) triple. Without it that row is column-identical to the plain
+   * pending-dedup row and asserts nothing extra.
    */
-  openedVia?: "aggregated" | "scoped";
+  openedByCall?: boolean;
   stage: CheckStage;
   expect: OrderOutcome;
   effects: OrderEffects;
@@ -206,19 +207,20 @@ export const ORDER_ROWS: readonly OrderRow[] = [
 
   // ── §7 step 3: the fixed order, filter first ──────────────────────────────────────────
   // §7 step 3: "**filter first** (`-32001` "tool not permitted" — so an ungranted agent
-  // can't even learn an app is archived), then **archived** (`-32002`)". The row is
-  // spelled on the aggregated endpoint deliberately: the scoped answer for an app an
-  // agent holds no grants on is 404 (§7 step 2, auth-matrix.test.ts's row), so the
-  // aggregated shape is where an ungranted call has a JSON-RPC code to be wrong about.
+  // can't even learn an app is archived), then **archived** (`-32002`)". §23.1 removed the
+  // aggregated namespace, so "ungranted" is spelled where a call can still be made at all:
+  // the scoped shape, with an app the agent IS granted and a TOOL its role does not cover.
+  // (An ungranted APP is a 404 at the door on this shape — auth-matrix.test.ts's row — so
+  // the filter is the only half of this claim a scoped request can exercise.)
   {
     title: "§7 step 3 · ungranted + archived → -32001, never -32002 (filter runs before archived)",
-    endpoint: "aggregated",
+    endpoint: "scoped",
     method: "tools/call",
-    toolName: "news_get",
+    toolName: "index_stats",
     principal: "agent",
-    access: "ungranted",
+    access: "allow",
     archived: true,
-    backend: { kind: "tunnel", status: "offline" },
+    backend: { kind: "proxy", status: "connected" },
     inCatalog: false,
     pass: "none",
     stage: "filter",
@@ -226,17 +228,17 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
     twin: "§7 step 3 · granted-allow + available → dispatch (the anchor allow-twin of the whole table)",
   },
-  // The same sentence against the LAST check instead of the second: an ungranted agent
-  // learns nothing about whether the app is reachable either.
+  // The same sentence against the LAST check instead of the second: a caller whose role
+  // does not cover the tool learns nothing about whether the app is reachable either.
   {
     title: "§7 step 3 · ungranted + known-offline → -32001 (filter runs before availability)",
-    endpoint: "aggregated",
+    endpoint: "scoped",
     method: "tools/call",
-    toolName: "news_get",
+    toolName: "index_stats",
     principal: "agent",
-    access: "ungranted",
+    access: "allow",
     archived: false,
-    backend: { kind: "tunnel", status: "offline" },
+    backend: { kind: "proxy", status: "not_connected" },
     inCatalog: false,
     pass: "none",
     stage: "filter",
@@ -369,12 +371,13 @@ export const ORDER_ROWS: readonly OrderRow[] = [
   },
   // §7 step 3: "Passing all four, the call is forwarded". The anchor: every refusal above is
   // this row with one column flipped, which is what makes the ORDER observable rather than
-  // merely asserted.
+  // merely asserted. §23.1 removed the aggregated tool namespace, so the anchor — like every
+  // other app call — rides the scoped shape and the app's own bare name.
   {
     title: "§7 step 3 · granted-allow + available → dispatch (the anchor allow-twin of the whole table)",
-    endpoint: "aggregated",
+    endpoint: "scoped",
     method: "tools/call",
-    toolName: "notion_search",
+    toolName: "search",
     principal: "agent",
     access: "allow",
     archived: false,
@@ -601,14 +604,14 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
     twin: "§7 step 3 · granted-allow + available → dispatch (the anchor allow-twin of the whole table)",
   },
-  // §7: "the first `_` splits the name unambiguously". The tool's OWN name contains `_`, so
-  // a greedy or last-`_` split resolves an app that does not exist — this row is green
-  // only if the split is first-`_` and the remainder is forwarded intact.
+  // §23.1 removed the aggregated `<slug>_<tool>` namespace, and with it the split: a tool
+  // whose OWN name contains `_` is now addressed verbatim on the scoped shape, which is the
+  // surviving half of this claim — no caller, and no hub, takes an underscore for structure.
   {
-    title: "§7 · an aggregated name splits at the FIRST `_` — a tool whose own name contains `_` survives intact",
-    endpoint: "aggregated",
+    title: "§7/§23.1 · a tool whose own name contains `_` is addressed verbatim on the scoped shape — no underscore is structure",
+    endpoint: "scoped",
     method: "tools/call",
-    toolName: "notion_search_pages",
+    toolName: "search_pages",
     principal: "agent",
     access: "allow",
     archived: false,
@@ -618,17 +621,16 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     stage: "dispatch",
     expect: { code: null, dataKeys: [] },
     effects: { dispatched: true, pendingCreated: false, passConsumed: false, pushSent: false },
-    twin: "§7 · an aggregated name splits at the FIRST `_` — a tool whose own name contains `_` survives intact",
+    twin: "§7/§23.1 · a tool whose own name contains `_` is addressed verbatim on the scoped shape — no underscore is structure",
   },
-  // §7 step 2: "`approval.tool` stores the **unprefixed** tool name (aggregated calls split
-  // off the slug prefix before the gate), so retries through either endpoint shape match the
-  // same row." Stated as an effect: the pending row this scoped call meets was opened by the
-  // PREFIXED call — that is what `openedVia: "aggregated"` seeds, and without it this row is
-  // column-identical to the pending-dedup row above and asserts nothing it does not. A hub
-  // that stored `notion_search` in `approval.tool` opens a second row here and goes red on
-  // `pendingCreated`.
+  // §7 step 2: "`approval.tool` stores the **unprefixed** tool name, so retries match the
+  // same row." Stated as an effect: the pending row this call meets was opened by a REAL
+  // earlier call rather than seeded — that is what `openedVia: "scoped"` runs, and without
+  // it this row is column-identical to the pending-dedup row above and asserts nothing it
+  // does not. A hub that keyed the approval row on anything but the bare (app, tool, args)
+  // binding opens a second row here and goes red on `pendingCreated`.
   {
-    title: "§7 · the scoped endpoint takes the bare name and binds the same approval row as the prefixed call",
+    title: "§7 · an approval row opened by a real earlier call is found by the retry — no second row",
     endpoint: "scoped",
     method: "tools/call",
     toolName: "search",
@@ -638,7 +640,7 @@ export const ORDER_ROWS: readonly OrderRow[] = [
     backend: { kind: "proxy", status: "connected" },
     inCatalog: false,
     pass: "pending",
-    openedVia: "aggregated",
+    openedByCall: true,
     stage: "approval",
     expect: { code: -32003, dataKeys: ["approvalId", "approvalUrl", "expiresAt"] },
     effects: { dispatched: false, pendingCreated: false, passConsumed: false, pushSent: false },
@@ -965,13 +967,13 @@ async function buildFixture(row: OrderRow): Promise<Fixture> {
  * the pending row, decide() settles it, and an EXPIRED one is check() under a backdated
  * clock (limits.APPROVAL_WINDOW_MS ago), never a hand-written row.
  *
- * `openedVia` is the exception, and the reason it exists: that row's pending must have
- * been opened by a real call on the OTHER endpoint shape, because what it pins is that
- * `approval.tool` stored the unprefixed name.
+ * `openedByCall` is the exception, and the reason it exists: that row's pending must have
+ * been opened by a real call through the endpoint shape it calls on, because what it pins is
+ * that `approval.tool` stored the bare name and the retry meets the same row.
  */
 async function seedPass(row: OrderRow, ns: SeededNamespace): Promise<string | undefined> {
   if (row.pass === "none") return undefined;
-  if (row.openedVia !== undefined) return openViaEndpoint(row, ns);
+  if (row.openedByCall === true) return openViaCall(row, ns);
 
   const backdated = row.pass === "expired";
   const gate = seedingGate(backdated ? () => Date.now() - 2 * APPROVAL_WINDOW_MS : Date.now);
@@ -987,12 +989,9 @@ async function seedPass(row: OrderRow, ns: SeededNamespace): Promise<string | un
   return opened.approvalId;
 }
 
-/** The pending row opened by a real call on the endpoint shape `openedVia` names. */
-async function openViaEndpoint(row: OrderRow, ns: SeededNamespace): Promise<string> {
-  const aggregated = row.openedVia === "aggregated";
-  const url = aggregated
-    ? `${ORIGIN}/${ns.owner.username}/mcp`
-    : `${ORIGIN}/${ns.owner.username}/mcp/${NOTION}`;
+/** The pending row opened by a real call on the row's own endpoint shape. */
+async function openViaCall(row: OrderRow, ns: SeededNamespace): Promise<string> {
+  const url = `${ORIGIN}/${ns.owner.username}/mcp/${NOTION}`;
   const response = await worker.fetch(
     new Request(url, {
       method: "POST",
@@ -1004,7 +1003,7 @@ async function openViaEndpoint(row: OrderRow, ns: SeededNamespace): Promise<stri
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
-        params: { name: aggregated ? `${NOTION}_${TOOL}` : TOOL, arguments: ARGS },
+        params: { name: TOOL, arguments: ARGS },
       }),
     }),
     env as unknown as Env,
@@ -1012,7 +1011,7 @@ async function openViaEndpoint(row: OrderRow, ns: SeededNamespace): Promise<stri
   const body = (await response.json()) as JsonRpcResponse;
   const approvalId = (body.error?.data as { approvalId?: string } | undefined)?.approvalId;
   if (approvalId === undefined) {
-    throw new Error(`${row.title}: opening the pass via ${row.openedVia} did not answer -32003: ${JSON.stringify(body)}`);
+    throw new Error(`${row.title}: opening the pass by call did not answer -32003: ${JSON.stringify(body)}`);
   }
   return approvalId;
 }
@@ -1113,10 +1112,16 @@ const TOOL = "search";
 const ARGS = { q: "hello" };
 
 /** What the fake upstream serves; no row of this table lists it, but a mute upstream would
- *  be a poor allow-twin for one that does. */
+ *  be a poor allow-twin for one that does. `UNGRANTED_TOOL` is served and NOT declared by
+ *  the fixture's role, which is what lets the filter-before-archived and
+ *  filter-before-availability rows stay expressible on the scoped shape: §23.1 removed the
+ *  aggregated namespace an ungranted APP could be spelled in. */
+const UNGRANTED_TOOL = "index_stats";
+
 const UPSTREAM_TOOLS = [
   { name: TOOL, inputSchema: { type: "object" } },
   { name: `${TOOL}_pages`, inputSchema: { type: "object" } },
+  { name: UNGRANTED_TOOL, inputSchema: { type: "object" } },
 ];
 
 /** The obviously-fake headers sealed into the credential envelope — see buildFixture. */
@@ -1312,17 +1317,11 @@ describe("§7's dispatch table, amended 2026-08-26 — the MCP handshake", () =>
     const discovered = await rpc(aggregated, token, { jsonrpc: "2.0", id: 1, method: "server/discover", params: {} });
     const revision = (discovered.result as { supportedVersions: string[] }).supportedVersions[0];
 
-    // Two of the three ARE the same answer on both shapes; `capabilities` stopped being so
-    // on 2026-08-26. §20.2 gives the aggregated shape one static two-family constant and
-    // DERIVES the scoped one from what the hub stores for that app — and this
-    // namespace's `news` is a tunnel that has never connected, so it declares `tools`
-    // alone. The two answers are pinned here per shape rather than dropped, so this case
-    // keeps stating the whole handshake; §20.2's own cases below own the reasoning.
+    // Aggregate and scoped `hub` use §23.1's fixed two-family answer. The `news`
+    // endpoint remains a real tunneled app that has never connected, so its stored
+    // picture declares tools alone with the listChanged flag it can honor.
     for (const [url, capabilities] of [
-      [aggregated, AGGREGATED_CAPABILITIES],
-      // §21.5 flipped the aggregated flags to TRUE and left the scoped derivation alone;
-      // `news` has never connected, so it declares `tools` — with the listChanged a
-      // tunneled app can now honor.
+      [aggregated, HUB_CAPABILITIES],
       [`${aggregated}/${NEWS}`, { tools: { listChanged: true } }],
     ] as const) {
       const answer = await rpc(url, token, { jsonrpc: "2.0", id: 1, method: "initialize", params: CLIENT_HANDSHAKE });
@@ -1550,12 +1549,11 @@ const D13_SERVES: Partial<ServingScenario> = {
   completionResult: COMPLETION_RESULT,
 };
 
-/** The aggregated endpoint's ONE static answer (§20.2, flipped by §21.5): tools and
- *  prompts, both listChanged TRUE — the transport that honors it landed in the same deploy
- *  — and never resources, never completions. */
-const AGGREGATED_CAPABILITIES = {
-  tools: { listChanged: true },
-  prompts: { listChanged: true },
+/** §23.1's fixed aggregate and scoped-hub answer: tools then resources, both push
+ * flags false, with no prompts, completions, or resource subscription. */
+const HUB_CAPABILITIES = {
+  tools: { listChanged: false },
+  resources: { listChanged: false },
 };
 
 /** The reserved `_meta` key §7 has the hub mirror onto every forwarded request — which
@@ -1755,13 +1753,6 @@ function capabilitiesOf(answer: JsonRpcResponse): Record<string, unknown> | unde
   return (answer.result as { capabilities?: Record<string, unknown> } | undefined)?.capabilities;
 }
 
-/** The slugs an aggregated answer reported unavailable, sorted. */
-function unavailableIn(answer: JsonRpcResponse): string[] {
-  const meta = (answer.result as { _meta?: Record<string, unknown> } | undefined)?._meta;
-  const omitted = meta?.["pmcp/unavailable"];
-  return Array.isArray(omitted) ? [...(omitted as string[])].sort() : [];
-}
-
 /** The arrivals of one JSON-RPC method, in arrival order. */
 function matching(arrivals: UpstreamObservation[], method: string): UpstreamObservation[] {
   return arrivals.filter((arrival) => arrival.rpcMethod === method);
@@ -1778,43 +1769,6 @@ describe("§20.2 — prompts, on both endpoint shapes", () => {
     // The twin: owners see everything in their namespace, in every family.
     const owner = await rpc(world.url(NOTION), await world.ownerToken(), message("prompts/list"));
     expect(promptNames(owner)).toEqual([PROMPT, UNGRANTED_PROMPT].sort());
-  });
-
-  it("§20.2 · aggregated prompts/list prefixes every name <slug>_<prompt>", async () => {
-    const world = await seedD13({ also: {} });
-
-    const aggregated = await rpc(world.url(), world.agent, message("prompts/list"));
-    expect(aggregated.error, JSON.stringify(aggregated.error)).toBeUndefined();
-    expect(promptNames(aggregated)).toEqual([`${LINEAR}_${PROMPT}`, `${NOTION}_${PROMPT}`].sort());
-  });
-
-  it("§20.2 · aggregated prompts/get splits at the first underscore and reaches the right app", async () => {
-    // The two apps answer DIFFERENTLY, which is what makes "the right app" a fact
-    // rather than an inference: `notion_digest_daily` carries two underscores, so a
-    // last-`_` split would address an app that does not exist and a greedy one would
-    // address `linear` never at all.
-    const elsewhere = { ...PROMPT_RESULT, description: "linear's own answer" };
-    const world = await seedD13({ also: { serves: { promptResult: elsewhere } } });
-
-    const answer = await rpc(world.url(), world.agent, getPrompt(`${NOTION}_${PROMPT}`));
-    expect(answer.error, JSON.stringify(answer.error)).toBeUndefined();
-    expect(answer.result, "the addressed app's own answer, relayed").toEqual(PROMPT_RESULT);
-    expect(matching(await world.arrivals(NOTION), "prompts/get"), "reached notion").toHaveLength(1);
-    expect(matching(await world.arrivals(LINEAR), "prompts/get"), "and nobody else").toHaveLength(0);
-  });
-
-  it("§20.2 · an aggregated prompt name whose prefix matches no visible app is -32001 — indistinguishable from not-permitted", async () => {
-    const world = await seedD13();
-
-    const ghost = await rpc(world.url(), world.agent, getPrompt(`ghost_${PROMPT}`));
-    const ungranted = await rpc(world.url(), world.agent, getPrompt(`${NOTION}_${UNGRANTED_PROMPT}`));
-
-    expect(ghost.error?.code).toBe(-32001);
-    // Indistinguishable is a SAMENESS claim, so the whole error object is compared —
-    // message included. A namespace's apps are not enumerable through prompt names.
-    expect(ghost.error, "a missing app must answer exactly like a missing grant").toEqual(
-      ungranted.error,
-    );
   });
 
   it("§20.2 · prompts/get for a prompt the caller's grants do not match is -32001 · a matched prompt returns messages (the twin)", async () => {
@@ -1864,38 +1818,8 @@ describe("§20.2 — prompts, on both endpoint shapes", () => {
   });
 });
 
-describe("§20.2 — resources are scoped-only, and matched by URI", () => {
-  it("§20.2 · aggregated resources/list is -32601 and the aggregated endpoint declares no resources capability", async () => {
-    // The namespace's one app DECLARES resources, so the aggregated answer is a
-    // constant rather than a union that happened to come out empty (§20.2).
-    const world = await seedD13({ capabilities: ["tools", "prompts", "resources"] });
+describe("§20.2 — application resources are scoped and matched by URI", () => {
 
-    const listed = await rpc(world.url(), world.agent, message("resources/list"));
-    expect(listed.error?.code).toBe(-32601);
-
-    const handshake = await rpc(world.url(), world.agent, initializeMessage());
-    expect(capabilitiesOf(handshake)?.resources, "never declared on the aggregated shape")
-      .toBeUndefined();
-  });
-
-  it("§20.2 · aggregated resources/read and completion/complete are -32601", async () => {
-    const world = await seedD13();
-
-    // §20.2 refuses the FAMILY on this shape — `resources/*` and `completion/complete` —
-    // and `resources/templates/list` rides here because it is the member nothing else in
-    // this file ever sends to the aggregated URL. A dispatch table that enumerated the
-    // refusals method by method and forgot it would fan template listings across the
-    // namespace: every app's raw `uriTemplate` strings, unprefixed and unroutable, on
-    // the one shape §18 decision 26 keeps resources off entirely.
-    for (const request of [
-      readResource(URI),
-      message("resources/templates/list"),
-      message("completion/complete", promptRef(PROMPT)),
-    ]) {
-      const answer = await rpc(world.url(), world.agent, request);
-      expect(answer.error?.code, String(request.method)).toBe(-32601);
-    }
-  });
 
   it("§20.2 · scoped resources/list returns unprefixed, unrewritten URIs", async () => {
     const world = await seedD13();
@@ -2027,21 +1951,15 @@ describe("§20.2 — resources are scoped-only, and matched by URI", () => {
   });
 
   it("§20.2 · a tool result carrying a resource_link is relayed byte-for-byte — no URI is rewritten anywhere", async () => {
-    // §18 decision 26's residue, pinned: the aggregated endpoint prefixes NAMES, and a
-    // `resource_link`'s URI is not a name. Asserted on both shapes because the aggregated
-    // one is where a rewrite would be tempting and the scoped one is where it would be
-    // pointless — the same bytes either way.
+    // §18 decision 26's residue, pinned: a `resource_link`'s URI is not a name, and §23.1
+    // left exactly one shape that serves app tool calls — the scoped one — so the bytes a
+    // consumer receives are the app's own, untouched.
     const link = { type: "resource_link", uri: URI, name: "tech feed", mimeType: "text/plain" };
     const world = await seedD13({ serves: { result: { content: [link], resultType: "complete" } } });
 
-    for (const [url, name] of [
-      [world.url(NOTION), TOOL],
-      [world.url(), `${NOTION}_${TOOL}`],
-    ] as const) {
-      const answer = await rpc(url, world.agent, message("tools/call", { name, arguments: ARGS }));
-      expect(answer.error, `${url}: ${JSON.stringify(answer.error)}`).toBeUndefined();
-      expect((answer.result as { content?: unknown }).content, url).toEqual([link]);
-    }
+    const answer = await rpc(world.url(NOTION), world.agent, message("tools/call", { name: TOOL, arguments: ARGS }));
+    expect(answer.error, JSON.stringify(answer.error)).toBeUndefined();
+    expect((answer.result as { content?: unknown }).content).toEqual([link]);
   });
 });
 
@@ -2063,23 +1981,20 @@ describe("§20.1/§20.2 — what each endpoint shape declares, and what it refus
     }
   });
 
-  it("§21.5 · the aggregated endpoint declares tools and prompts with listChanged TRUE — still one static answer whatever the namespace holds, still never resources or completions (replaces :2002)", async () => {
-    // Two namespaces at the extremes of what a union would produce: one whose app
-    // declares every family, one whose role grants tools alone. The answer is the same
-    // object, which is what "static" means and what the fixture pins. §21.5 flipped the
-    // FLAGS and nothing else about it: `resources` and `completions` are still not served on
-    // this shape at all (§18 decision 26), so advertising either would promise a -32601.
+  it("§23.1 · the aggregate endpoint declares the fixed hub tools and resources with push flags false, independent of the namespace catalog", async () => {
+    // Two namespaces at opposite catalog extremes receive the same protocol-infrastructure
+    // answer. Application catalogs are no longer projected onto the aggregate surface.
     const rich = await seedD13({
       capabilities: ["tools", "prompts", "resources", "completions"],
       also: {},
     });
     expect(capabilitiesOf(await rpc(rich.url(), rich.agent, initializeMessage()))).toEqual(
-      AGGREGATED_CAPABILITIES,
+      HUB_CAPABILITIES,
     );
 
     const bare = await seedD13({ roles: TOOLS_ONLY_ROLES });
     expect(capabilitiesOf(await rpc(bare.url(), bare.agent, initializeMessage()))).toEqual(
-      AGGREGATED_CAPABILITIES,
+      HUB_CAPABILITIES,
     );
   });
 
@@ -2260,20 +2175,6 @@ describe("§20.2/§20.4 — identity, MRTR, the fan-out and the two relay rules"
     expect(retry.error, JSON.stringify(retry.error)).toBeUndefined();
     expect(matching(await world.arrivals(), "prompts/get"), "an ordinary request, forwarded again")
       .toHaveLength(2);
-  });
-
-  it("§20.2 · aggregated prompts/list survives one failing app and names it in _meta[\"pmcp/unavailable\"] · the scoped list against the same app fails -32000 (the twin)", async () => {
-    const world = await seedD13({ also: { serves: { mode: { kind: "status", status: 503 } } } });
-
-    const aggregated = await rpc(world.url(), world.agent, message("prompts/list"));
-    expect(aggregated.error, "the aggregate itself always succeeds (§7, unchanged)").toBeUndefined();
-    expect(promptNames(aggregated), "one app's failure costs the consumer only its own")
-      .toEqual([`${NOTION}_${PROMPT}`]);
-    expect(unavailableIn(aggregated)).toContain(LINEAR);
-
-    // The twin: the scoped shape is where the aggregate's silent omission surfaces.
-    const scoped = await rpc(world.url(LINEAR), world.agent, message("prompts/list"));
-    expect(scoped.error?.code).toBe(-32000);
   });
 
   it("§20.4 · an app's cacheScope \"public\" on resources/read is downgraded to \"private\" before relay", async () => {

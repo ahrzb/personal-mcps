@@ -1,7 +1,7 @@
 // smoke.ts — the live end-to-end walk against a DEPLOYED hub. One process, one throwaway
 // namespace, every layer the design has: §12's bootstrap route, §4's password sign-in,
 // §14's CLI device flow and the `pmcp` commands it authenticates, §8's whoami and admin
-// ops over the `pmcp` MCP surface, §7's handshake and dispatch,
+// ops over the `pmcp` surface, §23's aggregate hub surface, §7's scoped dispatch,
 // §6's reverse tunnel (served from this very process by the REAL client library,
 // clients/js/src/index.ts), §7's approval gate, §15's ledger — and then the teardown,
 // verified.
@@ -238,8 +238,13 @@ async function main(): Promise<number> {
         "server/discover result",
       );
       const listed = asRecord(await mcp(`${ORIGIN}/${USERNAME}/mcp`, agentToken, "tools/list"), "tools/list result");
+      const names = asArray(listed.tools).map((tool) => String(asRecord(tool, "catalog entry").name));
+      expect(
+        JSON.stringify(names) === JSON.stringify(["hub_execute", "hub_search_types"]),
+        `aggregate tools ${JSON.stringify(names)}`,
+      );
       const serverInfo = asRecord(init.serverInfo, "serverInfo");
-      return `initialize ${String(serverInfo.name)}, notifications/initialized 202, discover ${JSON.stringify(discovered.supportedVersions)}, tools/list ${asArray(listed.tools).length} tools`;
+      return `initialize ${String(serverInfo.name)}, notifications/initialized 202, discover ${JSON.stringify(discovered.supportedVersions)}, aggregate tools ${JSON.stringify(names)}`;
     });
 
     await step("pmcp app_create (tunnel)", async () => {
@@ -294,6 +299,37 @@ async function main(): Promise<number> {
       return `scoped catalog ${JSON.stringify(names)}`;
     });
 
+    await step("§23 · hub search_types and execute cross the deployed Sandbox", async () => {
+      const searched = asRecord(
+        await mcp(`${ORIGIN}/${USERNAME}/mcp`, agentToken, "tools/call", {
+          name: "hub_search_types",
+          arguments: { query: TOOL, surface: "program" },
+        }),
+        "hub_search_types result",
+      );
+      const search = asRecord(searched.structuredContent, "hub_search_types structuredContent");
+      const matches = asArray(search.matches).map((match) => asRecord(match, "search match"));
+      expect(
+        matches.some((match) => match.service === APP && match.subject === TOOL),
+        `hub_search_types did not expose ${APP}/${TOOL}`,
+      );
+
+      const executed = asRecord(
+        await mcp(`${ORIGIN}/${USERNAME}/mcp`, agentToken, "tools/call", {
+          name: "hub_execute",
+          arguments: { code: `export default await mcp.smokeApp.echo({ text: "hub" });` },
+        }),
+        "hub_execute result",
+      );
+      const execution = asRecord(executed.structuredContent, "hub_execute structuredContent");
+      expect(execution.kind === "completed", `hub_execute kind ${String(execution.kind)}`);
+      const value = asRecord(execution.value, "hub_execute value");
+      const structured = asRecord(value.structuredContent, "executed tool structuredContent");
+      expect(structured.echo === "hub", `hub_execute echo ${String(structured.echo)}`);
+      expect(structured.principal === `agent:${AGENT}`, `hub_execute principal ${String(structured.principal)}`);
+      return `${matches.length} search match(es); execution completed through mcp.smokeApp.echo`;
+    });
+
     await step("tools/call through the tunnel", async () => {
       const result = asRecord(await callTool(agentToken), "tools/call result");
       const structured = asRecord(result.structuredContent, "structuredContent");
@@ -302,13 +338,10 @@ async function main(): Promise<number> {
       return `echo "${String(structured.echo)}" from ${String(structured.principal)} roles ${JSON.stringify(structured.roles)}`;
     });
 
-    await step("§21 · subscriptions/listen holds a stream and a catalog change rings its doorbell", async () => {
-      // One atomic leg, and the only one that asks whether PUSH survives a real deployment.
-      // The suites own every rule the stream obeys; what only a live origin can answer is
-      // whether the platform delivers a HELD `text/event-stream` at all — that no
-      // intermediary buffers the doorbell into silence, that a subscriber WebSocket opens
-      // from a Worker invocation into the app DO, and that the frame arrives while the
-      // response is still open rather than at its close.
+    await step("§23 · aggregate subscriptions/listen holds a hub-only keepalive stream", async () => {
+      // Aggregate now represents the virtual hub, whose push flags are false. The live
+      // deployment proof is therefore the held SSE response and authenticated keepalive;
+      // application catalog changes belong only to scoped application streams.
       const opened = await fetch(`${ORIGIN}/${USERNAME}/mcp`, {
         method: "POST",
         headers: {
@@ -333,34 +366,10 @@ async function main(): Promise<number> {
         // A live stream says so with a byte, not a header (§21.1's open).
         const first = await stream.next(30_000);
         expect(first.startsWith(":"), `the opened stream's first block was ${JSON.stringify(first)}`);
-
-        // The provocation: the SAME app re-registers declaring the SAME tool under a
-        // changed description. The catalog therefore compares as changed (§21.3) while the
-        // tool NAME is untouched, so every later step still calls what it called before and
-        // the bell is attributable to the change rather than to the reconnect.
-        await tunnel?.close();
-        const rebuilt = serveOneTool(appToken, {
-          ...ECHO_TOOL,
-          description: `${ECHO_TOOL.description} Re-declared to ring §21.3's bell.`,
-        });
-        tunnel = rebuilt;
-        await deadline(rebuilt.registered, 20_000, "the re-registration was never accepted");
-
-        // The doorbell. Keepalives in front of it are noise; the DATA block is the claim.
-        const rung = await stream.next(60_000, (block) => block.startsWith("data:"));
-        const frame = asRecord(JSON.parse(rung.slice("data:".length).trim()), "doorbell frame");
-        expect(
-          frame.method === "notifications/tools/list_changed",
-          `doorbell method ${String(frame.method)}`,
-        );
-        // §21.3's bare notification: method and jsonrpc, and nothing a consumer could read
-        // a catalog out of.
-        expect(frame.params === undefined, `the doorbell carried params ${JSON.stringify(frame.params)}`);
-        expect(frame.id === undefined, "the doorbell carried an id — it is a notification");
-        return `stream ${sessionId} (mint, not the supplied ${CLIENT_SUPPLIED_SESSION}); keepalive then ${JSON.stringify(frame)} after the re-declare`;
+        return `stream ${sessionId} (mint, not the supplied ${CLIENT_SUPPLIED_SESSION}); authenticated keepalive received`;
       } finally {
-        // Closing the consumer's end is what ends the held response and, with it, the
-        // stream's subscriptions (§21.1) — the walk leaves no invocation holding a body.
+        // Closing the consumer's end ends the held response. Aggregate hub streams open no
+        // application subscriber sockets because the virtual hub advertises no push.
         await stream.close();
       }
     });
@@ -529,19 +538,20 @@ async function main(): Promise<number> {
       // The tunnel leg above registered `echo` over the real client library; the landing
       // pane IS the Catalog (2026-09-17) and reads the DO's cached catalog through the
       // door's own listing (§13, §20.6), so the tool's name on the page is the
-      // deployment's DO, D1 and page template agreeing about one fact. The aggregated
-      // name lives in the details, which the pane reaches with `?sel=tool:<name>`.
+      // deployment's DO, D1 and page template agreeing about one fact. Its details keep
+      // the canonical scoped identity separate from the generated TypeScript path.
       const detail = await fetch(`${ORIGIN}/apps/${APP}`, { headers: { Cookie: sessionCookie } });
       expect(detail.status === 200, `authenticated /apps/${APP} → ${detail.status}`);
       expect((await detail.text()).includes(TOOL), `/apps/${APP} lists no ${TOOL}`);
-      // The aggregated name lives in the details, which the Catalog reaches at its own URL.
+      // The two identities live together in the details the Catalog reaches at its own URL.
       const selected = await fetch(`${ORIGIN}/apps/${APP}/catalog?sel=tool:${TOOL}`, {
         headers: { Cookie: sessionCookie },
       });
       expect(selected.status === 200, `/apps/${APP}/catalog?sel= → ${selected.status}`);
+      const selectedText = await selected.text();
       expect(
-        (await selected.text()).includes(`${APP}_${TOOL}`),
-        `/apps/${APP}/catalog carries no aggregated name ${APP}_${TOOL}`,
+        selectedText.includes("Scoped MCP identity") && selectedText.includes("TypeScript identity"),
+        `/apps/${APP}/catalog does not separate scoped and TypeScript identities`,
       );
       // The Catalog holds prompts and resources now, so their old pane URLs are permanent
       // moves onto it — while /tools stays the 404 it has always been.
@@ -553,7 +563,7 @@ async function main(): Promise<number> {
       );
       const alias = await fetch(`${ORIGIN}/apps/${APP}/tools`, { headers: { Cookie: sessionCookie }, redirect: "manual" });
       expect(alias.status === 404, `/apps/${APP}/tools (no alias, §2) → ${alias.status}`);
-      return `200 listing ${TOOL}, ${APP}_${TOOL} in its details; /apps/${APP}/prompts → 301 /apps/${APP}/catalog; /apps/${APP}/tools → 404`;
+      return `200 listing ${TOOL}, scoped and TypeScript identities in its details; /apps/${APP}/prompts → 301 /apps/${APP}/catalog; /apps/${APP}/tools → 404`;
     });
 
     await step("audit_query sees the calls", async () => {
@@ -732,13 +742,104 @@ async function main(): Promise<number> {
         const audValues = Array.isArray(aud) ? aud : [aud];
         expect(audValues.includes(resource), `access token aud ${JSON.stringify(aud)}`);
 
-        // The aggregated endpoint, and the SAME token scoped to the tunneled app — the
+        // The aggregate hub endpoint, and the SAME token scoped to the tunneled app — the
         // audience is namespace-wide (§19.6 step 3), so both endpoint shapes accept it.
         const aggregate = asRecord(await mcp(`${ORIGIN}/${USERNAME}/mcp`, accessToken, "tools/list"), "tools/list result");
         const aggregateNames = asArray(aggregate.tools).map((tool) => String(asRecord(tool, "catalog entry").name));
-        expect(aggregateNames.includes(`${APP}_${TOOL}`), `aggregated tools/list ${JSON.stringify(aggregateNames)}`);
+        expect(
+          JSON.stringify(aggregateNames) === JSON.stringify(["hub_execute", "hub_search_types"]),
+          `aggregate tools/list ${JSON.stringify(aggregateNames)}`,
+        );
+
+        // §23's exact-token Sandbox key changes when OAuth rotates a bearer even though
+        // both JWTs resolve to the same binding and agent. Execute through each credential;
+        // the platform instance list is the deployment-side oracle that they occupied
+        // distinct HubSandbox identities.
+        const originalExecution = asRecord(
+          await mcp(`${ORIGIN}/${USERNAME}/mcp`, accessToken, "tools/call", {
+            name: "hub_execute",
+            arguments: { code: `export default "oauth-original";` },
+          }),
+          "original OAuth hub_execute result",
+        );
+        expect(
+          asRecord(originalExecution.structuredContent, "original OAuth execution").kind === "completed",
+          "the original OAuth bearer did not complete",
+        );
+
+        const rotatedVerifier = base64url(randomBytes(48));
+        const rotatedChallenge = base64url(createHash("sha256").update(rotatedVerifier).digest());
+        const rotatedAuthorizeUrl = `${ORIGIN}/api/auth/oauth2/authorize?${new URLSearchParams({
+          response_type: "code",
+          client_id: clientId,
+          redirect_uri: OAUTH_REDIRECT_URI,
+          code_challenge: rotatedChallenge,
+          code_challenge_method: "S256",
+          scope: "mcp",
+          resource,
+          state: base64url(randomBytes(16)),
+        }).toString()}`;
+        const rotatedAuthorize = await fetch(rotatedAuthorizeUrl, {
+          redirect: "manual",
+          headers: { Cookie: browserCookie },
+        });
+        let rotatedLocation = await redirectTarget(rotatedAuthorize);
+        if (rotatedLocation.includes("/oauth/consent")) {
+          const rotatedConsentUrl = new URL(rotatedLocation, ORIGIN).toString();
+          const rotatedConsentHtml = await (await fetch(rotatedConsentUrl, {
+            headers: { Cookie: browserCookie },
+          })).text();
+          const rotatedConsent = await fetch(`${ORIGIN}/oauth/consent`, {
+            method: "POST",
+            redirect: "manual",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              Cookie: browserCookie,
+              Origin: ORIGIN,
+            },
+            body: new URLSearchParams({
+              csrf: hiddenField(rotatedConsentHtml, "csrf"),
+              oauth_query: hiddenField(rotatedConsentHtml, "oauth_query"),
+              agent: OAUTH_AGENT,
+              decision: "accept",
+            }),
+          });
+          rotatedLocation = await redirectTarget(rotatedConsent);
+        }
+        expect(rotatedLocation.startsWith(OAUTH_REDIRECT_URI), `rotated authorize → ${rotatedLocation}`);
+        const rotatedCode = new URL(rotatedLocation).searchParams.get("code") ?? "";
+        expect(rotatedCode !== "", "rotated authorization carried no code");
+        const rotatedResponse = await fetch(`${ORIGIN}/api/auth/oauth2/token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "authorization_code",
+            code: rotatedCode,
+            redirect_uri: OAUTH_REDIRECT_URI,
+            client_id: clientId,
+            code_verifier: rotatedVerifier,
+            resource,
+          }),
+        });
+        if (!rotatedResponse.ok) {
+          throw new Error(`rotated token endpoint → ${rotatedResponse.status} ${(await rotatedResponse.text()).slice(0, 200)}`);
+        }
+        const rotatedAnswer = (await rotatedResponse.json()) as Record<string, unknown>;
+        const rotatedAccessToken = asString(rotatedAnswer.access_token, "rotated access_token");
+        expect(rotatedAccessToken !== accessToken, "second authorization returned the original bearer");
+        const rotatedExecution = asRecord(
+          await mcp(`${ORIGIN}/${USERNAME}/mcp`, rotatedAccessToken, "tools/call", {
+            name: "hub_execute",
+            arguments: { code: `export default "oauth-rotated";` },
+          }),
+          "rotated OAuth hub_execute result",
+        );
+        expect(
+          asRecord(rotatedExecution.structuredContent, "rotated OAuth execution").kind === "completed",
+          "the rotated OAuth bearer did not complete",
+        );
         const scoped = asRecord(
-          await mcp(`${ORIGIN}/${USERNAME}/mcp/${APP}`, accessToken, "tools/call", {
+          await mcp(`${ORIGIN}/${USERNAME}/mcp/${APP}`, rotatedAccessToken, "tools/call", {
             name: TOOL,
             arguments: CALL_ARGS,
           }),
@@ -768,7 +869,7 @@ async function main(): Promise<number> {
 
         const refused = await fetch(`${ORIGIN}/${USERNAME}/mcp`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${rotatedAccessToken}`, "Content-Type": "application/json" },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
         });
         expect(refused.status === 401, `post-revoke call → ${refused.status}`);
@@ -777,7 +878,7 @@ async function main(): Promise<number> {
           `post-revoke challenge: ${refused.headers.get("WWW-Authenticate") ?? ""}`,
         );
 
-        return `client ${clientId} → aud ${resource}; aggregate+scoped tools/call both as agent:${OAUTH_AGENT}; ${calls.length} audit row(s); revoked → 401 with challenge`;
+        return `client ${clientId} → aud ${resource}; original + rotated OAuth bearers executed through distinct exact-token Sandbox keys; scoped tools/call as agent:${OAUTH_AGENT}; ${calls.length} audit row(s); revoked → 401 with challenge`;
       },
     );
 
@@ -1144,9 +1245,9 @@ async function expectError(promise: Promise<unknown>): Promise<RpcError> {
 /**
  * SSE blocks off a body this walk does NOT consume whole — the one response here that is
  * still being written while it is read. Blocks are separated by a blank line; a `:` line is
- * §21.1's keepalive comment and a `data:` line is a frame. `next` discards the blocks before
- * the one its predicate accepts, because a doorbell is what the leg is waiting for and the
- * keepalives in front of it are exactly the noise the design promises.
+ * §21.1's keepalive comment and a `data:` line is a frame. `next` can discard preceding
+ * blocks until its predicate accepts one, which keeps the helper usable for either form
+ * without ever awaiting the entire response.
  */
 function sseBlocks(body: ReadableStream<Uint8Array>): {
   next(budgetMs: number, want?: (block: string) => boolean): Promise<string>;

@@ -18,20 +18,26 @@
   `mcp`. Adding a top-level route extends this set; the
   implementation must derive the reserved list from the route table (or enforce the
   equivalence with a test that walks the router), so the two can never drift.
-- **App** — a registered MCP app. Identified by `(owner, slug)` — slugs are
-  `[a-z0-9-]` (no underscore; §7 relies on this), unique per owner. Two kinds:
+- **App** — a registered MCP app. Identified by immutable `id` and current `(owner,
+  slug)` — slugs are `[a-z0-9-]`, with `hub` and `pmcp` reserved virtual slugs and
+  `_` still excluded for canonical compatibility. Two kinds:
   - *tunneled* (the "bot"): dials in over WebSocket, at most one live connection,
-    declares its roles at connect time. Lifecycle: provisioned → online ↔ offline, plus
-    reversible **archived** and terminal deletion (§6, "App lifecycle").
+    declares its roles and optional SDK TypeScript alias hints at connect time. Lifecycle:
+    provisioned → online ↔ offline, plus reversible **archived** and terminal deletion
+    (§6, "App lifecycle").
   - *proxied*: an upstream MCP endpoint URL the hub forwards to. No connection, no
-    online/offline; roles are defined in config ("virtual roles"), not by the upstream.
-    Lifecycle is just provisioned / archived / deleted.
+    online/offline; roles and optional owner TypeScript aliases are defined through the
+    admin/configuration surfaces, never by requiring the upstream to adopt a hub SDK.
+    Lifecycle is provisioned / archived / deleted.
+  The aggregate endpoint does not publish apps. §23 builds an immutable caller-visible
+  program catalog from scoped app identities and pins the immutable app id so deleting
+  and recreating a slug cannot redirect an admitted program.
 - **Role** — named subset of an app's tools *(amended 2026-08-26: **and** of its
   prompts and resources — §20 gives a role one pattern list per primitive family; a bare
-  pattern list, the shape below, still means tools and nothing else)*. Declared in code at
-  registration for
-  tunneled apps (`{"reader": ["get_news", "search_.*"]}`), in the YAML / admin tools
-  for proxied ones. Patterns are **anchored regexes** over tool names (a pattern made
+  pattern list, the shape below, still means tools and nothing else)*. Declared in code
+  at registration for tunneled apps (`{"reader": ["get_news", "search_.*"]}`), and
+  through the admin wire, UI, or provider for proxied ones. Patterns are **anchored
+  regexes** over tool names (a pattern made
   only of tool-name characters `[A-Za-z0-9._-]` is matched as a literal tool name — §7
   pins the rule; anything else compiles as a regex, and `*` is accepted as an alias for
   `.*`). Every app additionally
@@ -58,4 +64,10 @@
   - *agent token*: long-lived API key bound to an agent → limited by grants.
   - *app token*: long-lived API key bound to a **tunneled** app → only valid for
     opening the reverse WebSocket as that app. Proxied apps have no tokens.
+
+- **Hub program** — one synchronous TypeScript module checked before evaluation and run
+  in an exact-token Cloudflare Sandbox (§23). Its `mcp` global is an immutable explicit
+  map over the invoking credential's current authority. It is non-transactional:
+  completed operations may have effects if a later operation fails, and nothing resumes
+  or replays the module automatically.
 

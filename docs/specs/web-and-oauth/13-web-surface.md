@@ -18,24 +18,19 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   cross-device-flow BCP: the user-code channel is unauthenticated, so the page is the
   phishing defense); the approval POST carries a CSRF token; device-code lifetime is
   set to ~10 minutes (down from better-auth's 30-minute default).
-- `/settings` *(rewritten 2026-09-02)* — sign-in and access for the owner, as six panes
-  behind a left rail (the pane rules are pinned once, under **Panes behind a rail**
-  below) *(2026-09-16: the rail and its pane are the **framed workspace box** the agent
-  page uses — not a rail beside a card at a width of its own)*. Requires a
-  cookie-authenticated session with recent authentication —
-  bearer-sourced sessions are rejected on these routes (§4) — and the gate is a **prefix
-  rule**: every route under `/settings`, every pane and every POST, is behind it, the two
-  ops-backed panes included (stricter than `/oauth/connections` had; accepted so the page
-  has one gate rather than two).
+- `/settings` — sign-in and access for the owner, now seven panes behind the existing
+  framed-workspace rail. Every route/POST under the prefix requires a recent
+  cookie-authenticated owner session; bearer sessions are rejected.
 
   | Group | Pane | Route | Rail marker |
   |---|---|---|---|
   | Sign-in | Password | `/settings` (landing) | none |
-  | Sign-in | Two-factor | `/settings/two-factor` | status dot — lit iff TOTP is enabled |
+  | Sign-in | Two-factor | `/settings/two-factor` | status dot |
   | Sign-in | Passkeys | `/settings/passkeys` | count |
   | Access | Sessions | `/settings/sessions` | count |
   | Access | Tokens | `/settings/tokens` | count |
   | Access | Connected clients | `/settings/clients` | count |
+  | Runtime | Execution | `/settings/execution` | default/max seconds |
 
   The rail order is the sign-in order — password, second factor, passkey — then the
   holdings that let something *in*; Password lands because `/settings` should never open
@@ -167,6 +162,12 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     `/agents/<slug>` page lands it carries a **read-only** Connected clients row — the
     clients bound to that agent, each linking to this pane — and never a second Revoke:
     revoking lives with the other credentials.
+  - **Execution** *(added 2026-09-18, §23)* — two integer millisecond fields,
+    default and maximum, with `1,000 <= default <= max <= 300,000`, one Save action,
+    CSRF, and the existing `hub_settings_get`/`hub_settings_update` operation path.
+    Invalid pairs redraw at 400 with field-linked messages; success reads back the
+    committed pair. Copy states that settings are owner-wide, new executions snapshot
+    them at admission, and updating them never extends an active run.
 - `/audit` — read-only, cookie-session-gated view over the audit table (§5): a plain
   server-rendered table, newest first, with the same filters as `audit_query`
   (agent, app, event, tool, time range) and offset/limit paging backed by
@@ -244,6 +245,10 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   `::after`, no script, with a hover, a pointer and a trailing chevron; the row's own
   Connect / Archive / Unarchive / Delete sit above the stretched anchor, so they still
   act.)*
+  Add-app forms optionally accept hub-local TypeScript aliases. Proxied owners configure
+  them here because no upstream SDK is required; a reachable catalog is preflighted, but
+  canonical upstream names are never changed. Alias syntax/collision refusals redraw the
+  form without a partial write.
 - `/apps/<slug>` *(added 2026-09-02)* — the app detail page, behind the same rail as
   `/settings` *(2026-09-16: and in the same **framed workspace box** as `/settings` and
   `/agents/<slug>` — a rail beside a card no longer)*. §13 named no such page before this
@@ -359,8 +364,8 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     connect, so the hub advertises none and serves an empty list." + "Declare prompts with
     your MCP SDK and they appear here after the next reconnect — the client library
     passes the declaration through untouched."; proxied: "The `capabilities` configured
-    for this app omit prompts (§20.2) — add it with `app_update` or the YAML." (each with
-    its family's name substituted).~~ *(2026-09-17, decision 32: there is no per-family
+    for this app omit prompts (§20.2) — add it with `app_update`, the web UI, or
+    OpenTofu." (each with its family's name substituted).~~ *(2026-09-17, decision 32:
     rail entry left to dim — the three families are groups inside one Catalog listing, and
     an unadvertised family is said **in its group**, beside its heading, in the strings the
     Catalog pane pins below. What survives of this rule is the **rail marker**: Catalog
@@ -414,6 +419,14 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
        schema-unsound tool (§7, §18 decision 16) says so here: "schema-unsound —
        approval-gated calls refuse, bodies are not recorded".
 
+
+    The Catalog details show **Scoped MCP identity** (canonical service/tool and
+    `/<user>/mcp/<slug>`) and **TypeScript identity** as separate facts. The owner sees
+    the complete reservation map, source (`owner`/`sdk`/`generated`), tombstones, and
+    bounded collision diagnostics; callers/search results see only grant-visible
+    identities and non-leaking diagnostics. Alias edits post one `app_update`
+    `typescript_aliases` object and never rename the upstream.
+
     *(2026-09-17, decision 32: the row is no longer an expander and the four facts above
     are no longer its tail — the row is a **link** and the facts are the details pane's
     cards, below. The matcher rule, the approval rule and the redaction sources are
@@ -460,13 +473,12 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     endpoint only — <origin>/<user>/mcp/<slug>` with the hub's own origin and the owner's
     username substituted, so the endpoint is copyable, and `Matched` → `by URI, never by
     name`;
-    **What only the hub knows**: `Called as` → `<slug>_<name> on the aggregated endpoint`
-    (absent for a resource, which does not aggregate — §20 decision 26), `Reachable by` →
-    one line per agent, `<agent> · via <entries>`, or `no agent yet`, `Approval` → on a
-    tool `asked for <agents>` or `none required`, on a prompt the fixed `never asked for
-    prompts` (§18 decision 27), absent for a resource, and `Redaction` → `arguments <paths>
-    · results <paths>` (the config entries plus the `writeOnly` leaves) or `no redacted
-    fields`, absent for a resource (a URI is not a body, §20.4).
+    **What only the hub knows**: `Scoped MCP identity` → canonical service/tool and the
+    copyable scoped endpoint; `TypeScript identity` → the resolved §23 path, reservation
+    source, and any owner-visible collision diagnostic (absent for prompts/resources,
+    which programs do not call as aliased methods); `Reachable by` → one line per agent
+    and matching entries; `Approval` → tool agents asked/none required, prompt never
+    asked, resource absent; `Redaction` → argument/result paths or none.
     The foot note, verbatim: `The same block the audit row and the agent page show for this
     <family>. Editing reach happens on Agents, masking on Recording.` — both links.
 
@@ -490,10 +502,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     `arguments` (name, description, required), then the hub block with `<slug>_<prompt>`,
     reachability over the role's *prompt* patterns, the fixed line "Never
     approval-gated" (§18 decision 27), and the `redact` entries matching the name (§20.3).~~
-    *(2026-09-17, decision 32: the Prompts group of Catalog. Everything it pinned survives
-    there — the aggregated name, reachability over the role's prompt patterns, the fixed
-    approval line, now spelled `never asked for prompts`, and the `redact` entries matching
-    the name — and `GET /apps/<slug>/prompts` is a `301` to the landing.)*
+    *(2026-09-18, §23: the Prompts group keeps canonical scoped identity,
+    reachability, fixed `never asked for prompts`, and matching redaction entries. The
+    former aggregate prefixed name is removed rather than displayed as an alias.)*
   - ~~**Resources** — two tabs, **Resources** and **Templates**, each with its count; rows
     are `URI` (templates: the raw `uriTemplate`) / `Name` / `Type` (`mimeType`)~~
     *(2026-09-17, decision 32: the Resources group of Catalog — **one** group, not two tabs,
@@ -502,13 +513,11 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     block gives reachability over the role's *resource* patterns, matched against the URI
     or the raw template, and the redaction line is absent (URIs are not bodies; §20.4
     pins what the audit row keeps). The pane carries the two §20 rules a reader would
-    otherwise learn from a `-32601`, verbatim: "Resources are served on the scoped
-    endpoint only — `https://<hub>/<user>/mcp/<slug>`" with the hub's own origin and the
-    owner's username in place of the placeholders, so the endpoint is copyable
-    *(2026-09-03: the literal `<hub>` was a board artefact)* — ". The aggregated endpoint answers
-    `-32601`, because a URI cannot carry a slug prefix and stay the URI the app knows."
-    and "Grants match resources by URI, never by name — a role's resource patterns are
-    URI patterns, and templates are matched against their raw `uriTemplate`."
+    otherwise learn from a refusal: "Resources are served directly on the scoped
+    endpoint — `https://<hub>/<user>/mcp/<slug>`" with actual origin/owner substituted;
+    "Hub programs address the same raw URI under the selected TypeScript service; the URI
+    is never prefixed or rewritten."; and "Grants match resources by URI, never by name —
+    templates by raw `uriTemplate`."
     *(2026-09-17: both rules are now the selected resource's **Resource** card — `Served
     on` and `Matched`, the strings above — so the reader meets them on the resource itself
     rather than on a pane header.)*
@@ -516,9 +525,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   - **Roles** — ~~the declared roles in §20.3's canonical read shape, read-only. Tunneled:
     "Declared by the app at connect time." with the trust-boundary line "Roles are
     self-declared by the tunneled app — granting a role trusts the app's declaration."
-    (§2); proxied: "Roles are defined in config (virtual) for proxied apps." (edited
-    through `app_update` / the YAML, §8/§9). Empty: "No roles declared" + "Grants fall
-    back to the built-in `all` role — every tool, present and future."~~
+    (§2); proxied: "Roles are defined in config (virtual) for proxied apps." Empty:
+    "No roles declared" + "Grants fall back to the built-in `all` role — every tool,
+    present and future."~~
     *(2026-09-17, decision 32: **the pane is editable.** A tunneled app's owner may define
     roles of their own beside the app's declaration — §20.3's "two sources, one rule", stored
     in `owner_roles_json` (§5) and written by `app_update { owner_roles }` (§8) — and a
@@ -918,10 +927,11 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     direct" / "ask · …" / "not reachable"), the approval sentence ("Not asked — allow wins
     over any ask entry, so adding one here would not gate it while <roles> allows it." /
     "Asked — each call waits for you." / "Not asked." for a direct allow no role backs /
-    "—"), an Arguments table, and the "What only the
-    hub knows" card ("Called as <app>_<tool> on the aggregated endpoint", "Reachable by",
-    "Redaction") — the app page's card, computed by the door's own matcher and never a
-    second one. A prompt or a resource: the same without arguments. A pattern → a
+    "—"), an Arguments table, and the "What only the hub knows" card (canonical scoped
+    identity, resolved TypeScript identity where applicable, Reachable by, Redaction) —
+    the app page's card, computed by the door's own matcher and never a second one. A
+    prompt or resource omits the TypeScript call path. A pattern →
+
     `pattern` badge, "An entry that is not one item: anchored, * aliases .*.", Standing,
     and "Matches today · N" with the names.
     **Script is optional.** A small inline script (the audit expanded row's precedent) may
@@ -1077,9 +1087,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   row per role the app declares (`app_get`'s canonical roles, §20.3) with the built-in
   `all` last, the undeclared-role rule in both kinds — tunneled warns and Save is allowed
   ("<app> hasn't declared <role>. Tunneled apps declare roles when they connect — this
-  grant stays dormant until then.", §9: the file may be ahead of first connect), proxied
-  is an error and `grant_set` refuses the save ("<app> is proxied — its roles are fixed in
-  config, so an undeclared role is an error."), the refusal redrawing the page that
+  grant stays dormant until then.", §8), proxied is an error and `grant_set` refuses the
+  save ("<app> is proxied — its roles are owner-defined, so an undeclared role is an
+  error."), the refusal redrawing the page that
   submitted it — and the composed `roles` list, still not the op's keys verbatim. What it
   loses: its own URL, its "Saving replaces every grant <agent> holds on <app> — unchecked
   roles are removed." footer, which the pane's foot and Discard / Save now say; its

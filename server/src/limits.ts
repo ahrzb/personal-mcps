@@ -120,9 +120,231 @@ export const SUBSCRIBE_URI_MAX_BYTES = 2048;
  */
 export const LISTEN_FANOUT_MAX = 6;
 
-// ── the five deadlines as CONFIGURATION ───────────────────────────────────────────────
+// ── the hub execution plane (§23) ─────────────────────────────────────────────────────
 //
-// These five are the durations a test must be able to SHORTEN: each is a wait a row would
+// One UPPER_SNAKE constant per §23.11 cap — the names runtime callsites read — then the
+// grouped record the wire fixture and the tool-schema bounds consume. Durations are
+// milliseconds; byte caps are UTF-8 bytes.
+
+/** §23.2 — smallest accepted `timeout_ms`, in milliseconds (the inclusive lower bound). */
+export const HUB_MIN_TIMEOUT_MS = 1_000;
+
+/** §23.11 — outer wall clock when neither a settings row nor `timeout_ms` selects one, in milliseconds. */
+export const HUB_DEFAULT_TIMEOUT_MS = 30_000;
+
+/** §23.11 — the maximum a new settings row starts with, before the owner raises it, in milliseconds. */
+export const HUB_INITIAL_MAX_TIMEOUT_MS = 30_000;
+
+/** §23.11 — compiled ceiling for any owner setting or `timeout_ms`, in milliseconds. */
+export const HUB_HARD_MAX_TIMEOUT_MS = 300_000;
+
+/** §23.11 — budget for the bounded offline `deno check`, in milliseconds; expiry is `limit_exceeded(check_time)`. */
+export const HUB_CHECK_TIMEOUT_MS = 5_000;
+
+/** §23.11 — per-inner-operation cap when the remaining outer budget is larger, in milliseconds. */
+export const HUB_INNER_OPERATION_TIMEOUT_MS = 10_000;
+
+/** §23.10 — backoff before the one proven-pre-launch container retry, in milliseconds. */
+export const HUB_PRELAUNCH_RETRY_BACKOFF_MS = 250;
+
+/** §23.4/§23.11 — tail budget reserved for the mandatory final credential reauthorization. */
+export const HUB_FINAL_REAUTH_RESERVE_MS = 500;
+
+/** §23.11 — grace between termination escalation steps, in milliseconds. */
+export const HUB_ABORT_GRACE_MS = 2_000;
+
+/** §23.11 — maximum sanitized type-diagnostic lines returned to a caller. */
+export const HUB_TYPE_DIAGNOSTIC_MAX_LINES = 32;
+
+/** §23.11 — maximum sanitized type-diagnostic bytes returned to a caller. */
+export const HUB_TYPE_DIAGNOSTIC_MAX_BYTES = 8_192;
+
+/** §23.5 — per-FAMILY deadline while the hub's catalog collector reads one service's tools,
+ *  resources or resource templates: a slow family is omitted from the caller's snapshot with
+ *  a bounded diagnostic rather than delaying the whole request past any useful bound. */
+export const HUB_CATALOG_FAMILY_DEADLINE_MS = 3_000;
+
+/** §23.11 — largest submitted source, in UTF-8 bytes; a larger source is refused with -32602. */
+export const HUB_SOURCE_MAX_BYTES = 65_536;
+
+/** §23.11 — largest search query before trimming, in UTF-8 bytes (the wire `maxLength` counts UTF-16 code units). */
+export const HUB_QUERY_MAX_BYTES = 256;
+
+/** §23.11 — largest caller-visible catalog, in entries; overflow refuses `execute` before Sandbox start and truncates `search_types`. */
+export const HUB_CATALOG_MAX_ENTRIES = 256;
+
+/** §23.11 — largest raw schema/catalog payload retained for one snapshot, in bytes. */
+export const HUB_CATALOG_MAX_BYTES = 2_097_152;
+
+/** §23.11 — largest single canonical subject — service, tool, or raw URI identity — in UTF-8 bytes. */
+export const HUB_SUBJECT_MAX_BYTES = 8_192;
+
+/** §23.11 — largest indexed description, in UTF-8 bytes. */
+export const HUB_DESCRIPTION_MAX_BYTES = 4_096;
+
+/** §23.11 — largest single input/output schema, in UTF-8 bytes. */
+export const HUB_SCHEMA_MAX_BYTES = 65_536;
+
+/** §23.11 — deepest schema nesting the renderer walks; deeper schemas render `unknown` with a diagnostic. */
+export const HUB_SCHEMA_MAX_DEPTH = 64;
+
+/** §23.11 — largest node count a rendered schema may have. */
+export const HUB_SCHEMA_MAX_NODES = 10_000;
+
+/** §23.11 — largest generated declaration text, in bytes; overflow renders a diagnostic banner and an `unknown` root. */
+export const HUB_DECLARATION_MAX_BYTES = 1_048_576;
+
+/** §23.11 — largest admitted inner operations per execution; the next one is refused, never queued past the deadline. */
+export const HUB_INNER_OPERATIONS_MAX = 32;
+
+/** §23.11 — largest inner operations in flight at once; a fifth is refused immediately. */
+export const HUB_INNER_CONCURRENCY_MAX = 4;
+
+/** §23.11 — largest serialized bridge arguments, in bytes. */
+export const HUB_BRIDGE_ARGUMENTS_MAX_BYTES = 262_144;
+
+/** §23.11 — largest serialized bridge response, in bytes. */
+export const HUB_BRIDGE_RESPONSE_MAX_BYTES = 1_048_576;
+
+/** §23.11 — largest stdout returned, in bytes; excess sets `stdoutTruncated`. */
+export const HUB_STDOUT_MAX_BYTES = 65_536;
+
+/** §23.11 — largest stderr returned, in bytes; excess sets `stderrTruncated`. */
+export const HUB_STDERR_MAX_BYTES = 65_536;
+
+/** §23.11 — largest serialized default export accepted, in bytes. */
+export const HUB_RESULT_MAX_BYTES = 262_144;
+
+/** §23.11 — `search_types` `limit` when the caller omits it. */
+export const HUB_SEARCH_LIMIT_DEFAULT = 10;
+
+/** §23.11 — largest `search_types` `limit` accepted. */
+export const HUB_SEARCH_LIMIT_MAX = 50;
+
+/** §23.11 — largest serialized `search_types` response, in bytes; excess truncates to the canonical prefix. */
+export const HUB_SEARCH_RESPONSE_MAX_BYTES = 262_144;
+
+/** §23.11 — active executions one exact token may have; a concurrent second call is transient `limit_exceeded(active_execution)`. */
+export const HUB_ACTIVE_EXECUTIONS_PER_TOKEN = 1;
+
+/** §23.11 — running Sandbox containers this Worker may hold account-wide; exhaustion before launch is transient. */
+export const HUB_SANDBOX_CONTAINERS_MAX = 10;
+
+/**
+ * §23.11 — the grouped shape of the hub caps. Its field values are the UPPER_SNAKE
+ * constants directly above; HUB_CONTRACT_LIMITS assembles them for the wire fixture and
+ * the tool-schema bounds, which must not repeat a literal.
+ */
+export type HubContractLimits = {
+  /** Smallest accepted `timeout_ms`, in milliseconds — §23.2's inclusive lower bound. */
+  readonly minTimeoutMs: number;
+  /** Outer wall clock when neither a settings row nor `timeout_ms` selects one, in milliseconds. */
+  readonly defaultTimeoutMs: number;
+  /** The maximum a new settings row starts with, before the owner raises it, in milliseconds. */
+  readonly initialMaxTimeoutMs: number;
+  /** Compiled ceiling for any owner setting or `timeout_ms`, in milliseconds. */
+  readonly hardMaxTimeoutMs: number;
+  /** Budget for the bounded offline `deno check`, in milliseconds; expiry is
+   *  `limit_exceeded(check_time)`. */
+  readonly checkTimeoutMs: number;
+  /** Per-inner-operation cap when the remaining outer budget is larger, in milliseconds. */
+  readonly innerOperationTimeoutMs: number;
+  /** Largest submitted source, in UTF-8 bytes; a larger source is refused with -32602. */
+  readonly sourceMaxBytes: number;
+  /** Largest search query before trimming, in UTF-8 bytes; the schema's `maxLength` is
+   *  this value in UTF-16 code units. */
+  readonly queryMaxBytes: number;
+  /** Largest caller-visible catalog, in entries; overflow refuses `execute` before Sandbox
+   *  start and truncates `search_types`. */
+  readonly catalogMaxEntries: number;
+  /** Largest raw schema/catalog payload retained for one snapshot, in bytes. */
+  readonly catalogMaxBytes: number;
+  /** Largest single canonical subject — service, tool, or raw URI identity — in UTF-8 bytes. */
+  readonly subjectMaxBytes: number;
+  /** Largest indexed description, in UTF-8 bytes. */
+  readonly descriptionMaxBytes: number;
+  /** Largest single input/output schema, in UTF-8 bytes. */
+  readonly schemaMaxBytes: number;
+  /** Deepest schema nesting the renderer walks; deeper schemas render `unknown` with a
+   *  diagnostic rather than narrowing incorrectly. */
+  readonly schemaMaxDepth: number;
+  /** Largest node count a rendered schema may have. */
+  readonly schemaMaxNodes: number;
+  /** Largest generated declaration text, in bytes; overflow renders a diagnostic banner
+   *  and an `unknown` root instead of a partially callable API. */
+  readonly declarationMaxBytes: number;
+  /** Largest admitted inner operations per execution; the next one is refused immediately
+   *  with the typed limit error, never queued past the deadline. */
+  readonly innerOperationsMax: number;
+  /** Largest inner operations in flight at once; a fifth is refused immediately. */
+  readonly innerConcurrencyMax: number;
+  /** Largest serialized bridge arguments, in bytes. */
+  readonly bridgeArgumentsMaxBytes: number;
+  /** Largest serialized bridge response, in bytes. */
+  readonly bridgeResponseMaxBytes: number;
+  /** Largest stdout returned, in bytes; excess sets `stdoutTruncated`. */
+  readonly stdoutMaxBytes: number;
+  /** Largest stderr returned, in bytes; excess sets `stderrTruncated`. */
+  readonly stderrMaxBytes: number;
+  /** Largest serialized default export accepted, in bytes. */
+  readonly resultMaxBytes: number;
+  /** `search_types` `limit` when the caller omits it. */
+  readonly searchLimitDefault: number;
+  /** Largest `search_types` `limit` accepted. */
+  readonly searchLimitMax: number;
+  /** Largest serialized `search_types` response, in bytes; excess truncates to the
+   *  canonical prefix. */
+  readonly searchResponseMaxBytes: number;
+  /** Active executions one exact token may have; a concurrent second call is transient
+   *  `limit_exceeded(active_execution)` and launches nothing. */
+  readonly activeExecutionsPerToken: number;
+  /** Running Sandbox containers this Worker may hold account-wide; exhaustion before launch
+   *  is transient. */
+  readonly sandboxContainersMax: number;
+};
+
+/**
+ * §23.11 — the compiled hub caps as one record, assembled field-for-field from the
+ * constants above. `contracts/hub.json` pins exactly this object (via
+ * hub-contract.ts's fixture) and the hub tool schemas read their bounds from it; runtime
+ * callsites read the individual constants. `initialMaxTimeoutMs` and `hardMaxTimeoutMs`
+ * differ on purpose — the former is the settings default an owner may raise, the latter is
+ * never exceeded.
+ */
+export const HUB_CONTRACT_LIMITS: HubContractLimits = {
+  minTimeoutMs: HUB_MIN_TIMEOUT_MS,
+  defaultTimeoutMs: HUB_DEFAULT_TIMEOUT_MS,
+  initialMaxTimeoutMs: HUB_INITIAL_MAX_TIMEOUT_MS,
+  hardMaxTimeoutMs: HUB_HARD_MAX_TIMEOUT_MS,
+  checkTimeoutMs: HUB_CHECK_TIMEOUT_MS,
+  innerOperationTimeoutMs: HUB_INNER_OPERATION_TIMEOUT_MS,
+  sourceMaxBytes: HUB_SOURCE_MAX_BYTES,
+  queryMaxBytes: HUB_QUERY_MAX_BYTES,
+  catalogMaxEntries: HUB_CATALOG_MAX_ENTRIES,
+  catalogMaxBytes: HUB_CATALOG_MAX_BYTES,
+  subjectMaxBytes: HUB_SUBJECT_MAX_BYTES,
+  descriptionMaxBytes: HUB_DESCRIPTION_MAX_BYTES,
+  schemaMaxBytes: HUB_SCHEMA_MAX_BYTES,
+  schemaMaxDepth: HUB_SCHEMA_MAX_DEPTH,
+  schemaMaxNodes: HUB_SCHEMA_MAX_NODES,
+  declarationMaxBytes: HUB_DECLARATION_MAX_BYTES,
+  innerOperationsMax: HUB_INNER_OPERATIONS_MAX,
+  innerConcurrencyMax: HUB_INNER_CONCURRENCY_MAX,
+  bridgeArgumentsMaxBytes: HUB_BRIDGE_ARGUMENTS_MAX_BYTES,
+  bridgeResponseMaxBytes: HUB_BRIDGE_RESPONSE_MAX_BYTES,
+  stdoutMaxBytes: HUB_STDOUT_MAX_BYTES,
+  stderrMaxBytes: HUB_STDERR_MAX_BYTES,
+  resultMaxBytes: HUB_RESULT_MAX_BYTES,
+  searchLimitDefault: HUB_SEARCH_LIMIT_DEFAULT,
+  searchLimitMax: HUB_SEARCH_LIMIT_MAX,
+  searchResponseMaxBytes: HUB_SEARCH_RESPONSE_MAX_BYTES,
+  activeExecutionsPerToken: HUB_ACTIVE_EXECUTIONS_PER_TOKEN,
+  sandboxContainersMax: HUB_SANDBOX_CONTAINERS_MAX,
+};
+
+// ── the configurable deadlines ────────────────────────────────────────────────────────
+//
+// These are the durations a test must be able to SHORTEN: each is a wait a row would
 // otherwise sit through, and none can be reached by a clock injection — two are bare
 // `setTimeout`s inside workerd, three are `AbortSignal.timeout`, one is Date.now arithmetic
 // plus a storage alarm. The lever this replaced patched `globalThis.setTimeout` and
@@ -143,9 +365,10 @@ const DEADLINES = {
   registrationDeadlineMs: ["PMCP_REGISTRATION_DEADLINE_MS", REGISTRATION_DEADLINE_MS],
   listenKeepaliveMs: ["PMCP_LISTEN_KEEPALIVE_MS", LISTEN_KEEPALIVE_MS],
   listenBellMinIntervalMs: ["PMCP_LISTEN_BELL_MIN_INTERVAL_MS", LISTEN_BELL_MIN_INTERVAL_MS],
+  hubCatalogDeadlineMs: ["PMCP_HUB_CATALOG_DEADLINE_MS", HUB_CATALOG_FAMILY_DEADLINE_MS],
 } as const satisfies Record<string, readonly [string, number]>;
 
-/** The five configurable deadlines, in milliseconds. */
+/** The configurable deadlines, in milliseconds. */
 export type Deadlines = { [K in keyof typeof DEADLINES]: number };
 
 /** The binding name behind each one — the harness that sets them reads the names from here. */
@@ -153,11 +376,11 @@ export const DEADLINE_ENV = Object.fromEntries(
   Object.entries(DEADLINES).map(([key, [name]]) => [key, name]),
 ) as { readonly [K in keyof typeof DEADLINES]: string };
 
-/** The optional string bindings `deadlines` reads — Env's five fields, structurally. */
+/** The optional string bindings `deadlines` reads — Env's own fields, structurally. */
 export type DeadlineBindings = { [K in (typeof DEADLINES)[keyof typeof DEADLINES][0]]?: string };
 
 /**
- * The five deadlines this env asks for: an override where the binding parses to a positive
+ * The deadlines this env asks for: an override where the binding parses to a positive
  * integer count of milliseconds, the production constant everywhere else. Anything that is
  * not one — absent, empty, zero, negative, fractional, "soon" — is ignored rather than
  * obeyed, because a mistyped binding must not silently disarm a deadline.

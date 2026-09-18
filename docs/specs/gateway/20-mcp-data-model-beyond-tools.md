@@ -15,10 +15,10 @@ method-agnostic. The hub is the only thing saying `-32601`.
 
 | Family | Methods | Status |
 |---|---|---|
-| Prompts | `prompts/list`, `prompts/get` | **In.** Request/response on the existing envelope. |
-| Resources | `resources/list`, `resources/read` | **In**, scoped endpoint only (§18 decision 26). |
-| Resource templates | `resources/templates/list` | **In**, scoped endpoint only, same reason. |
-| Completions | `completion/complete` | **In**, scoped endpoint only, and **filtered by its `ref`** like every other read (§20.2) — it is a relay, not a pass-through, because an unfiltered one is a read straight past the caller's patterns. Served for conformance; nothing observably consumes it, so it gets no CLI command. |
+| Prompts | `prompts/list`, `prompts/get` | **In on real scoped apps.** The aggregate hub surface returns `-32601`; programs do not expose prompts in the first release (§23). |
+| Resources | `resources/list`, `resources/read` | **In on real scoped apps.** Programs additionally list/read through their structured canonical-service + raw-URI API (§23); public application resources still do not aggregate. |
+| Resource templates | `resources/templates/list` | **In on real scoped apps** and as local immutable program snapshot metadata; templates are never fetched through a rewritten URI. |
+| Completions | `completion/complete` | **In on real scoped apps only.** Aggregate/hub and programs return/offer no completion surface. |
 | MRTR (elicitation / sampling / roots) | `input_required` results on `prompts/get` and `resources/read` | **In.** It is a *result shape*, not a stream: the hub already relays an `input_required` leg verbatim for `tools/call`, and §7's `clientCapabilities` mirroring already tells the app what the consumer can answer. |
 | `subscriptions/listen` | — | **In** *(2026-09-01, §21; **Deferred** at first writing)*. The deferral reasoned that piping an app notification into a consumer's open stream needs a DO→worker push channel that did not exist, and that a permanently-open subscription inverts the DO's hibernation discipline ("an unresolved inbound request blocks hibernation"). The D14 probe measured both away: the **Worker** holds the `text/event-stream` (CPU-billed — an idle stream is effectively free) and reaches each app DO over a **hibernatable WebSocket**, which is the missing push channel and hibernates like any socket. §21 is the spec. |
 | `notifications/*/list_changed` **to consumers**, `resources/updated` | — | **In** *(2026-09-01, §21)* — deliverable now that the listen stream is served. The consequence pin survives with its sign flipped: **never declare a capability the transport cannot honor** was the reason for `listChanged: false` (a declared-but-unserved capability makes a Claude Code v2 client open a listen stream, take `-32601`, and burn its reopen budget — 3 reopens then a stop; 5 in an hour then a ~6 h wait), and it is now the reason declaration and transport flip **in the same deploy** (§21.5): a served-but-undeclared stream is one no client ever opens. |
@@ -33,91 +33,42 @@ claude.ai's proxy is one, §21.)*
 
 ### 20.2 Routing at the door
 
-§7's method table gains seven entries. Refusal vocabulary, filter-first ordering, and
-the archived/availability checks are unchanged — a new family reuses the pipeline
-rather than growing one.
+The 2026-09-18 aggregate cutover in §23 removes aggregate application-family routing.
+The aggregate and virtual `hub` endpoints serve only hub tools and hub-owned declaration
+resources. Application prompts, resources, resource templates, completions, subscriptions,
+and tools remain on `/<user>/mcp/<slug>` with canonical names and raw URIs.
 
-**Aggregated `/<user>/mcp`** — tools and prompts only:
+On a real scoped endpoint, `prompts/list`, `prompts/get`, `resources/list`,
+`resources/templates/list`, `resources/read`, and `completion/complete` retain this
+section's filter-first pipeline and family-specific matching. A read is routed by the
+addressed slug, never the URI: two apps may serve the same URI and authorization is still
+evaluated against the selected app.
 
-- `prompts/list` — every prompt the caller may use across the namespace, names prefixed
-  `<slug>_<prompt>`, split at the first `_` by the same `splitAggregatedName` the tools
-  path uses (slugs contain no `_`, §7). Same parallel fan-out, same 10 s per-upstream
-  deadline, same `_meta["pmcp/unavailable"]`, same "the aggregate always succeeds" rule.
-  Filtered by name, on the existing pure code — see the matching-key rules below, which is
-  where the families stop being interchangeable.
-- `prompts/get` — prefix split, then filter → archived → availability. **No approval
-  gate** (§18 decision 27).
-- `resources/*` and `completion/complete` → `-32601`, and the aggregated endpoint does
-  not declare those capabilities. §18 decision 26 has the reasoning; the short form is
-  that a URI cannot take a `<slug>_` prefix and still be the URI the app knows, and
-  rewriting URIs would have to reach inside `resource_link` and embedded resource blocks
-  in *tool* results too — ending "the response is relayed verbatim".
+§18 decision 26 is narrowed, not reversed: **application resources do not aggregate on
+the public MCP wire**. A §23 program uses the separate structured address
+`mcp.<service>.resources.read(rawUri)`. The raw URI is never prefixed/re-written and the
+operation re-enters the same scoped `resources/read` dispatcher and audit policy.
 
-**Scoped `/<user>/mcp/<slug>`** — everything, unprefixed and unrewritten:
-`prompts/list`, `prompts/get`, `resources/list`, `resources/templates/list`,
-`resources/read`, `completion/complete`. This is the mount for a prompt- or
-resource-heavy app, and the documentation should say so: an aggregated prompt
-reaches Claude Code as `/mcp__<hubentry>__<slug>_<prompt>`, doubly prefixed, while the
-scoped mount gives `/mcp__<app>__<prompt>`.
+**Capabilities.** `initialize` and `server/discover` remain Worker-answered and share
+one producer:
 
-**A read is routed by the addressed slug, never by the URI it names.** §18 decision 26
-resolves aggregation by not aggregating, which leaves one residual worth pinning: two
-apps may legitimately serve the same URI (`file:///notes.txt` is nobody's private
-namespace). A caller granted that URI on app A reads it on **A's** scoped endpoint;
-the identical URI on B's scoped endpoint is judged against the caller's grants *on B* and
-refuses `-32001` when they do not cover it. The URI never selects the app — the URL
-does. Routing by URI would be the confused-deputy shape this design has otherwise avoided
-by construction.
+- aggregate and scoped `hub`: tools/resources with `listChanged: false`, no prompts,
+  completions, or subscribe (§23);
+- scoped tunneled real app: stored registration capabilities, with §21 push flags;
+- never-connected or unresolvable scoped slug: tools with `listChanged: true`;
+- scoped proxied real app: owner-declared families, all push flags false;
+- scoped `pmcp`: tools only, `listChanged: false`.
 
-**Capabilities.** `initialize` stays exactly what §7 pins it as — **Worker-answered,
-stateless, and never a live upstream call**. Two static answers, one per endpoint shape:
+No capability answer performs a live upstream call. The old union/intersection question
+and first-underscore prompt/tool splitting no longer exist.
 
-- **Aggregated**: `tools` and `prompts`, both `listChanged: false`, unconditionally. An
-  empty `prompts/list` is a legal answer, and a constant beats composing a union that
-  could only ever tell a consumer to expect nothing. Because it is one fixed result,
-  `contracts/initialize.json` keeps pinning it byte-for-byte: that fixture gains the
-  `prompts` capability and stays a fixture. *(Amended 2026-09-01, §21.5: the constant
-  flips to `listChanged: true` for both — still one fixed result, still the same
-  fixture, which flips in the very deploy that serves the stream, per §21.5's lockstep
-  rule.)*
-- **Scoped**: derived from what the hub already **stores** for that app — the
-  capability set learned at registration (§6's `server/discover`, cached in the DO) for
-  tunneled apps; for proxied apps, an **owner-declared `capabilities` list** on
-  the app's own config (§9's YAML and the `app_create`/`app_update` wire gain
-  the optional key, values a subset of `tools`/`prompts`/`resources`/`completions`;
-  absent means `tools` only, so every existing proxied app is unchanged). Declared
-  configuration, not cache — §20.5's "proxied apps cache nothing" stands — and the
-  declaration gates only what the handshake *advertises*: routing stays grant-filtered
-  either way, so a wrong declaration can mislead a client's feature detection but never
-  widen access. All of it — with `listChanged`
-  and `subscribe` forced false whatever the app claims, since the hub cannot honor
-  them and must not republish them. *(Amended 2026-09-01, §21.5: "cannot honor" ended
-  with §21 — the flags are now derived from what the hub serves: `listChanged: true` per
-  stored family and `resources.subscribe: true` for tunneled apps with `resources`;
-  proxied apps keep every push flag false, §21.2, so for them this sentence still
-  reads as first written.)* **Never a live upstream call**: an earlier draft of
-  this paragraph said "live for proxied", which would have put an unbounded round trip
-  inside the handshake, with no deadline and no answer for a down upstream, in the one
-  method §7 pins as stateless. A tunneled app that has **never connected** advertises
-  `tools` only — the same answer it already gives, and consistent with the empty
-  `tools/list` it serves from an empty catalog. A capability the hub has never been told
-  about is not declared.
+**Access control.** Every real-app family is filtered by current grants before listing or
+forwarding. Owners see everything. Program catalog reads use the same filters and then
+freeze the visible result for local list/template/search operations; actual tool/read
+dispatch reauthorizes current credential and grants.
 
-The union-or-intersection question the aggregated constant sidesteps has one answer worth
-recording: intersection would let a single tools-only app suppress every other
-app's prompts.
-
-The **consumer→hub** `server/discover` (distinct from §6's hub→app method of the same
-name) answers from those same two static pictures and changes in lockstep with this
-paragraph. One source, two spellings: a divergence between what `initialize` and
-`server/discover` advertise is a bug, not a degree of freedom.
-
-**Access control.** Every family is filtered by the caller's grants before anything is
-listed or forwarded, using the per-family pattern lists of §20.3. An agent with
-no matching pattern in a family gets an empty list and `-32001` on a fetch —
-indistinguishable from not-permitted, as everywhere else. Owners see everything. Three
-rules the families do **not** share, each pinned because the obvious implementation gets
-it wrong in a way nothing else catches:
+An agent with no matching pattern receives an empty list and `-32001` on a fetch.
+Three family-specific matcher rules remain because a generic name matcher is unsafe:
 
 - **Prompts are matched by `name`.** `registry.buildToolFilter`'s `filterList` is already
   generic over `{name}`, so prompt filtering needs no new pure code.
@@ -150,8 +101,8 @@ inspected and never rewritten.
 
 ### 20.3 Roles: one language, three keyspaces
 
-A role's declaration gains a family dimension (§18 decision 9). Wire shape, in
-`hub/register`, in `contracts/tunnel-frames.json`, in the YAML, and in both libraries'
+A role's declaration gains a family dimension (§18 decision 9). The same wire shape is
+used by `hub/register`, admin operations, the provider, and both libraries'
 `serve({roles})`:
 
 ```jsonc
@@ -164,11 +115,10 @@ A role's declaration gains a family dimension (§18 decision 9). Wire shape, in
 ```
 
 - **Backward compatibility is total.** A bare list is normalized to
-  `{ tools: [...] }` — so every app in the field, every YAML file, and every
-  `serve({roles})` call keeps its exact current meaning, and a role that grants tools
-  grants *nothing* in another family. The two spellings may be mixed across roles in one
-  declaration. Normalization happens once, in the hub (`registry.validateRoles` and the
-  filter builder); neither client library gains a rule that could disagree with it.
+  `{ tools: [...] }`, so every deployed app and every existing `serve({roles})` call keeps
+  its meaning. A role that grants tools grants nothing in another family. The two
+  spellings may be mixed across roles in one declaration. Normalization happens once in
+  the hub.
 - **Storage**: `app.roles_json` holds the normalized per-family object. Existing rows
   hold bare lists and are read as tools-only, so no data migration exists.
 - **Two sources, one rule** *(2026-09-17, decision 32)*: a **tunneled** app's owner may
@@ -185,17 +135,9 @@ A role's declaration gains a family dimension (§18 decision 9). Wire shape, in
   alone, the owner's map is untouched, and a collision is resolved at read time rather than
   by a write that could lose one side. The consequence an owner sees is one badge on the
   Roles pane, `app · replaced yours` (§13).
-- **Read shape**, pinned in one canonical wire form, because storage being normalized does
-  not by itself say what a *read* returns. `app_list` / `app_get`, the YAML the
-  planner diffs against, and anything the CLI prints all render the **canonical** form: a
-  bare list when the role is tools-only, the per-family object otherwise. Both directions
-  are pinned, and that is the point. Always rendering the object would make every YAML
-  file written before this change diff against the server on the first `pmcp diff` after
-  it lands; rendering whichever spelling happened to register would make the read shape a
-  function of history, so `pmcp diff` would be stable or noisy by accident. One canonical
-  form keeps an older CLI typed `Record<string, string[]>` correct for every tools-only
-  app — which is every app in the field today — and makes the diff a function of
-  meaning rather than of spelling.
+- **Read shape** is canonical: `app_list` / `app_get` render a bare list when a role is
+  tools-only and the per-family object otherwise. The result is a function of meaning,
+  not of whichever spelling happened to be stored or registered.
 - **Validation** (§6, applied identically to proxied virtual roles, §8): role names and
   the reserved `all` are unchanged; an unknown family key is a violation; every pattern
   must compile; `ROLE_PATTERN_MAX_LENGTH` bounds each pattern and `ROLE_PATTERNS_MAX`
@@ -321,16 +263,13 @@ always `private` — a listing is grant-filtered, so a shared cache would serve 
 agent's view to another. A result carrying `inputResponses`/`requestState` is never
 given a `ttlMs` at all.
 
-**Known ceilings, recorded rather than solved**: the hub returns whole lists and never
-emits `nextCursor` (pagination is optional for servers), so a *paginating* app is
-silently truncated to its first page — which is already true for `tools/list` today and
-matters more for resource lists; the hub mints its own TTL constant rather than composing
-`min(app ttlMs)` across a fan-out; and a **`resource_link` inside a tool result is
-dead on the aggregated endpoint**. §18 decision 26 relays such a block verbatim (rewriting
-it is the thing that decision refuses), but `resources/read` answers `-32601` there, so the
-link names a URI the consumer cannot fetch from the endpoint it is talking to. The scoped
-mount is where a resource-linking app belongs, and §20.2 already says to document that;
-this is the residue when an author does not.
+**Known ceilings, recorded rather than solved**: the hub returns whole scoped lists and
+never emits `nextCursor`, so a paginating app is truncated to its first page. Consumer
+cache hints remain private. A `resource_link` inside a direct application tool result is
+usable from that application's scoped mount. The aggregate hub never publishes
+application results or resource links; inside a program, application resources are read
+only through the structured canonical-service + raw-URI API, so no embedded URI is
+rewritten or made globally routable.
 
 ### 20.6 Surfaces
 
@@ -339,33 +278,14 @@ this is the residue when an author does not.
   (`resources/list` / `resources/templates/list`), `pmcp read <app> <uri>`
   (`resources/read`). All four are gateway sugar of the kind `tools`/`call` already are —
   they front an MCP method, not an admin op, so §8's parity list is untouched.
-- **Web** (§13, *added 2026-09-02, decision 30 — spec ahead of code*): `/apps/<slug>`
-  carries one pane per family — Tools, Prompts, Resources (with a Templates tab) — each
-  the owner's own view of the scoped endpoint's listing (unfiltered, §7 step 2; a tunneled
-  app's cached catalog, a proxied app's live fetch), the same read `pmcp describe
-  app/<slug>` renders, so §8's parity list is as untouched by the panes as by the
-  commands. Beside each entry the pane adds what only the hub knows: the aggregated name
-  (`<slug>_<name>` — tools and prompts only), which agents reach it through which role,
-  computed by the door's own matcher over §20.3's per-family patterns and never a second
-  one, the approval posture (never, for prompts — §18 decision 27; the Resources pane
-  carries no approval line at all, since a URI is never gated and a line saying so on
-  every row is noise — §13's bullet wins, *2026-09-03, owner question 37(c)*), and the
-  `redact` entries that match. A family the app does not advertise dims its rail entry to
-  `—`, and its pane says why. The Resources pane states the two rules a reader would
-  otherwise learn from a `-32601`: resources are served on the scoped endpoint only, and
-  grants match them by URI — templates by their raw `uriTemplate`. `completion/complete`
-  gets no pane for the reason it gets no command.
-- **Client libraries** (§11): no new API beyond the widened `roles` shape. The bridge is
-  transparent, so an app that declares prompts or resources with its own SDK serves
-  them through the hub with no library change; the libraries pass the declaration through
-  and let the hub validate it.
-- **The `pmcp` builtin**: tools only. Its scoped endpoint answers empty prompt and
-  resource lists and declares neither capability. **Its `call` must read `msg.method`, not
-  only `params.name`** — the gateway routes `tools/call`, `prompts/get` and `resources/read`
-  through one `AppBackend.call`, each carrying the addressed item in `params.name`, so a
-  backend that ignores `method` serves all three alike. Unguarded, `prompts/get` with
-  `name: "agent_create"` executed the admin op and the gateway recorded it as a prompt
-  fetch — an audit shape that carries no arguments and consults no `sensitivePaths`.
-  Authorization was intact throughout (`adminOpsFor` still gated it); §15's argument record
-  was not. A backend serving a strict subset of the three answers the rest `-32601`, which
-  is why that helper lives in `errors.ts` rather than inside the gateway.
+- **Web** (§13): `/apps/<slug>/catalog` renders the owner's scoped catalog and the
+  current hub-local TypeScript mapping/diagnostics. It shows canonical scoped identity,
+  not an obsolete aggregate `<slug>_<name>`. Reachability, approval, and redaction use
+  the door's own matcher and policies, never page-local copies.
+- **Client libraries** (§11): their transport remains transparent. The only §23 addition
+  is optional `typescriptAliases` on `hub/register`; it is an author hint and does not
+  change any canonical upstream service/tool name.
+- **The `pmcp` builtin**: tools only. Its scoped endpoint answers empty prompt/resource
+  lists and declares neither capability. Its backend reads `msg.method`, not only
+  `params.name`, so another family cannot execute an admin op. §23's program catalog
+  includes only the exact `adminOpsFor` subset admitted by the invoking credential.

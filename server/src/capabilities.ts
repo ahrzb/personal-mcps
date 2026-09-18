@@ -1,7 +1,7 @@
 // capabilities.ts — the §21 push core, extracted as the repo's Node-clean pure seams.
 //
-// PINS the D14 dispatch's pure contracts, each in the shape the suites and the
-// contracts producers consume:
+// PINS the D14 dispatch's pure contracts and the §23.1 hub wire shape, each in the
+// shape the suites and the contracts producers consume:
 //
 // - catalogChanged — the canonical-catalog comparator the DO's bell rings on (§21.3):
 //   absent and stored [] compare EQUAL (a first registration writing [] into a
@@ -13,8 +13,13 @@
 //   WHICH families appear — this is the kind-fallback an is-not-proxy implementation
 //   gets wrong. Resolves over APP_CAPABILITIES order, never the stored set's own
 //   (arbitrary for an owner-declared list), so the emitted object's key order is the
-//   canonical order the contracts fixtures pin byte-for-byte. AGGREGATED_CAPABILITIES
-//   is the §20.2/§21.5 constant this function renders.
+//   canonical order the contracts fixtures pin byte-for-byte. Real apps only: the
+//   virtual hub is not a kind and answers from HUB_CAPABILITIES below instead.
+// - HUB_CAPABILITIES — the §23.1 fixed capability shape both hub endpoint shapes
+//   answer `initialize`/`server/discover` with: tools then resources, every push flag
+//   false, no prompts, completions, or subscribe. A literal, not a shape-function
+//   rendering: no catalog bell is ever rung at the hub, so no app kind's flags
+//   describe it and it cannot drift with one.
 // - subscriberTag / parseSubscriberTag — the `sub:` prefix is the class invariant
 //   (§21.2): a getWebSockets(app.id) lookup can never return a subscriber socket,
 //   because a prefixed tag never equals a bare id. The prefix is the sole separator —
@@ -75,7 +80,8 @@ export const DEFAULT_APP_CAPABILITIES: readonly AppCapability[] = ["tools"];
  * "proxy" and "builtin" keep every push flag false and subscribe absent — proxy has
  * no channel to ring from (§21.2), the builtin has no DO to ring at all. Families
  * render in canonical APP_CAPABILITIES order and completions renders as the empty
- * object, because no completions bell exists.
+ * object, because no completions bell exists. Real apps only — the virtual hub is not
+ * a kind; both hub endpoint shapes answer from HUB_CAPABILITIES below (§23.1).
  */
 export function capabilityShape(
   stored: readonly AppCapability[],
@@ -96,14 +102,18 @@ export function capabilityShape(
 }
 
 /**
- * §20.2/§21.5 — the aggregated endpoint's one static answer: tools and prompts, both
- * listChanged true, no resources, no completions, no subscribe. Still one fixed
- * result whatever the namespace holds, and still the byte-for-byte fixture — it flips
- * shapes with the transport in the same deploy. Rendered from the shape function so
- * the two handshakes cannot describe a family differently.
+ * §23.1 — the fixed capability shape the aggregate and scoped-hub endpoints answer
+ * `initialize` and `server/discover` with: `tools` then `resources`, every push flag
+ * false, and no prompts, completions, or subscribe key. A literal rather than a
+ * `capabilityShape` rendering because the hub is protocol infrastructure, not an app
+ * kind: it opens no application subscriber socket and no catalog bell is ever rung at
+ * it, so no kind's flags describe it. Insertion order is the canonical wire order the
+ * contracts fixtures pin byte-for-byte.
  */
-export const AGGREGATED_CAPABILITIES: Readonly<Record<string, Readonly<Record<string, boolean>>>> =
-  capabilityShape(["tools", "prompts"], "tunnel");
+export const HUB_CAPABILITIES: Readonly<Record<string, Readonly<Record<string, boolean>>>> = {
+  tools: { listChanged: false },
+  resources: { listChanged: false },
+};
 
 /** §21.2 — the class invariant's prefix: a socket tagged `sub:<session-id>` is a subscriber
  *  socket; a bare id is the app socket. NOT exported: the builder and the parser below

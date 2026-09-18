@@ -55,12 +55,29 @@ type Families struct {
 // normalizes declarations; this package sends them unchanged.
 type Roles map[string]any
 
+// TypeScriptAliases carries optional hub-local TypeScript alias hints beside
+// Roles in hub/register (spec §23, wire key "typescriptAliases"). Both members
+// are optional; a nil pointer in Options means no hints are sent at all. An
+// alias never renames the app's MCP wire surface — canonical service/tool names
+// keep crossing the MCP wire untouched — and the hub, not this package, is the
+// syntax and collision authority: a malformed hint is refused at registration
+// (RegistrationError) while a valid hint that collides leaves the established
+// assignment in place and never disconnects the tunnel.
+type TypeScriptAliases struct {
+	// Service is a preferred TypeScript name for the app's service namespace.
+	Service string `json:"service,omitempty"`
+	// Tools maps canonical MCP tool names to preferred TypeScript names.
+	Tools map[string]string `json:"tools,omitempty"`
+}
+
 // Options configures Serve and NewHubTransport. URL and Token fall back to
 // PMCP_URL and PMCP_APP_TOKEN in Serve.
 type Options struct {
 	URL   string
 	Token string
 	Roles Roles
+	// TypeScriptAliases is optional; nil sends no alias hints.
+	TypeScriptAliases *TypeScriptAliases
 }
 
 // CredentialsError means the hub rejected or revoked the app credential.
@@ -112,6 +129,9 @@ type HubTransport struct {
 	address string
 	token   string
 	roles   Roles
+	// aliases is nil when the caller declared no hints; it is re-sent verbatim
+	// on every registration, never interpreted by this package.
+	aliases *TypeScriptAliases
 }
 
 // NewHubTransport validates options without performing network I/O.
@@ -129,7 +149,12 @@ func NewHubTransport(options Options) (*HubTransport, error) {
 	if options.Roles == nil {
 		options.Roles = Roles{}
 	}
-	return &HubTransport{address: address, token: options.Token, roles: options.Roles}, nil
+	return &HubTransport{
+		address: address,
+		token:   options.Token,
+		roles:   options.Roles,
+		aliases: options.TypeScriptAliases,
+	}, nil
 }
 
 // SupportsProtocolVersion restricts the official MCP SDK's discover response
@@ -140,7 +165,7 @@ func (*HubTransport) SupportsProtocolVersion(version string) bool {
 
 // Connect implements mcp.Transport.
 func (t *HubTransport) Connect(ctx context.Context) (mcp.Connection, error) {
-	conn := &hubConn{address: t.address, token: t.token, roles: t.roles}
+	conn := &hubConn{address: t.address, token: t.token, roles: t.roles, aliases: t.aliases}
 	if err := conn.establish(ctx, ""); err != nil {
 		return nil, err
 	}
@@ -236,6 +261,7 @@ type hubConn struct {
 	address string
 	token   string
 	roles   Roles
+	aliases *TypeScriptAliases
 
 	mu      sync.RWMutex
 	current *socketState
@@ -386,6 +412,10 @@ func (c *hubConn) establish(ctx context.Context, first schedule) error {
 }
 
 func (c *hubConn) register(ctx context.Context, ws *websocket.Conn) (ending, error) {
+	// The params carry §23's optional typescriptAliases member: nil leaves the key
+	// ABSENT, so a caller who declares no hints keeps sending exactly the historical
+	// three-key frame, and the hub reads a missing member as "no hints", never as a
+	// cleared map.
 	request := struct {
 		JSONRPC string `json:"jsonrpc"`
 		ID      string `json:"id"`
@@ -396,10 +426,11 @@ func (c *hubConn) register(ctx context.Context, ws *websocket.Conn) (ending, err
 		ID:      registerID,
 		Method:  registerMethod,
 		Params: struct {
-			ClientVersion   string `json:"clientVersion"`
-			ProtocolVersion string `json:"protocolVersion"`
-			Roles           Roles  `json:"roles"`
-		}{clientVersion, ProtocolVersion, c.roles},
+			ClientVersion     string             `json:"clientVersion"`
+			ProtocolVersion   string             `json:"protocolVersion"`
+			Roles             Roles              `json:"roles"`
+			TypeScriptAliases *TypeScriptAliases `json:"typescriptAliases,omitempty"`
+		}{clientVersion, ProtocolVersion, c.roles, c.aliases},
 	}
 	data, err := json.Marshal(request)
 	if err != nil {

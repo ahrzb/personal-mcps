@@ -58,7 +58,7 @@ limits.ts holding the defaults. `hygiene.test.ts` owns the body table;
 `redact_json`, `redact_results_json`, and `log_bodies`.)
 
 Resolved 2026-08-25 — **the skeleton-authoring escalations**, decided as a batch:
-- **Injected clock in identity** (`resolvePrincipal` / `resolveAppToken` /
+- **Injected clock in identity** (`resolveCaller` / `resolveAppToken` /
   `issueToken` take optional `now()`): the expired-token refusal is seeded by
   issuing at a fake t0 and resolving past expiry — no sleeping, no test-only
   mint-dead-token affordance; same rationale as `ApprovalsConfig.now()`.

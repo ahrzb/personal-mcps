@@ -16,7 +16,6 @@ const FILES = {
   "pmcp.mjs": "pmcp.mts",
   "src/main.mjs": "src/main.ts",
   "src/commands.mjs": "src/commands.ts",
-  "src/plan.mjs": "src/plan.ts",
   "src/config.mjs": "src/config.ts",
   "src/render.mjs": "src/render.ts",
   "src/errors.mjs": "src/errors.ts",

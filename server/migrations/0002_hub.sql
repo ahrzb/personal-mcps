@@ -40,7 +40,7 @@ ALTER TABLE "passkey" ADD COLUMN "last_used_at" INTEGER;
 CREATE TABLE service (
   id TEXT PRIMARY KEY,
   owner_id TEXT NOT NULL REFERENCES "user" ("id") ON DELETE CASCADE,
-  slug TEXT NOT NULL,                     -- [a-z0-9-], referenced in YAML and /<user>/mcp/<slug>
+  slug TEXT NOT NULL,                     -- [a-z0-9-], used in /<user>/mcp/<slug>
   name TEXT NOT NULL,
   description TEXT,                       -- always bound by createService; absent reads as ''
   kind TEXT NOT NULL CHECK (kind IN ('tunnel', 'proxy')),
@@ -50,7 +50,7 @@ CREATE TABLE service (
   upstream_url TEXT,                      -- proxy kind only
   upstream_auth_mode TEXT CHECK (upstream_auth_mode IN ('headers', 'oauth')),
                                           -- proxy kind only; the declared `auth` mode (§7,
-                                          -- §9). Configuration, so it survives Disconnect —
+                                          -- §8). Configuration, so it survives Disconnect —
                                           -- deliberately separate from upstream_auth_json,
                                           -- which is credentials.
   forward_identity INTEGER NOT NULL,
@@ -84,7 +84,7 @@ CREATE TABLE service_account (
 CREATE TABLE grant_ (                     -- "grant" is an SQL keyword
   service_account_id TEXT NOT NULL REFERENCES service_account (id) ON DELETE CASCADE,
   service_id TEXT NOT NULL REFERENCES service (id) ON DELETE CASCADE,
-  role TEXT NOT NULL,                     -- exact role name, or the built-in 'all' (§9)
+  role TEXT NOT NULL,                     -- exact role name, or the built-in 'all' (§8)
   mode TEXT NOT NULL CHECK (mode IN ('allow', 'approval')),
                                           -- registry.AccessMode's third member, `deny`, is a
                                           -- RESOLVER answer and never a stored grant — the

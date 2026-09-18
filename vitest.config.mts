@@ -6,7 +6,7 @@
 //   worker   workerd via @cloudflare/vitest-plugin, real D1, per-file storage isolation
 //   tunnel   the same runtime, SERIAL and un-isolated — WebSockets and Durable Objects
 //            are the two things per-file isolation cannot cover
-//   cli      plain Node — the diff planner
+//   cli      plain Node — command and profile contracts
 //   clients  plain Node — clients/js plus scripts/test (§2's "`scripts` + clients" row)
 //
 // D1: migrations are read HOST-side (readD1Migrations is exported from the package's
@@ -90,6 +90,10 @@ const preBundledDeps = {
           "hono",
           "uqr",
           "@block65/webcrypto-web-push",
+          // §23.8: the one platform-vendor runtime dependency. Pre-bundled for the same
+          // reason as the rest — per-file cold setup — and loaded with the plugin's
+          // containers-disabled path, so no Docker daemon is ever involved in a test.
+          "@cloudflare/sandbox",
         ],
         rolldownOptions: { external: [/^node:/, /^cloudflare:/] },
       },

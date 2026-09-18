@@ -26,6 +26,12 @@
               "news://feed/*"
             ]
           }
+        },
+        "typescriptAliases": {
+          "service": "news",
+          "tools": {
+            "search": "searchNews"
+          }
         }
       }
     },

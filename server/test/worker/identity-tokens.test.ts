@@ -12,7 +12,7 @@
 // null unconditionally would pass a refusals-only table, so the valid-credential row sits
 // in the same table as its `defect: "none"` twin.
 //
-// Boundaries: `resolvePrincipal`'s consumer 401/404 matrix belongs to auth-matrix.test.ts
+// Boundaries: `resolveCaller`'s consumer 401/404 matrix belongs to auth-matrix.test.ts
 // (that is where the anti-enumeration rows and their allow-twins live), and severing a
 // live socket when a token is revoked is admin's cascade, observed in
 // tunnel/lifecycle.test.ts. The REFERENT's state at upgrade time — app row gone,

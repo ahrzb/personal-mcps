@@ -45,10 +45,10 @@ import { query, record } from "../../src/audit";
 import type { AuditEntry, AuditRow } from "../../src/audit";
 import { CODES } from "../../src/errors";
 import type { BackendCtx, Tool } from "../../src/gateway";
-import { issueAdminToken, resolvePrincipal } from "../../src/identity";
+import { issueAdminToken, resolveCaller } from "../../src/identity";
 import { upsertBinding } from "../../src/oauth";
 import { tokenPattern } from "../../src/principal";
-import { PMCP_SLUG, Registry, SLUG_CHARSET, writeOnlyPaths } from "../../src/registry";
+import { HUB_SLUG, PMCP_SLUG, Registry, SLUG_CHARSET, writeOnlyPaths } from "../../src/registry";
 import type { App, ToolFilter } from "../../src/registry";
 import { seedNamespace, seedOwnerSession, uniqueSlug } from "../harness/seed";
 import type { SeededNamespace } from "../harness/seed";
@@ -263,8 +263,7 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
     sample: { slug: "news" },
   },
   // §8: "`agent_list` returns each agent's grants inline … there is no separate
-  // grant-read tool" — one app_list plus one agent_list is the CLI planner's whole
-  // desired-state read.
+  // grant-read tool".
   {
     op: "agent_list",
     slugArg: "none",
@@ -454,6 +453,32 @@ export const ADMIN_OP_ROWS: readonly AdminOpRow[] = [
     declaresOutputSchema: false,
     sample: { id: "fixture:binding.oauth" },
   },
+  // §23.3: "`hub_settings_get` — `{}` → `{ settings: { defaultTimeoutMs, maxTimeoutMs } }`,
+  // reading the absent-row default pair". A read, so no `admin.*` row; no slug at all, so
+  // the reservation sweep does not apply (the virtual slugs are reserved for APP slugs).
+  {
+    op: "hub_settings_get",
+    slugArg: "none",
+    writes: "read",
+    sideEvents: [],
+    cascade: [],
+    declaresOutputSchema: false,
+    sample: {},
+  },
+  // §23.3: "requires both `{ default_timeout_ms, max_timeout_ms }`, validates
+  // `1_000 <= default <= max <= 300_000`, atomically upserts, and returns the same settings
+  // shape". The sample is the pair a provider destroy restores, so both columns are
+  // exercised as one write — which is what makes the upsert one atomic pair, not two
+  // half-updates a reader could observe apart.
+  {
+    op: "hub_settings_update",
+    slugArg: "none",
+    writes: "mutating",
+    sideEvents: [],
+    cascade: [],
+    declaresOutputSchema: false,
+    sample: { default_timeout_ms: 1_000, max_timeout_ms: 30_000 },
+  },
   // §8: "→ `{ rows, total }`, newest first … Read-only; like everything else, `pmcp audit`
   // is sugar over this tool." Defaults cover limit/offset, so the empty input succeeds.
   {
@@ -500,6 +525,8 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
       expect(refusals[0].message).toContain(PMCP_SLUG);
     });
 
+    // One namespace per operation keeps destructive twins independent; the exhaustive
+    // sweep intentionally exceeds Vitest's five-second default under full-suite load.
     it("§8 · the same op accepts the fixture's real slug — the allow-twin the sweep generates per row", async () => {
       for (const row of rows) {
         // Each twin gets its own namespace: `app_delete` and `app_archive` name the
@@ -511,7 +538,7 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
           `${row.op}: the sample must succeed against the seeded fixture`,
         ).resolves.toBeDefined();
       }
-    });
+    }, 15_000);
 
     it("§8 · the row set equals Object.keys(ops) — a new op fails the sweep instead of skipping it", () => {
       expect(rows.map((r) => r.op).slice().sort()).toEqual(Object.keys(ops).sort());
@@ -1053,8 +1080,8 @@ describe("§19/§8 · connections (fronting oauth.ts)", () => {
 //
 // The table's `grant_set` row proves the op is wired and audited with a sample whose only
 // entry is the built-in `all`. What it cannot see is the ENTRY GRAMMAR: that an inline item
-// survives the proxied undeclared-role hard error, that `agent_list` relays it back in the
-// spelling `grant_set` takes (the CLI planner diffs one spelling against itself, §8/§9),
+// survives the proxied undeclared-role hard error and `agent_list` relays it back in the
+// spelling `grant_set` takes (§8),
 // and that the mode is read off the SUFFIX — which only a resource URI's own colons can
 // witness. NOTION is the fixture's proxied app and declares no role at all, so every entry
 // below would be a hard error if it were read as a role name.
@@ -1123,7 +1150,7 @@ describe("§22.4 · agent_update is a true partial patch", () => {
 describe("§22.1 · admin tokens (fronting identity.ts's admin_token family)", () => {
   /**
    * The request a `pmcp_adm_` bearer arrives on — the same `/<user>/mcp` shape
-   * resolvePrincipal's own consumer surface uses (auth-matrix.test.ts). The reserved
+   * resolveCaller's own consumer surface uses (auth-matrix.test.ts). The reserved
    * invalid host keeps this file's requests as inert as UPSTREAM_URL's.
    */
   function adminBearerRequest(username: string, token: string): Request {
@@ -1136,7 +1163,7 @@ describe("§22.1 · admin tokens (fronting identity.ts's admin_token family)", (
     const ns = await seedNamespace(env.DB, {});
     const issued = await issueAdminToken(ns.owner.userId, undefined);
 
-    expect(await resolvePrincipal(adminBearerRequest(ns.owner.username, issued.token))).toEqual({
+    expect((await resolveCaller(adminBearerRequest(ns.owner.username, issued.token))).principal).toEqual({
       kind: "admin",
       userId: ns.owner.userId,
       username: ns.owner.username,
@@ -1145,7 +1172,7 @@ describe("§22.1 · admin tokens (fronting identity.ts's admin_token family)", (
     await ops.admin_token_revoke.handler(ns.owner.userId, { id: issued.id });
 
     await expect(
-      resolvePrincipal(adminBearerRequest(ns.owner.username, issued.token)),
+      resolveCaller(adminBearerRequest(ns.owner.username, issued.token)),
       "the revoked token must stop authenticating, not merely echo its id back",
     ).rejects.toMatchObject({ status: 401 });
   });
@@ -1813,3 +1840,181 @@ async function doorFor(ns: SeededNamespace, slug: string): Promise<ToolFilter> {
     (await registry.appById(app.id))!,
   );
 }
+
+describe("§23.3/§23.6 · execution settings and hub-local names through the ops", () => {
+  it("§23.3 · hub_settings_get answers the pinned default pair, hub_settings_update stores and returns that same shape, and ONE admin row names the pair — never a per-column write", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+
+    expect(await ops.hub_settings_get.handler(ownerId, {})).toEqual({
+      settings: { defaultTimeoutMs: 30_000, maxTimeoutMs: 30_000 },
+    });
+
+    const updated = await ops.hub_settings_update.handler(ownerId, {
+      default_timeout_ms: 5_000,
+      max_timeout_ms: 60_000,
+    });
+    expect(updated).toEqual({ settings: { defaultTimeoutMs: 5_000, maxTimeoutMs: 60_000 } });
+    // The read answers what the write returned: one upserted pair, not two half-updates.
+    expect(await ops.hub_settings_get.handler(ownerId, {})).toEqual(updated);
+
+    const rows = await adminRows(ownerId);
+    expect(rows.map((row) => row.event)).toEqual(["admin.hub_settings_update"]);
+    // The pair is the change this row summarises — and it is configuration, never a secret.
+    expect(rows[0].detail).toEqual({ defaultTimeoutMs: 5_000, maxTimeoutMs: 60_000 });
+  });
+
+  it("§23.3 · a pair below the floor, above the ceiling, or inverted is refused as -32602 naming the field and stores nothing · twin: the inclusive boundary pair 1_000/300_000 stores", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+
+    // The floor and ceiling are the ADVERTISED bounds (render and coerce share one
+    // declaration); the ordering is registry's cross-field rule. Each refusal names the
+    // op's own field.
+    const floor = await wireRefusalOf(() =>
+      ops.hub_settings_update.handler(ownerId, { default_timeout_ms: 999, max_timeout_ms: 30_000 }),
+    );
+    expect(floor.code).toBe(CODES.invalidParams);
+    expect(floor.violations?.map((violation) => violation.field)).toEqual(["default_timeout_ms"]);
+
+    const ceiling = await wireRefusalOf(() =>
+      ops.hub_settings_update.handler(ownerId, { default_timeout_ms: 30_000, max_timeout_ms: 300_001 }),
+    );
+    expect(ceiling.violations?.map((violation) => violation.field)).toEqual(["max_timeout_ms"]);
+
+    const inverted = await wireRefusalOf(() =>
+      ops.hub_settings_update.handler(ownerId, { default_timeout_ms: 31_000, max_timeout_ms: 30_000 }),
+    );
+    expect(inverted.violations?.map((violation) => violation.field)).toEqual(["default_timeout_ms"]);
+
+    // Nothing was stored, and a refused write summarises nothing (§8).
+    expect(await ops.hub_settings_get.handler(ownerId, {})).toEqual({
+      settings: { defaultTimeoutMs: 30_000, maxTimeoutMs: 30_000 },
+    });
+    expect(await adminRows(ownerId)).toEqual([]);
+
+    // THE TWIN, at the boundary: the range is inclusive on both ends.
+    await expect(
+      ops.hub_settings_update.handler(ownerId, { default_timeout_ms: 1_000, max_timeout_ms: 300_000 }),
+    ).resolves.toEqual({ settings: { defaultTimeoutMs: 1_000, maxTimeoutMs: 300_000 } });
+  });
+
+  it("§8/§23.1 · every slug-taking op refuses `hub` exactly as it refuses `pmcp` — same class and code, one sentence naming the slug it refused — and a refused mutation summarises nothing · twin: a slug one edit away creates and reads back", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+    const before = (await query(env.DB, ownerId, {})).total;
+
+    const refusals: { op: string; code: unknown; message: string }[] = [];
+    for (const row of ADMIN_OP_ROWS.filter((candidate) => candidate.slugArg === "app")) {
+      const input = await resolveSample(row.sample, ns);
+      input[slugFieldOf(row.sample)] = HUB_SLUG;
+      const refusal = await wireRefusalOf(() => ops[row.op].handler(ownerId, input));
+      refusals.push({ op: row.op, code: refusal.code, message: refusal.message });
+    }
+    expect(refusals.length, "no app-slug op in the table — the sweep would assert nothing").toBeGreaterThan(0);
+    for (const refusal of refusals) {
+      expect(refusal.code, refusal.op).toBe(CODES.invalidParams);
+      expect(refusal.message, refusal.op).toContain(HUB_SLUG);
+    }
+    // ONE sentence modulo the slug: the reservation is a property of the table, not of any
+    // op — `app_create` collects it and every other op throws it, and both spell the same
+    // words (§8).
+    const shapes = new Set(refusals.map((refusal) => refusal.message.split(HUB_SLUG).join("<slug>")));
+    expect(shapes.size, [...shapes].join(" | ")).toBe(1);
+    // NOTHING SUMMARISED and nothing stored: `hub` is virtual in both directions.
+    expect((await query(env.DB, ownerId, {})).total).toBe(before);
+    await expect(ops.app_get.handler(ownerId, { slug: HUB_SLUG })).rejects.toBeDefined();
+
+    // THE TWIN, one edit away: reservation is by exact name, not by shape.
+    const allowed = `${HUB_SLUG}-tools`;
+    await expect(ops.app_create.handler(ownerId, { slug: allowed, kind: "tunnel" })).resolves.toBeDefined();
+    await expect(ops.app_get.handler(ownerId, { slug: allowed })).resolves.toBeDefined();
+  });
+
+  it("§23.6 · `typescript_aliases` rides app_create and app_update into the row, and app_get reports owner configuration, committed reservations and diagnostics as three separate facts — a colliding alias is refused whole at -32602 in the op's field · twin: a free alias stores", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+    const owned = { service: "typedFeed", tools: { get_news: "news" } };
+
+    const created = (await ops.app_create.handler(ownerId, {
+      slug: "typed",
+      kind: "tunnel",
+      typescript_aliases: owned,
+    })) as { app: { typescriptAliases: unknown; typescriptReservations: unknown[]; typescriptDiagnostics: unknown[] } };
+    expect(created.app.typescriptAliases).toEqual(owned);
+
+    const read = (await ops.app_get.handler(ownerId, { slug: "typed" })) as {
+      app: { typescriptAliases: unknown; typescriptReservations: unknown[]; typescriptDiagnostics: unknown[] };
+    };
+    expect(read.app.typescriptAliases).toEqual(owned);
+    expect(read.app.typescriptReservations).toEqual([
+      { appId: expect.any(String), family: "service", canonicalName: "typed", typescriptName: "typedFeed", source: "owner", active: true },
+      { appId: expect.any(String), family: "tool", canonicalName: "get_news", typescriptName: "news", source: "owner", active: true },
+    ]);
+    // The architecture is non-leaking BY CONSTRUCTION here: the two reservations are this
+    // app's own members, so no contender is named in its diagnostics.
+    expect(read.app.typescriptDiagnostics).toEqual([]);
+
+    // A second app, created free, then colliding: the update is refused WHOLE — -32602,
+    // field `typescript_aliases`, no row change — because the owner can see the namespace.
+    await ops.app_create.handler(ownerId, { slug: "other", kind: "tunnel" });
+    const collided = await wireRefusalOf(() =>
+      ops.app_update.handler(ownerId, { slug: "other", typescript_aliases: { service: "typedFeed" } }),
+    );
+    expect(collided.code).toBe(CODES.invalidParams);
+    expect(collided.violations?.map((violation) => violation.field)).toEqual(["typescript_aliases"]);
+    expect(collided.message).toContain("typedFeed");
+    const unchanged = (await ops.app_get.handler(ownerId, { slug: "other" })) as {
+      app: { typescriptAliases: unknown };
+    };
+    expect(unchanged.app.typescriptAliases).toEqual({});
+
+    // The colliding CREATE refuses identically, and stores nothing at all — no app row.
+    const refusedCreate = await wireRefusalOf(() =>
+      ops.app_create.handler(ownerId, { slug: "third", kind: "tunnel", typescript_aliases: { service: "typedFeed" } }),
+    );
+    expect(refusedCreate.violations?.map((violation) => violation.field)).toEqual(["typescript_aliases"]);
+    await expect(ops.app_get.handler(ownerId, { slug: "third" })).rejects.toBeDefined();
+
+    // A syntax mistake takes the same field and code, before anything is written.
+    const malformed = await wireRefusalOf(() =>
+      ops.app_update.handler(ownerId, { slug: "other", typescript_aliases: { service: "not an identifier" } }),
+    );
+    expect(malformed.violations?.map((violation) => violation.field)).toEqual(["typescript_aliases"]);
+
+    // THE TWIN: a free alias stores on the neighbour, and the first app's mapping is
+    // untouched by a write that was never about it.
+    await expect(
+      ops.app_update.handler(ownerId, { slug: "other", typescript_aliases: { service: "otherFeed" } }),
+    ).resolves.toBeDefined();
+    const after = (await ops.app_get.handler(ownerId, { slug: "typed" })) as { app: { typescriptReservations: unknown[] } };
+    expect(after.app.typescriptReservations).toEqual(read.app.typescriptReservations);
+  });
+
+  it("§23.6 · app_delete tombstones the app's names in its one batch: a recreated slug gets a new app id and cannot claim the deleted member's owner alias, while its own generated candidate is allocated fresh", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+
+    await ops.app_create.handler(ownerId, {
+      slug: "reborn",
+      kind: "tunnel",
+      typescript_aliases: { service: "rebornAlias" },
+    });
+    await ops.app_delete.handler(ownerId, { slug: "reborn" });
+
+    const recreated = (await ops.app_create.handler(ownerId, { slug: "reborn", kind: "tunnel" })) as {
+      app: { typescriptReservations: unknown[] };
+    };
+    // Nothing is inherited: the newcomer's generated candidate is a name the deleted member
+    // never held, and the old path stays a tombstone it cannot revive.
+    expect(recreated.app.typescriptReservations).toEqual([
+      { appId: expect.any(String), family: "service", canonicalName: "reborn", typescriptName: "reborn", source: "generated", active: true },
+    ]);
+
+    const refused = await wireRefusalOf(() =>
+      ops.app_update.handler(ownerId, { slug: "reborn", typescript_aliases: { service: "rebornAlias" } }),
+    );
+    expect(refused.code).toBe(CODES.invalidParams);
+    expect(refused.message).toContain("rebornAlias");
+  });
+});

@@ -53,6 +53,13 @@ const ORIGIN = (env as unknown as { PUBLIC_ORIGIN: string }).PUBLIC_ORIGIN;
 export type CheckedVocabulary = { kind: AppKind; status: ApprovalStatus };
 
 /**
+ * Sentinel used by the module-level §23.3 allow-twin row. `buildRow` replaces it with the
+ * fresh second owner `seedFixture` created for that test, so parallel or repeated runs
+ * never share a UNIQUE email/id while the table below stays static data.
+ */
+const TWIN_OWNER = Symbol("fixture twin owner");
+
+/**
  * The tables §5 defines as ours; better-auth's own tables are not this file's subject.
  * `upstream_oauth_state` is 0004's — declared for §7's upstream-OAuth connect flow rather
  * than listed in §5's own table list, but it is a control-plane table of ours like every
@@ -73,7 +80,11 @@ export type SchemaTable =
   // §19.4: the hub's own §19 table, and the ONLY §19 table pinned here — the eight
   // better-auth/oauthProvider tables 0005 generates stay camelCase and outside SCHEMA_TABLES,
   // exactly as `user`/`session` already do.
-  | "oauth_binding";
+  | "oauth_binding"
+  // §23.3/§23.6 (0011): the owner execution settings and the durable TypeScript name
+  // ledger. Both are ours, so both are pinned here like every other ours-table.
+  | "hub_execution_setting"
+  | "typescript_name_reservation";
 
 /**
  * One constraint, stated as the write it refuses beside the write it accepts.
@@ -946,6 +957,206 @@ export const schemaConstraintRows: readonly SchemaConstraintRow[] = [
     rejected: { client_id: "oab-dup-client" },
     accepted: { client_id: "oab-dup-client-2" },
   },
+
+  // ——— hub_execution_setting (§23.3, 0011) ———
+  // The three range CHECKs are table-level, so the derivation collapses them into ONE
+  // identity (`check`/`CHECK`): each clause is stated by its own row rather than letting
+  // one row stand for all three. The PRIMARY KEY row's twin needs a SECOND real owner —
+  // a literal id would trip the foreign key instead of the constraint under test — which is
+  // what FixtureCtx.twinOwnerId (a user seedFixture always creates) exists for.
+  {
+    title: "§23.3 · hub_execution_setting.owner_id PRIMARY KEY refuses a second settings row for one owner · twin stores the same pair under another owner",
+    table: "hub_execution_setting",
+    kind: "unique",
+    column: "owner_id",
+    rejected: {},
+    accepted: { owner_id: TWIN_OWNER },
+  },
+  {
+    title: "§23.3 · hub_execution_setting.owner_id FK refuses an absent user — settings are owner-scoped · twin stores under the seeded owner",
+    table: "hub_execution_setting",
+    kind: "foreign_key",
+    column: "owner_id",
+    rejected: { owner_id: "usr_FAKE0000_absent" },
+    accepted: {},
+  },
+  {
+    title: "§23.3 · hub_execution_setting.default_timeout_ms NOT NULL refuses null · twin stores a duration",
+    table: "hub_execution_setting",
+    kind: "not_null",
+    column: "default_timeout_ms",
+    rejected: { default_timeout_ms: null },
+    accepted: { default_timeout_ms: 30_000 },
+  },
+  {
+    title: "§23.3 · hub_execution_setting.max_timeout_ms NOT NULL refuses null · twin stores a duration",
+    table: "hub_execution_setting",
+    kind: "not_null",
+    column: "max_timeout_ms",
+    rejected: { max_timeout_ms: null },
+    accepted: { max_timeout_ms: 30_000 },
+  },
+  {
+    title: "§23.3 · CHECK (default_timeout_ms >= 1000) refuses a sub-second default · twin stores the floor itself",
+    table: "hub_execution_setting",
+    kind: "check",
+    column: "CHECK",
+    rejected: { default_timeout_ms: 999 },
+    accepted: { default_timeout_ms: 1_000 },
+  },
+  {
+    title: "§23.3 · CHECK (default_timeout_ms <= max_timeout_ms) refuses a default above the maximum · twin stores the pair EQUAL, which is the pinned default pair's own shape",
+    table: "hub_execution_setting",
+    kind: "check",
+    column: "CHECK",
+    rejected: { default_timeout_ms: 31_000, max_timeout_ms: 30_000 },
+    accepted: { default_timeout_ms: 30_000 },
+  },
+  {
+    title: "§23.3 · CHECK (max_timeout_ms <= 300000) refuses a maximum above the compiled hard ceiling · twin stores the ceiling itself",
+    table: "hub_execution_setting",
+    kind: "check",
+    column: "CHECK",
+    rejected: { max_timeout_ms: 300_001 },
+    accepted: { max_timeout_ms: 300_000 },
+  },
+
+  // ——— typescript_name_reservation (§23.6, 0011) ———
+  // The base row mints a FRESH canonical name and TypeScript name per call, which is what
+  // lets the two partial unique indexes be tested by their own columns rather than by the
+  // primary key: the duplicate row differs in the PK's other members and collides only on
+  // the index's tuple. That discipline is load-bearing here — every row below names a
+  // constraint the mis-transcribed version would pass for the wrong reason.
+  {
+    title: "§23.6 · typescript_name_reservation PRIMARY KEY refuses the identical reservation twice — one canonical member cannot hold one name twice · twin differs in the TypeScript name",
+    table: "typescript_name_reservation",
+    kind: "unique",
+    column: "(owner_id, app_id, family, canonical_name, typescript_name)",
+    // Every PK column pinned: the base row mints fresh names on purpose (so the index rows
+    // bite on their own tuples), and an unpinned duplicate would simply STORE.
+    rejected: { family: "service", canonical_name: "subject-pk", typescript_name: "subjectPk" },
+    accepted: { family: "service", canonical_name: "subject-pk", typescript_name: "subjectPkTwin" },
+  },
+  {
+    title: "§23.6 · typescript_name_reservation.owner_id NOT NULL refuses null — every reservation belongs to a namespace · twin stores under the seeded owner",
+    table: "typescript_name_reservation",
+    kind: "not_null",
+    column: "owner_id",
+    rejected: { owner_id: null },
+    accepted: {},
+  },
+  {
+    title: "§23.6 · typescript_name_reservation owner_id FK refuses an absent user · twin stores under the seeded owner",
+    table: "typescript_name_reservation",
+    kind: "foreign_key",
+    column: "owner_id",
+    rejected: { owner_id: "usr_FAKE0000_absent" },
+    accepted: {},
+  },
+  {
+    title: "§23.6 · typescript_name_reservation.app_id NOT NULL refuses null — the immutable identity a tool name is scoped to · twin stores a fresh app id",
+    table: "typescript_name_reservation",
+    kind: "not_null",
+    column: "app_id",
+    rejected: { app_id: null },
+    accepted: { app_id: "app_FAKE0000_twin" },
+  },
+  {
+    title: "§23.6 · typescript_name_reservation.family NOT NULL refuses null · twin stores the tool family",
+    table: "typescript_name_reservation",
+    kind: "not_null",
+    column: "family",
+    rejected: { family: null },
+    accepted: { family: "tool" },
+  },
+  {
+    title: "§23.6 · typescript_name_reservation.family CHECK (family IN ('service','tool')) refuses a third keyspace · twin stores 'tool'",
+    table: "typescript_name_reservation",
+    kind: "check",
+    column: "family",
+    rejected: { family: "prompt" },
+    accepted: { family: "tool" },
+  },
+  {
+    title: "§23.6 · typescript_name_reservation.canonical_name NOT NULL refuses null — the upstream name is never rewritten · twin stores a canonical name",
+    table: "typescript_name_reservation",
+    kind: "not_null",
+    column: "canonical_name",
+    rejected: { canonical_name: null },
+    accepted: { canonical_name: "get_news" },
+  },
+  {
+    title: "§23.6 · typescript_name_reservation.typescript_name NOT NULL refuses null · twin stores an identifier",
+    table: "typescript_name_reservation",
+    kind: "not_null",
+    column: "typescript_name",
+    rejected: { typescript_name: null },
+    accepted: { typescript_name: "getNews" },
+  },
+  {
+    title: "§23.6 · typescript_name_reservation.source NOT NULL refuses null — precedence must be readable · twin stores 'owner'",
+    table: "typescript_name_reservation",
+    kind: "not_null",
+    column: "source",
+    rejected: { source: null },
+    accepted: { source: "owner" },
+  },
+  {
+    title: "§23.6 · typescript_name_reservation.source CHECK (source IN ('owner','sdk','generated')) refuses fourth-lane provenance · twin stores 'sdk'",
+    table: "typescript_name_reservation",
+    kind: "check",
+    column: "source",
+    rejected: { source: "manual" },
+    accepted: { source: "sdk" },
+  },
+  {
+    title: "§23.6 · typescript_name_reservation.active NOT NULL refuses null · twin stores a valid tombstone pair",
+    table: "typescript_name_reservation",
+    kind: "not_null",
+    column: "active",
+    rejected: { active: null },
+    accepted: { active: 0, superseded_at: 1 },
+  },
+  {
+    title: "§23.6 · typescript_name_reservation.active CHECK (active IN (0,1)) refuses a third state · twin stores 1",
+    table: "typescript_name_reservation",
+    kind: "check",
+    column: "active",
+    rejected: { active: 2 },
+    accepted: { active: 1 },
+  },
+  {
+    title: "§23.6 · a tombstone requires superseded_at — inactive without its retirement instant is not a reconstructable reservation · twin stores both",
+    table: "typescript_name_reservation",
+    kind: "check",
+    column: "CHECK",
+    rejected: { active: 0 },
+    accepted: { active: 0, superseded_at: 1 },
+  },
+  {
+    title: "§23.6 · an active reservation forbids superseded_at — one row cannot be live and retired at once · twin stores the live pair",
+    table: "typescript_name_reservation",
+    kind: "check",
+    column: "CHECK",
+    rejected: { active: 1, superseded_at: 1 },
+    accepted: { active: 1, superseded_at: null },
+  },
+  {
+    title: "§23.6 · the service partial unique index reserves (owner_id, typescript_name) ACROSS active rows and tombstones: a second canonical identity cannot take one owner's service alias · twin takes a free name",
+    table: "typescript_name_reservation",
+    kind: "unique",
+    column: "(owner_id, typescript_name) WHERE family = 'service'",
+    rejected: { typescript_name: "newsFeed" },
+    accepted: { typescript_name: "newsFeedTwin" },
+  },
+  {
+    title: "§23.6 · the tool partial unique index reserves (app_id, typescript_name) per immutable app identity ACROSS active rows and tombstones · twin takes a free name in the same app",
+    table: "typescript_name_reservation",
+    kind: "unique",
+    column: "(app_id, typescript_name) WHERE family = 'tool'",
+    rejected: { family: "tool", typescript_name: "getNews" },
+    accepted: { family: "tool", typescript_name: "getNewsTwin" },
+  },
 ];
 
 /** Rows are OWNER-AUTHORED, as above (strategy §9 rule 1). */
@@ -957,9 +1168,18 @@ export const cascadeRows: readonly CascadeRow[] = [
   // record of record is pruned by retention, never by a cascade), so a delete that emptied
   // those tables would be a schema someone quietly changed.
   {
-    title: "§5 · deleting the user cascades app, agent, grant_, approval, push_subscription and upstream_oauth_state · token and audit rows survive",
+    title: "§5 · deleting the user cascades app, agent, grant_, approval, push_subscription, upstream_oauth_state and §23's settings/reservations · token and audit rows survive",
     parent: "user",
-    cascades: ["app", "agent", "grant_", "approval", "push_subscription", "upstream_oauth_state"],
+    cascades: [
+      "app",
+      "agent",
+      "grant_",
+      "approval",
+      "push_subscription",
+      "upstream_oauth_state",
+      "hub_execution_setting",
+      "typescript_name_reservation",
+    ],
     survives: ["token", "audit"],
   },
   // §5/§8: app_delete's D1 half is exactly these two child tables. Deleting the
@@ -970,19 +1190,34 @@ export const cascadeRows: readonly CascadeRow[] = [
   // with it: a `state` row outliving its app would resolve a callback against a binding
   // whose app no longer exists.
   {
-    title: "§5/§8 · deleting an app cascades its grant_, approval and upstream_oauth_state rows · its token rows survive — ref_id has no FK, so deletion stays admin's cascade",
+    title: "§5/§23.6 · deleting an app cascades its grant_, approval and upstream_oauth_state rows · its token rows and its TypeScript reservations survive — ref_id has no FK and reservation names are TOMBSTONED by admin's batch, never erased",
     parent: "app",
     cascades: ["grant_", "approval", "upstream_oauth_state"],
-    survives: ["token", "audit", "agent", "push_subscription"],
+    survives: [
+      "token",
+      "audit",
+      "agent",
+      "push_subscription",
+      "hub_execution_setting",
+      "typescript_name_reservation",
+    ],
   },
   // The other side of the same FK pair: upstream_oauth_state references `user` and
   // `app` and NOT `agent`, so an agent delete leaves an owner's in-flight
   // connect flow alone.
   {
-    title: "§5/§8 · deleting an agent cascades its grant_ and approval rows · its token and upstream_oauth_state rows survive, and the app it was granted on is untouched",
+    title: "§5/§8 · deleting an agent cascades its grant_ and approval rows · its token and upstream_oauth_state rows survive, the app it was granted on is untouched, and §23's owner-scoped tables are untouched",
     parent: "agent",
     cascades: ["grant_", "approval"],
-    survives: ["token", "audit", "app", "push_subscription", "upstream_oauth_state"],
+    survives: [
+      "token",
+      "audit",
+      "app",
+      "push_subscription",
+      "upstream_oauth_state",
+      "hub_execution_setting",
+      "typescript_name_reservation",
+    ],
   },
 ];
 
@@ -1023,11 +1258,18 @@ async function insertRow(table: string, row: Record<string, unknown>): Promise<v
 
 /** The one namespace every constraint/cascade case seeds fresh — never shared across
  * `it()`s, so a test poking `user`/`app` rows can never bleed into a sibling case
- * regardless of how fine-grained the pool's isolation turns out to be. */
-type FixtureCtx = { ownerId: string; appId: string; agentId: string };
+ * regardless of how fine-grained the pool's isolation turns out to be.
+ *
+ * `twinOwnerId` is a SECOND user, born with the fixture: §23.3's settings row is keyed by
+ * owner alone, so the only honest allow-twin for "a second row for one owner is refused" is
+ * a second REAL owner — a literal id would trip the foreign key instead of the primary key
+ * under test.
+ */
+type FixtureCtx = { ownerId: string; appId: string; agentId: string; twinOwnerId: string };
 
 async function seedFixture(): Promise<FixtureCtx> {
   const ownerId = `usr_FAKE0000_${crypto.randomUUID()}`;
+  const twinOwnerId = `usr_FAKE0000_${crypto.randomUUID()}`;
   const appId = `app_FAKE0000_${crypto.randomUUID()}`;
   const agentId = `agt_FAKE0000_${crypto.randomUUID()}`;
   const now = Date.now();
@@ -1037,6 +1279,15 @@ async function seedFixture(): Promise<FixtureCtx> {
     id: ownerId,
     name: "Fixture Owner",
     email: `${ownerId}@fixture.invalid`,
+    emailVerified: 0,
+    createdAt: now,
+    updatedAt: now,
+  });
+  // The second owner (§23.3's allow-twin): a fresh id and row per case.
+  await insertRow("user", {
+    id: twinOwnerId,
+    name: "Fixture Twin Owner",
+    email: `${twinOwnerId}@fixture.invalid`,
     emailVerified: 0,
     createdAt: now,
     updatedAt: now,
@@ -1061,7 +1312,7 @@ async function seedFixture(): Promise<FixtureCtx> {
     name: "Fixture Agent",
     created_at: now,
   });
-  return { ownerId, appId, agentId };
+  return { ownerId, appId, agentId, twinOwnerId };
 }
 
 /**
@@ -1171,6 +1422,28 @@ function baseRow(table: SchemaTable, ctx: FixtureCtx): Record<string, unknown> {
         agent_id: ctx.agentId,
         created_at: now,
       };
+    case "hub_execution_setting":
+      return {
+        owner_id: ctx.ownerId,
+        // The pinned default pair, spelled as VALUES rather than read from limits: this
+        // file pins the schema, and a row that read the runtime constants would move with
+        // an implementation change instead of failing against it.
+        default_timeout_ms: 30_000,
+        max_timeout_ms: 30_000,
+      };
+    case "typescript_name_reservation":
+      return {
+        owner_id: ctx.ownerId,
+        app_id: ctx.appId,
+        // Fresh canonical AND TypeScript name per call, so each `unique` row's duplicate
+        // collides on the tuple the row NAMES (a primary-key member, or one of the two
+        // partial indexes' columns) and never on a stale name — see the section comment.
+        family: "service",
+        canonical_name: `svc-${crypto.randomUUID()}`,
+        typescript_name: `svc${crypto.randomUUID().replace(/-/g, "")}`,
+        source: "generated",
+        active: 1,
+      };
   }
 }
 
@@ -1181,7 +1454,12 @@ function buildRow(
   ctx: FixtureCtx,
   overrides: Record<string, unknown>,
 ): Record<string, unknown> {
-  return { ...baseRow(table, ctx), ...overrides };
+  return Object.fromEntries(
+    Object.entries({ ...baseRow(table, ctx), ...overrides }).map(([column, value]) => [
+      column,
+      value === TWIN_OWNER ? ctx.twinOwnerId : value,
+    ]),
+  );
 }
 
 /** How one table's rows are scoped back to the fixture that seeded them, for the cascade
@@ -1209,6 +1487,11 @@ function ctxFilter(table: SchemaTable, ctx: FixtureCtx): { sql: string; params: 
     // FK carried the row away — owner_id (user delete) or agent_id (agent delete).
     case "oauth_binding":
       return { sql: "owner_id = ? AND agent_id = ?", params: [ctx.ownerId, ctx.agentId] };
+    // §23.3/§23.6: both are owner-scoped, and neither is reachable from app/agent deletes —
+    // the reservation table's whole point is that app deletion tombstones instead of erasing.
+    case "hub_execution_setting":
+    case "typescript_name_reservation":
+      return { sql: "owner_id = ?", params: [ctx.ownerId] };
   }
 }
 
@@ -1231,6 +1514,10 @@ async function seedCascadeChildren(ctx: FixtureCtx): Promise<void> {
   await insertRow("token", buildRow("token", ctx, { kind: "app", ref_id: ctx.appId }));
   await insertRow("token", buildRow("token", ctx, { kind: "agent", ref_id: ctx.agentId }));
   await insertRow("audit", buildRow("audit", ctx, {}));
+  // §23's two tables: the settings row and one reservation, so the user-delete row can prove
+  // the cascade and the app/agent rows can prove the reservation SURVIVES (no FK by design).
+  await insertRow("hub_execution_setting", buildRow("hub_execution_setting", ctx, {}));
+  await insertRow("typescript_name_reservation", buildRow("typescript_name_reservation", ctx, {}));
 }
 
 async function deleteParent(parent: CascadeRow["parent"], ctx: FixtureCtx): Promise<void> {
@@ -1291,10 +1578,10 @@ export function runCascadeTable(rows: readonly CascadeRow[]): void {
 // straight from the migration SQL (env.TEST_MIGRATIONS — the same queries d1.ts's
 // applyD1Migrations runs), so a constraint added to the SQL without a row here fails
 // this case instead of going unpinned. Deliberately not a parsed-once general SQL
-// parser: it knows exactly the shapes 0002/0003/0007 use (inline CHECK/UNIQUE/REFERENCES,
-// table-level UNIQUE/PRIMARY KEY tuples, one partial CREATE UNIQUE INDEX, and 0007's two
-// ALTER … RENAME forms) and nothing more — a schema shape outside that vocabulary is not
-// this repo's, so a regex tuned wider than that would be speculative.
+// parser: it knows exactly the shapes this repository uses (inline/table-level
+// CHECK, UNIQUE and REFERENCES, table-level UNIQUE/PRIMARY KEY tuples, partial
+// CREATE UNIQUE INDEX, and ALTER … RENAME forms) and nothing more — a schema shape outside
+// that vocabulary is not this repo's, so a regex tuned wider than that would be speculative.
 //
 // Renames are read rather than assumed, and that is load-bearing since 0007: a constraint
 // is DECLARED under the name the table had when it was created and must be credited to the
@@ -1316,6 +1603,8 @@ const SCHEMA_TABLES = new Set<string>([
   "push_subscription",
   "upstream_oauth_state",
   "oauth_binding",
+  "hub_execution_setting",
+  "typescript_name_reservation",
 ]);
 
 function stripSqlComments(sql: string): string {
@@ -1347,6 +1636,7 @@ function parseTableDef(table: SchemaTable, def: string): ConstraintIdentity[] {
   if (uniqueTuple) return [{ table, kind: "unique", column: `(${uniqueTuple[1].trim()})` }];
   const pkTuple = /^PRIMARY\s+KEY\s*\(([^)]*)\)/i.exec(def);
   if (pkTuple) return [{ table, kind: "unique", column: `(${pkTuple[1].trim()})` }];
+  if (/^CHECK\s*\(/i.test(def)) return [{ table, kind: "check", column: "CHECK" }];
 
   const name = def.split(/\s+/)[0];
   if (!name) return [];
@@ -1576,6 +1866,9 @@ describe("§10 · applying the set", () => {
         ownerId: `usr_FAKE0000_${crypto.randomUUID()}`,
         appId: `app_FAKE0000_${crypto.randomUUID()}`,
         agentId: `agt_FAKE0000_${crypto.randomUUID()}`,
+        // Named but not seeded: this case never inserts a §23 settings row, so the twin
+        // owner's FK never resolves — the field exists for the type, which is the point.
+        twinOwnerId: `usr_FAKE0000_${crypto.randomUUID()}`,
       };
       const now = Date.now();
       await insertRow("user", {

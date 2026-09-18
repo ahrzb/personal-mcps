@@ -10,8 +10,9 @@ collected in [§9](#9-what-was-the-authors) at the end.
 
 ## 0. Prerequisites
 
-- A Cloudflare account (the free plan covers everything here: Workers, D1, Durable
-  Objects on the SQLite backend).
+- A Cloudflare account with Workers, D1, Durable Objects, and Workers Containers enabled.
+  The hub's TypeScript execution surface runs a capped basic container; review your
+  account's current container pricing/limits before enabling it.
 - Node ≥ 22.18 / 23.6 — the CLI and the repo's scripts are TypeScript run through
   Node's native type stripping, which is exactly where that floor comes from. The
   published CLI declares the same `engines.node` floor; an earlier version of this
@@ -82,22 +83,26 @@ The command prints a `database_id`. **Paste it over the checked-in one** in
 `wrangler.jsonc` — the committed id belongs to the author's account and your deploy
 cannot reach it.
 
-Leave the Durable Object block alone:
+Keep both Durable Object histories and the container binding:
 
 ```jsonc
 "durable_objects": {
-  "bindings": [{ "name": "APP_CONNECTION", "class_name": "AppConnection" }]
+  "bindings": [
+    { "name": "APP_CONNECTION", "class_name": "AppConnection" },
+    { "name": "HUB_SANDBOX", "class_name": "HubSandbox" }
+  ]
 },
 "migrations": [
   { "tag": "v1", "new_sqlite_classes": ["ServiceConnection"] },
-  { "tag": "v2", "renamed_classes": [{ "from": "ServiceConnection", "to": "AppConnection" }] }
+  { "tag": "v2", "renamed_classes": [{ "from": "ServiceConnection", "to": "AppConnection" }] },
+  { "tag": "v3", "new_sqlite_classes": ["HubSandbox"] }
 ]
 ```
 
-`new_sqlite_classes` (not `new_classes`) is load-bearing: the storage backend is
-fixed when the class is first created and cannot be changed afterwards. The v1 tag
-keeps the name the class was *created* under — migration tags are history — and v2
-carries its state over to today's `AppConnection`; a fresh deploy just replays both.
+Migration tags are immutable history. `HubSandbox` is separate from `AppConnection` and
+is keyed by a digest of the exact consumer bearer. The matching container configuration
+uses a basic instance, at most ten instances, and six-minute idle sleep; package/image
+parity is checked by the repository build.
 
 ## 3. Set PUBLIC_ORIGIN
 
@@ -187,6 +192,16 @@ Local development is separate: `pnpm dev` reads `.dev.vars`, which is gitignored
 holds its own throwaway values. Nothing you set here affects it.
 
 ## 5. Apply the migrations
+
+Before applying the hub-execution cutover, preflight the reserved virtual slug:
+
+```bash
+npx wrangler d1 execute personal-mcps --remote --command \
+  \"SELECT owner_id, id, slug FROM app WHERE slug = 'hub'\"
+```
+
+The result must contain zero rows. A match is a deployment blocker: explicitly migrate
+that owner/app first. The hub never shadows or auto-renames it.
 
 The SQL files in `server/migrations` — better-auth's tables plus the hub's. Remote
 first-run:
@@ -318,13 +333,17 @@ which is why [§0](#0-prerequisites) ends with `wrangler whoami`.
 
 ## 11. Connect clients
 
-Your hub serves two MCP endpoint shapes, both streamable HTTP, both taking a
-`pmcp_agt_…` agent key as a bearer token:
+Your hub serves three MCP endpoint forms, all bearer-authenticated:
 
 ```
-https://<origin>/<user>/mcp        # aggregated — every app the agent can reach
-https://<origin>/<user>/mcp/<app>  # scoped to one app
+https://<origin>/<user>/mcp        # hub execute/search + TypeScript declarations
+https://<origin>/<user>/mcp/hub    # same hub surface, unprefixed tool names
+https://<origin>/<user>/mcp/<app>  # one canonical scoped application
 ```
+
+The aggregate endpoint no longer publishes application tools/prompts. Mount direct
+clients on scoped app URLs; use the aggregate or `/hub` endpoint when a consumer can run
+the generated TypeScript orchestration surface.
 
 Issue a key with `pnpm pmcp token issue --agent <slug>`. To write a bot, put it
 behind the tunnel, and point Claude Code at it, read the

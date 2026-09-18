@@ -1,7 +1,7 @@
 // workers-env.d.ts — the hand-rolled shadow of the platform surface, in two halves.
 //
 // `cloudflare:workers` is the ambient binding access the seams that take no `db` parameter
-// resolve through: identity (`issueToken(input, now?)`, `resolvePrincipal(req)`) and
+// resolve through: identity (`issueToken(input, now?)`, `resolveCaller(req)`) and
 // admin's ops table and §12 pair, none of which carry an Env argument, plus the tunnel DO
 // (audit.ts's resolveAuditConfig header names it). Registry and audit are the other
 // convention — they take the binding — and neither needs that half. `DurableObject` is
@@ -46,6 +46,8 @@ declare module "cloudflare:workers" {
  * behind §6's registration deadline, and the WebSocket hibernation API.
  */
 type DurableObjectStateLike = {
+  /** Extends the current DO event until late cleanup/quiescence work settles. */
+  waitUntil(work: Promise<unknown>): void;
   storage: {
     get<T>(key: string): Promise<T | undefined>;
     put(key: string, value: unknown): Promise<void>;
@@ -125,5 +127,10 @@ type D1Like = {
  *  inspected, which is why it needs no shape of its own. */
 type DurableObjectNamespaceLike<Stub> = {
   idFromName(name: string): unknown;
+  /** The id-from-digest path §23.8 addresses the Sandbox DO by: the 64-hex exact-token
+   *  digest IS the id, so no name indirection exists between a bearer and its container.
+   *  Added here — the one ambient home for platform binding shapes — because the tunnel
+   *  path never needed it. */
+  idFromString(id: string): unknown;
   get(id: unknown): Stub;
 };

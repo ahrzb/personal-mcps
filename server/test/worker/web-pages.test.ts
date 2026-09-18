@@ -56,6 +56,8 @@ import {
 import type { TokenInfo } from "../../src/identity";
 import worker from "../../src/index";
 import type { Env } from "../../src/index";
+import { HUB_HARD_MAX_TIMEOUT_MS, HUB_MIN_TIMEOUT_MS } from "../../src/limits";
+import { generatedAlias } from "../../src/hub-types";
 import { schemaLeaves } from "../../src/catalog-view";
 import { paths, SETTINGS_CONFIRM_PANE } from "../../src/pages/model";
 import type { ConnectionRow, SettingsConfirm } from "../../src/pages/model";
@@ -667,7 +669,7 @@ const ENDS_SESSIONS = (target: string): boolean =>
   target === paths.auth.signOut || target === paths.auth.revokeOtherSessions;
 
 /** Every page that renders a credential form — /login's three cards, the signed-in shell's
- *  Sign out, all six settings panes, and the destructive confirm dialogs, which is where
+ *  Sign out, all seven settings panes, and the destructive confirm dialogs, which is where
  *  three of the credential forms exist at all (§13 puts them behind `?confirm=`). */
 async function credentialPages(cookie: string): Promise<string[]> {
   const rendered = [
@@ -3578,7 +3580,7 @@ describe(`§13 · /agents/<slug>/apps/<app> — the (agent × app) grant pane`, 
     expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual([]);
   });
 
-  it(`§13 · the details pane answers sel: a role draws the role badge, "Declared by <app> at connect." / "Built in: every family, present and future.", its For-agent, Patterns and "Matches today" cards; a tool draws its Standing, the approval sentence, the Arguments table and "Called as <app>_<tool> on the aggregated endpoint"; a pattern draws the pattern badge, "An entry that is not one item: anchored, * aliases .*." and "Matches today · N" · nothing selected draws "Select a role, tool, prompt or resource on the left for its details." with the Catalog and "Grant set for <agent>" cards (the twin)`, async () => {
+  it(`§13 · the details pane answers sel: roles, tools and patterns; a tool draws its scoped MCP and TypeScript identities beside reach and approval; nothing selected draws the catalog summary`, async () => {
     const { cookie } = await withGrantPane();
     const base = paths.agentApp("viarole", "feed");
 
@@ -3595,7 +3597,10 @@ describe(`§13 · /agents/<slug>/apps/<app> — the (agent × app) grant pane`, 
 
     const tool = textOf(await page(`${base}?sel=tool:get_news`, cookie));
     expect(tool).toContain("Fetch the latest stories.");
-    expect(tool).toContain("Called as feed_get_news on the aggregated endpoint");
+    expect(tool).toContain("Scoped MCP identity");
+    expect(tool).toContain("feed / get_news");
+    expect(tool).toContain("TypeScript identity");
+    expect(tool).toContain("mcp.feed.getNews");
 
     const pattern = textOf(
       await page(`${paths.agentApp("direct", "feed")}?sel=pattern:${encodeURIComponent("tool/purge_.*")}`, cookie),
@@ -4322,8 +4327,8 @@ const PKCE_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 // docs/superpowers/plans/2026-09-02-d15-panes.md; each row's mechanics are on its
 // `asserts:` line there, which is where a reader goes to see what a title was meant to pin.
 
-describe(`§13 · the /settings shell — six panes behind one rail`, () => {
-  it(`§13 · each of the six settings panes answers at its own URL and /settings renders the Password pane · /settings/password is a 404, not an alias and not a redirect (the twin: the five other pane URLs all answer 200)`, async () => {
+describe(`§13 · the /settings shell — seven panes behind one rail`, () => {
+  it(`§13 · each of the seven settings panes answers at its own URL and /settings renders the Password pane · /settings/password is a 404, not an alias and not a redirect (the twin: the six other pane URLs all answer 200)`, async () => {
     for (const pane of PANES) {
       expect((await get(pane, world.session.cookie)).status, `GET ${pane}`).toBe(200);
     }
@@ -4337,7 +4342,7 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
     expect(alias.headers.get("Location")).toBeNull();
   });
 
-  it(`§13 · every pane renders the same rail — six entries under Sign-in and Access, in the sign-in-then-holdings order, each linking to its own pane URL — the Password entry carries no marker where the five others do, and the entry for the pane being rendered is the only rail entry carrying aria-current="page"`, async () => {
+  it(`§13 · every pane renders the same rail — seven entries under Sign-in, Access and Runtime, in the sign-in-then-holdings order, each linking to its own pane URL — the Password entry carries no marker where the six others do, and the entry for the pane being rendered is the only rail entry carrying aria-current="page"`, async () => {
     for (const pane of PANES) {
       const html = await page(pane);
       const entries = railEntries(html, RAIL_NAV_LABEL);
@@ -4355,7 +4360,11 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
       expect(at("Sign-in")).toBeLessThan(at(`href="${paths.settings}"`));
       expect(at("Access")).toBeGreaterThan(at(`href="${paths.settingsPasskeys}"`));
       expect(at("Access")).toBeLessThan(at(`href="${paths.settingsSessions}"`));
-      // §13's pane table: Password's marker cell reads `none`. The five beside it are what
+      // §13's Runtime group holds the one pane that configures what programs may SPEND:
+      // after Access, and before the Execution entry it heads.
+      expect(at("Runtime")).toBeGreaterThan(at(`href="${paths.settingsClients}"`));
+      expect(at("Runtime")).toBeLessThan(at(`href="${paths.settingsExecution}"`));
+      // §13's pane table: Password's marker cell reads `none`. The six beside it are what
       // keeps that absence a fact about Password rather than about the rail.
       expect(entries[0].marker, `the Password marker on ${pane}`).toBe("");
       for (const entry of entries.slice(1)) {
@@ -4435,7 +4444,7 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
     expect(enrolled, "the marker says the same thing in both states").not.toBe(notEnrolled);
     expect(Number(markerOf(after, paths.settingsPasskeys))).toBe(1);
   });
-  it(`§4/§13 · the /settings gate is a prefix rule: a stale cookie and a bearer-sourced session are refused on all six panes, the two ops-backed ones included · the same six panes render on a session signed in moments ago (the twin)`, async () => {
+  it(`§4/§13 · the /settings gate is a prefix rule: a stale cookie and a bearer-sourced session are refused on all seven panes, the three ops-backed ones included · the same seven panes render on a session signed in moments ago (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, { apps: [{ slug: "news", kind: "tunnel" }] });
     // Two sign-ins for ONE owner: ageing one cannot age the twin it is compared against.
     const stale = await seedOwnerSession(ns.owner);
@@ -4457,10 +4466,10 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
       expect((await get(pane, fresh.cookie)).status, `GET ${pane} on a fresh cookie`).toBe(200);
       walked += 1;
     }
-    expect(walked, "the walk did not cover six panes").toBe(6);
+    expect(walked, "the walk did not cover seven panes").toBe(7);
   });
 
-  it(`§4/§13 · every POST target under /settings/ refuses a day-old cookie carrying its own real CSRF token and never reaches its op — the credential targets and the two ops-backed panes' alike · the same posts from a fresh session are accepted (the twin)`, async () => {
+  it(`§4/§13 · every POST target under /settings/ refuses a day-old cookie carrying its own real CSRF token and never reaches its op — the credential targets and the three ops-backed panes' alike · the same posts from a fresh session are accepted (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {
       apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "app" }] }],
       agents: [{ slug: "agent", tokens: [{ as: "agt" }] }],
@@ -4692,7 +4701,7 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
     );
   });
 
-  it(`§13 · the six pane routes are the six strings §13 spells — /settings, /settings/two-factor, /settings/passkeys, /settings/sessions, /settings/tokens, /settings/clients — asserted against the literals once, since every other row reads them through paths`, () => {
+  it(`§13 · the seven pane routes are the seven strings §13 spells — /settings, /settings/two-factor, /settings/passkeys, /settings/sessions, /settings/tokens, /settings/clients, /settings/execution — asserted against the literals once, since every other row reads them through paths`, () => {
     // Every other row here derives both sides from `paths`, so renaming a member would
     // leave the whole suite green. §7 puts routes on the durable side; this is where they
     // are spelled, once.
@@ -4703,6 +4712,7 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
       paths.settingsSessions,
       paths.settingsTokens,
       paths.settingsClients,
+      paths.settingsExecution,
     ]).toEqual([
       "/settings",
       "/settings/two-factor",
@@ -4710,10 +4720,11 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
       "/settings/sessions",
       "/settings/tokens",
       "/settings/clients",
+      "/settings/execution",
     ]);
   });
 
-  it(`§13 · no rendered page links /oauth/consent — it is chromeless and has no nav slot, by design · the same pages link all six settings panes (the twin)`, async () => {
+  it(`§13 · no rendered page links /oauth/consent — it is chromeless and has no nav slot, by design · the same pages link all seven settings panes (the twin)`, async () => {
     const linked = new Set<string>();
     for (const path of [...PANES, paths.apps]) {
       const html = await page(path);
@@ -4730,7 +4741,7 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
     expect([...PANES].filter((pane) => linked.has(pane))).toEqual([...PANES]);
   });
 
-  it(`§13 · the mobile pill row lists the same six pane URLs in the same order as the rail, markerless, and shortens only the last label, to Clients — structure only, nothing visual`, async () => {
+  it(`§13 · the mobile pill row lists the same seven pane URLs in the same order as the rail, markerless, and shortens only the Connected clients label, to Clients — structure only, nothing visual`, async () => {
     for (const pane of PANES) {
       const html = await page(pane);
       const rail = railEntries(html, RAIL_NAV_LABEL);
@@ -4739,7 +4750,8 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
       expect(pills.map((e) => e.href), `the pill row on ${pane}`).toEqual(PANES);
       // §13: "label only, no markers".
       expect(pills.map((e) => e.marker), `the pill row on ${pane}`).toEqual(PANES.map(() => ""));
-      for (let at = 0; at < 5; at += 1) {
+      for (let at = 0; at < PANES.length; at += 1) {
+        if (at === 5) continue;
         expect(pills[at].label, `pill ${at} on ${pane}`).toBe(rail[at].label);
       }
       // The single shortening, asserted as a DIFFERENCE so it cannot pass by accident.
@@ -4831,7 +4843,7 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
     });
   });
 
-  it(`§13 · nothing is added TO the consent screen either: /oauth/consent renders neither paned page's rail and neither pill row — chromeless, no nav slot · the same helpers find the six entries on a settings pane (the twin)`, async () => {
+  it(`§13 · nothing is added TO the consent screen either: /oauth/consent renders neither paned page's rail and neither pill row — chromeless, no nav slot · the same helpers find the seven entries on a settings pane (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, { agents: [{ slug: "agent" }] });
     const session = await seedOwnerSession(ns.owner);
     const { clientId } = await registerOAuthClient();
@@ -4842,8 +4854,8 @@ describe(`§13 · the /settings shell — six panes behind one rail`, () => {
       expect(railEntries(html, label), `/oauth/consent rendered "${label}"`).toEqual([]);
     }
     // The twin, so the four empties are the page's answer and not the helper's: the same
-    // helper finds six entries on a settings pane in this same case.
-    expect(railEntries(await page(paths.settings, session.cookie), RAIL_NAV_LABEL).length).toBe(6);
+    // helper finds seven entries on a settings pane in this same case.
+    expect(railEntries(await page(paths.settings, session.cookie), RAIL_NAV_LABEL).length).toBe(7);
   });
 });
 
@@ -6703,7 +6715,7 @@ describe(`§13/§19 · the Connected clients pane`, () => {
       expect(times(invocations, "connection_revoke")).toBe(1);
     });
 
-    // The totality half §13 actually pins: nothing the six panes render points under the
+    // The totality half §13 actually pins: nothing the seven panes render points under the
     // old prefix, as a form action or as a link.
     for (const pane of PANES) {
       const html = await paneWithDialogs(pane, session.cookie);
@@ -7014,6 +7026,251 @@ describe(`§13/§19 · the Connected clients pane`, () => {
     const clientsAfter = await page(paths.settingsClients, session.cookie);
     expect(markerOf(clientsAfter, paths.settingsClients)).toBe("2");
     expect(clientsAfter).toContain(clientB);
+  });
+});
+
+describe(`§23 · /settings/execution — the timeout pair`, () => {
+  /** The pane's two controls as the render drew them, by field name — read off the form
+   *  itself, so a pane that drew constants where the op's read belongs cannot pass. */
+  const pairOn = (html: string): Record<string, string> => {
+    const [drawn] = formsPostingTo(html, paths.settingsExecutionUpdate);
+    return { defaults: drawn?.default_timeout_ms ?? "", maximum: drawn?.max_timeout_ms ?? "" };
+  };
+
+  it(`§23 · the pane renders hub_settings_get's committed pair as two integer millisecond controls over one Save, bounded by the op's own minimum and ceiling, and the rail marker reads the pair in seconds`, async () => {
+    const ns = await seedNamespace(env.DB, {});
+    const session = await seedOwnerSession(ns.owner);
+    // A pair that is NOT the pinned default, so a pane drawing constants cannot pass.
+    await ops.hub_settings_update.handler(ns.owner.userId, { default_timeout_ms: 45_000, max_timeout_ms: 120_000 });
+
+    const html = await page(paths.settingsExecution, session.cookie);
+    expect(pairOn(html)).toEqual({ defaults: "45000", maximum: "120000" });
+    // The bounds the op's schema advertises, on the controls a browser validates with.
+    expect(html).toContain(`min="${HUB_MIN_TIMEOUT_MS}"`);
+    expect(html).toContain(`max="${HUB_HARD_MAX_TIMEOUT_MS}"`);
+    expect(csrfOf(html)).not.toBe("");
+    expect(markerOf(html, paths.settingsExecution)).toBe("45s / 120s");
+  });
+
+  it(`§23 · a valid Save writes the pair, redirects to the pane with the notice, and the pane at that Location reads the committed pair back — with exactly one admin.hub_settings_update row`, async () => {
+    const ns = await seedNamespace(env.DB, {});
+    const session = await seedOwnerSession(ns.owner);
+    const rendered = await page(paths.settingsExecution, session.cookie);
+    const [drawn] = formsPostingTo(rendered, paths.settingsExecutionUpdate);
+
+    const answered = await formPost(
+      paths.settingsExecutionUpdate,
+      typedInto(drawn ?? {}, { default_timeout_ms: "60000", max_timeout_ms: "150000" }),
+      session.cookie,
+    );
+    expect(answered.status).toBe(303);
+    const back = new URL(answered.headers.get("Location") ?? "", ORIGIN);
+    expect(back.pathname).toBe(paths.settingsExecution);
+    expect(back.searchParams.get("done")).toBe("hub_settings_update");
+    expect((await query(env.DB, ns.owner.userId, { event: "admin.hub_settings_update" })).total).toBe(1);
+    const stored = (await ops.hub_settings_get.handler(ns.owner.userId, {})) as {
+      settings: { defaultTimeoutMs: number; maxTimeoutMs: number };
+    };
+    expect(stored.settings).toEqual({ defaultTimeoutMs: 60_000, maxTimeoutMs: 150_000 });
+    expect(pairOn(await page(`${back.pathname}${back.search}`, session.cookie))).toEqual({
+      defaults: "60000",
+      maximum: "150000",
+    });
+  });
+
+  it(`§23 · an invalid pair redraws the pane at 400 with the op's sentence under the control it named and the owner's own text in both boxes, and writes nothing — the ordering rule, the floor, and a non-integer each land on their own field (the twins)`, async () => {
+    const ns = await seedNamespace(env.DB, {});
+    const session = await seedOwnerSession(ns.owner);
+    const rendered = await page(paths.settingsExecution, session.cookie);
+    const [drawn] = formsPostingTo(rendered, paths.settingsExecutionUpdate);
+    const before = (await query(env.DB, ns.owner.userId, {})).total;
+
+    for (const [typed, sentence] of [
+      [{ default_timeout_ms: "200000", max_timeout_ms: "100000" }, 'Must not exceed "max_timeout_ms".'],
+      [{ default_timeout_ms: "500", max_timeout_ms: "30000" }, "Is below the minimum this tool accepts."],
+      [{ default_timeout_ms: "soon", max_timeout_ms: "30000" }, "Has the wrong type."],
+    ] as const) {
+      const refused = await formPost(
+        paths.settingsExecutionUpdate,
+        typedInto(drawn ?? {}, { ...typed }),
+        session.cookie,
+      );
+      expect(refused.status, typed.default_timeout_ms).toBe(400);
+      const html = await refused.text();
+      expect(textOf(html), typed.default_timeout_ms).toContain(sentence);
+      expect(pairOn(html).defaults, "the owner's own text was not redrawn").toBe(typed.default_timeout_ms);
+    }
+    expect((await query(env.DB, ns.owner.userId, {})).total, "a refused pair wrote").toBe(before);
+  });
+});
+
+describe(`§23.6 · the alias surfaces — the add-app form and the Overview editor`, () => {
+  it(`§23.6 · the add-app form carries the alias controls, and a create with them persists the owner configuration and commits its reservations`, async () => {
+    const ns = await seedNamespace(env.DB, {});
+    const session = await seedOwnerSession(ns.owner);
+    const slug = uniqueSlug("aliasapp");
+    const rendered = await page(paths.appNew, session.cookie);
+    const [drawn] = formsPostingTo(rendered, paths.appCreate);
+
+    // `typedInto` refuses a control the page never drew, which is the first half of this
+    // row: the service input and the pair rows are really on the form.
+    const posted = await post(
+      paths.appCreate,
+      typedInto(drawn ?? {}, {
+        kind: "tunnel",
+        slug,
+        name: "Aliased app",
+        typescript_service: "aliasreader",
+        "canonical.0": "search_feeds",
+        "alias.0": "searchFeeds",
+      }),
+      { csrf: csrfOf(rendered), cookie: session.cookie },
+    );
+    expect(posted.status, "the create was refused").toBe(200);
+
+    const row = (await ops.app_get.handler(ns.owner.userId, { slug })) as {
+      app: {
+        typescriptAliases: { service?: string; tools?: Record<string, string> };
+        typescriptReservations: unknown[];
+      };
+    };
+    expect(row.app.typescriptAliases).toEqual({
+      service: "aliasreader",
+      tools: { search_feeds: "searchFeeds" },
+    });
+    expect(row.app.typescriptReservations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          family: "service",
+          canonicalName: slug,
+          typescriptName: "aliasreader",
+          source: "owner",
+          active: true,
+        }),
+        expect.objectContaining({
+          family: "tool",
+          canonicalName: "search_feeds",
+          typescriptName: "searchFeeds",
+          source: "owner",
+          active: true,
+        }),
+      ]),
+    );
+  });
+
+  it(`§23.6 · a refused alias on the add-app form redraws it at 400 with the op's own sentence and creates nothing`, async () => {
+    const ns = await seedNamespace(env.DB, {});
+    const session = await seedOwnerSession(ns.owner);
+    const slug = uniqueSlug("aliasbad");
+    const rendered = await page(paths.appNew, session.cookie);
+    const [drawn] = formsPostingTo(rendered, paths.appCreate);
+
+    const posted = await post(
+      paths.appCreate,
+      typedInto(drawn ?? {}, { kind: "tunnel", slug, typescript_service: "hub" }),
+      { csrf: csrfOf(rendered), cookie: session.cookie },
+    );
+    expect(posted.status).toBe(400);
+    expect(textOf(await posted.text())).toContain("is owned by the hub namespace");
+    const listed = (await ops.app_list.handler(ns.owner.userId, {})) as { apps: { slug: string }[] };
+    expect(listed.apps.map((app) => app.slug)).not.toContain(slug);
+  });
+
+  it(`§23.6 · the Overview editor saves the owner configuration in ONE app_update, and a blank service field keeps the established reservation — omission never clears — while a name another app holds refuses the whole write at 400 with nothing stored (the twins)`, async () => {
+    const slug = uniqueSlug("aliasov");
+    const other = uniqueSlug("aliashold");
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        { slug, kind: "tunnel", typescriptAliases: { service: "firstname" } },
+        { slug: other, kind: "tunnel", typescriptAliases: { service: "holdername" } },
+      ],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const target = paths.appAliasSet(slug);
+    const rendered = await page(paths.appPane(slug, "overview"), session.cookie);
+    const [drawn] = formsPostingTo(rendered, target);
+    expect(drawn?.typescript_service, "the editor did not draw the stored name").toBe("firstname");
+
+    // Blanking the service control clears the CONFIGURATION and leaves the committed name.
+    const saved = await formPost(
+      target,
+      typedInto(drawn ?? {}, { typescript_service: "", "canonical.0": "tool_a", "alias.0": "toolAlias" }),
+      session.cookie,
+    );
+    expect(saved.status).toBe(303);
+    const after = (await ops.app_get.handler(ns.owner.userId, { slug })) as {
+      app: { typescriptAliases: unknown; typescriptReservations: unknown[] };
+    };
+    expect(after.app.typescriptAliases).toEqual({ tools: { tool_a: "toolAlias" } });
+    expect(after.app.typescriptReservations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          family: "service",
+          canonicalName: slug,
+          typescriptName: "firstname",
+          source: "owner",
+          active: true,
+        }),
+      ]),
+    );
+
+    // The collision: another app's committed name, refused whole — the editor redraws on
+    // the owner's own text and the stored configuration does not move.
+    const conflicting = await formPost(
+      target,
+      typedInto(drawn ?? {}, { typescript_service: "holdername" }),
+      session.cookie,
+    );
+    expect(conflicting.status).toBe(400);
+    const html = await conflicting.text();
+    expect(textOf(html)).toContain("is held by");
+    expect(formsPostingTo(html, target)[0]?.typescript_service, "the refusal lost the typed name").toBe(
+      "holdername",
+    );
+    const unchanged = (await ops.app_get.handler(ns.owner.userId, { slug })) as {
+      app: { typescriptAliases: unknown };
+    };
+    expect(unchanged.app.typescriptAliases).toEqual({ tools: { tool_a: "toolAlias" } });
+  });
+
+  it(`§23.6 · a value is never silently rewritten: an alias with surrounding whitespace is refused by the identifier grammar with nothing stored, and the canonical name round-trips byte-identical to what the owner typed`, async () => {
+    const slug = uniqueSlug("aliasverbatim");
+    const ns = await seedNamespace(env.DB, { apps: [{ slug, kind: "tunnel" }] });
+    const session = await seedOwnerSession(ns.owner);
+    const target = paths.appAliasSet(slug);
+    const rendered = await page(paths.appPane(slug, "overview"), session.cookie);
+    const [drawn] = formsPostingTo(rendered, target);
+
+    // A padded alias is the owner's own mistake, and the OP's grammar says so: the page
+    // neither trims it into acceptance nor invents words of its own for it.
+    const padded = await formPost(
+      target,
+      typedInto(drawn ?? {}, { "canonical.0": "search-feeds.v2", "alias.0": " searchFeeds " }),
+      session.cookie,
+    );
+    expect(padded.status).toBe(400);
+    const html = await padded.text();
+    expect(textOf(html)).toContain("must match [A-Za-z_$][A-Za-z0-9_$]*");
+    expect(formsPostingTo(html, target)[0]?.["alias.0"], "the typed alias was rewritten").toBe(
+      " searchFeeds ",
+    );
+    const refused = (await ops.app_get.handler(ns.owner.userId, { slug })) as {
+      app: { typescriptAliases: unknown };
+    };
+    expect(refused.app.typescriptAliases).toEqual({});
+
+    // The twin: the same row with a clean alias stores the canonical name EXACTLY — a
+    // punctuation-bearing upstream identity is not normalized into something friendlier.
+    const saved = await formPost(
+      target,
+      typedInto(drawn ?? {}, { "canonical.0": "search-feeds.v2", "alias.0": "searchFeeds" }),
+      session.cookie,
+    );
+    expect(saved.status).toBe(303);
+    const stored = (await ops.app_get.handler(ns.owner.userId, { slug })) as {
+      app: { typescriptAliases: unknown };
+    };
+    expect(stored.app.typescriptAliases).toEqual({ tools: { "search-feeds.v2": "searchFeeds" } });
   });
 });
 
@@ -7975,12 +8232,15 @@ describe(`§3 · /apps/<slug> — the Catalog pane`, () => {
     expect(resourceText).not.toContain("Arguments");
   });
 
-  it(`§3 · the "What only the hub knows" card: "Called as <slug>_<name> on the aggregated endpoint" on a tool and a prompt and on NO resource; "Reachable by" as one line per agent "<agent> · via <entries>" or "no agent yet"; "Approval" reading "asked for <agents>" / "none required" on a tool and "never asked for prompts" on a prompt and absent on a resource; "Redaction" reading "arguments <paths> · results <paths>" over the config entries plus the writeOnly leaves, or "no redacted fields", and absent on a resource (the twin)`, async () => {
+  it(`§3/§23.6 · the hub-known card separates canonical scoped identity from the generated TypeScript path on tools, while prompts and resources keep only canonical identity`, async () => {
     const landing = catalogPane(CATALOG);
+    const serviceName = generatedAlias(CATALOG, "service");
+    expect(serviceName).not.toBeNull();
 
     // A tool every reaching agent reaches in allow mode.
     const paper = textOf(await appPage(`${landing}?sel=tool:paper_fetch`));
-    expect(paper).toContain(`${CATALOG}_paper_fetch on the aggregated endpoint`);
+    expect(paper).toContain(`Scoped MCP identity ${CATALOG} / paper_fetch`);
+    expect(paper).toContain(`TypeScript identity mcp.${serviceName}.paperFetch`);
     expect(paper).toContain("reader-agent · via reader");
     expect(paper).toContain(NO_APPROVAL);
     expect(paper).toContain(NO_REDACTED);
@@ -7999,22 +8259,25 @@ describe(`§3 · /apps/<slug> — the Catalog pane`, () => {
     expect(secret).toContain("results");
     expect(secret).toContain("out.token");
 
-    // A prompt: the aggregated name, and the fixed approval sentence.
-    const prompt = textOf(await appPage(`${landing}?sel=prompt:digest_daily`));
-    expect(prompt).toContain(`${CATALOG}_digest_daily on the aggregated endpoint`);
-    expect(prompt).toContain(NEVER_GATED);
-    expect(prompt).toContain("audience");
+    // A prompt keeps its canonical scoped identity and has no TypeScript call path.
+    const prompt = detailsPaneOf(await appPage(`${landing}?sel=prompt:digest_daily`));
+    expect(textOf(prompt)).toContain(`Scoped MCP identity ${CATALOG} / digest_daily`);
+    expect(prompt).not.toContain("TypeScript identity");
+    expect(textOf(prompt)).toContain(NEVER_GATED);
+    expect(textOf(prompt)).toContain("audience");
 
-    // THE TWIN: a resource has neither an aggregated name, nor Approval, nor Redaction.
-    const resource = textOf(
-      detailsPaneOf(await appPage(`${landing}?sel=resource:${encodeURIComponent(CATALOG_RESOURCE_URIS[0])}`)),
+    // THE TWIN: a resource also has canonical identity, and no TypeScript, Approval or Redaction.
+    const resource = detailsPaneOf(
+      await appPage(`${landing}?sel=resource:${encodeURIComponent(CATALOG_RESOURCE_URIS[0])}`),
     );
-    expect(mentions(resource, `${CATALOG}_`)).toBe(0);
-    // The DETAILS pane's own text: "Approvals" is the shell's nav link on every page.
+    const resourceText = textOf(resource);
+    expect(resourceText).toContain(`Scoped MCP identity ${CATALOG} / ${CATALOG_RESOURCE_URIS[0]}`);
+    expect(resource).not.toContain("TypeScript identity");
     const hubCard = resource.slice(resource.indexOf("What only the hub knows"));
     expect(hubCard).not.toContain("Approval");
     expect(hubCard).not.toContain("Redaction");
     expect(hubCard).toContain("Reachable by");
+
   });
 
   it(`§3 · the Catalog details foot reads "The same block the audit row and the agent page show for this <family>. Editing reach happens on Agents, masking on Recording." with the family substituted and both words linking their own panes — /apps/<slug>/access and /apps/<slug>/recording`, async () => {
@@ -9542,7 +9805,7 @@ describe(`§7 · /apps/<slug> — Token, Overview and the Danger zone`, () => {
     expect(again).not.toMatch(TOKEN_MATERIAL);
   });
 
-  it(`§7 · the Overview pane is WIDE and is app_get's own row as a definition list — Slug, Kind, Created, a proxied app's Endpoint / Auth / Forward identity, a tunneled app's Last seen, Body logging reading "On — tunneled default" / "Off — proxied default" at each kind's default and the bare word where the owner set it explicitly, and Description — read-only: the pane renders no mutating form of any kind, the Body logging line included, the switch living on Recording (the twin)`, async () => {
+  it(`§7 · the Overview pane is WIDE and is app_get's own row as a definition list — Slug, Kind, Created, a proxied app's Endpoint / Auth / Forward identity, a tunneled app's Last seen, Body logging reading "On — tunneled default" / "Off — proxied default" at each kind's default and the bare word where the owner set it explicitly, and Description — plus §23.6's alias editor, the pane's ONE mutating form: the Body logging line stays read-only and the switch lives on Recording (the twin)`, async () => {
     const proxied = await appPage(paths.appPane(CATALOG, "overview"));
     const row = await appRowOf(CATALOG);
     const text = textOf(proxied);
@@ -9552,8 +9815,9 @@ describe(`§7 · /apps/<slug> — Token, Overview and the Danger zone`, () => {
     expect(text).toContain(row.endpoint ?? "");
     expect(text).toContain("Forward identity");
     expect(text).toContain(LOG_BODIES_PROXY);
-    // Read-only: no form, so the switch is Recording's and Recording's alone.
-    expect(opsOn(proxied)).toEqual([]);
+    // The alias editor is the pane's only form, and it is not a Body logging control: the
+    // switch is Recording's and Recording's alone (no checkbox is drawn here at all).
+    expect(opsOn(proxied)).toEqual(["alias_set"]);
     expect(checkboxesOn(proxied)).toEqual({});
 
     // The tunneled default, and the explicit setting that replaces both sentences.
@@ -10169,7 +10433,7 @@ describe(`§13 · /apps/<slug> — refusals and reserved segments`, () => {
     expect(seen).toBe(appPaneHrefs("probe").length);
   });
 
-  it(`§13 · /apps/<slug> is the ordinary owner session and nothing stricter: the day-old cookie the six /settings panes bounce to /login renders the app page, all seven of its panes, and posts the danger pane's own Archive form (the other half of §13's gate sentence)`, async () => {
+  it(`§13 · /apps/<slug> is the ordinary owner session and nothing stricter: the day-old cookie the seven /settings panes bounce to /login renders the app page, all seven of its panes, and posts the danger pane's own Archive form (the other half of §13's gate sentence)`, async () => {
     const slug = uniqueSlug("gated");
     const agent = uniqueSlug("gateagent");
     const world_ = await seedTunneledApp(slug, { agent });
@@ -10368,12 +10632,12 @@ const SETTINGS_CREDENTIAL_TARGETS: readonly string[] = Object.values<string>(pat
  * 24's walk. "connect" and "push" are the ones still owed.
  */
 /**
- * The app page's three Save targets that are op-SHAPED without being ops (§4/§5/§6): each
- * composes ONE `app_update` or `grant_set` out of fields that are not that op's keys, so
- * Direction B's field-set equality cannot describe them — exactly as the agent page's own
- * grant editor is exempted. What each composes is pinned by its own describe.
+ * The app page's four Save targets that are op-SHAPED without being ops (§4/§5/§6/§23.6):
+ * each composes ONE `app_update` or `grant_set` out of fields that are not that op's keys,
+ * so Direction B's field-set equality cannot describe them — exactly as the agent page's
+ * own grant editor is exempted. What each composes is pinned by its own describe.
  */
-const COMPOSED_APP_TARGETS: ReadonlySet<string> = new Set(["role_set", "recording_set", "grant_set"]);
+const COMPOSED_APP_TARGETS: ReadonlySet<string> = new Set(["role_set", "recording_set", "grant_set", "alias_set"]);
 
 const BROWSER_ONLY_TARGETS: ReadonlySet<string> = new Set([
   "connect",
@@ -10392,7 +10656,7 @@ async function sessionPages(): Promise<Record<string, string>> {
     paths.approvals,
     paths.approval(world.approvalId),
     paths.audit,
-    // All six panes, not just the landing one: a pane is a route, and a form that forgot
+    // All seven panes, not just the landing one: a pane is a route, and a form that forgot
     // its CSRF field on /settings/tokens is as unposted as one that forgot it on /apps.
     ...PANES,
     // And all eight of the app page's, for the same reason — otherwise the whole mutating
@@ -10522,7 +10786,7 @@ const PILL_NAV_LABEL = "Settings panes, compact";
 const APP_RAIL_NAV_LABEL = "App panes";
 const APP_PILL_NAV_LABEL = "App panes, compact";
 
-/** §13's six settings panes in rail order, read through `paths` and never respelled. */
+/** §13's seven settings panes in rail order, read through `paths` and never respelled. */
 const PANES: readonly string[] = [
   paths.settings,
   paths.settingsTwoFactor,
@@ -10530,6 +10794,7 @@ const PANES: readonly string[] = [
   paths.settingsSessions,
   paths.settingsTokens,
   paths.settingsClients,
+  paths.settingsExecution,
 ];
 
 /** One entry of a pane navigation. `marker` is "" when the entry carries none, which is
@@ -10661,7 +10926,7 @@ function formsOn(html: string): string[] {
 }
 
 /**
- * Every POST target the six panes render, with the pane that drew it and the submission it
+ * Every POST target the seven panes render, with the pane that drew it and the submission it
  * drew — including the ones that exist only under `?confirm=`, which is where §13 puts
  * Disable two-factor, Remove passkey, Revoke session, Revoke all others and the clients
  * pane's Revoke. A walk over the bare panes alone would see none of those five.

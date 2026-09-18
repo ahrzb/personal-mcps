@@ -596,7 +596,7 @@ async function withBrokenLedger<T>(body: () => Promise<T>): Promise<T> {
 }
 
 
-describe("§7 both endpoint shapes, one pipeline", () => {
+describe("§7 scoped app pipeline", () => {
   it("1. §7 · scoped tools/list serves the caller's filtered catalog with unprefixed names", async () => {
     const fixture = await seedFixture();
 
@@ -606,42 +606,9 @@ describe("§7 both endpoint shapes, one pipeline", () => {
     expect(listed.map((tool) => tool.name)).toEqual([TOOL]);
   });
 
-  it("2. §7 · aggregated tools/list prefixes `<slug>_` and spans only apps the caller holds a grant on", async () => {
-    const fixture = await seedFixture({ connectOther: true });
 
-    const forAgent = servedTools(
-      await rpc(fixture, fixture.ns.tokens[AGENT].token, null, listMessage()),
-    );
-    const forOwner = servedTools(
-      await rpc(fixture, (await seedOwnerSession(fixture.ns.owner)).token, null, listMessage()),
-    );
 
-    expect(forAgent.map((tool) => tool.name)).toEqual([`${APP_SLUG}_${TOOL}`]);
-    // The second app is real, online and catalogued — the agent simply holds no grant
-    // on it, which is what makes its absence a filtering claim rather than an empty one.
-    expect(forOwner.map((tool) => tool.name)).toContain(`${OTHER_SLUG}_${TOOL}`);
-    expect(forOwner.map((tool) => tool.name)).toContain(`${APP_SLUG}_${UNGRANTED_TOOL}`);
-  });
-
-  it("3. §7 · the same tool called through both shapes reaches the app with identical params — the prefix is split before anything else runs", async () => {
-    const fixture = await seedFixture();
-    const credential = fixture.ns.tokens[AGENT].token;
-
-    await rpc(fixture, credential, APP_SLUG, callMessage(TOOL, { q: "both shapes" }));
-    await rpc(fixture, credential, null, callMessage(`${APP_SLUG}_${TOOL}`, { q: "both shapes" }));
-
-    expect(await waitFor(() => fixture.fake.callCount(TOOL) === 2)).toBe(true);
-    const [scoped, aggregated] = callFrames(fixture.fake).map(
-      (frame) => frame.params as Record<string, unknown>,
-    );
-    // The app never learns the prefix existed: same name, same arguments, same _meta.
-    expect(aggregated.name).toBe(TOOL);
-    expect(scoped.name).toBe(TOOL);
-    expect(aggregated.arguments).toEqual(scoped.arguments);
-    expect(aggregated._meta).toEqual(scoped._meta);
-  });
-
-  it("4. §7 · role filtering bounds both surfaces: a tool outside the granted patterns is absent from the listing and answers -32001 on call, while a matched tool lists and executes (the refusal and its allow-twin in one pair)", async () => {
+  it("4. §7 · role filtering bounds the scoped surface: a tool outside the granted patterns is absent from the listing and answers -32001 on call, while a matched tool lists and executes (the refusal and its allow-twin in one pair)", async () => {
     const fixture = await seedFixture();
     const credential = fixture.ns.tokens[AGENT].token;
 

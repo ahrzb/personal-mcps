@@ -336,9 +336,10 @@ need no `trustedOrigins` entry.
    door with the ordinary challenge. MCP clients are spec-required to send `resource`,
    and this is the failure mode to look for first when a client cannot connect.
 3. **At the door** (§7 step 1, `identity.resolveCredential`'s prefix dispatch — the same
-   function that resolves `pmcp_agt_` keys, gaining one leg, so `resolvePrincipal` and
-   everything past it are unchanged). Four rules, each an authorization boundary rather
-   than an implementation note:
+   function that resolves `pmcp_agt_` keys, gaining one leg beneath `resolveCaller`).
+   The caller retains only the verified principal, a domain-separated credential digest,
+   and a non-secret binding reference for operation-time reauthorization. Four rules,
+   each an authorization boundary rather than an implementation note:
 
    **The predicate.** A bearer carrying neither `pmcp_` prefix is **JWT-shaped** when it
    is exactly three `.`-separated segments, each non-empty and each drawn from the

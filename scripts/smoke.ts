@@ -762,9 +762,10 @@ async function main(): Promise<number> {
           }),
           "original OAuth hub_execute result",
         );
+        const originalResult = asRecord(originalExecution.structuredContent, "original OAuth execution");
         expect(
-          asRecord(originalExecution.structuredContent, "original OAuth execution").kind === "completed",
-          "the original OAuth bearer did not complete",
+          originalResult.kind === "completed",
+          `the original OAuth bearer did not complete: ${JSON.stringify(originalResult)}`,
         );
 
         const rotatedVerifier = base64url(randomBytes(48));
@@ -834,9 +835,10 @@ async function main(): Promise<number> {
           }),
           "rotated OAuth hub_execute result",
         );
+        const rotatedResult = asRecord(rotatedExecution.structuredContent, "rotated OAuth execution");
         expect(
-          asRecord(rotatedExecution.structuredContent, "rotated OAuth execution").kind === "completed",
-          "the rotated OAuth bearer did not complete",
+          rotatedResult.kind === "completed",
+          `the rotated OAuth bearer did not complete: ${JSON.stringify(rotatedResult)}`,
         );
         const scoped = asRecord(
           await mcp(`${ORIGIN}/${USERNAME}/mcp/${APP}`, rotatedAccessToken, "tools/call", {

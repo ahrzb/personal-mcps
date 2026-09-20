@@ -252,14 +252,13 @@ inbound copies — a consumer cannot inject them.
 
 ### Hub-program dispatch context
 
-Sandbox calls never inherit arbitrary outer `_meta`. They advertise empty
-`io.modelcontextprotocol/clientCapabilities`, while the coordinator carries bounded
+Hub execution calls never inherit arbitrary outer `_meta`. They advertise empty
+`io.modelcontextprotocol/clientCapabilities`, while the executor carries bounded
 display-only client metadata separately for audit. `prepareForward` remains the single
 authoritative `hub/*` strip-then-set step. An optional earlier absolute deadline travels
-through backend context only for Sandbox-originated operations; the effective backend
+through backend context only for execution-originated operations; the effective backend
 timeout is the minimum of the existing direct-call timeout, ten seconds, and the
-remaining execution budget. Direct scoped behavior retains its existing 30-second
-deadline.
+remaining execution budget. Direct scoped behavior retains its existing 30-second deadline.
 
 ### Upstream OAuth (proxied apps)
 

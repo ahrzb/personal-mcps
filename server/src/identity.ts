@@ -20,11 +20,11 @@
 // may do belongs to registry (grants, roles) and the gateway pipeline.
 //
 // The door hands back more than a principal. `resolveCaller` answers an AuthenticatedCaller
-// whose `credential` carries a per-bearer Sandbox digest and a non-secret
-// CredentialReference, and `reauthorize` is the ONLY way that reference turns back into
-// authority — the check every operation an admitted execution later dispatches must pass
-// again. Both live here because one module owning a credential's whole life is the point:
-// an execution plane may hold references, never bearers.
+// whose `credential.reference` contains only the non-secret facts required to reauthorize,
+// and `reauthorize` is the ONLY way that reference turns back into authority — the check
+// every operation an admitted execution later dispatches must pass again. Both live here
+// because one module owning a credential's whole life is the point: an execution plane may
+// hold references, never bearers.
 //
 // Failure convention: identity fails at the HTTP layer, before any JSON-RPC exists —
 // its guards throw bare Response objects (401 with WWW-Authenticate, anonymous 404,
@@ -291,16 +291,13 @@ export type CredentialReference =
   | { kind: "adminToken"; tokenId: string; ownerId: string; expiresAt: number | null };
 
 /**
- * The resolved caller a consumer request admitted, plus what a Sandbox-scoped execution is
- * keyed and re-authorized by: `sandboxKey`, a domain-separated digest of the EXACT presented
- * bearer, and `reference`, the non-secret facts `reauthorize` re-checks. Two credentials
- * that resolve to the same principal name two different sandbox keys — the execution plane
- * scopes a container to the credential, never to the person behind it.
+ * The resolved caller a consumer request admitted, plus the non-secret credential facts
+ * each execution operation rechecks. Runtime isolation is per invocation, so no digest or
+ * other stable runtime identity is derived from the bearer.
  */
 export type AuthenticatedCaller = {
   principal: Principal;
   credential: {
-    sandboxKey: string;
     reference: CredentialReference;
   };
 };
@@ -323,8 +320,7 @@ export type AuthenticatedCaller = {
  * job, not this function's.
  *
  * The answer's `credential` is produced here and nowhere else: the bearer is read once,
- * turned into a sandbox key and a reference, and never retained, returned or logged.
- *
+ * resolved to a non-secret reference, and never retained, returned or logged.
  * `now` is the injected clock (epoch ms) every expiry judgment and last_used_at
  * stamp reads — same rationale as ApprovalsConfig.now: workerd tests cannot fake
  * global timers, and the expired-token refusal must be seedable beside its live
@@ -348,10 +344,7 @@ export async function resolveCaller(req: Request, now?: () => number): Promise<A
   if (owner === null || owner !== namespaceIdOf(resolved.principal)) throw anonymousNotFound();
   return {
     principal: resolved.principal,
-    credential: {
-      sandboxKey: await sha256Hex(`${SANDBOX_KEY_DOMAIN}${presented}`),
-      reference: resolved.reference,
-    },
+    credential: { reference: resolved.reference },
   };
 }
 
@@ -812,22 +805,10 @@ function bearerToken(req: Request): string | null {
   return match ? match[1] : null;
 }
 
-/**
- * The domain-separation prefix for a caller's Sandbox identity. A sandbox key is
- * `SHA-256` over this prefix + the EXACT presented bearer, so it can never equal the
- * unsalted digest of the same bearer that `token.hash`/`admin_token.hash` store: the two
- * derivations answer different questions ("which credential is at rest here" vs "which
- * container may this live presentation reuse"), and sharing one domain would let a
- * database read name a live execution identity. The version suffix retires old
- * derivations without colliding with identifiers minted under them.
- */
-const SANDBOX_KEY_DOMAIN = "pmcp.hub.sandbox.v1:";
 
 /**
  * Unsalted SHA-256, lowercase hex — deliberate for 256-bit random secrets (§4: do not
- * "fix" this into bcrypt); the plaintext never returns. Used for both at-rest token hashes
- * and sandbox keys, so callers own their domain separation (SANDBOX_KEY_DOMAIN above)
- * rather than this function inventing one.
+ * "fix" this into bcrypt); the plaintext never returns.
  */
 async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -955,20 +936,22 @@ export type OwnerSession = {
 };
 
 /**
- * The gate on every cookie-session web surface (/apps, /approvals, /audit,
- * /settings, the upstream-OAuth callback). Resolves the session cookie to the
- * signed-in user; on failure throws a Response that sends the browser through
- * /login. Two guards ride along: a session minted by the device flow (bearer-
- * sourced) never qualifies, even replayed as a cookie — a stolen CLI token must not
- * reach credential management and become persistent takeover — and with
- * `recent: true` (the /settings routes) the session must also carry recent
- * authentication or the thrown Response forces a fresh sign-in. Never reads
- * Authorization headers.
+ * The session gate's DECISION, without its consequence: resolves the cookie session to
+ * the signed-in owner, or `null` where `requireOwnerSession` would have redirected. It
+ * exists because the JSON API under /api answers an absent session with a 401 body while
+ * a page answers it with a 302 to /login — one rule, two carriers, so the rule is written
+ * once here and each caller supplies its own refusal.
+ *
+ * Two guards ride along: a session minted by the device flow (bearer-sourced) never
+ * qualifies, even replayed as a cookie — a stolen CLI token must not reach credential
+ * management and become persistent takeover — and with `recent: true` (the /settings
+ * routes) the session must also carry recent authentication. Never reads Authorization
+ * headers.
  */
-export async function requireOwnerSession(
+export async function resolveOwnerSession(
   req: Request,
   opts?: { recent?: boolean },
-): Promise<OwnerSession> {
+): Promise<OwnerSession | null> {
   // deps: better-auth
   // Cookie ONLY, rebuilt into a bare Headers: an Authorization header on a web route is
   // not a credential here, and this is where "bearer-sourced sessions are rejected"
@@ -981,12 +964,28 @@ export async function requireOwnerSession(
     ? null
     : await auth().api.getSession({ headers: new Headers({ cookie }) });
   const user = session?.user as { id: string; username?: string | null } | undefined;
-  if (!session || !user?.username) throw loginRedirect(req);
-  if (opts?.recent && !(await isRecentAuth(session.session.createdAt))) throw loginRedirect(req);
+  if (!session || !user?.username) return null;
+  if (opts?.recent && !(await isRecentAuth(session.session.createdAt))) return null;
   return {
     user: { kind: "user", userId: user.id, username: user.username },
     sessionId: session.session.id,
   };
+}
+
+/**
+ * The gate on every cookie-session PAGE surface (/apps, /approvals, /audit, /settings,
+ * the upstream-OAuth callback): `resolveOwnerSession`'s answer, with a thrown Response
+ * that sends the browser through /login in place of a null. Callers rely on the
+ * rejection, not a return value, so the throw is the contract and not an error path.
+ */
+export async function requireOwnerSession(
+  req: Request,
+  opts?: { recent?: boolean },
+): Promise<OwnerSession> {
+  // deps: resolveOwnerSession
+  const session = await resolveOwnerSession(req, opts);
+  if (session === null) throw loginRedirect(req);
+  return session;
 }
 
 /**

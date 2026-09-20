@@ -20,7 +20,7 @@
 // synthetic access filter, the caller-visible catalog COLLECTOR (per-family deadlines,
 // durable TypeScript-name allocation before filtering, grant filtering, bounded
 // diagnostics) that declarations, search and `execute` all read, the two trusted dispatch
-// seams a Sandbox bridge reuses, and the metadata-only outer audit of a hub tool call.
+// seams the QuickJS host bridge reuses, and the metadata-only outer audit of a hub tool call.
 //
 // It also owns §21's ONE carve-out from statelessness: `subscriptions/listen`'s held
 // `text/event-stream`, the session id the hub mints for it, its re-authorization tick and
@@ -104,7 +104,12 @@ import {
 import { availability, upstreamBackend } from "./upstream";
 import { approvalsFromEnv, vapidFromEnv } from "./wiring";
 import type { Env } from "./index";
-import { AUDIT_URI_CAP_BYTES, deadlines, HUB_INNER_OPERATION_TIMEOUT_MS } from "./limits";
+import {
+  AUDIT_URI_CAP_BYTES,
+  deadlines,
+  HUB_INNER_OPERATION_TIMEOUT_MS,
+  OWNER_CATALOG_DEADLINE_MS,
+} from "./limits";
 
 /**
  * A JSON-RPC 2.0 id as the hub accepts it on requests. `null` ids are never accepted
@@ -179,7 +184,7 @@ export type ResourceTemplate = {
  * metadata (128-char-truncated, §7). Informational downstream — every authorization
  * decision has already run in the pipeline before a backend sees this.
  *
- * `deadlineAt` is §23.10's optional EARLIER deadline, set only for a Sandbox-originated
+ * `deadlineAt` is §23.10's optional EARLIER deadline, set only for an execution-originated
  * operation: an absolute epoch-ms instant after which the operation must not run (and must
  * not still be running). Absent on every direct consumer call, where the backend's own
  * `CALL_TIMEOUT_MS` is the whole budget; the dispatch seams enforce it around
@@ -836,7 +841,16 @@ export async function ownerCatalog(
     // identity header must never carry an internal id (§7) — so a namespace with no user
     // row leaves as an unreadable catalog like any other, not as a crashed page render.
     const ctx: BackendCtx = { principal: await namespaceOwner(ownerId), roles: [] };
-    const items = await listScoped(env, ownerId, slug, ctx, kind, true);
+    // Bounded here rather than left to the per-fetch timeout: a page's four family reads
+    // are what an owner waits on, and an endpoint that accepts a connection and then says
+    // nothing would otherwise hold the answer for a whole CALL_TIMEOUT_MS. The rejection
+    // leaves through the catch below as the ordinary unreadable-catalog failure, which is
+    // exactly what the unread marker already renders.
+    const items = await withDeadline(
+      listScoped(env, ownerId, slug, ctx, kind, true),
+      OWNER_CATALOG_DEADLINE_MS,
+      "timeout",
+    );
     // A successful canonical tools listing is also the discovery boundary for §23.6's
     // stable names. The page and runtime therefore consume one reservation map rather than
     // independently deriving TypeScript paths.
@@ -912,7 +926,7 @@ function withoutWriteOnly(node: unknown): unknown {
 // §23.1's `hub` is a virtual service: no D1 row, never archived, always availability-
 // probeable, `logBodies: false`, and — like `pmcp` — reachable only through the namespace's
 // own credentials. It has no backend, so nothing here dials one: `search_types` is computed
-// from the caller-visible snapshot below, `execute` is handed to the injected Sandbox plane
+// from the caller-visible snapshot below, `execute` is handed to the injected QuickJS executor
 // (hub-backend.ts's seam), and its resources are its own declarations. What it SHARES with
 // every other request is the outer exit: one metadata-only audit row per tools/call, written
 // by the same `recordDispatch`, under app `hub` and the canonical tool name.
@@ -1184,7 +1198,7 @@ function hubServiceInput(read: HubServiceRead, plan: AliasPlan | null): CatalogS
  *
  * `search_types` reads the snapshot and answers; `execute` validates against the owner's
  * settings, builds the same snapshot, refuses before launch on a catalog overflow, and hands
- * the run to the injected Sandbox plane. Nothing here starts a container itself.
+ * the admitted request to the injected QuickJS executor.
  */
 async function hubCall(
   env: Env,
@@ -1327,9 +1341,8 @@ async function hubRead(env: Env, ownerId: string, msg: JsonRpcRequest, ctx: Back
 /**
  * §23.10's trusted input to one `tools/call`: identity and addressing that arrived already
  * resolved, never a raw JSON-RPC message. The scoped route builds it from the consumer's
- * message; the Sandbox bridge (§23.10's DO-to-gateway hop, implemented in hub-sandbox.ts)
- * builds it from a program's call, where `clientMeta`/`meta` are the admitted execution's
- * stored display data and the ordinary arguments alone.
+ * message; hub-quickjs.ts builds it from a program callable whose canonical target is
+ * closed over, with admitted display metadata and ordinary arguments only.
  */
 export type ToolDispatch = {
   /** The caller the door admitted (§7 step 1); its `principal` decides the owner, and its
@@ -1343,8 +1356,8 @@ export type ToolDispatch = {
   args?: Record<string, unknown>;
   /** Untrusted display-only client metadata for the audit row (§7). */
   clientMeta?: BackendCtx["clientMeta"];
-  /** The consumer's `_meta`, carried for direct calls; absent for Sandbox-originated ones,
-   *  which inherit no arbitrary outer `_meta` (§23.10). */
+  /** The consumer's `_meta`, carried for direct calls; absent for execution-originated
+   * operations, which inherit no arbitrary outer `_meta` (§23.10). */
   meta?: Record<string, unknown>;
   /** MRTR answers from the consumer, preserved as a params-level sibling of `arguments`. */
   inputResponses?: unknown;
@@ -1354,21 +1367,20 @@ export type ToolDispatch = {
   id?: JsonRpcId;
   /** Absolute epoch-ms deadline for THIS operation (§23.10). Absent for direct calls. */
   deadlineAt?: number;
-  /** §23.6 — the immutable app id a Sandbox snapshot pinned: a slug that now resolves to a
-   *  different app is refused -32001, so a deleted-and-recreated slug cannot redirect old
-   *  code. */
+  /** §23.6 — the immutable app id an execution snapshot pinned: a slug that now resolves
+   * to another app id is refused before dispatch with the existing not-permitted code. */
   expectAppId?: string;
-  /** §23.4 — Sandbox-originated dispatches set this: re-authorize the credential from its
-   *  non-secret reference and refuse -32001 unless the live principal key is unchanged,
-   *  BEFORE the app is resolved. A direct consumer call omits it: the door resolved this
-   *  very credential for this very request. */
+  /** §23.4 — execution-originated dispatches set this: re-authorize the credential from its
+   * non-secret reference and refuse -32001 unless the live principal key is unchanged,
+   * BEFORE the app is resolved. A direct consumer call omits it: the door resolved this
+   * very credential for this very request. */
   reauthorizeCredential?: boolean;
 };
 
 /**
- * The one tools/call pipeline — the scoped route's and §23.10's Sandbox bridge's alike, so a
- * program's operation crosses exactly the checks a direct consumer call crosses. `slug` and
- * `tool` arrive already resolved and canonical, so approvals bind to the same row either way.
+ * The one tools/call pipeline — the scoped route's and §23.10's QuickJS host bridge's alike,
+ * so a program's operation crosses exactly the checks a direct consumer call crosses.
+ * `slug` and `tool` arrive already resolved and canonical, so approvals bind to the same row either way.
  * Runs the pinned order: resolve app → pinned-app-id check → filter (-32001 — an ungranted
  * agent learns nothing more), archived (-32002), availability (-32000 — §7 lists it last but
  * the availability-first decision puts it ahead of the approval gate, and one test serves
@@ -1527,10 +1539,10 @@ async function requireSamePrincipal(caller: AuthenticatedCaller): Promise<void> 
 }
 
 /**
- * §23.4 — `requireSamePrincipal` as a verdict rather than a refusal, for the Sandbox plane's
- * own two call sites: the per-bridge-operation check (which the dispatch seams do
+ * §23.4 — `requireSamePrincipal` as a verdict rather than a refusal, for the QuickJS
+ * executor's two call sites: the per-host-operation check (which the dispatch seams do
  * themselves, via `reauthorizeCredential`) and the pre-PUBLICATION check, whose failure
- * discards a finished run's value, diagnostics, stdout and stderr. Answers false for every
+ * discards a finished run's value, stdout and stderr. Answers false for every
  * refusal and never leaks which one — a revoked row, an expired reference, a deleted agent
  * and a rebound principal are one answer, exactly like the door's.
  */
@@ -1839,14 +1851,14 @@ export type ResourceDispatch = {
   uri: string;
   /** Untrusted display-only client metadata for the audit row (§7). */
   clientMeta?: BackendCtx["clientMeta"];
-  /** The consumer's `_meta`, carried for direct calls; absent for Sandbox-originated ones. */
+  /** The consumer's `_meta`, carried for direct calls; absent for execution-originated operations. */
   meta?: Record<string, unknown>;
-  /** The consumer's JSON-RPC id; absent for a bridge call. */
+  /** The consumer's JSON-RPC id; absent for a host operation. */
   id?: JsonRpcId;
   /** Absolute epoch-ms deadline for THIS read (§23.10). Absent for direct calls. */
   deadlineAt?: number;
-  /** §23.6 — the immutable app id a Sandbox snapshot pinned; a slug resolving elsewhere is
-   *  refused -32001. */
+  /** §23.6 — the immutable app id an execution snapshot pinned; a slug resolving elsewhere
+   * is refused -32001. */
   expectAppId?: string;
   /** §23.4 — see `ToolDispatch.reauthorizeCredential`; identical here. */
   reauthorizeCredential?: boolean;
@@ -1854,7 +1866,7 @@ export type ResourceDispatch = {
 
 /**
  * §20.2's `resources/read` pipeline and §23.10's second dispatch seam — the scoped route's
- * and the Sandbox bridge's alike — matched by `uri` (never `name`, §20.2) against the
+ * and the QuickJS host bridge's alike — matched by `uri` (never `name`, §20.2) against the
  * caller's resource patterns. Two things it alone does: the outgoing result is decorated
  * (§20.4 — `cacheScope: "public"` downgraded to `"private"`, and a still-pending MRTR
  * exchange never given a `ttlMs`), and the audited `tool` column is the URI itself, put

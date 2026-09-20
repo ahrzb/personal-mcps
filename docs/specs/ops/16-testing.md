@@ -85,8 +85,8 @@
   fan-out remain out-of-process obligations.
 - One `scripts/e2e.md` runbook (manual): deploy to a dev worker, run the example app,
   `pmcp call` round-trip.
-- **Sandbox deployed proof** (§23): workerd fakes only the narrow adapter. A staging
-  container must prove Deno permissions, no Internet/package import, fixed bridge
-  identity, remote timeout/abort kill, exact-token reuse/isolation, output caps, six-minute
-  idle policy, package/image parity, and classified non-replayed replacement failures.
+- **QuickJS deployed proof** (§23): workerd executes the real pinned Wasm artifact and
+  proves fresh contexts, asynchronous host-promise resumption, dynamic-compiler removal,
+  interruption, output/result contracts, and shared dispatch. Post-deploy smoke must also
+  complete aggregate and scoped execution through the production Worker.
 

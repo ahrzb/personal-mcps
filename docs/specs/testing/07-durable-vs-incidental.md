@@ -7,12 +7,12 @@ is incidental — put it behind a named constant or don't assert it.**
 Durable: refusal codes/order; 401-vs-404 indistinguishability; persistence exclusions;
 approval exactly-once; close-code behavior; canonical scoped identities; aggregate
 hub-only routing; one explicit TypeScript map shared by declarations/runtime; sticky
-collision behavior; exact-token Sandbox boundary; credential reauthorization; `hub/*`
-strip-then-set; pattern language; six-code vocabulary; no invoking bearer in untrusted
-state.
+collision behavior; fresh per-invocation QuickJS isolation; credential reauthorization;
+`hub/*` strip-then-set; pattern language; six-code vocabulary; no invoking bearer in
+untrusted state.
 
 Incidental behind named producers/constants: timeout literals below the 300 s compiled
-ceiling, container preview version, diagnostics prose, SQL column layout, list/page
-ordering, HTML, cache/last-used cadence. First-underscore splitting is no longer a
-durable rule because aggregate application dispatch no longer exists.
+ceiling, diagnostics prose, SQL column layout, list/page ordering, HTML, and
+cache/last-used cadence. First-underscore splitting is no longer a durable rule because
+aggregate application dispatch no longer exists.
 

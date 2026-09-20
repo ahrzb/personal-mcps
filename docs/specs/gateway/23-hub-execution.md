@@ -1,9 +1,9 @@
-## 23. Hub TypeScript execution
+## 23. Hub JavaScript execution
 
-*Added 2026-09-18. This section replaces the aggregate application catalog with a
-hub-owned TypeScript orchestration surface. Application resources remain scoped on
-the public MCP wire as decision 26 requires; programs receive a separate structured
-resource API and do not rewrite resource URIs.*
+*Added 2026-09-18 and revised 2026-09-19. This section replaces the aggregate
+application catalog with a hub-owned JavaScript orchestration surface. Application
+resources remain scoped on the public MCP wire as decision 26 requires; programs receive
+a separate structured resource API and do not rewrite resource URIs.*
 
 ### 23.1 Public surface and virtual service
 
@@ -51,10 +51,13 @@ an admin successor. A zero-grant agent may use either hub endpoint for pure Type
 ### 23.2 Hub tools and declaration resources
 
 `execute` takes a closed object with required string `code` and optional integer
-`timeout_ms`. The source is at most 64 KiB after UTF-8 encoding. `timeout_ms` is in the
-inclusive range 1,000–300,000 and must not exceed the owner's configured maximum.
-Shape, source-size, and dynamic-maximum failures use the existing payload-free
-`-32602`; the hub never clamps a requested timeout.
+`timeout_ms`. `code` is the body of an async TypeScript function with read-only `mcp` and
+`console` bindings; top-level `await` and `return` are valid. The source is at most 64 KiB
+after UTF-8 encoding. `timeout_ms` is in the inclusive range 1,000–300,000 and must not
+exceed the owner's configured maximum. Shape, source-size, type, and lower-bound failures
+use the existing payload-free `-32602`. An integer `timeout_ms` above the effective owner
+maximum returns `-32602` with `data: { field: "timeout_ms", max }`, making the dynamic
+ceiling discoverable; the hub never clamps a requested timeout.
 
 `search_types` takes a closed object:
 
@@ -68,7 +71,7 @@ identity, then prefix, then substring, then description substring. Tie by kind,
 canonical service, then canonical subject. A result names its kind (`tool`, `resource`,
 `resourceTemplate`, or `hubTool`), surface, TypeScript path, canonical service and
 subject, rendered signature, direct declaration URI, and bounded mapping/catalog
-diagnostics. Search starts no Sandbox.
+diagnostics. Search starts no execution runtime.
 
 `resources/list` returns these UTF-8 `text/typescript` resources:
 
@@ -130,10 +133,9 @@ state. The admin fixture remains the single schema producer.
 ### 23.4 Authenticated caller and reauthorization
 
 The consumer door returns `AuthenticatedCaller = { principal, credential }`. `Principal`
-continues to carry authorization and audit identity. `credential` carries only:
-
-- `sandboxKey`: lowercase, domain-separated SHA-256 of the exact presented bearer;
-- a serializable, non-secret reference used to reauthorize.
+continues to carry authorization and audit identity. `credential` carries only the
+serializable, non-secret reference used to reauthorize. No digest or stable execution
+identity is derived from the bearer.
 
 References and liveness checks are family-specific:
 
@@ -150,20 +152,19 @@ representation. Initial resolution remains credential-first and namespace-second
 including prefix terminality, terminal OAuth failure, and the existing 401/404
 anti-enumeration matrix.
 
-Every bridge call/read reauthorizes the non-secret reference, compares its principal key
+Every program call/read reauthorizes the non-secret reference, compares its principal key
 to the execution's original key, and re-reads current grants. Expiry, revocation,
 account/agent deletion, rebinding, or a reused slug now pointing at a different immutable
-app id returns `-32001`. The coordinator reserves up to the final 500 ms of the admitted
+app id returns `-32001`. The executor reserves up to the final 500 ms of the admitted
 budget, never more than half of a short budget, then reauthorizes immediately before
 publication. Refusal or failure to finish that check by the absolute outer deadline
 discards result, diagnostics, stdout, and stderr and makes the outer call a metadata-only
 audited `-32001`. An already-dispatched operation remains at-most-once.
 
-The invoking bearer never enters Sandbox state, files, environment, argv, declarations,
-results, audit, product logs, or errors. The digest is not an authenticator and may appear
-only in Cloudflare platform diagnostics. An authorized `pmcp` operation may intentionally
-return a newly issued credential to an owner/admin program exactly as a direct call does;
-existing `writeOnly` masking and metadata-only outer audit apply.
+The invoking bearer never enters the QuickJS runtime, guest globals, results, audit,
+product logs, or errors. An authorized `pmcp` operation may intentionally return a newly
+issued credential to an owner/admin program exactly as a direct call does; existing
+`writeOnly` masking and metadata-only outer audit apply.
 
 ### 23.5 Caller-visible catalog
 
@@ -187,7 +188,7 @@ each inner operation.
 
 A visible catalog is capped at 256 entries and 2 MiB of raw schema/catalog bytes.
 Canonical subjects are at most 8 KiB UTF-8, descriptions 4 KiB, and schemas 64 KiB,
-depth 64, and 10,000 nodes. Overflow makes `execute` fail before Sandbox start,
+depth 64, and 10,000 nodes. Overflow makes `execute` fail before runtime creation,
 `search_types` return a deterministic prefix with `incomplete: true`, and declaration
 resources render a diagnostic banner plus an `unknown` root rather than a partially
 callable API.
@@ -195,10 +196,11 @@ callable API.
 ### 23.6 Stable hub-local TypeScript names
 
 Name allocation and declaration rendering live in a Node-clean pure module whose
-transitive imports do not touch `cloudflare:workers`, gateway, admin, tunnel, or Sandbox.
-Runtime dispatch and generated declarations consume one immutable explicit map and never
-reverse a TypeScript name heuristically. Upstreams always receive their original MCP
-service/tool names. A proxied server needs no SDK and never renames its wire API.
+transitive imports do not touch `cloudflare:workers`, gateway, admin, tunnel, or the
+QuickJS runtime. Runtime dispatch and generated declarations consume one immutable
+explicit map and never reverse a TypeScript name heuristically. Upstreams always receive
+their original MCP service/tool names. A proxied server needs no SDK and never renames its
+wire API.
 
 D1 stores durable reservations:
 
@@ -264,21 +266,23 @@ slug now resolves to another app id. A returning canonical tool may reactivate o
 own unchanged reservation. Recreating an app requires a new TypeScript service alias
 even if its wire slug is reused.
 
-### 23.7 Declaration contexts and schema renderer
+### 23.7 Declaration contexts and program surface
 
-`program.d.ts` declares read-only global `mcp: ProgramMcp`:
+`program.d.ts` documents the read-only `mcp: ProgramMcp` binding:
 
 - `mcp.<service>.<tool>(input)` returns `Promise<CallToolResult<Output>>`; absent output
   schemas become `unknown`;
+- each tool function carries frozen `inputSchema` and `outputSchema` properties containing
+  a bounded JSON copy of the upstream schemas, or `null` when absent;
 - `.resources.list()` and `.templates()` return the immutable filtered snapshot locally;
-- `.resources.read(rawUri)` calls the trusted bridge using canonical service plus raw URI;
+- `.resources.read(rawUri)` calls trusted host dispatch using canonical service plus raw
+  URI;
 - `mcp.hub.searchTypes(input)` searches the immutable program snapshot locally.
 
 `pmcp` appears only when the exact credential snapshot admits an operation. The program
-has no `mcp.hub.execute`, generic canonical call, prompt/completion/subscription API, or
-credential-bearing fetch. `client.d.ts` documents the external ergonomic facade,
-including `mcp.hub.execute` and `mcp.hub.searchTypes`; it is never loaded into the program
-checker.
+has no `mcp.hub.execute`, generic canonical call, prompt/completion/subscription API,
+credential-bearing fetch, module loader, or host global. `client.d.ts` documents the
+external ergonomic facade, including `mcp.hub.execute` and `mcp.hub.searchTypes`.
 
 The in-repo schema renderer handles only a bounded type-shaping subset: primitives and
 type arrays; JSON `enum`/`const`; objects with `properties`, `required`, and
@@ -291,165 +295,152 @@ nodes, or unsafe values become `unknown` with a diagnostic, never a narrower typ
 The renderer deep-copies JSON values after byte/node/depth validation, performs no I/O,
 never resolves file/HTTP/package references, uses `JSON.stringify` for literals, emits
 only validated generated identifiers, and never injects upstream descriptions or names
-into source/comments. Tests compile hostile, recursive, and fallback declarations with
-TypeScript. No schema-rendering dependency is added.
+into source/comments. The exact-pinned TypeScript compiler checks each submitted body
+against this caller-specific declaration before QuickJS starts. Syntax and semantic
+failures return bounded diagnostics with submitted-source line and column; no guest code
+or inner operation has run. An unknown `mcp.<service>.<tool>` member is shortened to the
+service and misspelled member, with a nearest unambiguous tool suggestion when available;
+the diagnostic never dumps the service's complete structural type.
 
-### 23.8 Sandbox identity and Cloudflare configuration
+### 23.8 QuickJS runtime and Cloudflare configuration
 
-The only new Worker runtime dependency is the exact-pinned
-`@cloudflare/sandbox@next` platform package and its lockfile-pinned transitive closure.
-Wrangler adds `enable_request_signal`, exports `HubSandbox extends Sandbox` and
-`ContainerProxy`, binds `HUB_SANDBOX`, and appends a new SQLite Durable Object migration
-without changing `AppConnection` history.
+The Worker exact-pins `typescript`, `@cfworker/json-schema`,
+`quickjs-emscripten-core`, and `@jitl/quickjs-wasmfile-release-sync`. TypeScript performs
+the in-memory preflight and emits JavaScript; the Worker-safe validator interprets
+application input schemas without dynamic code generation. Wrangler only recognizes the
+deployable QuickJS artifact when it is imported relative to Worker source, so
+`server/src/quickjs-release-sync.wasm` is a byte-for-byte copy of the pinned package's
+`dist/emscripten-module.wasm`; update the package and copy together. Wrangler imports that
+file as a Worker `WebAssembly.Module` and instantiates it once per Worker isolate. It is
+not the Asyncify variant: host operations return native QuickJS promises and resume the
+guest by executing pending jobs after settlement.
 
-The container is `instance_type: "basic"` (one quarter vCPU, 1 GiB),
-`max_instances: 10`, `sleepAfter: "6m"`. The deployment limit is the authoritative
-account-wide capacity and maximum spend-rate guardrail; cumulative monthly usage still
-depends on traffic. It does not promise a distinct user-visible capacity refusal:
-Cloudflare may queue or interrupt a saturated start instead. Six minutes exceeds the 300 s
-execution ceiling plus cleanup margin. A minimal multi-stage image copies the matching
-Sandbox control binary into a pinned Deno base, then only immutable
-`runner.ts`, `worker.ts`, and `deno.json`. A dry-run contract checks package/image
-compatibility.
+Each execution typechecks and emits the submitted body in memory before loading QuickJS.
+Only a clean compilation creates a fresh QuickJS runtime and context, installs limits and
+bindings, evaluates the emitted uninvoked async function, removes every guest-reachable
+dynamic source compiler, invokes the function, and disposes the whole runtime in a
+`finally` block. The context retains QuickJS's Eval intrinsic only for trusted host-side
+compilation and bounded JSON conversion; before guest code runs, `eval`, `Function`, and
+the constructor property on ordinary, async, generator, and async-generator function
+prototypes are irreversibly replaced with `undefined`. Heap, global objects, prototypes,
+pending jobs, and module state are never reused between executions. The Worker exposes no
+filesystem, environment, socket, Worker binding, `fetch`, timer, module loader, `eval`, or
+`Function` capability to the guest. QuickJS built-ins are available only inside the
+isolated guest heap.
 
-Hand-written Worker environment types remain authoritative. `Env` gains `HUB_SANDBOX`;
-the ambient namespace type gains only the used `idFromString`/RPC members; tests bind it
-as `unknown`. Both workerd projects prebundle the Sandbox module with containers disabled,
-and worker tests fake one narrow adapter rather than a container.
+Wrangler declares one Wasm module rule and retains `enable_request_signal`; it has no
+`HUB_SANDBOX` binding, Container declaration, Sandbox SDK, container image, or execution
+Durable Object export. Migration tags remain immutable history: a new migration deletes
+the obsolete `HubSandbox` class without changing `AppConnection` history. Removing the
+binding and container eliminates warm residency and per-token container capacity.
 
-The Sandbox/DO key is the exact-token digest. One token admits one active execution. A
-concurrent second call returns transient `limit_exceeded(active_execution)` without
-launch. Before its first await, admission stores the original principal key, non-secret
-credential reference, client metadata, immutable catalog/map, absolute deadline, call
-and concurrency counters, unguessable nonce, and generation. An expired admission that
-no `run` RPC claimed may be reclaimed because it could not have touched the workspace.
-Once `run` claims a generation, expiry or cancellation retains the slot until cleanup and
-every timed-out SDK operation actually settles; the DO registers that quiescence promise
-with its own `waitUntil`, without extending the bounded RPC response. A late operation
-therefore cannot overlap or mutate a successor's workspace even after event teardown.
+### 23.9 Host-call boundary
 
-Each run creates a fresh fixed-layout directory, writes source, sanitized declarations,
-mapping/catalog JSON, immutable runner/worker files, and `deno.json`, then performs a
-bounded offline `deno check`. A failed check evaluates no user module and dispatches no
-inner operation. The parent runs the identical source bytes, reads one bounded result
-envelope, captures stdout/stderr separately, reauthorizes publication, and deletes the
-directory. Uncertain cleanup destroys/replaces the container.
+The host builds `mcp` directly from the immutable catalog snapshot. Every callable closes
+over the canonical service, immutable app id, and canonical tool name; user input contains
+only tool arguments or a resource URI and can never select another target. The installed
+tree and each schema value are recursively frozen. Runtime dispatch never reconstructs a
+canonical name from a JavaScript alias.
 
-### 23.9 Deno and bridge boundary
+A host callable validates the guest argument against the bounded application input schema
+before incrementing counters or dispatching. A refusal rejects the guest promise with
+`-32602` plus a bounded `input...` path and reason, so user code may catch it; an uncaught
+refusal becomes a reported runtime exception with no inner operation. An admitted call
+then checks the execution deadline, concurrency, operation and byte caps before starting
+the existing Worker dispatcher. When dispatch settles, the host converts the bounded JSON
+answer or a typed JSON-RPC error into the guest heap, settles the QuickJS promise, and
+pumps pending jobs. No generic bridge request, private hostname, nonce,
+container id, or guest-controlled JSON-RPC method exists.
 
-The trusted parent runs a pinned Deno with:
-
-- `--unstable-worker-options`;
-- `--no-prompt --frozen --cached-only --no-remote --no-npm`;
-- `--allow-net=mcp.internal:80` only;
-- read permission for the fresh execution directory only;
-- write permission for one result-envelope path only;
-- `--allow-env=PMCP_EXECUTION_ID` only, containing the generation nonce;
-- no run, FFI, broad filesystem, broad environment, or package permission.
-
-The parent creates one module Worker with `deno.permissions: "none"` and transfers a
-private `MessagePort` with the snapshot. The fixed entry keeps that port lexical, installs
-the `mcp` global, then dynamically imports `program.ts`, awaits the required default
-export, validates accessors and JSON shape through pre-import captured intrinsics, and
-posts the result through the private port. Static sibling imports are insufficient here:
-Deno may evaluate `program.ts` while a separate installer's top-level await is pending.
-The parent owns captured fetch, nonce, and explicit alias map; caller-supplied canonical
-targets and global Worker messages are ignored. The result path is outside the user
-Worker's write permission.
-
-`enableInternet` is false, and the pinned Sandbox preview exposes `outboundByHost` rather
-than a separate `allowedHosts` surface. The sole registered outbound host is
-`mcp.internal`. `ContainerProxy` accepts bounded POSTs on fixed call/read paths. It trusts
-only platform-authored `ctx.containerId`, resolves it through
-`env.HUB_SANDBOX.idFromString`, and RPCs that exact DO. It accepts no caller-supplied
-sandbox id, principal, roles, app id, credential, URL, binding, or generic JSON-RPC
-method.
-
-Each bridge request presents the active nonce. The DO verifies nonce, generation,
-deadline, credential, counters, and the immutable mapping before invoking the internal
-dispatcher. Worker permissions are defense in depth; the load-bearing boundary is exact-
-token DO/container identity, platform-authored container identity, operation-time
-reauthorization, explicit mapping, limits, egress denial, and remote process timeout.
+Cloudflare freezes `Date.now()` while CPU-only Worker code executes, so a wall-clock check
+alone cannot stop a non-yielding guest in production. The QuickJS interrupt handler checks
+the absolute deadline and request abort signal when the platform clock or signal advances,
+and also consumes a deterministic 10,000-callback CPU budget across compilation and
+execution. Exhausting that budget returns `limit_exceeded` for `cpu`. Memory and stack
+limits are installed before emitted JavaScript evaluation. While the guest is suspended on a host
+promise, the dispatcher's own deadline is the minimum of the existing direct-call timeout,
+ten seconds, and the remaining execution budget. A timed-out or disconnected run is
+disposed; late host work may finish and audit once but never re-enters the disposed guest.
 
 ### 23.10 Reused dispatch and program semantics
 
 The gateway extracts `dispatchTool` and `dispatchResourceRead`, and ordinary scoped
-routes migrate to them before the Sandbox calls them. `dispatchTool` preserves resolve →
-current filter → archived → known availability/approval ordering → availability →
-strip-then-set `hub/*` metadata → backend → approval settlement → exactly one audit row.
-`dispatchResourceRead` preserves resolve → current URI filter → archived → availability →
-strip-then-set metadata → backend → cache decoration → exactly one URI-scrubbed audit row.
-The availability-first approval rule already pinned in §7 remains authoritative.
+routes use the same functions the QuickJS host bindings use. `dispatchTool` preserves
+resolve → current filter → archived → known availability/approval ordering → availability
+→ strip-then-set `hub/*` metadata → backend → approval settlement → exactly one audit row.
+`dispatchResourceRead` preserves resolve → current URI filter → archived → availability
+→ strip-then-set metadata → backend → cache decoration → exactly one URI-scrubbed audit
+row. The availability-first approval rule already pinned in §7 remains authoritative.
 
-Sandbox traffic supplies no arbitrary outer `_meta`; client capability metadata is `{}`.
+Program traffic supplies no arbitrary outer `_meta`; client capability metadata is `{}`.
 A narrow request lifecycle `{ signal, waitUntil }` is threaded from Hono to the hub
-backend. It owns abort cleanup and keeps the `execute` continuation alive through its
+backend. It owns abort disposal and keeps the `execute` continuation alive through its
 outer audit after a disconnect. An optional earlier absolute deadline travels through
 backend context. An inner call/read deadline is the minimum of the existing 30 s direct
 call timeout, 10 s hub-inner timeout, and remaining execution time. Direct scoped calls
 retain their existing timeout.
 
-The submitted TypeScript is one ES module with top-level await and a required default
-export. Programs are non-transactional. Completed earlier calls may already have effects
-when a later call, approval, runtime error, limit, or disconnect occurs. Approval-required
-`-32003` is delivered as the existing typed JSON-RPC error; the program may catch it, but
-continuation after human approval is never automatic. A human reruns the whole program
-with the partial-effect warning.
-
-Only a proven pre-launch `ContainerUnavailableError` may receive one short bounded retry
-when time remains. Operation interruption, transport failure, process-wait abort, and any
-failure after possible launch are never replayed.
+The submitted source is an async TypeScript function body. Programs are
+non-transactional. Completed earlier calls may already have effects when a later call,
+approval, runtime error, limit, or disconnect occurs. Approval-required `-32003` is
+delivered as an error carrying the existing JSON-RPC code and data; the program may catch
+it, but continuation after human approval is never automatic. A human reruns the whole
+program with the partial-effect warning. The executor never automatically replays source
+or an inner operation.
 
 ### 23.11 Result and limit contract
 
 `execute` returns a bounded union:
 
-- `completed`: JSON value, bounded stdout/stderr, truncation flags, and operation counts;
-- `type_error`: bounded deterministic diagnostics, `transient: false`,
-  `mayHaveRun: false`;
-- `runtime_error`: sanitized cause, bounded output, `transient`, `mayHaveRun`, and
-  cleanup-escalation state;
+- `completed`: JSON return value, bounded stdout/stderr, truncation flags, and operation
+  counts;
+- `type_error`: bounded TypeScript diagnostics with code/message and submitted-source
+  location when available; it is non-transient and `mayHaveRun` is false;
+- `runtime_error`: sanitized cause, bounded exception message and stack, bounded output,
+  `transient`, and `mayHaveRun`;
 - `limit_exceeded`: named limit, safe observed value, `transient`, and `mayHaveRun`.
 
-Active-execution and an SDK failure proven to be a pre-launch capacity or cold-start
-refusal are transient and did not run. The deployment's `max_instances` bound is a
-guardrail, not a promise that Cloudflare will identify saturation separately; a queued or
-interrupted saturated start keeps the stage-specific result the coordinator can actually
-prove rather than being relabeled as capacity. Typecheck timeout is non-transient and did
-not run. Deterministic count/size/concurrency limits and wall-clock expiry after evaluation
-are non-transient; `mayHaveRun` states whether an operation could have dispatched. Input
-shape/source/query failures remain `-32602`.
+Syntax and semantic failures are `type_error` results before QuickJS evaluation. Guest
+exceptions and invalid return values are non-transient runtime errors and report whether
+an operation dispatched. Exception stacks name `program.ts` locations but never include a
+source excerpt. Deterministic count/size/concurrency, heap, stack, and CPU-interrupt limits are
+non-transient; the outer wall-clock deadline still bounds waits and yielding programs.
+`mayHaveRun` states whether an operation could have dispatched. Input shape, source, and
+query failures remain `-32602`.
 
 Limits are named constants in `server/src/limits.ts`:
 
 - owner-selected outer wall clock, default/max initially 30 s, hard maximum 300 s, with up
   to 500 ms (never more than half) reserved for final credential reauthorization;
-- typecheck 5 s; each inner operation 10 s or remaining execution time;
+- each inner operation 10 s or remaining execution time;
+- QuickJS heap 16 MiB, stack 64 KiB, and 10,000 interrupt callbacks per execution;
+- at most 20 compiler diagnostics, 2 KiB per diagnostic/exception message, and an 8 KiB
+  exception stack;
 - source 64 KiB; search query 256 bytes;
 - catalog 256 entries/2 MiB; subject 8 KiB; description 4 KiB; schema 64 KiB,
   depth 64, 10,000 nodes;
 - generated declarations 1 MiB;
 - 32 inner operations total, four in flight;
-- bridge arguments 256 KiB and response 1 MiB;
-- stdout and stderr 64 KiB each; default export 256 KiB;
-- search default 10/max 50/serialized response 256 KiB;
-- one active execution per exact token, ten containers account-wide.
+- host-call arguments 256 KiB and response 1 MiB;
+- stdout and stderr 64 KiB each; returned value 256 KiB;
+- search default 10/max 50/serialized response 256 KiB.
 
 Only waits that tests must shrink receive positive-integer environment overrides through
 the existing `limits.deadlines(env)` pattern.
 
-The worker structured-clones the export, then accepts only acyclic JSON: null, booleans,
-strings, finite numbers, arrays, and plain string-keyed objects. It rejects undefined,
-non-finite numbers, bigint, functions, symbols, dates, maps, sets, accessors, cycles, and
-non-plain prototypes before bounded serialization.
+The host accepts only acyclic JSON crossing either direction: null, booleans, strings,
+finite numbers, arrays, and plain string-keyed objects. It rejects undefined, non-finite
+numbers, bigint, functions, symbols, dates, maps, sets, accessors, cycles, and non-plain
+prototypes before bounded serialization. Conversion uses JSON text produced only after
+that validation, never executable caller-controlled fragments.
 
-A remote process timeout is mandatory; local observation timeout or `AbortSignal` is not
-termination proof. On request abort the coordinator cancels the generation, rejects new
-bridge traffic, terminates the process group, escalates to hard kill/container destroy
-after bounded grace, discards output, and registers cleanup with `waitUntil`. The same
-invocation lifetime remains registered until the outer execution audit is attempted. An
-already-dispatched inner call may finish and audit once, but no later operation starts and
-no program response is published.
+On request abort the executor rejects new host operations, checks the abort flag at
+QuickJS interrupt callbacks, disposes the runtime, discards output, and registers any
+already-dispatched operation with `waitUntil`. The deterministic CPU budget ensures
+non-yielding bytecode still returns control even when the platform cannot deliver an abort
+until synchronous Wasm execution ends. The invocation lifetime remains registered until
+the outer execution audit is attempted. An already-dispatched inner call may finish and
+audit once, but no later operation starts and no program response is published.
 
 ### 23.12 Audit and failure hygiene
 
@@ -457,26 +448,25 @@ The outer hub tool call writes one metadata-only row under app `hub` and canonic
 `execute`/`search_types`, including outcome, duration, and bounded client metadata. Hub
 declaration reads record only their sanitized URI. No outer row or Worker log contains
 source, query, declarations, schemas, mapping data, diagnostics, returned value,
-stdout/stderr, nonce, Sandbox id, credential, or bridge body.
+stdout/stderr, guest heap data, credential, or host-call body.
 
 Inner tool/read calls retain their canonical app/service/tool/URI identity, existing
 body policy, masking, and exactly one audit row. Local snapshot lists/templates/searches
 write none. Newly issued credential results are masked in their inner record and absent
 from the outer record. Failures name a bounded cause and explicitly state transience and
-`mayHaveRun`; logs record decisions such as refusal/replacement, never progress.
+`mayHaveRun`; logs record decisions such as refusal, never progress.
 
 ### 23.13 Required proof boundary
 
 Pure and workerd tests prove schemas, routing, identity references, reservation
-concurrency/tombstones, renderer safety, limits, dispatch ordering, audit hygiene, and
-SDK/provider contracts. They do not prove the Deno permission model, container network,
-remote process kill, Cloudflare instance cap, package/image compatibility, or idle sleep.
-A staging deployment must therefore exercise the negative permission matrix, exact-token
-reuse/isolation and OAuth rotation, bridge forgery refusal, revocation during execution,
-150 s execution across the former two-minute window, immutable admitted deadline during a
-settings update, six-minute idle sleep, disconnect cleanup, collision stability, and
-provider/three-SDK round trips. Observed facts and re-run triggers are recorded in
-strategy §10.
+concurrency/tombstones, renderer safety, limits, dispatch ordering, audit hygiene, guest
+isolation, host-call target closure, interrupt handling, memory/stack caps, fresh runtime
+state, and SDK/provider contracts. A staging deployment must additionally measure isolate
+cold bootstrap and warm-isolate/fresh-runtime latency; exercise network, environment,
+filesystem, dynamic-code, module-import and Worker-binding negatives; prove revocation
+during execution, disconnect disposal, immutable admitted deadline during a settings
+update, collision stability, and provider/three-SDK round trips. Observed facts and re-run
+triggers are recorded in strategy §10.
 
 ### 23.14 Deliberate exclusions
 

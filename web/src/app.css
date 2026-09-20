@@ -1,0 +1,202 @@
+/* app.css — the SPA's SECOND stylesheet, loaded after /styles.css and never instead of it.
+   pages/styles.css stays the source of truth for the design language: every token, every
+   page-chrome class, every table and rail. What this file adds is only what Tailwind's
+   utility engine and shadcn's Base UI primitives need in order to coexist with it. */
+
+/* Tailwind's PREFLIGHT is deliberately not imported, which is why `tailwindcss/theme.css`
+   and `tailwindcss/utilities.css` are imported separately instead of the `tailwindcss`
+   bundle the shadcn CLI writes. Preflight strips `list-style` from `ul`/`ol`, and
+   styles.css's `.md ul` / `.md ol` rules (`:1856-1863`) set only margin and padding — they
+   assume the browser's markers are still there, so importing preflight would silently
+   delete every bullet in rendered app prose. The one preflight rule the primitives
+   genuinely depend on (a default border style, so a bare `border` utility paints) is
+   restored below, inside `base` and therefore BENEATH `utilities`: unlayered it would
+   outrank every layered utility and delete the borders the primitives ask for. */
+@layer theme, base, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-style: solid;
+    border-width: 0;
+  }
+}
+
+/* …but that reset is Tailwind's preflight rule, kept on purpose for the primitives and for
+   nothing else, and it must not reach a control the browser was left to draw. styles.css
+   styles text controls BY TYPE (`input[type="text"]`, `[type="search"]`, … `:712-731`), so
+   an `<input>` written with no `type` attribute matches none of those rules and has always
+   rendered as the user agent's own field. Zeroing its border does not restyle such a field,
+   it erases it.
+
+   `revert` rather than a width and a colour of this file's own: the correct appearance is
+   the UA sheet's, and writing one here would be a second definition of a control's look in
+   a file whose whole point is to carry none. Scoped to the absent attribute rather than to
+   a page, and still inside `base`, so a primitive's own `border` utility and app.css's
+   unlayered `[data-slot="input"]` rule both still win. */
+@layer base {
+  input:not([type]) {
+    border-style: revert;
+    border-width: revert;
+  }
+}
+
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* The two sheets the generated components assume: `shadcn/tailwind.css` carries the custom
+   variants and utilities base-vega's class strings use, and `tw-animate-css` carries the
+   `animate-in` / `slide-in-from-*` family every overlay's enter and exit transition is
+   written in. Both are the CLI's own dependencies, imported here in the order its
+   scaffold imports them. */
+@import "shadcn/tailwind.css";
+@import "tw-animate-css";
+
+/* shadcn's generated classes reach the palette two ways — `bg-primary` through Tailwind's
+   `--color-*` theme namespace, and `color-mix(in oklch, var(--secondary), …)` through the
+   raw name — so both vocabularies have to exist. Neither is a palette: every value below
+   resolves to a token defined in styles.css:9-95, which stays the only place a colour is
+   written down. A second palette here is the thing this block exists to prevent.
+
+   There is no `.dark` block and no `@custom-variant dark`, for the same reason styles.css
+   has no dark theme: the product has one appearance. A `dark:` utility in a generated class
+   string therefore matches nothing, which is the correct outcome rather than a gap. */
+:root {
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --card: var(--bg);
+  --card-foreground: var(--fg);
+  --popover: var(--bg);
+  --popover-foreground: var(--fg);
+  --primary-foreground: var(--primary-fg);
+  --secondary: var(--muted);
+  --secondary-foreground: var(--fg);
+  --muted-foreground: var(--muted-fg);
+  --accent: var(--muted);
+  --accent-foreground: var(--fg);
+  --destructive-foreground: var(--primary-fg);
+  --input: var(--border);
+}
+/* --primary, --muted, --border, --ring, --destructive and --radius are styles.css's own
+   names already and carry exactly the meaning shadcn gives them, so re-declaring them here
+   would be a second definition of one token rather than a bridge. */
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--bg);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--bg);
+  --color-popover-foreground: var(--fg);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-fg);
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-fg);
+  --color-accent: var(--muted);
+  --color-accent-foreground: var(--fg);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--primary-fg);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--ring);
+}
+
+/* The radius and font namespaces are deliberately NOT aliased here. Tailwind's own
+   `theme.css` already defines `--radius-*` and `--font-sans`, and it is imported into
+   `layer(theme)` — beneath styles.css's unlayered `:root`, which redeclares `--radius-sm`,
+   `--radius-lg`, `--radius-full` and `--font-sans` with the repo's values. So `rounded-sm`
+   and `font-sans` already resolve to the design tokens, and an alias here would be a
+   SECOND declaration of the same name in a higher position — a token ladder beside the
+   one styles.css owns, which is what the bridge exists to avoid. */
+
+/* ------------------------------------------------------- coexistence ---- */
+/*
+   styles.css styles BASE ELEMENTS — `a`, `h1-h3`, every `input[type=…]`, `:focus-visible`
+   (`:99-146`, `:712-742`) — and those rules reach inside a generated primitive that happens
+   to render one. Each counter-rule below is unlayered, so it outranks styles.css's
+   equally-unlayered base rule by source order, and each is scoped to the primitive's own
+   `data-slot` attribute so it can never reach a page-chrome element.
+
+   styles.css is never edited to make room for this file. It is the shared sheet: the SSR
+   pages under /audit, /approvals, /settings and /login read it too, and a change there to
+   suit a React primitive would move a page this work does not touch. */
+
+/* A primitive that renders an anchor — a dialog's link action, a menu item — draws its own
+   colour and must not inherit the base sheet's underline. */
+[data-slot="button"],
+[data-slot="badge"] a,
+[data-slot="dialog-footer"] a {
+  text-decoration: none;
+}
+
+/* Base UI renders its own focus ring as a ring utility on the element. styles.css's
+   `:focus-visible` adds a border colour and a box-shadow unconditionally, which
+   double-draws it on every focusable primitive. */
+[data-slot="dialog-content"]:focus-visible,
+[data-slot="popover-content"]:focus-visible,
+[data-slot="popover-trigger"]:focus-visible,
+[data-slot="select-trigger"]:focus-visible,
+[data-slot="select-item"]:focus-visible,
+[data-slot="combobox-input"]:focus-visible,
+[data-slot="combobox-item"]:focus-visible,
+[data-slot="checkbox"]:focus-visible,
+[data-slot="tabs-tab"]:focus-visible,
+[data-slot="button"]:focus-visible,
+[data-slot="input"]:focus-visible {
+  box-shadow: none;
+}
+
+/* `input[type=…]`, `select` and `textarea` in styles.css pin height, padding, border and
+   shadow on every text control on the page. Inside a primitive the primitive's own
+   utilities are the contract — a combobox input is not a form field in a `.field` stack. */
+[data-slot="input"],
+[data-slot="textarea"],
+[data-slot="combobox-input"],
+[data-slot="input-group-control"] {
+  height: auto;
+  padding: unset;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  width: auto;
+}
+
+/* The one elevation a floating surface gets, taken from the existing token rather than from
+   Tailwind's shadow scale, so a popover over a table matches the design boards. */
+[data-slot="dialog-content"],
+[data-slot="popover-content"],
+[data-slot="select-content"],
+[data-slot="combobox-content"] {
+  box-shadow: var(--shadow-pop);
+}
+
+/* The narrow drawer's OPEN state, which styles.css cannot supply to this client. It draws
+   the drawer and the scrim (`:2610-2634`, `:2688-2702`) but keys open on `#menu:target`,
+   because the server-rendered pages ship no script and a URL fragment is the only switch
+   they have. Here the same markup is opened by a Base UI Dialog, whose switch is
+   `data-open` on the popup and on the backdrop. Without these rules the dialog still opens
+   — focus trapped, scroll locked — while the panel stays `visibility: hidden` and
+   translated a full width off-screen, so the hamburger reads as dead.
+
+   `[data-starting-style]` marks the one frame Base UI mounts the popup in before flipping
+   it open; excluding it is what leaves a closed style to transition FROM, so the panel
+   slides in as it does on the SSR pages rather than appearing. The exit needs no rule:
+   Base UI keeps the element mounted until styles.css's own 0.22s transition finishes.
+
+   Inside the sheet's own narrow breakpoint, because above it `.menu` and `.scrim` are
+   `display: none` (`:254-258`) and there is no drawer to open. */
+@media (max-width: 767px) {
+  .menu[data-open]:not([data-starting-style]) {
+    visibility: visible;
+    transform: none;
+  }
+
+  .scrim[data-open]:not([data-starting-style]) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

@@ -3,14 +3,14 @@
     {
       "name": "execute",
       "aggregateName": "hub_execute",
-      "description": "Run one TypeScript ES module in a sandbox keyed to this credential and return its default export. Typechecked before evaluation; completed operations may already have effects and are never replayed.",
+      "description": "Typecheck and run one async TypeScript function body in a fresh QuickJS runtime. Completed operations may already have effects and are never replayed.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "code": {
             "type": "string",
             "writeOnly": true,
-            "description": "The submitted module: one TypeScript ES module with top-level await and a required default export. At most 64 KiB after UTF-8 encoding; a shape or source-size failure is -32602."
+            "description": "The body of one async TypeScript function with top-level await and return. It is checked against the caller-visible declaration before QuickJS starts. At most 64 KiB after UTF-8 encoding; a shape or source-size failure is -32602."
           },
           "timeout_ms": {
             "type": "integer",
@@ -26,17 +26,17 @@
       },
       "outputSchema": {
         "type": "object",
-        "description": "The bounded execute result, discriminated by `kind`. Failures of the request itself (shape, source size, requested timeout above the configured maximum) are -32602 and never appear here.",
+        "description": "The bounded execute result, discriminated by `kind`. Request failures are -32602 and never appear here; an over-max integer timeout returns data.field and data.max.",
         "oneOf": [
           {
             "type": "object",
-            "description": "The module evaluated and its default export was accepted.",
+            "description": "The program returned a valid bounded JSON value.",
             "properties": {
               "kind": {
                 "const": "completed"
               },
               "value": {
-                "description": "The module's default export: acyclic JSON (null, booleans, strings, finite numbers, arrays, plain string-keyed objects) under the result byte cap."
+                "description": "The program return value: acyclic JSON (null, booleans, strings, finite numbers, arrays, plain string-keyed objects) under the result byte cap."
               },
               "stdout": {
                 "type": "string",
@@ -89,25 +89,50 @@
           },
           {
             "type": "object",
-            "description": "The TypeScript checker rejected the module; no user module evaluated and no inner operation dispatched.",
+            "description": "TypeScript syntax or semantic checking failed before evaluation.",
             "properties": {
               "kind": {
                 "const": "type_error"
               },
               "diagnostics": {
                 "type": "array",
+                "maxItems": 20,
                 "items": {
-                  "type": "string"
-                },
-                "description": "Deterministic, bounded checker diagnostics."
+                  "type": "object",
+                  "properties": {
+                    "category": {
+                      "const": "error"
+                    },
+                    "code": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "Bounded compiler message with no submitted source excerpt."
+                    },
+                    "line": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "column": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "category",
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "transient": {
-                "const": false,
-                "description": "Never transient: identical source cannot pass later."
+                "const": false
               },
               "mayHaveRun": {
-                "const": false,
-                "description": "No user module evaluated, so no inner operation ran."
+                "const": false
               }
             },
             "required": [
@@ -120,14 +145,22 @@
           },
           {
             "type": "object",
-            "description": "The run failed after evaluation began; the failure is never replayed.",
+            "description": "The program failed during compilation or evaluation; the failure is never replayed.",
             "properties": {
               "kind": {
                 "const": "runtime_error"
               },
               "cause": {
                 "type": "string",
-                "description": "Sanitized bounded failure class; never source, credentials, nonces, or raw SDK text."
+                "description": "Sanitized bounded failure class; never source, credentials, or raw runtime text."
+              },
+              "message": {
+                "type": "string",
+                "description": "Bounded guest exception message; empty only when the thrown value has none."
+              },
+              "stack": {
+                "type": "string",
+                "description": "Bounded guest stack with generated filename and locations but no source excerpt."
               },
               "stdout": {
                 "type": "string",
@@ -147,27 +180,24 @@
               },
               "transient": {
                 "type": "boolean",
-                "description": "Whether a retry could plausibly succeed; false for failures after possible launch."
+                "description": "Whether a retry could plausibly succeed."
               },
               "mayHaveRun": {
                 "type": "boolean",
                 "description": "Whether an inner operation could have dispatched before the failure."
-              },
-              "containerReplaced": {
-                "type": "boolean",
-                "description": "True when uncertain cleanup destroyed and replaced the container."
               }
             },
             "required": [
               "kind",
               "cause",
+              "message",
+              "stack",
               "stdout",
               "stderr",
               "stdoutTruncated",
               "stderrTruncated",
               "transient",
-              "mayHaveRun",
-              "containerReplaced"
+              "mayHaveRun"
             ],
             "additionalProperties": false
           },
@@ -180,7 +210,7 @@
               },
               "limit": {
                 "type": "string",
-                "description": "The violated limit's name (§23.11's caps, e.g. `active_execution`, `check_time`, `wall_clock`, `inner_operations`)."
+                "description": "The violated limit's name (§23.11's caps, e.g. `memory`, `stack`, `cpu`, `wall_clock`, `inner_operations`)."
               },
               "observed": {
                 "type": "integer",
@@ -189,7 +219,7 @@
               },
               "transient": {
                 "type": "boolean",
-                "description": "Whether a retry could plausibly succeed: active-execution and pre-launch capacity exhaustion are transient, deterministic caps and post-evaluation wall clock are not."
+                "description": "Whether a retry could plausibly succeed; deterministic guest limits are not transient."
               },
               "mayHaveRun": {
                 "type": "boolean",
@@ -211,7 +241,7 @@
     {
       "name": "search_types",
       "aggregateName": "hub_search_types",
-      "description": "Search this credential's hub TypeScript declarations and canonical catalog. Case-insensitive, non-fuzzy, ranked; starts no sandbox.",
+      "description": "Search this credential's hub TypeScript declarations and canonical catalog. Case-insensitive, non-fuzzy, ranked; starts no execution runtime.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -373,8 +403,13 @@
     "defaultTimeoutMs": 30000,
     "initialMaxTimeoutMs": 30000,
     "hardMaxTimeoutMs": 300000,
-    "checkTimeoutMs": 5000,
     "innerOperationTimeoutMs": 10000,
+    "quickjsMemoryMaxBytes": 16777216,
+    "quickjsStackMaxBytes": 65536,
+    "quickjsInterruptMax": 10000,
+    "diagnosticMax": 20,
+    "diagnosticMessageMaxBytes": 2048,
+    "runtimeStackMaxBytes": 8192,
     "sourceMaxBytes": 65536,
     "queryMaxBytes": 256,
     "catalogMaxEntries": 256,
@@ -387,15 +422,13 @@
     "declarationMaxBytes": 1048576,
     "innerOperationsMax": 32,
     "innerConcurrencyMax": 4,
-    "bridgeArgumentsMaxBytes": 262144,
-    "bridgeResponseMaxBytes": 1048576,
+    "hostArgumentsMaxBytes": 262144,
+    "hostResponseMaxBytes": 1048576,
     "stdoutMaxBytes": 65536,
     "stderrMaxBytes": 65536,
     "resultMaxBytes": 262144,
     "searchLimitDefault": 10,
     "searchLimitMax": 50,
-    "searchResponseMaxBytes": 262144,
-    "activeExecutionsPerToken": 1,
-    "sandboxContainersMax": 10
+    "searchResponseMaxBytes": 262144
   }
 }

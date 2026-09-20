@@ -15,15 +15,35 @@
   // never aborts, and the hub's abort cleanup has nothing to fire on.
   "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
 
+  // TypeScript's CommonJS compiler build probes these Node module globals while creating
+  // its unused `ts.sys`. The hub supplies its own in-memory CompilerHost and performs no
+  // filesystem I/O; stable inert paths keep module initialization Worker-compatible.
+  "define": {
+    "__filename": "\"/typescript.js\"",
+    "__dirname": "\"/\""
+  },
+
   // Workers Logs: ops debugging only. The record of record is the D1 `audit` table
   // (§15) — these lines are never queried by the product.
   "observability": { "enabled": true },
 
-  // The one stylesheet (§13) ships as a TEXT module, so `import styles from
-  // "./pages/styles.css"` hands web.ts the bytes to serve at /styles.css — a worker has
-  // no filesystem, and the alternative is a second copy of the file inside a .ts.
-  // `fallthrough` keeps wrangler's own default Text rule (txt/html/sql) alive beside it.
-  "rules": [{ "type": "Text", "globs": ["**/*.css"], "fallthrough": true }],
+  // CSS ships as a TEXT module and the pinned QuickJS interpreter ships as a precompiled
+  // WebAssembly module. `fallthrough` keeps Wrangler's defaults alive beside both rules.
+  "rules": [
+    { "type": "Text", "globs": ["**/*.css"], "fallthrough": true },
+    { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }
+  ],
+
+  // The browser client's two files (§13, §17), built by `pnpm run build:web` before every
+  // `wrangler dev`, `vitest run` and `deploy` — wrangler validates that this directory
+  // exists, so the build is a prerequisite and not a convenience.
+  //
+  // `run_worker_first` keeps the Worker in FRONT of every path. Without it the asset layer
+  // would answer before the router and the served URL space would no longer be exactly the
+  // reservation table's — a file landing in web/dist could shadow a username, and §16's
+  // router walk would stop being total. The Worker's two asset routes (web.ts) are the only
+  // way anything under this directory is reachable.
+  "assets": { "directory": "./web/dist", "binding": "ASSETS", "run_worker_first": true },
 
   // The shared control plane (§5): better-auth tables plus ours.
   //
@@ -39,32 +59,13 @@
     }
   ],
 
-  // One DO instance per tunneled app, addressed by opaque `app.id` (§3, §6).
-  //
-  // HUB_SANDBOX is the §23.8 execution plane: one instance per EXACT-TOKEN digest (the DO
-  // id is the digest itself), owning that token's single container. It is a Sandbox DO —
-  // the class extends the pinned SDK's — and the `containers` entry below links it to the
-  // image it supervises.
+  // One DO instance per tunneled app, addressed by opaque `app.id` (§3, §6). Hub
+  // JavaScript executes in a fresh QuickJS runtime inside the Worker and needs no binding.
   "durable_objects": {
     "bindings": [
-      { "name": "APP_CONNECTION", "class_name": "AppConnection" },
-      { "name": "HUB_SANDBOX", "class_name": "HubSandbox" }
+      { "name": "APP_CONNECTION", "class_name": "AppConnection" }
     ]
   },
-
-  // §23.8: one container class, `basic` (1/4 vCPU, 1 GiB), at most ten instances
-  // account-wide. This deployment cap is the authoritative capacity and spend-rate
-  // guardrail; the platform may queue saturated starts rather than expose a distinct
-  // refusal. The image is the repository's own Dockerfile: pinned Sandbox control binary
-  // + pinned Deno.
-  "containers": [
-    {
-      "class_name": "HubSandbox",
-      "image": "./server/sandbox/Dockerfile",
-      "instance_type": "basic",
-      "max_instances": 10
-    }
-  ],
   // `new_sqlite_classes`, not `new_classes`: the class is SQLite-backed. Storage backend
   // is fixed at class creation and cannot be changed afterwards.
   //
@@ -72,11 +73,13 @@
   // rewriting v1 would tell the platform a different class had always been there,
   // orphaning every live object's storage. The 2026-09-01 lingo rename
   // (service → app) is v2's `renamed_classes` instead, which carries the state over.
-  // v3 appends the hub execution plane's class; AppConnection's history is untouched.
+  // v3 records the retired Sandbox class and v4 deletes it. Historical tags are immutable:
+  // a new deployment must carry both even though only AppConnection remains bound.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ServiceConnection"] },
     { "tag": "v2", "renamed_classes": [{ "from": "ServiceConnection", "to": "AppConnection" }] },
-    { "tag": "v3", "new_sqlite_classes": ["HubSandbox"] }
+    { "tag": "v3", "new_sqlite_classes": ["HubSandbox"] },
+    { "tag": "v4", "deleted_classes": ["HubSandbox"] }
   ],
 
   // Daily sweep (§15, §7): expire past-deadline approvals, prune audit/approval rows

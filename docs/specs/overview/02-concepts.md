@@ -65,9 +65,9 @@
   - *app token*: long-lived API key bound to a **tunneled** app → only valid for
     opening the reverse WebSocket as that app. Proxied apps have no tokens.
 
-- **Hub program** — one synchronous TypeScript module checked before evaluation and run
-  in an exact-token Cloudflare Sandbox (§23). Its `mcp` global is an immutable explicit
-  map over the invoking credential's current authority. It is non-transactional:
-  completed operations may have effects if a later operation fails, and nothing resumes
-  or replays the module automatically.
+- **Hub program** — one async TypeScript function body checked against the caller-visible
+  declaration, then emitted and run in a fresh QuickJS/Wasm runtime inside the Worker
+  (§23). Its `mcp` global is an immutable explicit map over the invoking credential's
+  current authority. It is non-transactional: completed operations may have effects if a
+  later operation fails, and nothing resumes or replays the program automatically.
 

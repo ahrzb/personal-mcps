@@ -18,10 +18,10 @@ export type Violation = { field: string; reason: string };
  * The hub's one error vocabulary. `code` is a code from the pinned table — -32000
  * app unavailable · -32001 tool not permitted / unknown (deliberately
  * indistinguishable, §7) · -32002 app archived · -32003 approval required, `data`
- * carrying { approvalId, approvalUrl, expiresAt } · -32601 method not found · -32602
- * invalid params (§21.4's over-cap subscribe, the sixth consumer-visible code). Thrown
- * anywhere in the pipeline or backends; it reaches the wire only through gateway's
- * mapping, so no module ever builds a JSON-RPC error object of its own.
+ * carrying `{ approvalId, approvalUrl, expiresAt }` · -32601 method not found · -32602
+ * invalid params (§21.4's over-cap subscribe and §23's discoverable dynamic timeout
+ * maximum). Thrown anywhere in the pipeline or backends; it reaches the wire only through
+ * gateway's mapping, so no module ever builds a JSON-RPC error object of its own.
  */
 export class HubError extends Error {
   code: number;
@@ -40,9 +40,8 @@ export class HubError extends Error {
    * §8's field-scoped list behind a `-32602` from an admin op — every violation the call
    * found, in the op's own field names — for the in-process callers that place each
    * sentence under a control (the add-app page). Like `auditDetail`, never serialized:
-   * the wire carries `code` and `message` (the same sentences joined with `; `) and
-   * `data` stays -32003's alone (§7), which is what keeps every other refusal
-   * indistinguishable by shape.
+   * admin-op violations carry `code` and `message` only. The distinct execute-admission
+   * refusal may put its dynamic timeout ceiling in `data`; it does not use this field.
    */
   violations?: readonly Violation[];
   /** `message` must already respect log hygiene (§15): no secrets, no upstream bodies. */
@@ -70,11 +69,10 @@ export const CODES = {
   /** Not §7's own, but JSON-RPC's: a body that is not a request at all. */
   invalidRequest: -32600,
   methodNotFound: -32601,
-  /** JSON-RPC's "invalid params", in TWO vocabularies since §21.4: an OWNER's configuration
-   *  request being wrong (admin.ts's note), and — the sixth consumer-visible code, the first
-   *  the door has ever emitted — a `resources/subscribe` refused past LISTEN_SUBSCRIPTIONS_MAX
-   *  or SUBSCRIBE_URI_MAX_BYTES, which is a caller-supplied list being too long rather than
-   *  any of §7's four access refusals. */
+  /** JSON-RPC's "invalid params", in two vocabularies: an owner's configuration request
+   * being wrong, and caller input rejected at a consumer boundary. Most uses are
+   * payload-free; §23's over-max `timeout_ms` carries only `{ field, max }`, while §21.4's
+   * subscription count/URI caps remain payload-free. */
   invalidParams: -32602,
   /** The generic mapping for anything that is not a HubError — never a cause, ever. */
   internal: -32603,
@@ -95,7 +93,7 @@ const UNAVAILABLE = "app unavailable";
  * stored credential the hub already knows is dead, so no dial is attempted),
  * "deadline_passed" (§23.10: the operation's own deadline had already elapsed, so it was
  * never sent — a LATER operation in the same execution may still dispatch), and
- * "execution_unavailable" (no Sandbox plane is installed, so no program ever started).
+ * "execution_unavailable" (no QuickJS executor is installed, so no program ever started).
  *
  * A SET rather than the inverse list, and that asymmetry is the safety rule: an unknown
  * class discloses. Over-warning costs a consumer one avoidable retry decision;

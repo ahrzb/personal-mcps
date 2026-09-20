@@ -17,9 +17,9 @@ text — §21, decisions 29–30 and the 2026-09-02 web-surface rewrite exist no
 | — | [Front matter](overview/00-front-matter.md) | Document title, date, and draft status. |
 | 1 | [Overview](overview/01-overview.md) | What the hub is: the two app kinds (tunneled bots that dial out, proxied remote endpoints the hub forwards to), the component table (server / clients / CLI / admin MCP / web pages), and the v1 non-goals. |
 | 2 | [Concepts](overview/02-concepts.md) | The vocabulary everything else runs on: users as namespace owners and the reserved-username rule, apps and their slugs, roles as anchored patterns plus the built-in `all`, agents, grants with `allow`/`approval` modes, and the three token kinds. Also the trust boundary — roles confine the agent, not the app. |
-| 3 | [Architecture](overview/03-architecture.md) | The Worker trust boundary, shared scoped dispatch, `AppConnection`, and exact-token `HubSandbox` execution path. |
-| 4 | [Tech stack](overview/04-tech-stack.md) | Workers/Hono/D1/DOs, MCP/better-auth, dependency policy including the one pinned Sandbox vendor package, and the pinned Deno execution boundary. |
-| 5 | [Data model](data-model/05-data-model.md) | Better Auth tables, app/agent/grant/approval/token/audit/push/OAuth rows, owner execution settings, durable TypeScript reservations, and separate DO state. |
+| 3 | [Architecture](overview/03-architecture.md) | The Worker trust boundary, shared scoped dispatch, `AppConnection`, and in-process QuickJS execution path. |
+| 4 | [Tech stack](overview/04-tech-stack.md) | Workers/Hono/D1/DOs, MCP/better-auth, dependency policy, and the pinned QuickJS/Wasm execution boundary. |
+| 5 | [Data model](data-model/05-data-model.md) | Better Auth tables, app/agent/grant/approval/token/audit/push/OAuth rows, owner execution settings, durable TypeScript reservations, and app DO state. |
 | 6 | [Reverse connection protocol](tunnel/06-reverse-connection-protocol.md) | Tunnel upgrade/framing, registration roles and optional alias hints, role drift, non-disconnecting alias collisions, cache warm, liveness, replacement, and lifecycle. |
 | 7 | [Consumer-facing proxy](gateway/07-consumer-facing-proxy.md) | Aggregate hub, scoped hub/app mounts, authentication, filters/check order, shared dispatch, approval, caller metadata, upstream OAuth, and redaction. |
 | 8 | [Admin MCP](admin-and-config/08-admin-mcp.md) | Built-in `pmcp` operations, reserved virtual slugs, settings/alias configuration, parity, credential policy, and `GET /api/whoami`. |
@@ -29,14 +29,14 @@ text — §21, decisions 29–30 and the 2026-09-02 web-surface rewrite exist no
 | 13 | [Web surface](web-and-oauth/13-web-surface.md) | Server-rendered login/device, seven-pane Settings including Execution, app/agent catalog and alias views, approvals/audit, OAuth consent, PWA and Web Push. |
 | 14 | [Alternatives considered](decisions/14-alternatives-considered.md) | Rejected designs and their reasons. |
 | 15 | [Error handling and operational behavior](ops/15-error-handling.md) | Direct and program deadlines, at-most-once behavior, revocation, failure classification, hygiene, audit bodies and retention. |
-| 16 | [Testing](ops/16-testing.md) | Unit/workerd/tunnel/client obligations plus the deployed Sandbox proof boundary. |
+| 16 | [Testing](ops/16-testing.md) | Unit/workerd/tunnel/client obligations plus the deployed QuickJS proof boundary. |
 | 17 | [Repo layout](overview/17-repo-layout.md) | Monorepo and sibling-provider ownership. |
-| 18 | [Decisions made by default](decisions/18-decision-log.md) | Numbered decisions 1–33 and their supersession history. |
+| 18 | [Decisions made by default](decisions/18-decision-log.md) | Numbered decisions 1–34 and their supersession history. |
 | 19 | [Inbound OAuth](web-and-oauth/19-inbound-oauth.md) | The hub as an authorization server: the vehicle and its verify side, the discovery documents and routes, the pinned provider options, the `oauth_binding` table, the consent screen, the token end to end (including the byte-level JWT predicate and the terminal, fail-closed door leg), the interaction with the `/api/auth` allowlist, the failure matrix, and what is explicitly out of scope. |
 | 20 | [The MCP data model beyond tools](gateway/20-mcp-data-model-beyond-tools.md) | Prompts, resources, resource templates and completions through the same pipeline: what is in and what is deferred with its reason, per-family routing and capability advertisement, roles over three keyspaces, per-family audit and URI hygiene, caching, and the CLI/library surfaces. |
 | 21 | [Push: the listen stream](gateway/21-push.md) | Server→consumer notifications un-deferred (decision 28): the Worker-held `text/event-stream`, subscriber sockets into app DOs, doorbell-not-data, `resources/subscribe`/`updated`, capability flags flipping in lockstep with the transport, and the recorded ceilings. |
 | 22 | [The OpenTofu provider](provider/22-opentofu-provider.md) | `terraform-provider-pmcp`, living in its own repo and managing hub contents while Wrangler owns the Worker: the `pmcp_adm_` admin credential, write-only upstream headers, resources and data sources, the behavioural parity oracle, flakes, terranix module, and acceptance rig. |
-| 23 | [Hub TypeScript execution](gateway/23-hub-execution.md) | The aggregate cutover to hub-owned `execute`/`search_types`, declaration resources, exact-token Sandbox identity, credential reauthorization, stable hub-local TypeScript aliases, configurable synchronous deadlines, limits, audit, and deployed proof boundary. |
+| 23 | [Hub JavaScript execution](gateway/23-hub-execution.md) | The aggregate cutover to hub-owned `execute`/`search_types`, declaration resources, isolated QuickJS/Wasm execution, credential reauthorization, stable hub-local TypeScript aliases, configurable synchronous deadlines, limits, audit, and deployed proof boundary. |
 
 
 ## Testing strategy

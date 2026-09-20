@@ -79,6 +79,16 @@ const ECHO_TOOL: SmokeTool = {
     required: ["text"],
     additionalProperties: false,
   },
+  outputSchema: {
+    type: "object",
+    properties: {
+      echo: { type: "string" },
+      principal: { type: "string" },
+      roles: { type: "array", items: { type: "string" } },
+    },
+    required: ["echo", "principal", "roles"],
+    additionalProperties: false,
+  },
   // The caller is the point: what comes back proves §7's identity forwarding survived the
   // whole path, not just that the socket carried bytes.
   run: (args, who) => ({ echo: args.text, principal: who.principal, roles: who.roles }),
@@ -299,7 +309,7 @@ async function main(): Promise<number> {
       return `scoped catalog ${JSON.stringify(names)}`;
     });
 
-    await step("§23 · hub search_types and execute cross the deployed Sandbox", async () => {
+    await step("§23 · hub search_types and execute cross the deployed QuickJS boundary", async () => {
       const searched = asRecord(
         await mcp(`${ORIGIN}/${USERNAME}/mcp`, agentToken, "tools/call", {
           name: "hub_search_types",
@@ -317,17 +327,94 @@ async function main(): Promise<number> {
       const executed = asRecord(
         await mcp(`${ORIGIN}/${USERNAME}/mcp`, agentToken, "tools/call", {
           name: "hub_execute",
-          arguments: { code: `export default await mcp.smokeApp.echo({ text: "hub" });` },
+          arguments: {
+            code: `
+              const result = await mcp.smokeApp.echo({ text: "hub" });
+              const output = result.structuredContent!;
+              return { echo: output.echo, principal: output.principal };
+            `,
+          },
         }),
         "hub_execute result",
       );
       const execution = asRecord(executed.structuredContent, "hub_execute structuredContent");
       expect(execution.kind === "completed", `hub_execute kind ${String(execution.kind)}`);
       const value = asRecord(execution.value, "hub_execute value");
-      const structured = asRecord(value.structuredContent, "executed tool structuredContent");
-      expect(structured.echo === "hub", `hub_execute echo ${String(structured.echo)}`);
-      expect(structured.principal === `agent:${AGENT}`, `hub_execute principal ${String(structured.principal)}`);
+      expect(value.echo === "hub", `hub_execute echo ${String(value.echo)}`);
+      expect(value.principal === `agent:${AGENT}`, `hub_execute principal ${String(value.principal)}`);
       return `${matches.length} search match(es); execution completed through mcp.smokeApp.echo`;
+    });
+
+    await step("§23 · TypeScript, schema, and exception failures are actionable", async () => {
+      const execute = async (code: string): Promise<Record<string, unknown>> => {
+        const called = asRecord(
+          await mcp(`${ORIGIN}/${USERNAME}/mcp`, agentToken, "tools/call", {
+            name: "hub_execute",
+            arguments: { code },
+          }),
+          "diagnostic hub_execute result",
+        );
+        return asRecord(called.structuredContent, "diagnostic hub_execute structuredContent");
+      };
+
+      const typed = await execute(`return await mcp.smokeApp.echo({ text: 42 });`);
+      const diagnostics = asArray(typed.diagnostics).map((diagnostic) => asRecord(diagnostic, "type diagnostic"));
+      expect(typed.kind === "type_error", `type failure kind ${String(typed.kind)}`);
+      expect(
+        diagnostics.some((diagnostic) =>
+          typeof diagnostic.message === "string" &&
+          diagnostic.message.includes("not assignable to type 'string'") &&
+          diagnostic.line === 1),
+        `type diagnostics ${JSON.stringify(diagnostics)}`,
+      );
+
+      const unknown = await execute(`return await mcp.smokeApp.ecoh({ text: "x" });`);
+      const unknownDiagnostic = asRecord(asArray(unknown.diagnostics)[0], "unknown-tool diagnostic");
+      expect(unknown.kind === "type_error", `unknown-tool failure kind ${String(unknown.kind)}`);
+      expect(
+        unknownDiagnostic.message === 'unknown tool "ecoh" on mcp.smokeApp; did you mean "echo"?',
+        `unknown-tool diagnostic ${String(unknownDiagnostic.message)}`,
+      );
+
+      const syntax = await execute("return (;");
+      const syntaxDiagnostic = asRecord(asArray(syntax.diagnostics)[0], "syntax diagnostic");
+      expect(syntax.kind === "type_error", `syntax failure kind ${String(syntax.kind)}`);
+      expect(syntaxDiagnostic.line === 1 && typeof syntaxDiagnostic.column === "number", "syntax location missing");
+
+      const schema = await execute(`
+        const input = JSON.parse('{"text":42}');
+        return await mcp.smokeApp.echo(input);
+      `);
+      expect(schema.kind === "runtime_error", `schema failure kind ${String(schema.kind)}`);
+      expect(
+        typeof schema.message === "string" && schema.message.includes("input.text"),
+        `schema failure message ${String(schema.message)}`,
+      );
+      expect(schema.mayHaveRun === false, "schema-invalid input reached dispatch");
+
+      const runtime = await execute(`throw new Error("smoke boom");`);
+      expect(runtime.kind === "runtime_error", `runtime failure kind ${String(runtime.kind)}`);
+      expect(runtime.message === "smoke boom", `runtime failure message ${String(runtime.message)}`);
+      expect(
+        typeof runtime.stack === "string" && runtime.stack.includes("program.ts:1:"),
+        `runtime failure stack ${String(runtime.stack)}`,
+      );
+
+      let timeoutRefusal: RpcError | null = null;
+      try {
+        await mcp(`${ORIGIN}/${USERNAME}/mcp`, agentToken, "tools/call", {
+          name: "hub_execute",
+          arguments: { code: "return 1;", timeout_ms: 60_000 },
+        });
+      } catch (err) {
+        if (err instanceof RpcError) timeoutRefusal = err;
+        else throw err;
+      }
+      expect(timeoutRefusal?.code === -32602, `over-max timeout code ${String(timeoutRefusal?.code)}`);
+      const timeoutData = asRecord(timeoutRefusal?.data, "over-max timeout data");
+      expect(timeoutData.field === "timeout_ms", `over-max timeout field ${String(timeoutData.field)}`);
+      expect(timeoutData.max === 30_000, `over-max timeout maximum ${String(timeoutData.max)}`);
+      return "typed results, concise suggestions, schema and exception diagnostics, and timeout maximum returned";
     });
 
     await step("tools/call through the tunnel", async () => {
@@ -395,22 +482,55 @@ async function main(): Promise<number> {
       return `identical retry executed, echo "${String(structured.echo)}"`;
     });
 
-    await step("§13 · the /apps page renders for the browser session, and for nobody else", async () => {
-      // The one page leg. The walk already holds the cookie the same sign-in set, so this
-      // asks the deployment the question no MCP call can: does the browser surface render
-      // at all — templates, stylesheet link, ops-backed reads — behind the cookie gate.
+    await step("§13 · the /apps shell renders for the browser session, and its API answers behind the same cookie", async () => {
+      // The one page leg, as the SPA shape makes it two. `/apps` is a shell document now:
+      // it reads nothing, so what it proves is the gate and the bundle's entry points, and
+      // the read the page used to perform is a JSON call this step makes itself. Both,
+      // because a deployment can ship one and not the other — a shell whose API 500s is a
+      // blank screen, and an API behind a shell that never loaded is invisible.
       const rendered = await fetch(`${ORIGIN}/apps`, { headers: { Cookie: sessionCookie } });
       expect(rendered.status === 200, `authenticated /apps → ${rendered.status}`);
       const html = await rendered.text();
-      // A marker only the RENDERED page carries: the app the walk just created, drawn
-      // in the table by the same read the `pmcp` tools front.
-      expect(html.includes(APP), `/apps rendered no row for ${APP}`);
+      expect(html.includes(`id="pmcp-bootstrap"`), "/apps carried no bootstrap island");
+      expect(html.includes(`src="/app.js"`), "/apps linked no client bundle");
+      expect(rendered.headers.get("cache-control") === "no-store", `/apps Cache-Control ${rendered.headers.get("cache-control") ?? ""}`);
+
+      // The read itself: the app the walk just created, through the resource the client
+      // reads — the same `app_list` the `pmcp` tools front.
+      const listed = await hubJson("/api/hub/apps", sessionCookie);
+      const slugs = asArray(listed.apps).map((app) => String(asRecord(app, "app row").slug));
+      expect(slugs.includes(APP), `GET /api/hub/apps listed no ${APP} (${JSON.stringify(slugs)})`);
+
       const anonymous = await fetch(`${ORIGIN}/apps`, { redirect: "manual" });
       expect(
         anonymous.status === 302 && (anonymous.headers.get("location") ?? "").startsWith("/login"),
         `unauthenticated /apps → ${anonymous.status} ${anonymous.headers.get("location") ?? ""}`,
       );
-      return `200 with ${APP} in the table; no cookie → ${anonymous.status} ${anonymous.headers.get("location") ?? ""}`;
+      // And the API's own refusal is a JSON 401, not that redirect: a fetch cannot follow
+      // one into the address bar, so the two surfaces refuse differently on purpose.
+      const noCookie = await fetch(`${ORIGIN}/api/hub/apps`, { redirect: "manual" });
+      expect(noCookie.status === 401, `unauthenticated /api/hub/apps → ${noCookie.status}`);
+
+      return `/apps 200 no-store with the bootstrap island and /app.js; GET /api/hub/apps lists ${APP}; no cookie → ${anonymous.status} ${anonymous.headers.get("location") ?? ""} and 401 on the API`;
+    });
+
+    await step("§13 · the client bundle the shell links is actually served", async () => {
+      // The asset binding is a deployment fact and nothing else: the suite runs against a
+      // built `web/dist`, and only a live origin says the same files shipped. A 404 here
+      // is a blank dashboard with a green suite behind it.
+      const script = await fetch(`${ORIGIN}/app.js`);
+      expect(script.status === 200, `/app.js → ${script.status}`);
+      expect(
+        (script.headers.get("content-type") ?? "").includes("javascript"),
+        `/app.js content-type ${script.headers.get("content-type") ?? ""}`,
+      );
+      const sheet = await fetch(`${ORIGIN}/app.css`);
+      expect(sheet.status === 200, `/app.css → ${sheet.status}`);
+      expect(
+        (sheet.headers.get("content-type") ?? "").includes("text/css"),
+        `/app.css content-type ${sheet.headers.get("content-type") ?? ""}`,
+      );
+      return `/app.js 200 ${script.headers.get("content-type") ?? ""}; /app.css 200 ${sheet.headers.get("content-type") ?? ""}`;
     });
 
     await step("§13 · the /settings panes render behind the prefix gate, and the old paths answer as pinned", async () => {
@@ -458,27 +578,33 @@ async function main(): Promise<number> {
       return `/settings 200 with the six-pane rail; /settings/clients 200; /settings/two-factor 200 drawing the Enable control; /settings/password 404; /oauth/connections 301 → /settings/clients; bearer-only change-password → 302 /login`;
     });
 
-    await step("§13 · /agents lists the smoke agent and its page shows the grant it holds", async () => {
-      // Step 9's two legs: the list and the page read through agent_list / token_list /
-      // connection_list on the real origin — the suite proves the rendering, the deployment
-      // proves the routes are mounted and the fifth nav slot ships.
+    await step("§13 · /agents answers the shell and its API reports the agent with the grant it holds", async () => {
+      // Step 9's two legs, in their SPA shape: the routes answer the shell document, and
+      // the reads the pages used to make — agent_list, connection_list — are now the two
+      // resources under /api/hub/agents. The deployment can still get the routing wrong
+      // (a route unmounted, the pair page 404ing on a real pair), and only a walk says so.
       const withCookie = { headers: { Cookie: sessionCookie }, redirect: "manual" as const };
-      const list = await fetch(`${ORIGIN}/agents`, withCookie);
-      expect(list.status === 200, `authenticated /agents → ${list.status}`);
-      const listHtml = await list.text();
-      expect(listHtml.includes(`href="/agents/${AGENT}"`), `/agents lists no ${AGENT}`);
-      // The landing renders the agent's FIRST granted app pane in place (no redirect), so
-      // one response has to carry both halves: the app in the rail and its declared role
-      // in the listing under it.
-      const page = await fetch(`${ORIGIN}/agents/${AGENT}`, withCookie);
-      expect(page.status === 200, `authenticated /agents/${AGENT} → ${page.status}`);
-      const pageHtml = await page.text();
+      for (const url of [`/agents`, `/agents/${AGENT}`, `/agents/${AGENT}/apps/${APP}`]) {
+        const answered = await fetch(`${ORIGIN}${url}`, withCookie);
+        expect(answered.status === 200, `authenticated ${url} → ${answered.status}`);
+        expect((await answered.text()).includes(`id="pmcp-bootstrap"`), `${url} carried no bootstrap island`);
+      }
+      // An (agent × app) pair the walk never granted is the document-level 404 the shell
+      // decides BEFORE it emits anything — the check that has to survive the cutover.
+      const missing = await fetch(`${ORIGIN}/agents/${AGENT}/apps/smoke-no-such-app`, withCookie);
+      expect(missing.status === 404, `/agents/${AGENT}/apps/smoke-no-such-app → ${missing.status}`);
+
+      const listed = await hubJson("/api/hub/agents", sessionCookie);
+      const slugs = asArray(listed.agents).map((agent) => String(asRecord(agent, "agent row").slug));
+      expect(slugs.includes(AGENT), `GET /api/hub/agents listed no ${AGENT} (${JSON.stringify(slugs)})`);
+
+      const one = await hubJson(`/api/hub/agents/${AGENT}`, sessionCookie);
+      const grants = asRecord(asRecord(one.agent, "agent").grants, "grants");
       expect(
-        pageHtml.includes(`href="/agents/${AGENT}/apps/${APP}"`),
-        `/agents/${AGENT} rail shows no ${APP} pane`,
+        asStrings(grants[APP]).some((entry) => entry === ROLE || entry === `${ROLE}:approval`),
+        `GET /api/hub/agents/${AGENT} shows no ${ROLE} on ${APP} (${JSON.stringify(grants)})`,
       );
-      expect(pageHtml.includes(`e.${ROLE}`), `/agents/${AGENT} listing has no ${ROLE} row`);
-      return `/agents 200 listing ${AGENT}; /agents/${AGENT} 200 rendering the ${APP} pane with its ${ROLE} row`;
+      return `/agents, /agents/${AGENT} and its ${APP} pane all 200 shells, an ungranted pair 404; GET /api/hub/agents lists ${AGENT} holding ${JSON.stringify(grants[APP])} on ${APP}`;
     });
 
     await step("§13 · the install icon the manifest declares is real PNG bytes at its declared size", async () => {
@@ -534,25 +660,27 @@ async function main(): Promise<number> {
       return `injected next= carries no "</script><img" and no "<img src=x"; absolute next= → callbackURL /apps`;
     });
 
-    await step(`§13 · /apps/${APP} renders the Catalog pane from the app's registered catalog`, async () => {
-      // The tunnel leg above registered `echo` over the real client library; the landing
-      // pane IS the Catalog (2026-09-17) and reads the DO's cached catalog through the
-      // door's own listing (§13, §20.6), so the tool's name on the page is the
-      // deployment's DO, D1 and page template agreeing about one fact. Its details keep
-      // the canonical scoped identity separate from the generated TypeScript path.
-      const detail = await fetch(`${ORIGIN}/apps/${APP}`, { headers: { Cookie: sessionCookie } });
-      expect(detail.status === 200, `authenticated /apps/${APP} → ${detail.status}`);
-      expect((await detail.text()).includes(TOOL), `/apps/${APP} lists no ${TOOL}`);
-      // The two identities live together in the details the Catalog reaches at its own URL.
-      const selected = await fetch(`${ORIGIN}/apps/${APP}/catalog?sel=tool:${TOOL}`, {
-        headers: { Cookie: sessionCookie },
-      });
-      expect(selected.status === 200, `/apps/${APP}/catalog?sel= → ${selected.status}`);
-      const selectedText = await selected.text();
+    await step(`§13 · GET /api/hub/apps/${APP}/catalog/tools reports the app's registered catalog`, async () => {
+      // The tunnel leg above registered `echo` over the real client library, and this is
+      // the read the Catalog pane makes: the DO's cached catalog through the door's own
+      // listing (§13, §20.6). The tool's name coming back is the deployment's DO, D1 and
+      // JSON surface agreeing about one fact — the same fact the page used to render.
+      const answered = await fetch(`${ORIGIN}/apps/${APP}`, { headers: { Cookie: sessionCookie } });
+      expect(answered.status === 200, `authenticated /apps/${APP} → ${answered.status}`);
+      expect((await answered.text()).includes(`id="pmcp-bootstrap"`), `/apps/${APP} carried no bootstrap island`);
+
+      const catalog = await hubJson(`/api/hub/apps/${APP}/catalog/tools`, sessionCookie);
+      const names = asArray(catalog.items).map((item) => String(asRecord(item, "catalog item").name));
+      expect(names.includes(TOOL), `catalog/tools lists no ${TOOL} (${JSON.stringify(names)})`);
+      // The derivation the panes draw from rides the same answer, one entry per item, and
+      // its `subject` is the canonical identity the details keep separate from the
+      // generated TypeScript path.
+      const derived = asArray(catalog.derived).map((row) => String(asRecord(row, "derivation").subject));
       expect(
-        selectedText.includes("Scoped MCP identity") && selectedText.includes("TypeScript identity"),
-        `/apps/${APP}/catalog does not separate scoped and TypeScript identities`,
+        derived.length === names.length && derived.includes(TOOL),
+        `catalog/tools derived ${JSON.stringify(derived)} for ${JSON.stringify(names)}`,
       );
+
       // The Catalog holds prompts and resources now, so their old pane URLs are permanent
       // moves onto it — while /tools stays the 404 it has always been.
       const moved = await fetch(`${ORIGIN}/apps/${APP}/prompts`, { headers: { Cookie: sessionCookie }, redirect: "manual" });
@@ -563,7 +691,7 @@ async function main(): Promise<number> {
       );
       const alias = await fetch(`${ORIGIN}/apps/${APP}/tools`, { headers: { Cookie: sessionCookie }, redirect: "manual" });
       expect(alias.status === 404, `/apps/${APP}/tools (no alias, §2) → ${alias.status}`);
-      return `200 listing ${TOOL}, scoped and TypeScript identities in its details; /apps/${APP}/prompts → 301 /apps/${APP}/catalog; /apps/${APP}/tools → 404`;
+      return `/apps/${APP} 200 shell; GET /api/hub/apps/${APP}/catalog/tools lists ${TOOL} with ${derived.length} derivation(s); /apps/${APP}/prompts → 301 /apps/${APP}/catalog; /apps/${APP}/tools → 404`;
     });
 
     await step("audit_query sees the calls", async () => {
@@ -751,14 +879,13 @@ async function main(): Promise<number> {
           `aggregate tools/list ${JSON.stringify(aggregateNames)}`,
         );
 
-        // §23's exact-token Sandbox key changes when OAuth rotates a bearer even though
-        // both JWTs resolve to the same binding and agent. Execute through each credential;
-        // the platform instance list is the deployment-side oracle that they occupied
-        // distinct HubSandbox identities.
+        // Both live OAuth bearers resolve to the same binding and agent. Execute through
+        // each credential to prove the in-Worker runtime accepts either reference without
+        // retaining or keying isolation on the bearer itself.
         const originalExecution = asRecord(
           await mcp(`${ORIGIN}/${USERNAME}/mcp`, accessToken, "tools/call", {
             name: "hub_execute",
-            arguments: { code: `export default "oauth-original";` },
+            arguments: { code: `return "oauth-original";` },
           }),
           "original OAuth hub_execute result",
         );
@@ -831,7 +958,7 @@ async function main(): Promise<number> {
         const rotatedExecution = asRecord(
           await mcp(`${ORIGIN}/${USERNAME}/mcp`, rotatedAccessToken, "tools/call", {
             name: "hub_execute",
-            arguments: { code: `export default "oauth-rotated";` },
+            arguments: { code: `return "oauth-rotated";` },
           }),
           "rotated OAuth hub_execute result",
         );
@@ -880,7 +1007,7 @@ async function main(): Promise<number> {
           `post-revoke challenge: ${refused.headers.get("WWW-Authenticate") ?? ""}`,
         );
 
-        return `client ${clientId} → aud ${resource}; original + rotated OAuth bearers executed through distinct exact-token Sandbox keys; scoped tools/call as agent:${OAUTH_AGENT}; ${calls.length} audit row(s); revoked → 401 with challenge`;
+        return `client ${clientId} → aud ${resource}; original + rotated OAuth bearers each completed in fresh QuickJS runtimes; scoped tools/call as agent:${OAUTH_AGENT}; ${calls.length} audit row(s); revoked → 401 with challenge`;
       },
     );
 
@@ -1113,6 +1240,15 @@ async function getJson(url: string, bearer: string): Promise<Record<string, unkn
   return asRecord(await response.json(), `GET ${url} response`);
 }
 
+/** One `/api/hub` read, as the browser client makes it: the session COOKIE and nothing
+ *  else. A bearer is deliberately not a credential on this surface — it is the pages'
+ *  own gate, split in two (§13) — so the cookie is what the walk has to carry. */
+async function hubJson(path: string, cookie: string): Promise<Record<string, unknown>> {
+  const response = await fetch(`${ORIGIN}${path}`, { headers: { Cookie: cookie } });
+  if (!response.ok) throw new Error(`GET ${path} → ${response.status} ${await response.text()}`);
+  return asRecord(await response.json(), `GET ${path} response`);
+}
+
 /** One anonymous GET — §19.2's two well-known documents carry no credential and want
  *  none: a browser-side client fetching them cross-origin is the supported discovery path. */
 async function getPublicJson(url: string): Promise<Record<string, unknown>> {
@@ -1170,6 +1306,8 @@ type SmokeTool = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** The structured result shape advertised to the hub and rendered into program types. */
+  outputSchema: Record<string, unknown>;
   run(args: Record<string, unknown>, who: { principal: string; roles: readonly string[] }): unknown;
 };
 
@@ -1198,7 +1336,14 @@ function answer(frame: { id?: unknown; method?: unknown; params?: unknown }, too
     return {
       jsonrpc: "2.0",
       id,
-      result: { tools: [{ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }] },
+      result: {
+        tools: [{
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+          outputSchema: tool.outputSchema,
+        }],
+      },
     };
   }
   const params = asRecord(frame.params, "params");

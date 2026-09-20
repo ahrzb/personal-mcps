@@ -590,7 +590,7 @@ describe("§23.7 · the schema renderer", () => {
   });
 
   it("rejects everything JSON cannot carry — accessors, prototypes, symbols, non-finite numbers, cycles — and treats an absent schema as plain `unknown`", () => {
-    expect(renderSchema(undefined)).toEqual({ type: "unknown", declarations: [], requiredMembers: false, diagnostics: [], bytes: 0 });
+    expect(renderSchema(undefined)).toEqual({ type: "unknown", json: null, declarations: [], requiredMembers: false, diagnostics: [], bytes: 0 });
     for (const value of [new Date(), { type: "string", description: () => "x" }, { type: "string", default: Number.NaN }]) {
       expect(renderSchema(value).type, String(value)).toBe("unknown");
       expect(renderSchema(value).diagnostics.length).toBeGreaterThan(0);
@@ -656,16 +656,16 @@ describe("§23.7 · generated declarations", () => {
     expect(renderProgramDeclaration(catalog)).toBe(program);
   });
 
-  it("the program declaration deliberately omits `mcp.hub.execute` while the client declaration has it — recursive Sandbox execution is unreachable from inside a program", () => {
+  it("the program declaration deliberately omits `mcp.hub.execute` while the client declaration has it — recursive execution is unreachable from inside a program", () => {
     const program = renderProgramDeclaration(catalog);
-    const programProbe = 'const run = mcp.hub.execute({ code: "export default 1" }); export { run };';
+    const programProbe = 'const run = mcp.hub.execute({ code: "return 1" }); export { run };';
     const programDiagnostics = compileDiagnostics({ "program.d.ts": program, "probe.ts": programProbe });
     expect(programDiagnostics.length).toBeGreaterThan(0);
     expect(programDiagnostics.every((message) => message.includes("execute"))).toBe(true);
 
     const client = renderClientDeclaration();
     const clientProbe = [
-      'const run = await mcp.hub.execute({ code: "export default 1" });',
+      'const run = await mcp.hub.execute({ code: "return 1" });',
       "const kind = run.structuredContent?.kind;",
       'const found = mcp.hub.searchTypes({ query: "news" });',
       "export { run, kind, found };",

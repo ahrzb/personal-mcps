@@ -26,6 +26,11 @@ jobs:
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile
+      # wrangler validates that `assets.directory` exists, and the vitest worker pool reads
+      # this repo's real wrangler config — so the client build is a prerequisite of the
+      # suite, not a separate artifact step. Spelled out rather than left to a pnpm
+      # pre-script: pnpm 10 defaults `enable-pre-post-scripts` to false.
+      - run: pnpm run build:web
       - run: pnpm typecheck
       - run: pnpm test
 

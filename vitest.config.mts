@@ -70,11 +70,11 @@ const workerPool = {
  * 1,542 URLs and 13.2 s of cold setup, measured; with it, 417 URLs and 6.8 s. It changes
  * only how a test LOADS its dependencies, never what runs.
  *
- * The eight DIRECT deps and no transitive one: pnpm's strict layout puts kysely, zod, jose
- * and the rest where the optimizer's resolver cannot see them, and pre-bundling
- * `@sentry/cloudflare`'s dependents drags in `node:async_hooks`. The two externals are the
- * schemes workerd supplies at runtime, which the bundler must leave alone for the same
- * reason.
+ * Direct dependencies only: pnpm's strict layout puts kysely, zod, jose and the rest where
+ * the optimizer's resolver cannot see them, and pre-bundling `@sentry/cloudflare`'s
+ * dependents drags in `node:async_hooks`. The two externals are schemes workerd supplies at
+ * runtime, which the bundler must leave alone for the same reason. QuickJS's Wasm artifact
+ * remains a module import rather than pre-bundled bytes.
  */
 const preBundledDeps = {
   deps: {
@@ -90,12 +90,16 @@ const preBundledDeps = {
           "hono",
           "uqr",
           "@block65/webcrypto-web-push",
-          // §23.8: the one platform-vendor runtime dependency. Pre-bundled for the same
-          // reason as the rest — per-file cold setup — and loaded with the plugin's
-          // containers-disabled path, so no Docker daemon is ever involved in a test.
-          "@cloudflare/sandbox",
+          "@cfworker/json-schema",
+          "typescript",
+          // §23.8's pinned in-Worker interpreter and release-sync variant. The `.wasm`
+          // subpath is compiled by Wrangler's module rule, never fetched at runtime.
+          "quickjs-emscripten-core",
+          "@jitl/quickjs-wasmfile-release-sync",
         ],
-        rolldownOptions: { external: [/^node:/, /^cloudflare:/] },
+        rolldownOptions: {
+          external: [/^(?:crypto|fs|inspector|os|path|perf_hooks)$/, /^node:/, /^cloudflare:/],
+        },
       },
     },
   },

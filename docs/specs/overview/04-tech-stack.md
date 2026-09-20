@@ -98,22 +98,31 @@
   `Transport` implementation over `ws`. Both SDKs dropped built-in WebSocket transports in
   v2, so this bridge is ours; it is small and the spec explicitly sanctions custom
   transports.
-- **Dependency policy** *(amended 2026-09-18, §23)*: the Worker runtime dependency
-  boundary admits the existing authentication/MCP packages and exactly one additional
-  platform-vendor package, the exact-pinned `@cloudflare/sandbox@next` preview plus its
-  lockfile-pinned transitive closure, solely for Cloudflare Container control. Its
-  matching control-binary/image version is checked at dry-run/build time. No general
-  schema renderer, ref resolver, execution framework, or other Worker runtime dependency
-  is added; §23's bounded renderer is in-repo. The CLI carve-out remains:
-  `cli/` may declare its own commander, @clack/prompts, picocolors, wrap-ansi, and
-  smol-toml dependencies. Clients keep their own minimal declarations.
-- **Monorepo**: pnpm workspaces with exactly two importers, `cli` and
-  `clients/js` — the two published npm packages — plus a `uv` project
-  (`clients/py`) and a standalone Go module (`clients/go`), neither of which is
+- **Dependency policy** *(amended 2026-09-20, §23)*: the Worker runtime dependency
+  boundary admits the existing authentication/MCP packages plus exact-pinned
+  `typescript`, `@cfworker/json-schema`, `quickjs-emscripten-core`, and
+  `@jitl/quickjs-wasmfile-release-sync`. TypeScript supplies the in-memory checker/emitter;
+  the Worker-safe validator interprets per-tool schemas without dynamic code generation;
+  the QuickJS packages supply the interpreter and Wasm artifact. No Sandbox SDK,
+  container control package, schema renderer, ref resolver, or execution framework is
+  admitted. §23's bounded renderer and host bridge remain in-repo. Two carve-outs remain,
+  and each is a directory whose packages `server/src` never imports and which therefore
+  never enter
+  the Worker's dependency closure: `cli/` may declare its own commander, @clack/prompts,
+  picocolors, wrap-ansi, and smol-toml; and `web/` may declare React,
+  `@tanstack/react-query`, `@tanstack/react-router`, `@base-ui/react` with the
+  shadcn-generated components' helpers, Vite, Tailwind, and screenshot tooling. The Worker
+  serves `web/dist` through a static-asset binding and never imports it. Clients keep their
+  own minimal declarations.
+- **Monorepo**: pnpm workspaces with exactly three importers, `cli`, `web` and
+  `clients/js` — the two published npm packages plus the browser client — plus a `uv`
+  project (`clients/py`) and a standalone Go module (`clients/go`), neither of which is
   npm. `server/` deliberately has **no manifest**: Wrangler builds it from the
   root, so one there would be a third declaration with no consumer. *(Amended
   2026-09-15: this line previously named `server` as a workspace package and
-  omitted that none of the three directories were importers at all.)*
+  omitted that none of the three directories were importers at all. Amended 2026-09-18:
+  `web` became the third importer — unpublished, but a manifest of its own for the same
+  reason the other two have one, since the root is where a mirrored declaration drifts.)*
 - **Toolchain authority**: `flake.nix`'s devShell — Node 24, pnpm 10, Go 1.25,
   `uv` — added 2026-09-15 (§22.7). It sits beside the documented `pnpm install`
   flow rather than replacing it, so contributors without Nix keep working, and
@@ -121,9 +130,13 @@
   Wrangler stays an npm dependency so it matches the lockfile: its version
   decides how the Worker runs, and two sources for that is one too many.
 
-- **Untrusted TypeScript runtime** *(added 2026-09-18, §23)*: Cloudflare Sandbox
-  Containers run a pinned Deno version with offline/frozen resolution, a permissionless
-  user Worker, no public Internet, and one fixed internal bridge host. The worker enables
-  `enable_request_signal`; a remote process timeout and kill escalation, not merely an
-  observing AbortSignal, bound each synchronous run.
+- **Untrusted TypeScript runtime** *(revised 2026-09-20, §23)*: the exact-pinned compiler
+  checks each submitted function body against the caller-specific generated declaration
+  and emits JavaScript before `quickjs-emscripten-core` evaluates it. Each execution gets
+  a fresh memory- and stack-bounded runtime; interrupt checks enforce a deterministic CPU
+  budget as well as the deadline and abort flag when the platform clock or signal
+  advances. Tool arguments are interpreted against their application JSON Schemas before
+  dispatch. MCP operations cross only explicit host functions that return guest promises.
+  There is no Container, Deno, filesystem, network, module loader, or guest-visible Worker
+  binding.
 

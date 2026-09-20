@@ -1,23 +1,26 @@
 // preview.ts — DEV-ONLY, KEPT. `wrangler dev -c wrangler.preview.jsonc` (launch name
-// `preview`) renders every page × fixture combination: the living demo of each screen
-// and component STATE — empty, populated, each refusal, each success notice, each confirm
-// dialog, archived, unreachable, dimmed — read beside the design boards as the reference
-// for what a state looks like (owner decision 2026-09-02; it began as scaffolding for
-// building the template layer against fixtures.ts and is now permanent). A page or pane
-// added without a fixture is a type error (model.ts's PagePropsByName), so the index can
-// never silently lag the pages. It is not part of the shipped worker
-// (server/src/index.ts), is not mounted by wrangler.jsonc, and is never deployed. No
-// auth, no bindings, no router dependency — a plain fetch handler is all two GET routes
-// need.
+// `preview`) renders every RETAINED server-rendered page × fixture combination: the living
+// demo of each screen and component STATE — empty, populated, each refusal, each success
+// notice, each confirm dialog — read beside the design boards as the reference for what a
+// state looks like (owner decision 2026-09-02; it began as scaffolding for building the
+// template layer against fixtures.ts and is now permanent). A page or pane added without a
+// fixture is a type error (model.ts's PagePropsByName), so the index can never silently lag
+// the pages. It is not part of the shipped worker (server/src/index.ts), is not mounted by
+// wrangler.jsonc, and is never deployed. No auth, no bindings, no router dependency — a
+// plain fetch handler is all two GET routes need.
+//
+// The six pages of `/apps/*` and `/agents/*` are NOT here: they are a React SPA now, and
+// their gallery of states is web/src/preview/. This file covers the pages that still
+// render server-side, and nothing else.
 //
 //   GET /                          — an index linking every page × fixture pair.
 //   GET /preview/<page>/<fixture>  — that page rendered with that fixture's exact props.
 //
 // Each page component already renders its complete document — the chromeless pages
-// (login, device, app-new, approval-detail, oauth-consent) draw their own <html>, the
-// shelled pages (settings, apps, app-detail, approvals, audit) wrap themselves in
-// ./layout's Layout internally — so rendering here is just the component's own JSX
-// stringified. Nothing here re-wraps a page in a second layout.
+// (login, device, approval-detail, oauth-consent) draw their own <html>, the shelled pages
+// (settings, approvals, audit) wrap themselves in ./layout's Layout internally — so
+// rendering here is just the component's own JSX stringified. Nothing here re-wraps a page
+// in a second layout.
 
 import type { PageName, PagePropsByName } from "../src/pages/model";
 import type { FC } from "hono/jsx";
@@ -25,12 +28,6 @@ import { fixtures } from "./fixtures";
 import { Login } from "../src/pages/login";
 import { Device } from "../src/pages/device";
 import { SettingsPage } from "../src/pages/settings";
-import { AppsPage } from "../src/pages/apps";
-import { AppDetailPage } from "../src/pages/app-detail";
-import { AppNewPage } from "../src/pages/app-new";
-import { AgentsPage } from "../src/pages/agents";
-import { AgentDetailPage } from "../src/pages/agent-detail";
-import { AgentNewPage } from "../src/pages/agent-new";
 import { ApprovalsPage } from "../src/pages/approvals";
 import { ApprovalDetail } from "../src/pages/approval-detail";
 import { AuditPage } from "../src/pages/audit";
@@ -41,12 +38,6 @@ const PAGES: Record<PageName, FC<any>> = {
   login: Login,
   device: Device,
   settings: SettingsPage,
-  apps: AppsPage,
-  "app-detail": AppDetailPage,
-  "app-new": AppNewPage,
-  agents: AgentsPage,
-  "agent-detail": AgentDetailPage,
-  "agent-new": AgentNewPage,
   approvals: ApprovalsPage,
   "approval-detail": ApprovalDetail,
   audit: AuditPage,

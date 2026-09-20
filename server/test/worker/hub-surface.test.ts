@@ -11,23 +11,23 @@
 // and every declaration URI resolves through decode-once/re-encode with exact snapshot
 // membership — so an encoded `/` never becomes path structure and a member the caller cannot
 // see is not found. `execute` validates closed arguments against the owner's settings before
-// any plane runs, and hands the injected executor an admitted request whose deadline,
+// the executor runs, and hands the injected seam an admitted request whose deadline,
 // settings and snapshot are the gateway's. The two exported dispatch seams are exercised
-// directly, because §23.10's Sandbox bridge calls them: the pinned-app-id refusal, the
+// directly because §23.9's QuickJS host functions call them: the pinned-app-id refusal, the
 // unpinned twin, a revoked credential's reauthorization, and the exactly-one-audit-row rule.
 //
-// HOW THE SANDBOX IS FAKED, and why that is not §9's never-faked list: the executor is the
-// seam hub-backend.ts declares for exactly this purpose (`installHubExecutor`), and what
-// this file asserts about it is the REQUEST the gateway admitted and the RESULT it relays —
-// never a container. Real Deno/container facts belong to the staging deployment (§23.13).
+// HOW EXECUTION IS FAKED: the executor is the seam hub-backend.ts declares for this purpose
+// (`installHubExecutor`), and this file asserts only about the REQUEST the gateway admitted
+// and the RESULT it relays. The real Wasm runtime and asynchronous host bridge are proved in
+// hub-quickjs.test.ts.
 //
-// Project: `worker` — real D1, real proxied apps through the real fake upstream, no sockets
-// and no container. Every case seeds its own namespace, so per-file isolation plus a fresh
+// Project: `worker` — real D1, real proxied apps through the real fake upstream, no sockets.
+// Every case seeds its own namespace, so per-file isolation plus a fresh
 // owner keeps audit counts exact.
 //
 // deps: harness/seed · harness/fake-upstream · harness/deadlines · ../../src/index
 //   (default.fetch) · ../../src/gateway (the two dispatch seams) · ../../src/hub-backend
-//   (installHubExecutor, the request/result types) · ../../src/hub-sandbox
+//   (installHubExecutor, the request/result types) · ../../src/hub-quickjs
 //   (createHubExecutor, restored after every fake) · ../../src/hub-contract ·
 //   ../../src/capabilities · ../../src/audit (query) · ../../src/identity · ../../src/upstream
 
@@ -40,7 +40,7 @@ import { dispatchResourceRead, dispatchTool, mcpMessage } from "../../src/gatewa
 import type { JsonRpcResponse, Tool } from "../../src/gateway";
 import { installHubExecutor } from "../../src/hub-backend";
 import type { HubExecutionRequest } from "../../src/hub-backend";
-import { createHubExecutor } from "../../src/hub-sandbox";
+import { createHubExecutor } from "../../src/hub-quickjs";
 import { HUB_DECLARATION_TEMPLATES, HUB_DECLARATION_URIS, HUB_TOOLS } from "../../src/hub-contract";
 import type { HubExecutionResult, HubSearchResult } from "../../src/hub-contract";
 import { issueAdminToken, resolveCaller, revokeToken } from "../../src/identity";
@@ -87,8 +87,7 @@ const PROTOCOL_VERSION = "2026-07-28";
 
 /** The composition root's OWN executor — what `index.ts` installs at import — so a case
  *  that swaps in a fake restores the real plane rather than leaving the isolate unwired.
- *  Constructing it starts nothing: the closure reads the HUB_SANDBOX binding only when a
- *  run is admitted, which no case here does. */
+ *  Constructing it starts nothing: the pinned Wasm module is loaded only by an execution. */
 const realExecutor = createHubExecutor();
 
 // ── the world ─────────────────────────────────────────────────────────────────────────
@@ -507,7 +506,7 @@ describe("§23.5 — the caller-visible snapshot behind search, declarations and
       return completed("hello");
     });
     try {
-      const executed = await call(world.hub, world.zero, "execute", { code: "export default 1" });
+      const executed = await call(world.hub, world.zero, "execute", { code: "return 1" });
       expect(executed.body.error, JSON.stringify(executed.body.error)).toBeUndefined();
       expect(structuredOf(executed.body)).toEqual(completed("hello"));
       expect(calls).toHaveLength(1);
@@ -582,7 +581,7 @@ describe("§23.5 — the caller-visible snapshot behind search, declarations and
       return completed();
     });
     try {
-      const refused = structuredOf((await call(aggregate, session.token, "hub_execute", { code: "export default 1" })).body);
+      const refused = structuredOf((await call(aggregate, session.token, "hub_execute", { code: "return 1" })).body);
       expect(refused).toMatchObject({ kind: "limit_exceeded", limit: "catalog", transient: false, mayHaveRun: false });
       expect(calls, "nothing launches over an overflowing catalog").toHaveLength(0);
     } finally {
@@ -614,7 +613,9 @@ describe("§23.2 — the declaration reader", () => {
     const tool = declarationOf(
       (await rpc(world.hub, world.owner, message("resources/read", { uri: `pmcp://hub/types/tools/${SLUG}/${TOOL}.d.ts` }))).body,
     );
-    expect(tool.text).toContain(`export function ${TOOL}(`);
+    expect(tool.text).toContain(`export declare const ${TOOL}: {`);
+    expect(tool.text).toContain("readonly inputSchema:");
+    expect(tool.text).toContain("readonly outputSchema:");
 
     // The app's raw URI carries slashes; its declaration URI carries them ENCODED, and the
     // reader resolves that one segment back to the record without ever splitting it.
@@ -671,7 +672,7 @@ describe("§23.2 — the declaration reader", () => {
 });
 
 describe("§23.2/§23.10 — execute's admission", () => {
-  it("refuses closed-shape, source-size and timeout violations with the payload-free -32602 before any plane runs, and hands an admitted request the deadline, settings and snapshot", async () => {
+  it("returns the owner's timeout ceiling with an over-max -32602 and refuses every admission violation before any plane runs", async () => {
     const world = await seedWorld();
     const calls: HubExecutionRequest[] = [];
     installHubExecutor(async (request) => {
@@ -685,15 +686,23 @@ describe("§23.2/§23.10 — execute's admission", () => {
         { code: 42 },
         { code: SENTINEL, extra: 1 },
         { code: SENTINEL, timeout_ms: 999 },
-        { code: SENTINEL, timeout_ms: 1_000_000 },
         { code: SENTINEL, timeout_ms: 5_000.5 },
         { code: "x".repeat(65_537) },
       ];
       for (const args of bad) {
         const answer = await call(world.aggregate, world.owner, "hub_execute", args);
         expect(answer.body.error?.code, JSON.stringify(args)?.slice(0, 40)).toBe(-32602);
-        expect(answer.body.error?.data, "a -32602 stays payload-free").toBeUndefined();
+        expect(answer.body.error?.data, "only an over-max timeout carries its discoverable ceiling").toBeUndefined();
       }
+      const overMax = await call(world.aggregate, world.owner, "hub_execute", {
+        code: SENTINEL,
+        timeout_ms: 60_000,
+      });
+      expect(overMax.body.error).toEqual({
+        code: -32602,
+        message: "invalid params",
+        data: { field: "timeout_ms", max: 30_000 },
+      });
       expect(calls, "no plane ran for a refused request").toHaveLength(0);
 
       const started = Date.now();
@@ -712,7 +721,7 @@ describe("§23.2/§23.10 — execute's admission", () => {
 
       // The default is the owner's stored pair, not the schema's: no `timeout_ms` selects
       // the pinned 30 s.
-      await call(world.hub, world.owner, "execute", { code: "export default 1" });
+      await call(world.hub, world.owner, "execute", { code: "return 1" });
       expect(calls[1].timeoutMs).toBe(30_000);
 
       // The outer row is metadata-only, and the source never reaches the ledger.
@@ -744,7 +753,7 @@ describe("§23.2/§23.10 — execute's admission", () => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify(message("tools/call", {
             name: "execute",
-            arguments: { code: "export default 1" },
+            arguments: { code: "return 1" },
           })),
           signal: controller.signal,
         }),
@@ -781,7 +790,7 @@ describe("§23.2/§23.10 — execute's admission", () => {
     // unwired refusal must be a refusal, never a fabricated `completed`.
     installHubExecutor(null);
     try {
-      const answer = await call(world.hub, world.owner, "execute", { code: "export default 1" });
+      const answer = await call(world.hub, world.owner, "execute", { code: "return 1" });
       expect(answer.body.error?.code).toBe(-32000);
       expect(structuredOf(answer.body)).toBeUndefined();
     } finally {
@@ -790,7 +799,7 @@ describe("§23.2/§23.10 — execute's admission", () => {
   });
 });
 
-describe("§23.10 — the dispatch seams the Sandbox bridge calls", () => {
+describe("§23.9 — the dispatch seams the QuickJS host bridge calls", () => {
   it("refuses a snapshot-pinned app id that no longer matches with -32001, while the unpinned twin reaches the availability check", async () => {
     const world = await seedWorld();
     const caller = await callerOf(world, world.owner);
@@ -885,8 +894,7 @@ describe("§23.10 — the dispatch seams the Sandbox bridge calls", () => {
   });
 });
 
-/** Nothing here asserts on a container, a Deno process or a socket: those are §23.13's
- *  staging facts, and this file fakes the ONE seam hub-backend.ts declares for them. Every
- *  case restores the composition root's own executor, and this is the belt to that
- *  suspenders — a case that threw before its restore leaves the real plane installed. */
+/** This file fakes the one executor seam hub-backend.ts declares. Every case restores the
+ * composition root's real QuickJS executor; this final restoration covers a case that
+ * threw before reaching its own `finally`. */
 afterAll(() => installHubExecutor(realExecutor));

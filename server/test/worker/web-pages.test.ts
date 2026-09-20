@@ -7,6 +7,19 @@
 // DIRECTION B: every mutating form's fields are exactly the fronted op's schema keys — and
 // §4's recent-auth gate on /settings's credential MUTATIONS, not merely on its read.
 //
+// SINCE 2026-09-18, "the pages" means TWO surfaces and this file describes both.
+// `/apps/*` and `/agents/*` are a browser SPA: they answer one shell document with a
+// `#pmcp-bootstrap` JSON island and a module script, and every read and write they used to
+// perform is a call to `/api/hub`. So the eleven describes that walked their markup are
+// gone — they asserted about pages that render none — and what stands in their place is
+// the BOUNDARY: the shell's gate order (session, then existence, then the document), its
+// two assets, `/api/hub`'s four-barrier write gate with the op provably unreached at each
+// barrier, the nine-name ops allowlist in both directions, and the five typed-route
+// behaviours that are the reason those routes exist at all — a filtered save leaving
+// undrawn literals alone chief among them. What the deleted describes proved about
+// RENDERING is the React gallery's and the screenshot comparison's now; what they proved
+// about ROUTING moved to routes.test.ts, which owns the retained 301s.
+//
 // Two more, both because a form nobody submits is a contract nobody checked (§9 rule 4b):
 // /device's approve/deny form is POSTED, as a browser posts it, through the whole RFC 8628
 // flow to the CLI's redemption; and the two §15 auth events a page can cause — `auth.login`
@@ -16,7 +29,9 @@
 // Direction B is derived on BOTH sides, which is why this file exports no row table and
 // declares none: one side is walked out of the rendered HTML, the other read off
 // admin.ops[name].schema. A transcribed form→field list would be a third copy of the
-// truth, and maintaining it is precisely the drift Direction B exists to catch.
+// truth, and maintaining it is precisely the drift Direction B exists to catch. Its
+// `/apps` half is now the ops allowlist walk, derived the same way — what the router
+// admits, measured, never a list copied out of api.ts.
 // (`pageRoutes`-as-data was considered and rejected for the same reason — exporting the
 // route table solely for a test violates the suite's no-test-only-exports rule; Direction
 // B plus review is the guard.)
@@ -41,8 +56,8 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ops } from "../../src/admin";
-import type { AdminOp } from "../../src/admin";
-import { AGENT_PANES, APP_PANES, RESERVED_APP_SLUGS } from "../../src/app-routes";
+import type { AdminOp, AppRow as OpsAppRow } from "../../src/admin";
+import { AGENT_PANES, APP_PANES } from "../../src/app-routes";
 import { Approvals } from "../../src/approvals";
 import { query, record } from "../../src/audit";
 import type { AuditQuery, AuditRow } from "../../src/audit";
@@ -58,24 +73,17 @@ import worker from "../../src/index";
 import type { Env } from "../../src/index";
 import { HUB_HARD_MAX_TIMEOUT_MS, HUB_MIN_TIMEOUT_MS } from "../../src/limits";
 import { generatedAlias } from "../../src/hub-types";
-import { schemaLeaves } from "../../src/catalog-view";
 import { paths, SETTINGS_CONFIRM_PANE } from "../../src/pages/model";
 import type { ConnectionRow, SettingsConfirm } from "../../src/pages/model";
 import { tokenPattern } from "../../src/principal";
-import {
-  buildToolFilter,
-  PMCP_SLUG,
-  Registry,
-  validateSchemaIndirection,
-  writeOnlyPaths,
-} from "../../src/registry";
-import type { App, AppCapability, GrantEntry, RoleDeclaration } from "../../src/registry";
+import { PMCP_SLUG, Registry, validateSchemaIndirection } from "../../src/registry";
+import type { App, RoleDeclaration } from "../../src/registry";
 import { beginConnect } from "../../src/upstream";
-import { AS_HOST, registerOverride, upstreamUrlFor } from "../harness/fake-upstream";
+import { AS_HOST, upstreamUrlFor } from "../harness/fake-upstream";
 import type { AsScenario, UpstreamScenario } from "../harness/fake-upstream";
-import { seedApp, seedNamespace, seedOwnerCredential, seedOwnerSession, seedToken, SEEDED_OWNER_PASSWORD, uniqueSlug } from "../harness/seed";
+import { seedNamespace, seedOwnerCredential, seedOwnerSession, SEEDED_OWNER_PASSWORD, uniqueSlug } from "../harness/seed";
 import { totpCode } from "../harness/totp";
-import type { SeededNamespace, SeededSession, TokenSpec } from "../harness/seed";
+import type { SeededNamespace, SeededSession } from "../harness/seed";
 
 /**
  * Direction B, side one: every mutating form a rendered page carries, as the ops key it
@@ -122,18 +130,6 @@ export function schemaKeysOf(op: AdminOp): string[] {
   // deps: admin.AdminOp.schema
   const fields = (op.schema as { fields: Record<string, unknown> }).fields;
   return Object.keys(fields).sort();
-}
-
-/** The same declaration read for what it REQUIRES. Direction B's strict field-set equality
- *  cannot describe an op with an optional field no §13 control fills (`token_issue`'s
- *  `expires_in`), so a walk over such an op states the containment instead — still derived
- *  on both sides, and still nothing hand-maintained. */
-function requiredKeysOf(op: AdminOp): string[] {
-  // deps: admin.AdminOp.schema
-  const fields = (op.schema as { fields: Record<string, { optional?: true }> }).fields;
-  return Object.keys(fields)
-    .filter((name) => fields[name].optional === undefined)
-    .sort();
 }
 
 /** One attribute's value out of a start tag — quoted, as every renderer emits them. */
@@ -401,6 +397,74 @@ function csrfOf(html: string): string {
   const token = /name="csrf"\s+value="([^"]+)"/.exec(html)?.[1];
   if (token === undefined) throw new Error("the page rendered no CSRF field");
   return token;
+}
+
+/**
+ * The CSRF token a SHELL document bootstrapped — the other half of `csrfOf`, and the only
+ * place a browser on an SPA route gets one. `/apps/*` and `/agents/*` render no form at
+ * all since 2026-09-18: the session's token rides a `<script type="application/json"
+ * id="pmcp-bootstrap">` island that the client parses on mount.
+ *
+ * Parsed with `JSON.parse`, not scraped with a second regex, because that is what the
+ * client does: a token this helper could read but the island's JSON could not carry is a
+ * token no browser can use, and the difference is exactly the escaping bug the island's
+ * `raw()` exists around.
+ */
+function bootstrapCsrfOf(html: string): string {
+  const island = /<script type="application\/json" id="pmcp-bootstrap">([\s\S]*?)<\/script>/.exec(html);
+  if (island === null) throw new Error("the document carried no #pmcp-bootstrap island");
+  const parsed: unknown = JSON.parse(island[1]);
+  if (typeof parsed !== "object" || parsed === null || !("csrf" in parsed) || typeof parsed.csrf !== "string") {
+    throw new Error("the bootstrap island carried no csrf");
+  }
+  return parsed.csrf;
+}
+
+/**
+ * One `/api/hub` call, shaped the way the browser client shapes it: the session cookie,
+ * a JSON body, and the `X-Pmcp-Csrf` header the write gate reads. Every option is absent
+ * by omission rather than by a flag, because each absence is a real shape — no header is
+ * the cross-site fetch, `cookie: null` is the signed-out one, and a foreign `Origin` is
+ * the cross-site page. `body` is passed through when it is a string, so a case can send
+ * something that is not an object at all.
+ */
+function hub(
+  method: string,
+  path: string,
+  body?: unknown,
+  options: { cookie?: string | null; csrf?: string; origin?: string } = {},
+): Promise<Response> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const cookie = options.cookie === undefined ? world.session.cookie : options.cookie;
+  if (cookie !== null) headers.Cookie = cookie;
+  if (options.csrf !== undefined) headers["X-Pmcp-Csrf"] = options.csrf;
+  if (options.origin !== undefined) headers.Origin = options.origin;
+  return call(
+    new Request(`${ORIGIN}${path}`, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }),
+    }),
+  );
+}
+
+/** One `/api/hub` answer as the object every one of them is. Checked once here rather
+ *  than asserted inline at each read: an answer that is not an object is a bug in the
+ *  surface, and a case reading a field off it would otherwise report the wrong failure. */
+async function jsonOf(response: Response): Promise<Record<string, unknown>> {
+  const body: unknown = await response.json();
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new Error(`the answer was not a JSON object: ${JSON.stringify(body)}`);
+  }
+  // Narrowed above; `object` has no index signature, and this is the one place that is
+  // turned into a readable record.
+  return body as Record<string, unknown>;
+}
+
+/** The `reason` every refusal carries (§15's refusals name fields, never values). */
+async function reasonOf(response: Response): Promise<string> {
+  const reason = (await jsonOf(response)).reason;
+  return typeof reason === "string" ? reason : "";
 }
 
 /** One mutating POST, as the browser's form makes it. `csrf` absent means the field is
@@ -793,41 +857,48 @@ describe("§13 · the bare root sends people where they can act", () => {
 });
 
 describe("§13 · CSRF on every mutating POST", () => {
-  it("1. §13 · a mutating POST with no CSRF field is 403 AND the substituted ops handler was never invoked (a rejected-but-executed mutation is the bug this case exists for)", async () => {
+  // Cases 1-3 moved from `POST /apps/app_archive` to `POST /api/hub/ops/app_archive` with
+  // the SPA cutover (2026-09-18). The form target is gone; the property is not. The three
+  // things they said about the form field are the three things they say about the header —
+  // absent is refused, another session's is refused, the session's own passes — because
+  // both carriers are compared against `csrfTokenFor(sessionId)` and nothing else. The
+  // header is additionally a barrier of its own: a cross-site page cannot set it without a
+  // preflight the hub never answers.
+  it("1. §13 · a mutating POST with no CSRF header is 403 AND the substituted ops handler was never invoked (a rejected-but-executed mutation is the bug this case exists for)", async () => {
     await withCountedOps(["app_archive"], async (invocations) => {
-      const refused = await post(paths.appArchive("news"), {});
+      const refused = await hub("POST", "/api/hub/ops/app_archive", { slug: "news" });
       expect(refused.status).toBe(403);
       expect(times(invocations, "app_archive")).toBe(0);
     });
   });
 
-  it("2. §13 · the same POST carrying the token the page rendered succeeds and the handler ran exactly once (the allow-twin of 1 — without it, `throw 403` passes)", async () => {
+  it("2. §13 · the same POST carrying the token the shell document bootstrapped succeeds and the handler ran exactly once (the allow-twin of 1 — without it, `throw 403` passes)", async () => {
     await withCountedOps(["app_archive"], async (invocations) => {
-      const csrf = csrfOf(await page(paths.apps));
-      const accepted = await post(paths.appArchive("news"), {}, { csrf });
-      expect(accepted.status).toBe(303);
-      expect(accepted.headers.get("Location")).toContain(paths.apps);
-      expect(times(invocations, "app_archive")).toBe(1);
-      // The op received the slug the target named — the query string IS the argument.
+      const csrf = bootstrapCsrfOf(await page(paths.apps));
+      const accepted = await hub("POST", "/api/hub/ops/app_archive", { slug: "news" }, { csrf });
+      expect(accepted.status).toBe(200);
+      // The op received the body as its input — a JSON surface hands it over whole, where
+      // the form target carried its one argument in the query string.
       expect(invocations.get("app_archive")?.[0]).toMatchObject({ slug: "news" });
+      expect(times(invocations, "app_archive")).toBe(1);
     });
   });
 
   it("3. §13 · a token minted under a different cookie session is 403, handler not invoked", async () => {
     await withCountedOps(["app_archive"], async (invocations) => {
-      const foreignToken = csrfOf(await page(paths.apps, world.other.cookie));
-      const refused = await post(paths.appArchive("news"), {}, { csrf: foreignToken });
+      const foreignToken = bootstrapCsrfOf(await page(paths.apps, world.other.cookie));
+      const refused = await hub("POST", "/api/hub/ops/app_archive", { slug: "news" }, { csrf: foreignToken });
       expect(refused.status).toBe(403);
       expect(times(invocations, "app_archive")).toBe(0);
       // The twin, so "403" is not simply what this endpoint always answers: the SAME
       // session's own token passes.
-      const own = csrfOf(await page(paths.apps));
-      expect((await post(paths.appArchive("news"), {}, { csrf: own })).status).toBe(303);
+      const own = bootstrapCsrfOf(await page(paths.apps));
+      expect((await hub("POST", "/api/hub/ops/app_archive", { slug: "news" }, { csrf: own })).status).toBe(200);
       expect(times(invocations, "app_archive")).toBe(1);
     });
   });
 
-  it("4. §13 · every mutating form the pages render carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one", async () => {
+  it("4. §13 · every mutating form the pages render carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one — and one of those targets, posted without the field, is refused with its op never reaching a handler (the walk says the field is DRAWN; the refusal says it is READ)", async () => {
     // Three exclusions, all structural rather than convenient. /login is not walked at
     // all: there is no session yet to derive a token from. A form that posts to
     // better-auth's own mount is outside this module's gate by design — §4 gives that
@@ -851,6 +922,22 @@ describe("§13 · CSRF on every mutating POST", () => {
     // The walk is proven to be looking at something: the pages really do render hub-owned
     // mutating forms, and every one of them was checked.
     expect(hubForms).toBeGreaterThan(0);
+
+    // And the carrier is load-bearing, not decorative. One surviving server-rendered
+    // mutation, taken end to end: `/settings/tokens/token_revoke` sits behind §13's
+    // strictest prefix (`{recent: true}`), which this fresh session satisfies — so the
+    // only thing left to refuse the post is the missing field, and it does. Since the
+    // cutover this is the last mutating FORM in the suite that reaches an op at all, and
+    // therefore the only remaining proof that the form carrier is still checked.
+    await withCountedOps(["token_revoke"], async (invocations) => {
+      const refused = await formPost(
+        `${paths.settingsTokens}/token_revoke`,
+        { id: "no-such-token" },
+        world.session.cookie,
+      );
+      expect(refused.status, "POST /settings/tokens/token_revoke with no CSRF field").toBe(403);
+      expect(times(invocations, "token_revoke")).toBe(0);
+    });
   });
 
   it("5. §13 · /audit renders no mutating form and needs no token (no mutations, no CSRF surface)", async () => {
@@ -867,7 +954,414 @@ describe("§13 · CSRF on every mutating POST", () => {
     // Its own controls are all GETs — the filter form included, which is why it needs none.
     expect(html).toContain('method="get"');
   });
+
+  it("5b. §13 · the one surviving mutating POST under /apps — `/apps/connect`, whose 303 goes to a third-party authorize URL and so cannot be a fetch — is refused 403 without the CSRF field, and the connect it would have started never happened: no upstream_oauth_state row was written (the twin: the same post WITH the field starts one)", async () => {
+    // What this replaces: `/apps` and the app page left `sessionPages()` with the cutover,
+    // so no server-HTML walk can see the Connect form's CSRF field any more — the client
+    // renders it. The field's presence is therefore unobservable here and its EFFECT is
+    // what is checked instead, which is the stronger of the two claims.
+    const target = `${paths.appConnect("")}?slug=notion`;
+    const stateCount = async (): Promise<number> => {
+      const row = await (env.DB as D1Like)
+        .prepare(`SELECT COUNT(*) AS n FROM upstream_oauth_state`)
+        .first<{ n: number }>();
+      return row?.n ?? 0;
+    };
+
+    const before = await stateCount();
+    const refused = await post(target, {});
+    expect(refused.status).toBe(403);
+    // `beginConnect` writes the single-use state row before it answers, so an unchanged
+    // count is "it was never called" said in the only way a route-level test can say it.
+    expect(await stateCount(), "a refused connect still started one").toBe(before);
+
+    // THE TWIN: the same post carrying the session's own token reaches upstream and
+    // redirects into the authorization server, which is why the form still exists at all.
+    const csrf = bootstrapCsrfOf(await page(paths.apps));
+    const started = await post(target, {}, { csrf });
+    expect(started.status).toBe(303);
+    expect(new URL(started.headers.get("Location") ?? "", ORIGIN).host).toBe(AS_HOST);
+    expect(await stateCount()).toBe(before + 1);
+  });
 });
+
+/* ------------------------------------------------------------------ *
+ * The SPA boundary (2026-09-18): the shell document, its two assets, and /api/hub
+ * ------------------------------------------------------------------ */
+
+/** Every URL the shell answers at for one (app, agent, pair) — built from the pane lists,
+ *  so a pane added to `APP_PANES` or `AGENT_PANES` is walked with no edit here. */
+function shellUrls(app: string, agent: string): string[] {
+  return [
+    paths.apps,
+    paths.appNew,
+    paths.appDetail(app),
+    ...APP_PANES.map((pane) => paths.appPane(app, pane)),
+    paths.agents,
+    paths.agentNew,
+    paths.agentDetail(agent),
+    ...AGENT_PANES.map((pane) => paths.agentPane(agent, pane)),
+    paths.agentApp(agent, app),
+  ];
+}
+
+describe("§13 · the SPA shell document", () => {
+  it("§13 · every /apps and /agents URL answers ONE document — 200, `Cache-Control: no-store`, the `#pmcp-bootstrap` JSON island carrying this session's CSRF token and username, and the `/app.js` module tag — and nothing that renders a pane server-side: the panes are the client's now, so the document is the same bytes whichever of them was asked for", async () => {
+    const urls = shellUrls("news", "agent");
+    // The pane lists really are being walked, not an empty array dressed as one.
+    expect(urls.length).toBeGreaterThan(APP_PANES.length + AGENT_PANES.length);
+    // The session's one token: every document must carry the SAME one, because it is
+    // derived from the session and not from the route.
+    const expected = bootstrapCsrfOf(await page(paths.apps));
+    for (const url of urls) {
+      const answered = await get(url);
+      expect(answered.status, `GET ${url}`).toBe(200);
+      // A session-derived token is in the body, so a stored copy is another owner's page.
+      expect(answered.headers.get("Cache-Control"), `GET ${url}`).toBe("no-store");
+      const html = await answered.text();
+      expect(html, url).toContain('id="pmcp-bootstrap"');
+      expect(html, url).toContain('src="/app.js"');
+      // The two facts no API can report, because both are the session's — read through
+      // the island's own JSON, which is what the client reads.
+      expect(bootstrapCsrfOf(html), url).toBe(expected);
+      expect(html, url).toContain(world.ns.owner.username);
+    }
+  });
+
+  it("§13 · the session gate runs BEFORE the document: every one of those URLs with no cookie is a 302 to /login carrying its own path as next=, never a 200 whose client would discover the refusal afterwards", async () => {
+    for (const url of shellUrls("news", "agent")) {
+      const answered = await call(new Request(`${ORIGIN}${url}`));
+      expect(answered.status, `GET ${url} with no cookie`).toBe(302);
+      expect(answered.headers.get("Location"), `GET ${url}`).toBe(
+        `/login?next=${encodeURIComponent(url)}`,
+      );
+    }
+    // Spelled once, byte for byte, because `next=` is what a bookmark survives on.
+    expect((await call(new Request(`${ORIGIN}${paths.apps}`))).headers.get("Location")).toBe(
+      "/login?next=%2Fapps",
+    );
+  });
+
+  it("§13 · the existence check runs before the document too: an unknown slug, ANOTHER namespace's real slug, the builtin pmcp and an (agent × app) pair the agent may not edit are one 404 apiece, byte-identical — a probe learns nothing about another namespace, and a 200 followed by a client-rendered \"not found\" would leak exactly that", async () => {
+    const foreign = await seedNamespace(env.DB, {
+      apps: [{ slug: uniqueSlug("foreign"), kind: "tunnel" }],
+    });
+    const foreignSlug = Object.keys(foreign.apps)[0];
+
+    const yardstick = await get(paths.appDetail(uniqueSlug("nosuch")));
+    expect(yardstick.status).toBe(404);
+    const body = await yardstick.text();
+    for (const url of [
+      paths.appDetail(foreignSlug),
+      paths.appDetail(PMCP_SLUG),
+      // Every pane of an unknown app, not just its landing: the check is the route's, and
+      // a pane that skipped it would render a shell for a namespace that has no such row.
+      ...APP_PANES.map((pane) => paths.appPane(uniqueSlug("nosuch"), pane)),
+      paths.agentDetail(uniqueSlug("noagent")),
+      // `parked` is archived and this agent holds nothing on it, which is precisely the
+      // pair §13 makes unreachable — while an archived app the agent DOES hold stays
+      // editable, which is why the rule is not "archived is 404".
+      paths.agentApp("agent", "parked"),
+      paths.agentApp("agent", foreignSlug),
+      paths.agentApp(uniqueSlug("noagent"), "news"),
+    ]) {
+      const answered = await get(url);
+      expect(answered.status, url).toBe(404);
+      expect(await answered.text(), url).toBe(body);
+    }
+  });
+
+  it("§13 · pane-name validation stays AHEAD of the session gate: /apps/<slug>/tools is the same 404 with a cookie and without one, because whether a segment names a page cannot depend on who is asking", async () => {
+    const withCookie = await get(`${paths.appDetail("news")}/tools`);
+    const without = await call(new Request(`${ORIGIN}${paths.appDetail("news")}/tools`));
+    expect(withCookie.status).toBe(404);
+    expect(without.status).toBe(404);
+    expect(await without.text()).toBe(await withCookie.text());
+    // The twin, so "404" is not what this prefix always answers: `catalog` IS a pane.
+    expect((await get(paths.appPane("news", "catalog"))).status).toBe(200);
+  });
+});
+
+describe("§13 · the client bundle's two assets", () => {
+  it("§13 · GET /app.js is 200 JavaScript and GET /app.css is 200 CSS — the two routes that reach the ASSETS binding, and the only ones: the shell links them by these exact names and a document whose script 404s is a blank page", async () => {
+    const script = await get(paths.clientScript);
+    expect(script.status, "GET /app.js").toBe(200);
+    expect(script.headers.get("Content-Type") ?? "", "GET /app.js").toMatch(/javascript/);
+
+    const sheet = await get(paths.clientStylesheet);
+    expect(sheet.status, "GET /app.css").toBe(200);
+    expect(sheet.headers.get("Content-Type") ?? "", "GET /app.css").toMatch(/text\/css/);
+
+    // And the shell really asks for these two names, so the pair is not two routes nobody
+    // links: the document's own tags are what makes them load-bearing.
+    const shell = await page(paths.apps);
+    expect(shell).toContain(`src="${paths.clientScript}"`);
+    expect(shell).toContain(`href="${paths.clientStylesheet}"`);
+  });
+});
+
+describe("§13 · /api/hub — the write gate, in the order it is written", () => {
+  // Four refusals, one per barrier, each proving its own place in the order AND that the
+  // handler behind it never ran. `withCountedOps` over the whole table is what makes the
+  // second half sayable: a substituted handler records its input and does nothing, so a
+  // refusal that had already executed would still be counted.
+  it("§13 · no cookie is 401 with a JSON body — and it is 401 even when the Origin is foreign and the token is absent, which is the session barrier standing FIRST (a fetch cannot follow a redirect into the address bar, so this is 401 where the page gate is 302)", async () => {
+    const csrf = bootstrapCsrfOf(await page(paths.apps));
+    await withCountedOps([...Object.keys(ops)], async (invocations) => {
+      const refused = await hub(
+        "POST",
+        "/api/hub/ops/app_archive",
+        { slug: "news" },
+        { cookie: null, csrf, origin: "https://evil.example" },
+      );
+      expect(refused.status).toBe(401);
+      expect(refused.headers.get("Content-Type") ?? "").toContain("application/json");
+      expect(await reasonOf(refused)).toBe("Sign in again.");
+      expect(times(invocations, "app_archive")).toBe(0);
+    });
+  });
+
+  it("§13 · a foreign Origin is 403 even carrying the session's own valid token — the origin barrier is the hub's, not a re-reading of the token (the twin: the hub's own Origin on the same request passes)", async () => {
+    const csrf = bootstrapCsrfOf(await page(paths.apps));
+    await withCountedOps([...Object.keys(ops)], async (invocations) => {
+      const refused = await hub(
+        "POST",
+        "/api/hub/ops/app_archive",
+        { slug: "news" },
+        { csrf, origin: "https://evil.example" },
+      );
+      expect(refused.status).toBe(403);
+      expect(await reasonOf(refused)).toBe("Forbidden");
+      expect(times(invocations, "app_archive")).toBe(0);
+
+      const accepted = await hub("POST", "/api/hub/ops/app_archive", { slug: "news" }, { csrf, origin: ORIGIN });
+      expect(accepted.status).toBe(200);
+      expect(times(invocations, "app_archive")).toBe(1);
+    });
+  });
+
+  it("§13 · the CSRF header is its own barrier: a same-origin write with the cookie and no `X-Pmcp-Csrf` is 403 and reaches nothing — a custom header cannot be set cross-origin without a preflight the hub never answers, so its absence is refused rather than tolerated", async () => {
+    await withCountedOps([...Object.keys(ops)], async (invocations) => {
+      const refused = await hub("POST", "/api/hub/ops/app_archive", { slug: "news" }, { origin: ORIGIN });
+      expect(refused.status).toBe(403);
+      expect(await reasonOf(refused)).toBe("Forbidden");
+      expect(times(invocations, "app_archive")).toBe(0);
+    });
+  });
+
+  it("§13 · a body that is not a JSON object is 400 — and the SAME body with no CSRF header is 403, which is the body barrier standing LAST: nothing is parsed on behalf of a request that was never going to be admitted", async () => {
+    const csrf = bootstrapCsrfOf(await page(paths.apps));
+    await withCountedOps([...Object.keys(ops)], async (invocations) => {
+      for (const body of ["not json at all", "[]", '"a string"', "7"]) {
+        const refused = await hub("POST", "/api/hub/ops/app_archive", body, { csrf });
+        expect(refused.status, body).toBe(400);
+        expect(await reasonOf(refused), body).toBe("Body must be a JSON object.");
+      }
+      // The order, made observable: strip the token and the same unparseable body is
+      // refused by the token instead.
+      const earlier = await hub("POST", "/api/hub/ops/app_archive", "not json at all");
+      expect(earlier.status).toBe(403);
+      expect(times(invocations, "app_archive")).toBe(0);
+    });
+  });
+});
+
+/**
+ * The typed routes' own world — its own namespace, because every case here WRITES.
+ *
+ * Proxied apps throughout, and deliberately so: a proxied app declares no roles, so its
+ * `roles` IS the owner map the Roles route edits, and no tunnel has to be dialled to give
+ * these cases something to compose against. The upstream is never reached — none of the
+ * six typed routes reads a catalog, which is the property three of the cases below exist
+ * to pin — so its URL only has to be well-formed.
+ */
+let typedWorld: Promise<{ ns: SeededNamespace; cookie: string; csrf: string }> | null = null;
+const withTypedWorld = (): Promise<{ ns: SeededNamespace; cookie: string; csrf: string }> =>
+  (typedWorld ??= seedTypedWorld());
+
+const TYPED_ROLE_APP = uniqueSlug("roleapp");
+const TYPED_RECORD_APP = uniqueSlug("recapp");
+const TYPED_GRANT_APP = uniqueSlug("grantapp");
+const TYPED_TOKEN_APP = uniqueSlug("tokapp");
+const TYPED_AGENT = uniqueSlug("holder");
+
+async function seedTypedWorld(): Promise<{ ns: SeededNamespace; cookie: string; csrf: string }> {
+  const upstream = upstreamUrlFor({ id: uniqueSlug("typedup"), mode: { kind: "unreachable" } });
+  const proxied = { kind: "proxy" as const, upstreamUrl: upstream, upstreamAuthMode: "headers" as const };
+  const ns = await seedNamespace(env.DB, {
+    apps: [
+      // Two literals in one role, so a save that draws ONE of them has an undrawn literal
+      // to leave alone — which is the whole of the filtered-save contract.
+      { slug: TYPED_ROLE_APP, ...proxied, roles: { mine: { tools: ["get_paper", "put_paper"] } } },
+      // Two tools, each masked on a path of its own, so "another tool's mask" exists.
+      { slug: TYPED_RECORD_APP, ...proxied, redact: { alpha_call: ["note"], beta_call: ["only_beta"] } },
+      { slug: TYPED_GRANT_APP, ...proxied, roles: { reader: { tools: ["get_paper"] } } },
+      { slug: TYPED_TOKEN_APP, kind: "tunnel" as const },
+    ],
+    agents: [{ slug: TYPED_AGENT, grants: { [TYPED_GRANT_APP]: [{ role: "reader", mode: "allow" }] } }],
+  });
+  const session = await seedOwnerSession(ns.owner);
+  return { ns, cookie: session.cookie, csrf: bootstrapCsrfOf(await page(paths.apps, session.cookie)) };
+}
+
+/** One `app_get` answer, typed by the contract the op declares. `handler` erases its
+ *  result to `unknown` for every caller, and `admin.AppRow` is where the shape is written
+ *  down — so this asserts to the OP's own type rather than to one invented here. */
+async function appGetRow(ownerId: string, slug: string): Promise<OpsAppRow> {
+  const answered = (await ops.app_get.handler(ownerId, { slug })) as { app: OpsAppRow };
+  return answered.app;
+}
+
+/** One role's tool list out of a stored map. §20.3 writes a tools-only role EITHER as the
+ *  bare array shorthand or as `{ tools: [...] }`, and which one is stored depends on how it
+ *  was written — so a case comparing what a save did has to read through both spellings or
+ *  it would be asserting about the shorthand rather than about the save. */
+function roleTools(roles: RoleDeclaration, role: string): string[] {
+  const held = roles[role];
+  if (held === undefined) return [];
+  return Array.isArray(held) ? held : (held.tools ?? []);
+}
+
+
+describe("§13 · /api/hub — the six typed routes, where the client sends a DELTA", () => {
+  it("§4/§9 · a FILTERED role save is a delta over the rows the editor drew: `drawn` naming one of the role's two literals removes exactly that one when it comes back unticked, and the literal the editor never drew survives untouched — which is what makes `?q=` safe, because a hidden row is not an unticked one", async () => {
+    const { ns, cookie, csrf } = await withTypedWorld();
+    expect(roleTools((await appGetRow(ns.owner.userId, TYPED_ROLE_APP)).roles, "mine")).toEqual([
+      "get_paper",
+      "put_paper",
+    ]);
+
+    const saved = await hub(
+      "PUT",
+      `/api/hub/apps/${TYPED_ROLE_APP}/roles`,
+      // The editor drew ONE row and it came back unticked; `put_paper` was filtered out of
+      // the render entirely, so it is in neither list.
+      { was: "mine", role: "mine", drawn: ["tools/get_paper"], ticked: [], keeps: [] },
+      { cookie, csrf },
+    );
+    expect(saved.status, await saved.text()).toBe(200);
+
+    expect(roleTools((await appGetRow(ns.owner.userId, TYPED_ROLE_APP)).roles, "mine")).toEqual([
+      "put_paper",
+    ]);
+  });
+
+  it("§4/§9 · a save whose family could not be READ changes no literal at all: an empty `drawn` — the editor rendered no item row, which is exactly what an unread catalog produces — leaves the role's stored patterns byte-identical, so a 503 upstream can never silently narrow a grant", async () => {
+    const { ns, cookie, csrf } = await withTypedWorld();
+    // Its own role on the same app, so the case above cannot have moved it.
+    await ops.app_update.handler(ns.owner.userId, {
+      slug: TYPED_ROLE_APP,
+      roles: { unread: { tools: ["get_paper", "put_paper"], prompts: ["digest_daily"] } },
+    });
+    const before = (await appGetRow(ns.owner.userId, TYPED_ROLE_APP)).roles;
+
+    const saved = await hub(
+      "PUT",
+      `/api/hub/apps/${TYPED_ROLE_APP}/roles`,
+      { was: "unread", role: "unread", drawn: [], ticked: [], keeps: [] },
+      { cookie, csrf },
+    );
+    expect(saved.status, await saved.text()).toBe(200);
+
+    expect((await appGetRow(ns.owner.userId, TYPED_ROLE_APP)).roles).toEqual(before);
+  });
+
+  it("§5/§9 · a recording save touches only the (path, tool) pairs the editor drew: masking one tool's path leaves ANOTHER tool's stored mask exactly as it was, because a pair the render never covered is not a pair the save has an opinion about", async () => {
+    const { ns, cookie, csrf } = await withTypedWorld();
+    const before = await appGetRow(ns.owner.userId, TYPED_RECORD_APP);
+    expect(before.redact).toEqual({ alpha_call: ["note"], beta_call: ["only_beta"] });
+
+    const saved = await hub(
+      "PUT",
+      `/api/hub/apps/${TYPED_RECORD_APP}/recording`,
+      {
+        logBodies: true,
+        // One path row, covering one tool, and unticked — so alpha's mask comes off.
+        // beta's path is not drawn at all, so nothing here speaks about it.
+        args: { drawn: [["note", ["alpha_call"]]], wholePath: [], perTool: [] },
+        results: { drawn: [], wholePath: [], perTool: [] },
+      },
+      { cookie, csrf },
+    );
+    expect(saved.status, await saved.text()).toBe(200);
+
+    const after = await appGetRow(ns.owner.userId, TYPED_RECORD_APP);
+    expect(after.redact.alpha_call, "the drawn pair did not move").toBeUndefined();
+    expect(after.redact.beta_call, "an undrawn tool's mask was rewritten").toEqual(["only_beta"]);
+  });
+
+  it("§6/§8 · a refused grant save answers 422 carrying the op's own field-scoped violations — the reason names `roles`, the field the entry belongs to, and the pair's stored set is untouched (the twin: the same route with a declared role writes it)", async () => {
+    const { ns, cookie, csrf } = await withTypedWorld();
+    const refused = await hub(
+      "PUT",
+      `/api/hub/apps/${TYPED_GRANT_APP}/grants`,
+      { agent: TYPED_AGENT, entries: { notarole: "allow" } },
+      { cookie, csrf },
+    );
+    expect(refused.status).toBe(422);
+    const body = await jsonOf(refused);
+    expect(typeof body.reason).toBe("string");
+    expect(body.violations, "the refusal carried no violations list").toEqual([
+      { field: "roles", reason: expect.stringContaining("notarole") },
+    ]);
+
+    // Nothing was written: the pair still holds exactly what it held.
+    const held = await grantsHeldBy(ns.owner.userId, TYPED_AGENT, TYPED_GRANT_APP);
+    expect(held).toEqual(["reader"]);
+
+    // THE TWIN: a declared role goes through the same route and REPLACES the set.
+    const accepted = await hub(
+      "PUT",
+      `/api/hub/apps/${TYPED_GRANT_APP}/grants`,
+      { agent: TYPED_AGENT, entries: { reader: "approval" } },
+      { cookie, csrf },
+    );
+    expect(accepted.status, await accepted.text()).toBe(200);
+    expect(await grantsHeldBy(ns.owner.userId, TYPED_AGENT, TYPED_GRANT_APP)).toEqual(["reader:approval"]);
+  });
+
+  it("§4/§15 · `token_issue` through the JSON surface reveals the plaintext EXACTLY once: the 200 carries a key that really opens the tunnel, and the credential listing afterwards carries only its prefix — nothing that could be presented", async () => {
+    const { ns, cookie, csrf } = await withTypedWorld();
+    const minted = await hub(
+      "POST",
+      "/api/hub/ops/token_issue",
+      { kind: "app", slug: TYPED_TOKEN_APP },
+      { cookie, csrf },
+    );
+    const answered = await jsonOf(minted);
+    expect(minted.status, JSON.stringify(answered)).toBe(200);
+    const value = answered.value;
+    if (typeof value !== "object" || value === null || !("token" in value) || typeof value.token !== "string") {
+      throw new Error("token_issue answered no plaintext");
+    }
+    const plaintext = value.token;
+
+    // It is a real credential, not a placeholder: identity's own resolver admits it.
+    const resolved = await resolveAppToken(
+      new Request(`${ORIGIN}/connect`, { headers: { Authorization: `Bearer ${plaintext}` } }),
+    );
+    expect(resolved, "the revealed key does not open the tunnel").not.toBeNull();
+
+    // ONCE: every later read of the same credential is the prefix and nothing more.
+    const listed = await hub("GET", "/api/hub/tokens", undefined, { cookie });
+    expect(listed.status).toBe(200);
+    const body = await listed.text();
+    expect(body, "the credential listing carried the plaintext").not.toContain(plaintext);
+    expect(body).toContain(TYPED_TOKEN_APP);
+    // And the ledger the walk just wrote did not keep it either (§15's uniform body rule).
+    const rows = await query(env.DB, ns.owner.userId, { event: "token_issue" });
+    expect(JSON.stringify(rows), "the audit trail kept the plaintext").not.toContain(plaintext);
+  });
+});
+
+/** One (agent × app) pair's saved entries, read through `agent_list` — the same answer the
+ *  grant editor reads, never the route's own echo of what it just sent. */
+async function grantsHeldBy(ownerId: string, agent: string, app: string): Promise<string[]> {
+  const listed = (await ops.agent_list.handler(ownerId, {})) as {
+    agents: { slug: string; grants: Record<string, string[]> }[];
+  };
+  return listed.agents.find((each) => each.slug === agent)?.grants[app] ?? [];
+}
 
 describe("§4/§13 · cookie sessions are the only page credential", () => {
   it("6. §4 · a bearer-sourced (device-flow) session is refused on /settings · a browser session renders it (the twin — the guard is about provenance, not about being logged out)", async () => {
@@ -911,296 +1405,6 @@ describe("§4/§13 · cookie sessions are the only page credential", () => {
       // Nothing namespace-shaped is in either: the shell is the same bytes for everyone.
       expect(body).not.toContain(world.ns.owner.username);
     }
-  });
-});
-
-describe("§13/§8 · /apps/new — proxied states: field-scoped refusals, the URL rule, several at once, and the connecting page", () => {
-  /** The sentence §8's endpoint rule produces, as the OP spells it (§13 shows it capitalised
-   *  with a period; both spellings are pinned below, from this one string). */
-  const ENDPOINT_REASON = `"endpoint" must be an https:// URL (http:// only for localhost)`;
-  const ENDPOINT_SHOWN = "Must be an https:// URL (http:// only for localhost).";
-
-  /** The reserved page segment `app_create` refuses — read off the route table, never
-   *  spelled, so a segment added later is walked here with no edit. Its sentence names no
-   *  field in quotes at all, which is what makes it the discriminator these rows need: a
-   *  message SCAN files it under the whole form, and only the violation's own `field`
-   *  puts it under Slug. */
-  const RESERVED_SLUG = [...RESERVED_APP_SLUGS][0];
-
-  /** The add-app form as /apps/new drew it, filled the way a human fills it and posted with
-   *  the token that render carried. Every case here goes through this, so none can submit a
-   *  control the page never rendered (`typedInto` refuses one). */
-  async function submitNewApp(typed: Record<string, string>): Promise<Response> {
-    const rendered = await page(paths.appNew);
-    const [drawn] = formsPostingTo(rendered, paths.appCreate);
-    expect(drawn, "/apps/new rendered no create form").toBeDefined();
-    return post(paths.appCreate, typedInto(drawn, typed), { csrf: csrfOf(rendered) });
-  }
-
-  /** One field of the add-app form as it came back: whether its control is `aria-invalid`,
-   *  and the sentence drawn under it. Split on the field wrapper rather than parsed — the
-   *  same shallow walk every other case in this file does to HTML. */
-  function fieldOf(
-    html: string,
-    control: "name" | "slug" | "endpoint",
-  ): { invalid: boolean; error: string | null } {
-    const chunk = html.split(`<div class="field"`).find((part) => part.includes(`id="app-${control}"`)) ?? "";
-    const error = /<div class="field-error">([\s\S]*?)<\/div>/.exec(chunk)?.[1];
-    return { invalid: chunk.includes(`aria-invalid="true"`), error: error === undefined ? null : textOf(error) };
-  }
-
-  /** The whole-form message the card draws above the fields, or null. */
-  function formAlert(html: string): string | null {
-    const alert = /<div class="alert alert--danger">([\s\S]*?)<\/div>/.exec(html)?.[1];
-    return alert === undefined ? null : textOf(alert);
-  }
-
-  /** A page's links as label → href. The connecting card's two buttons are anchors, so a
-   *  walk over `<a>` is how "what the owner can click next" is described. */
-  function linksOf(html: string): Record<string, string> {
-    const found: Record<string, string> = {};
-    for (const anchor of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)) {
-      found[textOf(anchor[2])] = decodeEntities(attributeOf(anchor[1], "href") ?? "");
-    }
-    return found;
-  }
-
-  /** Every app slug this namespace holds — "nothing created" read the way §8 reports it. */
-  async function slugsOf(): Promise<string[]> {
-    const listed = (await ops.app_list.handler(world.ns.owner.userId, {})) as { apps: { slug: string }[] };
-    return listed.apps.map((app) => app.slug);
-  }
-
-  it("§13/§8 · a refusal lands under the control it names — the field read off the refusal's own violations, never a substring of its message — with aria-invalid on that input and the op's sentence beneath it (capitalised, one period), the rest of the form echoed back at 400 and nothing created · a well-formed proxied headers create succeeds and lands on the created card (the twin)", async () => {
-    const endpoint = "https://mcp.example.com/mcp";
-    const refused = await submitNewApp({
-      kind: "proxy",
-      authMode: "headers",
-      name: "Reserved",
-      slug: RESERVED_SLUG,
-      endpoint,
-    });
-    expect(refused.status).toBe(400);
-    const redrawn = await refused.text();
-
-    // Under Slug, with the control marked — and the sentence itself quotes no field name,
-    // so a substring scan over the message could not have put it there.
-    expect(fieldOf(redrawn, "slug")).toEqual({
-      invalid: true,
-      error: `The slug "${RESERVED_SLUG}" is reserved: /apps/${RESERVED_SLUG} is a page.`,
-    });
-    expect(fieldOf(redrawn, "slug").error).not.toContain(`"slug"`);
-    // …and nothing else is marked: one violation, one error.
-    expect(fieldOf(redrawn, "endpoint")).toEqual({ invalid: false, error: null });
-    expect(formAlert(redrawn)).toBeNull();
-
-    // The rest of the form echoed back, so nothing the owner typed has to be retyped.
-    const [echoed] = formsPostingTo(redrawn, paths.appCreate);
-    expect(echoed.slug).toBe(RESERVED_SLUG);
-    expect(echoed.endpoint).toBe(endpoint);
-    expect(echoed.name).toBe("Reserved");
-
-    // NOTHING CREATED: a refused create is not a create (§8).
-    expect(await slugsOf()).not.toContain(RESERVED_SLUG);
-
-    // The other three slug refusals §13's boards draw, each as the page yields it from the
-    // OP's own message — derived here rather than transcribed, because server/dev/fixtures'
-    // `slugReserved`, `slugInvalid` and `errors` carry exactly these strings.
-    for (const [typed, sentence] of [
-      [PMCP_SLUG, `The slug "${PMCP_SLUG}" is reserved for the builtin admin app.`],
-      ["News_Feed", "Is not a valid slug."],
-      ["news", "Already exists in this namespace."],
-    ] as const) {
-      const answered = await submitNewApp({ kind: "tunnel", name: "Board", slug: typed });
-      expect(answered.status, typed).toBe(400);
-      expect(fieldOf(await answered.text(), "slug").error, typed).toBe(sentence);
-    }
-
-    // THE TWIN: the same form, one legal slug on, lands on the created card.
-    const slug = uniqueSlug("proxied");
-    const created = await submitNewApp({ kind: "proxy", authMode: "headers", name: "Docs", slug, endpoint });
-    expect(created.status).toBe(200);
-    const card = textOf(await created.text());
-    expect(card).toContain("App created");
-    expect(card).toContain(slug);
-    const stored = (await ops.app_get.handler(world.ns.owner.userId, { slug })) as {
-      app: { endpoint: string; auth: string };
-    };
-    expect(stored.app).toMatchObject({ endpoint, auth: "headers" });
-  });
-
-  it("§13/§8 · a proxied endpoint must be an https:// URL — http:// only for localhost, 127.0.0.1 and [::1]: `not-a-url`, `mcp.example.com` and `http://mcp.example.com/mcp` are refused under Endpoint on the page and by app_create alike, `http://localhost:3000/mcp` and `https://mcp.example.com/mcp` pass (the twins), and app_update applies the same rule to a stored app", async () => {
-    const ownerId = world.ns.owner.userId;
-
-    for (const endpoint of ["not-a-url", "mcp.example.com", "http://mcp.example.com/mcp"]) {
-      const slug = uniqueSlug("bad");
-      const refused = await submitNewApp({ kind: "proxy", authMode: "headers", name: "Bad", slug, endpoint });
-      expect(refused.status, endpoint).toBe(400);
-      expect(fieldOf(await refused.text(), "endpoint"), endpoint).toEqual({
-        invalid: true,
-        error: ENDPOINT_SHOWN,
-      });
-      // The rule is the OP's, not the page's — the same string refused at the owner's
-      // trust boundary, and nothing stored.
-      await expect(
-        ops.app_create.handler(ownerId, { slug, kind: "proxy", endpoint }),
-        endpoint,
-      ).rejects.toThrow(ENDPOINT_REASON);
-      expect(await slugsOf(), endpoint).not.toContain(slug);
-    }
-
-    // THE TWINS: loopback over http and a remote over https both pass, through the page.
-    for (const endpoint of ["http://localhost:3000/mcp", "https://mcp.example.com/mcp"]) {
-      const slug = uniqueSlug("ok");
-      const created = await submitNewApp({ kind: "proxy", authMode: "headers", name: "Fine", slug, endpoint });
-      expect(created.status, endpoint).toBe(200);
-      const stored = (await ops.app_get.handler(ownerId, { slug })) as { app: { endpoint: string } };
-      expect(stored.app.endpoint, endpoint).toBe(endpoint);
-    }
-
-    // §8 names three loopback hosts and the form has one Endpoint box, so the other two
-    // spellings are walked at the op.
-    for (const endpoint of ["http://127.0.0.1:3000/mcp", "http://[::1]:3000/mcp"]) {
-      await expect(
-        ops.app_create.handler(ownerId, { slug: uniqueSlug("loop"), kind: "proxy", endpoint }),
-        endpoint,
-      ).resolves.toBeDefined();
-    }
-
-    // app_update applies the same rule to a stored app — at update as at create (§8).
-    const slug = uniqueSlug("stored");
-    await ops.app_create.handler(ownerId, { slug, kind: "proxy", endpoint: "https://mcp.example.com/mcp" });
-    await expect(
-      ops.app_update.handler(ownerId, { slug, endpoint: "http://mcp.example.com/mcp" }),
-    ).rejects.toThrow(ENDPOINT_REASON);
-    await expect(
-      ops.app_update.handler(ownerId, { slug, endpoint: "https://mcp.example.com/v2" }),
-    ).resolves.toBeDefined();
-    const after = (await ops.app_get.handler(ownerId, { slug })) as { app: { endpoint: string } };
-    expect(after.app.endpoint).toBe("https://mcp.example.com/v2");
-  });
-
-  it("§13 · two violations render two field errors at once — a reserved-route slug beside a bad endpoint, both inputs aria-invalid — and a single violation renders exactly one (the twin); a violation naming no control of the form is the whole-form message", async () => {
-    const refused = await submitNewApp({
-      kind: "proxy",
-      authMode: "headers",
-      name: "Both",
-      slug: RESERVED_SLUG,
-      endpoint: "mcp.example.com",
-    });
-    expect(refused.status).toBe(400);
-    const redrawn = await refused.text();
-    expect(fieldOf(redrawn, "slug")).toEqual({
-      invalid: true,
-      error: `The slug "${RESERVED_SLUG}" is reserved: /apps/${RESERVED_SLUG} is a page.`,
-    });
-    expect(fieldOf(redrawn, "endpoint")).toEqual({ invalid: true, error: ENDPOINT_SHOWN });
-    expect(formAlert(redrawn)).toBeNull();
-
-    // THE TWIN: one violation is one error, and the other control comes back clean.
-    const single = await submitNewApp({
-      kind: "proxy",
-      authMode: "headers",
-      name: "One",
-      slug: uniqueSlug("one"),
-      endpoint: "mcp.example.com",
-    });
-    const only = await single.text();
-    expect(fieldOf(only, "endpoint")).toEqual({ invalid: true, error: ENDPOINT_SHOWN });
-    expect(fieldOf(only, "slug")).toEqual({ invalid: false, error: null });
-    expect(formAlert(only)).toBeNull();
-
-    // A violation naming NO control of the form is the whole-form message. `roles` is such
-    // a field — app_create declares it and the add-app form draws no control for it, which
-    // is walked here rather than assumed — so its violation can only be reported whole-form.
-    const [drawn] = formsPostingTo(await page(paths.appNew), paths.appCreate);
-    expect(Object.keys(drawn)).not.toContain("roles");
-    await expect(
-      ops.app_create.handler(world.ns.owner.userId, {
-        slug: uniqueSlug("roles"),
-        kind: "proxy",
-        endpoint: "https://mcp.example.com/mcp",
-        roles: { all: [] },
-      }),
-      // The sentence the whole-form alert would draw from this is
-      // `Role name "all" is reserved.` — server/dev/fixtures' `errors.form`.
-    ).rejects.toMatchObject({
-      // On the error object, never on the wire's `data` (§7: -32003's alone).
-      violations: [{ field: "roles", reason: `"roles" role name "all" is reserved` }],
-    });
-  });
-
-  it("§13 · a proxied OAuth create answers 200 with the connecting page — \"Connecting to <name>…\", the ten-minute sentence, \"Continue to <name>\" linking the provider's authorize URL (a state row minted for this session) and \"Not now\" linking the app's Overview pane — never the 303 the app page's own Connect keeps · a create whose discovery fails lands on that Overview pane with the connect notice, the app created (the twin)", async () => {
-    const scenario: UpstreamScenario = {
-      id: uniqueSlug("up"),
-      mode: { kind: "ok" },
-      as: { id: uniqueSlug("as") } as AsScenario,
-    };
-    const slug = uniqueSlug("linear");
-    const answered = await submitNewApp({
-      kind: "proxy",
-      authMode: "oauth",
-      name: "Linear",
-      slug,
-      endpoint: upstreamUrlFor(scenario),
-    });
-    // A 200 RENDER, never a redirect: a page cannot open a tab without a script and a
-    // create must not depend on one (decision 30), so the owner is handed a link.
-    expect(answered.status).toBe(200);
-    const html = await answered.text();
-    const text = textOf(html);
-    expect(text).toContain("Connecting to Linear…");
-    expect(text).toContain("Finish signing in at Linear — this link expires in about 10 minutes.");
-
-    const links = linksOf(html);
-    expect(links["Not now"]).toBe(paths.appPane(slug, "overview"));
-    const authorize = new URL(links["Continue to Linear"] ?? "", ORIGIN);
-    expect(authorize.host).toBe(AS_HOST);
-    // The state the link carries is a row minted for THIS session, alive for §7's window.
-    const state = authorize.searchParams.get("state") ?? "";
-    const row = await (env.DB as D1Like)
-      .prepare(`SELECT session_id, expires_at FROM upstream_oauth_state WHERE state = ?`)
-      .bind(state)
-      .first<{ session_id: string; expires_at: number }>();
-    expect(row?.session_id).toBe(world.sessionId);
-    expect(row?.expires_at).toBeGreaterThan(Date.now());
-
-    // Never the 303 the app page's own Connect keeps — that route is untouched.
-    const csrf = csrfOf(await page(paths.apps));
-    expect((await post(paths.appConnect(slug), {}, { csrf })).status).toBe(303);
-
-    // THE TWIN: discovery fails and the app still exists, so the landing is its own
-    // Overview pane. The scenario names no authorization server at all, so both
-    // well-known documents answer 404 over an https:// endpoint the URL rule accepts.
-    const blind: UpstreamScenario = { id: uniqueSlug("up"), mode: { kind: "ok" } };
-    const other = uniqueSlug("blind");
-    const failed = await submitNewApp({
-      kind: "proxy",
-      authMode: "oauth",
-      name: "Blind",
-      slug: other,
-      endpoint: upstreamUrlFor(blind),
-    });
-    expect(failed.status).toBe(303);
-    const landing = new URL(failed.headers.get("Location") ?? "", ORIGIN);
-    expect(landing.pathname).toBe(paths.appPane(other, "overview"));
-    expect(landing.searchParams.get("failed")).toBe("connect");
-    await expect(ops.app_get.handler(world.ns.owner.userId, { slug: other })).resolves.toBeDefined();
-  });
-
-  it("§13/§8 · a blank Name is not sent: the created app's name is its slug, and `name` is not a key the form can error on", async () => {
-    const slug = uniqueSlug("unnamed");
-    const created = await submitNewApp({ kind: "tunnel", name: "", slug });
-    expect(created.status).toBe(200);
-    const stored = (await ops.app_get.handler(world.ns.owner.userId, { slug })) as { app: { name: string } };
-    expect(stored.app.name).toBe(slug);
-
-    // …and a refusal marks the control it named while Name comes back clean: §8 defaults
-    // the field, so no refusal can ever name it (§13 — the form has no Name error).
-    const refused = await submitNewApp({ kind: "tunnel", name: "", slug: RESERVED_SLUG });
-    const redrawn = await refused.text();
-    expect(fieldOf(redrawn, "slug").invalid).toBe(true);
-    expect(fieldOf(redrawn, "name")).toEqual({ invalid: false, error: null });
   });
 });
 
@@ -1796,25 +2000,26 @@ describe("§13 · /approvals — deciding a request that is no longer pending", 
 });
 
 describe("§8 · parity direction B — forms and schemas are one source", () => {
-  it("16. §8 · every form rendered on /apps and /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)", async () => {
-    for (const path of [paths.apps, paths.approvals]) {
-      const forms = formsRenderedOn(await page(path));
-      expect(forms.length, `${path} rendered no form`).toBeGreaterThan(0);
-      for (const form of forms) {
-        if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
-        expect(Object.prototype.hasOwnProperty.call(ops, form.op), `${path} fronts "${form.op}"`).toBe(true);
-      }
+  // `/apps` left every walk in this describe with the SPA cutover (2026-09-18): it renders
+  // no form, so a form walk over it can only ever find nothing. What replaces it is not a
+  // second form walk but the surface that took the forms' place — `POST /api/hub/ops/:op`,
+  // whose allowlist is the new answer to "what can a browser reach", checked below in both
+  // directions with nothing transcribed that is not itself asserted.
+  it("16. §8 · every form rendered on /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)", async () => {
+    const forms = formsRenderedOn(await page(paths.approvals));
+    expect(forms.length, `${paths.approvals} rendered no form`).toBeGreaterThan(0);
+    for (const form of forms) {
+      if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
+      expect(Object.prototype.hasOwnProperty.call(ops, form.op), `/approvals fronts "${form.op}"`).toBe(true);
     }
   });
 
   it("17. §8 · each form's field set equals schemaKeysOf(ops[name]) — both sides derived, so a schema change with no form change fails here rather than at a user's keyboard", async () => {
     let checked = 0;
-    for (const path of [paths.apps, paths.approvals]) {
-      for (const form of formsRenderedOn(await page(path))) {
-        if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
-        expect(form.fields, `${path} → ${form.op}`).toEqual(schemaKeysOf(ops[form.op]));
-        checked += 1;
-      }
+    for (const form of formsRenderedOn(await page(paths.approvals))) {
+      if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
+      expect(form.fields, `/approvals → ${form.op}`).toEqual(schemaKeysOf(ops[form.op]));
+      checked += 1;
     }
     expect(checked, "no ops-backed form was checked").toBeGreaterThan(0);
   });
@@ -1824,20 +2029,84 @@ describe("§8 · parity direction B — forms and schemas are one source", () =>
   // `connection_revoke`, so the claim is now PER PANE and lives with the panes: see
   // "every control the /settings panes render is claimed".
 
+  it("18. §8/§13 · the browser's generic op surface is an ALLOWLIST and nothing else: every name POST /api/hub/ops/:op admits reaches its ops handler exactly once, every other ops name answers byte-identically to a name that is not an op at all — so a probe cannot tell withheld from nonexistent — and the admitted set is exactly the nine names, asserted against what the router does rather than copied from it", async () => {
+    const csrf = bootstrapCsrfOf(await page(paths.apps));
+    const notAnOp = uniqueSlug("no_such_op");
+    // Every handler substituted, so an admitted name is measured by whether it ARRIVED
+    // rather than by whether its arguments happened to parse — `{}` satisfies no real
+    // schema, and a refusal there would classify a reachable op as withheld.
+    const { admitted, answers, absent } = await withCountedOps([...Object.keys(ops)], async (invocations) => {
+      const admitted: string[] = [];
+      const answers = new Map<string, string>();
+      for (const name of Object.keys(ops)) {
+        const answered = await hub("POST", `/api/hub/ops/${name}`, {}, { csrf });
+        answers.set(name, `${answered.status} ${await answered.text()}`);
+        if (answered.status === 404) {
+          expect(times(invocations, name), `withheld ${name} still reached its handler`).toBe(0);
+          continue;
+        }
+        expect(answered.status, `POST /api/hub/ops/${name}`).toBe(200);
+        expect(times(invocations, name), `admitted ${name} did not reach its handler`).toBe(1);
+        admitted.push(name);
+      }
+      const outside = await hub("POST", `/api/hub/ops/${notAnOp}`, {}, { csrf });
+      return { admitted, answers, absent: `${outside.status} ${await outside.text()}` };
+    });
+
+    // DIRECTION ONE: what is withheld is indistinguishable from what does not exist. Status
+    // and body bytes both, because a distinguishable refusal is exactly the leak.
+    expect(absent.startsWith("404 "), `a name outside ops answered "${absent}"`).toBe(true);
+    for (const [name, answered] of answers) {
+      if (admitted.includes(name)) continue;
+      expect(answered, `withheld "${name}" is distinguishable from "${notAnOp}"`).toBe(absent);
+    }
+
+    // DIRECTION TWO: the set the router admits IS the nine §13 names. The list is spelled
+    // here only so a reader can see it — what the row asserts is that it equals the set
+    // measured above, so adding a tenth name to the allowlist reddens this row rather than
+    // riding in unnoticed, and removing one does too.
+    expect(admitted.sort()).toEqual(
+      [
+        "agent_create",
+        "agent_delete",
+        "app_archive",
+        "app_delete",
+        "app_disconnect",
+        "app_unarchive",
+        "approval_decide",
+        "token_issue",
+        "token_revoke",
+      ],
+    );
+  });
+
+  it("18b. §8 · an admitted op still answers to its own schema: a body carrying a field the tool does not declare is refused 422 with the reason, not accepted and not silently dropped — `parseInput` is the authority the JSON surface hands the body straight to", async () => {
+    const csrf = bootstrapCsrfOf(await page(paths.apps));
+    const refused = await hub(
+      "POST",
+      "/api/hub/ops/app_archive",
+      { slug: "news", nonesuch: "1" },
+      { csrf },
+    );
+    expect(refused.status).toBe(422);
+    expect(await reasonOf(refused)).toContain("does not declare");
+    // And nothing was written: the app the body named is still unarchived, read off the
+    // store rather than off the answer that just refused.
+    const row = await new Registry(env.DB).getApp(world.ns.owner.userId, "news");
+    expect(row?.archived ?? true).toBe(false);
+  });
+
   it("19. §8 · every page mutation reaches an ops handler (or better-auth): no page route mutates D1 on its own — the no-web-only-capability invariant, checked by substituting handlers across the ops table rather than by reading web.ts", async () => {
-    // Everything the pages have to SAY is read first, while the ops table is still real:
-    // the targets they render, and the token they rendered them with. The substitution
+    // Everything the page has to SAY is read first, while the ops table is still real:
+    // the targets it renders, and the token it rendered them with. The substitution
     // below replaces the read handlers too, so a page cannot be rendered under it — which
     // is itself the parity invariant showing through (a page has no other source).
     const targets = new Map<string, string>();
-    let csrf = "";
-    for (const path of [paths.apps, paths.approvals]) {
-      const html = await page(path);
-      csrf = csrfOf(html);
-      for (const form of formsRenderedOn(html)) {
-        if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
-        targets.set(form.op, actionFor(html, form.op));
-      }
+    const html = await page(paths.approvals);
+    const csrf = csrfOf(html);
+    for (const form of formsRenderedOn(html)) {
+      if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
+      targets.set(form.op, actionFor(html, form.op));
     }
     expect(targets.size).toBeGreaterThan(0);
     await withCountedOps([...Object.keys(ops)], async (invocations) => {
@@ -2444,1597 +2713,6 @@ describe(`§13 · the PWA icons — the install gate's own bytes`, () => {
   });
 });
 
-describe(`§13 · /agents and /agents/<slug> — the list, the five panes, and what points at them`, () => {
-  // Rows first (§9 rule 1), from §13's sections as the 2026-09-16 three-pane brief redraws
-  // them; the app pane — the grant set itself — is its own describe below.
-
-  it(`§13 · /agents lists one row per agent whose slug is an anchor stretched over the whole row (a class="row-link" inside the class="agent-row", with the trailing chevron), the description beneath, Access in one line as "N apps · A allowed · K ask first · D dormant" counted over the grant sets with no catalog read, Tokens and Created as today, and Delete as the row's only control · an agent holding nothing reads "no grants", and the empty namespace still reads "No agents yet. Create one to give an AI agent its own grants and keys." beside New agent (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        { slug: "linear", kind: "tunnel", name: "Linear" },
-        { slug: "news", kind: "tunnel" },
-        { slug: "parked", kind: "tunnel", archived: true },
-      ],
-      agents: [
-        {
-          slug: "claude",
-          description: "Claude sessions",
-          grants: {
-            // One of each bucket the Access line counts: an allow, an ask, a role the app
-            // has never declared, and a grant on an app that is archived.
-            linear: [{ role: "reader", mode: "allow" }, { role: "admin", mode: "approval" }],
-            news: [{ role: "ghost", mode: "allow" }],
-            parked: [{ role: "all", mode: "allow" }],
-          },
-          tokens: [{ as: "claude" }],
-        },
-        { slug: "cron", grants: {} },
-      ],
-    });
-    // `reader` and `admin` are declared, so only `ghost` is dormant for want of a
-    // declaration (a tunneled app's roles arrive at registration — seed FINDINGS 1).
-    await new Registry(env.DB).upsertDeclaredRoles(ns.apps.linear.id, { reader: ["get_.*"], admin: ["admin_.*"] });
-    const session = await seedOwnerSession(ns.owner);
-    const html = await page(paths.agents, session.cookie);
-    const text = textOf(html);
-
-    // The row's link is the slug, stretched: the classes are the contract here, because
-    // "the whole row is the link" exists nowhere else in the markup.
-    const rowLink = [...html.matchAll(/<a\b([^>]*)>/g)].find(
-      (anchor) => decodeEntities(attributeOf(anchor[1], "href") ?? "") === paths.agentDetail("claude"),
-    );
-    expect(rowLink, "no anchor to the agent page").toBeDefined();
-    expect(attributeOf(rowLink?.[1] ?? "", "class") ?? "").toContain("row-link");
-    expect(html).toContain("agent-row");
-    expect(text).toContain("Claude sessions");
-
-    // Access, in one line, over the grant sets: three apps, one allow, one ask, and two
-    // dormant — the archived app's grant and the undeclared role.
-    expect(text).toContain("3 apps · 1 allowed · 1 ask first · 2 dormant");
-    expect(text).toContain("no grants");
-    expect(text).toContain("1 active · never used");
-    expect(html).toContain(`href="${paths.agentNew}"`);
-
-    // Delete is the row's ONLY control: the list points at the agent page and at the
-    // delete dialog, and never into a pane.
-    expect(linkTexts(html, paths.agentsConfirmDelete("claude"))).toContain("Delete");
-    for (const href of html.matchAll(/href="([^"]*)"/g)) {
-      expect(decodeEntities(href[1]).startsWith(`${paths.agentDetail("claude")}/`), href[1]).toBe(false);
-    }
-
-    // The twin: the empty namespace.
-    const fresh = await seedNamespace(env.DB, {});
-    const empty = await page(paths.agents, (await seedOwnerSession(fresh.owner)).cookie);
-    expect(textOf(empty)).toContain("No agents yet.");
-    expect(textOf(empty)).toContain("Create one to give an AI agent its own grants and keys.");
-    expect(empty).toContain(`href="${paths.agentNew}"`);
-  });
-
-  it(`§13 · the wide top nav holds five entries in §13's order — Apps · Agents · Audit · Approvals · Settings — on every shell page, Agents marked aria-current="page" on /agents and on /agents/<slug> and nowhere else · /apps marks Apps alone (the twin)`, async () => {
-    const ORDER = [paths.apps, paths.agents, paths.audit, paths.approvals, paths.settings];
-    const navOf = (html: string): { href: string; current: boolean }[] => {
-      const nav = /<nav class="nav">([\s\S]*?)<\/nav>/.exec(html)?.[1] ?? "";
-      return [...nav.matchAll(/<a class="nav-link" href="([^"]*)"( aria-current="page")?>/g)].map((m) => ({
-        href: m[1],
-        current: m[2] !== undefined,
-      }));
-    };
-    const pages: [string, string][] = [
-      [paths.agents, paths.agents],
-      [paths.agentDetail("agent"), paths.agents],
-      [paths.apps, paths.apps],
-      [paths.audit, paths.audit],
-      [paths.approvals, paths.approvals],
-      [paths.settings, paths.settings],
-    ];
-    for (const [path, current] of pages) {
-      const nav = navOf(await page(path));
-      expect(nav.map((entry) => entry.href), path).toEqual(ORDER);
-      expect(nav.filter((entry) => entry.current).map((entry) => entry.href), path).toEqual([current]);
-    }
-  });
-
-  it(`§13 · every shell page carries the narrow shell's sidebar beside that wide nav, in the same document and with no script — the hamburger <a href="#menu" class="menu-open" aria-label="Menu">, the <nav id="menu" class="menu"> holding the same five entries in §13's order with aria-current="page" on the page's own and the Approvals pending count as its pill, the <a href="#" aria-label="Close menu"> and the <a href="#" class="scrim" aria-hidden="true"> that close it, and the username over the Sign out form at its foot — on /apps, /agents, /audit, /approvals, /settings and /agents/<slug> alike · the sign-in pages, which have no shell, render neither nav, no hamburger and no scrim (the twin)`, async () => {
-    const ORDER: readonly string[] = [paths.apps, paths.agents, paths.audit, paths.approvals, paths.settings];
-    // Its own namespace, with its own pending request: the count in the Approvals pill is
-    // an assertion, and the fixture world's one approval is a row other cases decide.
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel" }],
-      // `agent` by name: `openApproval` opens its request as the namespace's own agent.
-      agents: [{ slug: "agent", grants: { news: [{ role: "all", mode: "approval" }] } }],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    await openApproval(ns, "news");
-
-    /** An anchor that is a CONTROL rather than a destination, found by the class the
-     *  stylesheet shows and hides it by — the two halves of the `:target` mechanism. */
-    const anchorNamed = (html: string, className: string): string => {
-      const found = [...html.matchAll(/<a\b([^>]*)>/g)].find(
-        (anchor) => (attributeOf(anchor[1], "class") ?? "") === className,
-      );
-      return found?.[1] ?? "";
-    };
-    /** The sidebar's own markup: `#menu` is what the hamburger targets, so the id — not a
-     *  class and not an order — is what identifies it. */
-    const menuOf = (html: string): { attributes: string; body: string } | null => {
-      const nav = [...html.matchAll(/<nav\b([^>]*)>([\s\S]*?)<\/nav>/g)].find(
-        (candidate) => attributeOf(candidate[1], "id") === "menu",
-      );
-      return nav === undefined ? null : { attributes: nav[1], body: nav[2] };
-    };
-
-    const pages: [string, string][] = [
-      [paths.apps, paths.apps],
-      [paths.agents, paths.agents],
-      [paths.audit, paths.audit],
-      [paths.approvals, paths.approvals],
-      [paths.settings, paths.settings],
-      [paths.agentDetail("agent"), paths.agents],
-    ];
-    for (const [path, current] of pages) {
-      const html = await page(path, session.cookie);
-
-      // Both navigations, in ONE document: the wide nav stays where it was and the
-      // sidebar is drawn beside it, which is what lets CSS alone choose between them.
-      expect(html, path).toContain(`<nav class="nav">`);
-      const menu = menuOf(html);
-      expect(menu, `${path}: no #menu sidebar`).not.toBeNull();
-      expect(attributeOf(menu?.attributes ?? "", "class"), path).toBe("menu");
-
-      // The three controls, each an ANCHOR carrying a URL — a page whose menu opened by
-      // script would carry buttons here, and would not open with scripting off.
-      const hamburger = anchorNamed(html, "menu-open");
-      expect(attributeOf(hamburger, "href"), `${path}: the hamburger`).toBe("#menu");
-      expect(attributeOf(hamburger, "aria-label"), `${path}: the hamburger`).toBe("Menu");
-      const scrim = anchorNamed(html, "scrim");
-      expect(attributeOf(scrim, "href"), `${path}: the scrim`).toBe("#");
-      expect(attributeOf(scrim, "aria-hidden"), `${path}: the scrim`).toBe("true");
-      const close = [...(menu?.body ?? "").matchAll(/<a\b([^>]*)>/g)].find(
-        (anchor) => attributeOf(anchor[1], "aria-label") === "Close menu",
-      );
-      expect(close, `${path}: no close control`).toBeDefined();
-      expect(attributeOf(close?.[1] ?? "", "href"), `${path}: the close control`).toBe("#");
-
-      // The five entries the wide nav holds, in the same order, with this page's own
-      // marked — read off the sidebar, so `aria-current` is tested on one nav per page.
-      const entries = [...(menu?.body ?? "").matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].map((anchor) => ({
-        href: decodeEntities(attributeOf(anchor[1], "href") ?? ""),
-        current: attributeOf(anchor[1], "aria-current") === "page",
-        parts: topLevelElements(anchor[2]),
-      }));
-      const nav = entries.filter((entry) => ORDER.includes(entry.href));
-      expect(nav.map((entry) => entry.href), path).toEqual(ORDER);
-      expect(nav.filter((entry) => entry.current).map((entry) => entry.href), path).toEqual([current]);
-
-      // The pending count is an element of the Approvals entry rather than words in its
-      // label — the pill the wide nav draws as its badge.
-      const approvals = nav.find((entry) => entry.href === paths.approvals);
-      expect(approvals?.parts.map((part) => textOf(part)), `${path}: the Approvals pill`).toContain("1");
-
-      // The foot: who is signed in, and the one form that signs them out.
-      expect(textOf(menu?.body ?? ""), path).toContain(ns.owner.username);
-      expect(formsPostingTo(menu?.body ?? "", paths.auth.signOut).length, `${path}: Sign out`).toBeGreaterThan(0);
-    }
-
-    // The twin: /login has no shell, so it has neither navigation and none of the three
-    // controls — a sidebar over a page nobody is signed in to is nothing to open.
-    const login = await anonymousPage(paths.login);
-    expect(menuOf(login)).toBeNull();
-    expect(login).not.toContain(`<nav class="nav">`);
-    expect(login).not.toContain("menu-open");
-    expect(login).not.toContain("scrim");
-  });
-
-  it(`§13 · every shell page's <main> carries exactly ONE of the three shape classes §2 of design/layout-and-density.md pins — page--document on /approvals, page--table on /apps, /agents and /audit, page--workspace on /settings, /agents/<slug> and /apps/<slug> — and none of the four the rename retires (page, page--narrow, page--paned, page--fluid), with one <main> per page where /apps and /approvals drew a <div class="page"> · /login, which has no shell, carries no <main class="page…"> at all (the twin)`, async () => {
-    // Markup on purpose, and the second exception to this file's header rule: the shape
-    // class is the CONTRACT between the page and the stylesheet — width cap, gutters and
-    // the pane rules all key off which of the three a page writes — so it is not
-    // incidental HTML. The CSS behind it is the stylesheet's business and is not pinned.
-    const SHAPES: readonly string[] = ["page--document", "page--table", "page--workspace"];
-    const RETIRED: readonly string[] = ["page", "page--narrow", "page--paned", "page--fluid"];
-    /** Every <main> in the document as its class TOKENS — split rather than matched as a
-     *  substring, so `page--document` is never read as the retired bare `page`. */
-    const mainsOf = (html: string): string[][] =>
-      [...html.matchAll(/<main\b([^>]*)>/g)].map((main) =>
-        (attributeOf(main[1], "class") ?? "").split(/\s+/).filter(Boolean),
-      );
-
-    const shells: [string, string][] = [
-      [paths.approvals, "page--document"],
-      [paths.apps, "page--table"],
-      [paths.agents, "page--table"],
-      [paths.audit, "page--table"],
-      [paths.settings, "page--workspace"],
-      [paths.agentDetail("agent"), "page--workspace"],
-      [paths.appDetail("news"), "page--workspace"],
-    ];
-    for (const [path, shape] of shells) {
-      const mains = mainsOf(await page(path));
-      expect(mains.length, `${path}: <main> count`).toBe(1);
-      expect(mains[0].filter((token) => SHAPES.includes(token)), path).toEqual([shape]);
-      expect(mains[0].filter((token) => RETIRED.includes(token)), `${path}: retired classes`).toEqual([]);
-    }
-
-    // The twin: the sign-in family has no shell, so it has no shaped <main> either — the
-    // auth card is its own 400 px rule, not one of the three page shapes.
-    for (const tokens of mainsOf(await anonymousPage(paths.login))) {
-      expect(tokens.filter((token) => [...SHAPES, ...RETIRED].includes(token)), paths.login).toEqual([]);
-    }
-  });
-
-  it(`§13/§8 · /agents/new renders agent_create's three fields — slug, name, description — and nothing else, and a posted create lands on the new agent's page · a slug the op refuses (reserved, taken, illegal) re-renders the form at 400 with the refusal under the field and creates nothing (the twin)`, async () => {
-    const html = await page(paths.agentNew);
-    // The create form by its action — the shell's Sign out form comes first in the document.
-    const form = [...html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].find(
-      (match) => decodeEntities(attributeOf(match[1], "action") ?? "") === paths.agentCreate,
-    );
-    expect(form, "no form posts to agent_create").toBeDefined();
-    expect(namedControls(form?.[2] ?? "").sort()).toEqual(["description", "name", "slug"]);
-    const csrf = csrfOf(html);
-
-    const slug = uniqueSlug("bot");
-    const created = await formPost(paths.agentCreate, { csrf, slug, name: "Bot", description: "Runs things" }, world.session.cookie);
-    expect(created.status).toBe(303);
-    expect(new URL(created.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentDetail(slug));
-    const landed = await page(paths.agentDetail(slug));
-    expect(textOf(landed)).toContain("Bot");
-    expect(textOf(landed)).toContain("Runs things");
-
-    // The twin: a taken slug — the world's own agent — is refused by the op, and the form
-    // comes back at 400 with the reason where the field is, having created nothing.
-    const before = ((await ops.agent_list.handler(world.ns.owner.userId, {})) as { agents: { slug: string }[] }).agents.length;
-    const refused = await formPost(paths.agentCreate, { csrf, slug: "agent", name: "", description: "" }, world.session.cookie);
-    expect(refused.status).toBe(400);
-    const again = await refused.text();
-    expect(again).toContain('class="field-error"');
-    expect(again).toContain(`action="${paths.agentCreate}"`);
-    const after = ((await ops.agent_list.handler(world.ns.owner.userId, {})) as { agents: { slug: string }[] }).agents.length;
-    expect(after).toBe(before);
-  });
-
-  it(`§13 · Delete opens the same list with the confirm dialog at ?confirm=delete-agent&slug=, titled "Delete agent “<slug>”?" over "Deleting an agent deletes its tokens and removes its grants everywhere.", whose form fronts agent_delete — afterwards the agent, its keys and its grants are gone and /agents lands with the notice · a slug naming no agent draws no dialog (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel" }],
-      agents: [{ slug: "doomed", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "key" }] }],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const html = await page(paths.agentsConfirmDelete("doomed"), session.cookie);
-    expect(html).toContain("<dialog");
-    expect(textOf(html)).toContain("Delete agent “doomed”?");
-    expect(textOf(html)).toContain("Deleting an agent deletes its tokens and removes its grants everywhere.");
-    expect(formsPostingTo(html, paths.agentDelete("doomed")).length).toBeGreaterThan(0);
-
-    const deleted = await formPost(paths.agentDelete("doomed"), { csrf: csrfOf(html) }, session.cookie);
-    expect(deleted.status).toBe(303);
-    const landing = new URL(deleted.headers.get("Location") ?? "", ORIGIN);
-    expect(landing.pathname).toBe(paths.agents);
-    expect(landing.searchParams.get("done")).toBe("agent_delete");
-    const agents = (await ops.agent_list.handler(ns.owner.userId, {})) as { agents: { slug: string }[] };
-    expect(agents.agents.map((row) => row.slug)).not.toContain("doomed");
-    const tokens = (await ops.token_list.handler(ns.owner.userId, {})) as { tokens: { kind: string; refSlug: string }[] };
-    expect(tokens.tokens.filter((row) => row.kind === "agent" && row.refSlug === "doomed")).toEqual([]);
-
-    // The twin: a slug naming no agent draws no dialog at all.
-    expect(await page(paths.agentsConfirmDelete("nobody"), session.cookie)).not.toContain("<dialog");
-  });
-
-  it(`§2 · new is reserved from agent slugs: agent_create refuses "new" and GET /agents/new is the form, never a page for an agent called new · any other charset-legal slug creates and answers at /agents/<slug> (the twin)`, async () => {
-    const csrf = csrfOf(await page(paths.agentNew));
-    const refused = await formPost(paths.agentCreate, { csrf, slug: "new", name: "", description: "" }, world.session.cookie);
-    expect(refused.status).toBe(400);
-    expect(textOf(await refused.text())).toContain("reserved");
-    const form = await page(paths.agentNew);
-    expect(textOf(form)).toContain("New agent");
-    expect(form).not.toContain("Danger zone");
-
-    // The twin: any other charset-legal slug creates and answers at its own page.
-    const slug = uniqueSlug("legal");
-    const created = await formPost(paths.agentCreate, { csrf, slug, name: "", description: "" }, world.session.cookie);
-    expect(created.status).toBe(303);
-    expect(textOf(await page(paths.agentDetail(slug)))).toContain(slug);
-  });
-
-  it(`§13 · /agents/<slug> renders the FIRST app in slug order the agent holds a grant on, in place and under its own URL — the title row reading "Agents › <slug>", Agents a link to /agents in that same row and no agent badge anywhere in the header, then the name when it differs, the description, Created and the tiles "N apps · A allow · K ask first · D dormant" — with no alias URL for that pane · an agent holding no grant lands on the grant step, in place (the twin)`, async () => {
-    const { cookie } = await withAgentPanes();
-    const html = await page(paths.agentDetail("claude"), cookie);
-    const text = textOf(html);
-
-    // The crumb IS the title row: the link, the ›, and the slug in one row — never a line
-    // of its own above it, and never carrying the app or pane the page happens to render.
-    const header = html.slice(html.indexOf("<main"), html.indexOf("<nav", html.indexOf("<main")));
-    expect(textOf(header)).toContain("Agents › claude");
-    expect(header).toMatch(/<a[^>]*href="\/agents"[^>]*>Agents<\/a>[\s\S]{0,60}›[\s\S]{0,60}<h1[^>]*>claude<\/h1>/);
-    // The badge is gone: `agent` as a word of its own appears nowhere in the header
-    // (`Agents` is the crumb, and the lookahead is what keeps the two apart).
-    expect(textOf(header)).not.toMatch(/(?<!\w)agent(?!\w)/);
-    expect(text).toContain("Claude");
-    expect(text).toContain("Claude sessions");
-    expect(text).toContain("Created");
-    // Tiles, one per count — the header's own row, not one sentence.
-    for (const tile of ["3 apps", "1 allow", "1 ask first", "1 dormant"]) expect(text, tile).toContain(tile);
-
-    // The landing IS an app pane, and the app it renders is the first granted slug —
-    // `linear`, not `news`, and not `brand`, which this agent holds nothing on. What
-    // proves WHICH pane was rendered is the form only that pair's pane carries.
-    expect(html).toContain(`action="${paths.agentGrantSet("claude", "linear")}"`);
-    expect(html).not.toContain(`action="${paths.agentGrantSet("claude", "news")}"`);
-
-    // The twin: an agent holding no grant lands on the grant step, in place.
-    const bare = await page(paths.agentDetail("cron"), cookie);
-    expect(textOf(bare)).toContain(
-      "What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing granted yet.",
-    );
-    expect(bare).toContain(`href="${paths.agentApp("cron", "brand")}"`);
-  });
-
-  it(`§13 · the agent page's root carries data-level chosen from the URL alone — 1 on /agents/<slug>, 2 on /agents/<slug>/apps/<app> and on /grant, /credentials, /activity and /danger, 3 on a pane URL carrying sel= — and the level header above the content names the level above and the current thing: at 1 the back link "‹ Agents" → /agents titled with the slug, at 2 "‹ <slug>" → /agents/<slug> titled with the app's name or "Grant another app" / "Credentials" / "Activity" / "Danger zone", at 3 "‹ <the app or pane name>" → that pane's own URL with sel dropped and q, show and calls kept, titled with the selected row's name · the wide title row "Agents › <slug>" is still in the document at every one of the three levels (the twin)`, async () => {
-    // Its own world: the three levels need a granted app to open, a key to list and one
-    // call in the trail to select, and every row here READS — nothing the shared agent
-    // world would answer for.
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel", name: "News MCP" }],
-      agents: [{ slug: "claude", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "key" }] }],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    await record(env.DB, {
-      ownerId: ns.owner.userId,
-      principal: "agent:claude",
-      event: "tools/call",
-      app: "news",
-      tool: "get_news",
-      outcome: "ok",
-      durationMs: 7,
-    });
-    const call = (await query(env.DB, ns.owner.userId, { tool: "get_news" })).rows[0];
-    expect(call, "no ledger row for the seeded call").toBeDefined();
-
-    const detail = paths.agentDetail("claude");
-    const app = paths.agentApp("claude", "news");
-    const activity = paths.agentPane("claude", "activity");
-    const levels: { url: string; level: string; back: string; to: string; title: string }[] = [
-      { url: detail, level: "1", back: "‹ Agents", to: paths.agents, title: "claude" },
-      { url: app, level: "2", back: "‹ claude", to: detail, title: "News MCP" },
-      { url: paths.agentPane("claude", "grant"), level: "2", back: "‹ claude", to: detail, title: "Grant another app" },
-      { url: paths.agentPane("claude", "credentials"), level: "2", back: "‹ claude", to: detail, title: "Credentials" },
-      { url: activity, level: "2", back: "‹ claude", to: detail, title: "Activity" },
-      { url: paths.agentPane("claude", "danger"), level: "2", back: "‹ claude", to: detail, title: "Danger zone" },
-      // Level 3 twice, so "the pane URL without sel" is read on a pane whose other query
-      // field is `q` and on one whose other field is `calls` — both kept, sel alone gone.
-      { url: `${app}?q=all&sel=role:all`, level: "3", back: "‹ News MCP", to: `${app}?q=all`, title: "all" },
-      {
-        url: `${activity}?calls=40&sel=call:${call.id}`,
-        level: "3",
-        back: "‹ Activity",
-        to: `${activity}?calls=40`,
-        title: "get_news",
-      },
-    ];
-
-    for (const row of levels) {
-      const html = await page(row.url, session.cookie);
-      // The level is the page root's, so it is one attribute on one element — a second
-      // `data-level` anywhere would mean the level was decided twice.
-      expect([...html.matchAll(/\sdata-level="([^"]*)"/g)].map((match) => match[1]), row.url).toEqual([row.level]);
-
-      const header = levelHeader(html);
-      expect(header.back, `${row.url}: the back link`).toBe(row.back);
-      expect(header.href, `${row.url}: the back link`).toBe(row.to);
-      expect(header.title, `${row.url}: the level header's title`).toContain(row.title);
-
-      // The twin: the level header ADDS a navigation below the breakpoint — it does not
-      // replace the wide title row, which is still in the document at every level.
-      expect(textOf(html), row.url).toContain("Agents › claude");
-    }
-  });
-
-  it(`§13 · the agent page renders no pill row — no nav.pill-row on the landing or on any of the five panes, the rail-as-list being its replacement there · /settings still renders its (the twin; 2026-09-16: /apps/<slug> left the twin when it took the levels too)`, async () => {
-    const { cookie } = await withAgentPanes();
-    for (const url of [
-      paths.agentDetail("claude"),
-      paths.agentApp("claude", "news"),
-      ...AGENT_PANES.map((pane) => paths.agentPane("claude", pane)),
-    ]) {
-      const html = await page(url, cookie);
-      expect(html, url).not.toContain("pill-row");
-      const compact = [...html.matchAll(/<nav\b[^>]*aria-label="([^"]*)"[^>]*>/g)]
-        .map((nav) => nav[1])
-        .filter((label) => label.endsWith("compact"));
-      expect(compact, url).toEqual([]);
-      // Non-vacuous on this same render: what the page draws instead is right there.
-      expect(agentRail(html, "claude").length, url).toBeGreaterThan(0);
-    }
-
-    // The twin: the rule is the two level pages' — /settings keeps the pill row §13 gave
-    // it (the app page's own absence is the app page's row).
-    expect(navBlock(await page(paths.settings), PILL_NAV_LABEL), paths.settings).not.toBeNull();
-  });
-
-  it(`§13 · each pane answers on its own URL — /agents/<slug>/apps/<app>, /grant, /credentials, /activity, /danger — and /apps/<app> for an ACTIVE app the agent holds nothing on renders the new-grant state: an empty set, the header's dashed "new grant · nothing saved yet" badge and the app in the rail · an unknown pane segment, and an unknown, builtin, foreign or ungranted archived app, are noSuchPage (the twin)`, async () => {
-    const { cookie } = await withAgentPanes();
-    for (const pane of AGENT_PANES) {
-      expect((await get(paths.agentPane("claude", pane), cookie)).status, pane).toBe(200);
-    }
-    expect((await get(paths.agentApp("claude", "news"), cookie)).status).toBe(200);
-
-    // An ACTIVE app this agent holds nothing on: the pane renders, the set is empty, the
-    // badge says so, and the rail carries the app it is about.
-    const fresh = await page(paths.agentApp("claude", "brand"), cookie);
-    expect(textOf(fresh)).toContain("new grant · nothing saved yet");
-    const chosen = paneSubmission(fresh, paths.agentGrantSet("claude", "brand"));
-    expect(Object.keys(chosen).filter((name) => name.startsWith("e.")).length).toBeGreaterThan(0);
-    for (const [name, value] of Object.entries(chosen)) {
-      if (name.startsWith("e.")) expect(value, name).toBe("none");
-    }
-    expect(agentRail(fresh, "claude").map((entry) => entry.href)).toContain(paths.agentApp("claude", "brand"));
-
-    // The twin: everything that is not a pane of this agent is the hub's 404 — an unknown
-    // segment, the bare `apps` with no app, an unknown app, the builtin, an app of another
-    // namespace, and an archived app this agent holds nothing on.
-    for (const url of [
-      `${paths.agentDetail("claude")}/nowhere`,
-      `${paths.agentDetail("claude")}/apps`,
-      paths.agentApp("claude", uniqueSlug("nosuch")),
-      paths.agentApp("claude", PMCP_SLUG),
-      paths.agentApp("claude", "notion"),
-      paths.agentApp("cron", "parked"),
-    ]) {
-      const missing = await get(url, cookie);
-      expect(missing.status, url).toBe(404);
-      expect(await missing.text(), url).toContain("No such page");
-    }
-  });
-
-  it(`§13 · the moved editor keeps its old URLs as permanent moves: GET /agents/<slug>/grants/<app> answers 301 to /agents/<slug>/apps/<app> · GET /agents/<slug>/grants answers 301 to /agents/<slug>/grant (the twin)`, async () => {
-    const { cookie } = await withAgentPanes();
-    // Spelled, not built: the whole point of these two rows is that the OLD spelling still
-    // answers, and `paths` no longer carries it.
-    const moved = await get("/agents/claude/grants/news", cookie);
-    expect(moved.status).toBe(301);
-    expect(new URL(moved.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentApp("claude", "news"));
-
-    // The twin: the chooser's old URL moves to the grant step.
-    const chooser = await get("/agents/claude/grants", cookie);
-    expect(chooser.status).toBe(301);
-    expect(new URL(chooser.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentPane("claude", "grant"));
-  });
-
-  it(`§13 · the rail carries "Apps · N" — one entry per granted app in slug order, then "+ Grant another app…" with the count of grantable apps — then the "Agent" group (Credentials with its live · clients counts, Activity with its pending-approval count) and the tail group Danger zone, the open pane's entry marked aria-current="page" · a set holding an approval entry marks its entry rail-dot--warn, and an archived app draws the dash and rail-link--dim — and nothing else, the rail never reads a catalog — (the twin)`, async () => {
-    const { cookie } = await withAgentPanes();
-    const html = await page(paths.agentApp("claude", "news"), cookie);
-    const rail = agentRail(html, "claude");
-    expect(rail.map((entry) => entry.href)).toEqual([
-      paths.agentApp("claude", "linear"),
-      paths.agentApp("claude", "news"),
-      paths.agentApp("claude", "parked"),
-      paths.agentPane("claude", "grant"),
-      paths.agentPane("claude", "credentials"),
-      paths.agentPane("claude", "activity"),
-      paths.agentPane("claude", "danger"),
-    ]);
-    expect(rail.filter((entry) => entry.current).map((entry) => entry.href)).toEqual([
-      paths.agentApp("claude", "news"),
-    ]);
-    // The groups, and the one count the rail computes from the namespace rather than from
-    // this agent's own set: `brand` is the only active app it holds nothing on.
-    const block = agentRailBlock(html, "claude");
-    expect(textOf(block)).toContain("Apps · 3");
-    expect(textOf(block)).toContain("Agent");
-    expect(rail.find((entry) => entry.href === paths.agentPane("claude", "grant"))?.marker).toContain("1");
-
-    // The markers, which are the rail's whole vocabulary: amber where an entry asks first,
-    // the dash and the dimmed link where the app is archived, and neither anywhere else.
-    expect(railAnchor(html, "claude", paths.agentApp("claude", "news"))).toContain("rail-dot--warn");
-    expect(railAnchor(html, "claude", paths.agentApp("claude", "linear"))).not.toContain("rail-dot--warn");
-    const parked = railAnchor(html, "claude", paths.agentApp("claude", "parked"));
-    expect(parked).toContain("rail-link--dim");
-    expect(rail.find((entry) => entry.href === paths.agentApp("claude", "parked"))?.marker).toBe(DIMMED_MARKER);
-  });
-
-  it(`§13 · /agents/<slug>/grant lists one card per active non-builtin app the agent holds nothing on — name, slug, kind and status badges, description, and, while the card is CLOSED, "roles <names> · show endpoints" alone (the link, ?show=<app>), no count and no catalog read — under "What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing granted yet." and beside a Grant link to /agents/<slug>/apps/<app> · the OPEN card is the read: "T tools · P prompts · R resources · roles <names> · hide" above the endpoint list, whose rows carry the role badges that grant each entry or "only via all or by name", while q filters the cards by app name, slug, description or endpoint name and opens the ones it matched, and an agent holding every active app reads "<agent> already holds a grant on every active app. Archived apps are not listed; unarchive one to grant it." (the twin)`, async () => {
-    const { cookie } = await withAgentPanes();
-    const grant = paths.agentPane("claude", "grant");
-    const html = await page(grant, cookie);
-    const text = textOf(html);
-    expect(text).toContain("Grant another app");
-    expect(text).toContain(
-      "What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing granted yet.",
-    );
-    // Exactly the active apps held nothing on: `brand` — never `parked` (archived), never
-    // an app already granted, and never the builtin.
-    expect(text).toContain("Apps · 1");
-    expect(text).toContain("Brand");
-    expect(html).toContain(`href="${paths.agentApp("claude", "brand")}"`);
-    expect(linkTexts(html, paths.agentApp("claude", "brand"))).toContain("Grant");
-
-    // CLOSED: the roles it declares and the link that would open it — and nothing that
-    // could only come from a catalog, because a closed card has not read one.
-    expect(text).toContain("roles reader · show endpoints");
-    expect(text).not.toMatch(/\d+ tools/);
-    expect(linkTexts(html, `${grant}?show=brand`)).toContain("show endpoints");
-    expect(text).not.toContain("purge_cache");
-
-    // OPEN: the counts ARE the read, and the list names what grants each entry.
-    const opened = await page(`${grant}?show=brand`, cookie);
-    const shown = textOf(opened);
-    expect(shown).toMatch(/3 tools · \d+ prompts · \d+ resources · roles reader · hide/);
-    expect(linkTexts(opened, grant)).toContain("hide");
-    expect(shown).toContain("purge_cache");
-    expect(shown).toContain("reader");
-    expect(shown).toContain("only via all or by name");
-
-    // `q` filters by endpoint name too, and opens the cards it matched.
-    const searched = textOf(await page(`${paths.agentPane("claude", "grant")}?q=purge_cache`, cookie));
-    expect(searched).toContain("Brand");
-    expect(searched).toContain("purge_cache");
-
-    // The twin: an agent already granted on every active app is offered none.
-    const full = textOf(await page(paths.agentPane("everywhere", "grant"), cookie));
-    expect(full).toContain(
-      "everywhere already holds a grant on every active app. Archived apps are not listed; unarchive one to grant it.",
-    );
-  });
-
-  it(`§13/§4 · /agents/<slug>/credentials lists the agent's unrevoked keys under "Tokens · N" beside one form whose expires_in select offers 2592000 / 7776000 / 31536000 / never and whose Issue token answers 200 in place — the reveal above the list, the plaintext on no URL of the response · a live row offers Revoke at ?confirm=revoke-token&id= where an expired one offers Remove at ?confirm=remove-token&id= ("Remove expired token <prefix>?" over "It expired <date>; removing it keeps its history."), both dialogs posting token_revoke and landing back on this pane, while "Connected clients · N" is read-only, each row linking to /settings/clients (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel" }],
-      agents: [
-        {
-          slug: "keyed",
-          grants: { news: [{ role: "all", mode: "allow" }] },
-          tokens: [{ as: "live" }, { as: "dead", expired: true }],
-        },
-      ],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    await consentOnce(ns, session.cookie, "keyed", { client_name: "Claude Desktop" });
-    const pane = paths.agentPane("keyed", "credentials");
-    const html = await page(pane, session.cookie);
-    const text = textOf(html);
-    const keyed = (await tokensOf(ns.owner.userId)).filter((token) => token.refSlug === "keyed");
-    const dead = keyed.find((token) => token.id === ns.tokens.dead.id);
-    const live = keyed.find((token) => token.id === ns.tokens.live.id);
-    expect(dead, "the expired key vanished").toBeDefined();
-    expect(live, "the live key vanished").toBeDefined();
-    expect(text).toContain("Tokens · 2");
-
-    // The select the Issue control carries, in §4's own seconds.
-    const select = /<select\b[^>]*name="expires_in"[^>]*>([\s\S]*?)<\/select>/.exec(html);
-    expect(select, "the pane rendered no expires_in select").not.toBeNull();
-    expect(optionValues(select?.[1] ?? "")).toEqual(["2592000", "7776000", "31536000", "never"]);
-
-    // Issue answers 200 IN PLACE, on this pane's own URL, with the plaintext in the reveal
-    // and on no URL of the response.
-    const issueTarget = actionFor(html, "token_issue");
-    const issued = await formPost(issueTarget, { ...formsPostingTo(html, issueTarget)[0], csrf: csrfOf(html) }, session.cookie);
-    expect(issued.status).toBe(200);
-    const revealed = await issued.text();
-    const plaintext = /pmcp_agt_[A-Za-z0-9]+/.exec(textOf(revealed))?.[0];
-    expect(plaintext, "no plaintext key in the reveal").toBeDefined();
-    for (const href of revealed.matchAll(/href="([^"]*)"/g)) expect(href[1]).not.toContain(plaintext ?? "!");
-    expect(railAnchor(revealed, "keyed", pane), "the reveal is the pane, re-rendered").toBeTruthy();
-
-    // Revoke on the live row, Remove on the expired one — two dialogs, one op, and both
-    // land back here.
-    expect(links(html, `${pane}?confirm=revoke-token&id=${live?.id}`)).toBe(true);
-    expect(links(html, `${pane}?confirm=remove-token&id=${dead?.id}`)).toBe(true);
-    const remove = await page(`${pane}?confirm=remove-token&id=${dead?.id}`, session.cookie);
-    expect(remove).toContain("<dialog");
-    expect(textOf(remove)).toContain(`Remove expired token ${dead?.prefix}?`);
-    expect(textOf(remove)).toContain("removing it keeps its history.");
-    const removeTarget = actionFor(remove, "token_revoke");
-    const removed = await formPost(removeTarget, { csrf: csrfOf(remove) }, session.cookie);
-    expect(removed.status).toBe(303);
-    expect(new URL(removed.headers.get("Location") ?? "", ORIGIN).pathname).toBe(pane);
-    const revoke = await page(`${pane}?confirm=revoke-token&id=${live?.id}`, session.cookie);
-    const revoked = await formPost(actionFor(revoke, "token_revoke"), { csrf: csrfOf(revoke) }, session.cookie);
-    expect(revoked.status).toBe(303);
-    expect(new URL(revoked.headers.get("Location") ?? "", ORIGIN).pathname).toBe(pane);
-
-    // The twin: the clients half is read-only — it links into Settings and fronts no
-    // revocation of its own.
-    expect(text).toContain("Claude Desktop");
-    expect(html).toContain(`href="${paths.settingsClients}"`);
-    expect(postTargets(html).some((target) => target.endsWith("connection_revoke"))).toBe(false);
-  });
-
-  it(`§13/§15 · /agents/<slug>/activity lists "Awaiting approval · N" rows whose Reject and Approve post approval_decide to /agents/<slug>/approval_decide and land back on this pane, leaving the decided row dimmed with its status badge, above "Recent calls · N" from audit_query with one outcome badge per row (ok / approval required / not permitted / the failure) · sel=call:<id> on a refused call carries "Refused before the call was made, so there are no bodies to show." and the link /audit?expand=<id>#event-<id> (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel" }],
-      agents: [{ slug: "agent", grants: { news: [{ role: "all", mode: "approval" }] } }],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const approvalId = await openApproval(ns, "news");
-    // Two calls, so the badge vocabulary has both a success and a refusal to spell — the
-    // refused one deliberately recording no bodies, which is the sentence the twin reads.
-    await record(env.DB, {
-      ownerId: ns.owner.userId,
-      principal: "agent:agent",
-      event: "tools/call",
-      app: "news",
-      tool: "ok-tool",
-      outcome: "ok",
-      durationMs: 12,
-      args: { q: "term" },
-    });
-    await record(env.DB, {
-      ownerId: ns.owner.userId,
-      principal: "agent:agent",
-      event: "tools/call",
-      app: "news",
-      tool: "refused-tool",
-      outcome: "-32001",
-      durationMs: 1,
-    });
-    const pane = paths.agentPane("agent", "activity");
-    const html = await page(pane, session.cookie);
-    const text = textOf(html);
-    expect(text).toContain("Awaiting approval · 1");
-    expect(text).toContain("the last 7 days, the retention window");
-    expect(html).toContain(`href="${paths.audit}?principal=agent:agent"`);
-
-    // Recent calls, each with its outcome — the audit page's own vocabulary, which is
-    // where this pane's rows come from.
-    expect(text).toContain("ok-tool");
-    expect(text).toContain("refused-tool");
-    // A badge names the outcome; the raw JSON-RPC code the ledger stores is not a word a
-    // reader is owed, which is what "outcome badge" means here.
-    expect(text).not.toContain("-32001");
-
-    // Both decisions are drawn, each a form of its own whose target names the op and
-    // carries the op's own fields — and approving lands back on this pane.
-    const decide = (decision: "approve" | "reject"): string =>
-      paths.agentOp("agent", "approval_decide", { id: approvalId, decision });
-    expect(formsPostingTo(html, decide("reject")).length, "no Reject form").toBeGreaterThan(0);
-    expect(formsPostingTo(html, decide("approve")).length, "no Approve form").toBeGreaterThan(0);
-    const decided = await formPost(decide("approve"), { csrf: csrfOf(html) }, session.cookie);
-    expect(decided.status).toBe(303);
-    expect(new URL(decided.headers.get("Location") ?? "", ORIGIN).pathname).toBe(pane);
-    expect(textOf(await page(pane, session.cookie))).toContain("approved");
-
-    // The twin: the details of a refused call say why there are no bodies, and point at
-    // the same row in the trail.
-    const refused = (await query(env.DB, ns.owner.userId, { tool: "refused-tool" })).rows[0];
-    expect(refused, "no ledger row for the refused call").toBeDefined();
-    const details = await page(`${pane}?sel=call:${refused.id}`, session.cookie);
-    expect(textOf(details)).toContain("Refused before the call was made, so there are no bodies to show.");
-    expect(details).toContain(`href="${paths.audit}?expand=${refused.id}#event-${refused.id}"`);
-  });
-
-  it(`§13/§15 · /agents/<slug>/activity pages the trail — Recent calls draws the newest twenty over a "Load 20 more" row that is a plain link carrying ?calls=<n+20> and reads "<remaining> older in the last 7 days · everything before that is in Audit" (Audit linking /audit?principal=agent:<slug>), and under ?calls=<n> the list draws n rows with the summary counting over the rows shown, "last N calls · ok · denied · K awaiting approval" · a week the list has exhausted reads "That is the whole week — older calls are in Audit." (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel" }],
-      agents: [{ slug: "agent", grants: { news: [{ role: "all", mode: "approval" }] } }],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    await openApproval(ns, "news");
-    // Twenty-five calls, oldest first — the two refusals among the OLDEST, so a page that
-    // shows twenty of them counts differently from one that shows all twenty-five, which
-    // is what "counts what is shown" means and what a total over the week would not.
-    for (let at = 0; at < 25; at++) {
-      await record(env.DB, {
-        ownerId: ns.owner.userId,
-        principal: "agent:agent",
-        event: "tools/call",
-        app: "news",
-        tool: `paged-${at}`,
-        outcome: at < 2 ? "-32001" : "ok",
-        durationMs: 5,
-      });
-    }
-    const pane = paths.agentPane("agent", "activity");
-    const html = await page(pane, session.cookie);
-    const text = textOf(html);
-
-    // Twenty rows, newest first: the newest is there, the twentieth is there, the
-    // twenty-first is not — and the summary counts those twenty.
-    expect(text).toContain("paged-24");
-    expect(text).toContain("paged-5");
-    expect(text).not.toContain("paged-4");
-    expect(text).toContain("last 20 calls · 20 ok · 0 denied · 1 awaiting approval");
-
-    // The next page is a plain LINK, so scripting off pages one reload at a time.
-    expect(linkTexts(html, `${pane}?calls=40`)).toContain("Load 20 more");
-    expect(text).toContain("more older calls in the last 7 days · everything before that is in Audit");
-    expect(html).toContain(`href="${paths.audit}?principal=agent:agent"`);
-
-    // The twin: a week the list has exhausted offers no next page, and says so.
-    const all = await page(`${pane}?calls=40`, session.cookie);
-    const shown = textOf(all);
-    expect(shown).toContain("paged-0");
-    expect(shown).toContain("last 25 calls · 23 ok · 2 denied · 1 awaiting approval");
-    expect(shown).toContain("That is the whole week — older calls are in Audit.");
-    expect(links(all, `${pane}?calls=60`)).toBe(false);
-  });
-
-  it(`§13 · /agents/<slug>/danger draws the Delete agent card over "Deleting an agent deletes its tokens, revokes its clients and removes its grants everywhere. This cannot be undone.", whose Delete <agent> opens the same ?confirm=delete-agent dialog the list draws and lands on /agents with the notice · every other mutation an agent pane fronts lands back on its own pane (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel" }],
-      agents: [{ slug: "gone", grants: { news: [{ role: "all", mode: "allow" }] }, tokens: [{ as: "key" }] }],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const danger = paths.agentPane("gone", "danger");
-    const html = await page(danger, session.cookie);
-    expect(textOf(html)).toContain(
-      "Deleting an agent deletes its tokens, revokes its clients and removes its grants everywhere. This cannot be undone.",
-    );
-    expect(links(html, `${danger}?confirm=delete-agent`)).toBe(true);
-
-    // The twin first, so the agent still exists to land on: a refused revoke posted from
-    // the credentials pane comes back to the credentials pane with its failure.
-    const credentials = paths.agentPane("gone", "credentials");
-    const failed = await formPost(
-      paths.agentOp("gone", "token_revoke", { id: "tok_nope" }),
-      { csrf: csrfOf(await page(credentials, session.cookie)) },
-      session.cookie,
-    );
-    expect(failed.status).toBe(303);
-    const back = new URL(failed.headers.get("Location") ?? "", ORIGIN);
-    expect(back.pathname).toBe(credentials);
-    expect(back.searchParams.get("failed")).toBe("token_revoke");
-
-    const dialog = await page(`${danger}?confirm=delete-agent`, session.cookie);
-    expect(dialog).toContain("<dialog");
-    expect(textOf(dialog)).toContain("Delete agent “gone”?");
-    const deleted = await formPost(actionFor(dialog, "agent_delete"), { csrf: csrfOf(dialog) }, session.cookie);
-    expect(deleted.status).toBe(303);
-    const landing = new URL(deleted.headers.get("Location") ?? "", ORIGIN);
-    expect(landing.pathname).toBe(paths.agents);
-    expect(landing.searchParams.get("done")).toBe("agent_delete");
-    const agents = (await ops.agent_list.handler(ns.owner.userId, {})) as { agents: { slug: string }[] };
-    expect(agents.agents.map((row) => row.slug)).not.toContain("gone");
-  });
-
-  it(`§13 · the app pane's form is the one form the agent pages render whose fields are not its op's keys verbatim — one e.<entry> radio group per row, plus add / mode / drop / clear, composed by the route — and it is the only one: every other form on the five panes names an op's own fields (the twin, the parity-B sweep extended to /agents)`, async () => {
-    const { ns, cookie } = await withAgentPanes();
-    const key = (await tokensOf(ns.owner.userId)).find((token) => token.refSlug === "claude");
-    if (key === undefined) throw new Error("the seeded agent key vanished");
-
-    const seen = new Set<string>();
-    for (const url of [
-      paths.agents,
-      paths.agentsConfirmDelete("claude"),
-      paths.agentNew,
-      paths.agentDetail("claude"),
-      ...AGENT_PANES.map((pane) => paths.agentPane("claude", pane)),
-      `${paths.agentPane("claude", "credentials")}?confirm=revoke-token&id=${key.id}`,
-      `${paths.agentPane("claude", "danger")}?confirm=delete-agent`,
-    ]) {
-      for (const form of formsRenderedOn(await page(url, cookie))) {
-        if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
-        expect(Object.prototype.hasOwnProperty.call(ops, form.op), `${url} → ${form.op}`).toBe(true);
-        seen.add(form.op);
-        // The one exception, checked below rather than here — and the landing renders it,
-        // since the landing IS an app pane.
-        if (form.op === "grant_set") continue;
-        // Both sides derived off admin.ops: every required field, and nothing the schema
-        // does not declare. Not equality — `token_issue`'s optional `expires_in` is a
-        // control here, and nothing else's is.
-        for (const required of requiredKeysOf(ops[form.op])) {
-          expect(form.fields, `${url} → ${form.op} required`).toContain(required);
-        }
-        for (const submitted of form.fields) {
-          expect(schemaKeysOf(ops[form.op]), `${url} → ${form.op} submitted`).toContain(submitted);
-        }
-      }
-    }
-    for (const op of ["agent_create", "agent_delete", "token_issue", "token_revoke"]) {
-      expect([...seen], op).toContain(op);
-    }
-
-    // The one exception, and it is exactly one: the app pane's save fronts `grant_set` and
-    // submits no field the op declares — one `e.<entry>` per row plus the four the route
-    // composes, which it turns into the op's `roles` array (§13; D15 constraint 35).
-    const pane = await page(paths.agentApp("claude", "news"), cookie);
-    const forms = formsRenderedOn(pane).filter((form) => !BROWSER_ONLY_TARGETS.has(form.op));
-    expect(forms.map((form) => form.op)).toEqual(["grant_set"]);
-    expect(forms[0].fields).not.toEqual(schemaKeysOf(ops.grant_set));
-    expect(forms[0].fields.some((field) => field.startsWith("e."))).toBe(true);
-    for (const field of forms[0].fields) {
-      expect(schemaKeysOf(ops.grant_set), field).not.toContain(field);
-      expect(field.startsWith("e.") || COMPOSED_GRANT_FIELDS.has(field), field).toBe(true);
-    }
-  });
-
-  it(`§13 · every agent slug the other pages print links to /agents/<slug> — the Tokens pane's Bound to, the Connected clients pane's Acts as, the app page's Agents pane (its details' open agent page link, re-pointed 2026-09-17), and the consent screen's empty state, which now reads "Create one under Agents before connecting a client." — and the Tokens intro reads "Issue new keys from an app or agent page." again · app slugs still link to /apps/<slug> (the twin)`, async () => {
-    const agentLink = `href="${paths.agentDetail("agent")}"`;
-    const tokens = await page(paths.settingsTokens);
-    expect(tokens).toContain(agentLink);
-    expect(textOf(tokens)).toContain("Issue new keys from an app or agent page.");
-
-    await consentOnce(world.ns, world.session.cookie, "agent", { client_name: "Pointer Client" });
-    expect(await page(paths.settingsClients)).toContain(agentLink);
-    // The app page's Agents pane points at the PAIR's pane now that it carries the grant
-    // editor in place (2026-09-17), which is still a link to that agent's own page.
-    expect(await page(`${paths.appPane("news", "access")}?sel=agent:agent`)).toContain(
-      `href="${paths.agentApp("agent", "news")}"`,
-    );
-
-    const empty = await seedNamespace(env.DB, {});
-    const consent = (
-      await reachConsent((await registerOAuthClient()).clientId, (await seedOwnerSession(empty.owner)).cookie, {
-        resource: oauthResourceFor(empty.owner.username),
-      })
-    ).html;
-    // The link splits the sentence in the text projection; the words are what is pinned.
-    expect(textOf(consent)).toMatch(/Create one under\s+Agents\s+before connecting a client/);
-    expect(consent).toContain(`href="${paths.agentNew}"`);
-
-    // The twin: app slugs still link to the app page.
-    expect(tokens).toContain(`href="${paths.appDetail("news")}"`);
-  });
-
-
-  it(`§6 · every agent slug the app page's Agents pane prints links to its own /agents/<agent>/apps/<slug> pane through the details' open agent page link, now that the app page carries the grant editor in place — the pane fronting grant_set itself rather than pointing at a second editor (the twin, re-pointed 2026-09-17)`, async () => {
-    // Its own namespace: this row is in the AGENT page's describe, which has no app world.
-    const slug = uniqueSlug("linkapp");
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug, kind: "tunnel" }],
-      agents: [
-        { slug: "claude", grants: { [slug]: [{ role: "all", mode: "allow" }] } },
-        { slug: "cron", grants: { [slug]: [{ role: "all", mode: "approval" }] } },
-      ],
-    });
-    const { cookie } = await seedOwnerSession(ns.owner);
-    const pane = paths.appPane(slug, "access");
-    const listing = await page(pane, cookie);
-    // Every listed agent, read off the pane's own rows rather than off the fixture.
-    const listed = selValuesOn(listing, pane).map((sel) => sel.slice("agent:".length));
-    expect(listed.sort()).toEqual(["claude", "cron"]);
-    for (const agent of listed) {
-      const details = await page(`${pane}?sel=agent:${agent}`, cookie);
-      expect(links(details, paths.agentApp(agent, slug)), agent).toBe(true);
-      // THE TWIN: the pane fronts the editor itself, so the link is a way OUT and not the
-      // only way in — a pane that merely pointed at the agent page would draw no form.
-      expect(opsOn(details), agent).toContain("grant_set");
-    }
-  });
-});
-
-describe(`§13 · /agents/<slug>/apps/<app> — the (agent × app) grant pane`, () => {
-  // The listing and its details pane: the one page that reads a catalog, and the one form
-  // that writes a grant set.
-  it(`§13 · the listing header carries the app's name, slug, kind badge and status badge, the reach line "<agent> reaches N of T tools · K ask first · P of PT prompts · R of RT resources" computed over the SAVED set, then the filter row (a GET form q, placeholder "filter, or type a pattern…") and the groups Roles · N ("declared by the app at connect" / "defined in config"), Tools · N ("R reached · U not"), Prompts · N, Resources · N ("matched by URI") and Patterns · N ("entries that are not one item") in that order · a family the hub cannot list renders one note line in its group — "<app> has not connected yet — nothing to list until it does." / "is not advertised" / "could not be read just now" (the twin)`, async () => {
-    const { cookie } = await withGrantPane();
-    const html = await page(paths.agentApp("askrole", "feed"), cookie);
-    const text = textOf(html);
-    expect(text).toContain("News MCP");
-    expect(text).toContain("feed");
-
-    // The reach line, over the SAVED set: `reader` asks first, so every tool it reaches is
-    // reachable and gated, and the third tool is neither.
-    expect(text).toContain("askrole reaches 2 of 3 tools · 2 ask first · 1 of 1 prompts · 1 of 1 resources");
-    expect(html).toContain('placeholder="filter, or type a pattern…"');
-
-    // The groups, in §13's order, each with its count.
-    let at = -1;
-    for (const heading of ["Roles ·", "Tools · 3", "Prompts · 1", "Resources · 1"]) {
-      const next = text.indexOf(heading);
-      expect(next, heading).toBeGreaterThan(at);
-      at = next;
-    }
-    expect(text).toContain("2 reached · 1 not");
-    // The Patterns group is the set's own, so it is drawn where the set holds one.
-    expect(textOf(await page(paths.agentApp("direct", "feed"), cookie))).toContain("Patterns ·");
-
-    // The twin: a tunneled app that has never connected has nothing to list, and says so
-    // in the group rather than leaving it blank.
-    const quiet = textOf(await page(paths.agentApp("dormant", "silent"), cookie));
-    expect(quiet).toContain("silent has not connected yet — nothing to list until it does.");
-  });
-
-  it(`§13 · one role row per declared role — the name, the patterns per family beneath it and "matches N" — carries one control: three radios in a .seg named e.<role>, in the order none · ask · allow with values none / approval / allow, checked at the mode the saved set holds for that role · the built-in all, badged built-in, is last whatever order the declaration arrived in (the twin)`, async () => {
-    const { cookie } = await withGrantPane();
-    const html = await page(paths.agentApp("askrole", "feed"), cookie);
-    expect(segOf(html, "reader").map((button) => button.value)).toEqual(["none", "approval", "allow"]);
-    expect(checkedIn(html, "reader")).toBe("approval");
-    expect(checkedIn(html, "purger")).toBe("none");
-    expect(checkedIn(html, "all")).toBe("none");
-
-    // `all` LAST, whatever order the declaration arrived in, and marked as the built-in.
-    expect(html.indexOf('name="e.all"')).toBeGreaterThan(html.indexOf('name="e.purger"'));
-    expect(html.indexOf('name="e.all"')).toBeGreaterThan(html.indexOf('name="e.reader"'));
-    const text = textOf(html);
-    expect(text).toMatch(/all\s+built-in/);
-
-    // The twin: a row says what its role matches — the patterns, per family, and a count.
-    expect(text).toContain("get_.*");
-    expect(text).toContain("purge_cache");
-    expect(text).toMatch(/matches \d+/);
-  });
-
-  it(`§13 · an item row a granted role already reaches draws the implied mode hollow (.impl, and .warn when the role only asks) and marks every button BELOW it disabled with title "<roles> grants <ask|allow> — change the role to lower it", the row reading "via <roles>" · an item no role reaches draws the three buttons plain and enabled, with no via line (the twin)`, async () => {
-    const { cookie } = await withGrantPane();
-    const allowed = await page(paths.agentApp("viarole", "feed"), cookie);
-    const implied = segOf(allowed, "tool/get_news");
-    expect(implied.map((button) => button.value)).toEqual(["none", "approval", "allow"]);
-    // Everything below the implied allow is unclickable, and says why.
-    expect(implied.filter((button) => button.disabled).map((button) => button.value)).toEqual(["none", "approval"]);
-    expect(allowed).toContain('title="reader grants allow — change the role to lower it"');
-    expect(textOf(allowed)).toContain("via reader");
-
-    // A role that only ASKS implies less, so only the button below ask is disabled.
-    const asked = await page(paths.agentApp("askrole", "feed"), cookie);
-    expect(segOf(asked, "tool/get_news").filter((button) => button.disabled).map((button) => button.value)).toEqual([
-      "none",
-    ]);
-    expect(asked).toContain('title="reader grants ask — change the role to lower it"');
-
-    // The twin: an item no granted role reaches is a free choice.
-    expect(segOf(allowed, "tool/purge_cache").some((button) => button.disabled)).toBe(false);
-  });
-
-  it(`§13 · an item row's radio is checked at the DIRECT entry's mode — the set's own tool/<name>, prompt/<name> or resource/<uri> — and at none when the set holds no direct entry for that item, the row reading "also via <roles>" when a role matches it too (the twin)`, async () => {
-    const { cookie } = await withGrantPane();
-    const direct = await page(paths.agentApp("direct", "feed"), cookie);
-    expect(checkedIn(direct, "tool/get_weather")).toBe("approval");
-    expect(checkedIn(direct, "tool/get_news")).toBe("none");
-    expect(checkedIn(direct, "prompt/daily_digest")).toBe("none");
-    expect(checkedIn(direct, "resource/news://feed/latest")).toBe("none");
-
-    // The twin: a direct entry on an item a role ALSO matches says so, and is still what
-    // the radio is checked at.
-    const both = await page(paths.agentApp("both", "feed"), cookie);
-    expect(checkedIn(both, "tool/get_news")).toBe("approval");
-    expect(textOf(both)).toContain("also via reader");
-  });
-
-  it(`§13 · a direct entry at ask under a role that allows draws the "ask entry · no effect" badge, titled "allow wins over ask", beside a × button submitting drop=<entry> · the same entry with no role allowing it draws neither the badge nor the × (the twin)`, async () => {
-    const { cookie } = await withGrantPane();
-    const both = await page(paths.agentApp("both", "feed"), cookie);
-    expect(textOf(both)).toContain("ask entry · no effect");
-    expect(both).toContain('title="allow wins over ask"');
-    expect(dropOffers(both)).toContain("tool/get_news");
-
-    // The twin: the same shape of entry with nothing allowing over it is an ordinary ask.
-    const direct = await page(paths.agentApp("direct", "feed"), cookie);
-    expect(textOf(direct)).not.toContain("ask entry · no effect");
-    expect(dropOffers(direct)).not.toContain("tool/get_weather");
-  });
-
-  it(`§13 · a held role the app has not declared is its own row — the name, an undeclared badge and "granted, but the app has not declared it — dormant" — whose control is an "in Allowed" / "in Ask first" badge with a × remove button, never a radio group (the twin)`, async () => {
-    const { cookie } = await withGrantPane();
-    const quiet = await page(paths.agentApp("dormant", "silent"), cookie);
-    const text = textOf(quiet);
-    expect(text).toMatch(/triage\s+undeclared/);
-    expect(text).toContain("granted, but the app has not declared it — dormant");
-    expect(text).toContain("in Allowed");
-    expect(dropOffers(quiet)).toContain("triage");
-    // The twin: it is not a choice, so the row draws no radio group — the entry rides a
-    // hidden field, which is what keeps a save from silently dropping it.
-    expect(() => segOf(quiet, "triage")).toThrow();
-    expect(quiet).toContain('name="e.triage" value="allow"');
-  });
-
-  it(`§13 · an inline entry whose pattern is not one literal item is a Patterns · N row reading "matches N today" / "matches nothing today" with a radio group of its own · a q that is not a literal name offers "As a pattern": one row tool/<q> (resource/<q> when q holds "://") over "would match N today, and any added later" / "matches nothing today", with the two submits Ask and Allow carrying add=<entry> and mode=approval | allow (the twin)`, async () => {
-    const { cookie } = await withGrantPane();
-    const direct = await page(paths.agentApp("direct", "feed"), cookie);
-    expect(textOf(direct)).toContain("tool/purge_.*");
-    expect(textOf(direct)).toContain("matches 1 today");
-    expect(segOf(direct, "tool/purge_.*").map((button) => button.value)).toEqual(["none", "approval", "allow"]);
-
-    // The twin: a filter that is not a name is offered as a pattern, with both modes as
-    // submits of the pane's own form.
-    const base = paths.agentApp("viarole", "feed");
-    const offered = await page(`${base}?q=${encodeURIComponent("get_*")}`, cookie);
-    expect(textOf(offered)).toContain("As a pattern");
-    expect(textOf(offered)).toContain("would match 2 today, and any added later");
-    for (const [mode, label] of [["allow", "Allow"], ["approval", "Ask"]] as const) {
-      const press = clickedSubmission(offered, mode);
-      expect(press.fields.add, label).toBe("tool/get_*");
-      expect(press.fields.mode, label).toBe(mode);
-    }
-    // A `q` carrying a URI is a resource pattern, never a tool one.
-    const uri = await page(`${base}?q=${encodeURIComponent("news://feed/*")}`, cookie);
-    expect(textOf(uri)).toContain("resource/news://feed/*");
-  });
-
-  it(`§13 · with q set the rows are filtered by name or description substring while the pattern rows stay · a q that matches no row at all renders "Nothing matches “<q>”." (the twin)`, async () => {
-    const { cookie } = await withGrantPane();
-    const base = paths.agentApp("direct", "feed");
-    const filtered = textOf(await page(`${base}?q=forecast`, cookie));
-    // Matched on the DESCRIPTION, which is why the row it names is the weather one.
-    expect(filtered).toContain("get_weather");
-    expect(filtered).not.toContain("get_news");
-    // A held pattern is not a row the filter can narrow, so it stays.
-    expect(filtered).toContain("tool/purge_.*");
-
-    // The twin: nothing at all — read on a set holding no pattern of its own, since a
-    // pattern row is not a row the filter can empty.
-    const nothing = await page(`${paths.agentApp("viarole", "feed")}?q=zzz`, cookie);
-    expect(textOf(nothing)).toContain("Nothing matches “zzz”.");
-  });
-
-  it(`§13/§8 · Save composes every e.<entry> radio into ONE grant_set for the pair — allow bare, approval suffixed :approval, none dropped — merging the offer's add=<entry> at its mode and removing every drop=<entry>, replacing the pair's whole set and landing 303 on the pane with the notice (the twin)`, async () => {
-    const { ns, cookie } = await seedWritablePair();
-    const pane = paths.agentApp("claude", "feed");
-    const action = paths.agentGrantSet("claude", "feed");
-    const html = await page(pane, cookie);
-    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual([
-      "reader",
-      "tool/get_news:approval",
-      "tool/purge_.*",
-    ]);
-
-    // Pressed ×: the same composition, minus that one entry.
-    const dropped = await formPost(
-      action,
-      { ...pressed(html, action, "drop", "tool/get_news"), csrf: csrfOf(html) },
-      cookie,
-    );
-    expect(dropped.status).toBe(303);
-    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual(["reader", "tool/purge_.*"]);
-
-    // Pressed Allow on the pattern offer: the same composition, plus the offered entry.
-    const offered = await page(`${pane}?q=${encodeURIComponent("get_*")}`, cookie);
-    const added = await formPost(action, { ...pressed(offered, action, "mode", "allow"), csrf: csrfOf(offered) }, cookie);
-    expect(added.status).toBe(303);
-    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual(["reader", "tool/get_*", "tool/purge_.*"]);
-
-    // Pressed Save, with three rows changed: a role dropped, a role added bare, and an
-    // item added at ask — the whole set, replaced by what the page showed.
-    const again = await page(pane, cookie);
-    const saved = await formPost(
-      action,
-      {
-        ...paneSubmission(again, action),
-        "e.reader": "none",
-        "e.purger": "allow",
-        "e.tool/get_weather": "approval",
-        csrf: csrfOf(again),
-      },
-      cookie,
-    );
-    expect(saved.status).toBe(303);
-    const landing = new URL(saved.headers.get("Location") ?? "", ORIGIN);
-    expect(landing.pathname).toBe(pane);
-    expect(landing.searchParams.get("done")).toBe("grant_set");
-    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual([
-      "purger",
-      "tool/get_*",
-      "tool/get_weather:approval",
-      "tool/purge_.*",
-    ]);
-  });
-
-  it(`§13/§9 · a refused save — a proxied app's undeclared role, or a pattern that compiles to nothing valid — redraws the pane at 400 with the reason in a danger alert above the listing and every submitted choice preserved, never a redirect, leaving the saved set untouched (the twin)`, async () => {
-    const scenario = await paneScenario();
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        {
-          slug: "feed",
-          kind: "proxy",
-          name: "News MCP",
-          upstreamUrl: upstreamUrlFor(scenario),
-          upstreamAuthMode: "headers",
-          capabilities: ["tools", "prompts", "resources"],
-          // Declared at seed time so the grant below is legal, then withdrawn — the only
-          // way a proxied app can hold an undeclared grant, and the state §13 draws.
-          roles: { ...PANE_ROLES, triage: { tools: ["purge_.*"] } },
-        },
-      ],
-      agents: [
-        { slug: "claude", grants: { feed: [{ role: "reader", mode: "allow" }, { role: "triage", mode: "allow" }] } },
-      ],
-    });
-    await ops.app_update.handler(ns.owner.userId, { slug: "feed", roles: PANE_ROLES });
-    const cookie = (await seedOwnerSession(ns.owner)).cookie;
-    const pane = paths.agentApp("claude", "feed");
-    const action = paths.agentGrantSet("claude", "feed");
-    const html = await page(pane, cookie);
-
-    const refused = await formPost(
-      action,
-      { ...paneSubmission(html, action), "e.purger": "approval", csrf: csrfOf(html) },
-      cookie,
-    );
-    // Redrawn here rather than landed anywhere, with the choices the submission carried.
-    expect(refused.status).toBe(400);
-    const redrawn = await refused.text();
-    expect(redrawn).toContain(`action="${action}"`);
-    expect(textOf(redrawn)).toContain("triage");
-    expect(checkedIn(redrawn, "purger")).toBe("approval");
-    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual(["reader", "triage"]);
-
-    // The twin: a pattern that compiles to nothing valid is refused the same way — on a
-    // pair holding nothing else that could be refused first.
-    const clean = await seedWritablePair();
-    const cleanAction = paths.agentGrantSet("claude", "feed");
-    const offered = await page(`${paths.agentApp("claude", "feed")}?q=${encodeURIComponent("(")}`, clean.cookie);
-    const bad = await formPost(
-      cleanAction,
-      { ...pressed(offered, cleanAction, "mode", "allow"), csrf: csrfOf(offered) },
-      clean.cookie,
-    );
-    expect(bad.status).toBe(400);
-    expect(textOf(await bad.text())).toContain('entry "tool/(" is not a valid pattern');
-    expect(await grantsOn(clean.ns.owner.userId, "claude", "feed")).toEqual([
-      "reader",
-      "tool/get_news:approval",
-      "tool/purge_.*",
-    ]);
-  });
-
-  it(`§13 · Remove from <agent> opens ?confirm=remove-app on the pane — "Remove <app> from <agent>?" over "<agent> loses every entry on <app>. History stays; a waiting request expires." — whose form posts clear=1 to the same action, writing grant_set an empty set and landing 303 on /agents/<slug> with the notice (the twin)`, async () => {
-    const { ns, cookie } = await seedWritablePair();
-    const pane = paths.agentApp("claude", "feed");
-    const bare = await page(pane, cookie);
-    expect(links(bare, `${pane}?confirm=remove-app`)).toBe(true);
-
-    const dialog = await page(`${pane}?confirm=remove-app`, cookie);
-    expect(dialog).toContain("<dialog");
-    expect(textOf(dialog)).toContain("Remove feed from claude?");
-    expect(textOf(dialog)).toContain("claude loses every entry on feed. History stays; a waiting request expires.");
-    expect(
-      formsRenderedOn(dialog).some((form) => form.op === "grant_set" && form.fields.includes("clear")),
-    ).toBe(true);
-
-    const cleared = await formPost(
-      paths.agentGrantSet("claude", "feed"),
-      { clear: "1", csrf: csrfOf(dialog) },
-      cookie,
-    );
-    expect(cleared.status).toBe(303);
-    const landing = new URL(cleared.headers.get("Location") ?? "", ORIGIN);
-    expect(landing.pathname).toBe(paths.agentDetail("claude"));
-    expect(landing.searchParams.get("done")).toBe("grant_set");
-    expect(await grantsOn(ns.owner.userId, "claude", "feed")).toEqual([]);
-  });
-
-  it(`§13 · the details pane answers sel: roles, tools and patterns; a tool draws its scoped MCP and TypeScript identities beside reach and approval; nothing selected draws the catalog summary`, async () => {
-    const { cookie } = await withGrantPane();
-    const base = paths.agentApp("viarole", "feed");
-
-    const role = textOf(await page(`${base}?sel=role:reader`, cookie));
-    expect(role).toContain("Patterns");
-    expect(role).toContain("Matches today");
-    expect(role).toContain("get_news");
-    expect(role).toContain(
-      "A role widens when the app widens it. To keep a single item regardless, add it directly from its row.",
-    );
-    expect(textOf(await page(`${base}?sel=role:all`, cookie))).toContain(
-      "Built in: every family, present and future.",
-    );
-
-    const tool = textOf(await page(`${base}?sel=tool:get_news`, cookie));
-    expect(tool).toContain("Fetch the latest stories.");
-    expect(tool).toContain("Scoped MCP identity");
-    expect(tool).toContain("feed / get_news");
-    expect(tool).toContain("TypeScript identity");
-    expect(tool).toContain("mcp.feed.getNews");
-
-    const pattern = textOf(
-      await page(`${paths.agentApp("direct", "feed")}?sel=pattern:${encodeURIComponent("tool/purge_.*")}`, cookie),
-    );
-    // The sentence ends in the code span `.*`, and `textOf` takes the space off in front
-    // of the full stop that follows it — the string a reader sees, spelled as they see it.
-    expect(pattern).toContain("An entry that is not one item: anchored, * aliases");
-    expect(pattern).toContain("Matches today · 1");
-
-    // The twin: nothing selected is the app's own summary, not an empty column.
-    const nothing = textOf(await page(base, cookie));
-    expect(nothing).toContain("Select a role, tool, prompt or resource on the left for its details.");
-    expect(nothing).toContain("Grant set for viarole");
-  });
-
-  it(`§13 · a description is the Markdown an app wrote it in (2026-09-16): the listing row renders its FIRST paragraph inline and stays one line, the details pane renders it whole — a fence as <pre><code>, a list as <ul>, and an http link carrying rel="noopener noreferrer" target="_blank" — while the app's own markup never becomes markup: a javascript: link renders as its text and a literal <script> arrives escaped · the grant step's endpoint title, which can hold text alone, carries the same description with the Markdown taken off (the twin)`, async () => {
-    // Its own namespace: the shared pane world's counts ("reaches 2 of 3 tools") are read
-    // by the rows above, and a fourth tool would move every one of them.
-    const { cookie, pane, grant } = await seedMarkdownPane();
-    const html = await page(`${pane}?sel=tool:md_notes`, cookie);
-
-    // The ROW, whole and exact: the inline marks render, and nothing the description's
-    // later blocks contain can make a one-line row taller.
-    expect(html).toContain(
-      '<div class="cr-detail md">Draft the <strong>weekly</strong> note from <code>notes://inbox</code>.</div>',
-    );
-
-    // The details pane, the same description whole.
-    expect(html).toContain("<pre><code>");
-    expect(html).toContain("<ul>");
-    expect(html).toContain('<a href="https://example.com/docs" rel="noopener noreferrer" target="_blank">handbook</a>');
-
-    // Neutralised, both ways: the refused scheme survives as words with no anchor around
-    // them, and the app's tag arrives as the four characters it is.
-    expect(html).not.toContain("javascript:");
-    expect(textOf(html)).toContain("run it");
-    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
-    expect(html).not.toContain("<script>alert(1)</script>");
-
-    // The twin: an attribute holds text alone, so the grant step's info marker carries the
-    // description with the Markdown off — no marks, no markup, one line.
-    const step = await page(`${grant}?show=mdfeed`, cookie);
-    const title = /<span class="ep-info" title="([^"]*)"/.exec(step)?.[1] ?? "";
-    expect(title).toContain("Draft the weekly note from notes://inbox.");
-    expect(title).not.toContain("**");
-    expect(title).not.toContain("<strong>");
-    expect(step).not.toContain("<script>alert(1)</script>");
-  });
-});
-
-/* ------------------------------------------------------------------ *
- * The agent pages' own reading: the rail, one row's control, and the two seeded worlds.
- * ------------------------------------------------------------------ */
-
-/** The four fields the app pane's form carries that are NOT one row's choice — the ones
- *  the route composes into `grant_set`'s `roles` rather than passing through. */
-const COMPOSED_GRANT_FIELDS: ReadonlySet<string> = new Set(["add", "mode", "drop", "clear"]);
-
-/** The agent rail's accessible name, discovered rather than spelled: it is the navigation
- *  that carries this agent's Danger zone and is not the compact one. Finding it by what it
- *  links keeps every rail row about the rail's CONTENT, never about its label. */
-function agentRailLabel(html: string, slug: string): string {
-  const danger = `href="${paths.agentPane(slug, "danger")}"`;
-  for (const nav of html.matchAll(/<nav\b[^>]*aria-label="([^"]*)"[^>]*>([\s\S]*?)<\/nav>/g)) {
-    if (nav[2].includes(danger) && !nav[1].endsWith("compact")) return nav[1];
-  }
-  throw new Error("the page rendered no agent rail");
-}
-
-/** The agent rail's markup, for the group headings a rail entry walk cannot see. */
-function agentRailBlock(html: string, slug: string): string {
-  return navBlock(html, agentRailLabel(html, slug)) ?? "";
-}
-
-/** The agent rail's entries, in the order it drew them. */
-function agentRail(html: string, slug: string): RailEntry[] {
-  return railEntries(html, agentRailLabel(html, slug));
-}
-
-/** One rail entry's own markup — where the two markers that are not text live (the amber
- *  dot, the dimmed link), which is the only place they exist at all. */
-function railAnchor(html: string, slug: string, href: string): string {
-  const anchor = [...agentRailBlock(html, slug).matchAll(/<a\b([^>]*)>[\s\S]*?<\/a>/g)].find(
-    (candidate) => decodeEntities(attributeOf(candidate[1], "href") ?? "") === href,
-  );
-  if (anchor === undefined) throw new Error(`the agent rail carries no entry for "${href}"`);
-  return anchor[0];
-}
-
-/**
- * The level header the narrow agent page draws above its content (2026-09-16): its back
- * link — the one anchor whose text opens with §13's `‹` — and the title beside it.
- *
- * Read off the anchor and the text that FOLLOWS it rather than off a class, because which
- * element carries the header and how it is centred are CSS's business; what the brief pins
- * is where the link goes, what it names, and what the header calls the current thing. The
- * window is bounded so the title is the header's own and not the page's next sentence.
- */
-function levelHeader(html: string): { back: string; href: string; title: string } {
-  const back = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].find((anchor) =>
-    textOf(anchor[2]).startsWith("‹"),
-  );
-  if (back === undefined) throw new Error("the page rendered no level header");
-  const rest = html.slice((back.index ?? 0) + back[0].length);
-  const closes = rest.indexOf("</div>");
-  const after = rest.slice(0, closes < 0 ? 200 : Math.min(closes, 200));
-  return {
-    back: textOf(back[2]),
-    href: decodeEntities(attributeOf(back[1], "href") ?? ""),
-    title: textOf(after),
-  };
-}
-
-/** One row's control as the browser sees it: the radios named `e.<entry>`, in the order
- *  they are drawn, each with the three attributes that decide what a click can do. */
-function segOf(html: string, entry: string): { value: string; checked: boolean; disabled: boolean }[] {
-  const name = `e.${entry}`;
-  const buttons: { value: string; checked: boolean; disabled: boolean }[] = [];
-  for (const control of html.matchAll(/<input\b([^>]*)>/g)) {
-    if (decodeEntities(attributeOf(control[1], "name") ?? "") !== name) continue;
-    // RADIOS only: a row whose entry is not a choice carries its entry in a hidden field
-    // instead, and "that row offers no choice" must not read as "it offers one".
-    if (attributeOf(control[1], "type") !== "radio") continue;
-    buttons.push({
-      value: decodeEntities(attributeOf(control[1], "value") ?? ""),
-      checked: /\bchecked\b/.test(control[1]),
-      disabled: /\bdisabled\b/.test(control[1]),
-    });
-  }
-  if (buttons.length === 0) throw new Error(`the pane rendered no control named "${name}"`);
-  return buttons;
-}
-
-/** Which of one row's three buttons the page checked — `null` when it checked none, which
- *  is a different claim from "checked at none" and must not read as one. */
-function checkedIn(html: string, entry: string): string | null {
-  return segOf(html, entry).find((button) => button.checked)?.value ?? null;
-}
-
-/** The entries the pane offers to remove: one `drop` submit per × button. */
-function dropOffers(html: string): string[] {
-  return [...html.matchAll(/<button\b([^>]*)>/g)]
-    .filter((button) => attributeOf(button[1], "name") === "drop")
-    .map((button) => decodeEntities(attributeOf(button[1], "value") ?? ""));
-}
-
-/**
- * The app pane's form as a browser would submit it untouched: every hidden field, and each
- * radio group at the option the page CHECKED — a browser sends one value per group, which
- * `submissionOf` (written for text and checkbox controls) cannot say, and without which
- * "Save replaces the set with what the page showed" would be untestable.
- */
-function paneSubmission(html: string, action: string): Record<string, string> {
-  const form = [...html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].find(
-    (candidate) => decodeEntities(attributeOf(candidate[1], "action") ?? "") === action,
-  );
-  if (form === undefined) throw new Error(`the page rendered no form posting to "${action}"`);
-  const fields: Record<string, string> = {};
-  for (const control of form[2].matchAll(/<input\b([^>]*)>/g)) {
-    const name = decodeEntities(attributeOf(control[1], "name") ?? "");
-    if (name === "") continue;
-    const value = decodeEntities(attributeOf(control[1], "value") ?? "");
-    if (attributeOf(control[1], "type") === "radio") {
-      if (/\bchecked\b/.test(control[1])) fields[name] = value;
-      continue;
-    }
-    fields[name] = value;
-  }
-  return fields;
-}
-
-/** One PRESS of a named submit button on that form: the form's own controls plus the
- *  button's name and value, because a browser sends the button that was pressed and no
- *  other. Throws when the page drew no such button — a submission the page cannot make
- *  proves nothing. */
-function pressed(html: string, action: string, name: string, value: string): Record<string, string> {
-  const button = [...html.matchAll(/<button\b([^>]*)>/g)].find(
-    (candidate) =>
-      attributeOf(candidate[1], "name") === name &&
-      decodeEntities(attributeOf(candidate[1], "value") ?? "") === value,
-  );
-  if (button === undefined) throw new Error(`the pane rendered no "${name}" button valued "${value}"`);
-  return { ...paneSubmission(html, action), [name]: value };
-}
-
-/** The values one `<select>` offers, in the order it offers them. */
-function optionValues(body: string): string[] {
-  return [...body.matchAll(/<option\b([^>]*)>/g)].map((option) => decodeEntities(attributeOf(option[1], "value") ?? ""));
-}
-
-/** One pair's grants as `agent_list` spells them, sorted — the postcondition every save
- *  row reads, through the op and never off the table. */
-async function grantsOn(ownerId: string, agent: string, app: string): Promise<string[]> {
-  const listed = (await ops.agent_list.handler(ownerId, {})) as {
-    agents: { slug: string; grants: Record<string, string[]> }[];
-  };
-  return [...(listed.agents.find((row) => row.slug === agent)?.grants[app] ?? [])].sort();
-}
-
-/**
- * The catalog every grant-pane fixture reads: three tools (two of them behind one pattern),
- * one prompt and one resource, plus two roles — a pattern role that reaches most of it and a
- * literal role that reaches the one tool the other does not. That shape is what makes "via
- * <role>", "direct" and "reaches N of T" three different readings of one page.
- */
-const PANE_TOOLS = [
-  {
-    name: "get_news",
-    description: "Fetch the latest stories.",
-    inputSchema: { type: "object", properties: { q: { type: "string", description: "The query." } }, required: ["q"] },
-  },
-  { name: "get_weather", description: "Fetch the forecast.", inputSchema: { type: "object" } },
-  { name: "purge_cache", description: "Drop the cache.", inputSchema: { type: "object" } },
-];
-const PANE_PROMPTS = [{ name: "daily_digest", description: "The day's digest.", arguments: [] }];
-const PANE_RESOURCES = [{ uri: "news://feed/latest", name: "Latest headlines", mimeType: "text/plain" }];
-const PANE_ROLES = {
-  reader: { tools: ["get_.*"], prompts: ["daily_.*"], resources: ["news://feed/*"] },
-  purger: { tools: ["purge_cache"] },
-};
-
-/** One fake upstream serving that catalog — registered per fixture, so two namespaces'
- *  payloads can never collide. */
-async function paneScenario(): Promise<UpstreamScenario> {
-  const scenario: UpstreamScenario = { id: uniqueSlug("paneup"), mode: { kind: "ok" } };
-  await registerOverride(scenario.id, { tools: PANE_TOOLS, prompts: PANE_PROMPTS, resources: PANE_RESOURCES });
-  return scenario;
-}
-
-/**
- * §13's Markdown rule (2026-09-16) as an app would actually write a description: inline
- * marks, a fence, a list, a link the whitelist admits, one it must refuse, and a raw tag.
- * ONE source for both pages' rows, because it is one renderer (server/src/pages/markdown.ts)
- * — a description that rendered one way on the app page and another on the agent page would
- * be two whitelists, which is the shape this whole seam exists to prevent.
- *
- * The fence names no tool on purpose: the app page's own row counts how often each tool
- * name is NAMED, and a name inside a description would be a second mention of it.
- */
-const MARKDOWN_DESCRIPTION = [
-  "Draft the **weekly** note from `notes://inbox`.",
-  "",
-  "```sh",
-  "notes --since 7d",
-  "```",
-  "",
-  "- newest first",
-  "- capped at 50",
-  "",
-  "See the [handbook](https://example.com/docs), or [run it](javascript:alert(1)).",
-  "",
-  "<script>alert(1)</script>",
-].join("\n");
-
-const MARKDOWN_TOOL = { name: "md_notes", description: MARKDOWN_DESCRIPTION, inputSchema: { type: "object" } };
-
-/** A namespace of its own for the Markdown row: one proxied app advertising that one tool,
- *  the agent holding it (the listing and its details pane) and one holding nothing at all
- *  (the grant step, the one place the description becomes an attribute). Its own rather
- *  than the shared pane world's, whose counts every row above reads. */
-async function seedMarkdownPane(): Promise<{ cookie: string; pane: string; grant: string }> {
-  const scenario: UpstreamScenario = { id: uniqueSlug("mdup"), mode: { kind: "ok" } };
-  await registerOverride(scenario.id, { tools: [MARKDOWN_TOOL] });
-  const ns = await seedNamespace(env.DB, {
-    apps: [
-      {
-        slug: "mdfeed",
-        kind: "proxy",
-        name: "Markdown MCP",
-        upstreamUrl: upstreamUrlFor(scenario),
-        upstreamAuthMode: "headers",
-        capabilities: ["tools"],
-        roles: { reader: { tools: ["md_.*"] } },
-      },
-    ],
-    agents: [
-      { slug: "claude", grants: { mdfeed: [{ role: "reader", mode: "allow" }] } },
-      { slug: "fresh", grants: {} },
-    ],
-  });
-  return {
-    cookie: (await seedOwnerSession(ns.owner)).cookie,
-    pane: paths.agentApp("claude", "mdfeed"),
-    grant: paths.agentPane("fresh", "grant"),
-  };
-}
-
-type AgentWorld = { ns: SeededNamespace; cookie: string };
-
-/**
- * The agent page's own world, seeded ONCE and awaited from each row that reads it: four
- * apps (one grantable, one plain grant, one that asks first, one archived) and three agents
- * (one holding three grants, one holding none, one holding every active app). Memoized
- * rather than hung off a hook, because `-t` naming one row must still seed it — and shared
- * because these rows only READ: the rows that write seed their own.
- */
-let agentPanesWorld: Promise<AgentWorld> | null = null;
-const withAgentPanes = (): Promise<AgentWorld> => (agentPanesWorld ??= seedAgentPanes());
-
-async function seedAgentPanes(): Promise<AgentWorld> {
-  const scenario = await paneScenario();
-  const ns = await seedNamespace(env.DB, {
-    apps: [
-      {
-        slug: "brand",
-        kind: "proxy",
-        name: "Brand",
-        description: "The brand app.",
-        upstreamUrl: upstreamUrlFor(scenario),
-        upstreamAuthMode: "headers",
-        capabilities: ["tools", "prompts", "resources"],
-        roles: { reader: { tools: ["get_.*"] } },
-      },
-      { slug: "linear", kind: "tunnel", name: "Linear" },
-      { slug: "news", kind: "tunnel", name: "News MCP" },
-      { slug: "parked", kind: "tunnel", archived: true },
-    ],
-    agents: [
-      {
-        slug: "claude",
-        name: "Claude",
-        description: "Claude sessions",
-        grants: {
-          linear: [{ role: "reader", mode: "allow" }],
-          news: [{ role: "reader", mode: "approval" }],
-          parked: [{ role: "all", mode: "allow" }],
-        },
-        tokens: [{ as: "claude" }],
-      },
-      { slug: "cron", grants: {} },
-      {
-        slug: "everywhere",
-        grants: {
-          brand: [{ role: "reader", mode: "allow" }],
-          linear: [{ role: "reader", mode: "allow" }],
-          news: [{ role: "reader", mode: "allow" }],
-        },
-      },
-    ],
-  });
-  // The two tunneled apps have connected once, so their roles are declared and the header's
-  // dormant count is about the archived app alone (seed FINDINGS 1).
-  const registry = new Registry(env.DB);
-  await registry.upsertDeclaredRoles(ns.apps.linear.id, { reader: ["get_.*"] });
-  await registry.upsertDeclaredRoles(ns.apps.news.id, { reader: ["get_.*"] });
-  return { ns, cookie: (await seedOwnerSession(ns.owner)).cookie };
-}
-
-/**
- * The grant pane's world: one proxied app with a catalog, one tunneled app that has never
- * connected, and five agents — one reaching through a role, one through the same role at
- * ask, one holding inline items only, one holding both, and one holding a role its app has
- * never declared. Every state the listing draws, as a grant set.
- */
-let grantPaneWorld: Promise<AgentWorld> | null = null;
-const withGrantPane = (): Promise<AgentWorld> => (grantPaneWorld ??= seedGrantPane());
-
-async function seedGrantPane(): Promise<AgentWorld> {
-  const scenario = await paneScenario();
-  const ns = await seedNamespace(env.DB, {
-    apps: [
-      {
-        slug: "feed",
-        kind: "proxy",
-        name: "News MCP",
-        description: "The newsroom's own app.",
-        upstreamUrl: upstreamUrlFor(scenario),
-        upstreamAuthMode: "headers",
-        capabilities: ["tools", "prompts", "resources"],
-        roles: PANE_ROLES,
-      },
-      { slug: "silent", kind: "tunnel", name: "Silent app" },
-    ],
-    agents: [
-      { slug: "viarole", grants: { feed: [{ role: "reader", mode: "allow" }] } },
-      { slug: "askrole", grants: { feed: [{ role: "reader", mode: "approval" }] } },
-      {
-        slug: "direct",
-        grants: {
-          feed: [
-            { role: "tool/get_weather", mode: "approval" },
-            { role: "tool/purge_.*", mode: "allow" },
-          ],
-        },
-      },
-      {
-        slug: "both",
-        grants: {
-          feed: [
-            { role: "reader", mode: "allow" },
-            { role: "tool/get_news", mode: "approval" },
-          ],
-        },
-      },
-      { slug: "dormant", grants: { silent: [{ role: "triage", mode: "allow" }] } },
-    ],
-  });
-  return { ns, cookie: (await seedOwnerSession(ns.owner)).cookie };
-}
-
-/** One fresh namespace of the same shape, for the rows that WRITE: a save is not a read,
- *  and the rows above share one seeding. */
-async function seedWritablePair(): Promise<AgentWorld> {
-  const scenario = await paneScenario();
-  const ns = await seedNamespace(env.DB, {
-    apps: [
-      {
-        slug: "feed",
-        kind: "proxy",
-        name: "News MCP",
-        upstreamUrl: upstreamUrlFor(scenario),
-        upstreamAuthMode: "headers",
-        capabilities: ["tools", "prompts", "resources"],
-        roles: PANE_ROLES,
-      },
-    ],
-    agents: [
-      {
-        slug: "claude",
-        grants: {
-          feed: [
-            { role: "reader", mode: "allow" },
-            // An ask entry under an allowing role, so the pane draws the one × a save row
-            // can press, and a pattern, so it draws a Patterns row to preserve.
-            { role: "tool/get_news", mode: "approval" },
-            { role: "tool/purge_.*", mode: "allow" },
-          ],
-        },
-      },
-    ],
-  });
-  return { ns, cookie: (await seedOwnerSession(ns.owner)).cookie };
-}
-
 describe("§19.5 · the consent screen", () => {
   it("§19.5 · GET /oauth/consent without a cookie session bounces to /login carrying the signed oauth_query", async () => {
     // A shape a real signed query has (client_id + sig + exp) is enough to prove the
@@ -4497,8 +3175,8 @@ describe(`§13 · the /settings shell — seven panes behind one rail`, () => {
     // Each session's OWN token, off a page it can still render (/apps carries no recency
     // gate), so the refusals below cannot be the CSRF check answering — and harvested out
     // here, because no page renders at all once the read handlers are substituted.
-    const staleCsrf = csrfOf(await page(paths.apps, stale.cookie));
-    const freshCsrf = csrfOf(await page(paths.apps, fresh.cookie));
+    const staleCsrf = bootstrapCsrfOf(await page(paths.apps, stale.cookie));
+    const freshCsrf = bootstrapCsrfOf(await page(paths.apps, fresh.cookie));
     const bearerCookie = `${fresh.cookie.split("=")[0]}=${await deviceFlowToken(fresh.cookie)}`;
     // Session-ending targets last: `revoke-other-sessions` succeeds and would kill the
     // aged twin the refusal legs ride.
@@ -5360,7 +4038,7 @@ describe(`§4/§13 · the Password pane`, () => {
           }),
         ),
         // The stale session's OWN token, so the refusal cannot be the CSRF check.
-        csrf: csrfOf(await page(paths.apps, stale.cookie)),
+        csrf: bootstrapCsrfOf(await page(paths.apps, stale.cookie)),
       },
       stale.cookie,
     );
@@ -5370,8 +4048,9 @@ describe(`§4/§13 · the Password pane`, () => {
   });
 
   it(`§4 · the day-old cookie that can post none of /settings's credential targets cannot post Update password either — the action read off the rendered pane, walked stale and fresh · a session signed in moments ago reaches better-auth with the same body (the twin)`, async () => {
-    // One app for the same reason row 26 has one: /apps is where a stale session can
-    // still read its own CSRF token, and an empty namespace draws no form there.
+    // /apps is where a stale session can still read its own CSRF token: the shell document
+    // carries it in the bootstrap island behind no recency gate, whatever the namespace
+    // holds. An app is seeded anyway, so the namespace is the one row 26's is.
     const ns = await seedNamespace(env.DB, { apps: [{ slug: uniqueSlug("pwstale"), kind: "tunnel" }] });
     const stale = await seedOwnerSession(ns.owner);
     const fresh = await seedOwnerSession(ns.owner);
@@ -5395,7 +4074,7 @@ describe(`§4/§13 · the Password pane`, () => {
     // check answering instead of the gate.
     const refused = await formPost(
       target,
-      { ...body, csrf: csrfOf(await page(paths.apps, stale.cookie)) },
+      { ...body, csrf: bootstrapCsrfOf(await page(paths.apps, stale.cookie)) },
       stale.cookie,
     );
     expect(refused.status).toBe(302);
@@ -5403,7 +4082,7 @@ describe(`§4/§13 · the Password pane`, () => {
 
     const reached = await formPost(
       target,
-      { ...body, csrf: csrfOf(await page(paths.apps, fresh.cookie)) },
+      { ...body, csrf: bootstrapCsrfOf(await page(paths.apps, fresh.cookie)) },
       fresh.cookie,
     );
     expect(reached.status).toBe(303);
@@ -7104,176 +5783,6 @@ describe(`§23 · /settings/execution — the timeout pair`, () => {
   });
 });
 
-describe(`§23.6 · the alias surfaces — the add-app form and the Overview editor`, () => {
-  it(`§23.6 · the add-app form carries the alias controls, and a create with them persists the owner configuration and commits its reservations`, async () => {
-    const ns = await seedNamespace(env.DB, {});
-    const session = await seedOwnerSession(ns.owner);
-    const slug = uniqueSlug("aliasapp");
-    const rendered = await page(paths.appNew, session.cookie);
-    const [drawn] = formsPostingTo(rendered, paths.appCreate);
-
-    // `typedInto` refuses a control the page never drew, which is the first half of this
-    // row: the service input and the pair rows are really on the form.
-    const posted = await post(
-      paths.appCreate,
-      typedInto(drawn ?? {}, {
-        kind: "tunnel",
-        slug,
-        name: "Aliased app",
-        typescript_service: "aliasreader",
-        "canonical.0": "search_feeds",
-        "alias.0": "searchFeeds",
-      }),
-      { csrf: csrfOf(rendered), cookie: session.cookie },
-    );
-    expect(posted.status, "the create was refused").toBe(200);
-
-    const row = (await ops.app_get.handler(ns.owner.userId, { slug })) as {
-      app: {
-        typescriptAliases: { service?: string; tools?: Record<string, string> };
-        typescriptReservations: unknown[];
-      };
-    };
-    expect(row.app.typescriptAliases).toEqual({
-      service: "aliasreader",
-      tools: { search_feeds: "searchFeeds" },
-    });
-    expect(row.app.typescriptReservations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          family: "service",
-          canonicalName: slug,
-          typescriptName: "aliasreader",
-          source: "owner",
-          active: true,
-        }),
-        expect.objectContaining({
-          family: "tool",
-          canonicalName: "search_feeds",
-          typescriptName: "searchFeeds",
-          source: "owner",
-          active: true,
-        }),
-      ]),
-    );
-  });
-
-  it(`§23.6 · a refused alias on the add-app form redraws it at 400 with the op's own sentence and creates nothing`, async () => {
-    const ns = await seedNamespace(env.DB, {});
-    const session = await seedOwnerSession(ns.owner);
-    const slug = uniqueSlug("aliasbad");
-    const rendered = await page(paths.appNew, session.cookie);
-    const [drawn] = formsPostingTo(rendered, paths.appCreate);
-
-    const posted = await post(
-      paths.appCreate,
-      typedInto(drawn ?? {}, { kind: "tunnel", slug, typescript_service: "hub" }),
-      { csrf: csrfOf(rendered), cookie: session.cookie },
-    );
-    expect(posted.status).toBe(400);
-    expect(textOf(await posted.text())).toContain("is owned by the hub namespace");
-    const listed = (await ops.app_list.handler(ns.owner.userId, {})) as { apps: { slug: string }[] };
-    expect(listed.apps.map((app) => app.slug)).not.toContain(slug);
-  });
-
-  it(`§23.6 · the Overview editor saves the owner configuration in ONE app_update, and a blank service field keeps the established reservation — omission never clears — while a name another app holds refuses the whole write at 400 with nothing stored (the twins)`, async () => {
-    const slug = uniqueSlug("aliasov");
-    const other = uniqueSlug("aliashold");
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        { slug, kind: "tunnel", typescriptAliases: { service: "firstname" } },
-        { slug: other, kind: "tunnel", typescriptAliases: { service: "holdername" } },
-      ],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    const target = paths.appAliasSet(slug);
-    const rendered = await page(paths.appPane(slug, "overview"), session.cookie);
-    const [drawn] = formsPostingTo(rendered, target);
-    expect(drawn?.typescript_service, "the editor did not draw the stored name").toBe("firstname");
-
-    // Blanking the service control clears the CONFIGURATION and leaves the committed name.
-    const saved = await formPost(
-      target,
-      typedInto(drawn ?? {}, { typescript_service: "", "canonical.0": "tool_a", "alias.0": "toolAlias" }),
-      session.cookie,
-    );
-    expect(saved.status).toBe(303);
-    const after = (await ops.app_get.handler(ns.owner.userId, { slug })) as {
-      app: { typescriptAliases: unknown; typescriptReservations: unknown[] };
-    };
-    expect(after.app.typescriptAliases).toEqual({ tools: { tool_a: "toolAlias" } });
-    expect(after.app.typescriptReservations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          family: "service",
-          canonicalName: slug,
-          typescriptName: "firstname",
-          source: "owner",
-          active: true,
-        }),
-      ]),
-    );
-
-    // The collision: another app's committed name, refused whole — the editor redraws on
-    // the owner's own text and the stored configuration does not move.
-    const conflicting = await formPost(
-      target,
-      typedInto(drawn ?? {}, { typescript_service: "holdername" }),
-      session.cookie,
-    );
-    expect(conflicting.status).toBe(400);
-    const html = await conflicting.text();
-    expect(textOf(html)).toContain("is held by");
-    expect(formsPostingTo(html, target)[0]?.typescript_service, "the refusal lost the typed name").toBe(
-      "holdername",
-    );
-    const unchanged = (await ops.app_get.handler(ns.owner.userId, { slug })) as {
-      app: { typescriptAliases: unknown };
-    };
-    expect(unchanged.app.typescriptAliases).toEqual({ tools: { tool_a: "toolAlias" } });
-  });
-
-  it(`§23.6 · a value is never silently rewritten: an alias with surrounding whitespace is refused by the identifier grammar with nothing stored, and the canonical name round-trips byte-identical to what the owner typed`, async () => {
-    const slug = uniqueSlug("aliasverbatim");
-    const ns = await seedNamespace(env.DB, { apps: [{ slug, kind: "tunnel" }] });
-    const session = await seedOwnerSession(ns.owner);
-    const target = paths.appAliasSet(slug);
-    const rendered = await page(paths.appPane(slug, "overview"), session.cookie);
-    const [drawn] = formsPostingTo(rendered, target);
-
-    // A padded alias is the owner's own mistake, and the OP's grammar says so: the page
-    // neither trims it into acceptance nor invents words of its own for it.
-    const padded = await formPost(
-      target,
-      typedInto(drawn ?? {}, { "canonical.0": "search-feeds.v2", "alias.0": " searchFeeds " }),
-      session.cookie,
-    );
-    expect(padded.status).toBe(400);
-    const html = await padded.text();
-    expect(textOf(html)).toContain("must match [A-Za-z_$][A-Za-z0-9_$]*");
-    expect(formsPostingTo(html, target)[0]?.["alias.0"], "the typed alias was rewritten").toBe(
-      " searchFeeds ",
-    );
-    const refused = (await ops.app_get.handler(ns.owner.userId, { slug })) as {
-      app: { typescriptAliases: unknown };
-    };
-    expect(refused.app.typescriptAliases).toEqual({});
-
-    // The twin: the same row with a clean alias stores the canonical name EXACTLY — a
-    // punctuation-bearing upstream identity is not normalized into something friendlier.
-    const saved = await formPost(
-      target,
-      typedInto(drawn ?? {}, { "canonical.0": "search-feeds.v2", "alias.0": "searchFeeds" }),
-      session.cookie,
-    );
-    expect(saved.status).toBe(303);
-    const stored = (await ops.app_get.handler(ns.owner.userId, { slug })) as {
-      app: { typescriptAliases: unknown };
-    };
-    expect(stored.app.typescriptAliases).toEqual({ tools: { "search-feeds.v2": "searchFeeds" } });
-  });
-});
-
 /** Two-label hosts on purpose (constraint 24): a three-label one matches the three-segment
  *  JWT shape this file's hygiene guards look for, turning a guard into a false red. */
 const REDIRECT_A = "https://named.example/callback";
@@ -7323,227 +5832,6 @@ async function consentAgain(
   expect(accepted.status, await accepted.text()).toBe(303);
 }
 
-/* ------------------------------------------------------------------ *
- * /apps/<slug> — the world the header and Tools rows are written against
- * ------------------------------------------------------------------ */
-
-/**
- * The six apps this describe holds. Their slugs are CONSTS because `seedNamespace` keys
- * its apps by slug and every row addresses them that way; `uniqueSlug` because a tool
- * name asserted "exactly once" must not be able to collide with another file's fixture.
- *
- * CATALOG is the rich proxied app every listing row runs against; PLAIN is the proxied
- * app that declared no `capabilities` at all (§20.2's "absent ≡ [tools]"); TUNNELAPP and
- * FRESHAPP are the stamped and never-connected tunneled pair the header rows compare;
- * BROKEN is the oauth app driven into `needs_reconnect`; DOWN is the proxied app whose
- * upstream cannot be dialled at all.
- */
-const CATALOG = uniqueSlug("catalog");
-const PLAIN = uniqueSlug("plain");
-const TUNNELAPP = uniqueSlug("tunnelapp");
-const FRESHAPP = uniqueSlug("freshapp");
-const BROKEN = uniqueSlug("broken");
-const DOWN = uniqueSlug("down");
-
-/** One upstream per proxied app, so two `registerOverride` payloads cannot collide.
- *  BROKEN's authorization server hands back a token that is already dead and then rejects
- *  the refresh it forces — the one pair §7 allows to reach `needs_reconnect`. DOWN's
- *  `unreachable` mode is expressed in the URL's SCHEME, so the hub's own fetch rejects and
- *  the fake is never dialled at all: the OTHER arm of the listing seam's failure catch. */
-const catalogScenario: UpstreamScenario = { id: uniqueSlug("catup"), mode: { kind: "ok" } };
-const plainScenario: UpstreamScenario = { id: uniqueSlug("plainup"), mode: { kind: "ok" } };
-const brokenScenario: UpstreamScenario = {
-  id: uniqueSlug("brkup"),
-  mode: { kind: "ok" },
-  as: { id: uniqueSlug("brkas"), quirks: ["stale_first_token", "refresh_fails"] },
-};
-const downScenario: UpstreamScenario = { id: uniqueSlug("downup"), mode: { kind: "unreachable" } };
-
-/** §13's dimmed marker — the ONE value that means "advertises none". */
-const DIMMED_MARKER = "—";
-
-/** §13's Arguments table is read off THIS schema: one required string, one optional with
- *  a default, and one nested object whose own property must never reach the page. */
-const PAPER_SCHEMA = {
-  type: "object",
-  properties: {
-    doi: { type: "string" },
-    force_refresh: { type: "boolean", default: false },
-    options: { type: "object", properties: { depth: { type: "number" } } },
-  },
-  required: ["doi"],
-};
-
-/** §7's two redaction halves in one schema: a `writeOnly` mark the walk finds, and a
- *  plain path only the app's own `redact` config names. */
-const SECRET_SCHEMA = {
-  type: "object",
-  properties: {
-    credentials: { type: "object", properties: { token: { type: "string", writeOnly: true } } },
-    payload: { type: "object", properties: { key: { type: "string" } } },
-  },
-};
-
-/** Indirection the hub refuses to resolve (§7, §18 decision 16) — asserted through
- *  `validateSchemaIndirection` before any page is read, so the fixture cannot quietly
- *  become sound. */
-const BAD_SCHEMA = { type: "object", $ref: "https://schemas.pmcp-test.invalid/tool.json" };
-
-const PAPER_SUMMARY = "Fetch the paper identified by a DOI and return its text as Markdown.";
-const PAPER_DETAIL = "It must be the exact DOI string, not a URL or a padded value.";
-
-const CATALOG_TOOLS = [
-  { name: "paper_fetch", description: `${PAPER_SUMMARY}\n${PAPER_DETAIL}`, inputSchema: PAPER_SCHEMA },
-  {
-    name: "jobfeed_crawl",
-    description: "Trigger a crawl of the configured boards.",
-    inputSchema: { type: "object" },
-  },
-  { name: "secret_push", description: "Push a secret to the configured store.", inputSchema: SECRET_SCHEMA },
-  { name: "bad_schema", description: "A tool the hub will not walk.", inputSchema: BAD_SCHEMA },
-  // §13's Markdown rule (2026-09-16) — the same description the agent page's row reads.
-  MARKDOWN_TOOL,
-];
-const CATALOG_TOOL_NAMES = CATALOG_TOOLS.map((tool) => tool.name);
-
-/** One prompt `reader`'s `digest_.*` pattern reaches, carrying a declared argument, and
- *  one it does not — which is what makes "reachable by no agent yet" a claim about this
- *  prompt rather than about the fixture having no agents. */
-const CATALOG_PROMPTS = [
-  {
-    name: "digest_daily",
-    description: "The day's digest.",
-    arguments: [{ name: "day", description: "Which day.", required: true }],
-  },
-  { name: "weekly_note", description: "A weekly note.", arguments: [] },
-];
-const CATALOG_PROMPT_NAMES = CATALOG_PROMPTS.map((prompt) => prompt.name);
-
-/** The second row is §20.2's trap: its NAME matches `reader`'s `news://feed/*` pattern
- *  and its URI does not, which is the bug the URI-not-name rule was written to prevent. */
-const CATALOG_RESOURCES = [
-  { uri: "news://feed/latest", name: "Latest headlines", mimeType: "text/plain" },
-  { uri: "news://archive/2021", name: "news://feed/decoy", mimeType: "application/json" },
-];
-/** Reached by the same `news://feed/*` — `*` aliases `.*`, and §20.3 makes the raw
- *  template an ordinary subject string rather than something the hub expands. */
-const CATALOG_TEMPLATES = [
-  { uriTemplate: "news://feed/{id}", name: "One story by id", mimeType: "text/plain" },
-];
-const CATALOG_RESOURCE_URIS = CATALOG_RESOURCES.map((row) => row.uri);
-const CATALOG_TEMPLATE_URIS = CATALOG_TEMPLATES.map((row) => row.uriTemplate);
-
-/** One literal role, one pattern role, and a third that overlaps the pattern — which is
- *  what makes "allow wins over approval per agent" (§2) observable on one tool. */
-const CATALOG_ROLES = {
-  reader: { tools: ["paper_fetch"], prompts: ["digest_.*"], resources: ["news://feed/*"] },
-  crawler: ["jobfeed_.*"],
-  both: { tools: ["jobfeed_crawl"] },
-};
-
-const PLAIN_TOOLS = [{ name: "plain_ping", description: "Answer.", inputSchema: { type: "object" } }];
-
-/** The brief's sentences these rows pin (docs/superpowers/plans/2026-09-17-app-three-pane.md
- *  §2–§7, which §13 then records), spelled as it spells them — backticks included, so a
- *  reader can diff a literal against the spec; `pinned()` takes them off. */
-const CATALOG_TUNNELED_SUB = "advertised by the app on its last connect · re-listed on every reconnect";
-const CATALOG_PROXIED_SUB = "fetched live from the upstream";
-const NEVER_CONNECTED = "This app has never connected, so the hub has no catalog to list yet.";
-const REFRESH_FAILED = "Token refresh failed — calls return errors until you reconnect.";
-const NONE_ADVERTISED = "none advertised";
-const NO_MATCH = "no match";
-const NO_AGENT = "no agent";
-const CATALOG_PROMPT = "Select a tool, prompt or resource for its details.";
-const REACH_SOURCE = "computed with the gate's own matcher over each agent's grant";
-const MATCHED_BY_URI = "by URI, never by name";
-const NO_AGENT_YET = "no agent yet";
-const NO_REDACTED = "no redacted fields";
-const NO_APPROVAL = "none required";
-const NEVER_GATED = "never asked for prompts";
-
-/** The unread / undeclared states, per kind, with the family or endpoint substituted
- *  exactly as the brief substitutes it. */
-const unreachable = (endpoint: string): string =>
-  `Couldn't reach ${endpoint} — the live listing failed, so nothing is shown; calls return errors until it answers again.`;
-const tunneledUndeclared = (family: string): string =>
-  `This app declared no ${family} capability on its last connect.`;
-const proxiedOmits = (family: string): string =>
-  `The \`capabilities\` configured for this app omit ${family}.`;
-const catalogFoot = (family: string): string =>
-  `The same block the audit row and the agent page show for this ${family}. Editing reach happens on Agents, masking on Recording.`;
-
-/** §4 · the Roles pane. */
-const ROLES_SUB = "named sets of what this app exposes";
-const ROLES_TUNNELED_TAIL = "the app's declaration wins when it declares a name you defined";
-const ROLES_PROXIED_TAIL = "a proxied app declares none, so every role is yours";
-const ROLES_PROMPT = "Select a role to see what it can do, or add one of your own.";
-const ROLE_REPLACED = "app · replaced yours";
-const ROLE_REPLACED_TITLE = "the app declares this name — its declaration replaced yours";
-const ROLE_ALL_ITEMS = "every tool, prompt and resource, present and future";
-const HELD_BY_NONE = "held by no agent";
-const ALL_EXPLAINED = "Every tool, prompt and resource, present and future. Never declarable, only grantable.";
-const COLLISION_RULE =
-  "if the app later declares a name you defined, its declaration replaces yours — the row says so";
-const DELETE_ROLE_HINT = "grants naming it keep the name and match nothing until it exists again";
-const PATTERNS_LEGEND = "anchored · * aliases .*";
-const appRoleExplained = (name: string): string =>
-  `Declared by ${name} at connect. Read-only: the app owns it and may widen it on its next connect.`;
-const shadowedExplained = (name: string): string =>
-  `${name} declares this name, so its declaration replaced the one you had defined. Read-only: the app owns it.`;
-const yoursTunneled = (name: string, role: string): string =>
-  `Defined by you. If ${name} later declares a role named ${role}, the app's declaration replaces this one.`;
-const YOURS_PROXIED =
-  "Defined by you. A proxied app declares no roles, so this is the only kind it has.";
-const declaredByApp = (name: string): string =>
-  `${name} is declared by the app — its declaration would replace yours`;
-
-/** §5 · the Recording pane. */
-const RECORDING_SUB = "what the audit trail keeps, and what it masks";
-const RECORD_BODIES = "Record call bodies";
-const PROXIED_UNMASKED =
-  "A proxied app's schema is not cached at call time, so nothing is masked automatically. Tick what is secret before you save, or it is stored in the clear for 7 days.";
-const MASKED_BEFORE =
-  "These fields are replaced with ‹redacted› before a call is written to the trail. Everything else in the body is kept as sent.";
-const LOGGING_OFF_NOTE =
-  "Body logging is off, so no bodies reach the trail; the masks below apply once it is turned on.";
-const RECORDING_NOTE =
-  "A tick writes one literal (tool, path) entry per tool; nothing here is a pattern and nothing is typed. Masking applies to the approval record too.";
-const KEEPS_CAP = "16 KiB per body — an over-cap body is one oversize stub";
-const KEEPS_NEVER = "refused calls, token material, writeOnly and config-masked fields";
-const ALWAYS_MASKED = "declared by the app — always masked";
-const NO_PATH_MATCHES = "no path matches";
-const NO_SCHEMA_FIELDS = "no schema declares any field";
-const noOutputSchema = (tools: string): string =>
-  `${tools} declare no output schema — a result path there can only come from a recorded call (mask from evidence).`;
-
-/** §6 · the Agents pane. */
-const AGENTS_SUB = "who can call this app, and how";
-const AGENTS_NOTE =
-  "Granting a new agent starts from the agent's own page — Agents → the agent → Grant another app.";
-const agentsPrompt = (slug: string): string => `Select an agent to edit what it may call on ${slug}.`;
-const grantLegend = (agent: string, slug: string): string =>
-  `${agent}'s grant on ${slug}. Solid: set on the row · hollow: implied by a role · a row cannot lower what a role grants.`;
-const removeAgentBody = (agent: string, slug: string): string =>
-  `${agent} loses every entry on ${slug}. History stays; a waiting request expires.`;
-
-/** §7 · Token and Overview. */
-const TOKEN_SUB = "what the app presents to dial in";
-const TOKEN_ROTATION =
-  "app tokens have no expiry — rotate by issuing, then revoking the old one. Revoking the key a live socket used closes it.";
-const NO_LIVE_TOKEN = "No live token — the app cannot connect until one is issued.";
-const REVEAL_ONCE = "Shown once — copy it now";
-const EXPIRES_NEVER = "never — revoke on compromise";
-const tokenScope = (slug: string): string =>
-  `Only valid for opening the reverse WebSocket as ${slug}.`;
-
-/** §15's two per-kind defaults, as the Overview pane names them. */
-const LOG_BODIES_TUNNEL = "On — tunneled default";
-const LOG_BODIES_PROXY = "Off — proxied default";
-
-/** The Catalog's own pane URL. `/apps/<slug>` is the LANDING — level 1 on the phone, the
- *  same Catalog render on wide — and this is the pane itself (2026-09-17). */
-const catalogPane = (slug: string): string => paths.appPane(slug, "catalog");
-
 /** The seven rail entries' URLs, in the brief's table order — built from `paths`, never
  *  spelled, so a pane added to `APP_PANES` is walked with no edit here. */
 function appRailHrefs(slug: string): string[] {
@@ -7555,23 +5843,6 @@ function appPaneHrefs(slug: string): string[] {
   return [paths.appDetail(slug), ...appRailHrefs(slug)];
 }
 
-type AppSummaryRow = {
-  name: string;
-  kind: string;
-  archived: boolean;
-  roles: Record<string, unknown>;
-  logBodies: boolean;
-  redact: Record<string, string[]>;
-  redactResults: Record<string, string[]>;
-  status?: string;
-  lastSeen?: number | null;
-  createdAt?: number;
-  endpoint?: string;
-  auth?: string;
-  forwardIdentity?: boolean;
-  connection?: string;
-};
-
 let detail: {
   ns: SeededNamespace;
   session: SeededSession;
@@ -7579,2903 +5850,6 @@ let detail: {
    *  step 2 leaves unfiltered on the scoped endpoint. */
   bearer: string;
 };
-
-/**
- * The six apps, five agents, session and bearer every `/apps/<slug>` describe below reads,
- * seeded ONCE and awaited from each of their `beforeAll`s. One world rather than one per
- * describe because §13 makes these panes one page: the rows compare what one pane renders
- * against what another does and against the scoped endpoint's own answer, and two seedings
- * would make those comparisons about two different namespaces.
- *
- * Memoized rather than hung off a single describe's hook, because vitest runs a suite's
- * `beforeAll` only when that suite has an unskipped test — so a `-t` naming any ONE of
- * these describes would otherwise leave `detail` undefined for it.
- */
-let appDetailWorld: Promise<void> | null = null;
-const withAppDetailWorld = (): Promise<void> => (appDetailWorld ??= seedAppDetailWorld());
-
-async function seedAppDetailWorld(): Promise<void> {
-  // §20.2's per-family payloads are registered OUT of the URL: base64-encoding them
-  // into a request line trips a real HTTP 431, which is a fact about HTTP rather than
-  // about anything under test (fake-upstream's own note).
-  await registerOverride(catalogScenario.id, {
-    tools: CATALOG_TOOLS,
-    prompts: CATALOG_PROMPTS,
-    resources: CATALOG_RESOURCES,
-    resourceTemplates: CATALOG_TEMPLATES,
-  });
-  await registerOverride(plainScenario.id, { tools: PLAIN_TOOLS });
-  await registerOverride(brokenScenario.id, { tools: CATALOG_TOOLS });
-
-  const ns = await seedNamespace(env.DB, {
-    apps: [
-      {
-        slug: CATALOG,
-        kind: "proxy",
-        name: "Catalog app",
-        upstreamUrl: upstreamUrlFor(catalogScenario),
-        upstreamAuthMode: "headers",
-        forwardIdentity: true,
-        capabilities: ["tools", "prompts", "resources"],
-        roles: CATALOG_ROLES,
-        redact: { secret_push: ["payload.key"], "digest_.*": ["audience"] },
-        redactResults: { "secret_.*": ["out.token"] },
-      },
-      {
-        slug: PLAIN,
-        kind: "proxy",
-        name: "Plain app",
-        upstreamUrl: upstreamUrlFor(plainScenario),
-        upstreamAuthMode: "headers",
-        roles: {},
-      },
-      { slug: TUNNELAPP, kind: "tunnel", name: "Tunnel app" },
-      { slug: FRESHAPP, kind: "tunnel", name: "Fresh app", logBodies: false },
-      {
-        slug: BROKEN,
-        kind: "proxy",
-        name: "Broken app",
-        upstreamUrl: upstreamUrlFor(brokenScenario),
-        upstreamAuthMode: "oauth",
-        capabilities: ["tools", "prompts", "resources"],
-      },
-      {
-        slug: DOWN,
-        kind: "proxy",
-        name: "Down app",
-        upstreamUrl: upstreamUrlFor(downScenario),
-        upstreamAuthMode: "headers",
-        capabilities: ["tools", "prompts", "resources"],
-      },
-    ],
-    agents: [
-      { slug: "reader-agent", grants: { [CATALOG]: [{ role: "reader", mode: "allow" }] } },
-      { slug: "crawl-agent", grants: { [CATALOG]: [{ role: "crawler", mode: "approval" }] } },
-      {
-        slug: "mixed-agent",
-        grants: {
-          [CATALOG]: [
-            { role: "crawler", mode: "approval" },
-            { role: "both", mode: "allow" },
-          ],
-        },
-      },
-      { slug: "all-agent", grants: { [PLAIN]: [{ role: "all", mode: "allow" }] } },
-      {
-        slug: "breaker",
-        grants: { [BROKEN]: [{ role: "all", mode: "allow" }] },
-        tokens: [{ as: "breaker" }],
-      },
-    ],
-  });
-  // A tunneled app's roles and its last-connected stamp arrive at registration, so the
-  // registration write is what plants them — there is no create field for either.
-  await new Registry(env.DB).upsertDeclaredRoles(ns.apps[TUNNELAPP].id, { reader: ["get_.*"] });
-  const session = await seedOwnerSession(ns.owner);
-  detail = { ns, session, bearer: await deviceFlowToken(session.cookie) };
-}
-
-describe(`§2 · /apps/<slug> — the seven panes, the rail, the header and the three levels`, () => {
-  beforeAll(withAppDetailWorld);
-
-  // Owner questions 37(b) and 37(a), decided 2026-09-03 (§13 amended): the header's
-  // controls land on the app's own page, and a headers-mode app that cannot be reached
-  // says so in its own words rather than borrowing the oauth arm's.
-  it(`§2 · the app header's Connect refusal and Disconnect land back on the app's own page with the notice — /apps/<slug>/app_disconnect, never /apps/app_disconnect — and a finished Connect lands there too carrying done=connect · /apps's own row controls still land on /apps (the twin)`, async () => {
-    await breakBrokensCredential();
-    const html = await appPage(paths.appDetail(BROKEN));
-    // The header's Disconnect posts to the app page's own dispatch, never the list's.
-    expect(formsPostingTo(html, paths.appHeaderDisconnect(BROKEN)).length).toBeGreaterThan(0);
-    expect(formsPostingTo(html, paths.appDisconnect(BROKEN))).toEqual([]);
-    const csrf = csrfOf(html);
-
-    // A Connect refusal from the header lands on the app page: DOWN is headers-mode, so
-    // beginConnect refuses it, which is the cheapest refusal that reaches the redirect.
-    const refused = await formPost(paths.appConnect(DOWN), { csrf }, detail.session.cookie);
-    expect(refused.status).toBe(303);
-    const landing = new URL(refused.headers.get("Location") ?? "", ORIGIN);
-    expect(landing.pathname).toBe(paths.appPane(DOWN, "overview"));
-    expect(landing.searchParams.get("failed")).toBe("connect");
-
-    // Disconnect from the header: the notice lands on the app page, not on /apps.
-    const disconnected = await formPost(paths.appHeaderDisconnect(BROKEN), { csrf }, detail.session.cookie);
-    expect(disconnected.status).toBe(303);
-    const back = new URL(disconnected.headers.get("Location") ?? "", ORIGIN);
-    expect(back.pathname).toBe(paths.appPane(BROKEN, "overview"));
-    expect(back.searchParams.get("done")).toBe("app_disconnect");
-
-    // THE TWIN: the list's own rows still post to the list's targets, so the move above is
-    // the app page's and not a page-wide rename.
-    expect(postTargets(await appPage(paths.apps))).toContain(paths.appConnect(BROKEN));
-  });
-
-  it(`§2 · APP_PANES is the six non-landing panes in the brief's table order — catalog, roles, recording, overview, access, token, danger — each answering 200 at its own URL with aria-current="page" on its own rail entry and on no other, while the landing /apps/<slug> renders the Catalog and marks its entry too (2026-09-17) · /apps/<slug>/tools is a 404 and an unknown pane is that same noSuchPage 404 (the twin)`, async () => {
-    expect([...APP_PANES]).toEqual([
-      "catalog",
-      "roles",
-      "recording",
-      "overview",
-      "access",
-      "token",
-      "danger",
-    ]);
-
-    // Seven panes, seven renders: the marked entry is the pane's OWN and no other's.
-    for (const href of appRailHrefs(CATALOG)) {
-      const current = railEntries(await appPage(href), APP_RAIL_NAV_LABEL).filter((entry) => entry.current);
-      expect(current.map((entry) => entry.href), href).toEqual([href]);
-    }
-    // …and the LANDING marks the Catalog too, because it renders it (2026-09-17).
-    const onLanding = railEntries(await appPage(paths.appDetail(CATALOG)), APP_RAIL_NAV_LABEL).filter(
-      (entry) => entry.current,
-    );
-    expect(onLanding.map((entry) => entry.href)).toEqual([catalogPane(CATALOG)]);
-
-    // THE TWIN: an unknown pane is the yardstick, and the two aliases answer exactly it —
-    // byte-identical, so "404" is the same refusal rather than three different ones.
-    const unknown = await get(`${paths.appDetail(CATALOG)}/${uniqueSlug("nopane")}`, detail.session.cookie);
-    expect(unknown.status).toBe(404);
-    const yardstick = await unknown.text();
-    // `/tools` is the alias that stays a 404; `/catalog` is the pane's own URL and a 200.
-    const alias = await get(`${paths.appDetail(CATALOG)}/tools`, detail.session.cookie);
-    expect(alias.status).toBe(404);
-    expect(await alias.text()).toBe(yardstick);
-    expect((await get(catalogPane(CATALOG), detail.session.cookie)).status).toBe(200);
-  });
-
-  it(`§2 · GET /apps/<slug>/prompts and GET /apps/<slug>/resources answer 301 to /apps/<slug>/catalog — the Catalog holds them and the query is DROPPED, so ?sel= and ?q= do not ride along — while the six real panes answer 200 at their own URLs and the 301 is permanent, never a 302 or a 303 (the twin)`, async () => {
-    for (const moved of ["prompts", "resources"]) {
-      // A query on the way in, because "the query is dropped" is the half a bare probe
-      // cannot see: a 301 that carried `?sel=` forward would pass without it.
-      const from = `${paths.appDetail(CATALOG)}/${moved}?sel=tool:paper_fetch&q=paper`;
-      const answered = await get(from, detail.session.cookie);
-      expect(answered.status, from).toBe(301);
-      expect(answered.headers.get("Location"), from).toBe(catalogPane(CATALOG));
-    }
-    // THE TWIN: the panes that still exist are 200s at their own URLs, so the 301 is a
-    // statement about two names and not about the pane route.
-    for (const href of appPaneHrefs(CATALOG)) {
-      expect((await get(href, detail.session.cookie)).status, href).toBe(200);
-    }
-  });
-
-  it(`§2 · the app rail carries exactly the seven entries of the brief's pane table, in its order and under its headings — App holding Catalog, Roles, Recording and Overview, Access holding Agents and Token, and Danger zone ungrouped after them — and no pane renders a pill row: no nav.pill-row and no "App panes, compact" navigation on any of the seven, while /settings still renders its (the twin)`, async () => {
-    const html = await appPage(paths.appDetail(CATALOG));
-    const rail = railEntries(html, APP_RAIL_NAV_LABEL);
-    // The hrefs come from `paths`, never spelled; the labels are the table's own words.
-    expect(rail.map((entry) => entry.href)).toEqual(appRailHrefs(CATALOG));
-    expect(rail.map((entry) => entry.label)).toEqual([
-      "Catalog",
-      "Roles",
-      "Recording",
-      "Overview",
-      "Agents",
-      "Token",
-      "Danger zone",
-    ]);
-
-    // The two headings, read as ORDER inside the rail's own block rather than as markup.
-    const railText = textOf(navBlock(html, APP_RAIL_NAV_LABEL) ?? "");
-    const at = (word: string): number => {
-      const found = railText.indexOf(word);
-      expect(found, `the rail does not read "${word}"`).toBeGreaterThanOrEqual(0);
-      return found;
-    };
-    expect(at("App")).toBeLessThan(at("Catalog"));
-    expect(at("Overview")).toBeLessThan(at("Access"));
-    expect(at("Access")).toBeLessThan(at("Agents"));
-    expect(at("Token")).toBeLessThan(at("Danger zone"));
-
-    // No pill row on ANY of the seven — the rail-as-list is its replacement (2026-09-16).
-    for (const href of appPaneHrefs(CATALOG)) {
-      const pane = await appPage(href);
-      expect(railEntries(pane, APP_PILL_NAV_LABEL), href).toEqual([]);
-      expect(pane, href).not.toContain('class="pill-row"');
-    }
-    // THE TWIN: /settings still draws its, so "no pill row" is this page's property.
-    expect(railEntries(await page(paths.settings), PILL_NAV_LABEL).length).toBeGreaterThan(0);
-  });
-
-  it(`§2 · the Catalog rail marker is the app's tools + prompts + resources summed, BLANK when a family could not be read and the dimmed — when the app never connected; the Roles marker is the effective role count or "none"; the Agents marker is the number of agents holding ≥1 grant; the Token marker is the live count and the dimmed — for a proxied app; Overview and Danger zone carry no marker at all (the twin)`, async () => {
-    const html = await appPage(paths.appDetail(CATALOG));
-    const summed =
-      CATALOG_TOOLS.length + CATALOG_PROMPTS.length + CATALOG_RESOURCES.length + CATALOG_TEMPLATES.length;
-    expect(markerOn(html, catalogPane(CATALOG))).toBe(String(summed));
-    // The effective map, not the declaration: a proxied app's roles are all the owner's.
-    expect(markerOn(html, paths.appPane(CATALOG, "roles"))).toBe(String(Object.keys(CATALOG_ROLES).length));
-    const holders = (await grantsOnCatalog()) as Record<string, GrantEntry[]>;
-    expect(markerOn(html, paths.appPane(CATALOG, "access"))).toBe(String(Object.keys(holders).length));
-    // Proxied: no token dials in, so the marker is the dimmed em dash and never 0.
-    expect(markerOn(html, paths.appPane(CATALOG, "token"))).toBe(DIMMED_MARKER);
-    for (const pane of ["overview", "danger"] as const) {
-      expect(markerOn(html, paths.appPane(CATALOG, pane)), pane).toBe("");
-    }
-
-    // BLANK, not — and not 0: the app whose live listing could not be read at all.
-    expect(markerOn(await appPage(catalogPane(DOWN)), catalogPane(DOWN))).toBe("");
-    // The dimmed —: the tunneled app that has never connected, so there is no catalog.
-    const fresh = await appPage(catalogPane(FRESHAPP));
-    expect(markerOn(fresh, catalogPane(FRESHAPP))).toBe(DIMMED_MARKER);
-    // THE TWIN on the same render: an app with no role of any kind reads `none`.
-    expect(markerOn(await appPage(paths.appDetail(PLAIN)), paths.appPane(PLAIN, "roles"))).toBe("none");
-  });
-
-  it(`§2 · the Recording rail marker is the Two-factor dot's own markup and never a number — rail-dot--on with the sr-only text "on" while body logging is on, rail-dot--off with "off" when it is off — read on one app either side of a saved switch (the twin)`, async () => {
-    // Its own app, because the switch below is a WRITE and the shared world is read by
-    // four describes.
-    const slug = uniqueSlug("dot");
-    const ns = await seedNamespace(env.DB, { apps: [{ slug, kind: "tunnel", logBodies: true }] });
-    const { cookie } = await seedOwnerSession(ns.owner);
-    const pane = paths.appPane(slug, "recording");
-
-    const on = await page(pane, cookie);
-    const onAnchor = appRailAnchor(on, slug, pane);
-    expect(onAnchor).toContain("rail-dot--on");
-    expect(onAnchor).not.toContain("rail-dot--off");
-    expect(textOf(onAnchor)).toContain("on");
-    expect(markerOn(on, pane), "a dot is not a count").not.toMatch(/\d/);
-
-    // THE TWIN: the same app after the switch is saved off, through the pane's own form.
-    const posted = await formPost(
-      actionFor(on, "recording_set"),
-      unticked(paneSubmission(on, actionFor(on, "recording_set"))),
-      cookie,
-    );
-    expect(posted.status).toBe(303);
-    const off = await page(pane, cookie);
-    const offAnchor = appRailAnchor(off, slug, pane);
-    expect(offAnchor).toContain("rail-dot--off");
-    expect(offAnchor).not.toContain("rail-dot--on");
-    expect(textOf(offAnchor)).toContain("off");
-  });
-
-  it(`§2 · the header's title row is the "Apps ›" crumb linking /apps, the app's name, then its slug, kind and status as badge--title, with the description as the subtitle — and ONE tiles line beneath reading "T tools · P prompts · R resources · A agents · body logging on|off", a tunneled app adding " · last seen <relative>" and no pane carrying a separate "Last seen" note anywhere (the twin: the proxied app's tiles carry no last seen)`, async () => {
-    const html = await appPage(paths.appDetail(CATALOG));
-    const row = await appRowOf(CATALOG);
-    const text = textOf(html);
-    // The crumb is IN the title row, and it is a link to the list.
-    expect(text).toContain(`Apps › ${row.name}`);
-    expect(links(html, paths.apps)).toBe(true);
-    // slug / kind / status as title badges, read off the class the brief names.
-    const titleBadges = [...html.matchAll(/class="[^"]*badge--title[^"]*"[^>]*>([^<]*)</g)].map((badge) =>
-      textOf(badge[1]),
-    );
-    expect(titleBadges).toContain(CATALOG);
-    expect(titleBadges).toContain(row.kind);
-    // A status badge only where §8's row HAS a status — a proxied app carries none.
-    if (row.status !== undefined) expect(titleBadges).toContain(row.status);
-
-    // ONE tiles line, its numbers the same ones the rail sums.
-    const agents = Object.keys(await grantsOnCatalog()).length;
-    expect(text).toContain(
-      `${CATALOG_TOOLS.length} tools · ${CATALOG_PROMPTS.length} prompts · ` +
-        `${CATALOG_RESOURCES.length + CATALOG_TEMPLATES.length} resources · ${agents} agents · body logging off`,
-    );
-    // THE TWIN, and the "no separate note" half: a proxied app has no last seen at all.
-    expect(text).not.toContain("last seen");
-    expect(text).not.toContain("Last seen");
-
-    // A tunneled app carries the tail, and still no note of its own anywhere.
-    const tunneled = uniqueSlug("tiles");
-    const close = await dialTunnel(tunneled, { capabilities: ["tools"], tools: PLAIN_TOOLS });
-    try {
-      const tunnelText = textOf(await appPage(paths.appDetail(tunneled)));
-      expect(tunnelText).toContain("· last seen ");
-      expect(tunnelText).not.toContain("Last seen");
-    } finally {
-      await close();
-    }
-  });
-
-  it(`§2 · the proxied header card — endpoint, auth mode, forward identity and the Connect / Disconnect controls — sits above the pane on every pane EXCEPT Overview, which absorbs those fields into its own listing · a tunneled app renders no header card on any pane (the twin)`, async () => {
-    const row = await appRowOf(CATALOG);
-    if (row.endpoint === undefined) throw new Error("the proxied fixture carries no endpoint");
-    for (const href of appPaneHrefs(CATALOG)) {
-      const text = textOf(await appPage(href));
-      // Overview draws the same fields as its OWN listing, so the card's absence there is
-      // asserted structurally — by the class the card carries — and not by the endpoint.
-      expect(text, href).toContain(row.endpoint);
-    }
-    // ABOVE THE PANE, read as position rather than as a class: the card is whatever sits
-    // before the rail, and Overview's copy of the same three fields is inside its listing.
-    const aboveRail = (html: string): string => textOf(html.slice(0, html.indexOf('aria-label="App panes"')));
-    expect(aboveRail(await appPage(paths.appPane(CATALOG, "overview")))).not.toContain("Forward identity");
-    for (const href of appPaneHrefs(CATALOG).filter((pane) => pane !== paths.appPane(CATALOG, "overview"))) {
-      expect(aboveRail(await appPage(href)), href).toContain("Forward identity");
-    }
-
-    // The CONTROLS belong to the header rather than to a pane, so they sit above every one
-    // of them — Overview included, which absorbs the three FIELDS alone (2026-09-17).
-    await breakBrokensCredential();
-    for (const href of appPaneHrefs(BROKEN)) {
-      const drawn = postTargets(await appPage(href));
-      expect(drawn.includes(paths.appHeaderDisconnect(BROKEN)), href).toBe(true);
-    }
-
-    // THE TWIN: a tunneled app draws no card on any pane.
-    for (const href of appPaneHrefs(TUNNELAPP)) {
-      expect(await appPage(href), href).not.toContain('class="app-card"');
-    }
-  });
-
-  it(`§2 · the app page's root carries data-level chosen from the URL alone — 1 on /apps/<slug>, 2 on each of the seven panes, 3 on a pane carrying sel= — and the level header above the content names the level above and the current thing: at 1 "‹ Apps" → /apps titled with the app's name, at 2 "‹ <name>" → /apps/<slug> titled with the pane's own rail label, at 3 "‹ <pane label>" → the pane URL WITHOUT sel but keeping q, new and which, titled with the selected row's name`, async () => {
-    const name = (await appRowOf(CATALOG)).name;
-    const landingHref = paths.appDetail(CATALOG);
-    const landing = await appPage(landingHref);
-    expect(levelOf(landing)).toBe("1");
-    expect(levelHeader(landing)).toEqual({ back: "‹ Apps", href: paths.apps, title: name });
-
-    // Level 2 — one per pane, titled with the pane's OWN rail label, read off the rail.
-    const labels = new Map(
-      railEntries(landing, APP_RAIL_NAV_LABEL).map((entry) => [entry.href, entry.label] as const),
-    );
-    for (const href of appRailHrefs(CATALOG)) {
-      const html = await appPage(href);
-      expect(levelOf(html), href).toBe("2");
-      expect(levelHeader(html), href).toEqual({
-        back: `‹ ${name}`,
-        href: landingHref,
-        title: labels.get(href) ?? "",
-      });
-    }
-
-    // Level 3 — a pane carrying `sel`, whose back link drops `sel` and keeps `q`.
-    const selected = `${paths.appPane(CATALOG, "roles")}?q=paper&sel=role:reader`;
-    // …and the Catalog reaches it at its own URL, never at the landing's (2026-09-17).
-    expect(levelOf(await appPage(`${catalogPane(CATALOG)}?sel=tool:paper_fetch`))).toBe("3");
-    expect(levelHeader(await appPage(`${catalogPane(CATALOG)}?sel=tool:paper_fetch`)).href).toBe(
-      catalogPane(CATALOG),
-    );
-    const details = await appPage(selected);
-    expect(levelOf(details)).toBe("3");
-    expect(levelHeader(details)).toEqual({
-      back: `‹ ${labels.get(paths.appPane(CATALOG, "roles")) ?? ""}`,
-      href: `${paths.appPane(CATALOG, "roles")}?q=paper`,
-      title: "reader",
-    });
-  });
-
-  it(`§2 · the three wide panes render the listing alone — Overview, Danger zone, and Token for a PROXIED app carry listing--wide, no details pane and no level 3, so a sel= on them is still data-level 2 · a tunneled app's Token pane and the four other panes render listing + details and reach level 3 (the twin)`, async () => {
-    const wide = [
-      paths.appPane(CATALOG, "overview"),
-      paths.appPane(CATALOG, "danger"),
-      paths.appPane(CATALOG, "token"),
-    ];
-    for (const href of wide) {
-      const html = await appPage(href);
-      expect(html, href).toContain("listing--wide");
-      // A `sel` cannot take a wide pane to level 3: there is nothing to select into.
-      expect(levelOf(await appPage(`${href}?sel=role:reader`)), href).toBe("2");
-    }
-    // THE TWIN: every other pane is listing + details, and a `sel` reaches level 3.
-    for (const href of appPaneHrefs(CATALOG).filter((pane) => !wide.includes(pane))) {
-      expect(await appPage(href), href).not.toContain("listing--wide");
-    }
-    // …and a TUNNELED app's Token pane is one of them, because it has tokens to list.
-    const tunneled = await appPage(paths.appPane(TUNNELAPP, "token"));
-    expect(tunneled).not.toContain("listing--wide");
-  });
-});
-
-describe(`§3 · /apps/<slug> — the Catalog pane`, () => {
-  beforeAll(withAppDetailWorld);
-
-  it(`§3 · the Catalog listing header is the title Catalog over its kind's subtitle — tunneled "advertised by the app on its last connect · re-listed on every reconnect", proxied "fetched live from the upstream" — the summary line "T tools · P prompts · R resources · reachable by N agent(s)", and the filter as a GET form named q with the placeholder "filter tools, prompts, resources…" (the twin: the two kinds side by side)`, async () => {
-    const html = await appPage(catalogPane(CATALOG));
-    const text = textOf(html);
-    expect(text).toContain("Catalog");
-    expect(text).toContain(CATALOG_PROXIED_SUB);
-    expect(text).not.toContain(CATALOG_TUNNELED_SUB);
-    const agents = Object.keys(await grantsOnCatalog()).length;
-    expect(text).toContain(
-      `${CATALOG_TOOLS.length} tools · ${CATALOG_PROMPTS.length} prompts · ` +
-        `${CATALOG_RESOURCES.length + CATALOG_TEMPLATES.length} resources · reachable by ${agents} agents`,
-    );
-    // The filter is a GET form, so it survives scripting off and lands back on this pane.
-    expect(html).toContain('placeholder="filter tools, prompts, resources…"');
-    const filter = getFormsOn(html).find((form) => form.fields.includes("q"));
-    expect(filter?.action, "the filter lands back on the pane it filters").toBe(catalogPane(CATALOG));
-
-    // THE TWIN: the tunneled kind, same pane, its own sentence and not the other's.
-    const tunneled = uniqueSlug("cathead");
-    const close = await dialTunnel(tunneled, { capabilities: ["tools"], tools: PLAIN_TOOLS });
-    try {
-      const tunnelText = textOf(await appPage(catalogPane(tunneled)));
-      expect(tunnelText).toContain(CATALOG_TUNNELED_SUB);
-      expect(tunnelText).not.toContain(CATALOG_PROXIED_SUB);
-    } finally {
-      await close();
-    }
-  });
-
-  it(`§3 · the three groups "Tools · N", "Prompts · N" and "Resources · N" list the whole catalog in ONE pane — resources and templates in the Resources group, a template listed by its raw uriTemplate — and every row IS its own ?sel= link: sel=tool:<name>, sel=prompt:<name>, sel=resource:<uri>, the URI encoded and never the name (the twin: a resource whose NAME matches another row's URI is still selected by its own URI)`, async () => {
-    const landing = catalogPane(CATALOG);
-    const html = await appPage(landing);
-    const text = textOf(html);
-    expect(text).toContain(`Tools · ${CATALOG_TOOLS.length}`);
-    expect(text).toContain(`Prompts · ${CATALOG_PROMPTS.length}`);
-    expect(text).toContain(`Resources · ${CATALOG_RESOURCES.length + CATALOG_TEMPLATES.length}`);
-    // A template is listed by its RAW uriTemplate — §20.3 makes it an ordinary subject
-    // string rather than something the hub expands.
-    for (const template of CATALOG_TEMPLATE_URIS) expect(text, template).toContain(template);
-
-    // Every row IS the link, read as the `sel` values the pane's own anchors carry.
-    expect(selValuesOn(html, landing).sort()).toEqual(
-      [
-        ...CATALOG_TOOL_NAMES.map((name) => `tool:${name}`),
-        ...CATALOG_PROMPT_NAMES.map((name) => `prompt:${name}`),
-        ...[...CATALOG_RESOURCE_URIS, ...CATALOG_TEMPLATE_URIS].map((uri) => `resource:${uri}`),
-      ].sort(),
-    );
-    // THE TWIN (§20.2's trap): the decoy row's NAME is another row's URI, and it is still
-    // selected by its own URI — a `sel` naming the decoy's name reaches nothing.
-    expect(selValuesOn(html, landing)).toContain(`resource:${CATALOG_RESOURCES[1].uri}`);
-    expect(selValuesOn(html, landing)).not.toContain(`resource:${CATALOG_RESOURCES[1].name}`);
-  });
-
-  it(`§3 · a group of an unadvertised family reads "none advertised" beside its heading over ONE note row — tunneled "This app declared no <family> capability on its last connect." / proxied "The capabilities configured for this app omit <family>." with the family substituted — while the families the same app does advertise carry counts and list rows (the twin)`, async () => {
-    // Proxied: §20.2's "absent ≡ [tools]", so prompts and resources are unadvertised.
-    const plain = textOf(await appPage(catalogPane(PLAIN)));
-    for (const family of ["prompts", "resources"]) {
-      expect(plain, family).toContain(pinned(proxiedOmits(family)));
-    }
-    expect(plain).toContain(NONE_ADVERTISED);
-    // THE TWIN on the same render: the family it DOES advertise lists its row.
-    expect(plain).toContain(PLAIN_TOOLS[0].name);
-    expect(plain).toContain(`Tools · ${PLAIN_TOOLS.length}`);
-
-    // Tunneled: the same shape, its own sentence.
-    const slug = uniqueSlug("declares");
-    const served = [{ name: uniqueSlug("brief").replace(/-/g, "_"), description: "One." }];
-    const close = await dialTunnel(slug, { capabilities: ["tools", "prompts"], prompts: served, tools: PLAIN_TOOLS });
-    try {
-      const text = textOf(await appPage(catalogPane(slug)));
-      expect(text).toContain(tunneledUndeclared("resources"));
-      expect(text).not.toContain(pinned(proxiedOmits("resources")));
-      expect(text).toContain(served[0].name);
-    } finally {
-      await close();
-    }
-  });
-
-  it(`§3 · a tunneled app that has never connected renders ONE note — "This app has never connected, so the hub has no catalog to list yet." — in place of all three groups, and its Catalog rail marker is the dimmed — · the tunneled app beside it that connected lists its groups under a numeric marker (the twin)`, async () => {
-    const html = await appPage(catalogPane(FRESHAPP));
-    const text = textOf(html);
-    expect(text).toContain(NEVER_CONNECTED);
-    expect(markerOn(html, catalogPane(FRESHAPP))).toBe(DIMMED_MARKER);
-    // In place of ALL THREE: the note is the whole listing, not a fourth line beside them.
-    expect(text).not.toContain(NONE_ADVERTISED);
-    for (const family of ["tools", "prompts", "resources"]) {
-      expect(text, family).not.toContain(tunneledUndeclared(family));
-    }
-
-    // THE TWIN: a tunneled app that HAS connected lists and counts.
-    const slug = uniqueSlug("connected");
-    const close = await dialTunnel(slug, { capabilities: ["tools"], tools: PLAIN_TOOLS });
-    try {
-      const connected = await appPage(catalogPane(slug));
-      expect(textOf(connected)).not.toContain(NEVER_CONNECTED);
-      expect(markerOn(connected, catalogPane(slug))).toBe(String(PLAIN_TOOLS.length));
-    } finally {
-      await close();
-    }
-  });
-
-  it(`§3 · a proxied app whose live listing failed renders the unread state, never an empty one: "Couldn't reach <endpoint> — the live listing failed, so nothing is shown; calls return errors until it answers again." naming its own configured endpoint, or "Token refresh failed — calls return errors until you reconnect." beside Reconnect where the refresh is what broke — with a BLANK Catalog marker, never — and never 0 · the reachable proxied app beside it lists rows (the twin)`, async () => {
-    // The endpoint is read off §8's own row, never off the fixture's scenario.
-    const endpoint = (await appRowOf(DOWN)).endpoint ?? "";
-    expect(endpoint).not.toBe("");
-    const down = await appPage(catalogPane(DOWN));
-    expect(textOf(down)).toContain(unreachable(endpoint));
-    expect(markerOn(down, catalogPane(DOWN))).toBe("");
-    // A headers-mode app cannot reconnect, so it offers no control to do it with.
-    expect(postTargets(down)).not.toContain(paths.appConnect(DOWN));
-
-    // The other arm: the oauth app whose refresh failed says so, beside Reconnect.
-    await breakBrokensCredential();
-    const broken = await appPage(catalogPane(BROKEN));
-    expect(textOf(broken)).toContain(REFRESH_FAILED);
-    expect(postTargets(broken)).toContain(paths.appConnect(BROKEN));
-    expect(markerOn(broken, catalogPane(BROKEN))).toBe("");
-
-    // THE TWIN: the reachable proxied app's marker is a number and its rows are listed.
-    const reachable = await appPage(catalogPane(CATALOG));
-    expect(markerOn(reachable, catalogPane(CATALOG))).toMatch(/^\d+$/);
-    expect(textOf(reachable)).toContain(CATALOG_TOOL_NAMES[0]);
-  });
-
-  it(`§3 · a Catalog row is the name in mono over its description as one inline line, with one badge per agent that reaches it — "<agent>" where the grant allows and "<agent> · ask" as badge--warning where it asks — or the dim "no agent" where none does; an agent holding no grant on this app is named on no row, and an agent holding an allow role and an ask role over the same item is badged once, allow (the twin)`, async () => {
-    const text = textOf(await appPage(catalogPane(CATALOG)));
-    const blocks = blocksOf(text, CATALOG_TOOL_NAMES);
-
-    // `reader` reaches paper_fetch in allow mode and nothing else does.
-    expect(blocks.paper_fetch).toContain("reader-agent");
-    expect(blocks.paper_fetch).not.toContain("reader-agent · ask");
-
-    // jobfeed_crawl: `crawl-agent` asks, and `mixed-agent` holds BOTH an asking role and
-    // an allowing one over the same tool — allow wins, so it is badged once, plainly.
-    expect(blocks.jobfeed_crawl).toContain("crawl-agent · ask");
-    expect(blocks.jobfeed_crawl).toContain("mixed-agent");
-    expect(blocks.jobfeed_crawl).not.toContain("mixed-agent · ask");
-
-    // A tool no granted pattern reaches reads the dim "no agent".
-    expect(blocks.secret_push).toContain(NO_AGENT);
-
-    // An agent with no grant on THIS app is named on no row at all.
-    expect(text).not.toContain("all-agent");
-  });
-
-  it(`§3 · q filters every group by name or description substring and a group nothing matches reads "no match" under its own heading while the groups that do match still list rows · the unfiltered pane lists every row (the twin)`, async () => {
-    const landing = catalogPane(CATALOG);
-    // A term that reaches ONE tool by name and no prompt or resource at all.
-    const byName = textOf(await appPage(`${landing}?q=jobfeed`));
-    expect(byName).toContain("jobfeed_crawl");
-    expect(byName).not.toContain("paper_fetch");
-    expect(byName).toContain(NO_MATCH);
-
-    // …and by DESCRIPTION, which is the half a name-only filter would pass without.
-    const byDescription = textOf(await appPage(`${landing}?q=DOI`));
-    expect(byDescription).toContain("paper_fetch");
-    expect(byDescription).not.toContain("jobfeed_crawl");
-
-    // THE TWIN: unfiltered, every row is there and nothing reads "no match".
-    const all = textOf(await appPage(landing));
-    for (const name of CATALOG_TOOL_NAMES) expect(all, name).toContain(name);
-    expect(all).not.toContain(NO_MATCH);
-  });
-
-  it(`§3 · the Catalog details with nothing selected is the title Catalog over "Select a tool, prompt or resource for its details." and the card "Where this comes from": Schemas → tunneled "the app's last tools/list — the hub stores them, it does not author them" / proxied "the upstream's live listing, under a 10 s deadline", Reach → "computed with the gate's own matcher over each agent's grant"`, async () => {
-    const text = textOf(await appPage(catalogPane(CATALOG)));
-    expect(text).toContain(CATALOG_PROMPT);
-    expect(text).toContain("Where this comes from");
-    expect(text).toContain(pinned("the upstream's live listing, under a 10 s deadline"));
-    expect(text).toContain(REACH_SOURCE);
-
-    // The tunneled arm of the same card.
-    const slug = uniqueSlug("catwhere");
-    const close = await dialTunnel(slug, { capabilities: ["tools"], tools: PLAIN_TOOLS });
-    try {
-      const tunneled = textOf(await appPage(catalogPane(slug)));
-      expect(tunneled).toContain(
-        pinned("the app's last `tools/list` — the hub stores them, it does not author them"),
-      );
-      expect(tunneled).not.toContain(pinned("the upstream's live listing, under a 10 s deadline"));
-    } finally {
-      await close();
-    }
-  });
-
-  it(`§3 · a selected tool draws its name, a "tool" family badge and the full description as Markdown over the Arguments card: one row per schema LEAF — dotted paths, objects recursed into, an array printed as <type>[] and not recursed, required read off each level's own list — with a "writeOnly · masked" warning badge where the leaf declares it and "none" where the schema declares nothing, and a "Result · outputSchema" card of the same rows only where the tool declares one (the twin: the tool next door that declares none draws no Result card)`, async () => {
-    const landing = catalogPane(CATALOG);
-    const selected = textOf(await appPage(`${landing}?sel=tool:paper_fetch`));
-    expect(selected).toContain("paper_fetch");
-    expect(selected).toContain("tool");
-    // The whole description, not the row's first line.
-    expect(selected).toContain(PAPER_DETAIL);
-    expect(selected).toContain("Arguments");
-    // The LEAVES, derived on both sides — `schemaLeaves` is the page's own reader.
-    const leaves = schemaLeaves(PAPER_SCHEMA);
-    expect(leaves.map((leaf) => leaf.path)).toContain("options.depth");
-    for (const leaf of leaves) expect(selected, leaf.path).toContain(leaf.path);
-
-    // A schema declaring nothing reads `none` rather than an empty card.
-    expect(textOf(await appPage(`${landing}?sel=tool:jobfeed_crawl`))).toContain("none");
-
-    // The writeOnly badge, where the app declared one.
-    const secret = textOf(await appPage(`${landing}?sel=tool:secret_push`));
-    expect(secret).toContain("credentials.token");
-    expect(secret).toContain("writeOnly · masked");
-    // THE TWIN: neither tool declares an output schema, so neither draws the Result card.
-    expect(secret).not.toContain("Result · outputSchema");
-
-    // …and one that does, on a tunneled app of this row's own.
-    const slug = uniqueSlug("outschema");
-    const outputSchema = { type: "object", properties: { rows: { type: "array", items: { type: "string" } } } };
-    const tool = { name: "with_output", description: "Answers.", inputSchema: { type: "object" }, outputSchema };
-    const close = await dialTunnel(slug, { capabilities: ["tools"], tools: [tool] });
-    try {
-      const withOutput = textOf(await appPage(`${catalogPane(slug)}?sel=tool:with_output`));
-      expect(withOutput).toContain("Result · outputSchema");
-      // An array is printed as `<type>[]` and is not recursed into.
-      expect(withOutput).toContain("string[]");
-    } finally {
-      await close();
-    }
-  });
-
-  it(`§3/§20.3 · a selected PROMPT's Arguments card is one row per DECLARED argument and never a schema leaf — the argument's name as the path, its description or — in the type column, required / optional read off the declaration and no writeOnly badge anywhere — and it draws no Result card and no Resource card · a selected resource draws the Resource card instead — URI, Type, "Served on" → "the scoped endpoint only — <origin>/<user>/mcp/<slug>" printed with the hub's own origin and the owner's username, copyable and with the placeholder nowhere on the page, and "Matched" → "by URI, never by name" — and no Arguments card (the twin)`, async () => {
-    const landing = catalogPane(CATALOG);
-    const prompt = await appPage(`${landing}?sel=prompt:digest_daily`);
-    const promptText = textOf(prompt);
-    const declared = CATALOG_PROMPTS[0].arguments[0];
-    expect(promptText).toContain("Arguments");
-    expect(promptText).toContain(declared.name);
-    expect(promptText).toContain(declared.description);
-    expect(promptText).toContain("required");
-    expect(promptText).not.toContain("writeOnly");
-    expect(promptText).not.toContain("Result · outputSchema");
-    expect(promptText).not.toContain("Served on");
-    // The prompt with no argument reads the empty word rather than an empty card.
-    expect(textOf(await appPage(`${landing}?sel=prompt:weekly_note`))).toContain("none");
-
-    // THE TWIN: a resource draws the Resource card and no Arguments card.
-    const resourceHref = `${landing}?sel=resource:${encodeURIComponent(CATALOG_RESOURCE_URIS[0])}`;
-    const resource = await appPage(resourceHref);
-    const resourceText = textOf(resource);
-    const scoped = `${ORIGIN}${paths.mcpScoped(detail.ns.owner.username, CATALOG)}`;
-    expect(resourceText).toContain(CATALOG_RESOURCE_URIS[0]);
-    expect(resourceText).toContain(CATALOG_RESOURCES[0].mimeType);
-    expect(resourceText).toContain(`the scoped endpoint only — ${scoped}`);
-    expect(resource, "the placeholder is nowhere on the page").not.toContain("<hub>");
-    expect(resource).not.toContain("<user>");
-    expect(resourceText).toContain(MATCHED_BY_URI);
-    expect(resourceText).not.toContain("Arguments");
-  });
-
-  it(`§3/§23.6 · the hub-known card separates canonical scoped identity from the generated TypeScript path on tools, while prompts and resources keep only canonical identity`, async () => {
-    const landing = catalogPane(CATALOG);
-    const serviceName = generatedAlias(CATALOG, "service");
-    expect(serviceName).not.toBeNull();
-
-    // A tool every reaching agent reaches in allow mode.
-    const paper = textOf(await appPage(`${landing}?sel=tool:paper_fetch`));
-    expect(paper).toContain(`Scoped MCP identity ${CATALOG} / paper_fetch`);
-    expect(paper).toContain(`TypeScript identity mcp.${serviceName}.paperFetch`);
-    expect(paper).toContain("reader-agent · via reader");
-    expect(paper).toContain(NO_APPROVAL);
-    expect(paper).toContain(NO_REDACTED);
-
-    // A tool one agent reaches only in approval mode.
-    const jobfeed = textOf(await appPage(`${landing}?sel=tool:jobfeed_crawl`));
-    expect(jobfeed).toContain("asked for");
-    expect(jobfeed).toContain("crawl-agent");
-
-    // A tool no granted pattern reaches, whose redaction is config plus writeOnly.
-    const secret = textOf(await appPage(`${landing}?sel=tool:secret_push`));
-    expect(secret).toContain(NO_AGENT_YET);
-    expect(secret).toContain("arguments");
-    expect(secret).toContain("payload.key");
-    expect(secret).toContain("credentials.token");
-    expect(secret).toContain("results");
-    expect(secret).toContain("out.token");
-
-    // A prompt keeps its canonical scoped identity and has no TypeScript call path.
-    const prompt = detailsPaneOf(await appPage(`${landing}?sel=prompt:digest_daily`));
-    expect(textOf(prompt)).toContain(`Scoped MCP identity ${CATALOG} / digest_daily`);
-    expect(prompt).not.toContain("TypeScript identity");
-    expect(textOf(prompt)).toContain(NEVER_GATED);
-    expect(textOf(prompt)).toContain("audience");
-
-    // THE TWIN: a resource also has canonical identity, and no TypeScript, Approval or Redaction.
-    const resource = detailsPaneOf(
-      await appPage(`${landing}?sel=resource:${encodeURIComponent(CATALOG_RESOURCE_URIS[0])}`),
-    );
-    const resourceText = textOf(resource);
-    expect(resourceText).toContain(`Scoped MCP identity ${CATALOG} / ${CATALOG_RESOURCE_URIS[0]}`);
-    expect(resource).not.toContain("TypeScript identity");
-    const hubCard = resource.slice(resource.indexOf("What only the hub knows"));
-    expect(hubCard).not.toContain("Approval");
-    expect(hubCard).not.toContain("Redaction");
-    expect(hubCard).toContain("Reachable by");
-
-  });
-
-  it(`§3 · the Catalog details foot reads "The same block the audit row and the agent page show for this <family>. Editing reach happens on Agents, masking on Recording." with the family substituted and both words linking their own panes — /apps/<slug>/access and /apps/<slug>/recording`, async () => {
-    const landing = catalogPane(CATALOG);
-    for (const [sel, family] of [
-      ["tool:paper_fetch", "tool"],
-      ["prompt:digest_daily", "prompt"],
-      [`resource:${encodeURIComponent(CATALOG_RESOURCE_URIS[0])}`, "resource"],
-    ] as const) {
-      const html = await appPage(`${landing}?sel=${sel}`);
-      expect(textOf(html), sel).toContain(catalogFoot(family));
-      expect(links(html, paths.appPane(CATALOG, "access")), sel).toBe(true);
-      expect(links(html, paths.appPane(CATALOG, "recording")), sel).toBe(true);
-    }
-  });
-
-  it(`§3/§7 · the Catalog is the owner's own unfiltered read AND the scoped endpoint's own listing: a tool no granted pattern reaches is listed beside the ones that are (§7 step 2 — owner → all), and tools/list, prompts/list, resources/list and resources/templates/list posted to /<user>/mcp/<slug> under the owner's own bearer answer exactly the names the pane rendered and exactly the numbers its rail marker sums — for a tunneled app and for a proxied one`, async () => {
-    const tunneled = uniqueSlug("scoped");
-    const close = await dialTunnel(tunneled, {
-      capabilities: ["tools", "prompts", "resources"],
-      tools: PLAIN_TOOLS,
-      prompts: [{ name: "one_prompt", description: "One." }],
-      resources: [{ uri: "news://one", name: "One", mimeType: "text/plain" }],
-    });
-    try {
-      for (const slug of [CATALOG, tunneled]) {
-        const html = await appPage(catalogPane(slug));
-        const text = textOf(html);
-        const listed = [
-          ...((await scopedList(slug, "tools/list")).tools ?? []).map((row) => row.name),
-          ...((await scopedList(slug, "prompts/list")).prompts ?? []).map((row) => row.name),
-          ...((await scopedList(slug, "resources/list")).resources ?? []).map((row) => row.uri ?? ""),
-          ...((await scopedList(slug, "resources/templates/list")).resourceTemplates ?? []).map(
-            (row) => row.uriTemplate ?? "",
-          ),
-        ];
-        expect(listed.length, slug).toBeGreaterThan(0);
-        for (const name of listed) expect(text, `${slug} · ${name}`).toContain(name);
-        expect(markerOn(html, catalogPane(slug)), slug).toBe(String(listed.length));
-      }
-    } finally {
-      await close();
-    }
-    // §7 step 2, on the app whose grants reach only some of it: the tool no granted
-    // pattern reaches is listed all the same, which is what "the owner's own unfiltered
-    // read" means — and its row says so rather than hiding it.
-    const unreached = textOf(rowMarkupFor(await appPage(catalogPane(CATALOG)), "tool:secret_push"));
-    expect(unreached).toContain("secret_push");
-    expect(unreached).toContain(NO_AGENT);
-  });
-
-  it(`§3 · a tunneled app's Catalog is the DO's cached catalog: the tools it advertised on its last connect are listed and counted while its socket is open, and are still listed, unchanged and still counted, after the socket closes and the header reads offline`, async () => {
-    const slug = uniqueSlug("cached");
-    const tools = [
-      { name: uniqueSlug("kept").replace(/-/g, "_"), description: "One.", inputSchema: { type: "object" } },
-      { name: uniqueSlug("held").replace(/-/g, "_"), description: "Two.", inputSchema: { type: "object" } },
-    ];
-    const close = await dialTunnel(slug, { capabilities: ["tools"], tools });
-    const landing = catalogPane(slug);
-    const online = await appPage(landing);
-    for (const tool of tools) expect(textOf(online), tool.name).toContain(tool.name);
-    expect(markerOn(online, landing)).toBe(String(tools.length));
-    expect(textOf(online)).toMatch(/\bonline\b/);
-
-    await close();
-    const offline = await appPage(landing);
-    for (const tool of tools) expect(textOf(offline), tool.name).toContain(tool.name);
-    expect(markerOn(offline, landing)).toBe(String(tools.length));
-    expect(textOf(offline)).toMatch(/\boffline\b/);
-  });
-
-  it(`§3 · a description is the Markdown an app wrote it in (2026-09-16): the row renders its FIRST paragraph inline with every block wrapper dropped so the row stays one line, the details render it whole — **bold** as <strong>, a fence as <pre><code>, a list as <ul>, an http link carrying rel="noopener noreferrer" target="_blank" — while the app's own markup never becomes markup: a javascript: link renders as its own text with no anchor and a literal <script> arrives escaped (the twin)`, async () => {
-    const landing = catalogPane(CATALOG);
-    const details = await appPage(`${landing}?sel=tool:${MARKDOWN_TOOL.name}`);
-    expect(details).toContain("<strong>");
-    expect(details).toContain("<pre><code");
-    expect(details).toContain("<ul>");
-    expect(details).toMatch(/rel="noopener noreferrer"/);
-    expect(details).toMatch(/target="_blank"/);
-    // THE TWIN, the app's markup as data: no javascript: anchor and no live <script>.
-    expect(details).not.toContain('href="javascript:');
-    expect(details).not.toContain("<script>alert");
-    expect(details).toContain("&lt;script&gt;");
-
-    // The ROW is the first paragraph inline, with the block wrappers dropped.
-    const row = rowMarkupFor(await appPage(landing), `tool:${MARKDOWN_TOOL.name}`);
-    expect(row).not.toContain("<pre");
-    expect(row).not.toContain("<ul>");
-  });
-
-  it(`§3 · the Catalog pane edits nothing: on either kind of app it renders no mutating form of any kind, no checkbox and no radio · the same page's header card, Roles, Recording and Agents panes do (the twin)`, async () => {
-    for (const slug of [CATALOG, TUNNELAPP]) {
-      const html = await appPage(catalogPane(slug));
-      // The header's own controls are a proxied-oauth thing and neither fixture has them,
-      // so the pane's own emptiness is the whole claim here.
-      expect(opsOn(html), slug).toEqual([]);
-      expect(html, slug).not.toContain('type="checkbox"');
-      expect(html, slug).not.toContain('type="radio"');
-    }
-    // THE TWIN: the three panes that DO edit, on the same app.
-    // The three composed Save targets — op-SHAPED without being ops (§4/§5 compose one
-    // app_update each), which is what the parity row's own exemption records.
-    expect(opsOn(await appPage(`${paths.appPane(CATALOG, "roles")}?sel=role:reader`))).toContain("role_set");
-    expect(opsOn(await appPage(paths.appPane(CATALOG, "recording")))).toContain("recording_set");
-    expect(opsOn(await appPage(`${paths.appPane(CATALOG, "access")}?sel=agent:reader-agent`))).toContain(
-      "grant_set",
-    );
-  });
-});
-
-/* ------------------------------------------------------------------ *
- * The Roles and Recording panes — the world their rows tick over
- * ------------------------------------------------------------------ */
-
-/** One `get_`/`put_` pair so a pattern reaches exactly one of them, a third name for a
- *  second pattern family, and one prompt — with no resource at all, so "a family the app
- *  has none of is omitted" has something to omit. */
-const ROLE_TOOLS = [
-  { name: "get_paper", description: "Read a paper.", inputSchema: { type: "object" } },
-  { name: "put_paper", description: "Write a paper.", inputSchema: { type: "object" } },
-  { name: "jobfeed_crawl", description: "Crawl the boards.", inputSchema: { type: "object" } },
-];
-const ROLE_PROMPTS = [{ name: "digest_daily", description: "The day's digest.", arguments: [] }];
-
-/**
- * One tunneled app of the Roles pane's own: a real connect, so there is a catalog to tick
- * over and a `matches N` to compute, then the two maps the pane merges — the app's
- * declaration (`upsertDeclaredRoles`, which is what a connect writes) and the owner's
- * (`app_update { owner_roles }`, the only writer §1 gives it). The socket is closed
- * immediately: the cached catalog outlives it, which its own row pins.
- */
-async function seedRoleApp(
-  handle: string,
-  spec: { declared?: RoleDeclaration; owner?: RoleDeclaration } = {},
-): Promise<{ slug: string }> {
-  const slug = uniqueSlug(handle);
-  const close = await dialTunnel(slug, {
-    capabilities: ["tools", "prompts"],
-    tools: ROLE_TOOLS,
-    prompts: ROLE_PROMPTS,
-  });
-  await close();
-  const app = await new Registry(env.DB).getApp(detail.ns.owner.userId, slug);
-  if (app === null) throw new Error(`the seeded role app "${slug}" vanished`);
-  if (spec.declared !== undefined) await new Registry(env.DB).upsertDeclaredRoles(app.id, spec.declared);
-  if (spec.owner !== undefined) {
-    await ops.app_update.handler(detail.ns.owner.userId, { slug, owner_roles: spec.owner });
-  }
-  return { slug };
-}
-
-/** One agent holding one role on one app, so a holders' badge has a holder — created
- *  through the ops rather than through the seed, because the app already exists. */
-async function grantRole(
-  app: string,
-  handle: string,
-  role: string,
-  mode: "allow" | "approval",
-): Promise<string> {
-  const slug = uniqueSlug(handle);
-  await ops.agent_create.handler(detail.ns.owner.userId, { slug, name: slug });
-  await ops.grant_set.handler(detail.ns.owner.userId, {
-    agent: slug,
-    app,
-    roles: [mode === "allow" ? role : `${role}:approval`],
-  });
-  return slug;
-}
-
-/** The owner map as the STORE holds it — what a composed save is asserted against, rather
- *  than against the page's own redraw of it. */
-async function ownerRolesOf(slug: string): Promise<RoleDeclaration> {
-  return (await new Registry(env.DB).getApp(detail.ns.owner.userId, slug))?.ownerRoles ?? {};
-}
-
-/** Every checkbox a pane renders, as its name and whether it is ticked — the Roles and
- *  Recording editors' whole control surface, read without naming the element around it.
- *  A `disabled` box is reported too; `disabledBoxesOn` is what asks about that. */
-function checkboxesOn(html: string): Record<string, boolean> {
-  const found: Record<string, boolean> = {};
-  for (const control of html.matchAll(/<input\b([^>]*)>/g)) {
-    if (attributeOf(control[1], "type") !== "checkbox") continue;
-    const name = decodeEntities(attributeOf(control[1], "name") ?? "");
-    if (name === "") continue;
-    found[name] = /\bchecked\b/.test(control[1]);
-  }
-  return found;
-}
-
-/** The names of the checkboxes a pane drew `disabled` — "the control is there and cannot
- *  be moved" is a different claim from "there is no control". */
-function disabledBoxesOn(html: string): string[] {
-  const found: string[] = [];
-  for (const control of html.matchAll(/<input\b([^>]*)>/g)) {
-    if (attributeOf(control[1], "type") !== "checkbox") continue;
-    if (!/\bdisabled\b/.test(control[1])) continue;
-    found.push(decodeEntities(attributeOf(control[1], "name") ?? ""));
-  }
-  return found;
-}
-
-/** The values of every submit control with one name — the editors' `drop`, `add` and
- *  `keep` rows, each of which is one button or one hidden field per row it belongs to. */
-function valuesNamed(name: string, html: string): string[] {
-  const found: string[] = [];
-  for (const control of html.matchAll(/<(?:input|button)\b([^>]*)>/g)) {
-    if (decodeEntities(attributeOf(control[1], "name") ?? "") !== name) continue;
-    found.push(decodeEntities(attributeOf(control[1], "value") ?? ""));
-  }
-  return found;
-}
-
-describe(`§4/§20.3 · /apps/<slug> — the Roles pane and role_set`, () => {
-  beforeAll(withAppDetailWorld);
-
-  it(`§4 · the Roles listing header is the title Roles over "named sets of what this app exposes" and the summary "D declared by the app · Y yours · plus the built-in all" — tunneled adding " · the app's declaration wins when it declares a name you defined", proxied " · a proxied app declares none, so every role is yours" — and the LISTING carries no filter at all (the twin: the two kinds side by side)`, async () => {
-    const tunneled = await seedRoleApp("rolehead", {
-      declared: { app_role: ["get_.*"] },
-      owner: { mine: { tools: ["put_paper"] } },
-    });
-    const html = await page(paths.appPane(tunneled.slug, "roles"), detail.session.cookie);
-    const text = textOf(html);
-    expect(text).toContain("Roles");
-    expect(text).toContain(ROLES_SUB);
-    expect(text).toContain("1 declared by the app · 1 yours · plus the built-in all");
-    expect(text).toContain(ROLES_TUNNELED_TAIL);
-    expect(text).not.toContain(ROLES_PROXIED_TAIL);
-    // No filter on the LISTING — the editor's filter lives in the details and carries sel.
-    expect(getFormsOn(html)).toEqual([]);
-
-    // THE TWIN: the proxied kind, whose roles are all the owner's.
-    const proxied = textOf(await appPage(paths.appPane(CATALOG, "roles")));
-    expect(proxied).toContain(`0 declared by the app · ${Object.keys(CATALOG_ROLES).length} yours · plus the built-in all`);
-    expect(proxied).toContain(ROLES_PROXIED_TAIL);
-    expect(proxied).not.toContain(ROLES_TUNNELED_TAIL);
-  });
-
-  it(`§4 · one row per effective role with the built-in all LAST, each the name in mono under a source badge — built-in / app / "app · replaced yours" titled "the app declares this name — its declaration replaced yours" / "yours" as badge--success — over "tools a, b · prompts c · matches N" ("every tool, prompt and resource, present and future" for all), with one badge per agent holding it ("<agent>" / "<agent> · ask") or the dim "held by no agent"; the row IS the ?sel=role:<name> link and the foot's left carries New role → ?new=1`, async () => {
-    const app = await seedRoleApp("rolerows", {
-      declared: { app_role: ["get_.*"] },
-      owner: { mine: { tools: ["put_paper"] }, app_role: { tools: ["jobfeed_crawl"] } },
-    });
-    const pane = paths.appPane(app.slug, "roles");
-    const holder = await grantRole(app.slug, "holder", "mine", "allow");
-    const asker = await grantRole(app.slug, "asker", "app_role", "approval");
-    const html = await page(pane, detail.session.cookie);
-
-    // One row per EFFECTIVE role, then `all` last — order read off the rows themselves.
-    const drawn = selValuesOn(html, pane);
-    expect([...drawn].sort()).toEqual(["role:all", "role:app_role", "role:mine"]);
-    expect(drawn[drawn.length - 1], "the built-in is drawn last").toBe("role:all");
-
-    const rows = Object.fromEntries(
-      ["app_role", "mine", "all"].map((name) => [name, textOf(rowMarkupFor(html, `role:${name}`))]),
-    );
-    // The shadowed name: the app's declaration won, and the row says so.
-    expect(rows.app_role).toContain(ROLE_REPLACED);
-    expect(html).toContain(ROLE_REPLACED_TITLE);
-    expect(rows.app_role).toContain("tools get_.*");
-    expect(rows.app_role).toContain("matches 1");
-    expect(rows.app_role).toContain(`${asker} · ask`);
-
-    expect(rows.mine).toContain("yours");
-    expect(rows.mine).toContain("matches 1");
-    expect(rows.mine).toContain(holder);
-    expect(rows.mine).not.toContain(`${holder} · ask`);
-
-    expect(rows.all).toContain("built-in");
-    expect(rows.all).toContain(ROLE_ALL_ITEMS);
-    expect(rows.all).toContain(HELD_BY_NONE);
-
-    // The foot's New role.
-    expect(links(html, `${pane}?new=1`)).toBe(true);
-  });
-
-  it(`§4/§20.3 · a name the owner defined AND the app declares appears ONCE, its content the app's declaration and its badge "app · replaced yours" — effectiveRoles, the app on top, never a union of the two maps — while the owner's other names keep the "yours" badge and the app's other names keep "app" (the twin: the same owner map before the app declared that name)`, async () => {
-    const app = await seedRoleApp("shadow", { owner: { clash: { tools: ["put_paper"] }, mine: { tools: ["get_paper"] } } });
-    const pane = paths.appPane(app.slug, "roles");
-
-    // BEFORE — the twin: the owner's own name, its own content, badged "yours".
-    const before = await page(pane, detail.session.cookie);
-    expect(textOf(rowMarkupFor(before, "role:clash"))).toContain("yours");
-    expect(textOf(rowMarkupFor(before, "role:clash"))).toContain("put_paper");
-
-    // The app declares the same name on its next connect, with DIFFERENT content.
-    const row = await new Registry(env.DB).getApp(detail.ns.owner.userId, app.slug);
-    if (row === null) throw new Error("the seeded role app vanished");
-    await new Registry(env.DB).upsertDeclaredRoles(row.id, { clash: ["jobfeed_.*"], theirs: ["get_.*"] });
-
-    const after = await page(pane, detail.session.cookie);
-    // ONCE, not twice: a union would list `clash` on both sides of the summary.
-    expect(selValuesOn(after, pane).filter((sel) => sel === "role:clash").length).toBe(1);
-    const clash = textOf(rowMarkupFor(after, "role:clash"));
-    expect(clash).toContain(ROLE_REPLACED);
-    expect(clash).toContain("jobfeed_.*");
-    expect(clash, "the app's declaration REPLACED the owner's, it did not merge with it").not.toContain(
-      "put_paper",
-    );
-    // The neighbours keep their own sources.
-    expect(textOf(rowMarkupFor(after, "role:mine"))).toContain("yours");
-    const theirs = textOf(rowMarkupFor(after, "role:theirs"));
-    expect(theirs).toContain("app");
-    expect(theirs).not.toContain(ROLE_REPLACED);
-  });
-
-  it(`§4 · "matches N" is the count of catalog items the role's own patterns match, computed with the gate's own matcher: a literal role and a pattern role each carry their own N, a pattern reaching prompts and resources counts them too, and a role whose patterns match nothing today reads matches 0 rather than omitting the clause (the twin)`, async () => {
-    const app = await seedRoleApp("matches", {
-      owner: {
-        // `get_.*` reaches one of the two tools; the literal reaches exactly itself;
-        // `digest_.*` reaches the one prompt; and the last pattern reaches nothing today.
-        pattern_role: { tools: ["get_.*"] },
-        literal_role: { tools: ["put_paper"] },
-        prompt_role: { prompts: ["digest_.*"] },
-        empty_role: { tools: ["nothing_.*"] },
-      },
-    });
-    const html = await page(paths.appPane(app.slug, "roles"), detail.session.cookie);
-    expect(textOf(rowMarkupFor(html, "role:pattern_role"))).toContain("matches 1");
-    expect(textOf(rowMarkupFor(html, "role:literal_role"))).toContain("matches 1");
-    expect(textOf(rowMarkupFor(html, "role:prompt_role"))).toContain("matches 1");
-    // THE TWIN: the clause is there and reads 0 rather than being left off.
-    expect(textOf(rowMarkupFor(html, "role:empty_role"))).toContain("matches 0");
-  });
-
-  it(`§4 · the Roles details with nothing selected is "Select a role to see what it can do, or add one of your own." over the card "Two sources, one rule": "The app's" → tunneled "declared at connect; read-only here — the app owns them" / proxied "none: a proxied app declares no roles"; "Yours" → "defined here by ticking items or adding patterns; usable in grants like any role"; "Collision" → "if the app later declares a name you defined, its declaration replaces yours — the row says so"`, async () => {
-    const app = await seedRoleApp("rolecard", { declared: { app_role: ["get_.*"] } });
-    const tunneled = textOf(await page(paths.appPane(app.slug, "roles"), detail.session.cookie));
-    expect(tunneled).toContain(ROLES_PROMPT);
-    expect(tunneled).toContain("Two sources, one rule");
-    expect(tunneled).toContain("declared at connect; read-only here — the app owns them");
-    expect(tunneled).toContain(
-      "defined here by ticking items or adding patterns; usable in grants like any role",
-    );
-    expect(tunneled).toContain(COLLISION_RULE);
-
-    // The proxied arm of the same card.
-    const proxied = textOf(await appPage(paths.appPane(CATALOG, "roles")));
-    expect(proxied).toContain("none: a proxied app declares no roles");
-    expect(proxied).not.toContain("declared at connect; read-only here — the app owns them");
-  });
-
-  it(`§4 · a selected app-declared role is read-only: the name, the "declared by the app" badge, its holders' badges and "Declared by <name> at connect. Read-only: the app owns it and may widen it on its next connect." — or, where it shadows one of the owner's, "<name> declares this name, so its declaration replaced the one you had defined. Read-only: the app owns it." — every item row drawn as a locked check titled "in this role" or an empty box titled "not in this role" and never a checkbox, no filter, no Add as pattern, no Delete role and no Save (the twin: the owner's own role beside it draws all of them)`, async () => {
-    const app = await seedRoleApp("readonly", {
-      declared: { app_role: ["get_.*"], shadowing: ["put_paper"] },
-      owner: { shadowing: { tools: ["jobfeed_crawl"] }, mine: { tools: ["get_paper"] } },
-    });
-    const name = (await appRowOf(app.slug)).name;
-    const pane = paths.appPane(app.slug, "roles");
-
-    const declared = await page(`${pane}?sel=role:app_role`, detail.session.cookie);
-    const declaredText = textOf(declared);
-    expect(declaredText).toContain("declared by the app");
-    expect(declaredText).toContain(appRoleExplained(name));
-    // Read-only means read-only: no tick of any kind, and no form to submit one with.
-    expect(declared).not.toContain('name="i.');
-    expect(declared).not.toContain('name="drop"');
-    expect(declared).not.toContain('name="add"');
-    expect(declared).not.toContain('name="delete"');
-    expect(opsOn(declared)).not.toContain("role_set");
-    expect(declared).toContain("in this role");
-    expect(declared).toContain("not in this role");
-    expect(textOf(declared), "an app-declared role has no editor foot").not.toContain("Save");
-
-    // The shadowing arm says WHOSE it replaced.
-    const shadowed = textOf(await page(`${pane}?sel=role:shadowing`, detail.session.cookie));
-    expect(shadowed).toContain(shadowedExplained(name));
-
-    // THE TWIN: the owner's own role, on the same app, draws all of them.
-    const mine = await page(`${pane}?sel=role:mine`, detail.session.cookie);
-    expect(mine).toContain('name="i.');
-    expect(opsOn(mine)).toContain("role_set");
-  });
-
-  it(`§4 · the built-in all's details read "Every tool, prompt and resource, present and future. Never declarable, only grantable." with no groups, no Patterns section and no form of any kind`, async () => {
-    const app = await seedRoleApp("allrole", { owner: { mine: { tools: ["get_paper"] } } });
-    const html = await page(`${paths.appPane(app.slug, "roles")}?sel=role:all`, detail.session.cookie);
-    const text = textOf(html);
-    expect(text).toContain("built-in");
-    expect(text).toContain(ALL_EXPLAINED);
-    // The legend is read off the MARKUP: `textOf` closes the space before a full stop, so
-    // "aliases .*" survives a text walk only as "aliases.*".
-    expect(html).not.toContain(PATTERNS_LEGEND);
-    expect(text).not.toContain("Patterns ·");
-    expect(html).not.toContain('name="i.');
-    expect(opsOn(html)).not.toContain("role_set");
-    expect(text, "the built-in has no editor foot either").not.toContain("Discard");
-  });
-
-  it(`§4 · a selected role of the owner's own is editable: the explanation per kind — tunneled "Defined by you. If <name> later declares a role named <role>, the app's declaration replaces this one." / proxied "Defined by you. A proxied app declares no roles, so this is the only kind it has." — the filter (GET, q, placeholder "filter, or type a pattern…", carrying sel), the groups "Tools · K of N", "Prompts · K of N", "Resources · K of N" with K the count in the role and a family the app has none of omitted, and per row a checkbox <input type="checkbox" name="i.<family>/<name>" value="1"> checked at the literal, or a .cb.lock titled "matched by <patterns>" where a pattern already reaches it`, async () => {
-    const app = await seedRoleApp("editable", {
-      owner: { mine: { tools: ["put_paper", "get_.*"] } },
-    });
-    const name = (await appRowOf(app.slug)).name;
-    const pane = paths.appPane(app.slug, "roles");
-    const href = `${pane}?sel=role:mine`;
-    const html = await page(href, detail.session.cookie);
-    const text = textOf(html);
-
-    expect(text).toContain(yoursTunneled(name, "mine"));
-    expect(html).toContain('placeholder="filter, or type a pattern…"');
-    expect(getFormsOn(html)).toContainEqual({ action: pane, fields: ["q", "sel"].sort() });
-
-    // K of N per family, and the family the app declares none of is OMITTED.
-    expect(text).toContain(`Tools · 2 of ${ROLE_TOOLS.length}`);
-    expect(text).toContain(`Prompts · 0 of ${ROLE_PROMPTS.length}`);
-    expect(text).not.toContain("Resources ·");
-
-    // The literal is a ticked checkbox; the pattern-reached row is a LOCKED check, so a
-    // save cannot silently turn a pattern's reach into a literal.
-    const boxes = checkboxesOn(html);
-    expect(boxes["i.tools/put_paper"]).toBe(true);
-    expect(boxes["i.tools/get_paper"]).toBeUndefined();
-    expect(html).toContain("cb lock");
-    expect(html).toContain("matched by get_.*");
-    // The editor foot, per the 2026-09-17 ruling: Discard and Save on every editable role.
-    expect(text).toContain("Discard");
-    expect(text).toContain("Save");
-  });
-
-  it(`§4 · "Patterns · N" is one row per non-literal pattern — the pattern, its family and "matches N today, and any added later" under the legend "anchored · * aliases .*" — each carrying a remove submit named drop with the value "<family>/<pattern>" while the role is editable and a locked check where it is not (the twin)`, async () => {
-    const app = await seedRoleApp("patterns", {
-      declared: { theirs: ["put_.*"] },
-      owner: { mine: { tools: ["get_.*"] } },
-    });
-    const pane = paths.appPane(app.slug, "roles");
-    const editable = await page(`${pane}?sel=role:mine`, detail.session.cookie);
-    const text = textOf(editable);
-    expect(text).toContain("Patterns · 1");
-    // The legend is read off the MARKUP: `textOf` closes the space before a full stop, so
-    // "aliases .*" survives a text walk only as "aliases.*".
-    expect(editable).toContain(PATTERNS_LEGEND);
-    expect(text).toContain("get_.*");
-    expect(text).toContain("matches 1 today, and any added later");
-    expect(valuesNamed("drop", editable)).toEqual(["tools/get_.*"]);
-    // The pattern the form still lists rides the save as a `keep`.
-    expect(paneSubmission(editable, actionFor(editable, "role_set"))["keep"]).toBe("tools/get_.*");
-
-    // THE TWIN: the app's own role lists its pattern under the SAME legend — the group is
-    // the group whoever may edit it — and offers no way to drop it.
-    const readOnly = await page(`${pane}?sel=role:theirs`, detail.session.cookie);
-    expect(textOf(readOnly)).toContain("put_.*");
-    expect(readOnly).toContain(PATTERNS_LEGEND);
-    expect(valuesNamed("drop", readOnly)).toEqual([]);
-  });
-
-  it(`§4 · ?new=1 draws the new-role editor — an <input name="role"> with the placeholder "role name" and pattern [a-z0-9_-]+ in place of the name, an empty hidden was=, every checkbox unchecked, no Patterns rows and no Delete role — and the listing's New role link is what reaches it · a saved role's editor carries the hidden role, the hidden was=<name> and the Delete (the twin)`, async () => {
-    const app = await seedRoleApp("newrole", { owner: { mine: { tools: ["get_.*"] } } });
-    const pane = paths.appPane(app.slug, "roles");
-    expect(links(await page(pane, detail.session.cookie), `${pane}?new=1`)).toBe(true);
-
-    const fresh = await page(`${pane}?new=1`, detail.session.cookie);
-    expect(fresh).toContain('placeholder="role name"');
-    expect(fresh).toContain('pattern="[a-z0-9_-]+"');
-    const submitted = paneSubmission(fresh, actionFor(fresh, "role_set"));
-    expect(submitted["was"]).toBe("");
-    const ticked = Object.entries(checkboxesOn(fresh)).filter(([, on]) => on);
-    expect(ticked.filter(([name]) => name.startsWith("i."))).toEqual([]);
-    expect(fresh).not.toContain('name="delete"');
-    expect(textOf(fresh)).not.toContain(DELETE_ROLE_HINT);
-    // The editor foot is Discard and Save for EVERY editable role, the new one included.
-    expect(textOf(fresh)).toContain("Discard");
-    expect(textOf(fresh)).toContain("Save");
-    expect(links(fresh, pane), "Discard is a link back to the pane").toBe(true);
-
-    // THE TWIN: a saved role's editor names itself and offers the delete.
-    const saved = await page(`${pane}?sel=role:mine`, detail.session.cookie);
-    const savedFields = paneSubmission(saved, actionFor(saved, "role_set"));
-    expect(savedFields["was"]).toBe("mine");
-    expect(savedFields["role"]).toBe("mine");
-    expect(saved).toContain('name="delete"');
-    expect(textOf(saved)).toContain(DELETE_ROLE_HINT);
-  });
-
-  it(`§4 · with q a NON-literal the editor offers the row "<q> · tools · would match N today, and any added later" with Add as pattern (name="add" value="<q>"), the family reading resources where q carries :// and tools otherwise · a literal q filters the rows and offers nothing (the twin)`, async () => {
-    const app = await seedRoleApp("offer", { owner: { mine: { tools: ["put_paper"] } } });
-    const href = `${paths.appPane(app.slug, "roles")}?sel=role:mine`;
-
-    const offered = await page(`${href}&q=${encodeURIComponent("get_.*")}`, detail.session.cookie);
-    expect(textOf(offered)).toContain("would match 1 today, and any added later");
-    expect(valuesNamed("add", offered)).toEqual(["get_.*"]);
-
-    // A URI-shaped q is offered as a RESOURCE pattern rather than a tool one.
-    const uriShaped = await page(
-      `${href}&q=${encodeURIComponent("news://feed/*")}`,
-      detail.session.cookie,
-    );
-    expect(valuesNamed("add", uriShaped)).toEqual(["news://feed/*"]);
-    expect(textOf(uriShaped)).toContain("resources");
-
-    // THE TWIN: a literal q filters and offers nothing to add.
-    const literal = await page(`${href}&q=get_paper`, detail.session.cookie);
-    expect(textOf(literal)).toContain("get_paper");
-    expect(valuesNamed("add", literal)).toEqual([]);
-  });
-
-  it(`§4/§8 · role_set composes ONE app_update out of the rows the form DREW: the stored owner map, minus was, plus role → per family the literals whose hidden row=<family>/<name> the form carried, ticked or not, plus the patterns − drop + add, empty families omitted — writing owner_roles on a TUNNELED app and roles on a PROXIED one and never both — then lands 303 on /apps/<slug>/roles?sel=role:<name> with the notice (the twin: the role the form did not name is untouched)`, async () => {
-    const app = await seedRoleApp("compose", {
-      owner: { mine: { tools: ["put_paper", "get_.*"] }, untouched: { tools: ["jobfeed_crawl"] } },
-    });
-    const pane = paths.appPane(app.slug, "roles");
-    const html = await page(`${pane}?sel=role:mine`, detail.session.cookie);
-    const target = actionFor(html, "role_set");
-    // Every drawn item row names itself, ticked or not — which is what makes the save a
-    // delta over the rows rather than a replacement of the role.
-    expect(valuesNamed("row", html).sort()).toEqual(
-      [...ROLE_TOOLS.map((tool) => `tools/${tool.name}`), ...ROLE_PROMPTS.map((p) => `prompts/${p.name}`)].sort(),
-    );
-
-    // Submitted exactly as the browser submits it, plus one new tick.
-    const posted = await formPost(
-      target,
-      [...formPairs(html, target), ["i.tools/jobfeed_crawl", "1"]],
-      detail.session.cookie,
-    );
-    expect(posted.status).toBe(303);
-    const landed = new URL(posted.headers.get("Location") ?? "", ORIGIN);
-    expect(landed.pathname).toBe(pane);
-    expect(landed.searchParams.get("sel")).toBe("role:mine");
-    expect(landed.searchParams.get("done")).toBe("role_set");
-
-    const saved = await ownerRolesOf(app.slug);
-    expect(saved.mine).toEqual(["get_.*", "jobfeed_crawl", "put_paper"]);
-    // THE TWIN: the role the form did not name is untouched — the composition is of the
-    // STORED map, not of the pane.
-    expect(saved.untouched).toEqual(["jobfeed_crawl"]);
-    // A TUNNELED app writes `owner_roles`: its declaration map stays empty.
-    const row = await new Registry(env.DB).getApp(detail.ns.owner.userId, app.slug);
-    expect(row?.declaredRoles ?? {}).toEqual({});
-  });
-
-  it(`§4/§8 · Delete role posts delete=1 and composes the stored map minus was ALONE — no other role changes and no dialog, the hint beside it reading "grants naming it keep the name and match nothing until it exists again" — landing 303 on /apps/<slug>/roles; a grant naming the deleted role keeps the name and matches nothing until it exists again (the twin)`, async () => {
-    const app = await seedRoleApp("deleterole", {
-      owner: { doomed: { tools: ["get_paper"] }, keeper: { tools: ["put_paper"] } },
-    });
-    const agent = await grantRole(app.slug, "deleteholder", "doomed", "allow");
-    const pane = paths.appPane(app.slug, "roles");
-    const html = await page(`${pane}?sel=role:doomed`, detail.session.cookie);
-    const target = actionFor(html, "role_set");
-    // No dialog: the control is on the pane itself, because re-adding undoes it.
-    expect(confirmLinksOn(html)).toEqual([]);
-
-    const posted = await formPost(
-      target,
-      pressed(html, target, "delete", "1"),
-      detail.session.cookie,
-    );
-    expect(posted.status).toBe(303);
-    expect(posted.headers.get("Location")).toBe(`${pane}?done=role_set`);
-
-    const saved = await ownerRolesOf(app.slug);
-    expect(Object.keys(saved)).toEqual(["keeper"]);
-    // THE TWIN: the grant keeps the NAME and matches nothing until it exists again.
-    const held = (await ops.agent_list.handler(detail.ns.owner.userId, {})) as {
-      agents: { slug: string; grants: Record<string, string[]> }[];
-    };
-    expect(held.agents.find((row) => row.slug === agent)?.grants[app.slug]).toContain("doomed");
-    expect(textOf(await page(pane, detail.session.cookie))).not.toContain("doomed");
-  });
-
-  it(`§4/§9 · a role_set Save is a delta over the rows the form DREW, never a replacement: under ?q= the editor draws a narrowed set of item rows, each carrying its hidden row=<family>/<name>, and the Save leaves every undrawn literal in the role · an app whose catalog could not be read draws no item row at all, says "The catalog could not be read, so items cannot be ticked; patterns can still be edited." and a Save there leaves the role's literals untouched while its patterns are still editable (the twin)`, async () => {
-    const app = await seedRoleApp("roledelta", {
-      owner: { mine: { tools: ["get_paper", "put_paper"] } },
-    });
-    const href = `${paths.appPane(app.slug, "roles")}?sel=role:mine`;
-
-    // NARROWED: one row drawn, and the save moves only what that row named.
-    const narrowed = await page(`${href}&q=get_paper`, detail.session.cookie);
-    expect(valuesNamed("row", narrowed)).toEqual(["tools/get_paper"]);
-    const target = actionFor(narrowed, "role_set");
-    expect(
-      (await formPost(target, formPairs(narrowed, target), detail.session.cookie)).status,
-    ).toBe(303);
-    expect((await ownerRolesOf(app.slug)).mine, "the undrawn literal stays in the role").toEqual([
-      "get_paper",
-      "put_paper",
-    ]);
-
-    // …and unticking the drawn one takes exactly it, which is what keeps the row honest.
-    const again = await page(`${href}&q=get_paper`, detail.session.cookie);
-    const bare = formPairs(again, actionFor(again, "role_set")).filter(
-      ([name]) => name !== "i.tools/get_paper",
-    );
-    expect((await formPost(actionFor(again, "role_set"), bare, detail.session.cookie)).status).toBe(303);
-    expect((await ownerRolesOf(app.slug)).mine).toEqual(["put_paper"]);
-
-    // THE TWIN: a catalog that could not be read draws NO item row, says so, and a save
-    // there leaves the literals alone while the patterns stay editable.
-    const unread = uniqueSlug("roleunread");
-    const scenario: UpstreamScenario = { id: uniqueSlug("roleup"), mode: { kind: "unreachable" } };
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        {
-          slug: unread,
-          kind: "proxy",
-          upstreamUrl: upstreamUrlFor(scenario),
-          upstreamAuthMode: "headers",
-          roles: { mine: { tools: ["get_paper", "put_paper", "get_.*"] } },
-        },
-      ],
-    });
-    const { cookie } = await seedOwnerSession(ns.owner);
-    const blind = await page(`${paths.appPane(unread, "roles")}?sel=role:mine`, cookie);
-    expect(valuesNamed("row", blind)).toEqual([]);
-    expect(textOf(blind)).toContain(
-      "The catalog could not be read, so items cannot be ticked; patterns can still be edited.",
-    );
-    const blindTarget = actionFor(blind, "role_set");
-    expect((await formPost(blindTarget, formPairs(blind, blindTarget), cookie)).status).toBe(303);
-    const kept = (await new Registry(env.DB).getApp(ns.owner.userId, unread))?.declaredRoles ?? {};
-    expect(kept.mine).toEqual(["get_.*", "get_paper", "put_paper"]);
-    // The patterns are still editable there: the row offers its own drop.
-    expect(valuesNamed("drop", blind)).toEqual(["tools/get_.*"]);
-  });
-
-  it(`§4/§9 · a refused role_set redraws the pane at 400 with the reason in a danger alert and every submitted choice preserved, never a bare error page and never a partial write: an empty or illegal name, the reserved all, a pattern that does not compile, and — on a tunneled app — a name the app declares, refused with "<name> is declared by the app — its declaration would replace yours"; after each the stored map is byte-identical to what it was (the twin)`, async () => {
-    const app = await seedRoleApp("refuse", {
-      declared: { theirs: ["get_.*"] },
-      owner: { mine: { tools: ["put_paper"] } },
-    });
-    const pane = paths.appPane(app.slug, "roles");
-    const before = JSON.stringify(await ownerRolesOf(app.slug));
-
-    const html = await page(`${pane}?new=1`, detail.session.cookie);
-    const target = actionFor(html, "role_set");
-    const base = paneSubmission(html, target);
-    for (const [role, because] of [
-      ["", "an empty name"],
-      ["Not A Role", "an illegal name"],
-      ["all", "the reserved name"],
-      ["theirs", "a name the app declares"],
-    ] as const) {
-      const refused = await formPost(
-        target,
-        { ...base, role, "i.tools/put_paper": "1" },
-        detail.session.cookie,
-      );
-      expect(refused.status, because).toBe(400);
-      const body = await refused.text();
-      // The PANE is redrawn, not a bare error page: the listing is still there…
-      expect(textOf(body), because).toContain(ROLES_SUB);
-      // …the choice the owner made is still ticked…
-      expect(checkboxesOn(body)["i.tools/put_paper"], because).toBe(true);
-      // …and nothing was written.
-      expect(JSON.stringify(await ownerRolesOf(app.slug)), because).toBe(before);
-    }
-    // The collision names the app's declaration in the brief's own words.
-    const collided = await formPost(target, { ...base, role: "theirs" }, detail.session.cookie);
-    expect(textOf(await collided.text())).toContain(declaredByApp("theirs"));
-  });
-
-  it(`§4/§8 · owner_roles is for tunneled apps: the proxied app's Roles editor posts roles and its app_update refuses owner_roles with "owner_roles is for tunneled apps — a proxied app's roles are \`roles\`", while the tunneled app's editor posts owner_roles and leaves roles_json untouched (the twin — the page never mixes them)`, async () => {
-    // The PROXIED half, on this describe's own app so the shared world keeps its roles.
-    const proxied = uniqueSlug("kindprx");
-    const scenario: UpstreamScenario = { id: uniqueSlug("kindup"), mode: { kind: "ok" } };
-    await registerOverride(scenario.id, { tools: ROLE_TOOLS });
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        {
-          slug: proxied,
-          kind: "proxy",
-          upstreamUrl: upstreamUrlFor(scenario),
-          upstreamAuthMode: "headers",
-          roles: { mine: { tools: ["put_paper"] } },
-        },
-      ],
-    });
-    const { cookie } = await seedOwnerSession(ns.owner);
-    const html = await page(`${paths.appPane(proxied, "roles")}?sel=role:mine`, cookie);
-    const target = actionFor(html, "role_set");
-    const posted = await formPost(target, [...formPairs(html, target), ["i.tools/get_paper", "1"]], cookie);
-    expect(posted.status).toBe(303);
-    const row = await new Registry(env.DB).getApp(ns.owner.userId, proxied);
-    expect(row?.declaredRoles.mine).toEqual(["get_paper", "put_paper"]);
-    expect(row?.ownerRoles ?? {}, "a proxied app's owner map stays empty").toEqual({});
-    // The op agrees, in the brief's own words.
-    await expect(
-      ops.app_update.handler(ns.owner.userId, { slug: proxied, owner_roles: { mine: ["get_.*"] } }),
-    ).rejects.toThrow(/owner_roles is for tunneled apps/);
-
-    // THE TWIN: the tunneled app writes the OTHER map and leaves the declaration alone.
-    const tunneled = await seedRoleApp("kindtun", { owner: { mine: { tools: ["put_paper"] } } });
-    const tunnelHtml = await page(
-      `${paths.appPane(tunneled.slug, "roles")}?sel=role:mine`,
-      detail.session.cookie,
-    );
-    const tunnelTarget = actionFor(tunnelHtml, "role_set");
-    expect(
-      (await formPost(
-        tunnelTarget,
-        [...formPairs(tunnelHtml, tunnelTarget), ["i.tools/get_paper", "1"]],
-        detail.session.cookie,
-      )).status,
-    ).toBe(303);
-    const tunnelRow = await new Registry(env.DB).getApp(detail.ns.owner.userId, tunneled.slug);
-    expect(tunnelRow?.ownerRoles.mine).toEqual(["get_paper", "put_paper"]);
-    expect(tunnelRow?.declaredRoles ?? {}).toEqual({});
-  });
-});
-
-
-/**
- * The Recording pane's own catalog: one path THREE tools take (so "indexed once, sorted by
- * how many tools take it" has something to sort and something to expand), one path a single
- * tool takes, one the app declares `writeOnly` (so a path with no editable tool exists at
- * all), and one tool with an outputSchema beside two without (so the Results section has
- * both a path and its "mask from evidence" note).
- */
-const RECORD_TOOLS = [
-  {
-    name: "alpha_call",
-    description: "One.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        token: { type: "string", writeOnly: true },
-        note: { type: "string" },
-        shared: { type: "string" },
-      },
-    },
-  },
-  {
-    name: "beta_call",
-    description: "Two.",
-    inputSchema: {
-      type: "object",
-      properties: { shared: { type: "string" }, only_beta: { type: "number" } },
-    },
-  },
-  {
-    name: "gamma_call",
-    description: "Three.",
-    inputSchema: { type: "object", properties: { shared: { type: "string" } } },
-    outputSchema: { type: "object", properties: { out: { type: "string" } } },
-  },
-] as const;
-
-/** One tunneled app of the Recording pane's own — a real connect for the cached schemas,
- *  then §7's stored maps through the one op that writes them. */
-async function seedRecordingApp(
-  handle: string,
-  spec: {
-    redact?: Record<string, string[]>;
-    redactResults?: Record<string, string[]>;
-    logBodies?: boolean;
-  } = {},
-): Promise<{ slug: string }> {
-  const slug = uniqueSlug(handle);
-  const close = await dialTunnel(slug, {
-    capabilities: ["tools"],
-    tools: RECORD_TOOLS as unknown as { name: string; [key: string]: unknown }[],
-  });
-  await close();
-  const patch: Record<string, unknown> = { slug };
-  if (spec.redact !== undefined) patch.redact = spec.redact;
-  if (spec.redactResults !== undefined) patch.redact_results = spec.redactResults;
-  if (spec.logBodies !== undefined) patch.log_bodies = spec.logBodies;
-  if (Object.keys(patch).length > 1) await ops.app_update.handler(detail.ns.owner.userId, patch);
-  return { slug };
-}
-
-/** §7's two stored maps as the STORE holds them — what a composed save is asserted
- *  against, rather than against the page's own redraw of it. */
-async function redactionOf(
-  slug: string,
-): Promise<{ redact: Record<string, string[]>; redactResults: Record<string, string[]> }> {
-  const app = await new Registry(env.DB).getApp(detail.ns.owner.userId, slug);
-  if (app === null) throw new Error(`the recording app "${slug}" vanished`);
-  return { redact: app.redact, redactResults: app.redactResults };
-}
-
-/** The markup ONE of a pane's post forms wraps — the Recording and Roles panes each put a
- *  whole listing or editor inside theirs, and "in the listing" is otherwise unsayable. */
-function listingFormOf(html: string, op: string): string {
-  const form = [...html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].find((candidate) =>
-    decodeEntities(attributeOf(candidate[1], "action") ?? "").includes(`/${op}`),
-  );
-  if (form === undefined) throw new Error(`the pane renders no "${op}" form`);
-  return form[2];
-}
-
-/** The paths one Recording section drew, in the order it drew them — read off the controls
- *  each row carries (`p.<dir>.<path>`, or the `m.` rows of a path rendered expanded),
- *  because a mixed path has no `p.` field by design and must still count as a row. */
-function pathRowOrder(html: string, dir: "args" | "results"): string[] {
-  const order: string[] = [];
-  for (const control of listingFormOf(html, "recording_set").matchAll(/<input\b([^>]*)>/g)) {
-    const name = decodeEntities(attributeOf(control[1], "name") ?? "");
-    const path = name.startsWith(`p.${dir}.`)
-      ? name.slice(`p.${dir}.`.length)
-      : name.startsWith(`m.${dir}.`)
-        ? name.slice(`m.${dir}.`.length).split(".").slice(1).join(".")
-        : "";
-    if (path !== "" && !order.includes(path)) order.push(path);
-  }
-  return order;
-}
-
-/** One path row's own text, sliced out of its section — which is what makes a per-row claim
- *  an assertion about THAT row rather than about the pane. */
-function pathRow(html: string, dir: "args" | "results", path: string): string {
-  const listing = textOf(listingFormOf(html, "recording_set"));
-  const results = listing.indexOf("Results ·");
-  const section = dir === "args" ? listing.slice(0, results < 0 ? undefined : results) : listing.slice(results);
-  return blocksOf(section, pathRowOrder(html, dir))[path] ?? "";
-}
-
-/** The `which` values a Recording pane's own links carry — the expand/hide control, read
- *  as what it opens rather than as the bytes the renderer encoded it in. */
-function whichValuesOn(html: string): string[] {
-  const found: string[] = [];
-  for (const anchor of html.matchAll(/<a\b([^>]*)>/g)) {
-    const href = decodeEntities(attributeOf(anchor[1], "href") ?? "");
-    if (href === "") continue;
-    for (const value of new URL(href, ORIGIN).searchParams.getAll("which")) found.push(value);
-  }
-  return [...new Set(found)];
-}
-
-describe(`§5/§15 · /apps/<slug> — the Recording pane and recording_set`, () => {
-  beforeAll(withAppDetailWorld);
-
-  it(`§5 · the Recording listing header is the title Recording over "what the audit trail keeps, and what it masks", the switch Record call bodies at the right edge as a REAL <input type="checkbox" name="log" value="1"> with its label text visible, the summary "body logging on|off · <kind> default | set explicitly · M masked path(s) by config" with " · W declared writeOnly by the app" only where any are, and the filter (GET, q, placeholder "filter paths…")`, async () => {
-    const app = await seedRecordingApp("rechead", { redact: { alpha_call: ["note"] } });
-    const pane = paths.appPane(app.slug, "recording");
-    const html = await page(pane, detail.session.cookie);
-    const text = textOf(html);
-    expect(text).toContain("Recording");
-    expect(text).toContain(RECORDING_SUB);
-    expect(text).toContain(RECORD_BODIES);
-    // A REAL checkbox, so the pane works with scripting off.
-    expect(checkboxesOn(html).log).toBe(true);
-    expect(html).toContain('name="log" value="1"');
-    // Tunneled apps log by default, and the app declares one writeOnly path.
-    expect(text).toContain("body logging on · tunneled default · 1 masked path by config");
-    expect(text).toContain("· 1 declared writeOnly by the app");
-    expect(html).toContain('placeholder="filter paths…"');
-    expect(getFormsOn(html)).toContainEqual({ action: pane, fields: ["q"] });
-  });
-
-  it(`§5 · a proxied app with logging on and nothing masked carries the warning "A proxied app's schema is not cached at call time, so nothing is masked automatically. Tick what is secret before you save, or it is stored in the clear for 7 days." above the sections · the same app with something masked, and a tunneled app in the same state, carry none (the twin)`, async () => {
-    const slug = uniqueSlug("warnprx");
-    const scenario: UpstreamScenario = { id: uniqueSlug("warnup"), mode: { kind: "ok" } };
-    await registerOverride(scenario.id, { tools: [...RECORD_TOOLS] });
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        {
-          slug,
-          kind: "proxy",
-          upstreamUrl: upstreamUrlFor(scenario),
-          upstreamAuthMode: "headers",
-          logBodies: true,
-        },
-      ],
-    });
-    const { cookie } = await seedOwnerSession(ns.owner);
-    const pane = paths.appPane(slug, "recording");
-    expect(textOf(await page(pane, cookie))).toContain(PROXIED_UNMASKED);
-
-    // The same app, once something IS masked: the warning is spent.
-    await ops.app_update.handler(ns.owner.userId, { slug, redact: { alpha_call: ["note"] } });
-    expect(textOf(await page(pane, cookie))).not.toContain(PROXIED_UNMASKED);
-
-    // THE TWIN: a tunneled app logging with nothing masked carries none — its schema IS
-    // cached at call time, which is the whole reason the warning exists.
-    const tunneled = await seedRecordingApp("warntun", {});
-    expect(
-      textOf(await page(paths.appPane(tunneled.slug, "recording"), detail.session.cookie)),
-    ).not.toContain(PROXIED_UNMASKED);
-  });
-
-  it(`§5 · the two sections are "Arguments · N path(s)" (from each tool's inputSchema) and "Results · N path(s)" (from outputSchema, where declared), each path indexed ONCE over every tool's schemaLeaves and sorted by how many tools take it then by name — a row being the path in mono, its type, "T tool(s)", then " · declared writeOnly[ on K]" or " · masked on its tool | all T | K of T" (the twin: a path two tools take is one row, not two)`, async () => {
-    const app = await seedRecordingApp("recsections", { redact: { alpha_call: ["note"] } });
-    const html = await page(paths.appPane(app.slug, "recording"), detail.session.cookie);
-    const text = textOf(html);
-    // The paths, indexed once over every tool and sorted by how many take them.
-    expect(text).toContain("Arguments · 4 paths");
-    // The singular, on the same render, so the rule is pinned and not one spelling.
-    expect(text).toContain("Results · 1 path");
-    expect(text).toContain("from each tool's inputSchema");
-    expect(text).toContain("from outputSchema, where declared");
-
-    // ONE row per path, in the sorted order — the twin is `shared`, which three tools take.
-    expect(pathRowOrder(html, "args")).toEqual(["shared", "note", "only_beta", "token"]);
-    const shared = (pathRow(html, "args", "shared"));
-    expect(shared).toContain("string");
-    expect(shared).toContain("3 tools");
-    expect(pathRow(html, "args", "only_beta")).toContain("1 tool");
-    // `note` is masked on the one tool that takes it.
-    expect((pathRow(html, "args", "note"))).toContain("masked on its tool");
-    // `token` is the app's own declaration.
-    expect((pathRow(html, "args", "token"))).toContain("declared writeOnly");
-  });
-
-  it(`§5 · a path's control is a checkbox named p.<dir>.<path> with value 1, checked exactly when every EDITABLE tool masks it, and disabled and locked where no tool is editable because all of them declare it writeOnly · a path no tool masks is unchecked and enabled (the twin)`, async () => {
-    const app = await seedRecordingApp("recbox", {
-      redact: { alpha_call: ["shared"], beta_call: ["shared"], gamma_call: ["shared"] },
-    });
-    const html = await page(paths.appPane(app.slug, "recording"), detail.session.cookie);
-    const boxes = checkboxesOn(html);
-    // Masked on EVERY editable tool → checked.
-    expect(boxes["p.args.shared"]).toBe(true);
-    // THE TWIN: a path nothing masks → present, unchecked, and not disabled.
-    expect(boxes["p.args.only_beta"]).toBe(false);
-    expect(disabledBoxesOn(html)).not.toContain("p.args.only_beta");
-    // The all-writeOnly path has no editable tool at all, so its box cannot be moved.
-    expect(disabledBoxesOn(html)).toContain("p.args.token");
-  });
-
-  it(`§5 · a path masked on SOME but not all of its tools renders EXPANDED with no p. field at all — its per-tool rows shown and the path checkbox replaced by the locked-mixed glyph — so no save can silently clear a partial state · the same path masked on every tool renders collapsed and checked (the twin)`, async () => {
-    const partial = await seedRecordingApp("recmixed", { redact: { alpha_call: ["shared"] } });
-    const mixed = await page(paths.appPane(partial.slug, "recording"), detail.session.cookie);
-    const boxes = checkboxesOn(mixed);
-    // NO `p.` field: a save cannot carry an unticked box that would clear the partial set.
-    expect(boxes["p.args.shared"]).toBeUndefined();
-    expect(mixed).toContain("cb mixed");
-    // Its per-tool rows are open without anyone asking, and each is its own control.
-    expect(boxes["m.args.alpha_call.shared"]).toBe(true);
-    expect(boxes["m.args.beta_call.shared"]).toBe(false);
-    expect(boxes["m.args.gamma_call.shared"]).toBe(false);
-    expect(textOf(mixed)).toContain(`${RECORD_TOOLS[1].name}`);
-
-    // THE TWIN: masked on EVERY tool, the same path collapses to one ticked box.
-    const whole = await seedRecordingApp("recwhole", {
-      redact: { alpha_call: ["shared"], beta_call: ["shared"], gamma_call: ["shared"] },
-    });
-    const collapsed = await page(paths.appPane(whole.slug, "recording"), detail.session.cookie);
-    expect(checkboxesOn(collapsed)["p.args.shared"]).toBe(true);
-    expect(checkboxesOn(collapsed)["m.args.beta_call.shared"]).toBeUndefined();
-  });
-
-  it(`§5 · ?which=args:<path> and ?which=results:<path> expand one path's per-tool rows and turn that path's link into "hide", repeatable so two paths open at once, and the link is drawn only where more than one tool takes the path or any tool declares it writeOnly — an expanded sub-row being the tool name with "declared by the app — always masked" and a locked check where the tool declares it writeOnly, else a checkbox named m.<dir>.<tool>.<path> (the twin: a path one tool takes and nobody declares carries no which link)`, async () => {
-    const app = await seedRecordingApp("recwhich", {});
-    const pane = paths.appPane(app.slug, "recording");
-    const closed = await page(pane, detail.session.cookie);
-    // The link is drawn where the path is shared, or declared — and nowhere else.
-    expect(whichValuesOn(closed).sort()).toEqual(["args:shared", "args:token"]);
-    expect(checkboxesOn(closed)["m.args.beta_call.shared"]).toBeUndefined();
-
-    const open = await page(`${pane}?which=args:shared`, detail.session.cookie);
-    expect(checkboxesOn(open)["m.args.alpha_call.shared"]).toBe(false);
-    expect(checkboxesOn(open)["m.args.beta_call.shared"]).toBe(false);
-    expect(textOf(open)).toContain("hide");
-
-    // Repeatable: two directions open at once, each drawing its own rows.
-    const both = await page(`${pane}?which=args:shared&which=args:token`, detail.session.cookie);
-    expect(checkboxesOn(both)["m.args.beta_call.shared"]).toBe(false);
-    // The declared one is always masked and says so, with no checkbox of its own.
-    expect(textOf(both)).toContain(ALWAYS_MASKED);
-    expect(checkboxesOn(both)["m.args.alpha_call.token"]).toBeUndefined();
-  });
-
-  it(`§5 · under Results, where the tools declare no output schema and q is empty, the note "<tools or "N tools"> declare no output schema — a result path there can only come from a recorded call (mask from evidence)." · an empty section reads "no path matches" under a filter and "no schema declares any field" without one (the twin)`, async () => {
-    const app = await seedRecordingApp("recnote", {});
-    const pane = paths.appPane(app.slug, "recording");
-    const text = textOf(await page(pane, detail.session.cookie));
-    // Two of the three tools declare none, and the note names them.
-    expect(text).toContain("declare no output schema — a result path there can only come from a recorded call (mask from evidence).");
-    expect(text).toContain(RECORD_TOOLS[0].name);
-
-    // Filtered to nothing: "no path matches", and the note is gone with the filter.
-    const filtered = textOf(await page(`${pane}?q=${uniqueSlug("nomatch")}`, detail.session.cookie));
-    expect(filtered).toContain(NO_PATH_MATCHES);
-    expect(filtered).not.toContain(NO_SCHEMA_FIELDS);
-
-    // THE TWIN: an app whose tools declare nothing at all reads the other sentence.
-    const bare = uniqueSlug("recbare");
-    const close = await dialTunnel(bare, {
-      capabilities: ["tools"],
-      tools: [{ name: "bare_call", description: "Nothing.", inputSchema: { type: "object" } }],
-    });
-    try {
-      expect(textOf(await appPage(paths.appPane(bare, "recording")))).toContain(NO_SCHEMA_FIELDS);
-    } finally {
-      await close();
-    }
-  });
-
-  it(`§5 · the Recording details are "Masked before recording" over "These fields are replaced with ‹redacted› before a call is written to the trail. Everything else in the body is kept as sent." — or, with logging off, "Body logging is off, so no bodies reach the trail; the masks below apply once it is turned on." — then one card per direction, "Arguments · N masked" and "Results · N masked", listing each masked path with "on <tools>" ("N tools" past three) and "declared writeOnly by <tools>", or "nothing masked — arguments|results are recorded whole" (the twin)`, async () => {
-    const app = await seedRecordingApp("recdetails", { redact: { alpha_call: ["note"] } });
-    const text = textOf(await page(paths.appPane(app.slug, "recording"), detail.session.cookie));
-    expect(text).toContain("Masked before recording");
-    expect(text).toContain(MASKED_BEFORE);
-    expect(text).not.toContain(LOGGING_OFF_NOTE);
-    expect(text).toContain("Arguments · 2 masked");
-    expect(text).toContain(`on ${RECORD_TOOLS[0].name}`);
-    expect(text).toContain(`declared writeOnly by ${RECORD_TOOLS[0].name}`);
-    // Nothing is masked in the other direction, so that card says so.
-    expect(text).toContain("nothing masked — results are recorded whole");
-
-    // THE TWIN: the same pane with logging off says the masks are waiting.
-    const off = await seedRecordingApp("recoff", { logBodies: false });
-    const offText = textOf(await page(paths.appPane(off.slug, "recording"), detail.session.cookie));
-    expect(offText).toContain(LOGGING_OFF_NOTE);
-    expect(offText).not.toContain(MASKED_BEFORE);
-  });
-
-  it(`§5 · the card "What a recorded call keeps" is verbatim — Arguments → "params.arguments, post-redaction"; Results → "structuredContent post-redaction; text, image and resource blocks become size stubs, never bytes"; Cap → "16 KiB per body — an over-cap body is one oversize stub"; Kept for → "7 days, then pruned with the rest of the audit table · Export JSONL to keep longer" linking the audit export; Never → "refused calls, token material, writeOnly and config-masked fields" — over the note "A tick writes one literal (tool, path) entry per tool; nothing here is a pattern and nothing is typed. Masking applies to the approval record too.", with the foot's left reading "Recorded calls to <slug> →" linking /audit?app=<slug>`, async () => {
-    const app = await seedRecordingApp("reckeeps", {});
-    const html = await page(paths.appPane(app.slug, "recording"), detail.session.cookie);
-    const text = textOf(html);
-    expect(text).toContain("What a recorded call keeps");
-    expect(text).toContain(pinned("params.arguments, post-redaction"));
-    expect(text).toContain(
-      pinned("structuredContent post-redaction; text, image and resource blocks become size stubs, never bytes"),
-    );
-    expect(text).toContain(KEEPS_CAP);
-    expect(text).toContain("7 days, then pruned with the rest of the audit table · Export JSONL to keep longer");
-    expect(text).toContain(KEEPS_NEVER);
-    expect(text).toContain(RECORDING_NOTE);
-    // The foot links the trail this pane is about.
-    expect(text).toContain(`Recorded calls to ${app.slug} →`);
-    expect(links(html, `${paths.audit}?app=${app.slug}`)).toBe(true);
-  });
-
-  it(`§5/§8 · recording_set composes ONE app_update { slug, log_bodies, redact, redact_results } as DELTAS over the rows the form drew: each drawn path row carries one hidden t.<dir>.<path>=<tool> per editable tool and each per-tool sub-row its own, so a ticked p. adds the entry on every tool the row named and an unticked one removes it there — leaving every stored entry no drawn row names exactly as it was (the twin: a pattern-keyed entry no row can represent)`, async () => {
-    // A stored entry no schema row can represent: a PATTERN key, which the rows never draw.
-    const app = await seedRecordingApp("reccompose", { redact: { "alpha_.*": ["ghost"] } });
-    const pane = paths.appPane(app.slug, "recording");
-    const html = await page(pane, detail.session.cookie);
-    const target = actionFor(html, "recording_set");
-    const pairs = formPairs(html, target);
-    // The drawn row names its editable tools — one hidden field each, and no `keep.`.
-    expect(pairs.filter(([name]) => name === "t.args.shared").map(([, tool]) => tool).sort()).toEqual(
-      RECORD_TOOLS.map((tool) => tool.name).slice().sort(),
-    );
-    expect(pairs.some(([name]) => name.startsWith("keep."))).toBe(false);
-
-    const posted = await formPost(
-      target,
-      [...pairs, ["p.args.shared", "1"], ["p.args.only_beta", "1"]],
-      detail.session.cookie,
-    );
-    expect(posted.status).toBe(303);
-    const saved = await redactionOf(app.slug);
-    // A ticked `p.` is one literal entry per tool the row named.
-    for (const tool of RECORD_TOOLS.map((row) => row.name)) {
-      expect(saved.redact[tool] ?? [], tool).toContain("shared");
-    }
-    // …and a path only one tool takes reaches that tool alone.
-    expect(saved.redact.beta_call).toContain("only_beta");
-    expect(saved.redact.alpha_call ?? []).not.toContain("only_beta");
-    // THE TWIN: the pattern-keyed entry no drawn row names is exactly as it was.
-    expect(saved.redact["alpha_.*"]).toEqual(["ghost"]);
-
-    // A per-tool sub-row moves its own tool and no other: unticked, beta loses `shared`.
-    const open = await page(`${pane}?which=args:shared`, detail.session.cookie);
-    const openTarget = actionFor(open, "recording_set");
-    const withoutBeta = formPairs(open, openTarget).filter(
-      ([name]) => name !== "m.args.beta_call.shared",
-    );
-    expect((await formPost(openTarget, withoutBeta, detail.session.cookie)).status).toBe(303);
-    const after = await redactionOf(app.slug);
-    expect(after.redact.beta_call ?? []).not.toContain("shared");
-    expect(after.redact.alpha_call ?? []).toContain("shared");
-  });
-
-  it(`§5/§9 · a recording_set Save touches only the paths and tools the form drew: under ?q= the sections draw a narrowed set of rows and the Save leaves every stored mask on an undrawn path exactly as it was, and a Save whose form drew NO row at all — an app whose catalog could not be read — leaves redact and redact_results byte-identical (the twin: the same Save unfiltered does move the drawn ones)`, async () => {
-    const app = await seedRecordingApp("recdelta", {
-      redact: { alpha_call: ["note"], beta_call: ["only_beta"] },
-    });
-    const pane = paths.appPane(app.slug, "recording");
-
-    // NARROWED: one path drawn, and the save moves only it.
-    const narrowed = await page(`${pane}?q=shared`, detail.session.cookie);
-    expect(pathRowOrder(narrowed, "args")).toEqual(["shared"]);
-    const target = actionFor(narrowed, "recording_set");
-    expect(
-      (await formPost(target, [...formPairs(narrowed, target), ["p.args.shared", "1"]], detail.session.cookie))
-        .status,
-    ).toBe(303);
-    const saved = await redactionOf(app.slug);
-    expect(saved.redact.alpha_call, "the undrawn path's mask stays").toContain("note");
-    expect(saved.redact.beta_call).toContain("only_beta");
-    // THE TWIN, on the same save: the drawn path DID move, so the row is not vacuous.
-    expect(saved.redact.gamma_call ?? []).toContain("shared");
-
-    // A form that drew NOTHING leaves both maps byte-identical.
-    const blind = uniqueSlug("recunread");
-    const scenario: UpstreamScenario = { id: uniqueSlug("recup"), mode: { kind: "unreachable" } };
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        {
-          slug: blind,
-          kind: "proxy",
-          upstreamUrl: upstreamUrlFor(scenario),
-          upstreamAuthMode: "headers",
-          redact: { alpha_call: ["note"] },
-          redactResults: { gamma_call: ["out"] },
-        },
-      ],
-    });
-    const { cookie } = await seedOwnerSession(ns.owner);
-    const before = await new Registry(env.DB).getApp(ns.owner.userId, blind);
-    const html = await page(paths.appPane(blind, "recording"), cookie);
-    expect(pathRowOrder(html, "args")).toEqual([]);
-    const blindTarget = actionFor(html, "recording_set");
-    expect((await formPost(blindTarget, formPairs(html, blindTarget), cookie)).status).toBe(303);
-    const after = await new Registry(env.DB).getApp(ns.owner.userId, blind);
-    expect(after?.redact).toEqual(before?.redact);
-    expect(after?.redactResults).toEqual(before?.redactResults);
-  });
-
-  it(`§5/§9 · the switch is the save: recording_set posted with log unticked turns body logging off and with it ticked turns it on, each landing 303 back on the pane with the notice and the summary line reading the new state · a refused save redraws the pane at 400 with the reason and every submitted tick preserved (the twin)`, async () => {
-    const app = await seedRecordingApp("recswitch", {});
-    const pane = paths.appPane(app.slug, "recording");
-    const on = await page(pane, detail.session.cookie);
-    const target = actionFor(on, "recording_set");
-
-    // A browser omits an unticked checkbox, which is the whole mechanism of the switch.
-    const turnedOff = await formPost(target, unticked(paneSubmission(on, target)), detail.session.cookie);
-    expect(turnedOff.status).toBe(303);
-    expect(turnedOff.headers.get("Location")).toBe(`${pane}?done=recording_set`);
-    const off = await page(pane, detail.session.cookie);
-    expect(textOf(off)).toContain("body logging off");
-    expect(checkboxesOn(off).log).toBe(false);
-
-    // …and back on, through the same form.
-    const backOn = await formPost(
-      target,
-      { ...unticked(paneSubmission(off, actionFor(off, "recording_set"))), log: "1" },
-      detail.session.cookie,
-    );
-    expect(backOn.status).toBe(303);
-    expect(textOf(await page(pane, detail.session.cookie))).toContain("body logging on");
-
-    // THE TWIN: a refusal redraws the pane at 400 with the tick preserved. `redact`'s own
-    // validation is what refuses — a KEY that does not compile as a pattern, which is the
-    // one thing about this map the registry judges (assertRedactKeys) and the only refusal
-    // this form can actually reach: a tool name it has never heard of is a literal key like
-    // any other, and the op has no catalog to check it against.
-    const live = await page(pane, detail.session.cookie);
-    const liveTarget = actionFor(live, "recording_set");
-    const refused = await formPost(
-      liveTarget,
-      [...formPairs(live, liveTarget), ["t.args.shared", "alpha_(call"], ["p.args.shared", "1"]],
-      detail.session.cookie,
-    );
-    expect(refused.status).toBe(400);
-    const body = await refused.text();
-    expect(textOf(body)).toContain(RECORDING_SUB);
-    expect(checkboxesOn(body).log).toBe(true);
-  });
-});
-
-describe(`§6 · /apps/<slug> — the Agents pane and grant_set`, () => {
-  beforeAll(withAppDetailWorld);
-  beforeAll(async () => {
-    access = await seedAccessWorld();
-  });
-
-  it(`§6 · the Agents listing header is the title Agents over "who can call this app, and how" and the summary "N agent(s) hold a grant · open one to edit its grant on <slug>", over exactly the agents holding ≥1 grant on THIS app read from agent_list's inline grants, with the rail's Agents marker the number of rows it drew · an agent granted only on another app is absent here and present on that app's own pane (the twin)`, async () => {
-    // Ground truth from the op, so the absence below is FILTERING rather than an empty
-    // namespace: all three agents exist and all three are listed by agent_list.
-    const listed = (await ops.agent_list.handler(access.ownerId, {})) as { agents: { slug: string }[] };
-    const known = listed.agents.map((agent) => agent.slug);
-    for (const slug of Object.values(ACCESS_SLUG)) expect(known, slug).toContain(slug);
-
-    const alphaPane = paths.appPane(ALPHA, "access");
-    const alphaHtml = await page(alphaPane, access.cookie);
-    const alpha = textOf(alphaHtml);
-    expect(alpha).toContain("Agents");
-    expect(alpha).toContain(AGENTS_SUB);
-    expect(alpha).toContain(`2 agents hold a grant · open one to edit its grant on ${ALPHA}`);
-    expect(alpha).toContain(ACCESS_SLUG.claude);
-    expect(alpha).toContain(ACCESS_SLUG.pi);
-    expect(alpha).not.toContain(ACCESS_SLUG.stray);
-    expect(markerOn(alphaHtml, alphaPane)).toBe("2");
-
-    // THE TWIN: one agent_list, two panes, two answers.
-    const betaPane = paths.appPane(BETA, "access");
-    const betaHtml = await page(betaPane, access.cookie);
-    const beta = textOf(betaHtml);
-    expect(beta).toContain(`1 agent holds a grant · open one to edit its grant on ${BETA}`);
-    expect(beta).toContain(ACCESS_SLUG.stray);
-    expect(beta).not.toContain(ACCESS_SLUG.claude);
-    expect(markerOn(betaHtml, betaPane)).toBe("1");
-  });
-
-  it(`§6 · an Agents row is the agent slug in mono over its description, then "allowed" with one mono badge per allow entry (or —) and "ask first" with one warning badge per approval entry (or —), then "reaches R of T tools · K ask first[ · P of PT prompts][ · Q of QT resources] · C calls · 7 d" with C the tools/call rows audit_query reports for that principal on this app in seven days — and NO right-hand control; after the rows the note "Granting a new agent starts from the agent's own page — Agents → the agent → Grant another app." linking /agents (the twin)`, async () => {
-    const pane = paths.appPane(ALPHA, "access");
-    const html = await page(pane, access.cookie);
-    const rows = Object.fromEntries(
-      (["claude", "pi"] as const).map((handle) => [
-        handle,
-        textOf(rowMarkupFor(html, `agent:${ACCESS_SLUG[handle]}`)),
-      ]),
-    );
-    for (const handle of ["claude", "pi"] as const) {
-      expect(ACCESS_NAME[handle], "the fixture's name must differ from its slug").not.toBe(
-        ACCESS_SLUG[handle],
-      );
-      expect(rows[handle], handle).toContain(ACCESS_SLUG[handle]);
-      expect(rows[handle], handle).toContain(ACCESS_DESCRIPTION[handle]);
-      expect(rows[handle], handle).toContain("allowed");
-      expect(rows[handle], handle).toContain("ask first");
-      expect(rows[handle], handle).toContain("calls · 7 d");
-    }
-    // The agent that only ALLOWS has no ask entry, and the one that only asks no allow.
-    expect(rows.claude).toContain("all");
-    expect(rows.pi).toContain("reader");
-    expect(rows.claude).toContain("—");
-    expect(rows.pi).toContain("—");
-
-    // No right-hand control: the row is a link into the details, and nothing else.
-    expect(formsRenderedOn(rowMarkupFor(html, `agent:${ACCESS_SLUG.claude}`))).toEqual([]);
-    // THE TWIN: the note under the rows sends a NEW grant to the agent's own page.
-    expect(textOf(html)).toContain(AGENTS_NOTE);
-    expect(links(html, paths.agents)).toBe(true);
-  });
-
-  it(`§6 · the Agents details with nothing selected is "Select an agent to edit what it may call on <slug>." over the card "Per tool": the first six tools, each with the agents reaching it as "<agent>[ (ask)]" comma-joined or "no agent", then "… N more in the Catalog" with N the remainder (the twin: an app of six tools or fewer draws no "more" line)`, async () => {
-    // The shared world's proxied app has five tools, which is the "six or fewer" twin.
-    const few = textOf(await appPage(paths.appPane(CATALOG, "access")));
-    expect(few).toContain(agentsPrompt(CATALOG));
-    expect(few).toContain("Per tool");
-    expect(few).toContain("paper_fetch");
-    expect(few).toContain("reader-agent");
-    expect(few).toContain(NO_AGENT);
-    expect(few, "five tools need no “more” line").not.toContain("more in the Catalog");
-
-    // …and an app of more than six, whose card stops at six and counts the rest.
-    const slug = uniqueSlug("pertool");
-    const tools = Array.from({ length: 9 }, (_, index) => ({
-      name: `tool_${index}`,
-      description: "One.",
-      inputSchema: { type: "object" },
-    }));
-    const close = await dialTunnel(slug, { capabilities: ["tools"], tools });
-    try {
-      const many = textOf(await appPage(paths.appPane(slug, "access")));
-      expect(many).toContain("… 3 more in the Catalog");
-      expect(many).toContain("tool_5");
-      expect(many).not.toContain("tool_6");
-    } finally {
-      await close();
-    }
-  });
-
-  it(`§6 · a selected agent draws the header — the slug in mono, an "agent" badge, the description and an open agent page link to /agents/<agent>/apps/<slug> — over "<agent>'s grant on <slug>. Solid: set on the row · hollow: implied by a role · a row cannot lower what a role grants."`, async () => {
-    const html = await page(
-      `${paths.appPane(ALPHA, "access")}?sel=agent:${ACCESS_SLUG.claude}`,
-      access.cookie,
-    );
-    const text = textOf(html);
-    expect(text).toContain(ACCESS_SLUG.claude);
-    expect(text).toContain("agent");
-    expect(text).toContain(ACCESS_DESCRIPTION.claude);
-    expect(links(html, paths.agentApp(ACCESS_SLUG.claude, ALPHA))).toBe(true);
-    expect(text).toContain(grantLegend(ACCESS_SLUG.claude, ALPHA));
-  });
-
-  it(`§6 · the editor IS the agent page's, verbatim: the reach summary line, the groups Roles, Tools · N, Prompts · N, Resources · N and Patterns · N, the same rows, the same none · ask · allow radios named e.<entry> with the same checked, hollow-implied and disabled-below states and the same drop and carry fields — one shared renderer, asserted by the two pages drawing the SAME control set for the same pair — and no pattern offer here, the details carrying no filter (the twin: the agent page's own pane)`, async () => {
-    const onApp = await appPage(`${paths.appPane(CATALOG, "access")}?sel=agent:mixed-agent`);
-    const onAgent = await appPage(paths.agentApp("mixed-agent", CATALOG));
-
-    // The SAME control set: every `e.<entry>` radio group, its values and its states.
-    const entries = (html: string): string[] =>
-      [...new Set(
-        [...html.matchAll(/<input\b([^>]*)>/g)]
-          .filter((control) => attributeOf(control[1], "type") === "radio")
-          .map((control) => decodeEntities(attributeOf(control[1], "name") ?? "")),
-      )].sort();
-    expect(entries(onApp).length, "the editor drew no row at all").toBeGreaterThan(0);
-    expect(entries(onApp)).toEqual(entries(onAgent));
-    for (const name of entries(onApp)) {
-      const entry = name.slice("e.".length);
-      expect(segOf(onApp, entry), entry).toEqual(segOf(onAgent, entry));
-    }
-    // The groups the agent page draws, drawn here too.
-    const text = textOf(onApp);
-    for (const group of ["Roles", "Tools ·", "Prompts ·", "Resources ·"]) {
-      expect(text, group).toContain(group);
-    }
-    // No pattern offer here: the details carry no filter, so there is no `q` to offer.
-    expect(getFormsOn(onApp)).toEqual([]);
-    expect(dropOffers(onApp).length).toBeGreaterThanOrEqual(0);
-  });
-
-  it(`§6/§8 · Save on the app page's Agents pane composes the same grant_set the agent page's route composes and lands 303 on /apps/<slug>/access?sel=agent:<agent> with the notice · the same submission made on the agent page lands on the agent page (the twin), and both leave the pair's saved set identical`, async () => {
-    const agent = await grantRole(CATALOG, "twinagent", "reader", "allow");
-    const pane = paths.appPane(CATALOG, "access");
-    const href = `${pane}?sel=agent:${agent}`;
-    const html = await appPage(href);
-    const target = actionFor(html, "grant_set");
-    const fields = paneSubmission(html, target);
-    expect(fields.agent).toBe(agent);
-
-    const posted = await formPost(target, { ...fields, "e.tool/paper_fetch": "approval" }, detail.session.cookie);
-    expect(posted.status).toBe(303);
-    expect(new URL(posted.headers.get("Location") ?? "", ORIGIN).pathname).toBe(pane);
-    expect(new URL(posted.headers.get("Location") ?? "", ORIGIN).searchParams.get("sel")).toBe(
-      `agent:${agent}`,
-    );
-    const fromApp = await grantsOn(detail.ns.owner.userId, agent, CATALOG);
-
-    // THE TWIN: the same choice made on the AGENT page lands there and saves the same set.
-    const other = await grantRole(CATALOG, "twinagenttwo", "reader", "allow");
-    const agentHref = paths.agentApp(other, CATALOG);
-    const agentHtml = await appPage(agentHref);
-    const agentTarget = actionFor(agentHtml, "grant_set");
-    const landed = await formPost(
-      agentTarget,
-      { ...paneSubmission(agentHtml, agentTarget), "e.tool/paper_fetch": "approval" },
-      detail.session.cookie,
-    );
-    expect(landed.status).toBe(303);
-    expect(new URL(landed.headers.get("Location") ?? "", ORIGIN).pathname).toBe(agentHref);
-    expect(await grantsOn(detail.ns.owner.userId, other, CATALOG)).toEqual(fromApp);
-  });
-
-  it(`§6/§9 · a refused grant_set from the app page redraws the pane at 400 with the reason above the editor and every submitted choice preserved, never a bare error page and never a partial write`, async () => {
-    const agent = await grantRole(CATALOG, "refusedagent", "reader", "allow");
-    const href = `${paths.appPane(CATALOG, "access")}?sel=agent:${agent}`;
-    const html = await appPage(href);
-    const target = actionFor(html, "grant_set");
-    const before = await grantsOn(detail.ns.owner.userId, agent, CATALOG);
-
-    // A proxied app refuses a role it does not declare (§8) — the cheapest real refusal.
-    const refused = await formPost(
-      target,
-      { ...paneSubmission(html, target), add: "nosuchrole", mode: "allow" },
-      detail.session.cookie,
-    );
-    expect(refused.status).toBe(400);
-    const body = await refused.text();
-    // The PANE is redrawn: the listing is still there, and so is the editor's own row.
-    expect(textOf(body)).toContain(AGENTS_SUB);
-    expect(checkedIn(body, "reader")).toBe("allow");
-    // …and nothing was written.
-    expect(await grantsOn(detail.ns.owner.userId, agent, CATALOG)).toEqual(before);
-  });
-
-  it(`§6/§20.3 · the agent page's grant editor reads the EFFECTIVE map: an owner-defined role on a tunneled app is listed in its Roles group as an ordinary grantable row — never with the undeclared badge and never "granted, but the app has not declared it — dormant" — and the reach line counts what it reaches · a held role in NEITHER map is still dormant (the twin)`, async () => {
-    const app = await seedRoleApp("effective", { owner: { mine: { tools: ["get_paper"] } } });
-    const agent = await grantRole(app.slug, "effholder", "mine", "allow");
-    const html = await appPage(paths.agentApp(agent, app.slug));
-    const text = textOf(html);
-    // The owner's role is an ORDINARY row: a control of its own, and no dormancy.
-    expect(segOf(html, "mine").length).toBeGreaterThan(0);
-    expect(text).not.toContain("undeclared");
-    expect(text).not.toContain("granted, but the app has not declared it — dormant");
-    // …and the reach line counts through it.
-    expect(text).toContain(`${agent} reaches 1 of ${ROLE_TOOLS.length} tools`);
-
-    // THE TWIN: a held role in NEITHER map is still dormant, so the clause is not gone.
-    await ops.grant_set.handler(detail.ns.owner.userId, {
-      agent,
-      app: app.slug,
-      roles: ["mine", "ghostrole"],
-    });
-    const dormant = textOf(await appPage(paths.agentApp(agent, app.slug)));
-    expect(dormant).toContain("ghostrole");
-    expect(dormant).toContain("granted, but the app has not declared it — dormant");
-  });
-
-  it(`§6 · Remove <agent> opens ?confirm=remove-agent&agent=<slug> on THIS pane — the dialog "Remove <agent> from <slug>?" over "<agent> loses every entry on <slug>. History stays; a waiting request expires." — whose form posts clear=1 to grant_set, after which the agent is off the pane and off the rail's Agents marker · the same query on another pane's URL draws no dialog (the twin)`, async () => {
-    const agent = await grantRole(CATALOG, "removedagent", "reader", "allow");
-    const pane = paths.appPane(CATALOG, "access");
-    const before = markerOn(await appPage(pane), pane);
-    const html = await appPage(`${pane}?sel=agent:${agent}`);
-    const confirm = confirmLinksOn(html).find((href) => href.includes("remove-agent")) ?? "";
-    expect(new URL(confirm, ORIGIN).pathname).toBe(pane);
-    expect(new URL(confirm, ORIGIN).searchParams.get("agent")).toBe(agent);
-
-    const dialog = await appPage(confirm);
-    expect(textOf(dialog)).toContain(`Remove ${agent} from ${CATALOG}?`);
-    expect(textOf(dialog)).toContain(removeAgentBody(agent, CATALOG));
-    const target = actionFor(dialog, "grant_set");
-    const posted = await formPost(target, submissionOf(dialog), detail.session.cookie);
-    expect(posted.status).toBe(303);
-
-    const after = await appPage(pane);
-    expect(textOf(after)).not.toContain(agent);
-    expect(Number(markerOn(after, pane))).toBe(Number(before) - 1);
-    // THE TWIN: the same query on another pane's URL draws no dialog at all.
-    const elsewhere = paths.appPane(CATALOG, "roles");
-    const carried = `${elsewhere}${new URL(confirm, ORIGIN).search}`;
-    expect(opsOn(await appPage(carried))).toEqual(opsOn(await appPage(elsewhere)));
-  });
-});
-
-/* ------------------------------------------------------------------ *
- * /apps/<slug> — the Access group, the Danger zone, and the refusals
- * ------------------------------------------------------------------ */
-
-/** §13's pinned sentences for the three panes below, each byte-identical with the spec
- *  (the backticked ones go through `pinned`; none of these carries a code span). */
-const PROXIED_NO_TOKENS = "Proxied apps hold no tokens — the hub dials the upstream; nothing dials in.";
-const REVOKE_CLOSES = "Revoking closes the app's live connection.";
-/** …and the body for a key no socket is holding, which is the other half of §7's rule. */
-const REVOKE_OFFLINE = "The app can no longer connect with it.";
-const ISSUE_ROTATION = "The previous token keeps working until you revoke it.";
-const ARCHIVE_SENTENCE = "It refuses connections and leaves the list — tokens, grants and history are kept.";
-const deleteSentence = (tokens: number, agents: number): string =>
-  `Revokes its ${tokens} token${tokens === 1 ? "" : "s"}, closes the live connection and removes ` +
-  `every grant (${agents} agent${agents === 1 ? "" : "s"}). This cannot be undone.`;
-const ARCHIVED_BANNER =
-  "Archived apps refuse connections; everything is kept — tokens, grants and audit history.";
-
-/** The Agents-pane fixture: two proxied apps and three agents, so "exactly the agents
- *  holding a grant on THIS app" has something to exclude and something to include. */
-const ALPHA = uniqueSlug("alpha");
-const BETA = uniqueSlug("beta");
-const ACCESS_SLUG = { claude: uniqueSlug("claude"), pi: uniqueSlug("pi"), stray: uniqueSlug("stray") };
-/** Names DIFFER from slugs, so "the row renders the slug" cannot be satisfied by the name. */
-const ACCESS_NAME = { claude: "Main assistant", pi: "Home Pi", stray: "Passing bot" };
-const ACCESS_DESCRIPTION = { claude: "the main agent", pi: "the home Raspberry Pi", stray: "granted next door" };
-const accessScenario: UpstreamScenario = { id: uniqueSlug("accessup"), mode: { kind: "ok" } };
-
-let access: { ns: SeededNamespace; cookie: string; ownerId: string };
-
-/** Its own namespace and its own sign-in: `page` defaults to the file world's cookie, a
- *  different owner, and asserts 200 — an omitted cookie would fail as a login bounce
- *  rather than as the property under test. */
-async function seedAccessWorld(): Promise<typeof access> {
-  const ns = await seedNamespace(env.DB, {
-    apps: [ALPHA, BETA].map((slug) => ({
-      slug,
-      kind: "proxy" as const,
-      upstreamUrl: upstreamUrlFor(accessScenario),
-      upstreamAuthMode: "headers" as const,
-      // Declared roles on a tunneled app exist only after a real registration, and nothing
-      // in these rows is kind-dependent.
-      roles: { reader: ["get_.*"] },
-    })),
-    agents: [
-      {
-        slug: ACCESS_SLUG.claude,
-        name: ACCESS_NAME.claude,
-        description: ACCESS_DESCRIPTION.claude,
-        grants: { [ALPHA]: [{ role: "all", mode: "allow" }] },
-      },
-      {
-        slug: ACCESS_SLUG.pi,
-        name: ACCESS_NAME.pi,
-        description: ACCESS_DESCRIPTION.pi,
-        grants: { [ALPHA]: [{ role: "reader", mode: "approval" }] },
-      },
-      {
-        slug: ACCESS_SLUG.stray,
-        name: ACCESS_NAME.stray,
-        description: ACCESS_DESCRIPTION.stray,
-        grants: { [BETA]: [{ role: "reader", mode: "allow" }] },
-      },
-    ],
-  });
-  return { ns, cookie: (await seedOwnerSession(ns.owner)).cookie, ownerId: ns.owner.userId };
-}
-
-/** One tunneled app of this section's own, with its own owner and sign-in — the shape
- *  nearly every row below needs, so no row inherits another's keys or grants. */
-async function seedTunneledApp(
-  slug: string,
-  spec: { tokens?: TokenSpec[]; agent?: string } = {},
-): Promise<{ ns: SeededNamespace; cookie: string; ownerId: string }> {
-  const ns = await seedNamespace(env.DB, {
-    apps: [{ slug, kind: "tunnel", tokens: spec.tokens }],
-    agents:
-      spec.agent === undefined
-        ? []
-        : [{ slug: spec.agent, grants: { [slug]: [{ role: "all", mode: "allow" }] } }],
-  });
-  return { ns, cookie: (await seedOwnerSession(ns.owner)).cookie, ownerId: ns.owner.userId };
-}
-
-/** One app token presented at the door, which is where "stops authenticating a tunnel" is
- *  observable in-process: identity's own resolver, not a page's claim about it. */
-function dialsIn(token: string): Promise<{ appId: string; tokenId: string } | null> {
-  return resolveAppToken(new Request(`${ORIGIN}/connect`, { headers: { Authorization: `Bearer ${token}` } }));
-}
-
-describe(`§7 · /apps/<slug> — Token, Overview and the Danger zone`, () => {
-
-  it(`§7 · the Token listing header is the title Token over "what the app presents to dial in", the Issue new token button at the right edge, and the summary "L live · app tokens have no expiry — rotate by issuing, then revoking the old one. Revoking the key a live socket used closes it." — a row being the prefix in mono with "holds the live socket" as a success badge where it does and "new" where it was just issued, over "issued <relative> · used <relative> | never used" and a Revoke reaching ?confirm=revoke-token&id= · an app with no live key reads "No live token — the app cannot connect until one is issued." (the twin)`, async () => {
-    const slug = uniqueSlug("tokhead");
-    const world_ = await seedTunneledApp(slug, { tokens: [{ as: "live" }] });
-    const key = (await tokensOf(world_.ownerId)).find((token) => token.refSlug === slug);
-    if (key === undefined) throw new Error("the seeded key vanished");
-    const pane = paths.appPane(slug, "token");
-    const html = await page(pane, world_.cookie);
-    const text = textOf(html);
-    expect(text).toContain("Token");
-    expect(text).toContain(TOKEN_SUB);
-    expect(text).toContain(`1 live · ${TOKEN_ROTATION}`);
-    expect(text).toContain(key.prefix);
-    expect(text).toContain("never used");
-    expect(links(html, paths.appConfirm(slug, "token", "revoke-token", key.id))).toBe(true);
-    expect(formsRenderedOn(html).map((form) => form.op)).toContain("token_issue");
-
-    // THE TWIN: an app with no live key says so rather than drawing an empty list.
-    const empty = uniqueSlug("tokempty");
-    const bare = await seedTunneledApp(empty, {});
-    expect(textOf(await page(paths.appPane(empty, "token"), bare.cookie))).toContain(NO_LIVE_TOKEN);
-  });
-
-  it(`§7 · a just-issued token is SELECTED and its reveal is drawn in the details — "Shown once — copy it now", the key, "The previous token keeps working until you revoke it." — over Issued, "Expires → never — revoke on compromise", Last used and "Connection → holds the live socket now | none", beneath the prefix, an "app token" badge and "Only valid for opening the reverse WebSocket as <slug>." · the same pane re-fetched carries no plaintext anywhere (the twin)`, async () => {
-    const slug = uniqueSlug("tokreveal");
-    const world_ = await seedTunneledApp(slug, { tokens: [{ as: "seeded" }] });
-    const pane = paths.appPane(slug, "token");
-    const listed = await page(pane, world_.cookie);
-    const target = actionFor(listed, "token_issue");
-
-    const posted = await formPost(target, formsPostingTo(listed, target)[0], world_.cookie);
-    expect(posted.status).toBe(200);
-    const body = await posted.text();
-    const revealed = TOKEN_MATERIAL.exec(body)?.[0] ?? "";
-    expect(revealed.startsWith("pmcp_app_")).toBe(true);
-    const text = textOf(body);
-    expect(text).toContain(REVEAL_ONCE);
-    expect(text).toContain(ISSUE_ROTATION);
-    expect(text).toContain("app token");
-    expect(text).toContain(tokenScope(slug));
-    expect(text).toContain(EXPIRES_NEVER);
-    // The new row is the SELECTED one, which is what puts the reveal in the details.
-    const minted = (await tokensOf(world_.ownerId)).find(
-      (token) => token.refSlug === slug && token.id !== world_.ns.tokens.seeded.id,
-    );
-    if (minted === undefined) throw new Error("token_list reports no new key");
-    expect(text).toContain("new");
-    expect(body).toContain(minted.prefix);
-
-    // THE TWIN: the plaintext exists in that one response only.
-    const again = await page(pane, world_.cookie);
-    expect(again).not.toContain(revealed);
-    expect(again).not.toMatch(TOKEN_MATERIAL);
-  });
-
-  it(`§7 · the Overview pane is WIDE and is app_get's own row as a definition list — Slug, Kind, Created, a proxied app's Endpoint / Auth / Forward identity, a tunneled app's Last seen, Body logging reading "On — tunneled default" / "Off — proxied default" at each kind's default and the bare word where the owner set it explicitly, and Description — plus §23.6's alias editor, the pane's ONE mutating form: the Body logging line stays read-only and the switch lives on Recording (the twin)`, async () => {
-    const proxied = await appPage(paths.appPane(CATALOG, "overview"));
-    const row = await appRowOf(CATALOG);
-    const text = textOf(proxied);
-    expect(proxied).toContain("listing--wide");
-    expect(text).toContain(CATALOG);
-    expect(text).toContain(row.kind);
-    expect(text).toContain(row.endpoint ?? "");
-    expect(text).toContain("Forward identity");
-    expect(text).toContain(LOG_BODIES_PROXY);
-    // The alias editor is the pane's only form, and it is not a Body logging control: the
-    // switch is Recording's and Recording's alone (no checkbox is drawn here at all).
-    expect(opsOn(proxied)).toEqual(["alias_set"]);
-    expect(checkboxesOn(proxied)).toEqual({});
-
-    // The tunneled default, and the explicit setting that replaces both sentences.
-    const tunneled = textOf(await appPage(paths.appPane(TUNNELAPP, "overview")));
-    expect(tunneled).toContain(LOG_BODIES_TUNNEL);
-    const explicit = await seedRecordingApp("overexplicit", { logBodies: false });
-    const set = textOf(await appPage(paths.appPane(explicit.slug, "overview")));
-    expect(set).not.toContain(LOG_BODIES_TUNNEL);
-    expect(set).not.toContain(LOG_BODIES_PROXY);
-    expect(set).toMatch(/Body logging Off\b/);
-  });
-
-  it(`§10 · the long-data fixtures render whole rather than truncating a listing away: a 300-character pattern on a role, a 40-word tool description and a 60-character slug each appear in full in their own pane's row and in its details, and the pane still draws every other row beside them (the twin)`, async () => {
-    // 120, not the brief's 300: §20.3 caps a pattern at 128 characters, and a fixture the
-    // op refuses would pin nothing about how the page draws a long one.
-    const long = "get_".concat("x".repeat(115), ".*");
-    expect(long.length).toBe(121);
-    const app = await seedRoleApp("longdata", {
-      owner: { longrole: { tools: [long] }, shortrole: { tools: ["get_paper"] } },
-    });
-    const pane = paths.appPane(app.slug, "roles");
-    const listing = await page(pane, detail.session.cookie);
-    // The pattern is on the row whole, and the row beside it is still drawn — the twin.
-    expect(textOf(rowMarkupFor(listing, "role:longrole"))).toContain(long);
-    expect(selValuesOn(listing, pane)).toContain("role:shortrole");
-
-    // …and whole again in the details, beside every other pattern row.
-    const details = await page(`${pane}?sel=role:longrole`, detail.session.cookie);
-    expect(textOf(details)).toContain(long);
-    expect(valuesNamed("drop", details)).toEqual([`tools/${long}`]);
-  });
-  beforeAll(withAppDetailWorld);
-  beforeAll(async () => {
-    access = await seedAccessWorld();
-  });
-
-
-
-  it(`§13 · /apps/<slug>/token lists a tunneled app's live tokens by display prefix and the rail marker is that live count · the same app's revoked and expired tokens are absent from the pane though token_list still reports all three (the twin), and no plaintext appears anywhere on it`, async () => {
-    const slug = uniqueSlug("feedlist");
-    const world_ = await seedTunneledApp(slug, {
-      // All three rows are production-shaped: revoked through revokeToken, expired against
-      // a backdated clock (harness/seed's own note).
-      tokens: [{ as: "live" }, { as: "dead", revoked: true }, { as: "stale", expired: true }],
-    });
-    const reported = (await tokensOf(world_.ownerId)).filter((token) => token.refSlug === slug);
-    expect(reported.length, "token_list still reports all three").toBe(3);
-    const live = reported.filter(
-      (token) => token.revokedAt === null && (token.expiresAt === null || token.expiresAt > Date.now()),
-    );
-    expect(live.length).toBe(1);
-
-    const pane = paths.appPane(slug, "token");
-    const html = await page(pane, world_.cookie);
-    expect(html).toContain(live[0].prefix);
-    for (const gone of reported.filter((token) => token.id !== live[0].id)) {
-      expect(html, gone.id).not.toContain(gone.prefix);
-    }
-    expect(markerOn(html, pane)).toBe("1");
-
-    // §5 hygiene: no plaintext, and nothing token-shaped — the display prefix is twelve
-    // characters, far short of what `tokenPattern(16)` asks for.
-    for (const handle of ["live", "dead", "stale"]) expect(html).not.toContain(world_.ns.tokens[handle].token);
-    expect(html).not.toMatch(TOKEN_MATERIAL);
-  });
-
-  it(`§7 · Revoke on /apps/<slug>/token walks end to end as a browser walks it — the confirm link, the dialog whose body is "The app can no longer connect with it." for a key holding no socket and "Revoking closes the app's live connection." for the key that holds one, the posted form, the redirect back to the token pane — and the key stops authenticating a tunnel while the app's other live key still does (the twin)`, async () => {
-    const slug = uniqueSlug("feedrev");
-    // Two LIVE keys, so the revoke is a revoke OF one rather than an emptying.
-    const world_ = await seedTunneledApp(slug, { tokens: [{ as: "doomed" }, { as: "keeper" }] });
-    const rows = (await tokensOf(world_.ownerId)).filter((token) => token.refSlug === slug);
-    const doomed = rows.find((token) => token.id === world_.ns.tokens.doomed.id);
-    const keeper = rows.find((token) => token.id === world_.ns.tokens.keeper.id);
-    if (doomed === undefined || keeper === undefined) throw new Error("the seeded keys vanished");
-
-    const pane = paths.appPane(slug, "token");
-    const listed = await page(pane, world_.cookie);
-    const confirm = paths.appConfirm(slug, "token", "revoke-token", doomed.id);
-    expect(links(listed, confirm)).toBe(true);
-    // A confirm naming a token id no row carries draws no dialog at all.
-    const guessed = paths.appConfirm(slug, "token", "revoke-token", uniqueSlug("nope"));
-    expect(formsOn(await page(guessed, world_.cookie))).toEqual(formsOn(listed));
-
-    const dialog = await page(confirm, world_.cookie);
-    // Neither key holds a socket, so this is the OTHER body — the live one is below.
-    expect(textOf(dialog)).toContain(REVOKE_OFFLINE);
-    expect(textOf(dialog)).not.toContain(REVOKE_CLOSES);
-    expect(dialog).toContain(doomed.prefix);
-    const target = actionFor(dialog, "token_revoke");
-    expect(new URL(target, ORIGIN).searchParams.get("id")).toBe(doomed.id);
-    const posted = await formPost(target, submissionOf(dialog), world_.cookie);
-    expect(posted.status).toBe(303);
-    expect(posted.headers.get("Location")).toBe(`${pane}?done=token_revoke`);
-
-    const after = await page(pane, world_.cookie);
-    expect(after).not.toContain(doomed.prefix);
-    expect(after).toContain(keeper.prefix);
-    expect(markerOn(after, pane)).toBe("1");
-
-    // At the door, which is where "closes the app's live connection" is observable in
-    // process — the twin is what keeps a resolver that always says no from passing.
-    expect(await dialsIn(world_.ns.tokens.doomed.token)).toBeNull();
-    expect(await dialsIn(world_.ns.tokens.keeper.token)).toMatchObject({ appId: world_.ns.apps[slug].id });
-
-    // The OTHER body, on a key that does hold the socket — which is the whole difference.
-    const live = uniqueSlug("feedlive");
-    const closeSocket = await dialTunnel(live, { capabilities: ["tools"], tools: PLAIN_TOOLS });
-    try {
-      const held = (await tokensOf(detail.ns.owner.userId)).find((token) => token.refSlug === live);
-      if (held === undefined) throw new Error("the dialled key vanished");
-      const open = await appPage(paths.appConfirm(live, "token", "revoke-token", held.id));
-      expect(textOf(open)).toContain(REVOKE_CLOSES);
-    } finally {
-      await closeSocket();
-    }
-  });
-
-  it(`§13 · Issue new token fronts token_issue { kind: "app" } from the token pane's own target — not the generic 303 dispatch — and renders the once-only reveal in place with "The previous token keeps working until you revoke it.", after which both keys authenticate a tunnel and the pane's marker reads 2 (§5: more than one live app token is legal)`, async () => {
-    const slug = uniqueSlug("feedissue");
-    const world_ = await seedTunneledApp(slug, { tokens: [{ as: "seeded" }] });
-    const pane = paths.appPane(slug, "token");
-    const listed = await page(pane, world_.cookie);
-
-    // The op's own field names on the target's query string, parsed off the action rather
-    // than spelled here.
-    const target = actionFor(listed, "token_issue");
-    const named = new URL(target, ORIGIN).searchParams;
-    expect(named.get("kind")).toBe("app");
-    expect(named.get("slug")).toBe(slug);
-
-    // 200, not 303: the reveal cannot survive a redirect and `dispatch` unconditionally
-    // redirects, so this is a route of its own (§15 — a plaintext key never rides a URL).
-    const posted = await formPost(target, formsPostingTo(listed, target)[0], world_.cookie);
-    expect(posted.status).toBe(200);
-    const body = await posted.text();
-    const revealed = TOKEN_MATERIAL.exec(body)?.[0] ?? "";
-    expect(revealed.startsWith("pmcp_app_")).toBe(true);
-    expect(revealed).not.toBe(world_.ns.tokens.seeded.token);
-    expect(textOf(body)).toContain(ISSUE_ROTATION);
-
-    // Rotation is issue-then-revoke, in that order: a hub that revoked on issue fails here.
-    const appId = world_.ns.apps[slug].id;
-    expect(await dialsIn(revealed)).toMatchObject({ appId });
-    expect(await dialsIn(world_.ns.tokens.seeded.token)).toMatchObject({ appId });
-
-    const after = await page(pane, world_.cookie);
-    expect(markerOn(after, pane)).toBe("2");
-    const live = (await tokensOf(world_.ownerId)).filter(
-      (token) => token.refSlug === slug && token.revokedAt === null,
-    );
-    expect(live.length, "the marker is the list's length, not a counter of its own").toBe(2);
-    for (const token of live) expect(after).toContain(token.prefix);
-    expect(after, "the plaintext exists in one response only").not.toContain(revealed);
-  });
-
-  it(`§13 · a proxied app's Token rail entry is the dimmed —, its pane says "Proxied apps hold no tokens — the hub dials the upstream; nothing dials in (§2)." and it renders no issue control — which token_issue agrees with by refusing kind: "app" on that app · a tunneled app's pane renders one (the twin)`, async () => {
-    const proxied = uniqueSlug("notiontok");
-    const tunneled = uniqueSlug("feedtok");
-    const scenario: UpstreamScenario = { id: uniqueSlug("tokup"), mode: { kind: "ok" } };
-    // ONE namespace holding both kinds, so the two legs differ in exactly one thing.
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        {
-          slug: proxied,
-          kind: "proxy",
-          upstreamUrl: upstreamUrlFor(scenario),
-          upstreamAuthMode: "headers",
-        },
-        { slug: tunneled, kind: "tunnel", tokens: [{ as: "live" }] },
-      ],
-    });
-    const { cookie } = await seedOwnerSession(ns.owner);
-
-    const proxiedPane = paths.appPane(proxied, "token");
-    const dimmed = await page(proxiedPane, cookie);
-    expect(markerOn(dimmed, proxiedPane)).toBe(DIMMED_MARKER);
-    expect(textOf(dimmed)).toContain(PROXIED_NO_TOKENS);
-    const drawn = formsRenderedOn(dimmed).map((form) => form.op);
-    expect(drawn).not.toContain("token_issue");
-    expect(drawn).not.toContain("token_revoke");
-    // The absence is not the page hiding a working capability: the op refuses the same
-    // thing (§8 — `kind: "app"` is rejected for proxied apps).
-    await expect(ops.token_issue.handler(ns.owner.userId, { kind: "app", slug: proxied })).rejects.toThrow();
-    // And the refusal left NO row behind: a handler that minted the key and then threw is
-    // invisible to the pane, whose marker is derived from the app's kind, not from a list.
-    expect((await tokensOf(ns.owner.userId)).filter((token) => token.refSlug === proxied)).toEqual([]);
-
-    const tunneledPane = paths.appPane(tunneled, "token");
-    const live = await page(tunneledPane, cookie);
-    expect(formsRenderedOn(live).map((form) => form.op)).toContain("token_issue");
-    expect(markerOn(live, tunneledPane)).toMatch(/^\d+$/);
-  });
-
-  it(`§13 · Archive on /apps/<slug>/danger walks end to end behind its dialog — "It refuses connections and leaves the list — tokens, grants and history are kept." — and afterwards the page still renders under the verbatim archived banner with its tokens and grants still listed and its header status reading archived, until Unarchive (posted as the browser posts it) takes the banner away again · the same page carried no banner before (the twin), and the Danger rail entry is an ordinary link carrying no marker`, async () => {
-    const slug = uniqueSlug("feedarch");
-    const agent = uniqueSlug("archagent");
-    // Something to retain, or "tokens, grants and history are kept" is vacuous.
-    const world_ = await seedTunneledApp(slug, { tokens: [{ as: "live" }], agent });
-    const key = (await tokensOf(world_.ownerId)).find((token) => token.refSlug === slug);
-    if (key === undefined) throw new Error("the seeded key vanished");
-    const tokenPane = paths.appPane(slug, "token");
-    const accessPane = paths.appPane(slug, "access");
-    const dangerPane = paths.appPane(slug, "danger");
-
-    // BEFORE, the twin — no banner, and both retained things listed.
-    expect(textOf(await page(paths.appDetail(slug), world_.cookie))).not.toContain(ARCHIVED_BANNER);
-    expect(await page(tokenPane, world_.cookie)).toContain(key.prefix);
-    expect(textOf(await page(accessPane, world_.cookie))).toContain(agent);
-
-    // The Danger rail entry is neutral as STRUCTURE, which is all §7 leaves assertable:
-    // an ordinary anchor built from `paths`, carrying no marker. Colour is incidental.
-    const danger = await page(dangerPane, world_.cookie);
-    expect(links(danger, dangerPane)).toBe(true);
-    expect(markerOn(danger, dangerPane)).toBe("");
-
-    const confirm = paths.appConfirm(slug, "danger", "archive");
-    expect(links(danger, confirm)).toBe(true);
-    const dialog = await page(confirm, world_.cookie);
-    expect(textOf(dialog)).toContain(ARCHIVE_SENTENCE);
-    const posted = await formPost(actionFor(dialog, "app_archive"), submissionOf(dialog), world_.cookie);
-    expect(posted.status).toBe(303);
-    expect(posted.headers.get("Location")).toBe(`${dangerPane}?done=app_archive`);
-
-    // AFTER: §13's "an archived app's page stays reachable", with everything still on it.
-    const landing = await get(paths.appDetail(slug), world_.cookie);
-    expect(landing.status).toBe(200);
-    const banner = textOf(await landing.text());
-    expect(banner).toContain(ARCHIVED_BANNER);
-    expect(banner).toContain("archived");
-    expect(await page(tokenPane, world_.cookie)).toContain(key.prefix);
-    expect(textOf(await page(accessPane, world_.cookie))).toContain(agent);
-
-    // §9 rule 4b: the form this row rendered is posted the way a browser posts it.
-    const archived = await page(dangerPane, world_.cookie);
-    const unarchive = actionFor(archived, "app_unarchive");
-    const back = await formPost(unarchive, formsPostingTo(archived, unarchive)[0], world_.cookie);
-    expect(back.status).toBe(303);
-    expect(back.headers.get("Location")).toBe(`${dangerPane}?done=app_unarchive`);
-    expect(textOf(await page(paths.appDetail(slug), world_.cookie))).not.toContain(ARCHIVED_BANNER);
-    const listedApps = (await ops.app_list.handler(world_.ownerId, {})) as {
-      apps: { slug: string; archived: boolean }[];
-    };
-    expect(listedApps.apps.find((row) => row.slug === slug)?.archived).toBe(false);
-  });
-
-  it(`§13 · Delete on /apps/<slug>/danger walks end to end behind its dialog — "Revokes its tokens, closes the live connection and removes every grant. This cannot be undone." — and afterwards the app's page is byte-identical to an unknown slug's 404 · a sibling app's page still renders (the twin)`, async () => {
-    const doomed = uniqueSlug("doomed");
-    const keeper = uniqueSlug("keeper");
-    const agent = uniqueSlug("delagent");
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        { slug: doomed, kind: "tunnel", tokens: [{ as: "doomed" }] },
-        { slug: keeper, kind: "tunnel" },
-      ],
-      agents: [{ slug: agent, grants: { [doomed]: [{ role: "all", mode: "allow" }] } }],
-    });
-    const { cookie } = await seedOwnerSession(ns.owner);
-
-    const dangerPane = paths.appPane(doomed, "danger");
-    const confirm = paths.appConfirm(doomed, "danger", "delete");
-    expect(links(await page(dangerPane, cookie), confirm)).toBe(true);
-    const dialog = await page(confirm, cookie);
-    expect(textOf(dialog)).toContain(deleteSentence(1, 1));
-    expect(textOf(dialog)).toContain(doomed);
-
-    const posted = await formPost(actionFor(dialog, "app_delete"), submissionOf(dialog), cookie);
-    expect(posted.status).toBe(303);
-    // WHERE it lands is not pinned — §13 pins only that the deleted page is a 404 — but the
-    // owner is not left on a dead page.
-    const landed = posted.headers.get("Location") ?? "";
-    expect(landed.startsWith(paths.appDetail(doomed))).toBe(false);
-    expect((await get(landed, cookie)).status).toBe(200);
-
-    // The one-answer property row 8 pins for /approvals/<id>, here for /apps/<slug>.
-    const gone = await get(paths.appDetail(doomed), cookie);
-    const never = await get(paths.appDetail(uniqueSlug("never")), cookie);
-    expect(gone.status).toBe(404);
-    expect({ status: gone.status, text: await gone.text() }).toEqual({
-      status: never.status,
-      text: await never.text(),
-    });
-
-    // The twin, and the op's cascade (§8).
-    expect(await page(paths.appDetail(keeper), cookie)).toContain(keeper);
-    const listedApps = (await ops.app_list.handler(ns.owner.userId, {})) as { apps: { slug: string }[] };
-    expect(listedApps.apps.map((row) => row.slug)).not.toContain(doomed);
-    expect((await tokensOf(ns.owner.userId)).filter((token) => token.refSlug === doomed)).toEqual([]);
-  });
-
-  it(`§13 · every /apps row links to its detail page, the archived section included, while the builtin pmcp row links to none — and the list's own Archive / Unarchive / Delete / Connect actions are still rendered beside the link (the twin)`, async () => {
-    // Read through the op rather than through assumptions about which earlier case ran.
-    const listed = (await ops.app_list.handler(world.ns.owner.userId, {})) as {
-      apps: { slug: string; kind: string; archived: boolean }[];
-    };
-    const builtin = listed.apps.filter((row) => row.kind === "builtin");
-    const archived = listed.apps.filter((row) => row.kind !== "builtin" && row.archived);
-    const active = listed.apps.filter((row) => row.kind !== "builtin" && !row.archived);
-    expect(builtin.map((row) => row.slug)).toContain(PMCP_SLUG);
-    expect(archived.length, "the archived section must not be empty").toBeGreaterThan(0);
-    expect(active.length).toBeGreaterThan(0);
-
-    const html = await page(paths.apps);
-    for (const row of [...active, ...archived]) {
-      expect(links(html, paths.appDetail(row.slug)), row.slug).toBe(true);
-    }
-    // A link on the builtin row would be a link to the 404 the refusals row pins.
-    expect(links(html, paths.appDetail(PMCP_SLUG))).toBe(false);
-
-    // The twin: a detail link that had REPLACED the row's own actions fails here.
-    const drawn = new Set(formsRenderedOn(html).map((form) => form.op));
-    // Per SECTION, not one disjunction over the page: apps.tsx draws Unarchive on an
-    // archived row and Archive on an active one, and both sections are non-empty above, so
-    // an OR would stay green with either section's own action gone.
-    expect(drawn.has("app_archive"), "the active section's own action").toBe(true);
-    expect(drawn.has("app_unarchive"), "the archived section's own action").toBe(true);
-    expect(drawn.has("connect") || drawn.has("app_disconnect")).toBe(true);
-    expect(
-      [...active, ...archived].some((row) => links(html, paths.appsConfirmDelete(row.slug))),
-    ).toBe(true);
-  });
-
-  it(`§13 · every /apps row IS the link — the name an anchor class="row-link" stretched over a class="app-row" row with the trailing chevron, on the active and the archived rows alike (2026-09-16: as the agents list, replacing the name-only link) — while the row's own Archive / Unarchive / Delete / Connect actions still sit beside it above the stretched anchor, and the builtin pmcp row is still not listed (the twin)`, async () => {
-    const listed = (await ops.app_list.handler(world.ns.owner.userId, {})) as {
-      apps: { slug: string; kind: string; archived: boolean }[];
-    };
-    const rows = listed.apps.filter((row) => row.kind !== "builtin");
-    expect(rows.some((row) => row.archived), "the archived section must not be empty").toBe(true);
-    expect(rows.some((row) => !row.archived)).toBe(true);
-
-    const html = await page(paths.apps);
-    // One `app-row` per listed app and no other, each closed by its own </tr>, so every
-    // assertion below is about ONE row's markup and not the page's.
-    const trs = [...html.matchAll(/<tr class="app-row">([\s\S]*?)<\/tr>/g)].map((match) => match[1]);
-    expect(trs.length).toBe(rows.length);
-    for (const row of rows) {
-      const tr = trs.find((markup) => links(markup, paths.appDetail(row.slug)));
-      expect(tr, `no app-row links ${row.slug}`).toBeDefined();
-      // The stretched anchor is the NAME's, and it is the row's only link to the page.
-      const stretched = [...(tr ?? "").matchAll(/<a class="row-link" href="([^"]*)"/g)].map((m) => decodeEntities(m[1]));
-      expect(stretched, row.slug).toEqual([paths.appDetail(row.slug)]);
-      expect(tr, row.slug).toContain('class="row-chevron"');
-      // The twin: the row's own actions are still in the row, above the anchor.
-      expect(links(tr ?? "", paths.appsConfirmDelete(row.slug)), `${row.slug}: Delete`).toBe(true);
-      expect(formsRenderedOn(tr ?? "").map((form) => form.op), row.slug).toContain(
-        row.archived ? "app_unarchive" : "app_archive",
-      );
-    }
-    // The builtin is not a row, so it is not a link either.
-    expect(links(html, paths.appDetail(PMCP_SLUG))).toBe(false);
-  });
-
-  it(`§8 · every mutating form the /apps/<slug> panes render fronts a real admin.ops key and submits within that op's schema — every required field, and no field the schema does not declare — so the page that issues and revokes app tokens joins parity direction B instead of standing outside it`, async () => {
-    const tunneled = uniqueSlug("paritytun");
-    const proxied = uniqueSlug("parityprx");
-    const agent = uniqueSlug("parityagent");
-    const scenario: UpstreamScenario = { id: uniqueSlug("parityup"), mode: { kind: "ok" } };
-    const ns = await seedNamespace(env.DB, {
-      apps: [
-        { slug: tunneled, kind: "tunnel", tokens: [{ as: "live" }] },
-        // `oauth`, not `headers`: the header's Connect and Disconnect controls — which
-        // §13 draws on EVERY pane of a proxied app — exist for that mode alone, and this
-        // row's subject is every mutating form the panes render.
-        { slug: proxied, kind: "proxy", upstreamUrl: upstreamUrlFor(scenario), upstreamAuthMode: "oauth" },
-      ],
-      agents: [{ slug: agent, grants: { [tunneled]: [{ role: "all", mode: "allow" }] } }],
-    });
-    const { cookie } = await seedOwnerSession(ns.owner);
-    const key = (await tokensOf(ns.owner.userId)).find((token) => token.refSlug === tunneled);
-    if (key === undefined) throw new Error("the seeded key vanished");
-
-    // The destructive forms live inside the dialogs, so a walk of the bare panes misses them.
-    const walked = [
-      ...appPaneHrefs(tunneled),
-      ...appPaneHrefs(proxied),
-      paths.appConfirm(tunneled, "token", "revoke-token", key.id),
-      paths.appConfirm(tunneled, "danger", "archive"),
-      paths.appConfirm(tunneled, "danger", "delete"),
-      // The two editors that exist only under a selection — the Roles one and, once the
-      // app has a holder, the grant editor the Agents pane draws in place.
-      `${paths.appPane(tunneled, "roles")}?new=1`,
-      `${paths.appPane(tunneled, "access")}?sel=agent:${agent}`,
-    ];
-    const seen = new Set<string>();
-    const walkedOps = new Set<string>();
-    for (const url of walked) {
-      for (const form of formsRenderedOn(await page(url, cookie))) {
-        walkedOps.add(form.op);
-        if (BROWSER_ONLY_TARGETS.has(form.op) || COMPOSED_APP_TARGETS.has(form.op)) continue;
-        if (form.op === "sign-out") continue;
-        expect(Object.prototype.hasOwnProperty.call(ops, form.op), `${url} → ${form.op}`).toBe(true);
-        seen.add(form.op);
-        // Both sides derived off `admin.ops`: every required field, and nothing the schema
-        // does not declare. Not equality — `token_issue` declares an optional `expires_in`
-        // §13 pins no control for on this pane.
-        for (const required of requiredKeysOf(ops[form.op])) {
-          expect(form.fields, `${form.op} required`).toContain(required);
-        }
-        for (const submitted of form.fields) {
-          expect(schemaKeysOf(ops[form.op]), `${form.op} submitted`).toContain(submitted);
-        }
-      }
-    }
-    // The composed targets are not absent: each is a real Save this walk passed over, and
-    // its own describe pins the one `app_update` it composes.
-    for (const composed of COMPOSED_APP_TARGETS) {
-      expect(walkedOps, composed).toContain(composed);
-    }
-    // Non-vacuity: the walk really saw this page's five ops. `connect` is not among them —
-    // it is a browser-only target (§19's redirect), and BROWSER_ONLY_TARGETS holds it.
-    for (const op of ["token_issue", "token_revoke", "app_archive", "app_delete", "app_disconnect"]) {
-      expect([...seen], op).toContain(op);
-    }
-  });
-
-
-  it(`§8/§13 · Issue new token reaches the op although its route answers 200 instead of the generic redirect: the post writes exactly one admin.token_issue audit row naming the app and the id token_list then reports, and that row carries neither the revealed key nor any token material`, async () => {
-    const slug = uniqueSlug("feedaudit");
-    const world_ = await seedTunneledApp(slug, { tokens: [{ as: "seeded" }] });
-    // REAL ops throughout: a substituted token_issue returns {}, so no reveal could render
-    // and `withCountedOps` would prove less than this does.
-    const before = (await query(env.DB, world_.ownerId, { event: "admin.token_issue" })).total;
-
-    const pane = paths.appPane(slug, "token");
-    const listed = await page(pane, world_.cookie);
-    const target = actionFor(listed, "token_issue");
-    const posted = await formPost(target, formsPostingTo(listed, target)[0], world_.cookie);
-    expect(posted.status).toBe(200);
-    const revealed = TOKEN_MATERIAL.exec(await posted.text())?.[0] ?? "";
-    expect(revealed).not.toBe("");
-
-    // §8's "every mutating pmcp tool writes an admin.<tool> audit row" is the whole
-    // discriminator: `summarise` inside token_issue.run is that event's only writer, and a
-    // Registry-side mint writes none.
-    const after = await query(env.DB, world_.ownerId, { event: "admin.token_issue" });
-    expect(after.total).toBe(before + 1);
-    const minted = (await tokensOf(world_.ownerId)).find(
-      (token) => token.refSlug === slug && token.id !== world_.ns.tokens.seeded.id,
-    );
-    if (minted === undefined) throw new Error("token_list reports no new key");
-    const row = after.rows[0];
-    // Not `detail`: that name belongs to this describe's shared app-detail world, and the
-    // shadow would put a later reader of the world inside this block's dead zone.
-    const serializedDetail = JSON.stringify(row.detail);
-    expect(serializedDetail).toContain(slug);
-    expect(serializedDetail).toContain(minted.id);
-    // §15 hygiene on the one page that has a plaintext to leak.
-    const serialized = JSON.stringify(row);
-    expect(serialized).not.toContain(revealed);
-    expect(serialized).not.toMatch(TOKEN_MATERIAL);
-  });
-
-  it(`§9/§13 · every ?confirm= link the eight /apps/<slug> panes render rides the pane that drew it and draws its dialog there · the same query moved onto another pane's URL, and an id naming no row, each draw none (the twin)`, async () => {
-    const slug = uniqueSlug("totality");
-    const agent = uniqueSlug("totagent");
-    const world_ = await seedTunneledApp(slug, { tokens: [{ as: "live" }], agent });
-
-    // Harvest every `?confirm=` link the eight panes render, with the pane it was on.
-    const harvest: { pane: string; href: string }[] = [];
-    const bare = new Map<string, string>();
-    for (const pane of appPaneHrefs(slug)) {
-      const html = await page(pane, world_.cookie);
-      bare.set(pane, html);
-      for (const href of confirmLinksOn(html)) harvest.push({ pane, href });
-    }
-    expect(harvest.length).toBeGreaterThan(0);
-    const panesDrawing = new Set(harvest.map((found) => found.pane)).size;
-    expect(panesDrawing, "one pane's dialogs are not the whole page's").toBeGreaterThan(1);
-
-    for (const { pane, href } of harvest) {
-      // §13's "confirm-dialog state rides the owning pane's URL", made observable.
-      expect(new URL(href, ORIGIN).pathname, href).toBe(pane);
-      const withQuery = await page(href, world_.cookie);
-      // A STRICT SUPERSET rather than a difference, so a pane that legitimately renders an
-      // op inline AND behind a dialog cannot fail for the wrong reason.
-      expect(supersets(opsOn(withQuery), opsOn(bare.get(pane) ?? "")), href).toBe(true);
-    }
-
-    // TWIN ONE: the same query on a DIFFERENT pane's URL draws nothing.
-    const moved = harvest[0];
-    const elsewhere = appPaneHrefs(slug).find((pane) => pane !== moved.pane) ?? "";
-    const carried = `${elsewhere}${new URL(moved.href, ORIGIN).search}`;
-    expect(opsOn(await page(carried, world_.cookie))).toEqual(opsOn(bare.get(elsewhere) ?? ""));
-
-    // TWIN TWO: the same kind with an id naming no row draws nothing either.
-    const guessed = paths.appConfirm(slug, "token", "revoke-token", uniqueSlug("nope"));
-    const tokenPane = paths.appPane(slug, "token");
-    expect(opsOn(await page(guessed, world_.cookie))).toEqual(opsOn(bare.get(tokenPane) ?? ""));
-  });
-
-  it(`§13 · an archived app's page keeps its catalog: after Archive is posted from the danger pane the banner page still lists the tools the app advertised and its Catalog marker is still that number · the same page listed them under the same marker before the archive (the twin)`, async () => {
-    const slug = uniqueSlug("kept");
-    const tools = [
-      { name: uniqueSlug("kept").replace(/-/g, "_"), description: "One.", inputSchema: { type: "object" } },
-      { name: uniqueSlug("held").replace(/-/g, "_"), description: "Two.", inputSchema: { type: "object" } },
-    ];
-    // `close()` first, so nothing below depends on the socket staying open.
-    const close = await dialTunnel(slug, { capabilities: ["tools"], tools });
-    await close();
-
-    // BEFORE — the twin, and what makes "still" mean anything.
-    const landing = catalogPane(slug);
-    const before = await appPage(landing);
-    for (const tool of tools) expect(textOf(before), tool.name).toContain(tool.name);
-    expect(markerOn(before, landing)).toBe("2");
-    expect(textOf(before)).not.toContain(ARCHIVED_BANNER);
-
-    // Archive through the pane's own control, as the browser posts it.
-    const dangerPane = paths.appPane(slug, "danger");
-    const dialog = await appPage(paths.appConfirm(slug, "danger", "archive"));
-    const posted = await formPost(
-      actionFor(dialog, "app_archive"),
-      submissionOf(dialog),
-      detail.session.cookie,
-    );
-    expect(posted.status).toBe(303);
-    expect(posted.headers.get("Location")).toBe(`${dangerPane}?done=app_archive`);
-
-    // AFTER: the retained catalog, under the same marker — explicitly not "", not "—",
-    // not "0", so a seam that answered "unreadable" for an archived app fails here.
-    const answered = await get(landing, detail.session.cookie);
-    expect(answered.status).toBe(200);
-    const after = await answered.text();
-    expect(textOf(after)).toContain(ARCHIVED_BANNER);
-    for (const tool of tools) expect(textOf(after), tool.name).toContain(tool.name);
-    expect(markerOn(after, landing)).toBe("2");
-
-    // The world is SHARED — `dialTunnel` seeds into `detail.ns`, which four describes read
-    // — so this row puts back the one thing it changed rather than leaving an archived app
-    // behind for whoever enumerates that namespace next.
-    await ops.app_unarchive.handler(detail.ns.owner.userId, { slug });
-  });
-});
-
-describe(`§13 · /apps/<slug> — refusals and reserved segments`, () => {
-
-  it(`§13 · /apps/pmcp, an unknown slug and another namespace's real slug are one 404, byte-identical — reserved, nonexistent and foreign are indistinguishable, and app_get refuses pmcp the same way · the owner's own app renders at the same shape (the twin)`, async () => {
-    const foreignSlug = uniqueSlug("foreign");
-    const foreign = await seedNamespace(env.DB, { apps: [{ slug: foreignSlug, kind: "tunnel" }] });
-    const theirs = await seedOwnerSession(foreign.owner);
-
-    const answers = [];
-    for (const slug of [PMCP_SLUG, uniqueSlug("nope"), foreignSlug]) {
-      const response = await get(paths.appDetail(slug));
-      answers.push({ slug, status: response.status, text: await response.text() });
-    }
-    for (const answer of answers) expect(answer.status, answer.slug).toBe(404);
-    // A probe learns nothing about WHICH of reserved, nonexistent and foreign it hit.
-    for (const answer of answers.slice(1)) {
-      expect({ status: answer.status, text: answer.text }).toEqual({
-        status: answers[0].status,
-        text: answers[0].text,
-      });
-    }
-    // Non-vacuity of the foreign leg: the row exists — this owner's pages read only their
-    // own namespace.
-    expect(await page(paths.appDetail(foreignSlug), theirs.cookie)).toContain(foreignSlug);
-
-    // Page and op agree on the builtin, which has not vanished: app_list still flags it.
-    await expect(ops.app_get.handler(world.ns.owner.userId, { slug: PMCP_SLUG })).rejects.toThrow(
-      new RegExp(PMCP_SLUG),
-    );
-    const listed = (await ops.app_list.handler(world.ns.owner.userId, {})) as {
-      apps: { slug: string; builtin?: boolean }[];
-    };
-    expect(listed.apps.find((row) => row.slug === PMCP_SLUG)?.builtin).toBe(true);
-
-    // The twin.
-    expect((await get(paths.appDetail("news"))).status).toBe(200);
-  });
-
-  it(`§13 · /apps/new still renders the add-app form and POST /apps/connect still starts the upstream redirect — a static segment mounted under /apps/ wins over the slug route, which answers the 404 for every other name (the twin)`, async () => {
-    // GET: `new` is a page, not a slug — the add-app form, whose op says so.
-    const added = await page(paths.appNew);
-    expect(formsRenderedOn(added).map((form) => form.op)).toContain("app_create");
-    expect((await get(paths.appDetail(uniqueSlug("nope")))).status).toBe(404);
-
-    // POST: `connect` is a mounted route (beginConnect's redirect or its own noticeUrl
-    // refusal — either is the mounted route answering), while any other name falls to the
-    // generic /apps/:op dispatch's "No such action".
-    const csrf = csrfOf(await page(paths.apps));
-    const connected = await post(paths.appConnect("notion"), {}, { csrf });
-    expect(connected.status).toBe(303);
-    const unmounted = await post(`/apps/${uniqueSlug("nope")}`, {}, { csrf });
-    expect(unmounted.status).toBe(404);
-    // The ANSWER, not just the code: the page router's own tail answers 404 here too, so
-    // status alone stays green with the `/apps/:op` dispatch deleted outright — and it is
-    // this dispatch's answer that routes.test.ts's derivation reads as its control.
-    expect(await unmounted.text()).toBe("No such action\n");
-
-    // The twin, so "static wins" does not read as "the slug route is broken".
-    expect((await get(paths.appDetail("news"))).status).toBe(200);
-  });
-
-  it(`§13 · every /apps/<slug> pane is behind the ordinary owner session: an anonymous GET of the detail page and of each of the seven pane URLs bounces to /login, and so does a bearer with no cookie · the same URLs under the owner's cookie render (the twin)`, async () => {
-    // Derived off `paths`, so a pane added later is walked with no edit here.
-    const walked = appPaneHrefs("news");
-    let seen = 0;
-    for (const path of walked) {
-      const anonymous = await call(new Request(`${ORIGIN}${path}`));
-      expect(anonymous.status, path).toBe(302);
-      expect(anonymous.headers.get("Location") ?? "", path).toMatch(/^\/login(\?|$)/);
-
-      // A bearer with no cookie is nothing on a page route (requireOwnerSession's contract).
-      const bearer = await call(
-        new Request(`${ORIGIN}${path}`, { headers: { Authorization: `Bearer ${world.deviceToken}` } }),
-      );
-      expect(bearer.status, path).toBe(302);
-      expect(bearer.headers.get("Location") ?? "", path).toMatch(/^\/login(\?|$)/);
-
-      expect((await get(path)).status, path).toBe(200);
-      seen += 1;
-    }
-    expect(seen).toBe(appPaneHrefs("probe").length);
-  });
-
-  it(`§13 · /apps/<slug> is the ordinary owner session and nothing stricter: the day-old cookie the seven /settings panes bounce to /login renders the app page, all seven of its panes, and posts the danger pane's own Archive form (the other half of §13's gate sentence)`, async () => {
-    const slug = uniqueSlug("gated");
-    const agent = uniqueSlug("gateagent");
-    const world_ = await seedTunneledApp(slug, { agent });
-    // Two sign-ins for one owner: ageing one cannot age the other.
-    const stale = await seedOwnerSession(world_.ns.owner);
-    const fresh = await seedOwnerSession(world_.ns.owner);
-    await ageSession(stale.token);
-
-    // PRECONDITION, not the claim: it proves the legs below are about the credential §13
-    // distinguishes.
-    for (const pane of PANES) {
-      const bounced = await get(pane, stale.cookie);
-      expect(bounced.status, pane).toBe(302);
-      expect(bounced.headers.get("Location") ?? "", pane).toMatch(/^\/login(\?|$)/);
-    }
-
-    // THE CLAIM, before any mutation.
-    const walked = appPaneHrefs(slug);
-    let seen = 0;
-    for (const path of walked) {
-      expect((await get(path, stale.cookie)).status, path).toBe(200);
-      // THE CONTROL: the same eight under a fresh cookie, so the 200s above are not this
-      // row leaning on §13's separate archived-page rule.
-      expect((await get(path, fresh.cookie)).status, path).toBe(200);
-      seen += 1;
-    }
-    expect(seen).toBe(appPaneHrefs("probe").length);
-
-    // THE POST SIDE, last and sharpest: a recency gate gates mutations, not only reads.
-    // The CSRF token rides as the STALE session's own, read off its own dialog render, so
-    // the acceptance cannot be the CSRF check answering.
-    const dangerPane = paths.appPane(slug, "danger");
-    const dialog = await page(paths.appConfirm(slug, "danger", "archive"), stale.cookie);
-    const posted = await formPost(actionFor(dialog, "app_archive"), submissionOf(dialog), stale.cookie);
-    expect(posted.status).toBe(303);
-    expect(posted.headers.get("Location")).toBe(`${dangerPane}?done=app_archive`);
-    const listed = (await ops.app_list.handler(world_.ownerId, {})) as {
-      apps: { slug: string; archived: boolean }[];
-    };
-    expect(listed.apps.find((row) => row.slug === slug)?.archived).toBe(true);
-  });
-});
 
 async function registerOAuthClient(
   fields: Record<string, unknown> = {},
@@ -10619,26 +5993,6 @@ const SETTINGS_CREDENTIAL_TARGETS: readonly string[] = Object.values<string>(pat
   (path) => path.startsWith(`${paths.settings}/`),
 );
 
-/**
- * Every mutating target that fronts no ops key, by name. Three are §8's pinned browser
- * interactions — the consent redirect, the per-browser push subscription, and the device
- * decision — and the rest are better-auth's own endpoints, which the shell's Sign out puts
- * on every page. A target outside this set and outside admin.ops is exactly the drift
- * cases 16 and 17 exist to catch.
- *
- * An exclusion here is a debt owed to another case, never a hole (§9 rule 4a). Two of the
- * three are paid in this file: "decide" by cases 28 and 29, which submit that form both
- * ways and follow the flow to the CLI's redemption, and the better-auth targets by case
- * 24's walk. "connect" and "push" are the ones still owed.
- */
-/**
- * The app page's four Save targets that are op-SHAPED without being ops (§4/§5/§6/§23.6):
- * each composes ONE `app_update` or `grant_set` out of fields that are not that op's keys,
- * so Direction B's field-set equality cannot describe them — exactly as the agent page's
- * own grant editor is exempted. What each composes is pinned by its own describe.
- */
-const COMPOSED_APP_TARGETS: ReadonlySet<string> = new Set(["role_set", "recording_set", "grant_set", "alias_set"]);
-
 const BROWSER_ONLY_TARGETS: ReadonlySet<string> = new Set([
   "connect",
   "push",
@@ -10646,22 +6000,26 @@ const BROWSER_ONLY_TARGETS: ReadonlySet<string> = new Set([
   ...BETTER_AUTH_ACTIONS,
 ]);
 
-/** Every session-backed page, rendered — the walk's input for case 4. */
+/**
+ * Every SERVER-RENDERED, session-backed page — the walk's input for case 4.
+ *
+ * `/apps`, `/apps/new` and the app page's eight URLs left this list with the SPA cutover
+ * (2026-09-18): they answer a shell document that renders no form at all, so walking them
+ * would only ever prove the shell carries none. The coverage that went with them — the one
+ * retained `/apps/connect` form's CSRF field, now drawn client-side where no server-HTML
+ * walk can see it — is owed to the behavioural case beside case 4, which posts that target
+ * with no field and reads the refusal.
+ */
 async function sessionPages(): Promise<Record<string, string>> {
   const { userCode } = await requestDeviceCodes();
   const rendered: Record<string, string> = {};
   for (const path of [
-    paths.apps,
-    paths.appNew,
     paths.approvals,
     paths.approval(world.approvalId),
     paths.audit,
     // All seven panes, not just the landing one: a pane is a route, and a form that forgot
-    // its CSRF field on /settings/tokens is as unposted as one that forgot it on /apps.
+    // its CSRF field on /settings/tokens is as unposted as one that forgot it on /settings.
     ...PANES,
-    // And all eight of the app page's, for the same reason — otherwise the whole mutating
-    // surface of `/apps/<slug>` is claimed by no walk, an exclusion with no debtor.
-    ...appPaneHrefs("notion"),
     `${paths.device}?user_code=${encodeURIComponent(userCode)}`,
   ]) {
     rendered[path] = await page(path);
@@ -10888,33 +6246,6 @@ const PROSE_ENTITIES: Record<string, string> = {
   "&#039;": "'",
   "&apos;": "'",
 };
-
-/** Does the page LINK this exact URL? An href comes back through the URL decoder, so an
- *  `&` the renderer escaped compares equal without either side spelling the entity — and
- *  the compare is EXACT, so `?confirm=archive` is not satisfied by a longer query. */
-function links(html: string, href: string): boolean {
-  return [...html.matchAll(/href="([^"]*)"/g)].some((anchor) => decodeEntities(anchor[1]) === href);
-}
-
-/** The set of ops one render's posting forms front, sorted — how "this query drew a dialog
- *  the bare pane does not" is compared without reading a class or a copy string. */
-function opsOn(html: string): string[] {
-  return [...new Set(formsRenderedOn(html).map((form) => form.op))].filter(inPane).sort();
-}
-
-/** Strictly more, as a set: everything `fewer` has, plus at least one it does not. A page
- *  that renders an op inline AND behind a dialog therefore cannot fail for the wrong
- *  reason, which a set DIFFERENCE would make it do. */
-function supersets(more: string[], fewer: string[]): boolean {
-  return fewer.every((op) => more.includes(op)) && more.length > fewer.length;
-}
-
-/** Every posting form's action on one rendered page, sorted — the shape "this query drew a
- *  form the bare pane does not" is compared as. */
-/** The shell's own sign-out rides every signed-in page, so it is never a pane's form. */
-function inPane(op: string): boolean {
-  return op !== "sign-out";
-}
 
 function formsOn(html: string): string[] {
   const actions: string[] = [];
@@ -11175,133 +6506,6 @@ async function namespaceShape(): Promise<string> {
   return JSON.stringify({ apps: apps.results, approvals: approvals.results });
 }
 
-
-/* ------------------------------------------------------------------ *
- * /apps/<slug> — the helpers its rows share
- * ------------------------------------------------------------------ */
-
-/** One of this describe's pages under ITS OWN session: `page` defaults to the file
- *  world's cookie, a different owner, and asserts 200 — so an omitted cookie would fail
- *  as a login bounce rather than as the property under test. */
-function appPage(path: string): Promise<string> {
-  return page(path, detail.session.cookie);
-}
-
-/** One app as §8's own read reports it — what the header is asserted AGAINST, rather
- *  than the spec the seed was written from. */
-async function appRowOf(slug: string): Promise<AppSummaryRow> {
-  const answered = (await ops.app_get.handler(detail.ns.owner.userId, { slug })) as { app: AppSummaryRow };
-  return answered.app;
-}
-
-/** Every GET form a page renders, as its target and the controls it submits — the filter
- *  rows, which are forms with no op behind them and so are invisible to Direction B. */
-function getFormsOn(html: string): { action: string; fields: string[] }[] {
-  const found: { action: string; fields: string[] }[] = [];
-  for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
-    if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "get") continue;
-    found.push({
-      action: decodeEntities(attributeOf(form[1], "action") ?? ""),
-      fields: namedControls(form[2]).sort(),
-    });
-  }
-  return found;
-}
-
-/** The `sel` values one pane's own rows carry — the listing's links read as what they
- *  SELECT rather than as the bytes the renderer chose to encode them in. */
-function selValuesOn(html: string, paneHref: string): string[] {
-  const found: string[] = [];
-  for (const anchor of html.matchAll(/<a\b([^>]*)>/g)) {
-    const href = decodeEntities(attributeOf(anchor[1], "href") ?? "");
-    if (href === "") continue;
-    const url = new URL(href, ORIGIN);
-    const sel = url.searchParams.get("sel");
-    if (url.pathname === paneHref && sel !== null) found.push(sel);
-  }
-  return found;
-}
-
-/** One listing row's own markup — the slice from its `?sel=` anchor to the next one, which
- *  is what makes "the row stays one line" a claim about THAT row and not about the pane. */
-function rowMarkupFor(html: string, sel: string): string {
-  const rows = [...html.matchAll(/<a\b([^>]*)>/g)].filter((anchor) => {
-    const href = decodeEntities(attributeOf(anchor[1], "href") ?? "");
-    return href !== "" && new URL(href, ORIGIN).searchParams.get("sel") !== null;
-  });
-  const at = rows.findIndex((anchor) => {
-    const href = decodeEntities(attributeOf(anchor[1], "href") ?? "");
-    return new URL(href, ORIGIN).searchParams.get("sel") === sel;
-  });
-  if (at < 0) throw new Error(`no listing row selects "${sel}"`);
-  return html.slice(rows[at].index ?? 0, at + 1 < rows.length ? rows[at + 1].index : html.length);
-}
-
-/**
- * One form's submission as the BROWSER builds it: every enabled named control in document
- * order, REPEATED names kept, with unticked checkboxes and unchecked radios dropped.
- * `paneSubmission` keeps one value per name, which cannot describe a form whose rows repeat
- * one — the two composers' `t.<dir>.<path>` and `row` fields, on which "a Save is a delta
- * over the rows the form drew" entirely rests (2026-09-17).
- */
-function formPairs(html: string, action: string): [string, string][] {
-  const form = [...html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)].find(
-    (candidate) => decodeEntities(attributeOf(candidate[1], "action") ?? "") === action,
-  );
-  if (form === undefined) throw new Error(`the page rendered no form posting to "${action}"`);
-  const pairs: [string, string][] = [];
-  for (const control of form[2].matchAll(/<input\b([^>]*)>/g)) {
-    const name = decodeEntities(attributeOf(control[1], "name") ?? "");
-    if (name === "" || /\bdisabled\b/.test(control[1])) continue;
-    const type = attributeOf(control[1], "type");
-    if ((type === "checkbox" || type === "radio") && !/\bchecked\b/.test(control[1])) continue;
-    pairs.push([name, decodeEntities(attributeOf(control[1], "value") ?? "")]);
-  }
-  return pairs;
-}
-
-/** The details pane's own markup — the right-hand half of a split pane. A claim about
- *  what the details say must not be answerable by the shell's own navigation, whose
- *  "Approvals" link contains "Approval" on every signed-in page. */
-function detailsPaneOf(html: string): string {
-  const at = html.indexOf('class="details"');
-  if (at < 0) throw new Error("the pane rendered no details");
-  return html.slice(at);
-}
-
-/** The level the page chose, read off the root's own attribute — the one place §13's
- *  narrow ladder exists at all, since which level is showing is otherwise CSS's business. */
-function levelOf(html: string): string {
-  return /\bdata-level="(\d)"/.exec(html)?.[1] ?? "";
-}
-
-/** One app-rail entry's own markup — where the Recording dot lives, which is a marker no
- *  text walk can see (its state is in the class and its word is `sr-only`). */
-function appRailAnchor(html: string, slug: string, href: string): string {
-  const block = navBlock(html, APP_RAIL_NAV_LABEL) ?? "";
-  const anchor = [...block.matchAll(/<a\b([^>]*)>[\s\S]*?<\/a>/g)].find(
-    (candidate) => decodeEntities(attributeOf(candidate[1], "href") ?? "") === href,
-  );
-  if (anchor === undefined) throw new Error(`the app rail of "${slug}" carries no entry for "${href}"`);
-  return anchor[0];
-}
-
-/** One pane's marker read off THIS render's app rail — never off another pane's copy of
- *  the rail, and never off "the anchor with that href", which the pill row repeats
- *  markerless (`Number("")` is 0, not NaN). */
-function markerOn(html: string, href: string): string {
-  const entry = railEntries(html, APP_RAIL_NAV_LABEL).find((row) => row.href === href);
-  if (entry === undefined) throw new Error(`the app rail carries no entry for "${href}"`);
-  return entry.marker;
-}
-
-/** A §13 quote as the page renders it: only the markdown backticks come off, because the
- *  page draws those spans as markup and `textOf` has already dropped the tags. Everything
- *  else stays byte-identical with the spec's own sentence. */
-function pinned(sentence: string): string {
-  return sentence.replace(/`/g, "");
-}
-
 /**
  * How often a name is NAMED in some text. Occurrences preceded by a word character do not
  * count, which is what keeps §7's aggregated `<slug>_<tool>` from reading as a second
@@ -11340,12 +6544,6 @@ function blocksOf(text: string, names: readonly string[]): Record<string, string
   return blocks;
 }
 
-/** The header's last-seen value, without pinning its format: §13 gives a tunneled app a
- *  last seen, and this reads whatever word the page put after the label. */
-function lastSeenOf(html: string): string {
-  return /Last seen (\S+)/.exec(textOf(html))?.[1] ?? "";
-}
-
 /** Every target a page posts to, `action=` and a submit button's `formaction=` alike —
  *  /apps draws Connect as the latter, so a walk over form actions alone would miss the
  *  very control the app page's own is compared against. */
@@ -11362,165 +6560,4 @@ function linkTexts(html: string, href: string): string[] {
     if (decodeEntities(attributeOf(anchor[1], "href") ?? "") === href) found.push(textOf(anchor[2]));
   }
   return found;
-}
-
-/** One listing on the scoped endpoint under this describe's OWN owner bearer — `user:<name>`,
- *  the principal §7 step 2 leaves unfiltered, which is what makes the comparison fair. */
-async function scopedList(
-  slug: string,
-  method: string,
-): Promise<Record<string, { name: string; uri?: string; uriTemplate?: string }[] | undefined>> {
-  const answered = await call(
-    new Request(`${ORIGIN}${paths.mcpScoped(detail.ns.owner.username, slug)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${detail.bearer}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method }),
-    }),
-  );
-  const body = (await answered.json()) as { result?: Record<string, { name: string }[] | undefined> };
-  return body.result ?? {};
-}
-
-/** Every agent's grants ON CATALOG, `agent_list`'s own spelling parsed back into the
- *  entries the door takes — so "no agent reaches it" is the matcher's answer rather than
- *  the fixture's claim. */
-async function grantsOnCatalog(): Promise<Record<string, GrantEntry[]>> {
-  const listed = (await ops.agent_list.handler(detail.ns.owner.userId, {})) as {
-    agents: { slug: string; grants: Record<string, string[]> }[];
-  };
-  const held: Record<string, GrantEntry[]> = {};
-  for (const agent of listed.agents) {
-    const spelled = agent.grants[CATALOG] ?? [];
-    if (spelled.length === 0) continue;
-    held[agent.slug] = spelled.map((entry) => {
-      const at = entry.indexOf(":");
-      return at < 0
-        ? { role: entry, mode: "allow" as const }
-        : { role: entry.slice(0, at), mode: "approval" as const };
-    });
-  }
-  return held;
-}
-
-/**
- * Drive BROKEN into `needs_reconnect` the one way §7 allows: connect it for real against
- * the fake authorization server, then make one call whose proactive refresh that server
- * rejects. The flag lives inside the stored ciphertext, so nothing here pokes a column,
- * and the precondition is read back through §8's own row rather than through the seam
- * under test.
- */
-async function breakBrokensCredential(): Promise<void> {
-  const app = await new Registry(env.DB).getApp(detail.ns.owner.userId, BROKEN);
-  if (app === null) throw new Error("the app-detail fixture's oauth app vanished");
-  const started = await beginConnect(app, { id: await sessionIdOf(detail.session.cookie) });
-  const redirected = await fetch(started.toString(), { redirect: "manual" });
-  const callbackUrl = redirected.headers.get("Location");
-  if (callbackUrl === null) throw new Error("the fake AS answered no redirect");
-  const completed = await call(new Request(callbackUrl, { headers: { Cookie: detail.session.cookie } }));
-  expect(completed.status, "the upstream callback").toBe(302);
-  // `stale_first_token` makes the stored access token dead on arrival, so the next call
-  // must refresh before it forwards — and `refresh_fails` rejects that refresh.
-  await call(
-    new Request(`${ORIGIN}${paths.mcpScoped(detail.ns.owner.username, BROKEN)}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${detail.ns.tokens.breaker.token}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name: "paper_fetch", arguments: {} },
-      }),
-    }),
-  );
-  const row = await appRowOf(BROKEN);
-  if (row.connection !== "needs_reconnect") {
-    throw new Error(`the refresh did not fail for "${BROKEN}": ${String(row.connection)}`);
-  }
-}
-
-/**
- * A real tunneled app of this describe's own, on the other end of §6's wire — seeded, its
- * credential minted, and dialled hand-rolled through `worker.fetch`, because
- * `harness/fake-app` is pinned to the `tunnel` project and a socket is not (hygiene's own
- * sockets are dialled the same way).
- *
- * Its `server/discover` answer carries a FAMILY-KEYED OBJECT, which is the only spelling
- * that declares anything: tunnel keeps the capabilities whose KEY is present, so the array
- * spelling declares none and would clear the very catalogs these rows list (§20.5).
- *
- * It SETTLES both transitions rather than sleeping through them — it returns only once the
- * scoped endpoint serves what the app advertised, and its `close()` resolves only once
- * `app_get` reports the app offline.
- */
-async function dialTunnel(
-  slug: string,
-  serves: {
-    capabilities: readonly AppCapability[];
-    tools?: { name: string; [key: string]: unknown }[];
-    prompts?: { name: string; [key: string]: unknown }[];
-    resources?: { uri: string; [key: string]: unknown }[];
-    resourceTemplates?: { uriTemplate: string; [key: string]: unknown }[];
-  },
-): Promise<() => Promise<void>> {
-  const ownerId = detail.ns.owner.userId;
-  const app = await seedApp(env.DB, ownerId, { slug, kind: "tunnel", name: slug });
-  const credential = await seedToken(ownerId, "app", app.id, slug, { as: slug });
-  const response = await call(
-    new Request(`${ORIGIN}/connect`, {
-      headers: { Upgrade: "websocket", Authorization: `Bearer ${credential.token}` },
-    }),
-  );
-  const socket = response.webSocket;
-  if (response.status !== 101 || socket === null) {
-    throw new Error(`/connect refused the upgrade: ${response.status}`);
-  }
-  socket.accept();
-  const declared: Record<string, unknown> = {};
-  for (const family of serves.capabilities) declared[family] = {};
-  socket.addEventListener("message", (event) => {
-    const frame = JSON.parse(String((event as MessageEvent).data)) as { id?: unknown; method?: unknown };
-    const answer = (body: Record<string, unknown>): void =>
-      socket.send(JSON.stringify({ jsonrpc: "2.0", id: frame.id, ...body }));
-    if (frame.method === "server/discover") answer({ result: { capabilities: declared } });
-    else if (frame.method === "tools/list") answer({ result: { tools: serves.tools ?? [] } });
-    else if (frame.method === "prompts/list") answer({ result: { prompts: serves.prompts ?? [] } });
-    else if (frame.method === "resources/list") answer({ result: { resources: serves.resources ?? [] } });
-    else if (frame.method === "resources/templates/list")
-      answer({ result: { resourceTemplates: serves.resourceTemplates ?? [] } });
-  });
-  socket.send(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      id: "register",
-      method: "hub/register",
-      params: { clientVersion: "web-pages/0", protocolVersion: "2026-07-28", roles: {} },
-    }),
-  );
-  const family = serves.tools === undefined ? "prompts" : "tools";
-  const advertised = (serves.tools ?? serves.prompts ?? []).length;
-  await until(
-    async () => ((await scopedList(slug, `${family}/list`))[family] ?? []).length === advertised,
-    `the "${slug}" catalog never warmed`,
-  );
-  return async () => {
-    try {
-      socket.close(1000, "case teardown");
-    } catch {
-      // already gone
-    }
-    await until(async () => (await appRowOf(slug)).status === "offline", `"${slug}" never went offline`);
-  };
-}
-
-/** Poll a state to a budget — what every socket fixture in this repo does instead of
- *  sleeping, because "warm" and "offline" are states nothing signals. */
-async function until(ready: () => Promise<boolean>, complaint: string): Promise<void> {
-  for (let turn = 0; turn < 250; turn += 1) {
-    if (await ready()) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-  throw new Error(complaint);
 }

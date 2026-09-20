@@ -20,3 +20,9 @@ result-*
 
 # live browser session cookies — never committed
 cookies.txt
+
+# Vite build output for the browser client — built on demand, never committed
+web/dist/
+
+# the visual-comparison report and its scratch shots (web/scripts/visual-compare.mts)
+web/.visual/

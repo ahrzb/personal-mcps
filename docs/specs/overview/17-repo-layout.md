@@ -2,11 +2,17 @@
 
 ```
 personal-mcps/
-  server/            # CF Worker, AppConnection + HubSandbox DOs, D1 migrations
-    sandbox/          # immutable pinned Deno parent/worker image inputs (§23)
+  server/            # CF Worker, AppConnection DO, QuickJS/Wasm execution, D1 migrations
   cli/               # pmcp — a pnpm workspace importer, published as @ahrzb/personal-mcp-cli
+  web/               # the browser client (§13) — React SPA for /apps/* and /agents/*, a
+                     #   workspace importer, unpublished; `vite build` emits dist/app.{js,css}
+    src/lib/          # the fetch door, the wire types, the query keys
+    src/chrome/       # the shell, the pane rail, the dialogs
+    src/features/     # apps, app-detail, agents
+    src/preview/      # the state gallery, preview-mode only
+    scripts/          # visual-compare.mts, drawer-check.mts — hand-run, browser-driven
   clients/
-    js/              # @ahrzb/personal-mcp-client — the other workspace importer
+    js/              # @ahrzb/personal-mcp-client — the third workspace importer
     py/              # personal-mcp-client (uv project, not npm)
     go/              # github.com/ahrzb/personal-mcps/clients/go module (not npm)
   examples/
@@ -18,10 +24,13 @@ personal-mcps/
   flake.nix          # pinned toolchain + the pmcp package (§22.7)
 ```
 
-**`cli` and `clients/js` are the only workspace importers** — the two published npm packages.
-`server/` has no manifest of its own on purpose: Wrangler builds it from the root, so a manifest
-there would be a third declaration of the same dependency set with nothing consuming it.
-`clients/py` and `clients/go` are not npm packages at all.
+**`cli`, `web` and `clients/js` are the workspace importers** — the two published npm
+packages plus the browser client. `server/` has no manifest of its own on purpose: Wrangler
+builds it from the root, so a manifest there would be a third declaration of the same
+dependency set with nothing consuming it. `clients/py` and `clients/go` are not npm packages
+at all. Nothing in `server/src` imports anything from `web/`: the Worker serves that
+directory's two built files out of a static-asset binding, which is the whole of the edge
+between them (§4's dependency policy).
 
 The separate sibling `../terraform-provider-pmcp` repository owns provider
 implementation and lifecycle tests. This repository owns its generated admin contracts

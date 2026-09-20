@@ -4,12 +4,11 @@
 //
 // - HUB_TOOLS — the two tool descriptors (§23.1/§23.2). `name` is the canonical spelling
 //   the scoped `/mcp/hub` endpoint serves; `aggregateName` is the fixed `hub_`-prefixed
-//   spelling the aggregate `/mcp` endpoint serves. Input schemas are closed objects; the
-//   bounds they can carry come from HUB_CONTRACT_LIMITS. `execute.code` carries the
-//   standard `writeOnly: true` marker so §7's schema-declared redaction covers the source
-//   wherever a hub body could be recorded. `execute`'s output schema is §23.11's bounded
-//   result union discriminated by `kind` — four outcome variants, not a new error
-//   vocabulary.
+//   spelling the aggregate endpoint serves. Input schemas are closed objects; the bounds
+//   they can carry come from HUB_CONTRACT_LIMITS. `execute.code` carries the standard
+//   `writeOnly: true` marker so §7's schema-declared redaction covers the source wherever
+//   a hub body could be recorded. `execute`'s output schema is §23.11's bounded result
+//   union discriminated by `kind` — four outcome variants, not a new error vocabulary.
 // - HUB_DECLARATION_URIS — the two fixed declaration resources (§23.2), in served order.
 // - HUB_DECLARATION_TEMPLATES — the four declaration templates (§23.2). Each brace
 //   placeholder is exactly one canonical string segment in `encodeURIComponent` form; the
@@ -41,7 +40,7 @@
 //
 // NOT HERE: which endpoint serves which name (the hub backend), how the declaration
 // renderer fills the template placeholders (hub-types.ts), and how execution enforces the
-// limits (the Sandbox plane) — this file owns the wire VALUES alone.
+// limits (the QuickJS executor) — this file owns the wire VALUES alone.
 
 import { HUB_CONTRACT_LIMITS } from "./limits";
 import type { HubContractLimits } from "./limits";
@@ -52,8 +51,8 @@ import type { HubContractLimits } from "./limits";
 export { HUB_CONTRACT_LIMITS };
 export type { HubContractLimits };
 
-/** §23.1 — the only two tool names either hub endpoint dispatches: `execute` runs one
- *  TypeScript module; `search_types` searches the caller-visible snapshot locally. */
+/** §23.1 — the only two tool names either hub endpoint dispatches: `execute` typechecks
+ *  and runs one TypeScript function body; `search_types` searches locally. */
 export type HubToolName = "execute" | "search_types";
 
 /**
@@ -76,17 +75,32 @@ export type HubTool = {
   readonly outputSchema: Record<string, unknown>;
 };
 
+/** One bounded compiler diagnostic. Locations refer to the submitted body, never the
+ * synthetic wrapper or generated declaration files. */
+export type HubExecutionDiagnostic = {
+  /** Stable severity; only errors prevent execution. */
+  readonly category: "error";
+  /** TypeScript diagnostic code, or zero for an internal emit refusal. */
+  readonly code: number;
+  /** Bounded compiler message with no submitted source excerpt. */
+  readonly message: string;
+  /** One-based submitted-source line when the diagnostic belongs to the program body. */
+  readonly line?: number;
+  /** One-based submitted-source column when the diagnostic belongs to the program body. */
+  readonly column?: number;
+};
+
 /**
  * §23.11 — the bounded `execute` result union, served as `structuredContent` and pinned by
- * `execute`'s `outputSchema`. Every variant names `kind` first; request-level failures
- * (shape, source size, a requested timeout above the configured maximum) stay §7's
- * payload-free `-32602` and never appear here.
+ * `execute`'s `outputSchema`. Request-level failures stay -32602 and never appear here;
+ * an over-max integer timeout carries only its field and effective maximum, while other
+ * request failures remain payload-free.
  */
 export type HubExecutionResult =
   | {
-      /** Discriminant: the module evaluated and its default export was accepted. */
+      /** Discriminant: the program returned a valid bounded JSON value. */
       readonly kind: "completed";
-      /** The default export: acyclic JSON only (null, booleans, strings, finite numbers,
+      /** The returned value: acyclic JSON only (null, booleans, strings, finite numbers,
        *  arrays, plain string-keyed objects), serialized under the result byte cap. */
       readonly value: unknown;
       /** Captured user stdout, live-return only, byte-capped, never logged or persisted. */
@@ -106,20 +120,24 @@ export type HubExecutionResult =
       };
     }
   | {
-      /** Discriminant: the TypeScript checker rejected the module. */
+      /** Discriminant: TypeScript syntax or semantic checking failed before evaluation. */
       readonly kind: "type_error";
-      /** Deterministic, bounded checker diagnostics; never source text from the program. */
-      readonly diagnostics: readonly string[];
-      /** Always false: rerunning identical source cannot fix a type error. */
+      /** Bounded errors in compiler order. */
+      readonly diagnostics: readonly HubExecutionDiagnostic[];
+      /** Type errors are deterministic for the same source and catalog snapshot. */
       readonly transient: false;
-      /** Always false: no user module evaluated, so no inner operation dispatched. */
+      /** Type checking runs before QuickJS evaluation or any inner operation. */
       readonly mayHaveRun: false;
     }
   | {
-      /** Discriminant: the run failed after evaluation began. */
+      /** Discriminant: evaluation or an uncaught guest error failed after typechecking. */
       readonly kind: "runtime_error";
-      /** Sanitized bounded failure class; never source, credentials, nonces, or raw SDK text. */
+      /** Sanitized bounded failure class; never source, credentials, or raw runtime text. */
       readonly cause: string;
+      /** Bounded guest exception message; empty only when the thrown value has none. */
+      readonly message: string;
+      /** Bounded guest stack with generated filename and locations but no source excerpt. */
+      readonly stack: string;
       /** Captured user stdout, live-return only, byte-capped, never logged or persisted. */
       readonly stdout: string;
       /** Captured user stderr, live-return only, byte-capped, never logged or persisted. */
@@ -128,25 +146,20 @@ export type HubExecutionResult =
       readonly stdoutTruncated: boolean;
       /** True when stderr hit its byte cap and was cut. */
       readonly stderrTruncated: boolean;
-      /** Whether a retry could plausibly succeed; false for failures after possible launch. */
+      /** Whether a retry could plausibly succeed. */
       readonly transient: boolean;
       /** Whether an inner operation could have dispatched before the failure. */
       readonly mayHaveRun: boolean;
-      /** True when uncertain cleanup destroyed and replaced the container instead of
-       *  reusing questionable state. */
-      readonly containerReplaced: boolean;
     }
   | {
       /** Discriminant: a named limit stopped the execution. */
       readonly kind: "limit_exceeded";
-      /** The violated limit's name (§23.11's caps; §23.8 pins `active_execution` and §23.11
-       *  pins `check_time`). */
+      /** The violated limit's name (§23.11's caps). */
       readonly limit: string;
       /** The observed quantity in that limit's own unit — bytes, count, or milliseconds —
        *  never source text or a credential. */
       readonly observed: number;
-      /** Whether a retry could plausibly succeed: active-execution and pre-launch capacity
-       *  exhaustion are transient, deterministic caps and post-evaluation wall clock are not. */
+      /** Whether a retry could plausibly succeed. */
       readonly transient: boolean;
       /** Whether an inner operation could have dispatched before the limit stopped the run. */
       readonly mayHaveRun: boolean;
@@ -174,7 +187,7 @@ export type HubSearchMatch = {
 };
 
 /** §23.5/§23.2 — the `search_types` result: ranked matches plus bounded diagnostics.
- *  Search reads the immutable snapshot locally and starts no Sandbox. */
+ * Search reads the immutable snapshot locally and starts no execution runtime. */
 export type HubSearchResult = {
   /** Ranked matches: exact path/identity, then prefix, then substring, then description
    *  substring; ties by kind, then canonical service, then canonical subject. */
@@ -222,7 +235,7 @@ const EXECUTE_INPUT_SCHEMA: Record<string, unknown> = {
       type: "string",
       writeOnly: true,
       description:
-        "The submitted module: one TypeScript ES module with top-level await and a required default export. At most 64 KiB after UTF-8 encoding; a shape or source-size failure is -32602.",
+        "The body of one async TypeScript function with top-level await and return. It is checked against the caller-visible declaration before QuickJS starts. At most 64 KiB after UTF-8 encoding; a shape or source-size failure is -32602.",
     },
     timeout_ms: {
       type: "integer",
@@ -237,8 +250,8 @@ const EXECUTE_INPUT_SCHEMA: Record<string, unknown> = {
 };
 
 /** §23.2 — `search_types` arguments: a closed object whose `query` is non-empty after
- *  trimming and bounded in UTF-8 bytes before trimming; `surface` and `limit` default
- *  rather than being inferred. Search starts no Sandbox, so nothing here is a source cap. */
+ * trimming and bounded in UTF-8 bytes before trimming; `surface` and `limit` default
+ * rather than being inferred. Search starts no runtime, so nothing here is a source cap. */
 const SEARCH_TYPES_INPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
@@ -267,22 +280,22 @@ const SEARCH_TYPES_INPUT_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
-/** §23.11 — `execute`'s structured result: the four-variant union, discriminated by `kind`.
- *  Every variant is total — `transient` and `mayHaveRun` are always present rather than
- *  inferred from absence, which is what makes "never replayed" machine-checkable. */
+/** §23.11 — `execute`'s structured result: the four-variant union, discriminated by
+ *  `kind`. Failure fields are present on every failure variant rather than inferred from
+ *  absence, which is what makes "never replayed" machine-checkable. */
 const EXECUTE_OUTPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
   description:
-    "The bounded execute result, discriminated by `kind`. Failures of the request itself (shape, source size, requested timeout above the configured maximum) are -32602 and never appear here.",
+    "The bounded execute result, discriminated by `kind`. Request failures are -32602 and never appear here; an over-max integer timeout returns data.field and data.max.",
   oneOf: [
     {
       type: "object",
-      description: "The module evaluated and its default export was accepted.",
+      description: "The program returned a valid bounded JSON value.",
       properties: {
         kind: { const: "completed" },
         value: {
           description:
-            "The module's default export: acyclic JSON (null, booleans, strings, finite numbers, arrays, plain string-keyed objects) under the result byte cap.",
+            "The program return value: acyclic JSON (null, booleans, strings, finite numbers, arrays, plain string-keyed objects) under the result byte cap.",
         },
         stdout: {
           type: "string",
@@ -310,29 +323,50 @@ const EXECUTE_OUTPUT_SCHEMA: Record<string, unknown> = {
     },
     {
       type: "object",
-      description:
-        "The TypeScript checker rejected the module; no user module evaluated and no inner operation dispatched.",
+      description: "TypeScript syntax or semantic checking failed before evaluation.",
       properties: {
         kind: { const: "type_error" },
         diagnostics: {
           type: "array",
-          items: { type: "string" },
-          description: "Deterministic, bounded checker diagnostics.",
+          maxItems: HUB_CONTRACT_LIMITS.diagnosticMax,
+          items: {
+            type: "object",
+            properties: {
+              category: { const: "error" },
+              code: { type: "integer", minimum: 0 },
+              message: {
+                type: "string",
+                description: "Bounded compiler message with no submitted source excerpt.",
+              },
+              line: { type: "integer", minimum: 1 },
+              column: { type: "integer", minimum: 1 },
+            },
+            required: ["category", "code", "message"],
+            additionalProperties: false,
+          },
         },
-        transient: { const: false, description: "Never transient: identical source cannot pass later." },
-        mayHaveRun: { const: false, description: "No user module evaluated, so no inner operation ran." },
+        transient: { const: false },
+        mayHaveRun: { const: false },
       },
       required: ["kind", "diagnostics", "transient", "mayHaveRun"],
       additionalProperties: false,
     },
     {
       type: "object",
-      description: "The run failed after evaluation began; the failure is never replayed.",
+      description: "The program failed during compilation or evaluation; the failure is never replayed.",
       properties: {
         kind: { const: "runtime_error" },
         cause: {
           type: "string",
-          description: "Sanitized bounded failure class; never source, credentials, nonces, or raw SDK text.",
+          description: "Sanitized bounded failure class; never source, credentials, or raw runtime text.",
+        },
+        message: {
+          type: "string",
+          description: "Bounded guest exception message; empty only when the thrown value has none.",
+        },
+        stack: {
+          type: "string",
+          description: "Bounded guest stack with generated filename and locations but no source excerpt.",
         },
         stdout: {
           type: "string",
@@ -344,30 +378,13 @@ const EXECUTE_OUTPUT_SCHEMA: Record<string, unknown> = {
         },
         stdoutTruncated: { type: "boolean", description: "True when stdout hit its byte cap and was cut." },
         stderrTruncated: { type: "boolean", description: "True when stderr hit its byte cap and was cut." },
-        transient: {
-          type: "boolean",
-          description: "Whether a retry could plausibly succeed; false for failures after possible launch.",
-        },
+        transient: { type: "boolean", description: "Whether a retry could plausibly succeed." },
         mayHaveRun: {
           type: "boolean",
           description: "Whether an inner operation could have dispatched before the failure.",
         },
-        containerReplaced: {
-          type: "boolean",
-          description: "True when uncertain cleanup destroyed and replaced the container.",
-        },
       },
-      required: [
-        "kind",
-        "cause",
-        "stdout",
-        "stderr",
-        "stdoutTruncated",
-        "stderrTruncated",
-        "transient",
-        "mayHaveRun",
-        "containerReplaced",
-      ],
+      required: ["kind", "cause", "message", "stack", "stdout", "stderr", "stdoutTruncated", "stderrTruncated", "transient", "mayHaveRun"],
       additionalProperties: false,
     },
     {
@@ -378,7 +395,7 @@ const EXECUTE_OUTPUT_SCHEMA: Record<string, unknown> = {
         limit: {
           type: "string",
           description:
-            "The violated limit's name (§23.11's caps, e.g. `active_execution`, `check_time`, `wall_clock`, `inner_operations`).",
+            "The violated limit's name (§23.11's caps, e.g. `memory`, `stack`, `cpu`, `wall_clock`, `inner_operations`).",
         },
         observed: {
           type: "integer",
@@ -388,8 +405,7 @@ const EXECUTE_OUTPUT_SCHEMA: Record<string, unknown> = {
         },
         transient: {
           type: "boolean",
-          description:
-            "Whether a retry could plausibly succeed: active-execution and pre-launch capacity exhaustion are transient, deterministic caps and post-evaluation wall clock are not.",
+          description: "Whether a retry could plausibly succeed; deterministic guest limits are not transient.",
         },
         mayHaveRun: {
           type: "boolean",
@@ -459,7 +475,7 @@ export const HUB_TOOLS: readonly HubTool[] = [
     name: "execute",
     aggregateName: "hub_execute",
     description:
-      "Run one TypeScript ES module in a sandbox keyed to this credential and return its default export. Typechecked before evaluation; completed operations may already have effects and are never replayed.",
+      "Typecheck and run one async TypeScript function body in a fresh QuickJS runtime. Completed operations may already have effects and are never replayed.",
     inputSchema: EXECUTE_INPUT_SCHEMA,
     outputSchema: EXECUTE_OUTPUT_SCHEMA,
   },
@@ -467,7 +483,7 @@ export const HUB_TOOLS: readonly HubTool[] = [
     name: "search_types",
     aggregateName: "hub_search_types",
     description:
-      "Search this credential's hub TypeScript declarations and canonical catalog. Case-insensitive, non-fuzzy, ranked; starts no sandbox.",
+      "Search this credential's hub TypeScript declarations and canonical catalog. Case-insensitive, non-fuzzy, ranked; starts no execution runtime.",
     inputSchema: SEARCH_TYPES_INPUT_SCHEMA,
     outputSchema: SEARCH_TYPES_OUTPUT_SCHEMA,
   },

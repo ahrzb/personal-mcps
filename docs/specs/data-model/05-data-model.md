@@ -243,10 +243,9 @@ CREATE INDEX upstream_oauth_state_expires ON upstream_oauth_state(expires_at);
 
 `AppConnection` keeps per-app volatile/cached state in its own SQLite: cached family
 catalogs, connection metadata, alarm purpose, ring timing and subscriber attachments.
-`HubSandbox` is a separate exact-token-named Durable Object (§23). Its active execution
-generation, nonce, counters, immutable catalog/map, credential reference and deadline are
-ephemeral coordination state, not D1 job/workspace state. Durable owner timeout settings
-and TypeScript reservations live in D1 tables above.
+Hub execution adds no Durable Object or D1 job/workspace state: every invocation owns one
+ephemeral in-Worker QuickJS runtime, while durable owner timeout settings and TypeScript
+reservations live in D1 tables above.
 
 App socket identity/auth facts ride in `serializeAttachment` (≤16 KB); subscriber
 attachments additionally carry principal and capped subscriptions as §21 requires.

@@ -41,7 +41,7 @@
 | `hibernation.test.ts` | the honest hibernation pins via `evictDurableObject`: socket round-trips after eviction; catalog still served; identity survives via attachment; the alarm still fires; **the pending map is EMPTY after eviction** — converting §6's unvalidated assumption into a validated one. (No test asserts the map survives; upstream proves it doesn't.) |
 | `pipeline-tunnel.test.ts` | §16's core integration test: both endpoint shapes, role filtering, `_meta` hygiene observed at the app (strip-then-set, mirrored capabilities, ids never cross), deadline → `-32000`, the audit chokepoint (row exists with `duration_ms` when the response resolves) |
 | `approval-e2e.test.ts` | §16's approval bullet over a real tunnel with the fake app's **invocation counter as the exactly-once oracle**; CAS under table-driven deterministic interleavings (never fire-50-and-hope — workerd is cooperative); availability-between-check-and-claim both directions; MRTR legs; the redaction union; catalog-miss refused with `-32001` (decided 2026-08-25) |
-| `hub-sandbox.test.ts` | fake-adapter worker proof of generation lease, counters, deadlines, reauthorization, abort cleanup and shared dispatch without pretending to prove container permissions |
+| `hub-quickjs.test.ts` | real workerd/Wasm proof of fresh runtimes, async host promises, canonical target closure, frozen schemas, dynamic-compiler removal, deadline interruption and sanitized failures |
 
 ### Clients and scripts
 

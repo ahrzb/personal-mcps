@@ -354,7 +354,8 @@ describe("§23.7 · snapshot to declaration", () => {
       "export { call, read, walk, search };",
     ].join("\n");
     expect(compileDiagnostics({ "program.d.ts": program, "probe.ts": probe })).toEqual([]);
-    expect(program).toContain("walk(input?: { \"next\"?: T0 })");
+    expect(program).toContain("readonly walk: {");
+    expect(program).toContain("(input?: { \"next\"?: T0 }): Promise<HubCallToolResult<unknown>>");
     expect(program).toContain('type T0 = { "child"?: T0 };');
   });
 });

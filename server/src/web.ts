@@ -35,9 +35,8 @@ import { env } from "cloudflare:workers";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { ops } from "./admin";
-import type { AdminOp, AppRow } from "./admin";
+import type { AdminOp } from "./admin";
 import { AGENT_PANES, APP_PANES } from "./app-routes";
-import type { AgentPane, AppPane } from "./app-routes";
 import type { PushSubscriptionJson } from "./approvals";
 import { exportJsonl, record } from "./audit";
 import { HubError } from "./errors";
@@ -45,7 +44,7 @@ import { callAuth, callAuthResponse, formatPrincipal, requireOwnerSession } from
 import type { OwnerSession } from "./identity";
 import { upsertBinding } from "./oauth";
 import { Registry } from "./registry";
-import type { App, RoleDeclaration, Violation } from "./registry";
+import type { App, Violation } from "./registry";
 import { beginConnect } from "./upstream";
 import { approvalsFromEnv } from "./wiring";
 import { SettingsPage } from "./pages/settings";
@@ -55,12 +54,7 @@ import { AuditPage } from "./pages/audit";
 import { ConsentPage } from "./pages/consent";
 import { Device } from "./pages/device";
 import { Login } from "./pages/login";
-import { AppDetailPage } from "./pages/app-detail";
-import { AppNewPage } from "./pages/app-new";
-import { AppsPage } from "./pages/apps";
-import { AgentsPage } from "./pages/agents";
-import { AgentDetailPage } from "./pages/agent-detail";
-import { AgentNewPage } from "./pages/agent-new";
+import { SpaShell } from "./pages/spa";
 import {
   settingsProps,
   approvalDetailProps,
@@ -78,31 +72,11 @@ import {
   paths,
   revealedCodesOf,
   SETTINGS_PANES,
-  appDetailProps,
-  appNewForm,
-  appNewProps,
-  appsProps,
-  agentsProps,
-  agentNewProps,
-  agentNewForm,
-  agentDetailProps,
-  aliasDraftOf,
-  composeOwnerRoles,
-  composeRedaction,
-  composeRoles,
-  composeTypescriptAliases,
-  grantChoicesOf,
-  drawnPaths,
-  drawnRows,
-  ALIAS_SERVICE_FIELD,
 } from "./pages/model";
 import { ICON_192, ICON_512 } from "./pages/icon";
 import type {
-  AppDetailPane,
-  GrantChoice,
   Notice,
   PageContext,
-  AppNewErrors,
   PasswordField,
   SettingsExecutionForm,
   SettingsProps,
@@ -171,7 +145,7 @@ type PageRouter = unknown;
  */
 export function pageRoutes(): PageRouter {
   // deps: hono · identity.requireOwnerSession · admin.ops · pages/model (the loaders) ·
-  // approvals.subscribePush · upstream.beginConnect · csrfTokenFor · checkCsrf ·
+  // approvals.subscribePush · upstream.beginConnect · csrfTokenFor · csrfOk ·
   // streamAuditJsonl
   const app = new Hono();
 
@@ -561,31 +535,20 @@ export function pageRoutes(): PageRouter {
   });
 
   /* -------------------------------- /apps --------------------------------- */
-
-  app.get(paths.apps, async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    return render(AppsPage(await appsProps(ctx)));
-  });
-
-  app.get(paths.appNew, async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    return render(
-      AppNewPage(appNewProps(ctx, { kind: "form", form: appNewForm(ctx.query), errors: {} })),
-    );
-  });
-
-  // §2's seven panes behind one rail, as two routes: each pane answers at its own URL, and
-  // the page root RENDERS the Catalog in place — the agent page's shape, where a landing
-  // renders a pane that also has a URL. The two differ only in the narrow level (`null` is
-  // the landing, which is level 1). Registered after the static segments above, which is
-  // what keeps `/apps/new` a page rather than a slug — the same precedence app-routes'
-  // RESERVED_APP_SLUGS makes `app_create` refuse. The pane list is that module's, so a pane
-  // added there is mounted here with no second edit, and `tools` is deliberately not in it:
-  // the families moved into the Catalog, so `/apps/<slug>/tools` falls to the 404 below.
   //
-  // The gate is `requireOwnerSession` with no options — §13's "`/apps/<slug>/*` is the
-  // ordinary owner session", deliberately NOT /settings's recent-auth prefix rule.
-  app.get("/apps/:slug", async (c) => appDetailPane(c, null));
+  // §13's app pages, as the SPA shell (2026-09-18). Static segments first, which is what
+  // keeps `/apps/new` a page rather than a slug — the same precedence app-routes'
+  // RESERVED_APP_SLUGS makes `app_create` refuse — then the two retained 301s, then the
+  // app's own routes.
+  //
+  // One POST survives under this prefix, and only one: `/apps/connect`, which answers a 303
+  // to a THIRD-PARTY authorize URL. A `fetch` cannot follow a cross-origin redirect into the
+  // address bar, so that interaction stays a real form submission and the client renders a
+  // `<form method="post">` for it. Everything else a pane used to post is a call to
+  // `/api/hub` now.
+
+  app.get(paths.apps, shell("Apps"));
+  app.get(paths.appNew, shell("Add app"));
 
   // The two URLs the family panes lived at until 2026-09-17, moved for good: the Catalog
   // holds all three families now, so a bookmark should stop coming back here — 301 rather
@@ -594,98 +557,18 @@ export function pageRoutes(): PageRouter {
   app.get("/apps/:slug/prompts", (c) => c.redirect(paths.appPane(c.req.param("slug") ?? "", "catalog"), 301));
   app.get("/apps/:slug/resources", (c) => c.redirect(paths.appPane(c.req.param("slug") ?? "", "catalog"), 301));
 
+  // The landing and the seven panes. `tools` is deliberately not a pane: the families moved
+  // into the Catalog, so `/apps/<slug>/tools` falls to the 404 below rather than aliasing
+  // anything. The pane list is app-routes', so a pane added there is served here with no
+  // second edit.
+  app.get("/apps/:slug", shell("App", appExists));
   app.get("/apps/:slug/:pane", async (c) => {
     const pane = c.req.param("pane") ?? "";
+    // Ahead of the session gate, exactly where it was: an unknown segment is not a page,
+    // and whether it is one cannot depend on who is asking.
     if (!(APP_PANES as readonly string[]).includes(pane)) return noSuchPage();
-    return appDetailPane(c, pane as AppPane);
+    return shell("App", appExists)(c);
   });
-
-  /** One pane of one app, or the 404 an unknown, reserved or foreign slug shares. */
-  async function appDetailPane(c: Context, pane: AppDetailPane | null): Promise<Response> {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    const props = await appDetailProps(ctx, c.req.param("slug") ?? "", pane);
-    if (props === null) return noSuchPage();
-    return render(AppDetailPage(props));
-  }
-
-  // The one mutation that does not redirect back, because its answer cannot survive a
-  // redirect: a tunneled create is followed by the token_issue that gives the bot its
-  // credential, and §4 shows that plaintext exactly once — in this response, never in a
-  // URL (§15). An `auth: oauth` create redirects into consent instead (§7).
-  app.post(
-    paths.appCreate,
-    mutation(async (c, session, form) => {
-      const ctx = await context(c.req.raw, session);
-      const draft = appNewForm(formQuery(form));
-      const name = draft.name.trim() === "" ? draft.slug : draft.name;
-      // §23.6's optional naming, composed before the call so the editor's own one refusal
-      // (an alias with no canonical name beside it) redraws the form rather than reaching
-      // the op as a value it would have to guess at.
-      const aliases = composeTypescriptAliases(formFields(form));
-      const created =
-        "error" in aliases
-          ? { reason: aliases.error }
-          : await attempt(() =>
-              ops.app_create.handler(session.user.userId, {
-                slug: draft.slug,
-                kind: draft.kind,
-                // A blank Name is not SENT, so the op defaults it to the slug (§8/§13) and
-                // the form has no Name error to draw.
-                ...(draft.name.trim() === "" ? {} : { name: draft.name }),
-                // Proxy-only fields are rejected on a tunneled create (§8), so they are sent
-                // only where they mean something. `authMode` is the control's name and `auth`
-                // is the op's — the one place the two spellings meet.
-                ...(draft.kind === "proxy" ? { endpoint: draft.endpoint, auth: draft.authMode } : {}),
-                // An untouched alias section composes to `{}`, which says exactly what an
-                // absent key says to a create — so it is not sent at all.
-                ...("error" in aliases || Object.keys(aliases.aliases).length === 0
-                  ? {}
-                  : { typescript_aliases: aliases.aliases }),
-              }),
-            );
-      if ("reason" in created) {
-        return render(
-          AppNewPage(appNewProps(ctx, { kind: "form", form: draft, errors: createErrors(created) })),
-          400,
-        );
-      }
-      // §13's connecting page: the app now exists, so a started flow is a 200 render
-      // carrying the authorize link and a refusal lands on the app's own Overview pane
-      // (decision 30 — no auto-open, and Connect lives on that page).
-      if (draft.kind === "proxy" && draft.authMode === "oauth") {
-        const app = await new Registry(env.DB).getApp(session.user.userId, draft.slug);
-        const started =
-          app === null
-            ? { reason: "No such app." }
-            : await attempt(() => beginConnect(app, { id: session.sessionId }));
-        if ("reason" in started) {
-          return c.redirect(noticeUrl(paths.appPane(draft.slug, "overview"), "connect", started), 303);
-        }
-        return render(
-          AppNewPage(
-            appNewProps(ctx, { kind: "connecting", slug: draft.slug, name, url: String(started.value) }),
-          ),
-        );
-      }
-      // A proxied app has nothing that connects, so it has no token to reveal (§6).
-      const minted =
-        draft.kind === "tunnel"
-          ? await attempt(() =>
-              ops.token_issue.handler(session.user.userId, { kind: "app", slug: draft.slug }),
-            )
-          : null;
-      return render(
-        AppNewPage(
-          appNewProps(ctx, {
-            kind: "created",
-            slug: draft.slug,
-            name,
-            token: minted !== null && "value" in minted ? tokenOf(minted.value) : null,
-          }),
-        ),
-      );
-    }),
-  );
 
   // Connect and Reconnect: §8's one browser-only interaction, which is why it fronts no
   // tool. Everything it does — discovery, client identity, the single-use state row —
@@ -695,213 +578,6 @@ export function pageRoutes(): PageRouter {
     mutation((c, session) =>
       connectRedirect(c, session, new URL(c.req.url).searchParams.get("slug") ?? ""),
     ),
-  );
-
-  app.post("/apps/:op", dispatch(paths.apps));
-
-  // §13's Token pane gets ONE route of its own, for the same reason `paths.appCreate` has
-  // one: the reveal cannot survive a redirect and `dispatch` unconditionally redirects, so
-  // the answer is a 200 rendering the pane with the plaintext in place (§15 — a key never
-  // rides a URL). It still keeps the final-segment convention, so parity direction B
-  // describes it like every other target. Mounted ahead of the generic pane dispatcher.
-  app.post(
-    `/apps/:slug/${TOKEN_ISSUE}`,
-    mutation(async (c, session, form) => {
-      const slug = c.req.param("slug") ?? "";
-      const minted = await attempt(() =>
-        ops[TOKEN_ISSUE].handler(session.user.userId, {
-          ...queryFields(c.req.raw),
-          ...formFields(form),
-        }),
-      );
-      // A refusal has no plaintext to protect, so it goes back the way every other pane
-      // mutation's does — to the pane that drew the form, carrying its own reason.
-      const back = paths.appPane(slug, "token");
-      if ("reason" in minted) return c.redirect(noticeUrl(back, TOKEN_ISSUE, minted), 303);
-      const ctx = await context(c.req.raw, session);
-      // The new key is the SELECTED row, so the reveal is drawn in its details (§7). The
-      // selection rides the render's own query rather than the URL: the request that
-      // minted it is a POST, and a plaintext key must never ride a URL at all (§15).
-      const id = String((minted.value as { id?: unknown }).id ?? "");
-      ctx.query.set("sel", `token:${id}`);
-      ctx.query.set("issued", id);
-      const props = await appDetailProps(ctx, slug, "token");
-      if (props === null) return noSuchPage();
-      return render(AppDetailPage({ ...props, reveal: tokenOf(minted.value) }));
-    }),
-  );
-
-  // §4's Save — ONE `app_update` writing `owner_roles` on a tunneled app and `roles` on a
-  // proxied one, composed from the editor's checkboxes, its `keep` patterns and whichever
-  // of `add` / `drop` / `delete` was pressed. A route of its own rather than the generic
-  // dispatch for `grant_set`'s reason: the form's fields are not the op's keys, and a
-  // refusal redraws the editor on the very choices that caused it (never a redirect, or
-  // they would be lost).
-  app.post(
-    `/apps/:slug/${ROLE_SET}`,
-    mutation(async (c, session, form) => {
-      const slug = c.req.param("slug") ?? "";
-      const ctx = await context(c.req.raw, session);
-      const fields = formFields(form);
-      const current = await attempt(() => ops.app_get.handler(session.user.userId, { slug }));
-      if ("reason" in current) return c.redirect(noticeUrl(paths.appPane(slug, "roles"), ROLE_SET, current), 303);
-      const row = (current.value as { app: AppRow }).app;
-      // Which stored map the editor is editing follows the KIND, and the page never mixes
-      // them: a tunneled app's owner roles live beside the app's declaration, a proxied
-      // app's roles are already all the owner's (§1).
-      const tunnelled = row.kind === "tunnel";
-      const stored = tunnelled ? (row as { ownerRoles: RoleDeclaration }).ownerRoles : row.roles;
-      // The app's OWN declaration, which an owner role may not collide with — empty on a
-      // proxied app, whose `roles` are already all the owner's (§1).
-      const declared = tunnelled ? row.roles : {};
-      const composed = composeOwnerRoles(
-        stored,
-        declared,
-        fields,
-        form.getAll("keep").filter(isText),
-        drawnRows(form),
-      );
-      // A name the op is never GIVEN is a name the op cannot refuse: an empty one would
-      // simply leave the map without a key and answer 200 to a save that saved nothing.
-      const saved =
-        composed.refusal !== null
-          ? { reason: composed.refusal }
-          : await attempt(() =>
-              ops.app_update.handler(session.user.userId, {
-                slug,
-                ...(tunnelled ? { owner_roles: composed.roles } : { roles: composed.roles }),
-              }),
-            );
-      if (!("reason" in saved)) {
-        const back = composed.deleted
-          ? paths.appPane(slug, "roles")
-          : `${paths.appPane(slug, "roles")}?sel=role:${encodeURIComponent(composed.role)}`;
-        return c.redirect(noticeUrl(back, ROLE_SET, saved), 303);
-      }
-      const props = await appDetailProps(ctx, slug, "roles", {
-        kind: "role",
-        was: composed.was,
-        role: composed.role,
-        families: composed.families,
-        error: saved.reason,
-      });
-      if (props === null) return noSuchPage();
-      return render(AppDetailPage(props), 400);
-    }),
-  );
-
-  // §5's Save — ONE `app_update { log_bodies, redact, redact_results }`, composed as the
-  // STORED maps plus the deltas of the rows the form says it drew (its hidden `t.` fields).
-  // The only read is `app_get`, for those stored maps: a catalog read here would be a
-  // SECOND answer, taken after the one the form was drawn against, and a path the two
-  // disagree about is a path the save would rewrite without anyone having seen it.
-  app.post(
-    `/apps/:slug/${RECORDING_SET}`,
-    mutation(async (c, session, form) => {
-      const slug = c.req.param("slug") ?? "";
-      const ctx = await context(c.req.raw, session);
-      const fields = formFields(form);
-      const current = await attempt(() => ops.app_get.handler(session.user.userId, { slug }));
-      if ("reason" in current) {
-        return c.redirect(noticeUrl(paths.appPane(slug, "recording"), RECORDING_SET, current), 303);
-      }
-      const row = (current.value as { app: AppRow }).app;
-      const saved = await attempt(() =>
-        ops.app_update.handler(session.user.userId, {
-          slug,
-          log_bodies: fields.log === "1",
-          redact: composeRedaction(row.redact, "args", fields, drawnPaths(form, "args")),
-          redact_results: composeRedaction(row.redactResults, "results", fields, drawnPaths(form, "results")),
-        }),
-      );
-      const back = paths.appPane(slug, "recording");
-      if (!("reason" in saved)) return c.redirect(noticeUrl(back, RECORDING_SET, saved), 303);
-      const props = await appDetailProps(ctx, slug, "recording", { kind: "recording", error: saved.reason });
-      if (props === null) return noSuchPage();
-      return render(AppDetailPage(props), 400);
-    }),
-  );
-
-  // §23.6's Save — ONE `app_update { slug, typescript_aliases }` composed from the
-  // Overview editor's rows. A route of its own for the three above it's reason: the form's
-  // fields are not the op's keys, and a refusal redraws the editor on the very rows that
-  // caused it. The op is the authority for the identifier grammar and for collisions; the
-  // composed object is sent WHOLE (an omitted key keeps whatever name is established), so
-  // clearing every field clears the owner's CONFIGURATION and never a committed name.
-  app.post(
-    `/apps/:slug/${ALIAS_SET}`,
-    mutation(async (c, session, form) => {
-      const slug = c.req.param("slug") ?? "";
-      const fields = formFields(form);
-      const composed = composeTypescriptAliases(fields);
-      const saved =
-        "error" in composed
-          ? { reason: composed.error }
-          : await attempt(() =>
-              ops.app_update.handler(session.user.userId, { slug, typescript_aliases: composed.aliases }),
-            );
-      if (!("reason" in saved)) {
-        return c.redirect(noticeUrl(paths.appPane(slug, "overview"), ALIAS_SET, saved), 303);
-      }
-      const ctx = await context(c.req.raw, session);
-      const props = await appDetailProps(ctx, slug, "overview", {
-        kind: "alias",
-        service: fields[ALIAS_SERVICE_FIELD] ?? "",
-        rows: aliasDraftOf(Object.entries(fields)),
-        error: saved.reason,
-      });
-      if (props === null) return noSuchPage();
-      return render(AppDetailPage(props), 400);
-    }),
-  );
-
-  // §6's Save — the SAME `grant_set` the agent page posts, composed by the same function,
-  // with the agent riding a hidden field because the pane's URL names the app. `clear=1`
-  // is Remove <agent>: the same op with nothing to compose.
-  app.post(
-    `/apps/:slug/${GRANT_SET}`,
-    mutation(async (c, session, form) => {
-      const slug = c.req.param("slug") ?? "";
-      const fields = formFields(form);
-      const agent = fields.agent ?? "";
-      const { cleared, choices, roles } = grantSetFrom(fields);
-      const saved = await attempt(() =>
-        ops[GRANT_SET].handler(session.user.userId, { agent, app: slug, roles }),
-      );
-      const pane = paths.appPane(slug, "access");
-      if (!("reason" in saved)) {
-        const back = cleared ? pane : `${pane}?sel=agent:${encodeURIComponent(agent)}`;
-        return c.redirect(noticeUrl(back, GRANT_SET, saved), 303);
-      }
-      const ctx = await context(c.req.raw, session);
-      const props = await appDetailProps(ctx, slug, "access", {
-        kind: "grant",
-        agent,
-        choices,
-        error: saved.reason,
-      });
-      if (props === null) return noSuchPage();
-      return render(AppDetailPage(props), 400);
-    }),
-  );
-
-  // Every other mutation an `/apps/<slug>` pane renders, through the same generic dispatch
-  // /apps' own mutations ride — and back to the pane that drew the form. Delete is the one
-  // that cannot go back: the page it came from is the 404 §13 pins, so it lands on the list.
-  app.post(
-    "/apps/:slug/:op",
-    (c, next) =>
-      // An op with a route of its own must not ALSO be reachable generically: the three
-      // Save targets compose their op's arguments out of fields that are not its keys, and
-      // `token_issue`'s reveal would ride the redirect §15 forbids. Both spellings mounted
-      // is one op with two contracts, so the generic one answers like any unknown action.
-      APP_OWN_ROUTE.has(c.req.param("op") ?? "")
-        ? new Response("No such action\n", { status: 404, headers: TEXT })
-        : next(),
-    dispatch((c) => {
-      const pane = APP_OP_PANE[c.req.param("op") ?? ""];
-      return pane === undefined ? paths.apps : paths.appPane(c.req.param("slug") ?? "", pane);
-    }),
   );
 
   /* -------------------------------- /oauth/consent ------------------------------ */
@@ -1000,6 +676,13 @@ export function pageRoutes(): PageRouter {
 
   app.get(paths.stylesheet, () => new Response(styles, { headers: CSS }));
 
+  // The browser client, straight out of the ASSETS binding. The raw request goes through
+  // unmodified, so the asset lookup is `web/dist/app.js` / `web/dist/app.css` with no
+  // prefix to rewrite and no second spelling of either name; wrangler's `run_worker_first`
+  // is what makes these two routes the only reachable path into that directory.
+  app.get(paths.clientScript, (c) => env.ASSETS.fetch(c.req.raw));
+  app.get(paths.clientStylesheet, (c) => env.ASSETS.fetch(c.req.raw));
+
   // The manifest's two icons and the head's `rel="icon"`: bytes from pages/icon.ts, the
   // same in the suite and in production, which is the whole reason they are not a file.
   app.get(paths.icon192, () => new Response(ICON_192, { headers: PNG }));
@@ -1007,52 +690,17 @@ export function pageRoutes(): PageRouter {
 
   /* -------------------------------- /agents ---------------------------------- */
   //
-  // §13's agents pages (2026-09-03, roadmap step 9). Static segments first (`/agents/new`
-  // is a page, never an agent — admin refuses the slug), then the agent's own page and
-  // its mutations. The gate is the ordinary owner session, like `/apps/<slug>/*`.
+  // §13's agents pages, as the SPA shell (2026-09-18). Static segments first (`/agents/new`
+  // is a page, never an agent — admin refuses the slug), then the two retained 301s, then
+  // the agent's own routes. Each shell gate is the ordinary owner session, like
+  // `/apps/<slug>/*`, and each existence check runs before any HTML is emitted so the
+  // document 404s §13 pins survive the rewrite.
+  //
+  // There are no mutation POSTs under this prefix any more: every one of them is a call to
+  // `/api/hub` now, and a second spelling of the same op would be one op with two contracts.
 
-  app.get(paths.agents, async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    return render(AgentsPage(await agentsProps(ctx)));
-  });
-
-  app.get(paths.agentNew, async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    return render(AgentNewPage(await agentNewProps(ctx, agentNewForm(ctx.query), {})));
-  });
-
-  // agent_create's translation: a refusal re-renders the form at 400 with the reason under
-  // the field it names; a created agent lands on its own page (§13) — which is why this is
-  // not the generic redirect-back, exactly like `paths.appCreate`.
-  app.post(
-    paths.agentCreate,
-    mutation(async (c, session, form) => {
-      const ctx = await context(c.req.raw, session);
-      const draft = agentNewForm(formQuery(form));
-      const created = await attempt(() =>
-        ops.agent_create.handler(session.user.userId, {
-          slug: draft.slug,
-          ...(draft.name === "" ? {} : { name: draft.name }),
-          ...(draft.description === "" ? {} : { description: draft.description }),
-        }),
-      );
-      if ("reason" in created) {
-        const errors = /"slug"|slug/i.test(created.reason) ? { slug: created.reason } : { form: created.reason };
-        return render(AgentNewPage(await agentNewProps(ctx, draft, errors)), 400);
-      }
-      return c.redirect(noticeUrl(paths.agentDetail(draft.slug), "agent_create", created), 303);
-    }),
-  );
-
-  // The landing render: `/agents/<slug>` draws the first app in slug order the agent
-  // holds a grant on (the grant step when it holds none), IN PLACE — the loader resolves
-  // which, because no alias URL may exist for a landing pane (§13).
-  app.get("/agents/:slug", async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    const props = await agentDetailProps(ctx, c.req.param("slug") ?? "");
-    if (props === null) return noSuchPage();
-    return render(AgentDetailPage(props));
-  });
+  app.get(paths.agents, shell("Agents"));
+  app.get(paths.agentNew, shell("New agent"));
 
   // The two URLs the 2026-09-03 editor lived at, moved for good: 301 rather than 302,
   // because the page they named is gone and a bookmark should stop coming back here.
@@ -1063,97 +711,20 @@ export function pageRoutes(): PageRouter {
   );
 
   // One (agent × app) pair's pane. Two segments rather than one, because this is the only
-  // pane carrying an argument — which is also why it is not in `AGENT_PANES`.
-  app.get("/agents/:slug/apps/:app", async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    const props = await agentDetailProps(ctx, c.req.param("slug") ?? "", {
-      pane: "app",
-      app: c.req.param("app") ?? "",
-    });
-    if (props === null) return noSuchPage();
-    return render(AgentDetailPage(props));
-  });
+  // pane carrying an argument — which is also why it is not in `AGENT_PANES`. All three
+  // existence checks ride in `agentAppExists`.
+  app.get("/agents/:slug/apps/:app", shell("Agent", agentAppExists));
 
-  // Save — the ONE page form whose fields are not the op's keys: `roles` is a list
-  // `stringList` takes only as an array, so this route composes it from the per-row
-  // controls and calls the handler itself, the way the Issue target does rather than the
-  // generic dispatch. A refusal (a proxied app's undeclared role §8, an uncompilable
-  // pattern §1) redraws the pane on the very choices that caused it — never a redirect,
-  // or they would be lost. `clear=1` is Remove from <agent>: the same op with nothing to
-  // compose, which lands on the agent page because the pane it came from is now empty.
-  app.post(
-    `/agents/:slug/apps/:app/${GRANT_SET}`,
-    mutation(async (c, session, form) => {
-      const agent = c.req.param("slug") ?? "";
-      const target = c.req.param("app") ?? "";
-      const fields = formFields(form);
-      const cleared = fields.clear === "1";
-      const choices = cleared ? {} : grantChoicesOf(fields);
-      const saved = await attempt(() =>
-        ops[GRANT_SET].handler(session.user.userId, { agent, app: target, roles: composeRoles(choices) }),
-      );
-      if (!("reason" in saved)) {
-        const back = cleared ? paths.agentDetail(agent) : paths.agentApp(agent, target);
-        return c.redirect(noticeUrl(back, GRANT_SET, saved), 303);
-      }
-      const ctx = await context(c.req.raw, session);
-      const props = await agentDetailProps(ctx, agent, { pane: "app", app: target }, { choices, error: saved.reason });
-      if (props === null) return noSuchPage();
-      return render(AgentDetailPage(props), 400);
-    }),
-  );
-
-  // Issue token on the Credentials pane: the same 200-in-place reveal the app page's
-  // Issue answers with, for the same reason (§15 — a plaintext key never rides a URL).
-  // Mounted ahead of the generic pane route, which would otherwise claim the segment.
-  app.post(
-    `/agents/:slug/${TOKEN_ISSUE}`,
-    mutation(async (c, session, form) => {
-      const slug = c.req.param("slug") ?? "";
-      const minted = await attempt(() =>
-        ops[TOKEN_ISSUE].handler(session.user.userId, { ...queryFields(c.req.raw), ...formFields(form) }),
-      );
-      const back = paths.agentPane(slug, "credentials");
-      if ("reason" in minted) return c.redirect(noticeUrl(back, TOKEN_ISSUE, minted), 303);
-      const ctx = await context(c.req.raw, session);
-      const props = await agentDetailProps(ctx, slug, { pane: "credentials" });
-      if (props === null) return noSuchPage();
-      return render(AgentDetailPage({ ...props, reveal: tokenOf(minted.value) }));
-    }),
-  );
-
-  // Every other mutation an agent pane renders, through the same generic dispatch /agents'
-  // own mutations ride — and back to the pane that drew the form. Delete is the one that
-  // cannot go back: the page it came from is the 404 §13 pins, so it lands on the list.
-  app.post(
-    "/agents/:slug/:op",
-    (c, next) =>
-      // An op with a route of its own must not ALSO be reachable generically: this path
-      // is one segment short of `grant_set`'s, so a post here would hand the op a `roles`
-      // string where its schema wants the list the pane composes, and `token_issue`'s
-      // reveal would ride the redirect §15 forbids. Both spellings mounted is one op with
-      // two contracts, so the generic one answers like any other unknown action.
-      AGENT_OWN_ROUTE.has(c.req.param("op") ?? "")
-        ? new Response("No such action\n", { status: 404, headers: TEXT })
-        : next(),
-    dispatch((c) => {
-      const pane = AGENT_OP_PANE[c.req.param("op") ?? ""];
-      return pane === undefined ? paths.agents : paths.agentPane(c.req.param("slug") ?? "", pane);
-    }),
-  );
-
-  // The four single-segment panes. LAST of the `/agents/:slug/*` GETs, so `new`, `grants`
-  // and the op-named POST targets are all claimed before a segment reaches here.
+  // The four single-segment panes. LAST of the `/agents/:slug/*` GETs, so `new` and
+  // `grants` are both claimed before a segment reaches here.
+  app.get("/agents/:slug", shell("Agent", agentExists));
   app.get("/agents/:slug/:pane", async (c) => {
     const pane = c.req.param("pane") ?? "";
+    // Pane-name validation stays AHEAD of the session gate, exactly where it was: an
+    // unknown segment is not a page, and whether it is one cannot depend on who is asking.
     if (!(AGENT_PANES as readonly string[]).includes(pane)) return noSuchPage();
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    const props = await agentDetailProps(ctx, c.req.param("slug") ?? "", { pane: pane as AgentPane });
-    if (props === null) return noSuchPage();
-    return render(AgentDetailPage(props));
+    return shell("Agent", agentExists)(c);
   });
-
-  app.post("/agents/:op", dispatch(paths.agents));
 
   return app;
 }
@@ -1210,12 +781,13 @@ function mutation(
   handle: (c: Context, session: OwnerSession, form: FormData) => Promise<Response>,
   gate?: { recent: boolean },
 ): (c: Context) => Promise<Response> {
-  // deps: sessionOf · checkCsrf
+  // deps: sessionOf · csrfOk
   return async (c) => {
     const session = await sessionOf(c, gate);
     const form = await c.req.formData();
-    const refused = await checkCsrf(session.sessionId, form);
-    if (refused !== null) return refused;
+    if (!(await csrfOk(session.sessionId, field(form, "csrf")))) {
+      return new Response("Forbidden", { status: 403, headers: TEXT });
+    }
     return handle(c, session, form);
   };
 }
@@ -1235,16 +807,15 @@ async function sessionOf(c: Context, gate?: { recent: boolean }): Promise<OwnerS
 }
 
 /**
- * The check itself: the submitted form's CSRF field against the cookie session that
- * rendered it. Null to proceed, or the 403 `mutation` returns as-is. Separate from the
- * wrapper because it is the decision, and the wrapper is the ordering.
+ * The check itself: a presented CSRF token against the cookie session it must have been
+ * minted for. True to proceed. Separate from its callers because it is the decision, and
+ * they are the ordering and the carrier — the form field for a page POST, the
+ * `X-Pmcp-Csrf` header for the JSON API.
  */
-async function checkCsrf(sessionToken: string, form: FormData): Promise<Response | null> {
+export async function csrfOk(sessionToken: string, presented: string | null): Promise<boolean> {
   // deps: csrfTokenFor
-  const presented = field(form, "csrf");
   const expected = await csrfTokenFor(sessionToken);
-  if (presented !== null && presented.length === expected.length && presented === expected) return null;
-  return new Response("Forbidden", { status: 403, headers: TEXT });
+  return presented !== null && presented.length === expected.length && presented === expected;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1478,77 +1049,6 @@ async function refusalOf(response: Response | null): Promise<{ code: string; mes
 /** The op key **Update password** reports its outcome under, spelled once because the
  *  route writes it and `noticeOf` reads it back. */
 const CHANGE_PASSWORD = "change_password";
-
-/** The op **Issue new token** fronts, spelled once because its route mounts the name, keys
- *  the ops table with it and names it back in a refusal's notice. */
-const TOKEN_ISSUE = "token_issue";
-
-/** The op the grant editor's Save fronts, spelled once because its route mounts the name,
- *  keys the ops table with it and names it back in the landing notice. */
-const GRANT_SET = "grant_set";
-
-/** The three Save targets that are op-SHAPED without being ops: each composes one
- *  `app_update` out of fields that are not its keys (§4/§5/§23.6), and the final-segment
- *  convention still describes them, which is why they are spelled once here. */
-const ROLE_SET = "role_set";
-const RECORDING_SET = "recording_set";
-const ALIAS_SET = "alias_set";
-
-/**
- * ONE composer for `grant_set`, called by BOTH routes that post it — the agent page's and
- * the app page's — so §6's "composes exactly what the agent page's does" is a shared
- * function rather than a promise. `clear=1` is the Remove dialog: the same op with nothing
- * to compose, since the op replaces the pair's whole set.
- */
-function grantSetFrom(fields: Record<string, string>): {
-  cleared: boolean;
-  choices: Record<string, GrantChoice>;
-  roles: string[];
-} {
-  const cleared = fields.clear === "1";
-  const choices = cleared ? {} : grantChoicesOf(fields);
-  return { cleared, choices, roles: composeRoles(choices) };
-}
-
-/** A repeated form field's values, the Files a `<form>` can never produce dropped — the
- *  multi-valued half of `formFields`, which keeps one value per name. */
-function isText(value: FormDataEntryValue): value is string {
-  return typeof value === "string";
-}
-
-/**
- * Which `/apps/<slug>` pane owns each mutation its panes render, so the redirect-back lands
- * where the form was (§13). An op with no entry here has no pane to go back to — which is
- * exactly `app_delete`, whose page is the 404 §13 pins the moment it succeeds.
- */
-const APP_OP_PANE: Record<string, AppPane> = {
-  token_revoke: "token",
-  // The header's Disconnect (37(b)): the header belongs to no pane, so its notice lands
-  // on the landing pane of the app it was pressed on.
-  app_disconnect: "overview",
-  app_archive: "danger",
-  app_unarchive: "danger",
-};
-
-/**
- * Which `/agents/<slug>` pane owns each mutation its panes render, so the redirect-back
- * lands where the form was (§13). An op with no entry here has no pane to go back to —
- * exactly `agent_delete`, whose page is a 404 the moment it succeeds. `grant_set` is
- * absent for the other reason: it has a route of its own, which knows the app too.
- */
-const AGENT_OP_PANE: Record<string, AgentPane> = {
-  token_revoke: "credentials",
-  approval_decide: "activity",
-};
-
-/** The agent-page ops that are mounted at a route of their OWN, and are therefore not the
- *  generic dispatcher's to serve — `grant_set`, whose route composes the `roles` list and
- *  knows the app, and `token_issue`, whose answer is a 200 carrying the plaintext. */
-const AGENT_OWN_ROUTE: ReadonlySet<string> = new Set([GRANT_SET, TOKEN_ISSUE]);
-
-/** The same, for `/apps/<slug>`: the four Save targets and the Issue whose answer is a
- *  200 carrying the plaintext. */
-const APP_OWN_ROUTE: ReadonlySet<string> = new Set([ROLE_SET, RECORDING_SET, GRANT_SET, ALIAS_SET, TOKEN_ISSUE]);
 
 /**
  * §13's two mapped refusal codes, as the control each is drawn beside. A code that is not
@@ -1863,39 +1363,6 @@ function queryFields(req: Request): Record<string, string> {
   return Object.fromEntries(new URL(req.url).searchParams.entries());
 }
 
-/** A submitted form as a query bag, so the add-app form and the /apps/new link
- *  are read back by exactly one function (pages/model's appNewForm). */
-function formQuery(form: FormData): URLSearchParams {
-  return new URLSearchParams(Object.entries(formFields(form)));
-}
-
-/**
- * A refused create, split into the messages the form draws in red — read off the
- * refusal's OWN `violations` (§8), never off a substring of its message: the two
- * reservation sentences name no field in quotes at all, and a scan files them under the
- * whole form. A violation naming a control of the form sits under it; anything else
- * (roles, redaction paths) is the whole-form message. Two violations on one field join
- * with a space, because the control has one place to say things.
- */
-function createErrors(refused: { reason: string; violations?: Violation[] }): AppNewErrors {
-  const errors: AppNewErrors = {};
-  // A refusal that carries no list at all is still one sentence about this form.
-  const violations = refused.violations ?? [{ field: "", reason: refused.reason }];
-  for (const violation of violations) {
-    const key =
-      violation.field === "slug" || violation.field === "endpoint"
-        ? violation.field
-        : // §23.6's refusals are about the whole alias section — the op names
-          // `typescript_aliases`, and the form draws one block of controls for it.
-          violation.field === "typescript_aliases"
-          ? "aliases"
-          : "form";
-    const sentence = shownSentence(violation);
-    errors[key] = errors[key] === undefined ? sentence : `${errors[key]} ${sentence}`;
-  }
-  return errors;
-}
-
 /**
  * One violation as the PAGE says it: the op's own sentence with the `"<field>" ` quote
  * prefix dropped where it has one (the control's label already says which field this is),
@@ -1940,12 +1407,6 @@ function executionErrors(violations: readonly Violation[]): SettingsExecutionFor
     errors[key] = errors[key] === undefined ? sentence : `${errors[key]} ${sentence}`;
   }
   return errors;
-}
-
-/** token_issue's plaintext, read out of the op's own result and never anywhere else. */
-function tokenOf(value: unknown): string | null {
-  const token = (value as { token?: unknown }).token;
-  return typeof token === "string" ? token : null;
 }
 
 /** The browser's PushSubscription JSON, as the control POSTs it. Shape-checked here
@@ -1996,6 +1457,90 @@ async function render(node: unknown, status = 200): Promise<Response> {
       "Cache-Control": "no-store",
     },
   });
+}
+
+/**
+ * The SPA shell document — what `/apps/*` and `/agents/*` answer with (§13, 2026-09-18).
+ *
+ * It is a gate and a head, in that order, and the order is the whole point:
+ *
+ *  1. `requireOwnerSession`, so an unauthenticated deep link is still the 302 to
+ *     `/login?next=…` it always was, before any HTML exists;
+ *  2. `exists`, so the document-level 404s survive — an unknown slug, another namespace's,
+ *     the builtin `pmcp`, and an invalid (agent × app) pair are all the one answer they
+ *     were, decided BEFORE the shell is emitted rather than by the client afterwards. A
+ *     200 followed by a client-rendered "not found" would make a probe's job easier and
+ *     would break every bookmark test;
+ *  3. only then the shell.
+ *
+ * The body is three elements. `<div id="root">` is where the client mounts; the bootstrap is
+ * a `<script type="application/json">` carrying the session's CSRF token and the owner's
+ * username, which are the two facts no API can report; and the module script is the client.
+ * A JSON island rather than an executable one, deliberately — no page-generated JavaScript
+ * runs, so the existing CSP needs no `script-src` relaxation.
+ *
+ * `title` is the tab's, matching what the page it replaces rendered. The client sets it
+ * again on every client-side navigation, because a client navigation changes no head.
+ */
+function shell(
+  title: string,
+  /** The document-level 404 check for this route, or absent where the route names no row.
+   *  Returning false is `noSuchPage()`; anything it needs it reads itself. */
+  exists?: (c: Context, session: OwnerSession) => Promise<boolean>,
+): (c: Context) => Promise<Response> {
+  return async (c) => {
+    const session = await requireOwnerSession(c.req.raw);
+    if (exists !== undefined && !(await exists(c, session))) return noSuchPage();
+    const bootstrap = JSON.stringify({
+      csrf: await csrfTokenFor(session.sessionId),
+      username: session.user.username,
+      // The CANONICAL origin, not whatever host this request arrived on: a scoped endpoint
+      // URL is a value the owner copies into a bot's configuration, and this is the origin
+      // the hub puts on the wire everywhere else (§7's approvalUrl, the CIMD document, the
+      // `wss://` the clients derive). So the client never reads `location.origin`.
+      origin: env.PUBLIC_ORIGIN,
+    });
+    return render(
+      SpaShell({ title, bootstrap, stylesheet: paths.stylesheet, appStylesheet: paths.clientStylesheet, script: paths.clientScript }),
+    );
+  };
+}
+
+/**
+ * Whether `/apps/<slug>` names a row this owner may see. `getApp` answers null for the
+ * builtin, the unknown and the foreign slug alike — one answer, which is exactly what §13
+ * pins: a probe learns nothing about another namespace from the 404.
+ */
+async function appExists(c: Context, session: OwnerSession): Promise<boolean> {
+  return (await new Registry(env.DB).getApp(session.user.userId, c.req.param("slug") ?? "")) !== null;
+}
+
+/** The same for `/agents/<slug>`. The agent listing is the namespace's whole agent set, so a
+ *  slug missing from it is unknown or another owner's — indistinguishable, by design. */
+async function agentExists(c: Context, session: OwnerSession): Promise<boolean> {
+  const slug = c.req.param("slug") ?? "";
+  const listed = (await ops.agent_list.handler(session.user.userId, {})) as { agents: { slug: string }[] };
+  return listed.agents.some((agent) => agent.slug === slug);
+}
+
+/**
+ * `/agents/<slug>/apps/<app>`, which is three checks rather than one: the agent is this
+ * owner's, the app is too, and — for an ARCHIVED app — the agent holds a grant on it. The
+ * last is the one that is easy to lose: an archived app the agent holds nothing on is not a
+ * page, but one it DOES hold something on stays reachable, because the set has to remain
+ * editable after the app is shelved.
+ */
+async function agentAppExists(c: Context, session: OwnerSession): Promise<boolean> {
+  const agentSlug = c.req.param("slug") ?? "";
+  const appSlug = c.req.param("app") ?? "";
+  const listed = (await ops.agent_list.handler(session.user.userId, {})) as {
+    agents: { slug: string; grants: Record<string, string[]> }[];
+  };
+  const agent = listed.agents.find((each) => each.slug === agentSlug);
+  if (agent === undefined) return false;
+  const app = await new Registry(env.DB).getApp(session.user.userId, appSlug);
+  if (app === null) return false;
+  return !app.archived || (agent.grants[appSlug] ?? []).length > 0;
 }
 
 /** The browser surface's own 404: a path under a segment the hub serves, and no page

@@ -11,12 +11,13 @@
 import { httpServerIntegration, withSentry } from "@sentry/cloudflare";
 import { Hono } from "hono";
 import type { Context, ExecutionContext } from "hono";
+import { hubApiRoutes } from "./api";
 import { beforeSend, HUB_NAMESPACE, prune, record, resolveAuditConfig } from "./audit";
 import type { AuditConfig } from "./audit";
 import { mcpMessage } from "./gateway";
 import type { RequestLifecycle } from "./gateway";
 import { installHubExecutor } from "./hub-backend";
-import { createHubExecutor } from "./hub-sandbox";
+import { createHubExecutor } from "./hub-quickjs";
 import {
   anonymousNotFound,
   authRoutes,
@@ -54,6 +55,8 @@ import { approvalsFromEnv } from "./wiring";
 type D1Database = unknown;
 /** @cloudflare/workers-types DurableObjectNamespace. */
 type DurableObjectNamespace = unknown;
+/** @cloudflare/workers-types Fetcher — the static-asset binding's one member. */
+type Fetcher = { fetch(request: Request): Promise<Response> };
 
 /**
  * The wrangler environment — bindings and secrets, named here and nowhere else.
@@ -64,12 +67,6 @@ export type Env = {
   DB: D1Database;
   /** AppConnection DO namespace, addressed by opaque `app.id` only (§3, §6). */
   APP_CONNECTION: DurableObjectNamespace;
-  /**
-   * HubSandbox DO namespace, addressed by the EXACT-TOKEN digest only (§23.8): the id is
-   * the digest itself, so two tokens never share a container and the binding carries no
-   * user or principal identity. `hub-sandbox.ts` narrows it to the two members it calls.
-   */
-  HUB_SANDBOX: DurableObjectNamespace;
   /**
    * The canonical public https origin, e.g. "https://mcp.example.com" — scheme + host,
    * no trailing slash, no path. The single source for every absolute URL the hub emits:
@@ -117,6 +114,14 @@ export type Env = {
    * limits.AUDIT_BODY_CAP_BYTES. Same parse path as AUDIT_RETENTION_DAYS.
    */
   AUDIT_BODY_CAP_BYTES?: string;
+  /**
+   * The static-asset binding holding the browser client's build output (`web/dist`):
+   * `app.js` and `app.css`, fetched by the two web.ts routes that serve them. Not
+   * optional — the vitest pool reads this repo's real wrangler config, so the binding
+   * exists under test exactly as it does in production, and an optional field would be a
+   * `?.` at the two call sites standing in for a condition that cannot happen.
+   */
+  ASSETS: Fetcher;
 } & DeadlineBindings;
 // …and, spread in above, the optional deadline vars —
 // PMCP_CALL_TIMEOUT_MS, PMCP_AGGREGATED_LIST_DEADLINE_MS, PMCP_REGISTRATION_DEADLINE_MS,
@@ -151,6 +156,8 @@ export const ROUTES = [
   "styles.css", // web: the one stylesheet every page's shell links (§13)
   "icon-192.png", // web: the PWA icon the shell head and the manifest link (§13)
   "icon-512.png", // web: the manifest's install-size icon (§13)
+  "app.js", // web: the browser client's one script bundle (§13) — the dot keeps it out of the username charset, as sw.js's does
+  "app.css", // web: the browser client's one stylesheet, loaded after styles.css (§13)
 ] as const;
 
 /** One top-level segment, as the table above names it. */
@@ -170,20 +177,12 @@ export const RESERVED_ROUTES: ReadonlySet<string> = new Set([...ROUTES, "mcp"]);
  */
 export { AppConnection } from "./tunnel";
 
-/**
- * §23.8/§23.9 — the execution plane's two exports, for the same platform reason: wrangler
- * resolves the Sandbox DO class against the entry module, and the platform resolves
- * `ctx.exports.ContainerProxy` there too, which is what routes intercepted container
- * egress (`mcp.internal`) into `HubSandbox.bridgeFetch`.
- */
-export { ContainerProxy, HubSandbox } from "./hub-sandbox";
 
 /**
  * §23.8's ONE wiring point for the execution plane: the hub backend's `execute` tool calls
- * whatever executor is installed, and this is the only place one is. Built once per isolate
- * — `createHubExecutor` closes over the HUB_SANDBOX binding through the ambient `env` and
- * starts nothing until a run is admitted — so the gateway never imports the Sandbox SDK and
- * a worker test that never touches a container never loads it either.
+ * whatever executor is installed, and this is the only place one is. The executor loads
+ * the pinned QuickJS/Wasm module lazily once per isolate and creates a fresh runtime for
+ * every call; the gateway never imports or evaluates guest code.
  */
 installHubExecutor(createHubExecutor());
 
@@ -433,7 +432,7 @@ type Mount = (app: Hono<{ Bindings: Env }>, segment: ServedSegment) => void;
 /**
  * Segment → mount, exhaustive over ROUTES by type: a segment added to the table above with
  * no mount here is a compile error, and a mount that claims nothing is caught at runtime by
- * the router walk. The browser surface is one app (web.pageRoutes) that twelve segments
+ * the router walk. The browser surface is one app (web.pageRoutes) that fourteen segments
  * dispatch into whole; the five machine segments are mounted here because each is the
  * composition root's own wiring of a sibling module.
  */
@@ -450,10 +449,16 @@ const MOUNTS: Record<ServedSegment, Mount> = {
   "styles.css": browser,
   "icon-192.png": browser,
   "icon-512.png": browser,
+  "app.js": browser,
+  "app.css": browser,
 
-  // better-auth's own surface (§4) and the CLI's one non-MCP data route (§8).
+  // better-auth's own surface (§4), the CLI's one non-MCP data route (§8), and the browser
+  // client's own JSON surface (§13) — three groups under one reserved segment, mounted in
+  // increasing generality so `/api/auth/*` and `/api/hub/*` are claimed before `/api`'s
+  // own routes are consulted.
   api: (app, segment) => {
     app.route("/api/auth", authRoutes() as Hono);
+    app.route("/api", hubApiRoutes() as Hono);
     app.route("/api", whoamiRoute() as Hono);
     claim(app, segment, () => segmentNotFound(segment));
   },

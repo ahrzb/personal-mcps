@@ -1,0 +1,1025 @@
+// api.ts — the browser client's JSON surface, mounted at /api/hub by the composition root.
+//
+// WHAT THIS IS. §13's `/apps/*` and `/agents/*` are a browser SPA, and this is the only way
+// it reads or writes. Every route is cookie-authenticated exactly as the pages were — the
+// same `resolveOwnerSession`, so a bearer is not a credential here either — and every write
+// goes through the same three barriers a page POST went through (session, origin, CSRF),
+// written once in `writer` below for `mutation`'s own reason: a fourth write cannot forget
+// the order, because the order is how a write is spelled.
+//
+// WHAT THIS IS NOT. Not a second admin surface. The nine names `OPS_ALLOWED` lists are
+// dispatched into `admin.ops` by name with the parsed body as input, so a client can do
+// nothing a `pmcp` command cannot — the property §8's parity direction B pins, kept by
+// construction rather than by review. The six typed routes exist only where a form composed
+// a DELTA the op's own keys cannot express; each calls the same exported composer from
+// pages/model that the deleted form route called, so "the SPA writes what the form wrote" is
+// one function rather than two implementations.
+//
+// WHAT IS NOT HERE. No page rendering (web.ts's `shell` serves the SPA document), no
+// catalog collection (gateway's `ownerCatalog`), no validation of the values a write
+// carries — `app_update` and `app_create` remain the authority for slugs, path grammar,
+// identifier rules and collisions, and every refusal they make arrives here as a HubError
+// and leaves as a 422 carrying its own field-scoped violations.
+//
+// deps: hono · identity.resolveOwnerSession · web.csrfOk · admin.ops · gateway.ownerCatalog ·
+//       catalog-view · registry (Registry, effectiveRoles, writeOnlyPaths) · tunnel.capabilities ·
+//       upstream.beginConnect · pages/model (the composers, auditFilters/auditQueryOf) ·
+//       errors.HubError
+
+import { env } from "cloudflare:workers";
+import { Hono } from "hono";
+import type { Context } from "hono";
+import { ops } from "./admin";
+import type { AppRow as OpsAppRow } from "./admin";
+import { DEFAULT_APP_CAPABILITIES } from "./capabilities";
+import { argumentRows, schemaLeaves } from "./catalog-view";
+import type { ArgumentRow, SchemaLeaf } from "./catalog-view";
+import { HubError } from "./errors";
+import type { Violation } from "./errors";
+import { ownerCatalog } from "./gateway";
+import { aliasDiagnosticMessage } from "./hub-types";
+import type { ListedItem } from "./gateway";
+import { resolveOwnerSession } from "./identity";
+import type { OwnerSession } from "./identity";
+import type { Connection } from "./oauth";
+import { effectiveRoles, Registry, writeOnlyPaths } from "./registry";
+import type { AppCapability, ListKind, RoleDeclaration, RoleFamily } from "./registry";
+import { capabilities as tunnelCapabilities } from "./tunnel";
+import { beginConnect } from "./upstream";
+import { inlineMarkdown, plainText, renderMarkdown } from "./pages/markdown";
+import { csrfOk } from "./web";
+import {
+  auditFilters,
+  auditQueryOf,
+  composeOwnerRoles,
+  composeRedaction,
+  composeRoles,
+  composeTypescriptAliases,
+  grantChoicesOf,
+} from "./pages/model";
+
+/* ------------------------------------------------------------------ *
+ * The drafts a typed route takes
+ * ------------------------------------------------------------------ */
+
+/**
+ * §4's Roles editor, as the client submits it. Every field is exactly one input
+ * `composeOwnerRoles` consumes — the shape is the composer's parameter list, spelled as
+ * JSON, and nothing here is a second opinion about what a save means.
+ *
+ * `drawn` and `ticked` are separate because that is the distinction the composer turns on:
+ * a literal in `drawn` but not `ticked` is REMOVED, a literal in neither KEEPS its stored
+ * value (model.ts:5266-5280). `drawn` is the editor's own account of the coverage it
+ * rendered — checked and unchecked alike — and is never reconstructed from the ticks and
+ * never from a refetched catalog. That is what makes a filtered save safe: `?q=` hides
+ * rows, and a hidden row is not an unticked one.
+ */
+export type RoleDraft = {
+  /** The role being edited; "" for a new one. */
+  was: string;
+  /** Its (possibly renamed) name. */
+  role: string;
+  /** Delete `was` instead of writing it — the only delete trigger. */
+  delete?: true;
+  /** `<family>/<name>` item rows the editor RENDERED: its coverage. */
+  drawn: string[];
+  /** `<family>/<name>` whose checkbox came back ticked: the selection. */
+  ticked: string[];
+  /** `<family>/<pattern>` pattern rows the editor carried. */
+  keeps: string[];
+  /** `<family>/<pattern>` the owner removed. */
+  drop?: string;
+  /** A new pattern. */
+  add?: string;
+};
+
+/** One direction of §5's Recording editor — args or results. */
+export type RedactionDraft = {
+  /** The render's own account of its coverage: one `(path, tools)` pair per path row. */
+  drawn: [path: string, tools: string[]][];
+  /** Paths whose ENABLED "all tools" box is ticked. A DISABLED checked control is not a
+   *  submitted field on the form either, and including it would OR-cancel per-tool
+   *  unticking (model.ts:5353-5356). */
+  wholePath: string[];
+  /** `<tool>.<path>` whose per-tool box is ticked. */
+  perTool: string[];
+};
+
+/** §5's Recording pane, as the client submits it. */
+export type RecordingDraft = {
+  logBodies: boolean;
+  args: RedactionDraft;
+  results: RedactionDraft;
+};
+
+/** §23.6's alias editor, as the client submits it: the service control plus the rows,
+ *  paired as the composer's indexed fields are paired. */
+export type AliasDraft = {
+  service: string;
+  rows: { canonicalName: string; alias: string }[];
+};
+
+/** Either grant editor's submission: the whole set, replaced. `clear` is the Remove
+ *  dialog — the same op with nothing to compose, since it replaces the pair's set. */
+export type GrantDraft = {
+  clear?: true;
+  /** Entry → mode, exactly as the pane's per-row controls read: `allow`, `approval` or
+   *  `none`. `none` contributes nothing, which is how the pane revokes. */
+  entries: Record<string, "allow" | "approval" | "none">;
+};
+
+/* ------------------------------------------------------------------ *
+ * The router
+ * ------------------------------------------------------------------ */
+
+/**
+ * The nine ops reachable through `POST /api/hub/ops/:op`, and the whole list of them.
+ *
+ * Each takes only scalar slug/id/kind arguments, so a JSON body IS its input and nothing
+ * needs composing. The exclusions are as deliberate as the inclusions:
+ *
+ *  - `hub_settings_update`, `admin_token_issue`, `admin_token_revoke` and
+ *    `connection_revoke` stay unreachable because their panes stay server-rendered under
+ *    `/settings`'s `{recent: true}` prefix — admitting them to the ordinary JSON gate would
+ *    make it a freshness bypass, and `admin_token_issue` would additionally disclose a
+ *    minted plaintext where the page's generic dispatcher discards it into a redirect.
+ *  - `agent_update` and `app_set_upstream_auth` are excluded because no surface invokes
+ *    them; the CLI is their caller.
+ *  - the four Save targets and `app_create` are excluded because they are not reachable as
+ *    their own keys at all — they have typed routes below.
+ *  - the read ops are excluded because a read is a GET, and the ten resources above are it.
+ *
+ * `token_issue` and `token_revoke` keep the ORDINARY gate, which is exactly their current
+ * reachability from `/apps/<slug>/token` and `/agents/<slug>/credentials`: no tightening
+ * and no loosening. No route in this module asks for recent authentication.
+ */
+const OPS_ALLOWED: ReadonlySet<string> = new Set([
+  "app_archive",
+  "app_unarchive",
+  "app_delete",
+  "app_disconnect",
+  "agent_create",
+  "agent_delete",
+  "token_issue",
+  "token_revoke",
+  "approval_decide",
+]);
+
+/** The four catalog families a client may ask for, and the `ListKind` each names. */
+const FAMILY_KIND: Record<string, ListKind> = {
+  tools: "tools",
+  prompts: "prompts",
+  resources: "resources",
+  resourceTemplates: "resourceTemplates",
+};
+
+/**
+ * Which GRANT family each catalog family is matched under (§20.3). Resources and templates
+ * are one keyspace — a template matched on its raw `uriTemplate` — so the two listings
+ * answer to one family, which is why this is not `FAMILY_KIND` with the values reused.
+ */
+const SUBJECT_FAMILY: Record<string, RoleFamily> = {
+  tools: "tools",
+  prompts: "prompts",
+  resources: "resources",
+  resourceTemplates: "resources",
+};
+
+/**
+ * `/api/hub` — the SPA's whole server surface. Mounted beside `/api/auth` and
+ * `/api/whoami`, under the `api` segment the route table already reserves, so no
+ * reservation moves.
+ */
+export function hubApiRoutes(): unknown {
+  const app = new Hono();
+
+  /* ------------------------------- reads -------------------------------- */
+
+  app.get("/hub/apps", reader(async (session) => json(await ops.app_list.handler(session.user.userId, {}))));
+
+  app.get(
+    "/hub/apps/:slug",
+    reader(async (session, c) => {
+      const slug = c.req.param("slug") ?? "";
+      // The one read that is not an ops handler, for the page's own reason: an app's
+      // opaque id is addressing and no read op reports one (§3), and the id is what a
+      // tunnel's declared capability set is keyed on. It doubles as this route's 404,
+      // since `getApp` answers null for the builtin, the unknown and the foreign slug
+      // alike — one answer, so a probe cannot tell those three apart.
+      const app = await new Registry(env.DB).getApp(session.user.userId, slug);
+      if (app === null) return noSuchApp();
+      const detail = await read<{ app: OpsAppRow }>(session, "app_get", { slug });
+      if (detail.app.kind === "builtin") return noSuchApp();
+      return json({
+        app: detail.app,
+        kind: app.kind,
+        // §23.6's owner-facing sentences, RENDERED here. `aliasDiagnosticMessage` is the
+        // one author of that prose (hub-types owns it, and the provider's refresh reads the
+        // same words), so handing the browser the raw diagnostic objects would invite a
+        // second wording of one explanation.
+        //
+        // Each sentence carries its SUBJECT beside it — the family and canonical name it is
+        // about — because the Catalog details card prints only the diagnostics belonging to
+        // the selected member. Without them the client would have to pair this list against
+        // the row's raw `typescriptDiagnostics` by index, which is a coupling neither side
+        // could see.
+        diagnostics: detail.app.typescriptDiagnostics.map((diagnostic) => ({
+          family: diagnostic.family,
+          canonicalName: diagnostic.canonicalName,
+          message: aliasDiagnosticMessage(diagnostic),
+        })),
+      });
+    }),
+  );
+
+  app.get(
+    "/hub/apps/:slug/capabilities",
+    reader(async (session, c) => {
+      const slug = c.req.param("slug") ?? "";
+      const app = await new Registry(env.DB).getApp(session.user.userId, slug);
+      if (app === null) return noSuchApp();
+      const detail = await read<{ app: OpsAppRow }>(session, "app_get", { slug });
+      const row = detail.app;
+      if (row.kind === "builtin") return noSuchApp();
+      // §20.2/§20.5's advertised set, per kind — the same resolution gateway's
+      // `capabilitiesFor` makes for the scoped handshake, because the dimming rule and
+      // the handshake are two readings of one stored fact.
+      const capabilities: readonly AppCapability[] =
+        app.kind === "tunnel"
+          ? await tunnelCapabilities(app.id)
+          : ((row.kind === "proxy" ? row.capabilities : undefined) ?? DEFAULT_APP_CAPABILITIES);
+      return json({
+        capabilities,
+        // §13 (2026-09-03): a tunneled app that has never connected has no catalog at all,
+        // which is a different answer from an empty one and from an unread one.
+        neverConnected: row.kind === "tunnel" && row.lastSeen === null,
+      });
+    }),
+  );
+
+  app.get(
+    "/hub/apps/:slug/catalog/:family",
+    reader(async (session, c) => {
+      const slug = c.req.param("slug") ?? "";
+      const family = c.req.param("family") ?? "";
+      const kind = Object.prototype.hasOwnProperty.call(FAMILY_KIND, family)
+        ? FAMILY_KIND[family]
+        : undefined;
+      if (kind === undefined) return refuse(404, "No such catalog family.");
+      const app = await new Registry(env.DB).getApp(session.user.userId, slug);
+      if (app === null) return noSuchApp();
+
+      // §23.6's committed reservations, read on both sides of the listing. A tools read
+      // IS the discovery boundary that allocates them, so a name may become established
+      // by this very request — and the surfaces that print an app's TypeScript identity
+      // (Overview, the Catalog rows) have to know to re-read the app row. The committed
+      // RESERVATION map is what says so: `typescriptAliases` is the owner's input rather
+      // than what was committed, and a non-empty `AliasPlan.activate` can reassert an
+      // unchanged name (registry.ts:1752).
+      const before = kind === "tools" ? await reservedNames(app.id) : null;
+      const answered = await ownerCatalog(env, session.user.userId, slug, kind);
+      if (!answered.ok) {
+        // Unread, which is NOT empty: a needs-reconnect credential, an upstream that
+        // never answered, and now the owner-listing deadline all leave here, and the
+        // client draws the blank marker rather than a zero (gateway.ts:816-825).
+        return refuse(503, answered.failure.message, { unread: true });
+      }
+      const after = before === null ? null : await reservedNames(app.id);
+      return json({
+        family,
+        items: answered.items,
+        derived: answered.items.map((item) => derivationOf(item, SUBJECT_FAMILY[family])),
+        ...(before === null || after === null ? {} : { namesChanged: before !== after }),
+      });
+    }),
+  );
+
+  app.get(
+    "/hub/apps/:slug/roles",
+    reader(async (session, c) => {
+      const slug = c.req.param("slug") ?? "";
+      const app = await new Registry(env.DB).getApp(session.user.userId, slug);
+      if (app === null) return noSuchApp();
+      const detail = await read<{ app: OpsAppRow }>(session, "app_get", { slug });
+      const row = detail.app;
+      if (row.kind === "builtin") return noSuchApp();
+      // §1's merge rule, read once: the owner's roles, then the app's declaration on top.
+      // Three fields rather than one, because the editor needs all three — which name is
+      // the owner's to rename, which is the app's and therefore uneditable, and which map
+      // the door actually resolves against.
+      const ownerRoles: RoleDeclaration = row.kind === "tunnel" ? row.ownerRoles : row.roles;
+      const declaredRoles: RoleDeclaration = row.kind === "tunnel" ? row.roles : {};
+      return json({
+        ownerRoles,
+        declaredRoles,
+        effective: effectiveRoles({ declaredRoles, ownerRoles }),
+      });
+    }),
+  );
+
+  app.get(
+    "/hub/agents",
+    reader(async (session) => json(await ops.agent_list.handler(session.user.userId, {}))),
+  );
+
+  app.get(
+    "/hub/agents/:slug",
+    reader(async (session, c) => {
+      const slug = c.req.param("slug") ?? "";
+      const listed = await read<{ agents: ListedAgent[] }>(session, "agent_list");
+      const agent = listed.agents.find((each) => each.slug === slug);
+      // The agent listing is the namespace's whole agent set, so a slug missing from it
+      // is unknown or another owner's — indistinguishable, like the app 404 above.
+      if (agent === undefined) return refuse(404, "No such agent.");
+      const connections = await read<{ connections: Connection[] }>(session, "connection_list");
+      return json({ agent, agents: listed.agents, connections: connections.connections });
+    }),
+  );
+
+  // `token_list` declares no fields (admin.ts:1484), so there is no `?kind=` to forward
+  // and no filtering to do here: the whole namespace's credentials come back and the
+  // client narrows to the app or agent whose pane is drawn.
+  app.get("/hub/tokens", reader(async (session) => json(await ops.token_list.handler(session.user.userId, {}))));
+
+  app.get(
+    "/hub/audit",
+    reader(async (session, c) => {
+      const url = new URL(c.req.url);
+      const filters = auditFilters({ now: new Date().toISOString(), query: url.searchParams });
+      const page = await read<unknown>(session, "audit_query", {
+        ...auditQueryOf(filters),
+        limit: filters.limit,
+        offset: filters.offset,
+      });
+      return json({ filters, page });
+    }),
+  );
+
+  // Two resources rather than one, because `Approvals.list` filters BEFORE it limits
+  // (approvals.ts:446-447): counting pending rows inside a limited history response
+  // undercounts, and the nav badge is exactly that count.
+  app.get(
+    "/hub/approvals",
+    reader(async (session, c) => {
+      const url = new URL(c.req.url);
+      const status = url.searchParams.get("status");
+      const limit = url.searchParams.get("limit");
+      const input =
+        status !== null ? { status } : limit !== null ? { limit: Number(limit) } : {};
+      return json(await ops.approval_list.handler(session.user.userId, input));
+    }),
+  );
+
+  /* ------------------------------- writes ------------------------------- */
+
+  app.post(
+    "/hub/ops/:op",
+    writer(async (session, c, body) => {
+      const name = c.req.param("op") ?? "";
+      // A name outside the allowlist answers exactly as a name outside `ops` does, so a
+      // probe cannot learn which ops exist but are withheld from this surface.
+      const op = OPS_ALLOWED.has(name) ? opNamed(name) : undefined;
+      if (op === undefined) return refuse(404, "No such action");
+      // Straight through: `parseInput` refuses an undeclared field and type-checks each
+      // declared one, and a JSON body can carry the real booleans and integers `coerce`
+      // demands — which is the one thing a form's all-strings input never could.
+      return outcome(await attempt(() => op.handler(session.user.userId, body)));
+    }),
+  );
+
+  /**
+   * §8's create, whole: the op, then the arm its answer requires. One route rather than a
+   * create plus a follow-up call, because two of the three arms carry something the client
+   * cannot ask for twice — a plaintext key shown exactly once (§15), and an authorize URL
+   * bound to a single-use state row.
+   */
+  app.post(
+    "/hub/apps",
+    writer(async (session, c, body) => {
+      const draft = appDraftOf(body);
+      if ("reason" in draft) return refuse(400, draft.reason);
+      // The display name, not the slug: §13:218-223's connecting screen reads
+      // "Connecting to <name>…", and a blank Name defaults to the slug at the op, so the
+      // fallback is applied here too rather than left for the client to guess.
+      const name = draft.name.trim() === "" ? draft.slug : draft.name;
+      const aliases = composeTypescriptAliases(draft.aliasFields);
+      if ("error" in aliases) return refuse(422, aliases.error);
+      const created = await attempt(() =>
+        ops.app_create.handler(session.user.userId, {
+          slug: draft.slug,
+          kind: draft.kind,
+          // A blank Name is not SENT, so the op defaults it to the slug (§8/§13).
+          ...(draft.name.trim() === "" ? {} : { name: draft.name }),
+          // Proxy-only fields are rejected on a tunneled create (§8), so they are sent
+          // only where they mean something. `authMode` is the control's name and `auth`
+          // is the op's — the one place the two spellings meet.
+          ...(draft.kind === "proxy" ? { endpoint: draft.endpoint, auth: draft.authMode } : {}),
+          // An untouched alias section composes to `{}`, which says exactly what an absent
+          // key says to a create — so it is not sent at all.
+          ...(Object.keys(aliases.aliases).length === 0 ? {} : { typescript_aliases: aliases.aliases }),
+        }),
+      );
+      if ("reason" in created) return outcome(created);
+
+      if (draft.kind === "proxy" && draft.authMode === "oauth") {
+        const app = await new Registry(env.DB).getApp(session.user.userId, draft.slug);
+        const started =
+          app === null
+            ? { reason: "No such app." }
+            : await attempt(() => beginConnect(app, { id: session.sessionId }));
+        // A refused begin leaves the CREATE standing: the app exists, and the client
+        // lands on its Overview with the reason, exactly as the form route did.
+        return "reason" in started
+          ? json({ slug: draft.slug, name, connectError: started.reason })
+          : json({ slug: draft.slug, name, connect: { authorizeUrl: String(started.value) } });
+      }
+
+      // A proxied app has nothing that connects, so it has no token to reveal (§6).
+      const minted =
+        draft.kind === "tunnel"
+          ? await attempt(() => ops.token_issue.handler(session.user.userId, { kind: "app", slug: draft.slug }))
+          : null;
+      return json({
+        slug: draft.slug,
+        name,
+        ...(draft.kind === "tunnel"
+          ? { token: minted !== null && "value" in minted ? tokenOf(minted.value) : null }
+          : {}),
+      });
+    }),
+  );
+
+  /**
+   * §4's Save. The ONE read here is `app_get`, for the stored map the delta merges into:
+   * the client never sends a whole map, so that read is what keeps a concurrent change to
+   * an UNDRAWN entry from being overwritten. A catalog read would be a second answer taken
+   * after the one the editor was drawn against, and is deliberately absent.
+   */
+  app.put(
+    "/hub/apps/:slug/roles",
+    writer(async (session, c, body) => {
+      const slug = c.req.param("slug") ?? "";
+      const draft = roleDraftOf(body);
+      if ("reason" in draft) return refuse(400, draft.reason);
+      const current = await attempt(() => ops.app_get.handler(session.user.userId, { slug }));
+      if ("reason" in current) return outcome(current);
+      // `app_get`'s result shape is admin's own and `handler` erases it to `unknown`;
+      // asserted rather than re-validated because the value never left this isolate.
+      const detail = current.value as { app: OpsAppRow };
+      const row = detail.app;
+      if (row.kind === "builtin") return noSuchApp();
+      // Which stored map is being edited follows the KIND, and the page never mixes them:
+      // a tunneled app's owner roles live beside the app's declaration, a proxied app's
+      // roles are already all the owner's (§1).
+      const tunnelled = row.kind === "tunnel";
+      const stored = tunnelled ? row.ownerRoles : row.roles;
+      const declared = tunnelled ? row.roles : {};
+      const composed = composeOwnerRoles(
+        stored,
+        declared,
+        roleFieldsOf(draft.draft),
+        draft.draft.keeps,
+        draft.draft.drawn,
+      );
+      // A name the op is never GIVEN is a name the op cannot refuse: an empty one would
+      // simply leave the map without a key and answer 200 to a save that saved nothing.
+      if (composed.refusal !== null) return refuse(422, composed.refusal);
+      const saved = await attempt(() =>
+        ops.app_update.handler(session.user.userId, {
+          slug,
+          ...(tunnelled ? { owner_roles: composed.roles } : { roles: composed.roles }),
+        }),
+      );
+      if ("reason" in saved) return outcome(saved);
+      return json({ role: composed.role, was: composed.was, deleted: composed.deleted });
+    }),
+  );
+
+  /** §5's Save. Reads `app_get` for the same reason the Roles save does, and for no other:
+   *  `composeRedaction` merges a delta into a stored map. */
+  app.put(
+    "/hub/apps/:slug/recording",
+    writer(async (session, c, body) => {
+      const slug = c.req.param("slug") ?? "";
+      const draft = recordingDraftOf(body);
+      if ("reason" in draft) return refuse(400, draft.reason);
+      const current = await attempt(() => ops.app_get.handler(session.user.userId, { slug }));
+      if ("reason" in current) return outcome(current);
+      // Asserted for the reason the Roles save's read is.
+      const detail = current.value as { app: OpsAppRow };
+      const row = detail.app;
+      if (row.kind === "builtin") return noSuchApp();
+      return outcome(
+        await attempt(() =>
+          ops.app_update.handler(session.user.userId, {
+            slug,
+            log_bodies: draft.draft.logBodies,
+            redact: composeRedaction(row.redact, "args", redactFieldsOf(draft.draft.args, "args"), draft.draft.args.drawn),
+            redact_results: composeRedaction(
+              row.redactResults,
+              "results",
+              redactFieldsOf(draft.draft.results, "results"),
+              draft.draft.results.drawn,
+            ),
+          }),
+        ),
+      );
+    }),
+  );
+
+  /** §23.6's Save. No stored read at all: `composeTypescriptAliases` composes from its own
+   *  fields, the object is sent WHOLE, and an extra read would add a failure point with
+   *  nothing to merge. */
+  app.put(
+    "/hub/apps/:slug/aliases",
+    writer(async (session, c, body) => {
+      const slug = c.req.param("slug") ?? "";
+      const draft = aliasFieldsOf(body);
+      if ("reason" in draft) return refuse(400, draft.reason);
+      const composed = composeTypescriptAliases(draft.fields);
+      if ("error" in composed) return refuse(422, composed.error);
+      return outcome(
+        await attempt(() =>
+          ops.app_update.handler(session.user.userId, { slug, typescript_aliases: composed.aliases }),
+        ),
+      );
+    }),
+  );
+
+  /** §6's Save from the app's Agents pane: the agent rides the body, the app is the URL.
+   *  No stored read — the submitted set REPLACES the pair's whole set. */
+  app.put(
+    "/hub/apps/:slug/grants",
+    writer(async (session, c, body) => {
+      const slug = c.req.param("slug") ?? "";
+      const agent = stringOf(body, "agent");
+      if (agent === null) return refuse(400, "agent must be a string.");
+      const draft = grantDraftOf(body);
+      if ("reason" in draft) return refuse(400, draft.reason);
+      return outcome(
+        await attempt(() =>
+          ops.grant_set.handler(session.user.userId, { agent, app: slug, roles: rolesOf(draft.draft) }),
+        ),
+      );
+    }),
+  );
+
+  /** The SAME `grant_set`, composed by the same function, from the agent's own pane —
+   *  which is what §6's "composes exactly what the agent page's does" means. */
+  app.put(
+    "/hub/agents/:slug/apps/:app/grants",
+    writer(async (session, c, body) => {
+      const agent = c.req.param("slug") ?? "";
+      const target = c.req.param("app") ?? "";
+      const draft = grantDraftOf(body);
+      if ("reason" in draft) return refuse(400, draft.reason);
+      return outcome(
+        await attempt(() =>
+          ops.grant_set.handler(session.user.userId, { agent, app: target, roles: rolesOf(draft.draft) }),
+        ),
+      );
+    }),
+  );
+
+  return app;
+}
+
+/* ------------------------------------------------------------------ *
+ * The two gates
+ * ------------------------------------------------------------------ */
+
+/**
+ * A read: the session, and nothing else. A read mutates nothing, which is the same reason
+ * `mutation` excludes GETs (web.ts:1206-1207) — there is no state for a cross-site GET to
+ * change, and the cookie is SameSite regardless.
+ */
+function reader(
+  handle: (session: OwnerSession, c: Context) => Promise<Response>,
+): (c: Context) => Promise<Response> {
+  return async (c) => {
+    const session = await resolveOwnerSession(c.req.raw);
+    if (session === null) return signIn();
+    return handle(session, c);
+  };
+}
+
+/**
+ * A write, in the order that order is written ONCE: session, origin, CSRF, body, handler.
+ * `mutation`'s own comment names this seam as where a cross-cutting origin rule belongs,
+ * and here it is one — the page gate leans on better-auth's SameSite cookie plus the form
+ * field, and this surface adds the header.
+ *
+ * `X-Pmcp-Csrf` is itself a barrier and not merely a re-spelling of the form field: a
+ * custom header cannot be set cross-origin without a preflight the hub never answers, so a
+ * cross-site page cannot reach a handler here even before the token is compared.
+ */
+function writer(
+  handle: (session: OwnerSession, c: Context, body: Record<string, unknown>) => Promise<Response>,
+): (c: Context) => Promise<Response> {
+  return async (c) => {
+    const session = await resolveOwnerSession(c.req.raw);
+    if (session === null) return signIn();
+    if (crossOrigin(c.req.raw)) return refuse(403, "Forbidden");
+    if (!(await csrfOk(session.sessionId, c.req.header("X-Pmcp-Csrf") ?? null))) {
+      return refuse(403, "Forbidden");
+    }
+    const body = await c.req.raw
+      .json()
+      .then((parsed) => (isRecord(parsed) ? parsed : null))
+      .catch(() => null);
+    if (body === null) return refuse(400, "Body must be a JSON object.");
+    return handle(session, c, body);
+  };
+}
+
+/**
+ * The origin rule, the same if-present-must-match shape the /login routes and the consumer
+ * surface stand on: a non-browser client sends no Origin and passes, a same-site fetch
+ * sends the hub's own, and the cross-site post this refuses is the one that would otherwise
+ * ride a browser's ambient cookies.
+ */
+function crossOrigin(req: Request): boolean {
+  const origin = req.headers.get("Origin");
+  return origin !== null && origin !== env.PUBLIC_ORIGIN;
+}
+
+/* ------------------------------------------------------------------ *
+ * Answers
+ * ------------------------------------------------------------------ */
+
+/** Every successful answer. `no-store` like every other session-derived response: a
+ *  browser that keeps a copy shows a stale or someone else's namespace. */
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
+/** Every refusal, as one shape: `reason` and whatever the status adds. A refusal names
+ *  fields and never submitted values (§15). */
+function refuse(status: number, reason: string, extra: Record<string, unknown> = {}): Response {
+  return json({ reason, ...extra }, status);
+}
+
+/** The absent-session answer. 401 rather than the page gate's 302: a `fetch` cannot follow
+ *  a redirect into the address bar, so the client is told to go to /login and does. */
+function signIn(): Response {
+  return refuse(401, "Sign in again.");
+}
+
+/** The 404 the builtin `pmcp`, an unknown slug and a foreign slug share — one answer, so a
+ *  probe learns nothing about another namespace (§13's document 404 as JSON). */
+function noSuchApp(): Response {
+  return refuse(404, "No such app.");
+}
+
+/** One ops answer as this surface renders it: the value, or §8's field-scoped refusal. */
+function outcome(attempted: Attempted): Response {
+  return "value" in attempted
+    ? json({ value: attempted.value })
+    : json(
+        {
+          reason: attempted.reason,
+          ...(attempted.violations === undefined ? {} : { violations: attempted.violations }),
+        },
+        422,
+      );
+}
+
+/**
+ * Runs one ops handler and separates the two answers a client renders differently: a value,
+ * or an owner-fixable refusal. Only HubError is caught — a bug inside a handler must reach
+ * the composition root as the 500 it is, never a message telling the owner they asked
+ * wrongly (admin.ts and web.ts draw the same line for the same reason).
+ */
+async function attempt(work: () => Promise<unknown>): Promise<Attempted> {
+  try {
+    return { value: await work() };
+  } catch (err) {
+    if (!(err instanceof HubError)) throw err;
+    return err.violations === undefined
+      ? { reason: err.message }
+      : { reason: err.message, violations: [...err.violations] };
+  }
+}
+
+type Attempted = { value: unknown } | { reason: string; violations?: Violation[] };
+
+/** An op by name — `hasOwnProperty` so a request naming `toString` names no tool. */
+function opNamed(name: string): (typeof ops)[string] | undefined {
+  return Object.prototype.hasOwnProperty.call(ops, name) ? ops[name] : undefined;
+}
+
+/** One ops read, by name. A name that is not in the table is a bug in this file, never a
+ *  caller's input, so it throws rather than refusing. */
+async function read<T>(session: OwnerSession, name: string, input: Record<string, unknown> = {}): Promise<T> {
+  const op = opNamed(name);
+  if (op === undefined) throw new Error(`api: no such admin op "${name}"`);
+  return (await op.handler(session.user.userId, input)) as T;
+}
+
+/* ------------------------------------------------------------------ *
+ * Catalog derivation
+ * ------------------------------------------------------------------ */
+
+/**
+ * One listed declaration's description, rendered three ways by `pages/markdown.ts`.
+ *
+ * It is on the WIRE and not in the browser because that module is the hub's ONE audited
+ * renderer of untrusted app prose — its header forbids a second implementation, and it is
+ * the only place whose output a surface may treat as markup. A client-side renderer would
+ * be a second whitelist to keep right; rendering plain text instead would print an app's
+ * asterisks at the reader.
+ *
+ * Three forms because the surfaces need three: a row is one line high, a details card is
+ * block structure, and a `title` attribute cannot carry markup at all.
+ */
+export type RenderedProse = {
+  /** The first paragraph's inline formatting, as safe HTML. For a one-line row. */
+  inline: string;
+  /** Block structure and all, as safe HTML. For a details card. */
+  block: string;
+  /** The markup taken off. For a `title` / `aria-label`. */
+  text: string;
+};
+
+/**
+ * Everything the panes compute from ONE listed declaration, derived here because
+ * `catalog-view`, `registry` and `pages/markdown` own those computations and the browser
+ * must not hold a second implementation of any of them: §13's Arguments table, the dotted
+ * leaf paths the Catalog details and the Recording pane's mask rows read, the `writeOnly`
+ * result paths §7 masks regardless of configuration, and every description as rendered
+ * markup.
+ *
+ * `subject` is the string a grant matches this item by — its name, or for a resource or
+ * template its raw URI (§20.3: grants match resources by URI, never by name). It rides the
+ * derivation because every matcher on every pane asks for it and reconstructing it in the
+ * browser would be a second reading of the same rule.
+ */
+export type CatalogDerivation = {
+  subject: string;
+  /** The declaration's own prose, all three forms. The surfaces use all three: a row is one
+   *  line, a details card is block structure, and an endpoint tooltip is a `title`. */
+  description: RenderedProse;
+  /** §13's Arguments table. No prose here: a schema property carries a type and a default,
+   *  not a description — only a PROMPT's declared arguments carry one, below. */
+  arguments: ArgumentRow[];
+  argPaths: SchemaLeaf[];
+  resultPaths: SchemaLeaf[];
+  writeOnly: string[];
+  /**
+   * A PROMPT's declared arguments, which are the one place a per-argument description
+   * exists: a prompt carries no JSON Schema at all (§20.3), so its card draws the app's own
+   * declaration — name, prose, and required. Empty for every other family.
+   */
+  promptArguments: { name: string; description: RenderedProse; required: boolean }[];
+};
+
+function derivationOf(item: ListedItem, family: RoleFamily): CatalogDerivation {
+  // `ListedItem` is gateway's own narrow view — the key the filter matches on plus the
+  // outputSchema it strips — so the input schema, the description and a prompt's arguments
+  // are read by narrowing rather than asserted onto it, exactly as the props builder read
+  // them (model.ts:4277-4282, :4374-4383). The RESPONSE still carries each item whole, so a
+  // field neither type names (a resource's `mimeType`) reaches the client untouched.
+  const inputSchema = "inputSchema" in item ? item.inputSchema : undefined;
+  const described = "description" in item && typeof item.description === "string" ? item.description : "";
+  return {
+    subject: family === "resources" ? (item.uri ?? item.uriTemplate ?? "") : (item.name ?? ""),
+    description: proseOf(described),
+    arguments: argumentRows(inputSchema),
+    argPaths: schemaLeaves(inputSchema),
+    resultPaths: schemaLeaves(item.outputSchema),
+    writeOnly: writeOnlyPaths(item.outputSchema),
+    promptArguments: promptArgumentsOf(item),
+  };
+}
+
+/**
+ * A prompt's declared arguments, read DEFENSIVELY: this is the app's own relayed
+ * declaration, so nothing is trusted to be the documented shape — a missing name reads as
+ * `""` and a missing description as empty prose, rather than the page printing `undefined`
+ * or the render throwing on an app's malformed answer.
+ */
+function promptArgumentsOf(item: ListedItem): CatalogDerivation["promptArguments"] {
+  const declared = "arguments" in item ? item.arguments : undefined;
+  if (!Array.isArray(declared)) return [];
+  return declared.map((argument: unknown) => {
+    const each = typeof argument === "object" && argument !== null ? argument : {};
+    const name = "name" in each && typeof each.name === "string" ? each.name : "";
+    const description = "description" in each && typeof each.description === "string" ? each.description : "";
+    return { name, description: proseOf(description), required: "required" in each && each.required === true };
+  });
+}
+
+/** One description through the audited renderer. An empty one is three empty strings rather
+ *  than three parses of nothing — every surface already draws its own em dash for it. */
+function proseOf(source: string): RenderedProse {
+  if (source === "") return { inline: "", block: "", text: "" };
+  return { inline: inlineMarkdown(source), block: renderMarkdown(source), text: plainText(source) };
+}
+
+/** The app's committed TypeScript reservations as one comparable string, in a stable order.
+ *  Compared BEFORE and AFTER a tools listing so `namesChanged` reports a real move of a
+ *  committed name rather than the owner's configuration or a reasserted plan. */
+async function reservedNames(appId: string): Promise<string> {
+  const mapping = await new Registry(env.DB).typescriptReservationsFor(appId);
+  return mapping.reservations
+    .filter((row) => row.active)
+    .map((row) => `${row.family}\u0000${row.canonicalName}\u0000${row.typescriptName}`)
+    .sort()
+    .join("\u0001");
+}
+
+/* ------------------------------------------------------------------ *
+ * Body validation, and the adapters onto the composers
+ * ------------------------------------------------------------------ *
+ *
+ * A TypeScript annotation validates nothing, so every typed route checks its body before
+ * composing: each required field present and of its declared type, each array an array of
+ * the element type it claims. A malformed body is a 400 naming the FIELD and never its
+ * value. What is deliberately NOT checked here is meaning — path grammar, identifier
+ * rules, slug charset, collisions — because `app_create` / `app_update` are the authority
+ * for all of it and a second judgement here would be a second set of rules to keep aligned.
+ */
+
+/**
+ * This module's own plain-object guard — a fourth private copy, like catalog-view's
+ * `objectOf` and registry's `isJsonObject`, because the repo has no shared guard module
+ * and a `Record<string, unknown>` proves only that a value is an object. Every field the
+ * validators below read is checked individually; nothing here claims a shape.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringOf(body: Record<string, unknown>, field: string): string | null {
+  const value = body[field];
+  return typeof value === "string" ? value : null;
+}
+
+function stringsOf(body: Record<string, unknown>, field: string): string[] | null {
+  const value = body[field];
+  if (!Array.isArray(value)) return null;
+  return value.every((each) => typeof each === "string") ? (value as string[]) : null;
+}
+
+/** `/apps`' body: the add-app form's controls, plus the alias editor's rows flattened into
+ *  the indexed fields `composeTypescriptAliases` reads. */
+function appDraftOf(
+  body: Record<string, unknown>,
+):
+  | { slug: string; kind: "tunnel" | "proxy"; name: string; endpoint: string; authMode: string; aliasFields: Record<string, string> }
+  | { reason: string } {
+  const slug = stringOf(body, "slug");
+  if (slug === null) return { reason: "slug must be a string." };
+  const kind = stringOf(body, "kind");
+  if (kind !== "tunnel" && kind !== "proxy") return { reason: "kind must be tunnel or proxy." };
+  const name = body.name === undefined ? "" : stringOf(body, "name");
+  if (name === null) return { reason: "name must be a string." };
+  const endpoint = body.endpoint === undefined ? "" : stringOf(body, "endpoint");
+  if (endpoint === null) return { reason: "endpoint must be a string." };
+  const authMode = body.authMode === undefined ? "none" : stringOf(body, "authMode");
+  if (authMode === null) return { reason: "authMode must be a string." };
+  const aliases = body.aliases === undefined ? { service: "", rows: [] } : body.aliases;
+  const fields = aliasFieldsOf(aliases);
+  if ("reason" in fields) return fields;
+  return { slug, kind, name, endpoint, authMode, aliasFields: fields.fields };
+}
+
+function roleDraftOf(body: Record<string, unknown>): { draft: RoleDraft } | { reason: string } {
+  const was = stringOf(body, "was");
+  if (was === null) return { reason: "was must be a string." };
+  const role = stringOf(body, "role");
+  if (role === null) return { reason: "role must be a string." };
+  const drawn = stringsOf(body, "drawn");
+  if (drawn === null) return { reason: "drawn must be an array of strings." };
+  const ticked = stringsOf(body, "ticked");
+  if (ticked === null) return { reason: "ticked must be an array of strings." };
+  const keeps = stringsOf(body, "keeps");
+  if (keeps === null) return { reason: "keeps must be an array of strings." };
+  const drop = body.drop === undefined ? "" : stringOf(body, "drop");
+  if (drop === null) return { reason: "drop must be a string." };
+  const add = body.add === undefined ? "" : stringOf(body, "add");
+  if (add === null) return { reason: "add must be a string." };
+  if (body.delete !== undefined && body.delete !== true) return { reason: "delete must be true or absent." };
+  return {
+    draft: {
+      was,
+      role,
+      drawn,
+      ticked,
+      keeps,
+      ...(drop === "" ? {} : { drop }),
+      ...(add === "" ? {} : { add }),
+      ...(body.delete === true ? { delete: true as const } : {}),
+    },
+  };
+}
+
+/** `RoleDraft` as the flat record `composeOwnerRoles` reads: the tick prefix is the page's
+ *  own `i.`, spelled here because this is the other half of that translation. */
+function roleFieldsOf(draft: RoleDraft): Record<string, string> {
+  const fields: Record<string, string> = { was: draft.was, role: draft.role };
+  if (draft.delete === true) fields.delete = "1";
+  if (draft.drop !== undefined) fields.drop = draft.drop;
+  if (draft.add !== undefined) fields.add = draft.add;
+  for (const row of draft.ticked) fields[`i.${row}`] = "1";
+  return fields;
+}
+
+function recordingDraftOf(body: Record<string, unknown>): { draft: RecordingDraft } | { reason: string } {
+  if (typeof body.logBodies !== "boolean") return { reason: "logBodies must be a boolean." };
+  const args = redactionDraftOf(body.args, "args");
+  if ("reason" in args) return args;
+  const results = redactionDraftOf(body.results, "results");
+  if ("reason" in results) return results;
+  return { draft: { logBodies: body.logBodies, args: args.draft, results: results.draft } };
+}
+
+function redactionDraftOf(value: unknown, field: string): { draft: RedactionDraft } | { reason: string } {
+  if (!isRecord(value)) return { reason: `${field} must be an object.` };
+  if (!Array.isArray(value.drawn)) return { reason: `${field}.drawn must be an array.` };
+  const drawn: [string, string[]][] = [];
+  for (const pair of value.drawn) {
+    if (!Array.isArray(pair) || pair.length !== 2) return { reason: `${field}.drawn must hold [path, tools] pairs.` };
+    const [path, tools] = pair as [unknown, unknown];
+    if (typeof path !== "string") return { reason: `${field}.drawn must hold [path, tools] pairs.` };
+    if (!Array.isArray(tools) || !tools.every((each) => typeof each === "string")) {
+      return { reason: `${field}.drawn must hold [path, tools] pairs.` };
+    }
+    drawn.push([path, tools as string[]]);
+  }
+  const wholePath = stringsOf(value, "wholePath");
+  if (wholePath === null) return { reason: `${field}.wholePath must be an array of strings.` };
+  const perTool = stringsOf(value, "perTool");
+  if (perTool === null) return { reason: `${field}.perTool must be an array of strings.` };
+  return { draft: { drawn, wholePath, perTool } };
+}
+
+/** `RedactionDraft` as the flat record `composeRedaction` reads — the page's own `p.` and
+ *  `m.` prefixes, spelled here for `roleFieldsOf`'s reason. */
+function redactFieldsOf(draft: RedactionDraft, dir: "args" | "results"): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const path of draft.wholePath) fields[`p.${dir}.${path}`] = "1";
+  for (const entry of draft.perTool) fields[`m.${dir}.${entry}`] = "1";
+  return fields;
+}
+
+
+/** An `AliasDraft` as the indexed fields `composeTypescriptAliases` reads. Values pass
+ *  through BYTE FOR BYTE: the composer's own comment says why, and trimming here would
+ *  store a name nobody typed and swallow the reason to refuse it. */
+function aliasFieldsOf(value: unknown): { fields: Record<string, string> } | { reason: string } {
+  if (!isRecord(value)) return { reason: "aliases must be an object." };
+  const service = value.service === undefined ? "" : value.service;
+  if (typeof service !== "string") return { reason: "aliases.service must be a string." };
+  const rows = value.rows === undefined ? [] : value.rows;
+  if (!Array.isArray(rows)) return { reason: "aliases.rows must be an array." };
+  const fields: Record<string, string> = { typescript_service: service };
+  for (const [index, row] of rows.entries()) {
+    if (!isRecord(row)) return { reason: "aliases.rows must hold objects." };
+    const canonicalName = row.canonicalName === undefined ? "" : row.canonicalName;
+    const alias = row.alias === undefined ? "" : row.alias;
+    if (typeof canonicalName !== "string" || typeof alias !== "string") {
+      return { reason: "aliases.rows must hold canonicalName and alias strings." };
+    }
+    fields[`canonical.${index}`] = canonicalName;
+    fields[`alias.${index}`] = alias;
+  }
+  return { fields };
+}
+
+function grantDraftOf(body: Record<string, unknown>): { draft: GrantDraft } | { reason: string } {
+  if (body.clear !== undefined && body.clear !== true) return { reason: "clear must be true or absent." };
+  const entries = body.entries === undefined ? {} : body.entries;
+  if (!isRecord(entries)) return { reason: "entries must be an object." };
+  const checked: Record<string, "allow" | "approval" | "none"> = {};
+  for (const [entry, mode] of Object.entries(entries)) {
+    if (mode !== "allow" && mode !== "approval" && mode !== "none") {
+      return { reason: "entries values must be allow, approval or none." };
+    }
+    checked[entry] = mode;
+  }
+  return { draft: { ...(body.clear === true ? { clear: true as const } : {}), entries: checked } };
+}
+
+/** `grant_set`'s `roles` argument, through the SAME pair of functions both form routes
+ *  used: the per-row controls parsed into choices, then composed. `clear` composes to the
+ *  empty list, which is how the pane revokes — the op replaces the pair's whole set. */
+function rolesOf(draft: GrantDraft): string[] {
+  if (draft.clear === true) return [];
+  const fields: Record<string, string> = {};
+  for (const [entry, mode] of Object.entries(draft.entries)) fields[`e.${entry}`] = mode;
+  return composeRoles(grantChoicesOf(fields));
+}
+
+/** The plaintext out of a `token_issue` answer. Structural, because the op's result shape
+ *  is admin's and this surface only forwards the one field §4 shows once. */
+function tokenOf(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || !("token" in value)) return null;
+  return typeof value.token === "string" ? value.token : null;
+}
+
+/** One row of `agent_list`, as this module reads it back to find a named agent. */
+type ListedAgent = { slug: string; grants: Record<string, string[]> };

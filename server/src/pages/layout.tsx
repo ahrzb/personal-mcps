@@ -1,7 +1,8 @@
 /**
- * The document shell every page renders inside: <!doctype>, head (stylesheet, PWA
- * manifest, service-worker registration), the header bar with the four sections, and a
- * slot for the page's own content.
+ * The document shell every server-rendered page sits inside: <!doctype>, head
+ * (stylesheet, PWA manifest, service-worker registration), the header bar with the five
+ * sections, and a slot for the page's own content. The SPA routes (/apps/*, /agents/*)
+ * have a shell of their own in web.ts and do not pass through here.
  *
  * Pure: props in, JSX out. No fetching, no cookies, no auth checks — web.ts decides who
  * may see a page and what the props say; this file only draws them. Every URL comes
@@ -15,14 +16,7 @@
 
 import { html } from "hono/html";
 import type { Child, FC } from "hono/jsx";
-import {
-  ALIAS_ALIAS_PREFIX,
-  ALIAS_CANONICAL_PREFIX,
-  paths,
-  type AliasRow,
-  type LevelHeader as LevelHeaderModel,
-  type NavSection,
-} from "./model";
+import { paths, type NavSection } from "./model";
 
 export type LayoutProps = {
   /** Browser tab title for this page. */
@@ -110,15 +104,15 @@ export type PaneEntry = {
  */
 export type PaneMarker = { text: string; dot?: "on" | "off" | "warn"; dim?: boolean } | null;
 
-/** A rail group: a heading (§13's `Sign-in` / `Access` / `App`) and its entries, or a
- *  headless run for the ungrouped tail the app page's Danger zone sits in. */
+/** A rail group: a heading (§13's `Sign-in` / `Access` / `Runtime`) and its entries, or a
+ *  headless run for §13's ungrouped tail. */
 export type PaneGroup = { heading: string | null; entries: PaneEntry[] };
 
 /**
- * The rail's grouping, once, for both paned pages: entries fall under their own `group`,
- * and the headings come out in the order the entries first name them — which is §13's
- * table order, so neither page states an order of its own that could drift from the order
- * its panes are actually listed in.
+ * The rail's grouping, once: entries fall under their own `group`, and the headings come
+ * out in the order the entries first name them — which is §13's table order, so the page
+ * states no order of its own that could drift from the order its panes are actually
+ * listed in.
  */
 export function paneGroups(entries: PaneEntry[]): PaneGroup[] {
   const groups: PaneGroup[] = [];
@@ -131,11 +125,12 @@ export function paneGroups(entries: PaneEntry[]): PaneGroup[] {
 }
 
 /**
- * §13's "Panes behind a rail", as the one shell both paned pages render. TWO navigations
- * on every response at every width — the rail and the pill row, the second hidden by CSS
- * above the breakpoint rather than left out of the document — each with its own accessible
- * name, because two navigations on one page that share their destinations are otherwise
- * indistinguishable to anyone listing the page's landmarks.
+ * §13's "Panes behind a rail", as the one shell a paned page renders (/settings, and the
+ * SPA's own rail mirrors it). TWO navigations on every response at every width — the rail
+ * and the pill row, the second hidden by CSS above the breakpoint rather than left out of
+ * the document — each with its own accessible name, because two navigations on one page
+ * that share their destinations are otherwise indistinguishable to anyone listing the
+ * page's landmarks.
  *
  * The active entry stays an ANCHOR carrying `aria-current="page"`: a page that dropped it
  * to a <div> would leave the rail with one fewer thing to tab to and no way to say which
@@ -144,8 +139,8 @@ export function paneGroups(entries: PaneEntry[]): PaneGroup[] {
 export const PaneRail: FC<{ label: string; groups: PaneGroup[] }> = ({ label, groups }) => (
   <nav class="rail" aria-label={label}>
     {groups.map((group) => (
-      /* The headless run is the app page's Danger zone: no heading, but a rule above it,
-         which is how the board separates it from the groups without a third heading. */
+      /* A headless run takes no heading but keeps a rule above it, which is how §13
+         separates an ungrouped tail from the groups without inventing a third heading. */
       <div class={group.heading === null ? "rail-group rail-group--tail" : "rail-group"}>
         {group.heading === null ? null : <div class="rail-heading">{group.heading}</div>}
         {group.entries.map((entry) => (
@@ -174,25 +169,6 @@ export const PaneRail: FC<{ label: string; groups: PaneGroup[] }> = ({ label, gr
   </nav>
 );
 
-/**
- * The narrow level header the two level pages render (§13's level tables for
- * /agents/<slug> and /apps/<slug>) — one row: the way up on the left, where you are in the
- * middle. In the document on every render at every width and shown only below the
- * breakpoint, where it stands in for the title line and the rail at once.
- *
- * The trailing span is the counterweight that centres the title against the back link;
- * it carries nothing, which is why it is hidden from anyone reading the page's contents.
- */
-export const LevelHeader: FC<{ header: LevelHeaderModel }> = ({ header }) => (
-  <div class="level-header">
-    <a class="level-back" href={header.backHref}>
-      ‹ {header.backLabel}
-    </a>
-    <span class="level-title">{header.title}</span>
-    <span class="level-end" aria-hidden="true"></span>
-  </div>
-);
-
 /** The same panes below the breakpoint: a horizontally scrolling pill row under the page
  *  title — label only, no markers (§13's Mobile rule). */
 export const PanePills: FC<{ label: string; entries: PaneEntry[] }> = ({ label, entries }) => (
@@ -206,14 +182,14 @@ export const PanePills: FC<{ label: string; entries: PaneEntry[] }> = ({ label, 
 );
 
 /**
- * §13's confirm step, as the one shell both paned pages render: a server-rendered
- * `<dialog open>` reached by a URL, so every confirmation works with scripting off and is
- * reachable from a fixture and a bookmark alike. The caller supplies only what differs —
- * the title, the sentence and the form that acts — because everything else about a
- * confirmation is the same question asked about a different row.
+ * §13's confirm step, as the one shell /settings renders for all five of its dialogs: a
+ * server-rendered `<dialog open>` reached by a URL, so every confirmation works with
+ * scripting off and is reachable from a fixture and a bookmark alike. The caller supplies
+ * only what differs — the title, the sentence and the form that acts — because everything
+ * else about a confirmation is the same question asked about a different row.
  *
- * `id` is the caller's, so a page can carry its own (`confirm-settings` / `confirm-app`)
- * and the script below re-opens THAT dialog and no other.
+ * `id` is the caller's (`confirm-settings`), so the script below re-opens THAT dialog and
+ * no other — which is what lets a page carry more than one.
  */
 export const ConfirmShell: FC<{ id: string; title: string; text: string; children?: Child }> = ({
   id,
@@ -240,61 +216,6 @@ export const ConfirmShell: FC<{ id: string; title: string; text: string; childre
     <script
       dangerouslySetInnerHTML={{
         __html: `var d=document.getElementById(${JSON.stringify(id)});if(d&&d.open){d.removeAttribute("open");d.showModal();}`,
-      }}
-    />
-  </>
-);
-
-/**
- * A freshly minted key, in the one response that will ever hold it (§4/§15) — the add-app
- * flow's reveal and the app page's rotation reveal, which §13 makes the same one. The Copy
- * button is enhancement: the value is selectable text without it, and the script only
- * saves a drag.
- *
- * `children` is where a caller adds what is true of ITS reveal alone (the rotation
- * sentence), under the warning both share.
- */
-export const TokenReveal: FC<{ token: string; children?: Child }> = ({ token, children }) => (
-  <>
-    <div class="token-reveal">
-      <div class="token-value" id="token-value">
-        {token}
-      </div>
-      <button type="button" class="btn btn--outline" id="copy-token">
-        Copy
-      </button>
-    </div>
-    <div class="alert alert--warning">This token is shown only once. Store it in your bot's secret store.</div>
-    {children}
-    <script
-      dangerouslySetInnerHTML={{
-        __html: `(function(){var b=document.getElementById("copy-token");var v=document.getElementById("token-value");if(!b||!v)return;b.addEventListener("click",function(){navigator.clipboard.writeText(v.textContent||"");});})();`,
-      }}
-    />
-  </>
-);
-
-/**
- * A value the reader is meant to take away rather than read — the scoped endpoint a
- * resource is served on (§3), and anything else a page wants to hand over intact. The Copy
- * button is ENHANCEMENT, exactly as the token reveal's is: the value is selectable text
- * without it and the script only saves a drag.
- *
- * The script binds by attribute rather than by id, and marks what it has bound, so several
- * of these on one page cost one listener each and no coordination — a component cannot
- * hold a counter, and an id per instance would be one.
- */
-export const Copyable: FC<{ value: string }> = ({ value }) => (
-  <>
-    <span class="copyable">
-      <span class="mono copy-value">{value}</span>
-      <button type="button" class="btn btn--ghost btn--sm" data-copy aria-label="Copy">
-        Copy
-      </button>
-    </span>
-    <script
-      dangerouslySetInnerHTML={{
-        __html: `document.querySelectorAll("[data-copy]:not([data-copy-bound])").forEach(function(b){b.setAttribute("data-copy-bound","1");b.addEventListener("click",function(){var v=b.previousElementSibling;navigator.clipboard.writeText(v?v.textContent||"":"");});});`,
       }}
     />
   </>
@@ -367,56 +288,6 @@ export const OtpBoxes: FC<{ invalid: boolean }> = ({ invalid }) => (
     </div>
     <script dangerouslySetInnerHTML={{ __html: OTP_SCRIPT }} />
   </>
-);
-
-/**
- * §23.6's alias rows, drawn by BOTH the add-app form and the app page's Overview editor:
- * one `<tr>` per row, `canonical.<i>` beside `alias.<i>`, paired by index exactly as
- * `composeTypescriptAliases` reads them — one definition, so the two surfaces cannot spell
- * the field names differently. A row's canonical name is an editable input, not a label:
- * a spare row is how the owner names a member the hub has not seen, and retargeting a
- * prefilled row is the same statement. A row the owner leaves wholly blank composes to
- * nothing, and a blank alias keeps whatever name is already established for that member.
- *
- * Each input carries its own `aria-label`: the `<th>`s name the columns on a wide screen,
- * but the table's narrow treatment hides the header row, and a stacked pair of bare inputs
- * with only a placeholder would leave a screen reader with no name at all.
- */
-export const AliasRows: FC<{ rows: readonly AliasRow[] }> = ({ rows }) => (
-  <table class="table alias-table">
-    <thead>
-      <tr>
-        <th>Canonical tool name</th>
-        <th>TypeScript alias</th>
-      </tr>
-    </thead>
-    <tbody>
-      {rows.map((row, index) => (
-        <tr>
-          <td>
-            <input
-              class="input--mono"
-              type="text"
-              name={`${ALIAS_CANONICAL_PREFIX}${index}`}
-              value={row.canonicalName}
-              placeholder="canonical tool name"
-              aria-label={`Canonical tool name, row ${index + 1}`}
-            />
-          </td>
-          <td>
-            <input
-              class="input--mono"
-              type="text"
-              name={`${ALIAS_ALIAS_PREFIX}${index}`}
-              value={row.alias}
-              placeholder="alias"
-              aria-label={`TypeScript alias, row ${index + 1}`}
-            />
-          </td>
-        </tr>
-      ))}
-    </tbody>
-  </table>
 );
 
 export const Layout: FC<LayoutProps> = ({ title, active, username, pendingApprovals, children }) => (

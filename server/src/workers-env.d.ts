@@ -127,10 +127,5 @@ type D1Like = {
  *  inspected, which is why it needs no shape of its own. */
 type DurableObjectNamespaceLike<Stub> = {
   idFromName(name: string): unknown;
-  /** The id-from-digest path §23.8 addresses the Sandbox DO by: the 64-hex exact-token
-   *  digest IS the id, so no name indirection exists between a bearer and its container.
-   *  Added here — the one ambient home for platform binding shapes — because the tunnel
-   *  path never needed it. */
-  idFromString(id: string): unknown;
   get(id: unknown): Stub;
 };

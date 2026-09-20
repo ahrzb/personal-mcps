@@ -169,6 +169,21 @@ async function bytesOf(response: Response): Promise<string> {
   return JSON.stringify({ status: response.status, headers, body: await response.text() });
 }
 
+/**
+ * The session's CSRF token out of a SHELL document — the `/apps/*` and `/agents/*` pages
+ * are a browser SPA (2026-09-18) and carry it in the `#pmcp-bootstrap` JSON island rather
+ * than in a rendered form field. Parsed as JSON, not scraped with a second regex: the
+ * island is what the client itself reads, and a token this helper found but `JSON.parse`
+ * could not would be a token no browser can use.
+ */
+function bootstrapCsrfOf(html: string): string {
+  const island = /<script type="application\/json" id="pmcp-bootstrap">([\s\S]*?)<\/script>/.exec(html);
+  if (island === null) throw new Error("the document carried no #pmcp-bootstrap island");
+  const { csrf } = JSON.parse(island[1]) as { csrf?: unknown };
+  if (typeof csrf !== "string" || csrf === "") throw new Error("the bootstrap island carried no csrf");
+  return csrf;
+}
+
 /** One bootstrap invocation (§12), as scripts/users.ts makes it. */
 function bootstrap(body: Record<string, unknown>, secret = BOOTSTRAP_SECRET): Promise<Response> {
   return call(
@@ -586,7 +601,7 @@ function appSegmentCandidates(probe: string): Set<string> {
 }
 
 describe(`§2/§13 · the app-slug reservation is derived from the router`, () => {
-  it("§2/§13 · the app-slug reservation is derived, not listed: the charset-legal static segments the walk finds directly under /apps/ equal RESERVED_APP_SLUGS, and the op-named targets fall outside SLUG_CHARSET rather than out of a list · two generated slugs of the same charset classify as the slug route (the twin)", async () => {
+  it("§2/§13 · the app-slug reservation is derived, not listed: the charset-legal static segments the walk finds directly under /apps/ equal RESERVED_APP_SLUGS, and every segment `paths` puts under /apps/ is charset-legal now that the op-named POST targets are gone · two generated slugs of the same charset classify as the slug route (the twin)", async () => {
     const probe = uniqueSlug("probe");
     const controls = [uniqueSlug("ctrl"), uniqueSlug("ctrltwo")];
     // A THIRD never-seeded slug, kept out of `candidates`: measuring the controls against one
@@ -594,24 +609,27 @@ describe(`§2/§13 · the app-slug reservation is derived from the router`, () =
     // nothing but response determinism.
     const yardstick = uniqueSlug("yard");
     const harvested = appSegmentCandidates(probe);
-    // CHARSET, asserted rather than assumed: the op-named targets are dropped BY
-    // SLUG_CHARSET — §13's "they carry `_` and fall outside the slug charset already" — and
-    // the dropped set is non-empty, or the clause does nothing.
-    const dropped = [...harvested].filter((segment) => !SLUG_CHARSET.test(segment));
-    expect(dropped.length, "no candidate was dropped by the charset — the clause is vacuous").toBeGreaterThan(0);
-    for (const segment of dropped) expect(segment).toContain("_");
-    const candidates = [...new Set([...harvested, ...RESERVED_APP_SLUGS, ...controls])].filter((segment) =>
-      SLUG_CHARSET.test(segment),
-    );
+    // CHARSET, asserted rather than assumed — and re-read for the SPA cutover (2026-09-18).
+    // The op-named targets this clause used to describe (`app_create`, `app_archive`, …)
+    // went with the form routes, so `paths` now puts nothing carrying `_` under `/apps/`
+    // and nothing is dropped. The claim is therefore the one that is still true and still
+    // load-bearing: the equality below is over the WHOLE harvest. A segment silently
+    // dropped by the charset would weaken it into "the ones we kept", and a POST target
+    // re-added to `paths` would show up here rather than quietly leaving the walk.
+    for (const segment of harvested) {
+      expect(SLUG_CHARSET.test(segment), `/apps/${segment} is not charset-legal`).toBe(true);
+    }
+    expect(harvested.size, "the walk harvested no segment under /apps/").toBeGreaterThan(0);
+    const candidates = [...new Set([...harvested, ...RESERVED_APP_SLUGS, ...controls])];
 
     // The router classifies, not a list: a session and its own CSRF token, because the POST
     // probe below goes through `mutation` and a CSRF refusal would answer for every segment
-    // alike.
+    // alike. The token comes out of the SHELL document's bootstrap island now — `/apps` is
+    // the SPA shell and renders no form, so the field the old walk read is gone with it.
     const owner = await seedNamespace(env.DB, { apps: [{ slug: "feed", kind: "tunnel" }] });
     const { cookie } = await seedOwnerSession(owner.owner);
     const apps = await call(new Request(`${ORIGIN}${paths.apps}`, { headers: { Cookie: cookie } }));
-    const csrf = /name="csrf"\s+value="([^"]+)"/.exec(await apps.text())?.[1];
-    expect(csrf, "/apps rendered no CSRF field").toBeDefined();
+    const csrf = bootstrapCsrfOf(await apps.text());
 
     /** How `/apps/<segment>` answers, on both methods, against this session. */
     const answersFor = async (segment: string): Promise<[string, string]> => [
@@ -621,7 +639,7 @@ describe(`§2/§13 · the app-slug reservation is derived from the router`, () =
           new Request(`${ORIGIN}/apps/${segment}`, {
             method: "POST",
             headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({ csrf: String(csrf) }).toString(),
+            body: new URLSearchParams({ csrf }).toString(),
           }),
         ),
       ),
@@ -641,5 +659,55 @@ describe(`§2/§13 · the app-slug reservation is derived from the router`, () =
     // THE TWIN: both generated slugs are read as slugs — each measured against the third,
     // distinct one — so "static" is a real distinction and not the answer every name gets.
     for (const control of controls) expect(await isStatic(control), `/apps/${control}`).toBe(false);
+  });
+});
+
+/**
+ * The four permanent moves that SURVIVED the SPA cutover (2026-09-18). They live here
+ * rather than in web-pages.test.ts because a 301 is routing and nothing else: the pages
+ * they used to be read against are a client bundle now, and these rows never read a page.
+ *
+ * Each is mounted AHEAD of its prefix's pane route, which is the whole reason they still
+ * work — `prompts`, `resources` and `grants` would otherwise be read as pane segments and
+ * fall to the 404. They are spelled here, not built from `paths`: the point of each row is
+ * that the OLD spelling still answers, and `paths` no longer carries it.
+ */
+describe(`§2/§13 · the retained permanent moves under /apps and /agents`, () => {
+  it("§2/§13 · GET /apps/<slug>/prompts and /resources answer 301 to /apps/<slug>/catalog and the query is DROPPED, so ?sel= and ?q= do not ride along — while /apps/<slug>/catalog itself is a 200 and /apps/<slug>/tools stays a 404, so the 301 is a statement about two names rather than about the pane route (the twin)", async () => {
+    const owner = await seedNamespace(env.DB, { apps: [{ slug: "feed", kind: "tunnel" }] });
+    const { cookie } = await seedOwnerSession(owner.owner);
+    const withCookie = { headers: { Cookie: cookie } };
+
+    for (const moved of ["prompts", "resources"]) {
+      // A query on the way in, because "the query is dropped" is the half a bare probe
+      // cannot see: a 301 that carried `?sel=` forward would pass without it.
+      const from = `/apps/feed/${moved}?sel=tool:echo&q=echo`;
+      const answered = await call(new Request(`${ORIGIN}${from}`, withCookie));
+      expect(answered.status, from).toBe(301);
+      expect(answered.headers.get("Location"), from).toBe(paths.appPane("feed", "catalog"));
+    }
+
+    // THE TWIN, both halves: the pane the 301 names really is a page, and the name that was
+    // never a pane still is not one.
+    expect((await call(new Request(`${ORIGIN}${paths.appPane("feed", "catalog")}`, withCookie))).status).toBe(200);
+    expect((await call(new Request(`${ORIGIN}/apps/feed/tools`, withCookie))).status).toBe(404);
+  });
+
+  it("§2/§13 · GET /agents/<slug>/grants answers 301 to /agents/<slug>/grant and GET /agents/<slug>/grants/<app> answers 301 to /agents/<slug>/apps/<app> — the moved editor's two old URLs, both ahead of the pane route (the twin)", async () => {
+    const owner = await seedNamespace(env.DB, {
+      apps: [{ slug: "feed", kind: "tunnel" }],
+      agents: [{ slug: "claude", grants: { feed: [{ role: "all", mode: "allow" }] } }],
+    });
+    const { cookie } = await seedOwnerSession(owner.owner);
+    const withCookie = { headers: { Cookie: cookie } };
+
+    const chooser = await call(new Request(`${ORIGIN}/agents/claude/grants`, withCookie));
+    expect(chooser.status).toBe(301);
+    expect(new URL(chooser.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentPane("claude", "grant"));
+
+    // The twin: the per-app spelling moves onto the pair's own page.
+    const perApp = await call(new Request(`${ORIGIN}/agents/claude/grants/feed`, withCookie));
+    expect(perApp.status).toBe(301);
+    expect(new URL(perApp.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.agentApp("claude", "feed"));
   });
 });

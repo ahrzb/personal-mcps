@@ -1,5 +1,8 @@
-# `cli` and `clients/js` are the two published packages, so they are the two importers. Before
-# this key existed neither was one: the lockfile carried only the root, which meant each
+# Three importers. `cli` and `clients/js` are the two published packages; `web` is the browser
+# client (§17) — unpublished, but a manifest of its own for the same reason, because its
+# dependency set (React, TanStack, Vite, Tailwind) is one no other part of the repo may import
+# and the root is where a mirrored declaration would drift. Before this key existed neither
+# published manifest was an importer: the lockfile carried only the root, which meant each
 # published manifest's dependencies were mirrored at the root to make anything resolve — two
 # declarations of one dependency set, drifting, with npm resolving from the package and local
 # `pnpm pmcp` resolving from the root (§22.7).
@@ -8,6 +11,7 @@
 # would be a third declaration with no consumer. `clients/py` and `clients/go` are not npm at all.
 packages:
   - cli
+  - web
   - clients/js
 allowBuilds:
   esbuild: true # bundler used by wrangler; postinstall places its platform binary

@@ -16,7 +16,6 @@ declare module "cloudflare:test" {
   export const env: {
     DB: unknown;
     APP_CONNECTION: unknown;
-    HUB_SANDBOX: unknown;
     TEST_MIGRATIONS: D1Migration[];
   };
   export function applyD1Migrations(db: unknown, migrations: D1Migration[]): Promise<void>;

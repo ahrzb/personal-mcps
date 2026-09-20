@@ -794,6 +794,9 @@ export type RenderedSchema = {
    *  carry), for the catalog's 2 MiB accounting. Measured even when the render bailed, so
    *  an over-limit schema still counts against the cap. */
   readonly bytes: number;
+  /** Bounded deep JSON copy for the runtime's callable metadata, or `null` when the
+   *  upstream value was absent, invalid, or over limit. */
+  readonly json: unknown | null;
 };
 
 /** `renderSchema`'s one option: where a file's alias numbering starts, so a file that
@@ -1000,11 +1003,18 @@ function collectRefPointers(document: unknown): Set<string> {
  */
 export function renderSchema(schema: unknown, options?: RenderedSchemaOptions): RenderedSchema {
   if (schema === undefined) {
-    return { type: "unknown", declarations: [], requiredMembers: false, diagnostics: [], bytes: 0 };
+    return { type: "unknown", declarations: [], requiredMembers: false, diagnostics: [], bytes: 0, json: null };
   }
   const copy = copyJsonSchema(schema);
   if (!copy.ok) {
-    return { type: "unknown", declarations: [], requiredMembers: false, diagnostics: [copy.reason], bytes: copy.bytes };
+    return {
+      type: "unknown",
+      declarations: [],
+      requiredMembers: false,
+      diagnostics: [copy.reason],
+      bytes: copy.bytes,
+      json: null,
+    };
   }
   const document = copy.value;
   const diagnostics: string[] = [];
@@ -1213,7 +1223,7 @@ export function renderSchema(schema: unknown, options?: RenderedSchemaOptions): 
     Array.isArray(document["required"]) &&
     document["required"].some((member) => typeof member === "string");
 
-  return { type: rootType, declarations, requiredMembers, diagnostics, bytes: copy.bytes };
+  return { type: rootType, declarations, requiredMembers, diagnostics, bytes: copy.bytes, json: document };
 }
 
 // ── signatures (the search face of a rendered entry) ──────────────────────────────────
@@ -1474,20 +1484,31 @@ function hubTypeAliases(surface: CatalogSurface): readonly string[] {
   return declarations;
 }
 
+/** One declaration member for a runtime tool: callable plus the bounded schemas exposed as
+ * frozen metadata on that function. */
+function toolMember(tool: DeclarationTool, indent: string): string[] {
+  if (tool.typescriptName === null) return [];
+  return [
+    `${indent}readonly ${memberKey(tool.typescriptName)}: {`,
+    `${indent}  readonly inputSchema: unknown | null;`,
+    `${indent}  readonly outputSchema: unknown | null;`,
+    `${indent}  (${toolParameter(tool)}): Promise<${CALL_TOOL_RESULT}<${tool.outputType}>>;`,
+    `${indent}};`,
+  ];
+}
+
 /** Every declaration block for a service's callable members plus the shared resource
- *  handle, as object-type members. */
+ * handle, as object-type members. */
 function serviceMembers(service: DeclarationService): string[] {
-  const lines = namedTools(service).map(
-    (tool) => `  ${memberKey(tool.typescriptName)}(${toolParameter(tool)}): Promise<${CALL_TOOL_RESULT}<${tool.outputType}>>;`,
-  );
+  const lines = namedTools(service).flatMap((tool) => toolMember(tool, "  "));
   lines.push(`  readonly resources: ${RESOURCE_HANDLE};`);
   return lines;
 }
 
 /** §23.7 — the program-surface declaration: the read-only global `mcp` with the caller's
- *  authorized services, their TypeScript tool names and structured resource API, plus the
- *  local `mcp.hub.searchTypes` helper. Deliberately no `mcp.hub.execute`: recursive Sandbox
- *  execution is impossible from inside a program. */
+ * authorized services, their TypeScript tool names and structured resource API, plus the
+ * local `mcp.hub.searchTypes` helper. Deliberately no `mcp.hub.execute`: recursive
+ * execution is impossible from inside a program. */
 export function renderProgramDeclaration(catalog: DeclarationCatalog): string {
   if (catalog.overflow !== null) return unavailable(catalog.overflow, "mcp");
   const services = [...catalog.services].sort((left, right) =>
@@ -1563,7 +1584,11 @@ export function renderToolDeclaration(tool: DeclarationTool): string {
     ...RESULT_TYPES,
     ...(aliases.length === 0 ? [] : ["", ...aliases]),
     "",
-    `export function ${memberKey(tool.typescriptName)}(${toolParameter(tool)}): Promise<${CALL_TOOL_RESULT}<${tool.outputType}>>;`,
+    `export declare const ${memberKey(tool.typescriptName)}: {`,
+    "  readonly inputSchema: unknown | null;",
+    "  readonly outputSchema: unknown | null;",
+    `  (${toolParameter(tool)}): Promise<${CALL_TOOL_RESULT}<${tool.outputType}>>;`,
+    "};",
   ];
   return bounded(`${lines.join("\n")}\n`, "tool");
 }

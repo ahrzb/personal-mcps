@@ -4,11 +4,11 @@
  ┌──────────┐  POST /<user>/mcp or /mcp/hub              ┌─────────────────────────────┐
  │ MCP      │  hub execute/search + type resources       │ Worker trust boundary       │
  │ client   │ ──────────────────────────────────────────▶│ auth · catalog · dispatch   │
- └──────────┘  exact bearer → token-scoped Sandbox       └───────────┬─────────────────┘
-                                                                    │ explicit mapped RPC
+ └──────────┘                                            └───────────┬─────────────────┘
+                                                                    │ explicit host calls
                                                        ┌────────────▼────────────────┐
-                                                       │ HubSandbox DO + container   │
-                                                       │ pinned Deno, no Internet    │
+                                                       │ fresh QuickJS/Wasm runtime  │
+                                                       │ no host globals or modules  │
                                                        └────────────┬────────────────┘
                                                                     │ reauthorized operation
  ┌──────────┐  POST /<user>/mcp/<app>                   ┌────────────▼────────────────┐
@@ -28,9 +28,10 @@
   approval, metadata-hygiene, redaction, backend, and audit seams.
 - `AppConnection` owns the hibernatable app and subscriber sockets plus cached tunneled
   catalogs. Proxied upstreams still use no app DO.
-- `HubSandbox` is a separate exact-bearer-scoped DO/container boundary. It holds only
-  ephemeral execution generations; D1 owns durable execution settings and TypeScript
-  reservations. Untrusted code receives neither the bearer nor a generic Worker binding.
-- Apps always dial **in**. The program bridge reaches the Worker only through the fixed
-  `mcp.internal` container proxy and explicit mapped call/read RPCs (§23).
+- A fresh QuickJS runtime and context isolate every execution inside the Worker. D1 owns
+  durable execution settings and TypeScript reservations. Untrusted code receives neither
+  the bearer nor a generic Worker binding, filesystem, network, module loader, or host
+  global.
+- Host callables close over canonical snapshot identities and enter the same scoped
+  dispatch functions as direct traffic (§23).
 

@@ -19,7 +19,7 @@
  *  - The per-browser push opt-in: the one bit of client script this page ships,
  *    mirroring the service-worker registration script layout.tsx already embeds.
  *    Its wire format (a CSRF-carrying FormData POST to `paths.approvalsPush`) is
- *    this file's own choice — web.ts's checkCsrf is generic over any FormData.
+ *    this file's own choice — web.ts's `mutation` gate is generic over any FormData.
  *
  * Empty pending and empty history are independent props states, not one big
  * "empty" flag — the `empty` fixture shows both at once, `noPending` only the

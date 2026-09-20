@@ -2,9 +2,9 @@
 
 A personal MCP hub on Cloudflare Workers. Long-running bots connect **out** over a
 reverse WebSocket tunnel and proxied apps stay remote. Consumers call each app at a
-stable scoped HTTPS endpoint, or submit one typed TypeScript program to the aggregate
-hub orchestration endpoint. Per-agent grants, human approvals, exact-credential
-Sandbox isolation, and the audit trail apply end to end.
+stable scoped HTTPS endpoint, or submit one TypeScript program to the aggregate hub
+orchestration endpoint. Programs are checked before isolated QuickJS execution; per-agent
+grants, human approvals, and the audit trail apply end to end.
 
 ```
  bot / proxied MCP                       consumer
@@ -13,7 +13,7 @@ Sandbox isolation, and the audit trail apply end to end.
         ▼                               ▼
  ┌──────────────────────── Cloudflare Worker trust boundary ────────────────────────┐
  │ D1 registry · grants · approvals · audit · AppConnection tunnel DO              │
- │ hub catalog + declarations ──▶ exact-token HubSandbox container (pinned Deno)    │
+ │ hub catalog + declarations ──▶ fresh QuickJS/Wasm runtime per execution          │
  └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,10 +43,10 @@ Sandbox isolation, and the audit trail apply end to end.
 
 | Path | What it is |
 |---|---|
-| [server/src](server/src) | Worker trust boundary: router, identity, scoped dispatch, tunnel, hub catalog/types/Sandbox |
-| `server/sandbox/` | Pinned Deno parent/worker and minimal container image (§23; added with the execution runtime) |
+| [server/src](server/src) | Worker trust boundary: router, identity, scoped dispatch, tunnel, hub catalog/types/QuickJS runtime |
 | [server/test](server/test) | Unit, workerd, tunnel, and adapter suites |
 | [cli](cli) | The `pmcp` CLI |
+| [web](web) | The browser client: a React SPA for `/apps/*` and `/agents/*` over the JSON surface at `/api/hub`. `vite build` emits `dist/app.js` and `dist/app.css`, which the Worker serves out of a static-asset binding — nothing in `server/src` imports from here |
 | [clients/js](clients/js) | TypeScript app-author library |
 | [clients/py](clients/py) | Python app-author library |
 | [clients/go](clients/go) | Go app-author library |
@@ -57,9 +57,11 @@ Sandbox isolation, and the audit trail apply end to end.
 | [docs/superpowers/postmortems](docs/superpowers/postmortems) | One file per escaped bug |
 | [flake.nix](flake.nix) | The pinned toolchain and the `pmcp` package; the version authority |
 
-The pnpm workspace has exactly two importers, `cli` and `clients/js` — the two published npm
-packages. `server/` deliberately has no manifest of its own, because Wrangler builds it from the
-root, and `clients/py` and `clients/go` are not npm packages at all.
+The pnpm workspace has three importers: `cli` and `clients/js` — the two published npm
+packages — and `web`, the browser client, which is unpublished but carries its own manifest
+because its dependency set is one no other part of the repo may import. `server/`
+deliberately has no manifest of its own, because Wrangler builds it from the root, and
+`clients/py` and `clients/go` are not npm packages at all.
 
 ## Everyday commands
 
@@ -68,8 +70,12 @@ pnpm install
 ```
 
 ```bash
-pnpm dev          # wrangler dev on http://localhost:8787 (reads .dev.vars)
+pnpm dev          # builds the client, then wrangler dev on http://localhost:8787 (reads .dev.vars)
 ```
+
+`pnpm dev` builds `web/dist` first because `wrangler dev` reads that directory once, at
+startup: rebuilding the client under a running dev server leaves it serving a 404 for
+`/app.js` until it is restarted. Rebuild and restart together.
 
 ```bash
 pnpm test         # the full suite
@@ -78,6 +84,17 @@ pnpm test         # the full suite
 ```bash
 pnpm typecheck
 ```
+
+Two checks drive a real browser, so they are run by hand rather than in CI — the workflow
+provides neither a dev server nor a browser download:
+
+```bash
+pnpm visual:compare   # every gallery state against design/baseline/ → web/.visual/report.html
+pnpm check:drawer     # the phone drawer's behaviour, which no screenshot can capture
+```
+
+`design/baseline/` is a fixed reference: the server-rendered `/apps` and `/agents` pages it
+was captured from no longer exist, so it is read and never recaptured.
 
 Python client tests run in their own environment:
 
@@ -94,6 +111,7 @@ cd clients/go && go test ./...
 Deploy and verify:
 
 ```bash
+pnpm run build:web   # wrangler validates that assets.directory exists, so this comes first
 npx wrangler deploy
 ```
 

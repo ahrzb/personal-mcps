@@ -20,6 +20,15 @@ export const CALL_TIMEOUT_MS = 30_000;
  */
 export const AGGREGATED_LIST_DEADLINE_MS = 10_000;
 
+/**
+ * §13 — the owner listing's own deadline: one `/apps/<slug>` catalog read, bounded so a
+ * silent upstream renders the unread marker instead of holding the answer open. Distinct
+ * from CALL_TIMEOUT_MS, which is one FETCH's budget and would let a dead endpoint hold a
+ * page-driven read for 30 s, and from AGGREGATED_LIST_DEADLINE_MS, which bounds one
+ * upstream inside a fan-out rather than a single named app's listing.
+ */
+export const OWNER_CATALOG_DEADLINE_MS = 5_000;
+
 /** §7 — an approval's whole life: the pending wait and the post-approval retry window. */
 export const APPROVAL_WINDOW_MS = 60 * 60_000;
 
@@ -138,26 +147,32 @@ export const HUB_INITIAL_MAX_TIMEOUT_MS = 30_000;
 /** §23.11 — compiled ceiling for any owner setting or `timeout_ms`, in milliseconds. */
 export const HUB_HARD_MAX_TIMEOUT_MS = 300_000;
 
-/** §23.11 — budget for the bounded offline `deno check`, in milliseconds; expiry is `limit_exceeded(check_time)`. */
-export const HUB_CHECK_TIMEOUT_MS = 5_000;
 
 /** §23.11 — per-inner-operation cap when the remaining outer budget is larger, in milliseconds. */
 export const HUB_INNER_OPERATION_TIMEOUT_MS = 10_000;
 
-/** §23.10 — backoff before the one proven-pre-launch container retry, in milliseconds. */
-export const HUB_PRELAUNCH_RETRY_BACKOFF_MS = 250;
+/** §23.11 — maximum QuickJS heap allocated by one execution, in bytes. */
+export const HUB_QUICKJS_MEMORY_MAX_BYTES = 16_777_216;
 
 /** §23.4/§23.11 — tail budget reserved for the mandatory final credential reauthorization. */
 export const HUB_FINAL_REAUTH_RESERVE_MS = 500;
 
-/** §23.11 — grace between termination escalation steps, in milliseconds. */
-export const HUB_ABORT_GRACE_MS = 2_000;
+/** §23.11 — maximum QuickJS interpreter stack allocated by one execution, in bytes. */
+export const HUB_QUICKJS_STACK_MAX_BYTES = 65_536;
 
-/** §23.11 — maximum sanitized type-diagnostic lines returned to a caller. */
-export const HUB_TYPE_DIAGNOSTIC_MAX_LINES = 32;
+/** §23.9/§23.11 — maximum QuickJS interrupt callbacks across compilation and execution.
+ * Cloudflare freezes wall clocks during CPU work, so this deterministic budget is the
+ * backstop for non-yielding guest bytecode. */
+export const HUB_QUICKJS_INTERRUPT_MAX = 10_000;
 
-/** §23.11 — maximum sanitized type-diagnostic bytes returned to a caller. */
-export const HUB_TYPE_DIAGNOSTIC_MAX_BYTES = 8_192;
+/** §23.11 — maximum TypeScript diagnostics returned for one rejected program. */
+export const HUB_DIAGNOSTIC_MAX = 20;
+
+/** §23.11 — maximum UTF-8 bytes returned for one diagnostic or exception message. */
+export const HUB_DIAGNOSTIC_MESSAGE_MAX_BYTES = 2_048;
+
+/** §23.11 — maximum UTF-8 bytes returned for one guest exception stack. */
+export const HUB_RUNTIME_STACK_MAX_BYTES = 8_192;
 
 /** §23.5 — per-FAMILY deadline while the hub's catalog collector reads one service's tools,
  *  resources or resource templates: a slow family is omitted from the caller's snapshot with
@@ -170,7 +185,7 @@ export const HUB_SOURCE_MAX_BYTES = 65_536;
 /** §23.11 — largest search query before trimming, in UTF-8 bytes (the wire `maxLength` counts UTF-16 code units). */
 export const HUB_QUERY_MAX_BYTES = 256;
 
-/** §23.11 — largest caller-visible catalog, in entries; overflow refuses `execute` before Sandbox start and truncates `search_types`. */
+/** §23.11 — largest caller-visible catalog, in entries; overflow refuses `execute` before runtime creation and truncates `search_types`. */
 export const HUB_CATALOG_MAX_ENTRIES = 256;
 
 /** §23.11 — largest raw schema/catalog payload retained for one snapshot, in bytes. */
@@ -200,11 +215,11 @@ export const HUB_INNER_OPERATIONS_MAX = 32;
 /** §23.11 — largest inner operations in flight at once; a fifth is refused immediately. */
 export const HUB_INNER_CONCURRENCY_MAX = 4;
 
-/** §23.11 — largest serialized bridge arguments, in bytes. */
-export const HUB_BRIDGE_ARGUMENTS_MAX_BYTES = 262_144;
+/** §23.11 — largest serialized host-call arguments, in bytes. */
+export const HUB_HOST_ARGUMENTS_MAX_BYTES = 262_144;
 
-/** §23.11 — largest serialized bridge response, in bytes. */
-export const HUB_BRIDGE_RESPONSE_MAX_BYTES = 1_048_576;
+/** §23.11 — largest serialized host-call response, in bytes. */
+export const HUB_HOST_RESPONSE_MAX_BYTES = 1_048_576;
 
 /** §23.11 — largest stdout returned, in bytes; excess sets `stdoutTruncated`. */
 export const HUB_STDOUT_MAX_BYTES = 65_536;
@@ -212,7 +227,7 @@ export const HUB_STDOUT_MAX_BYTES = 65_536;
 /** §23.11 — largest stderr returned, in bytes; excess sets `stderrTruncated`. */
 export const HUB_STDERR_MAX_BYTES = 65_536;
 
-/** §23.11 — largest serialized default export accepted, in bytes. */
+/** §23.11 — largest serialized program return value accepted, in bytes. */
 export const HUB_RESULT_MAX_BYTES = 262_144;
 
 /** §23.11 — `search_types` `limit` when the caller omits it. */
@@ -224,11 +239,6 @@ export const HUB_SEARCH_LIMIT_MAX = 50;
 /** §23.11 — largest serialized `search_types` response, in bytes; excess truncates to the canonical prefix. */
 export const HUB_SEARCH_RESPONSE_MAX_BYTES = 262_144;
 
-/** §23.11 — active executions one exact token may have; a concurrent second call is transient `limit_exceeded(active_execution)`. */
-export const HUB_ACTIVE_EXECUTIONS_PER_TOKEN = 1;
-
-/** §23.11 — running Sandbox containers this Worker may hold account-wide; exhaustion before launch is transient. */
-export const HUB_SANDBOX_CONTAINERS_MAX = 10;
 
 /**
  * §23.11 — the grouped shape of the hub caps. Its field values are the UPPER_SNAKE
@@ -244,18 +254,27 @@ export type HubContractLimits = {
   readonly initialMaxTimeoutMs: number;
   /** Compiled ceiling for any owner setting or `timeout_ms`, in milliseconds. */
   readonly hardMaxTimeoutMs: number;
-  /** Budget for the bounded offline `deno check`, in milliseconds; expiry is
-   *  `limit_exceeded(check_time)`. */
-  readonly checkTimeoutMs: number;
   /** Per-inner-operation cap when the remaining outer budget is larger, in milliseconds. */
   readonly innerOperationTimeoutMs: number;
+  /** Maximum QuickJS heap allocated by one execution, in bytes. */
+  readonly quickjsMemoryMaxBytes: number;
+  /** Maximum QuickJS interpreter stack allocated by one execution, in bytes. */
+  readonly quickjsStackMaxBytes: number;
+  /** Maximum QuickJS interrupt callbacks across compilation and execution. */
+  readonly quickjsInterruptMax: number;
+  /** Maximum TypeScript diagnostics returned for one rejected program. */
+  readonly diagnosticMax: number;
+  /** Maximum UTF-8 bytes returned for one diagnostic or exception message. */
+  readonly diagnosticMessageMaxBytes: number;
+  /** Maximum UTF-8 bytes returned for one guest exception stack. */
+  readonly runtimeStackMaxBytes: number;
   /** Largest submitted source, in UTF-8 bytes; a larger source is refused with -32602. */
   readonly sourceMaxBytes: number;
   /** Largest search query before trimming, in UTF-8 bytes; the schema's `maxLength` is
    *  this value in UTF-16 code units. */
   readonly queryMaxBytes: number;
-  /** Largest caller-visible catalog, in entries; overflow refuses `execute` before Sandbox
-   *  start and truncates `search_types`. */
+  /** Largest caller-visible catalog, in entries; overflow refuses `execute` before runtime
+   *  creation and truncates `search_types`. */
   readonly catalogMaxEntries: number;
   /** Largest raw schema/catalog payload retained for one snapshot, in bytes. */
   readonly catalogMaxBytes: number;
@@ -278,15 +297,15 @@ export type HubContractLimits = {
   readonly innerOperationsMax: number;
   /** Largest inner operations in flight at once; a fifth is refused immediately. */
   readonly innerConcurrencyMax: number;
-  /** Largest serialized bridge arguments, in bytes. */
-  readonly bridgeArgumentsMaxBytes: number;
-  /** Largest serialized bridge response, in bytes. */
-  readonly bridgeResponseMaxBytes: number;
+  /** Largest serialized host-call arguments, in bytes. */
+  readonly hostArgumentsMaxBytes: number;
+  /** Largest serialized host-call response, in bytes. */
+  readonly hostResponseMaxBytes: number;
   /** Largest stdout returned, in bytes; excess sets `stdoutTruncated`. */
   readonly stdoutMaxBytes: number;
   /** Largest stderr returned, in bytes; excess sets `stderrTruncated`. */
   readonly stderrMaxBytes: number;
-  /** Largest serialized default export accepted, in bytes. */
+  /** Largest serialized program return value accepted, in bytes. */
   readonly resultMaxBytes: number;
   /** `search_types` `limit` when the caller omits it. */
   readonly searchLimitDefault: number;
@@ -295,12 +314,6 @@ export type HubContractLimits = {
   /** Largest serialized `search_types` response, in bytes; excess truncates to the
    *  canonical prefix. */
   readonly searchResponseMaxBytes: number;
-  /** Active executions one exact token may have; a concurrent second call is transient
-   *  `limit_exceeded(active_execution)` and launches nothing. */
-  readonly activeExecutionsPerToken: number;
-  /** Running Sandbox containers this Worker may hold account-wide; exhaustion before launch
-   *  is transient. */
-  readonly sandboxContainersMax: number;
 };
 
 /**
@@ -316,8 +329,13 @@ export const HUB_CONTRACT_LIMITS: HubContractLimits = {
   defaultTimeoutMs: HUB_DEFAULT_TIMEOUT_MS,
   initialMaxTimeoutMs: HUB_INITIAL_MAX_TIMEOUT_MS,
   hardMaxTimeoutMs: HUB_HARD_MAX_TIMEOUT_MS,
-  checkTimeoutMs: HUB_CHECK_TIMEOUT_MS,
   innerOperationTimeoutMs: HUB_INNER_OPERATION_TIMEOUT_MS,
+  quickjsMemoryMaxBytes: HUB_QUICKJS_MEMORY_MAX_BYTES,
+  quickjsStackMaxBytes: HUB_QUICKJS_STACK_MAX_BYTES,
+  quickjsInterruptMax: HUB_QUICKJS_INTERRUPT_MAX,
+  diagnosticMax: HUB_DIAGNOSTIC_MAX,
+  diagnosticMessageMaxBytes: HUB_DIAGNOSTIC_MESSAGE_MAX_BYTES,
+  runtimeStackMaxBytes: HUB_RUNTIME_STACK_MAX_BYTES,
   sourceMaxBytes: HUB_SOURCE_MAX_BYTES,
   queryMaxBytes: HUB_QUERY_MAX_BYTES,
   catalogMaxEntries: HUB_CATALOG_MAX_ENTRIES,
@@ -330,16 +348,14 @@ export const HUB_CONTRACT_LIMITS: HubContractLimits = {
   declarationMaxBytes: HUB_DECLARATION_MAX_BYTES,
   innerOperationsMax: HUB_INNER_OPERATIONS_MAX,
   innerConcurrencyMax: HUB_INNER_CONCURRENCY_MAX,
-  bridgeArgumentsMaxBytes: HUB_BRIDGE_ARGUMENTS_MAX_BYTES,
-  bridgeResponseMaxBytes: HUB_BRIDGE_RESPONSE_MAX_BYTES,
+  hostArgumentsMaxBytes: HUB_HOST_ARGUMENTS_MAX_BYTES,
+  hostResponseMaxBytes: HUB_HOST_RESPONSE_MAX_BYTES,
   stdoutMaxBytes: HUB_STDOUT_MAX_BYTES,
   stderrMaxBytes: HUB_STDERR_MAX_BYTES,
   resultMaxBytes: HUB_RESULT_MAX_BYTES,
   searchLimitDefault: HUB_SEARCH_LIMIT_DEFAULT,
   searchLimitMax: HUB_SEARCH_LIMIT_MAX,
   searchResponseMaxBytes: HUB_SEARCH_RESPONSE_MAX_BYTES,
-  activeExecutionsPerToken: HUB_ACTIVE_EXECUTIONS_PER_TOKEN,
-  sandboxContainersMax: HUB_SANDBOX_CONTAINERS_MAX,
 };
 
 // ── the configurable deadlines ────────────────────────────────────────────────────────

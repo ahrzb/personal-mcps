@@ -83,26 +83,25 @@ The command prints a `database_id`. **Paste it over the checked-in one** in
 `wrangler.jsonc` — the committed id belongs to the author's account and your deploy
 cannot reach it.
 
-Keep both Durable Object histories and the container binding:
+Keep the Durable Object migration history, but bind only the live app class:
 
 ```jsonc
 "durable_objects": {
   "bindings": [
-    { "name": "APP_CONNECTION", "class_name": "AppConnection" },
-    { "name": "HUB_SANDBOX", "class_name": "HubSandbox" }
+    { "name": "APP_CONNECTION", "class_name": "AppConnection" }
   ]
 },
 "migrations": [
   { "tag": "v1", "new_sqlite_classes": ["ServiceConnection"] },
   { "tag": "v2", "renamed_classes": [{ "from": "ServiceConnection", "to": "AppConnection" }] },
-  { "tag": "v3", "new_sqlite_classes": ["HubSandbox"] }
+  { "tag": "v3", "new_sqlite_classes": ["HubSandbox"] },
+  { "tag": "v4", "deleted_classes": ["HubSandbox"] }
 ]
 ```
 
-Migration tags are immutable history. `HubSandbox` is separate from `AppConnection` and
-is keyed by a digest of the exact consumer bearer. The matching container configuration
-uses a basic instance, at most ten instances, and six-minute idle sleep; package/image
-parity is checked by the repository build.
+Migration tags are immutable history. `HubSandbox` was created by v3 and removed by v4;
+neither historical tag may be rewritten. Hub programs now run in a fresh QuickJS/Wasm
+runtime inside the Worker and require no Container application or Sandbox binding.
 
 ## 3. Set PUBLIC_ORIGIN
 
@@ -223,8 +222,13 @@ alone.
 ## 6. Deploy
 
 ```bash
+pnpm run build:web
 npx wrangler deploy
 ```
+
+The client build comes first because `wrangler.jsonc` configures an `assets.directory`
+(`web/dist`) and wrangler refuses a deploy whose asset directory is missing. `pnpm ship`
+already chains the two in that order.
 
 `--dry-run` is worth knowing about: it is what actually validates
 `compatibility_flags` (the vitest Workers pool tolerates their absence, a real deploy

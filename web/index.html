@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>personal-mcps</title>
+    <!--
+      The BUILD ENTRY, and in production nothing more: the Worker composes the real document
+      (web.ts's `shell`), because only it holds the session the bootstrap block carries. What
+      ships out of `vite build` and is actually served is what this entry pulls in —
+      dist/app.js and dist/app.css — never the file itself.
+
+      In `vite dev --mode preview` it IS the document, so the head below spells what the
+      Worker's shell spells. /styles.css is served by vite.config's preview middleware from
+      the SSR sheet, so the two renderings read one stylesheet and not a copy.
+    -->
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="application/json" id="pmcp-bootstrap">
+      { "csrf": "preview", "username": "preview", "origin": "https://hub.example" }
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

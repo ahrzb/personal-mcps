@@ -101,9 +101,17 @@
     allowlisted vendor session-id `_meta` key, e.g. Claude Code's) — truncated,
     untrusted, display-and-filter only (`audit_query.session`), never authorization
     input (§5, §7).
-21. **The web surface is a PWA** (manifest + minimal service worker; pages stay
-    server-rendered, no SPA) and approval requests are Web Push-notified through it
-    (§13). Blocking-until-decided remains future work.
+21. **The web surface is a PWA** (manifest + minimal service worker) and approval
+    requests are Web Push-notified through it (§13). Blocking-until-decided remains
+    future work. *(Amended 2026-09-18: the decision's "pages stay server-rendered, no
+    SPA" half is withdrawn for two route families and only those. `/apps/*` and
+    `/agents/*` are a React SPA over a cookie-authenticated JSON surface at `/api/hub`;
+    login/device, Settings, approvals, audit and the consent screen stay server-rendered.
+    What forced it: every pane of `/apps/<slug>` blocked its HTML on four live MCP
+    catalog reads with no deadline, so one silent upstream held the whole document, and
+    every interaction was a full-page form POST that lost the editor's draft on refusal.
+    The PWA and push halves stand unchanged — the service worker still has no fetch
+    handler and still does not intercept navigation.)*
 22. **Audit rows carry call bodies, post-redaction, under short retention** (§15):
     per-service `log_bodies` (tunneled default on, proxied default off — proxied
     schemas can't be trusted, so the owner opts in and covers secrets with config
@@ -452,3 +460,53 @@
     admitted Worker runtime dependency; a bounded in-repo schema renderer avoids a second
     dependency. Container idle sleep is six minutes so it cannot interrupt the five-
     minute ceiling, accepting longer idle residency instead of a heartbeat lifecycle.
+
+34. **Hub execution is a fresh in-Worker QuickJS/Wasm runtime per invocation**
+    *(2026-09-19, supersedes decision 33's Sandbox/runtime paragraphs; §23)*. The aggregate
+    and scoped hub surfaces, catalog snapshot, TypeScript alias map, settings, dispatch
+    chokepoints and reauthorization contract from decision 33 remain. Submitted `code` is
+    now the body of an async JavaScript function: top-level `await` and `return` are valid,
+    and there is no TypeScript compilation or `export default`.
+
+    The Worker exact-pins `quickjs-emscripten-core` and the release-sync Wasm artifact,
+    lazily instantiates one module per isolate, and creates and disposes a memory-, stack-
+    and deadline-bounded runtime for every call. Host MCP operations are the only
+    capabilities and resume guest promises without Asyncify. The host compiles the
+    submitted body before invocation, then removes guest access to `eval`, `Function`, and
+    every function-family constructor. No filesystem, network, timer, module loader,
+    Worker binding, bearer, or stable runtime identity enters the guest.
+
+    This deliberately removes the Sandbox SDK, Container application, execution Durable
+    Object, Deno image, exact-bearer digest, warm reuse and four-way typecheck/runtime
+    lifecycle. The deciding consideration is operational weight: the required
+    orchestration needs a bounded interpreter and explicit host calls, not a remotely
+    managed operating-system process. Alternatives rejected were retaining Containers
+    for stronger process isolation at the cost of startup, capacity, billing and a second
+    deployment plane; and evaluating in the Worker realm, which neither provides a
+    capability boundary nor a disposable heap. The externally visible source/result
+    contract is the hard-to-reverse part: adopting JavaScript-only bodies is easier than
+    later restoring transparent TypeScript, so declarations remain discovery material and
+    the schema says JavaScript explicitly.
+
+35. **QuickJS execution restores TypeScript preflight and reports bounded failures**
+    *(2026-09-20, supersedes decision 34's JavaScript-only/no-typecheck clauses; §23)*.
+    Submitted `code` remains an async function body, but the exact-pinned TypeScript
+    compiler checks it against the caller-specific generated declaration and emits the
+    JavaScript that QuickJS evaluates. A syntax or semantic failure returns `type_error`
+    diagnostics before QuickJS starts; each diagnostic carries its stable code, bounded
+    message, and submitted-source location when available.
+
+    Tool arguments also cross an interpreted JSON Schema gate before any counter or
+    dispatcher changes. The exact-pinned Worker-safe validator is preferred over an
+    in-repo partial validator because silently ignoring an unfamiliar schema keyword would
+    recreate the bug at a more dangerous boundary. An uncaught guest exception returns its
+    bounded message and source-mapped stack to the same authenticated caller; neither is
+    logged or audited.
+
+    The deciding consideration is failure locality: a program that cannot typecheck or a
+    call that cannot satisfy its advertised schema must fail before it can create effects.
+    This adds compiler size and startup work, but adopting weak checking is easier than
+    removing it after programs depend on false acceptance. The alternative—JavaScript-only
+    execution with declarations as documentation—was smaller and operationally simpler,
+    but its opaque `syntax_error`/`program_error` labels and downstream schema failures
+    made orchestration materially harder to correct.

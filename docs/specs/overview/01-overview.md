@@ -19,9 +19,9 @@ Components:
 | **clients** (py + js) | Libraries an app author uses: write a normal MCP server, hand it to the lib, it maintains the reverse connection. |
 | **cli** (`pmcp`) | Login via device flow, inspect the namespace, invoke MCP and admin tools. |
 | **admin MCP** | The hub's management app named `pmcp`, reached directly at scoped `/mcp/pmcp` or from an authorized §23 program; it is no longer published as prefixed aggregate tools. |
-| **web pages** | Server-rendered pages (Hono JSX, §13): login/device, seven-pane Settings including Execution, apps/agents, approvals, and audit; fronts over shared operations except the pinned browser/auth/export exceptions. |
+| **web pages** | Two renderings, one design language (§13): `/apps/*` and `/agents/*` are a React SPA (TanStack Query + Router, shadcn on Base UI) over the cookie-authenticated JSON surface at `/api/hub`; login/device, seven-pane Settings including Execution, approvals, audit and the OAuth consent screen stay server-rendered (Hono JSX). Both front shared operations except the pinned browser/auth/export exceptions. |
 
-Non-goals (v1): cross-namespace sharing, a browser SPA, persistent execution
+Non-goals (v1): cross-namespace sharing, persistent execution
 workspaces, package installation, saved programs, and asynchronous execution jobs.
 OAuth, prompts/resources, and push are specified in §§19–21. The §23 orchestration
 surface is synchronous, dependency-free TypeScript with explicit limits; it does not

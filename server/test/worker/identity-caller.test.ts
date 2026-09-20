@@ -4,9 +4,7 @@
 // WHAT THIS FILE PINS.
 //   1. Every family — local agent token, better-auth session, OAuth access token, admin
 //      token — resolves to an `AuthenticatedCaller` whose `credential.reference` holds row
-//      ids and expiry facts only, and whose `sandboxKey` is stable for one exact bearer,
-//      different for a second credential of the same caller, and never equal to what an
-//      at-rest hash stores (the domain separation, stated as the equality it refuses).
+//      ids and expiry facts only, without retaining a bearer or at-rest hash.
 //   2. `reauthorize` answers the SAME `principalKey` the door admitted while the credential
 //      is live, and `null` — never another principal — the moment it is revoked, expired,
 //      deleted, or rebound to a different agent/user. Each refusal sits beside its allow
@@ -297,42 +295,11 @@ describe("§7 step 1 · resolveCaller's credential half, per family", () => {
       expect(serialized).not.toContain(secret);
     }
 
-    // A second presentation of the SAME bearer reuses its Sandbox identity; two tokens
-    // never do (the next case states the contrast).
-    const again = await resolveCaller(callerRequest(ns.owner.username, bearer));
-    expect(again.credential.sandboxKey).toBe(caller.credential.sandboxKey);
-    expect(caller.credential.sandboxKey).toMatch(/^[0-9a-f]{64}$/);
     // The authorization key is the immutable row id, not the display slug — which is what
     // makes "the same principal key" a statement reauthorization can hold over time.
     expect(principalKey(caller.principal)).toBe(`agent:${ns.agents[AGENT_SLUG].id}`);
   });
 
-  it("§7 · the Sandbox identity is per exact bearer and domain-separated from the at-rest hash: two live tokens for one agent get different keys, and each differs from what `token.hash`/`admin_token.hash` store", async () => {
-    const ns = await seedNamespace(env.DB, {
-      agents: [{ slug: AGENT_SLUG, tokens: [{ as: "one" }, { as: "two" }] }],
-    });
-    const one = await resolveCaller(callerRequest(ns.owner.username, ns.tokens.one.token));
-    const two = await resolveCaller(callerRequest(ns.owner.username, ns.tokens.two.token));
-
-    // One caller, two credentials: the execution plane must be keyed by the credential,
-    // never by the principal it resolves.
-    expect(one.principal).toEqual(two.principal);
-    expect(one.credential.sandboxKey).not.toBe(two.credential.sandboxKey);
-
-    // The domain separation: the same bytes, hashed for two purposes, must not answer the
-    // same value — otherwise a database read would name a live sandbox.
-    const tokenHash = await rawFirst<{ hash: string }>(`SELECT "hash" FROM token WHERE "id" = ?`, ns.tokens.one.id);
-    expect(one.credential.sandboxKey).not.toBe(tokenHash.hash);
-
-    const admin = await issueAdminToken(ns.owner.userId, AN_HOUR_SECONDS);
-    const adminCaller = await resolveCaller(callerRequest(ns.owner.username, admin.token));
-    const adminHash = await rawFirst<{ hash: string }>(
-      `SELECT "hash" FROM admin_token WHERE "id" = ?`,
-      admin.id,
-    );
-    expect(adminCaller.credential.sandboxKey).not.toBe(adminHash.hash);
-    expect(adminCaller.credential.sandboxKey).not.toBe(one.credential.sandboxKey);
-  });
 
   it("§7/§19.6 · the session family: a real sign-in resolves to a reference carrying the session row's id, userId and raw ISO-8601 expiresAt — the representation better-auth's Kysely/D1 adapter stored — and reauthorize answers the same principal key", async () => {
     const ns = await seedNamespace(env.DB, {});

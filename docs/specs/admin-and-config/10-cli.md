@@ -15,7 +15,7 @@ pmcp profile list | use <name> | remove <name>
 pmcp ls                                          # apps + kind/status/roles
 pmcp describe <ref>                              # app/<slug>[/<item>] | agent/<slug>
 pmcp call <app> <tool> [key=value … | --args '{…}']       # scoped canonical call
-pmcp hub execute --args '{"code":"export default 1","timeout_ms":5000}'
+pmcp hub execute --args '{"code":"return 1","timeout_ms":5000}'
 pmcp hub search-types --args '{"query":"news"}'
 pmcp get prompt/<app>/<name> [key=value … | --args '{…}']
 pmcp get resource/<app>/<uri>                    # resources/read — scoped endpoint

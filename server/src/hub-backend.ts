@@ -2,7 +2,7 @@
 // endpoint shape serves, the declaration resources and templates the hub publishes, the
 // declaration READER (decode-once, re-encode, exact snapshot membership), the closed-object
 // validation both hub tools need, the ranked `search_types` over an already-built snapshot,
-// and the ONE seam the Sandbox execution plane plugs into.
+// and the ONE seam the QuickJS execution plane plugs into.
 //
 // WHY THIS IS NOT gateway.ts. The gateway owns the consumer pipeline — the door's JSON-RPC
 // half, the dispatch seams, the audit exit, the virtual app and its access filter, and the
@@ -16,7 +16,7 @@
 // WHAT IS NOT HERE: how the caller-visible snapshot is collected (gateway's
 // collectHubCatalog: app selection, per-family deadlines, alias allocation, grant filtering,
 // caps), what the outer `tools/call` row records (gateway's recordDispatch), and how a
-// program actually runs (hub-sandbox.ts, which implements HubExecutor and is installed by
+// program actually runs (hub-quickjs.ts, which implements HubExecutor and is installed by
 // the composition root). Nothing here reads D1, a DO, or `cloudflare:workers`.
 //
 // PROJECT: `unit` and `worker` — the runtime imports are hub-contract (the frozen wire
@@ -31,7 +31,7 @@ import {
 import type { HubExecutionResult, HubSearchResult, HubTool } from "./hub-contract";
 import { searchCatalog } from "./hub-catalog";
 import type { CatalogSnapshot } from "./hub-catalog";
-import { invalidParams, unavailable } from "./errors";
+import { CODES, HubError, invalidParams, unavailable } from "./errors";
 import {
   HUB_HARD_MAX_TIMEOUT_MS,
   HUB_MIN_TIMEOUT_MS,
@@ -287,10 +287,10 @@ export type HubExecuteRequest = {
 
 /**
  * §23.2 — validates an `execute` argument object against the owner's stored settings.
- * Throws the payload-free -32602 for a non-object, an unknown member, a missing or
- * non-string or over-long `code`, and for a `timeout_ms` that is not an integer in
- * 1_000–min(owner maximum, compiled ceiling). A requested timeout is NEVER clamped: over the
- * maximum is a refusal, not a silently shortened run.
+ * Non-object, unknown-member, source, type and lower-bound failures use the generic
+ * payload-free -32602. An integer timeout above the owner's effective maximum includes
+ * `{ field: "timeout_ms", max }`, so a caller can discover the dynamic bound without a
+ * second settings request. A requested timeout is never silently clamped.
  */
 export function hubExecuteRequest(raw: unknown, settings: HubExecutionSettings): HubExecuteRequest {
   const args = closedArguments(raw, ["code", "timeout_ms"]);
@@ -303,28 +303,28 @@ export function hubExecuteRequest(raw: unknown, settings: HubExecutionSettings):
   const max = Math.min(settings.maxTimeoutMs, HUB_HARD_MAX_TIMEOUT_MS);
   const timeoutMs = args.timeout_ms ?? settings.defaultTimeoutMs;
   if (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs)) throw invalidParams();
-  if (timeoutMs < HUB_MIN_TIMEOUT_MS || timeoutMs > max) throw invalidParams();
+  if (timeoutMs < HUB_MIN_TIMEOUT_MS) throw invalidParams();
+  if (timeoutMs > max) {
+    throw new HubError(CODES.invalidParams, "invalid params", { field: "timeout_ms", max });
+  }
   return { code, timeoutMs };
 }
 
 // ══ §23.8/§23.10 — the execution seam ══════════════════════════════════════════════════
 //
-// The hub's `execute` is the ONE tool whose answer is not computed here: the run belongs to
-// the Sandbox plane (a Durable Object class plus its container, `server/src/hub-sandbox.ts`),
-// which this module must not import — a Worker entry that pulls the Sandbox SDK in through
-// the gateway would pay for it on every request, and worker tests that never touch a
-// container would need it bundled. So the dependency is INJECTED, exactly once, at the
-// composition root: the seam is the `HubExecutor` function type below, and its absence is an
-// honest -32000 rather than a fabricated result — there is no in-process fallback, no fake
-// completed run, and nothing here that could be mistaken for one.
+// The hub's `execute` is the ONE tool whose answer is not computed here: untrusted source
+// belongs to the isolated QuickJS plane (`server/src/hub-quickjs.ts`), which this module
+// must not import. The dependency is INJECTED exactly once at the composition root: the
+// seam is the `HubExecutor` function type below, and its absence is an honest -32000 rather
+// than a fabricated result.
 
 /**
- * §23.10 — the narrow request lifecycle the Sandbox plane needs and nothing more. `signal`
+ * §23.10 — the narrow request lifecycle the QuickJS plane needs and nothing more. `signal`
  * is the inbound request's own abort signal (the client-disconnect channel, live once
  * Wrangler's `enable_request_signal` is on; without it the signal simply never aborts);
- * `waitUntil` registers background cleanup with the invocation's ExecutionContext when the
- * runtime handed one in — absent when a caller (a test) invoked the worker directly, which
- * is a lifetime fact, not a failure.
+ * `waitUntil` registers already-dispatched host work with the invocation's
+ * ExecutionContext when the runtime handed one in — absent when a caller (a test) invoked
+ * the worker directly, which is a lifetime fact, not a failure.
  */
 export type HubRequestLifecycle = {
   readonly signal: AbortSignal;
@@ -332,24 +332,24 @@ export type HubRequestLifecycle = {
 };
 
 /**
- * §23.8 — what one admitted execution hands the Sandbox plane. Everything here was decided
- * by the gateway before this point: the credential (keyed by `sandboxKey` and re-authorized
- * from `reference`), the resolved timeout and the settings it came from, and the immutable
- * snapshot the run's bridge operations resolve TypeScript names through. `code` is the
- * submitted source — the ONE field that never enters audit, a log, or a result.
+ * §23.8 — what one admitted execution hands the QuickJS plane. Everything here was decided
+ * by the gateway before this point: the credential reauthorized from `reference`, the
+ * resolved timeout and the settings it came from, and the immutable snapshot the run's
+ * host callables close over. `code` is the submitted source — the ONE field that never
+ * enters audit, a log, or a result.
  */
 export type HubExecutionRequest = {
   /** The exact credential this execution is keyed to and re-authorized by. */
   readonly caller: AuthenticatedCaller;
   /** The owner whose settings and namespace this run belongs to. */
   readonly ownerId: string;
-  /** The submitted TypeScript source, already bounded. */
+  /** The submitted async TypeScript function body, already byte-bounded. */
   readonly code: string;
   /** The resolved outer wall clock in milliseconds, already validated against the maximum. */
   readonly timeoutMs: number;
   /** §23.8 — the ABSOLUTE epoch-ms instant the outer budget expires: the admission instant
-   *  plus `timeoutMs`, which bounds the whole catalog/render/start/check/run/result/cleanup
-   *  path. A later settings change never extends an admitted run (§23.3). */
+   *  plus `timeoutMs`, which bounds catalog/render/runtime/dispatch/publication. A later
+   *  settings change never extends an admitted run (§23.3). */
   readonly deadlineAt: number;
   /** The owner settings the timeout was resolved from; changes govern new runs only. */
   readonly settings: HubExecutionSettings;
@@ -361,13 +361,13 @@ export type HubExecutionRequest = {
   readonly lifecycle: HubRequestLifecycle;
 };
 
-/** §23.8 — the Sandbox plane as this module sees it: one admitted execution in, §23.11's
- *  bounded result union out. Implemented by hub-sandbox.ts; never implemented here. */
+/** §23.8 — the QuickJS plane as this module sees it: one admitted execution in,
+ * §23.11's bounded result union out. Implemented by hub-quickjs.ts. */
 export type HubExecutor = (request: HubExecutionRequest) => Promise<HubExecutionResult>;
 
 /**
  * §23.4 — the executor's signal that the execution's credential no longer authorizes it
- * (revoked, expired, deleted, rebound, or a slug now resolving to another app): every bridge
+ * (revoked, expired, deleted, rebound, or a slug now resolving to another app): every host
  * operation and the pre-publication check raise it, and the caller discards the run's whole
  * value — result, diagnostics, stdout and stderr — answering the existing metadata-only
  * -32001 instead. Carries no data, so nothing of the credential or the run can ride out.
@@ -380,11 +380,11 @@ export class HubCredentialRevokedError extends Error {
 }
 
 /**
- * §23.10/§23.11 — the executor's signal that the inbound request was aborted (the consumer
- * disconnected): the run's process was terminated and its output discarded, no program
- * response is published, and nothing is replayed. Like the revocation signal it carries no
- * data — the caller still writes its one outer audit row and answers the wire normally,
- * because the disconnect already decided nobody is reading.
+ * §23.10/§23.11 — the executor's signal that the inbound request was aborted (the
+ * consumer disconnected): the guest runtime was disposed and its output discarded, no
+ * program response is published, and nothing is replayed. Like the revocation signal it
+ * carries no data — the caller still writes its one outer audit row and answers the wire
+ * normally, because the disconnect already decided nobody is reading.
  */
 export class HubExecutionAbortedError extends Error {
   constructor() {
@@ -398,8 +398,8 @@ export class HubExecutionAbortedError extends Error {
  *  contract) has no channel for it. */
 let executor: HubExecutor | null = null;
 
-/** §23.8 — the composition root's ONE wiring point for the Sandbox plane. `null` unwires it
- *  (a test that wants the unwired refusal, or a deploy that must not run code at all). */
+/** §23.8 — the composition root's ONE wiring point for the QuickJS plane. `null` unwires
+ * it for a test that wants the honest unavailable refusal. */
 export function installHubExecutor(next: HubExecutor | null): void {
   executor = next;
 }

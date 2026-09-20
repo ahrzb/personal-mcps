@@ -1,0 +1,47 @@
+import { createContext, useContext } from "react";
+import type { Violation } from "@/lib/types";
+
+/**
+ * The state gallery's one seam into the pages, and the reason it needs one.
+ *
+ * Most of what `server/dev/fixtures.ts` shows is reachable without a seam: a query result is
+ * seeded into the cache, and an open dialog or a selected row is a search parameter. Four
+ * states are neither — they are the transient result of a submit that the gallery cannot
+ * perform and no resource returns:
+ *
+ *  - a minted key, which is shown exactly once and deliberately never cached (§4/§15);
+ *  - a refused save's field-scoped violations, drawn against the editor's local draft;
+ *  - the create receipt;
+ *  - §13's connecting screen, whose authorize URL comes from a single-use state row.
+ *
+ * So each owning component reads this context for its INITIAL value and is otherwise
+ * unchanged. In production the context is empty and every arm reads as absent, which is the
+ * same code path a first render takes anyway — there is no preview branch inside a page.
+ */
+export type Transient = {
+  /**
+   * A freshly minted key, as the Token / Credentials pane would hold it.
+   *
+   * The ROW ID rides with the plaintext because the pane draws two things from one mint:
+   * the reveal, and the `new` badge on the row it belongs to. A seed carrying only the
+   * secret could show the first and not the second, which is a different screen from the
+   * one the mint actually produces.
+   */
+  revealedToken?: { token: string; id: string };
+  /** A refused write, as a mutation's `ApiError` would have surfaced it. */
+  refusal?: { reason: string; violations?: Violation[] };
+  /** The add-app flow's receipt: a created app, with its once-only token where there is one. */
+  created?: { slug: string; name: string; token?: string | null };
+  /** §13's connecting screen, mid-flow. */
+  connecting?: { slug: string; name: string; authorizeUrl: string };
+};
+
+const TransientContext = createContext<Transient>({});
+
+export const TransientProvider = TransientContext.Provider;
+
+/** What the gallery seeded for this render, or nothing. Safe to call anywhere: the default
+ *  is the empty object, so a page outside the gallery sees exactly what a fresh mount sees. */
+export function usePreviewTransient(): Transient {
+  return useContext(TransientContext);
+}

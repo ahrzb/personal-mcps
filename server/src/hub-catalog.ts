@@ -145,6 +145,12 @@ export type CatalogTool = DeclarationTool & {
   readonly diagnostics: readonly string[];
   /** Raw schema bytes this entry contributed to the catalog cap. */
   readonly bytes: number;
+  /** Bounded deep copy of the upstream input schema exposed on the runtime callable, or
+   *  `null` when absent or invalid. */
+  readonly inputSchema: unknown | null;
+  /** Bounded deep copy of the upstream output schema exposed on the runtime callable, or
+   *  `null` when absent or invalid. */
+  readonly outputSchema: unknown | null;
 };
 
 /** §23.5 — one raw resource in the snapshot. */
@@ -273,6 +279,8 @@ export function buildCatalogSnapshot(input: CatalogSnapshotInput): CatalogSnapsh
       declarationUri,
       diagnostics: mergeDiagnostics(inputSchema?.diagnostics ?? [], outputSchema?.diagnostics ?? []),
       bytes: (inputSchema?.bytes ?? 0) + (outputSchema?.bytes ?? 0),
+      inputSchema: inputSchema?.json ?? null,
+      outputSchema: outputSchema?.json ?? null,
     };
     return { ...entry, signature: toolSignature(entry) };
   };

@@ -1218,19 +1218,53 @@ Tapping the scrim or the close control closes it. This replaces the horizontally
 five-entry nav on narrow screens; **the wide shell is unchanged**. Every page inherits it —
 it is the shell, not a page rule.
 
-**No script.** The sidebar is `:target`-driven: the hamburger is `<a href="#menu"
-class="menu-open" aria-label="Menu">`, the sidebar `<nav id="menu" class="menu">`, the
-close control `<a href="#" aria-label="Close menu">`, the scrim `<a href="#" class="scrim"
-aria-hidden="true">`; CSS shows the menu and the scrim on `#menu:target`. A wide viewport
-never shows the hamburger, the menu or the scrim (`display: none` above the breakpoint).
-The wide nav markup stays in the document and is hidden below the breakpoint, so
-`aria-current` is asserted once, on either. `layout.tsx` owns the markup, `styles.css` the
-rules.
+**No script — on the server-rendered pages.** The sidebar is `:target`-driven: the
+hamburger is `<a href="#menu" class="menu-open" aria-label="Menu">`, the sidebar `<nav
+id="menu" class="menu">`, the close control `<a href="#" aria-label="Close menu">`, the
+scrim `<a href="#" class="scrim" aria-hidden="true">`; CSS shows the menu and the scrim on
+`#menu:target`. A wide viewport never shows the hamburger, the menu or the scrim
+(`display: none` above the breakpoint). The wide nav markup stays in the document and is
+hidden below the breakpoint, so `aria-current` is asserted once, on either. `layout.tsx`
+owns the markup, `styles.css` the rules. *(Amended 2026-09-18: on the SPA routes the same
+five entries and the same `styles.css` classes are driven by a Base UI Dialog instead — it
+traps focus and closes on Escape, which a bare `:target` cannot. The rules are untouched and
+shared; only the mechanism differs, and it differs only where a script is already running.)*
+
+**Two renderings, one design language** *(2026-09-18)*. `/apps/*` and `/agents/*` are a
+React SPA; `/login`, `/device`, `/settings/*`, `/approvals*`, `/audit` and `/oauth/consent`
+stay server-rendered. Both read `/styles.css` — it is the shared sheet and the source of
+truth for every token and every page-chrome class — and the SPA adds `/app.css` after it,
+carrying only what Tailwind's utility engine and the Base UI primitives need in order to
+coexist with it. Tailwind's preflight is deliberately not imported, because it would strip
+the list markers `.md ul` / `.md ol` depend on.
+
+**The SPA's server surface** is `/api/hub`, under the already-reserved `api` segment: ten
+cookie-authenticated JSON reads and, for writes, one allowlisting op dispatcher plus six
+typed routes whose input is a delta the editor composes rather than an op's own keys. Every
+read answers 401 with a JSON body when the session is absent; every write passes session,
+origin and an `X-Pmcp-Csrf` header in that order. A custom header cannot be set cross-origin
+without a preflight the hub never answers, so the header is itself a barrier and not a
+re-spelling of the form field. The op dispatcher admits exactly nine names, all of which
+take scalar arguments; `/settings`' own ops stay unreachable through it, so the ordinary
+gate can never become a bypass of §4's recent-authentication prefix.
+
+**The SPA's document** is a shell the Worker still renders and still gates: the session gate
+first, then the existence checks — so an unauthenticated deep link is the same 302 to
+`/login?next=…` and an unknown, foreign or builtin slug is the same document 404 — and only
+then the head, `<div id="root">`, a `<script type="application/json" id="pmcp-bootstrap">`
+carrying `{csrf, username}`, and `<script type="module" src="/app.js">`. A JSON island
+rather than an executable one, so no page-generated JavaScript runs and the existing CSP
+needs no `script-src` relaxation. `Cache-Control: no-store`, like every other
+session-derived response.
 
 **PWA**: the web surface ships a web-app manifest and a minimal service worker, so
-the dashboard installs to phone and desktop home screens. Pages stay server-rendered —
-the service worker exists for installability and push, not offline rendering (the
-no-SPA pin holds, §1). **Approval push**: `/approvals` offers a per-browser "Enable
+the dashboard installs to phone and desktop home screens. The service worker exists for
+installability and push, not offline rendering — it has no fetch handler at all and does not
+intercept navigation. *(On the SPA routes its registration moved from the shell's body into
+the client entry, which is the only place it could go once the layout that carried it was
+deleted.)*
+
+**Approval push**: `/approvals` offers a per-browser "Enable
 notifications" control; subscriptions land in `push_subscription` (§5), and every new
 approval request sends a Web Push (VAPID keys in Worker secrets, ES256 via WebCrypto,
 RFC 8291 payload encryption) naming the app and tool — never arguments — which

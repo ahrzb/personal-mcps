@@ -1,0 +1,30 @@
+{
+  // Separate from the root tsconfig for one reason: the root pins
+  // `jsxImportSource: "hono/jsx"` for the server-rendered pages, and a React tree compiled
+  // against hono's JSX namespace does not typecheck. Everything else here follows from that
+  // split rather than being a second opinion about the same setting.
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "skipLibCheck": true,
+    // `scripts/*.mts` run under `node --experimental-strip-types`, which resolves a
+    // relative import only WITH its extension — so a script must spell `./shots.mts`, and
+    // the compiler has to accept that. Free of consequence: `noEmit` is on, so nothing is
+    // ever written with an extension it would have had to rewrite. The root tsconfig
+    // carries the same flag for the same reason.
+    "allowImportingTsExtensions": true,
+    "types": ["vite/client", "node"],
+    // shadcn's generated components import each other as `@/components/ui/x`, so the alias
+    // is the CLI's requirement rather than a preference; vite.config.ts carries the same
+    // mapping for the bundler.
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["src", "scripts"]
+}

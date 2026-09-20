@@ -107,10 +107,14 @@
           #
           # `fetcherVersion = 3`: version 2 is deprecated and scheduled for removal in 26.11.
           # The hash is fetcher-version-specific, so moving between them regenerates it.
+          #
+          # Regenerated 2026-09-18 with §13's `web` workspace package: the lockfile gained
+          # React, TanStack, Vite, Tailwind and the screenshot tooling, and the fetcher's
+          # output moved with it.
           pnpmDeps = (pkgs.fetchPnpmDeps.override { inherit pnpm; }) {
             inherit (final) pname version src;
             fetcherVersion = 3;
-            hash = "sha256-QxO+E40bs/9InDkyjO7BKS+qxqUz5/VTt0LkJ7+zj7E=";
+            hash = "sha256-f6VSSFXvy0nv12oBF4hiI6NLWsBMiy79KiTQ47oj/TQ=";
           };
 
           # `--ignore-scripts` is the hook's default, and it is what keeps pnpm-workspace.yaml's

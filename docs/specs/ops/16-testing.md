@@ -54,7 +54,12 @@
   call rows — the one refused `-32003` and the one dispatched after a claim, the latter
   merged with a `failureClass` when the dispatch then failed; and the SPA shell on
   `GET /audit` behind the session gate, `no-store`. Pure rows:
-  `server/test/unit/audit-derive.test.ts` over the page's one pure module — outcome classes,
+  `server/test/unit/audit-derive.test.ts` over the page's one pure module — outcome classes
+  with their **labels and sentences verbatim**, the `Cause: <failureClass>.` suffix on a
+  `-32000` that carries one, an outcome the table does not know falling back to its raw
+  value with no sentence, and **what the record's outcome row prints for a given outcome** —
+  no word twice, so `ok` is the chip alone, `error` the chip over its sentence, a refusal
+  chip · label · code;
   titles (`<app>/<tool>` for the three call events alone, the event name for everything else,
   so an `approval.*` row naming an app and a tool never reads as a call, **and the chain-row
   exception** — a chain titled by its call while the record it opens keeps the head row's

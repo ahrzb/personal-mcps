@@ -185,6 +185,29 @@ refused 214 times** calling `news/get_news` — denied."
 draws the salience waterfall: runs of more than two `ok` `tools/call` rows fold to "N ok
 calls — apps", everything else keeps its own line and opens its record.
 
+**A code never stands alone** *(owner, 2026-09-21: "I literally won't know what -32001 is, it's
+not like 404")*. Every recorded outcome has a **label** — the hub's own §7 words for it — and,
+for the four refusals and `error`, one **sentence**; both live once, in `derive.ts`:
+
+| Outcome | Label | Sentence (the record, under the outcome row) |
+|---|---|---|
+| `ok` | ok | — |
+| `-32003` | approval required | This tool needs your approval for this agent. The call was held, not run — it waits on, or was settled in, Approvals. |
+| `-32002` | app archived | The app is archived, so the hub dispatches nothing to it. |
+| `-32001` | not permitted | The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, so the ledger cannot say which. |
+| `-32000` | app unavailable | The app could not be reached or did not answer in time. (With a `detail.failureClass`: the same sentence, then "Cause: <failureClass>.") |
+| `error` | error | The call was dispatched and the app answered with an error. |
+
+An outcome the table does not know is labelled by its raw value and gets no sentence. Where
+each shows: the **record**’s outcome row reads chip · label · dim raw code (`denied` · not
+permitted · `-32001`) with the sentence on the line beneath, as a note — a word is never printed twice, so the label shows only when it differs from the chip's class and the raw code only when it differs from the label: `ok` is the chip alone, `error` the chip alone over its sentence, a refusal all three; the strip's **legend**
+drops the raw codes for words — `ok`, `approval required`, `app archived`, `denied — not
+permitted or unavailable`, `error` (class names only at narrow, as before); a **waterfall**
+line's right-hand text is the label, with `failureClass` after it when there is one (`app
+unavailable · timeout`), never `class · code`. Row chips and the facet rail keep the short
+class names. The raw code is printed in exactly one place, the record, because that is the
+value `pmcp audit --outcome` and the export take.
+
 **Titles.** A row, a waterfall line, a record head and a timeline line are titled
 `<app>/<tool>` only for the three call events (`tools/call`, `prompts/get`,
 `resources/read`); every other event is titled by its **event name**, with `<app>/<tool>` as

@@ -222,6 +222,42 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   `outcome` filter takes the **raw** recorded value (§8), and the record's field table shows
   that raw code beside the class.
 
+  **A code never stands alone** *(owner, 2026-09-21: "I literally won't know what -32001 is,
+  it's not like 404")*. Every recorded outcome has a **label** — the hub's own §7 words for it
+  — and, for the four refusals and `error`, one **sentence**. Both are pinned copy, and both
+  live once, beside the class derivation:
+
+  | Outcome | Label | Sentence (the record, under the outcome row) |
+  |---|---|---|
+  | `ok` | ok | — |
+  | `-32003` | approval required | This tool needs your approval for this agent. The call was held, not run — it waits on, or was settled in, Approvals. |
+  | `-32002` | app archived | The app is archived, so the hub dispatches nothing to it. |
+  | `-32001` | not permitted | The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, so the ledger cannot say which. |
+  | `-32000` | app unavailable | The app could not be reached or did not answer in time. |
+  | `error` | error | The call was dispatched and the app answered with an error. |
+
+  A `-32000` carrying a `detail.failureClass` appends "Cause: <failureClass>." to its
+  sentence. An outcome the table does not know is labelled by its **raw value** and gets no
+  sentence — a vocabulary the page has not met is reported, never guessed at. The `-32001`
+  sentence names the two sources an owner can act on and then closes on *every such case*
+  deliberately: §7 has a **third** — a tool for which no sound redaction map can be derived
+  refuses with the same code — and listing it would hand a probing reader the map of the
+  refusal that §7 withholds by construction, while a sentence claiming there are two would be
+  false.
+
+  **Where each shows.** The **record**'s outcome row reads chip · label · dim raw code
+  (`denied` · not permitted · `-32001`) with the sentence on the line beneath it, as a note,
+  and **a word is never printed twice**: the label shows only when it differs from the chip's
+  class name, and the raw code only when it differs from the label — so `ok` is the chip
+  alone, `error` the chip alone over its sentence, and a refusal all three. The row is
+  **top-aligned**: its key lines up with the chip line and the sentence hangs beneath in the
+  value column. That row is the **one place the raw code is printed**, because it is the value
+  `pmcp audit --outcome` and the export take (§8). The strip's **legend** drops the codes for
+  words — `ok`, `approval required`, `app archived`, `denied — not permitted or unavailable`,
+  `error` — keeping the class names alone at narrow. A **waterfall** line's right-hand text is
+  the label, with the `failureClass` after it when the row carries one (`app unavailable ·
+  timeout`), never `class · code`. Row chips and the facet rail keep the short class names.
+
   **Titles** *(2026-09-21, from the boards)*: an event row, a waterfall line, a record's head
   and a chain timeline's line are titled `<app>/<tool>` **only for the three call events** —
   `tools/call`, `prompts/get`, `resources/read` (§15/§20.4's audited reads). Every other
@@ -264,8 +300,10 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   a window of at least an hour, the presets **1h · 24h · 7d** sit beside the title (the
   last labelled from the retention window) and **Whole window** clears the brush — the demo's
   label read "Whole week", and retention is a knob (§15), so this control may no more name a
-  week than the preset beside it may. A legend names the five classes. The strip is focusable,
-  ←/→ move the brush by an hour and Shift+←/→ resize it.
+  week than the preset beside it may. A legend names the five classes **in words, never in
+  codes** — the legend strings of *A code never stands alone* above, with the class names
+  alone at narrow *(2026-09-21)*. The strip
+  is focusable, ←/→ move the brush by an hour and Shift+←/→ resize it.
 
   **Facet rail**: the groups `outcome`, `principal`, `app`, `tool`, `event`, each value a
   toggle carrying its count **under every other filter but its own group's** (so a group's
@@ -296,7 +334,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   grouped under "<principal> · no session", newest first, forty at a time behind **Load
   more**. Opening one draws the salience waterfall: a run of more than two `ok`
   `tools/call` rows folds to "N ok calls — apps", and everything else keeps its own line
-  and opens its record.
+  and opens its record. A line's right-hand text is the outcome's **label**, plus its
+  `failureClass` when it carries one, never a class and a code *(2026-09-21 — *A code never
+  stands alone* above)*.
 
   **Events**: merged rows, newest first, a hundred and twenty at a time behind **Load
   more**. Rows sharing a `detail.approvalId` (§15) are **one chain row**, headed by the
@@ -320,7 +360,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   this record…**, which highlights matches in the trees and **opens every ancestor of a
   match**, so a match is never hidden behind a collapsed node, and says "No matches in this
   record." when there are none *(2026-09-21, from review)*; the **Record** field table (when,
-  principal, event, app, tool, outcome with its raw code, duration, client, session, id)
+  principal, event, app, tool, outcome — the one row that prints a **raw** code, as chip ·
+  label · dim code with its sentence beneath *(2026-09-21 — *A code never stands alone*
+  above)* — duration, client, session, id)
   in which **every id is a button that filters by it and closes the drawer** — the session
   id among them, which is what the `?session=…` link struck below became; then **Arguments** /
   **Result** / **Detail** as collapsible JSON trees with their first ~~level~~ **two levels**

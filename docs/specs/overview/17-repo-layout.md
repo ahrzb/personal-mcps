@@ -4,11 +4,12 @@
 personal-mcps/
   server/            # CF Worker, AppConnection DO, QuickJS/Wasm execution, D1 migrations
   cli/               # pmcp — a pnpm workspace importer, published as @ahrzb/personal-mcp-cli
-  web/               # the browser client (§13) — React SPA for /apps/* and /agents/*, a
+  web/               # the browser client (§13) — React SPA for /apps/*, /agents/* and
+                     #   /audit (2026-09-21, decision 36), a
                      #   workspace importer, unpublished; `vite build` emits dist/app.{js,css}
     src/lib/          # the fetch door, the wire types, the query keys
     src/chrome/       # the shell, the pane rail, the dialogs
-    src/features/     # apps, app-detail, agents
+    src/features/     # apps, app-detail, agents, audit
     src/preview/      # the state gallery, preview-mode only
     scripts/          # visual-compare.mts, drawer-check.mts — hand-run, browser-driven
   clients/

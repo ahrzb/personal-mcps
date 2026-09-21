@@ -35,6 +35,35 @@
   `_meta` key under `hub/` (e.g. a forged `hub/roles`) is stripped before forwarding
   while non-reserved keys like `progressToken` survive; `X-Pmcp-*` headers present
   only with `forward_identity: true` and absent by default.
+- **the audit explorer** (§13, decision 36) — **written before the implementation it pins**.
+  Worker rows: `audit_query`'s additions, each on its own (`id`, owner-scoped, so
+  another namespace's id is absent and not a row; `text`, over every string column and both
+  body columns, with the `LIKE` escaping proved by a needle of `%` matching only a literal
+  `%`; `bodies: false`, whose rows carry `argsHead` and `hasResult` and **never** `args` or
+  `result`; `outcome` as a sixth exact filter **on the op**, taking a raw recorded value; and
+  the module read's list form of those six, an empty list being no filter); the
+  two new `/api/hub` reads (401 without a session, the `404` for an id outside the namespace,
+  an `offset` past `AUDIT_EXPLORER_ROWS` answering an empty page, the echoed window); the
+  export's repeated keys, `outcome=` among them in raw codes; `detail.approvalId` on **both**
+  call rows — the one refused `-32003` and the one dispatched after a claim, the latter
+  merged with a `failureClass` when the dispatch then failed; and the SPA shell on
+  `GET /audit` behind the session gate, `no-store`. Pure rows:
+  `server/test/unit/audit-derive.test.ts` over the page's one pure module — outcome classes,
+  titles (`<app>/<tool>` for the three call events alone, the event name for everything else,
+  so an `approval.*` row naming an app and a tool never reads as a call, **and the chain-row
+  exception** — a chain titled by its call while the record it opens keeps the head row's
+  title), facet counts
+  excluding their own group, the chain merge and its **(ts, id)** order (`approval.requested`
+  heads the chain although the refused call may share its millisecond), ×N runs and that a
+  chain never joins one, the waterfall fold threshold, the three insight rules, the export
+  href (class → codes, `<app>/<tool>` split, repeated keys) and the lanes' worst-outcome and
+  not-loaded cells. The
+  two `/audit` `describe`s in `server/test/worker/web-pages.test.ts` go with the page they
+  pinned; what they pinned that still holds — the three no-bodies sentences and the stub
+  size spellings — moves to that unit file rather than being dropped. The preview gallery
+  gains an `audit` fixture set, one seed per page state §13 names plus the views, a session
+  opened, the record in each of its no-bodies and stub shapes, a chain record, and one
+  long-data seed; the visual gate is the gallery beside the boards at both widths.
 - **upstream oauth**: fake AS in-test — expired access token triggers refresh before
   forwarding; failed refresh surfaces needs-reconnect and calls fail `-32000`; a
   callback carrying a valid code but a missing, consumed, expired, or other-session

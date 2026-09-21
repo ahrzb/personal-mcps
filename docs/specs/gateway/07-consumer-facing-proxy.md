@@ -182,7 +182,14 @@ result or app error consumes it, with `expires_at` (1 h) bounding the exchange.
 
 Approvals are single-use, args-bound, and expire 1 h after creation. Every transition
 writes an audit row (`approval.requested` / `approval.approved` / `approval.rejected` /
-`approval.expired`). Expiry is enforced **lazily**: every path that reads or decides
+`approval.expired`). *(Amended 2026-09-21, decision 36: so do the two `tools/call` rows at
+either end of the wait — the row refused `-32003` at step 2 and the row dispatched after
+step 1's successful claim each record `detail.approvalId` (§15). That is a ledger join and
+not a wire change: the `-32003` already hands the caller `approvalId` in its `data`, a
+dispatch under a claimed approval stays byte-identical to one that needed no approval, and
+the `-32001` refusals this section makes indistinguishable gain no `reason` — the ledger
+never becomes the oracle a refusal withholds.)* Expiry is enforced **lazily**: every path
+that reads or decides
 approvals — the step-1 and step-2 lookups, `approval_list`, `/approvals`,
 `approval_decide` — treats `expires_at < now` as expired regardless of stored status,
 and at that moment flips any such `pending` row to `expired`, writing the

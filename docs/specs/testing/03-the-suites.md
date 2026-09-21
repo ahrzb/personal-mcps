@@ -10,6 +10,7 @@
 | `server/test/unit/redact.test.ts` | the path grammar + writeOnly walk as a pure table — direction-blind: input and output schemas through the same walk (§7, decided 2026-08-25) |
 | `clients/js/test/api.test.ts` | `caller()`/`sensitive()`/`secret()` pure halves (marking works on input and output schemas; values untouched); backoff schedule table *(nudge N2)* |
 | `server/test/unit/hub-types.test.ts` | stable name generation/reservations, schema allowlist and hostile/cyclic rendering, declaration context separation, search ranking/caps, canonical identity |
+| `server/test/unit/audit-derive.test.ts` | `web/src/features/audit/derive.ts` — §13's explorer as a pure table: outcome classes, titles, incl. the chain-row exception (`<app>/<tool>` for `tools/call` / `prompts/get` / `resources/read` alone, the event name otherwise, so an `approval.*` row never reads as a call; a chain row titled by its call while the record it opens keeps the head row's title), facet counts excluding their own group, the chain merge with its **(ts, id)** order and that a chain never joins a ×N run, the waterfall fold threshold, the three insight rules, the export href (class → raw codes, `<app>/<tool>` split, repeated keys), lanes' worst-outcome and not-loaded cells; plus the three no-bodies sentences and the stub size spellings inherited from `web-pages.test.ts`. The one `unit` file over `web/` source, which is what "no React, no `@/` runtime imports" in that module buys *(2026-09-21, decision 36)* |
 
 ### `worker` — real D1, no sockets
 
@@ -27,7 +28,7 @@
 | `admin-pipeline.test.ts` | scoped pmcp plus credential-mirrored pmcp authority inside hub programs |
 | `hygiene.test.ts` | persisted-secret sweep plus metadata-only hub outer audit and source/output/nonce absence |
 | `cron.test.ts` | scheduled effects unchanged |
-| `web-pages.test.ts` | CSRF and schema parity plus execution settings/alias forms |
+| `web-pages.test.ts` | CSRF and schema parity plus execution settings/alias forms *(2026-09-21, decision 36: minus its two `/audit` `describe`s, which went with the server-rendered page; the explorer's own rows are the new `audit_query` options, the two `/api/hub` audit reads, the export's repeated keys and the SPA shell on `/audit`)* |
 | `routes.test.ts` | reserved route equivalence including virtual hub |
 | `contracts.test.ts` | sole producer for hub/initialize/errors/admin/tunnel fixtures |
 

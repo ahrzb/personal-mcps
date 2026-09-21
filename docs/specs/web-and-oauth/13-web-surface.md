@@ -168,7 +168,7 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     Invalid pairs redraw at 400 with field-linked messages; success reads back the
     committed pair. Copy states that settings are owner-wide, new executions snapshot
     them at admission, and updating them never extends an active run.
-- `/audit` — read-only, cookie-session-gated view over the audit table (§5): a plain
+- `/audit` — read-only, cookie-session-gated view over the audit table (§5): ~~a plain
   server-rendered table, newest first, with the same filters as `audit_query`
   (agent, app, event, tool, time range) and offset/limit paging backed by
   `audit_query`'s `total` (desktop shows numbered pages, mobile a "Load more" that
@@ -176,23 +176,165 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   are computed over the newest 1,000 matching rows while the Events count is exact; past
   that ceiling the per-row tiles and the chart say "over the newest 1,000", and the three
   filter selects likewise list only what the newest 1,000 rows of the namespace mention
-  *(2026-09-03, step 13: G22)*. An **Export JSONL** action
-  streams every row matching the current filters, one JSON object per line: the
-  handler re-runs the same query in `limit`-sized chunks and writes each chunk to a
-  streaming response as it is fetched, never holding the full result set in memory —
-  a serialization of `audit_query`, not a new capability. The expanded row detail
+  *(2026-09-03, step 13: G22)*.~~ **the explorer below**
+
+  *(2026-09-21, decision 36 — `design/concepts/AuditDemo.html`, adopted whole: the table
+  is an **explorer**, and the page is the SPA's **third route family** rather than a
+  server-rendered page. What the struck sentences promised is gone with the page that
+  served them: numbered pages and accumulated `offset`s — the window is loaded once and
+  read client-side, and `?limit=` / `?offset=` are ignored; the four tiles and the chart
+  over the newest 1,000 — Summary's own tiles are computed over the loaded window and the
+  lane strip replaces the chart; and the three filter selects read from that same scan —
+  the facet rail reads the loaded rows and carries live counts instead. `?expand=` is no
+  longer an in-page `<details>` opened by a small inline script but the id of the record
+  the drawer shows, whose bodies are fetched for that one row. What survives verbatim
+  below, because it is about what the ledger holds rather than how a page draws it: the
+  typed size placeholders, the three no-bodies sentences, the JSONL export, and "no
+  mutations, so no CSRF surface".)*
+
+  **Shape** *(2026-09-21)*: the ladder's **workspace** (*Where the numbers live* below) —
+  the facet rail at the ladder's rail width as its own card, the main pane the rest; the
+  numbers are `design/layout-and-density.md`'s, where `Audit` moves from the table row to
+  the workspace row of the shape table. The shell's Audit nav entry becomes a router link,
+  like Apps and Agents.
+
+  **Three views over one filtered set** — **Summary**, **Sessions** and **Events** are
+  three readings of the *same* rows under the same window, facets and search, chosen by
+  `view=` and nothing else: switching a view never refetches and never changes what
+  matches.
+
+  **One state, in the URL.** `view=summary|sessions|events` (absent ≡ `summary`), `since`
+  and `until` (epoch ms — the brush), repeated `principal` / `app` / `event` / `tool` /
+  `outcome` / `session`, `q` (the search text, sent to the server as `text`),
+  `expand=<id>` (the open record) and `open=<sessionId>` (the open session in Sessions).
+  Every key is a string or repeated strings, the SPA router's contract. A `tool` value is
+  spelled `<app>/<tool>` on the page — the facet names a tool by its app — and is split
+  again for the export link; an `outcome` value is one of the five classes below, which
+  the export link expands to its raw codes.
+
+  **Outcome classes**, five over the six recorded `outcome` values (§5): `ok` ← `ok`;
+  `approval` ← `-32003`; `archived` ← `-32002`; `denied` ← `-32001` and `-32000`; `error`
+  ← `error`. Each has one colour, and the **class name is always printed beside the
+  colour** — on a chip, in the legend, in a record's head — so no state is ever carried by
+  colour alone. A class is the page's grouping and nothing below it: `audit_query`'s own
+  `outcome` filter takes the **raw** recorded value (§8), and the record's field table shows
+  that raw code beside the class.
+
+  **Titles** *(2026-09-21, from the boards)*: an event row, a waterfall line, a record's head
+  and a chain timeline's line are titled `<app>/<tool>` **only for the three call events** —
+  `tools/call`, `prompts/get`, `resources/read` (§15/§20.4's audited reads). Every other
+  event is titled by its **event name**, with `<app>/<tool>` as dim secondary text when the
+  row carries them. The reason is that §5 lets an `approval.*` row name an app and a tool,
+  and such a row must never read as a call: in a session's waterfall the refused call and
+  its `approval.requested` would otherwise be two identical lines. **One exception**: an
+  Events **chain row** is the story of a call, so it is titled by that call's `<app>/<tool>`
+  whichever row heads it — while the record it opens is still the head row's and is titled by
+  the rule above, so a chain row `home/set_scene · 2 events` opens a record headed
+  `approval.requested home/set_scene`.
+
+  **Loading.** One read per `(since, until, q)` fetches the **whole retention window** of
+  **slim** rows (no bodies; `argsHead` and `hasResult` instead — §8's `audit_query
+  { bodies: false }`), a page at a time up to the ceiling, and the facets, the brush, the
+  views, the merging and the sessions are all computed over those loaded rows: a facet
+  click, a view switch and a brush drag never fetch. `since`/`until` in the URL are the
+  **brush**, applied client-side; `q` is debounced and is the one control that refetches.
+  Past the ceiling the page says so rather than lying by omission — the notice, pinned as a
+  **template** and not as a literal: "Showing the newest <ceiling> of <total> events — narrow
+  the search, or export JSONL for all of them.", which at today's constant renders as
+  "Showing the newest 5,000 of N events — narrow the search, or export JSONL for all of
+  them." **Both numbers are formatted at render**, the first from the window read's echoed
+  `ceiling` and the second from its `total`, so the sentence carries no second literal of the
+  constant below — the rule the Password pane's "At least 12 characters." already follows.
+  Every lane cell older than the oldest loaded row draws as **not loaded**, never as empty.
+  Three constants carry the numbers (`limits.ts`): `AUDIT_EXPLORER_ROWS` (**5,000** — the
+  most slim rows one window loads, and what the window read echoes as its `ceiling`),
+  `AUDIT_EXPLORER_PAGE` (**1,000** — one request's worth) and `AUDIT_ARGS_HEAD_CHARS`
+  (**160** — `argsHead`'s length).
+
+  **Header**: "Audit log", the subtitle "N events · <from> → <to> UTC · kept for N days"
+  (the last from the retention window, §15), **Export JSONL** (a plain link carrying the
+  current selection) and the view segment.
+
+  **Lane strip**: one lane per principal present in the loaded rows — at most six, busiest
+  first, the rest folded into a last lane "N others" — and one cell per hour of the
+  retention window, each cell the **worst** outcome class in that hour under the current
+  facets and search. The brush does not dim the strip; it is drawn on it. Dragging selects
+  a window of at least an hour, the presets **1h · 24h · 7d** sit beside the title (the
+  last labelled from the retention window) and **Whole window** clears the brush — the demo's
+  label read "Whole week", and retention is a knob (§15), so this control may no more name a
+  week than the preset beside it may. A legend names the five classes. The strip is focusable,
+  ←/→ move the brush by an hour and Shift+←/→ resize it.
+
+  **Facet rail**: the groups `outcome`, `principal`, `app`, `tool`, `event`, each value a
+  toggle carrying its count **under every other filter but its own group's** (so a group's
+  own values never zero each other out as they are ticked) and a proportional bar, the top
+  few with **Show all N** expanding the group in place. Several values in one group **OR**;
+  groups **AND**. `session` is never listed — it is set from a record. Active filters
+  repeat as removable chips above the main pane, beside the search box ("Search events and
+  bodies…", `/` focuses it) and **Clear**.
+
+  **Summary**: three tiles (events · tool calls; refused or waiting on you; median call ·
+  p95); **Worth a look**, three hand-written rules each with a **show me** that applies the
+  filters it names — the worst (principal, target) pair of refusals when it exceeds five,
+  tools first seen in the last two days of the loaded window, and changes to the setup
+  (`admin.*`, `upstream.*`); top-N bars for Agents, Apps and Tools; Refusals; Changes you
+  made; and the foot "All N events →". The ledger records no *reason* for a refusal (§15),
+  so the first rule's sentence ends at the outcome class: "**agent:cron was refused 214
+  times** calling `news/get_news` — denied."
+
+  **Sessions**: one row per `client.sessionId` (§5's `client_session_id`), rows without one
+  grouped under "<principal> · no session", newest first, forty at a time behind **Load
+  more**. Opening one draws the salience waterfall: a run of more than two `ok`
+  `tools/call` rows folds to "N ok calls — apps", and everything else keeps its own line
+  and opens its record.
+
+  **Events**: merged rows, newest first, a hundred and twenty at a time behind **Load
+  more**. Rows sharing a `detail.approvalId` (§15) are **one chain row**, headed by the
+  `approval.requested` row or else the earliest, its members ordered by **(ts, id)**
+  *(2026-09-21: the pair, not `ts` alone — the hub writes `approval.requested` inside the
+  approval check (§7 step 2) and the gateway records the refused `tools/call` row only after
+  the refusal is thrown, so the request always has the lower id at the same or an earlier
+  millisecond, and a chain would otherwise be free to open on the refusal)*; carrying the
+  chain sentence ("asked for approval → you approved 18:00 → ran ok 1.2 s" — **the refused
+  call is the ask**, never a step of its own, so a chain of a refusal, a decision and a
+  dispatch reads as three clauses and not four) and the state of its last event;
+  consecutive un-chained rows with the same (event, app, tool, principal, outcome,
+  `detail.failureClass`) collapse to **×N runs**, and a chain never joins a run. The third
+  line previews `argsHead` clipped (an oversize stub's head renders as its placeholder),
+  else the first three `detail` pairs. The foot: "N rows from M events — related events
+  merged, repeats collapsed."
+
+  **The record** (`?expand=<id>`) — a right-hand drawer over a scrim at wide, a full-screen
+  level on the phone, and a real dialog primitive (focus trap, Escape) rather than a
+  hand-rolled one. Head: the outcome swatch, the title, the time, Close. Body: **Search
+  this record…**, which highlights matches in the trees; the **Record** field table (when,
+  principal, event, app, tool, outcome with its raw code, duration, client, session, id)
+  in which **every id is a button that filters by it and closes the drawer** — the session
+  id among them, which is what the `?session=…` link struck below became; then **Arguments** /
+  **Result** / **Detail** as collapsible JSON trees, first level open; the three no-bodies
+  sentences below; a chain record's sibling events as a short timeline whose lines open
+  their own records; and **Show this session** / **Copy as JSON**. The field table draws
+  from the slim row already loaded and the bodies arrive from the page's own one-row read
+  when the drawer opens, the body sections showing a skeleton until they do; a record id
+  outside the loaded window still opens, the one-row read not needing the window.
+  ~~The expanded row detail~~ **That record** *(2026-09-21: the same facts about the ledger,
+  in a drawer instead of an expanded row — the sentences below are kept verbatim)*
   shows the caller's client metadata when present (client name/version and session id,
   §5/§7) and the recorded call bodies when present (§15) — post-redaction args and
   result structuredContent, with stubs rendered as typed size placeholders (e.g.
   `‹blob image/png · 4.2 MB›`, `‹oversize · 20 KB›` — KB under a megabyte, MB with one
-  decimal above; never the bytes); the session id renders as a link to this same audit view filtered to that
-  session (`?session=…`, backed by `audit_query`'s `session` filter). A call row with no
+  decimal above; never the bytes), and `‹redacted›` as a stub chip of its own
+  *(2026-09-21)*; ~~the session id renders as a link to this same audit view filtered to that
+  session (`?session=…`, backed by `audit_query`'s `session` filter)~~ **the session id is
+  one of the field table's id buttons, and filtering by it is still `?session=…`, still
+  backed by `audit_query`'s `session` filter** *(2026-09-21)*. A call row with no
   bodies says why, in one sentence, so no panel is ever blank: "Call bodies aren't
   recorded for this app (body logging is off)." when the app's `log_bodies` is off now
   (§15's default for proxied apps); "Refused before the call was made, so there are no
   bodies to show." for a refusal outcome; "No bodies were recorded for this call."
   otherwise (recorded before logging was switched on, or the app is gone) — and such a
-  row is expandable for that sentence alone. The summary row carries `id="event-<id>"`
+  row ~~is expandable~~ **opens its record** *(2026-09-21: every row opens one, so no row
+  has to earn a control)* for that sentence alone. ~~The summary row carries `id="event-<id>"`
   and an opening chevron's link ends in `#event-<id>`, so the scripting-off reload lands
   on the row it opened *(2026-09-03, step 10: G24, G49, O27)*. A row with something
   to show draws a chevron that is a link to this same view with `?expand=<id>` — the
@@ -201,8 +343,52 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   rendered into the page, hidden until opened: a small inline script opens it in place
   with no request and no reload, closing the row that was open, and keeps `?expand=<id>`
   in the address so a refresh or a shared link reproduces the state; with scripting off
-  the chevron's link reaches the same state one reload later *(2026-09-03)*. No
+  the chevron's link reaches the same state one reload later *(2026-09-03)*.~~
+  *(2026-09-21: all three go with the server-rendered page — there is no summary row to
+  carry an `id`, no chevron, and no pre-rendered hidden detail. `?expand=<id>` survives as
+  the URL of the open record and the rest of the selection rides beside it, so a refresh
+  or a shared link still reproduces the state.)* No
   mutations, so no CSRF surface.
+
+  **Page states** *(2026-09-21)*, each one a preview-gallery fixture (§16): the loading
+  skeleton; load failed — the shell's error card with **Try again**; an empty ledger,
+  "Nothing recorded yet — calls, approvals and config changes will appear here."; filters
+  matching nothing, "Nothing matches — widen the window or drop a filter." with **Clear**;
+  over the ceiling (the notice above); the record loading; and a record that is not there,
+  "That record is gone — audit rows are kept for N days."
+
+  **The phone** *(2026-09-21)* — below the shell's breakpoint, under the narrow shell
+  (brand + hamburger): one column. The view segment runs full width at the narrow tap
+  height. The strip keeps its lanes with each name **above** its cells and has **no drag**
+  on touch — the presets and tapping a day on the axis set the window. The rail becomes a
+  **Filters · N** button opening a full-screen level headed `‹ Audit`, the same groups at
+  the narrow tap height under a sticky **Show N events**. Event rows become two-line cards
+  (time · principal · outcome chip, then the mono title, the chain line, ×N); a session
+  header wraps to two lines and its waterfall puts each label above its bar; and the record
+  is a full-screen level headed `‹ Audit` rather than a drawer. Between that breakpoint and
+  the side-by-side one the desktop layout stands, with the rail above the main pane as a
+  wrapping row of groups.
+
+  **Export.** An **Export JSONL** action
+  streams every row matching the current filters, one JSON object per line: the
+  handler re-runs the same query in `limit`-sized chunks and writes each chunk to a
+  streaming response as it is fetched, never holding the full result set in memory —
+  a serialization of `audit_query`, not a new capability. *(2026-09-21: still a Worker
+  route, still at `/audit/export.jsonl` — a bookmark must not break — and still that
+  serialization: the page links it and it is never a second read. It
+  now accepts `since`, `until`, `text` and **repeated** `principal` / `app` / `event` /
+  `tool` / `session` / `outcome` keys, handed to the one read as lists. The repeated
+  `outcome=` holds **raw** outcome strings (`-32001`, `ok`, …), never a display class: an
+  outcome class is the page's own grouping and `denied` folds two codes, so the page's export
+  link is what expands a class to its codes. `range`, `limit`, `offset` and `expand` are
+  ignored by the export as they always were.)*
+
+  **Deep links that must keep working** *(2026-09-21)*, the agent page, the app page and
+  old bookmarks emitting them: `/audit?principal=agent:<slug>`, `/audit?app=<slug>`,
+  `/audit?session=<id>`, `/audit?expand=<id>#event-<id>` — the query opens that record, and
+  the fragment names no element any more, so it is inert rather than broken — and `?since=`
+  / `?until=` in epoch ms. `?range=1h|24h|7d` stays a readable spelling of a window ending
+  now, `30d` reads as the whole window, and `?limit=` / `?offset=` are ignored.
 - `/approvals` — cookie-session-gated: pending requests up top (agent, app, tool,
   redacted arguments, requested time, approve/reject buttons — CSRF token on the POST),
   decision history below. A decision on a request that is no longer pending (decided
@@ -938,7 +1124,10 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     mark rows whose radio differs from its initial value with the `unsaved` badge and
     count them in the foot, and the rail's blue draft dot is script-only; with scripting
     off **Save still replaces the set and the page is complete**, and nothing in a test
-    depends on the script *(2026-09-16)*.
+    depends on the script *(2026-09-16)* *(2026-09-21: the precedent cited is gone — the
+    audit page is the SPA's explorer and has no hidden-detail row to open. This page is a
+    SPA route itself since 2026-09-18; the clause is kept as the record of what the
+    server-rendered pane promised)*.
   - **Grant another app** (`/agents/<slug>/grant`) *(2026-09-16)* — the listing alone, at
     the wide width. Header "Grant another app" · "apps <agent> holds nothing on"; a GET
     search form (`q`, placeholder "search apps and endpoints…"); the sentence "What each
@@ -1230,15 +1419,17 @@ five entries and the same `styles.css` classes are driven by a Base UI Dialog in
 traps focus and closes on Escape, which a bare `:target` cannot. The rules are untouched and
 shared; only the mechanism differs, and it differs only where a script is already running.)*
 
-**Two renderings, one design language** *(2026-09-18)*. `/apps/*` and `/agents/*` are a
-React SPA; `/login`, `/device`, `/settings/*`, `/approvals*`, `/audit` and `/oauth/consent`
+**Two renderings, one design language** *(2026-09-18)*. `/apps/*`, `/agents/*` **and
+`/audit`** *(2026-09-21, decision 36)* are a React SPA; `/login`,
+`/device`, `/settings/*`, `/approvals*` ~~, `/audit`~~ and `/oauth/consent`
 stay server-rendered. Both read `/styles.css` — it is the shared sheet and the source of
 truth for every token and every page-chrome class — and the SPA adds `/app.css` after it,
 carrying only what Tailwind's utility engine and the Base UI primitives need in order to
 coexist with it. Tailwind's preflight is deliberately not imported, because it would strip
 the list markers `.md ul` / `.md ol` depend on.
 
-**The SPA's server surface** is `/api/hub`, under the already-reserved `api` segment: ten
+**The SPA's server surface** is `/api/hub`, under the already-reserved `api` segment: ~~ten~~
+**twelve** *(2026-09-21, decision 36: the two the explorer adds — below)*
 cookie-authenticated JSON reads and, for writes, one allowlisting op dispatcher plus six
 typed routes whose input is a delta the editor composes rather than an op's own keys. Every
 read answers 401 with a JSON body when the session is absent; every write passes session,
@@ -1247,6 +1438,22 @@ without a preflight the hub never answers, so the header is itself a barrier and
 re-spelling of the form field. The op dispatcher admits exactly nine names, all of which
 take scalar arguments; `/settings`' own ops stay unreachable through it, so the ordinary
 gate can never become a bypass of §4's recent-authentication prefix.
+
+**The explorer's two reads** *(2026-09-21, decision 36)*, alongside the unchanged
+`GET /api/hub/audit` the agent page's Activity pane pages (bodies included): a **window**
+read answering one page (`AUDIT_EXPLORER_PAGE`) of slim rows, newest first, for a
+`since`/`until`/`text` window with an `offset` — it carries the row total, the window it
+resolved and echoed (absent or invalid bounds mean the whole retention window ending now,
+so the client never computes "now" twice), the retention days and the
+`AUDIT_EXPLORER_ROWS` ceiling, and answers an empty page for an `offset` past that ceiling;
+and a **record** read answering one full row by id, bodies and `noBodies` included, whose
+`404` covers a row that is not in the caller's namespace exactly as it covers one that
+never existed (unknown and foreign indistinguishable, §8). Both are `reader` routes like
+the other ten — cookie session, 401 JSON when absent, `no-store` — and both are
+`audit_query` underneath, the window one with `bodies: false` and the record one with `id`.
+A slim row is the ordinary row minus the two body columns and minus the namespace id, plus
+`argsHead` and `hasResult` and the same `noBodies` the server-rendered page computed: a
+slim row "has bodies" when it carries an `argsHead` or a result.
 
 **The SPA's document** is a shell the Worker still renders and still gates: the session gate
 first, then the existence checks — so an unauthenticated deep link is the same 302 to
@@ -1282,7 +1489,14 @@ The dashboard pages `/apps`, `/apps/<slug>`, `/approvals`, `/audit` — and, *(a
 2026-09-02)*, the Tokens and Connected clients panes of `/settings` — and the CLI are all
 fronts over the same server-side handlers as the `pmcp` tools (`token_list` /
 `token_revoke`, `connection_list` / `connection_revoke` among them) — one implementation,
-three surfaces; the ~~Tools, Prompts and Resources panes~~ **Catalog pane** *(2026-09-17,
+three surfaces *(2026-09-21, decision 36: `/audit` becoming the SPA's explorer changes
+nothing here. Its three reads are `audit_query` with new options, and its export is still
+that op's serialization. Four of the options are **on the op** — `id`, `text`, `bodies` and
+`outcome`, the last a sixth single-valued exact filter — so `pmcp audit` reaches each of
+them; what the page has and the CLI does not is the **list form** of the six exact filters,
+which reaches nothing but the export and therefore sits inside §8's existing export
+exception rather than widening the parity list)*; the ~~Tools, Prompts
+and Resources panes~~ **Catalog pane** *(2026-09-17,
 decision 32)* fronts MCP listings on the scoped
 endpoint exactly as `pmcp tools` / `prompts` / `resources` do (§20.6), which is why §8's
 parity list does not change — and the three forms decision 32 adds (`role_set`,

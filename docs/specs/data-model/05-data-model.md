@@ -199,7 +199,19 @@ CREATE TABLE audit (
                                        -- bytes; a result with only content blocks
                                        -- stores {content: [...]}
   detail TEXT                          -- small JSON summary; NEVER token material — bodies
-                                       -- live only in the two capped columns above
+                                       -- live only in the two capped columns above.
+                                       -- What it may hold, by event (2026-09-21, decision
+                                       -- 36): `approvalId` on the four approval.* rows, on
+                                       -- the tools/call row refused -32003, and on the
+                                       -- tools/call row dispatched under a claimed approval
+                                       -- (§7 step 1) — MERGED with whatever else the
+                                       -- outcome owes, so a -32000 after a claim carries
+                                       -- both failureClass and approvalId; `failureClass`
+                                       -- on a -32000 (§15); and the bounded decision
+                                       -- summary a mutating admin.<tool> row writes (§8).
+                                       -- An approval id is not token
+                                       -- material and no `reason` is ever recorded for a
+                                       -- -32001 — §15 pins both.
 );
 CREATE INDEX audit_owner_ts ON audit(owner_id, ts);
 

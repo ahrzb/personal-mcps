@@ -46,6 +46,24 @@
   snapshot operations, listen streams, doorbells, and updated relays are not recorded.
   Hub outer tool/read audit is metadata-only; inner calls/reads retain exactly one
   canonical existing row. Token material never appears in any column.
+  *(Amended 2026-09-21, decision 36: two call rows gain `detail.approvalId` — the
+  `tools/call` row refused with `-32003`, and the `tools/call` row **dispatched under a
+  claimed approval** (§7 step 1's CAS claim), each carrying the id of the `approval` row
+  (§5) it opened or consumed, **merged** with whatever detail the outcome already owes: a
+  `-32000` after a claim carries both `failureClass` and `approvalId`. Until now only the
+  four `approval.*` rows carried the id and nothing tied a call to the approval it waited
+  on, which is the one thing §13's explorer needs to draw "asked → you approved → ran" as a
+  single row. Three things this is **not**. It is not a hygiene exception: an approval id is
+  not token material — four rows of this same table already record it and `/approvals/<id>`
+  is owner-gated (§13) — so the bullet above stands unqualified. It is not a wire change:
+  §7's `-32003` already hands the caller `{ approvalId, approvalUrl, expiresAt }` in its
+  `data`, and a dispatch under a claimed approval stays byte-identical to one that never
+  needed an approval, so §7's indistinguishability rules are untouched — the field is a
+  ledger fact and only that. And it is not the beginning of a refusal *reason*: **no
+  `reason` is recorded for `-32001`**, whose three sources (not permitted, unknown, no sound
+  redaction map — §7) stay as indistinguishable in the ledger as they are on the wire, so
+  the trail can never be read as the oracle the refusal deliberately withholds. Whether
+  `outcome` should split into a mechanism and a reason is left open, deliberately.)*
 - Audit bodies: a `tools/call` row carries the call's bodies when the app's
   `log_bodies` flag is on AND the call was actually dispatched. Refusal rows
   (`-32000`/`-32001`/`-32002`/`-32003`) never carry bodies — several refusals happen
@@ -84,6 +102,14 @@
   window — a quietly abused token must be noticed within it. The coarse
   `last_used_at` on tokens (§5) carries the rotation/staleness question past the
   window.
+  *(Amended 2026-09-21, decision 36: three **read-side** constants join the two knobs in
+  `limits.ts` — `AUDIT_EXPLORER_ROWS` **5,000**, the most body-less rows §13's explorer
+  loads for one window; `AUDIT_EXPLORER_PAGE` **1,000**, one request's worth of them; and
+  `AUDIT_ARGS_HEAD_CHARS` **160**, the length of the `argsHead` preview a body-less read
+  returns in place of the arguments column. All three bound a **read**, never the table:
+  retention stays the only bound on what the ledger holds and on body exposure, and the
+  JSONL export stays unbounded — which is why the explorer, on reaching the ceiling, points
+  at the export rather than loading more.)*
 
 - Hub structured failures (§23) always name a bounded cause and say whether it is
   transient and whether an operation may have run. Only proven pre-launch container

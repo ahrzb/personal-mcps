@@ -34,6 +34,16 @@ export type Transient = {
   created?: { slug: string; name: string; token?: string | null };
   /** §13's connecting screen, mid-flow. */
   connecting?: { slug: string; name: string; authorizeUrl: string };
+  /**
+   * What the audit record's **Search this record…** box holds.
+   *
+   * A fifth arm, and it earns one the same way the four above do: it is typed into a box, so no
+   * resource returns it, and it is NOT in the URL — the record search filters what is drawn
+   * inside one open record rather than what the page selected, and putting it in the query
+   * string would make it survive closing the drawer. Without this the gallery cannot show the
+   * one state where a search opens a collapsed subtree.
+   */
+  recordSearch?: string;
 };
 
 const TransientContext = createContext<Transient>({});

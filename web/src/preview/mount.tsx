@@ -95,7 +95,7 @@ function mount(target: HTMLElement, name: PreviewName, state: string, seed: Seed
 
   createRoot(target).render(
     <StrictMode>
-      <AppEnvProvider value={{ api: refusingClient(name, state), bootstrap: BOOTSTRAP }}>
+      <AppEnvProvider value={{ api: refusingClient(name, state, seed.hanging ?? []), bootstrap: BOOTSTRAP }}>
         <QueryClientProvider client={client}>
           <TransientProvider value={seed.transient ?? {}}>
             <RouterProvider router={router} />
@@ -137,11 +137,17 @@ const BOOTSTRAP = {
  * An API client that answers nothing. A gallery render is a function of its seed, so a call
  * that escapes it is a seed that is incomplete — and a throw says so, where a stub that
  * resolved `{}` would quietly render an empty screen and be mistaken for a state.
+ *
+ * `hanging` is the deliberate exception: a path the seed named stays IN FLIGHT forever, which is
+ * the only way to hold a component in its loading state. Unseeded and hanging are therefore two
+ * different answers — an incomplete seed still fails loudly.
  */
-function refusingClient(name: string, state: string): ApiClient {
-  const refuse = <T,>(path: string): Promise<T> =>
-    Promise.reject(new Error(`preview ${name}/${state}: unseeded request to ${path}`));
-  return { get: refuse, post: refuse, put: refuse };
+function refusingClient(name: string, state: string, hanging: string[]): ApiClient {
+  const answer = <T,>(path: string): Promise<T> =>
+    hanging.some((prefix) => path.startsWith(prefix))
+      ? new Promise<T>(() => undefined)
+      : Promise.reject(new Error(`preview ${name}/${state}: unseeded request to ${path}`));
+  return { get: answer, post: answer, put: answer };
 }
 
 /** A seeded failure as the client's own error type, so a pane's `instanceof ApiError` test

@@ -200,3 +200,1285 @@
     pointer-events: auto;
   }
 }
+
+
+/* ============================================================== /audit ====
+   The explorer's own rules.
+
+   A TRANSLITERATION of `design/concepts/AuditDemo.html`'s `<style>` block, which is the
+   visual contract for this page (§13 decision 36) — copied rather than re-derived from a
+   description, for the reason
+   `docs/superpowers/postmortems/2026-09-16-agent-page-layout-not-the-board.md` records: the
+   agent page was once built from prose about a board and came out a different page.
+
+   Two mechanical changes, and nothing else:
+     - every value the shared sheet already names is the TOKEN, not the literal. The demo's
+       `:root` was a standalone copy of `styles.css:9-95`, and a second palette here is what
+       this file's own header forbids; the five outcome colours and four fills below are the
+       values that have no shared name, and they sit on `.audit` rather than on `:root`.
+     - every class is prefixed `a-`, which is what lets the rules below carry no ancestor
+       selector at all. `.rail`, `.filters`, `.more`, `.strip` and `.scrim` all exist in the
+       shared sheet with other meanings — and `.scrim` is `display: none` above 768px, which
+       would have hidden this page's drawer backdrop outright. The prefix also survives the
+       PORTAL: the record drawer and the Filters level render outside `.audit`, so a scoped
+       rule would have had to be written twice.
+
+   These rules are here and not in `server/src/pages/styles.css` because that sheet is shared
+   with the server-rendered pages and `/audit` is no longer one of them. */
+
+/* The page, the drawer and the level: three roots, one palette, because the last two are
+   portalled out of the first and custom properties inherit through the DOM, not the JSX. */
+.audit,
+.audit-drawer,
+.audit-level {
+  /* The five outcome colours. Not `styles.css` tokens because no other surface has five
+     states to distinguish; if a second one ever does, these move there. Their names are
+     always printed beside them — the legend, every chip, the record head — so no state on
+     this page is ever carried by colour alone. */
+  --o-ok: #d4d4d8;
+  --o-approval: #fab219;
+  --o-archived: #8a5a00;
+  --o-denied: #e5484d;
+  --o-error: #7f1d1d;
+  /* Two fills a bar is drawn in: behind a facet row, and behind a top-N row one step
+     quieter. Between `--muted` and `--border` on purpose — a bar has to read under mono text
+     without becoming a block. */
+  --a-bar: #ececee;
+  --a-bar-soft: #f0f0f1;
+  /* A search hit inside the record's trees. */
+  --a-hit: #fef08a;
+  /* A number leaf in a JSON tree — the one place this page colours a value by its type. */
+  --a-num: #1d4ed8;
+  /* The hatch that means "not loaded": an hour the ceiling cut off, which must never read as
+     an hour in which nothing happened. */
+  --a-hatch: repeating-linear-gradient(45deg, var(--dim-fg) 0 2px, var(--sunken) 2px 4px);
+}
+
+/* The workspace shape's 24px gutters stand; its cards sit 12px apart as the demo draws them,
+   not the 24 the shape gives free-standing cards — this page is one instrument, not a stack
+   of unrelated panels. */
+.audit {
+  gap: var(--space-6);
+  padding-top: var(--space-9);
+}
+
+/* Two rows of title with the actions beside them, as a grid so the phone can re-area the
+   same markup rather than reorder it in JSX. */
+.a-head {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-areas: "ttl exp seg" "sub exp seg";
+  align-items: center;
+  column-gap: var(--space-6);
+}
+.a-ttl { grid-area: ttl; }
+.a-sub { grid-area: sub; }
+.a-exp { grid-area: exp; }
+.a-views { grid-area: seg; }
+
+/* A non-call event is titled by its event name; what it was about rides beside it, dim. */
+.a-sub2 {
+  color: var(--muted-fg);
+  font-weight: 400;
+}
+
+.a-skel {
+  background: linear-gradient(90deg, var(--muted), var(--a-bar), var(--muted));
+  border-radius: var(--radius-sm);
+  height: 12px;
+}
+
+/* A 24px control inside a dense row — the strip's presets and Whole window. */
+.btn--mini {
+  height: var(--control-h-xs);
+  padding: 0 var(--space-4);
+  font-size: var(--text-2xs);
+  box-shadow: none;
+}
+
+.a-sw {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+  flex: none;
+}
+.a-sw--ok { background: var(--o-ok); }
+.a-sw--approval { background: var(--o-approval); }
+.a-sw--archived { background: var(--o-archived); }
+.a-sw--denied { background: var(--o-denied); }
+.a-sw--error { background: var(--o-error); }
+.a-sw--nl { background: var(--a-hatch); }
+
+/* ---------------------------------------------------------- the filter bar ---- */
+
+.a-fbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.a-fchip {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-xs);
+  border-radius: 7px;
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow: hidden;
+}
+.a-fchip-k {
+  padding: 0 var(--space-2) 0 var(--space-5);
+  color: var(--muted-fg);
+}
+.a-fchip-v { padding-right: var(--space-2); }
+.a-fchip button {
+  border: 0;
+  background: none;
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
+  color: var(--ring);
+  padding: 0;
+  cursor: pointer;
+}
+.a-fchip button:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
+.a-search {
+  display: flex;
+  align-items: center;
+  height: var(--control-h-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 var(--space-5);
+  gap: var(--space-3);
+  min-width: 260px;
+}
+/* The shared sheet styles text controls BY TYPE and this input carries no `type`, so without
+   these lines it renders as the user agent's own field inside a styled box. */
+.a-search input {
+  border: 0;
+  outline: 0;
+  font: inherit;
+  font-size: var(--text-sm);
+  flex: 1;
+  min-width: 0;
+  background: none;
+  height: auto;
+  padding: 0;
+  box-shadow: none;
+}
+
+.a-filtersbtn { display: none; }
+
+/* ---------------------------------------------------------- the lane strip ---- */
+
+.a-strip {
+  padding: var(--space-6) var(--space-7);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.a-striphead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+.a-striprange {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+.a-presets {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+.a-stripend { margin-left: auto; }
+
+/* `--gut` is the lane-name column, and the brush is positioned against it: the cells start
+   where the names end, so a percentage of the strip is not a percentage of the window. The
+   phone sets it to 0, names sitting above their cells. */
+.a-lanes {
+  --gut: 114px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  position: relative;
+  cursor: crosshair;
+  user-select: none;
+}
+.a-lane {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+.a-lane-nm {
+  width: 104px;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.a-cells {
+  flex: 1;
+  display: flex;
+  gap: 1px;
+  height: 16px;
+  min-width: 0;
+}
+.a-c {
+  flex: 1;
+  border-radius: 1px;
+  background: var(--muted);
+}
+.a-c--ok { background: var(--o-ok); }
+.a-c--approval { background: var(--o-approval); }
+.a-c--archived { background: var(--o-archived); }
+.a-c--denied { background: var(--o-denied); }
+.a-c--error { background: var(--o-error); }
+.a-c--nl { background: var(--a-hatch); }
+
+.a-brush {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  background: rgba(24, 24, 27, 0.07);
+  border-left: 2px solid var(--primary);
+  border-right: 2px solid var(--primary);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.a-axis {
+  display: flex;
+  margin-left: 114px;
+  font-size: var(--text-2xs);
+  color: var(--muted-fg);
+}
+.a-axis button {
+  flex: 1;
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  text-align: left;
+  font-size: var(--text-2xs);
+  color: var(--muted-fg);
+  border-radius: var(--space-2);
+  font-family: inherit;
+  cursor: pointer;
+}
+.a-axis button:hover {
+  background: var(--muted);
+  color: var(--fg);
+}
+.a-axis button[aria-pressed="true"] {
+  background: var(--muted);
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.a-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  font-size: var(--text-2xs);
+  color: var(--muted-fg);
+}
+.a-legend-i {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.a-legend-lbl {
+  font-weight: 500;
+  color: var(--fg-subtle);
+}
+.a-legend-code {
+  font-family: var(--font-mono);
+  color: var(--ring);
+}
+
+.a-ceiling {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border: 1px solid var(--warning-border);
+  background: var(--warning-bg);
+  border-radius: var(--radius);
+  font-size: var(--text-xs);
+  color: var(--warning);
+}
+
+/* ------------------------------------------------------- rail beside pane ---- */
+
+.a-body {
+  display: flex;
+  gap: var(--space-6);
+  align-items: flex-start;
+}
+
+/* Sticky, because the rail is how the reader narrows a long list and scrolling the list must
+   not take the controls off screen. */
+.a-rail {
+  width: var(--rail-w);
+  flex: none;
+  position: sticky;
+  top: var(--space-6);
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  padding: var(--space-5) var(--space-4);
+}
+.a-rail-title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  margin: 0 0 2px;
+  padding: 0 5px;
+}
+.a-fgroup { margin: var(--space-5) 0 0; }
+.a-fgroup .eyebrow {
+  display: block;
+  margin: 0 0 3px;
+  padding: 0 5px;
+}
+.a-railnote { padding: 0 5px; }
+
+.a-frow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: var(--control-h-xs);
+  padding: 0 5px;
+  border-radius: 5px;
+  font-size: var(--text-xs);
+  position: relative;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+/* Scoped rather than bare, and that is load-bearing: `.a-frow span` below gives every label a
+   stacking position, and a bare `.a-bar` would LOSE to it on specificity — the bar would join
+   the flex flow, push every label to the right and paint nothing. */
+.a-frow .a-bar,
+.a-topn .a-bar {
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  background: var(--a-bar);
+  border-radius: var(--space-2);
+}
+/* Every label sits above the bar: the bar is absolute inside the row, so a span without a
+   stacking position of its own would be painted under it. */
+.a-frow span { position: relative; }
+.a-nm {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.a-ct {
+  margin-left: auto;
+  color: var(--muted-fg);
+  font-size: var(--text-2xs);
+  padding-left: var(--space-3);
+}
+.a-frow:hover { box-shadow: inset 0 0 0 1px var(--border); }
+.a-frow[aria-pressed="true"] {
+  background: var(--border);
+  font-weight: 600;
+}
+
+.a-showall {
+  border: 0;
+  background: none;
+  padding: 0 5px;
+  height: var(--control-h-xs);
+  font-size: var(--text-2xs);
+  color: var(--muted-fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  width: 100%;
+  text-align: left;
+  border-radius: 5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.a-showall:hover { color: var(--fg); }
+
+.a-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* ------------------------------------------------------------ the summary ---- */
+
+.a-grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-6);
+}
+.a-grid2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: var(--space-6);
+}
+.a-pad {
+  padding: var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+.a-stat-v {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+.a-stat-v--bad { color: var(--danger-fg); }
+.a-stat-l {
+  font-size: var(--text-xs);
+  color: var(--muted-fg);
+}
+
+.a-look {
+  border: 1px solid var(--warning-border);
+  background: var(--warning-bg);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6) var(--space-7);
+}
+.a-look .eyebrow {
+  display: block;
+  color: var(--warning);
+  margin: 0 0 var(--space-2);
+}
+.a-look ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.a-look li {
+  font-size: var(--text-sm);
+  line-height: 1.75;
+}
+.a-look button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.a-topn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.a-topn button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--control-h-xs);
+  font-size: var(--text-xs);
+  position: relative;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  width: 100%;
+  text-align: left;
+  border-radius: 5px;
+  padding: 0 5px;
+  cursor: pointer;
+}
+.a-topn button:hover { box-shadow: inset 0 0 0 1px var(--border); }
+.a-topn .a-bar {
+  top: 1px;
+  bottom: 1px;
+  /* One step quieter than the rail's: three of these panels sit side by side, and the rail's
+     fill at that repetition reads as a shaded block rather than as three charts. */
+  background: var(--a-bar-soft);
+}
+.a-topn span { position: relative; }
+.a-topn .a-n {
+  margin-left: auto;
+  color: var(--muted-fg);
+  font-variant-numeric: tabular-nums;
+  padding-left: var(--space-3);
+}
+
+.a-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.a-changes .a-frow {
+  height: auto;
+  padding: 3px 5px;
+}
+
+.a-foot {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-6);
+  display: flex;
+  gap: var(--space-5);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.a-foot .btn { margin-left: auto; }
+
+/* ---------------------------------------- the events table — dense, 6 / 16 ---- */
+
+.a-etab {
+  width: 100%;
+  border-collapse: collapse;
+}
+.a-etab th {
+  text-align: left;
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-fg);
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--border);
+}
+.a-etab td {
+  padding: var(--space-3) var(--space-8);
+  border-bottom: 1px solid var(--row-border);
+  font-size: var(--text-sm);
+  vertical-align: top;
+}
+/* The two fixed columns never wrap: an un-chained row is then one line and the table reads as
+   the dense 32px tier rather than as a mix of 32 and 48. */
+.a-etab td.a-when,
+.a-etab td.a-who { white-space: nowrap; }
+.a-th-when { width: 152px; }
+.a-th-who { width: 128px; }
+.a-th-out { width: 128px; }
+/* The whole row is the control, with no script and no click handler on the row: the title
+   button's `::after` covers it, which is `styles.css`'s `.row-link` grammar for the apps and
+   agents lists. `position: relative` on a `<tr>` is what the covering box is measured against. */
+.a-ev {
+  position: relative;
+  cursor: pointer;
+}
+.a-rowlink {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.a-rowlink::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+/* The focus ring has to be the ROW's, not the title's: the button is the row, so a ring around
+   four words in the middle of it would point at the wrong thing. */
+.a-rowlink:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.a-rowlink:focus-visible::after {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+.a-ev:hover { background: var(--sunken); }
+.a-ev--sel { background: var(--muted); }
+.a-tmono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.a-title { font-weight: 600; }
+.a-dim { color: var(--muted-fg); }
+/* An identifier has no spaces to break at, and a 300-character tool name in an auto-layout
+   table sets the table's own width — which is a page-wide horizontal scrollbar, not a long
+   cell. `anywhere` rather than `break-word` because only `anywhere` also shrinks the cell's
+   MIN-CONTENT width, which is what the table measures. */
+.a-etab td.a-what,
+.a-rowline .a-tmono { overflow-wrap: anywhere; }
+
+.a-chain {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  font-size: var(--text-2xs);
+  color: var(--muted-fg);
+  margin-top: 2px;
+}
+.a-chain b {
+  font-weight: 500;
+  color: var(--fg);
+}
+.a-chain-arrow { color: var(--ring); }
+.a-rowline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.a-prev {
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.a-more {
+  padding: var(--space-5) var(--space-7);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+/* ----------------------------------------------------------- the sessions ---- */
+
+.a-listhead {
+  padding: var(--space-6) var(--space-7);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+}
+.a-listhead b { font-weight: 600; }
+
+.a-sess { border-bottom: 1px solid var(--row-border); }
+.a-shead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-7);
+  cursor: pointer;
+  min-height: var(--control-h-sm);
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+}
+.a-shead:hover { background: var(--sunken); }
+.a-sess--open .a-shead { background: var(--muted); }
+.a-who {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+.a-meta {
+  color: var(--muted-fg);
+  font-size: var(--text-xs);
+}
+.a-counts {
+  margin-left: auto;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.a-wf {
+  padding: var(--space-4) var(--space-7) var(--space-7);
+  background: var(--sunken);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.a-wfr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  font-size: var(--text-xs);
+  min-height: var(--control-h-xs);
+  border-radius: 5px;
+  padding: 0 var(--space-2);
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font-family: inherit;
+}
+button.a-wfr { cursor: pointer; }
+button.a-wfr:hover {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.a-wft {
+  width: 52px;
+  color: var(--muted-fg);
+  font-family: var(--font-mono);
+  flex: none;
+}
+.a-wflbl {
+  width: 230px;
+  flex: none;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.a-wftrack {
+  flex: 1;
+  height: 12px;
+  position: relative;
+  min-width: 40px;
+}
+.a-wfbar {
+  position: absolute;
+  top: 1px;
+  height: 10px;
+  min-width: 3px;
+  border-radius: 3px;
+  background: var(--o-ok);
+}
+.a-wfbar--approval { background: var(--o-approval); }
+.a-wfbar--denied { background: var(--o-denied); }
+.a-wfbar--archived { background: var(--o-archived); }
+.a-wfbar--error { background: var(--o-error); }
+/* A folded run has no single duration to draw, so its band is a hatch across the span it
+   covered rather than a solid bar that would claim one. */
+.a-wfbar--fold {
+  background: repeating-linear-gradient(90deg, var(--border) 0 5px, transparent 5px 9px);
+}
+.a-wfrt {
+  width: 190px;
+  flex: none;
+  text-align: right;
+  color: var(--muted-fg);
+  font-size: var(--text-2xs);
+}
+.a-wffold {
+  color: var(--muted-fg);
+  font-style: italic;
+}
+.a-wfr--keep .a-wflbl { font-weight: 600; }
+
+/* ------------------------------------------------------------- the record ---- */
+
+/* Not `.scrim`: the shared sheet's `.scrim` is the narrow shell's drawer backdrop and is
+   `display: none` above 768px, which would leave this page's drawer without one. */
+.audit-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 9, 11, 0.18);
+  z-index: 40;
+}
+
+.audit-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(620px, 100vw);
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.12);
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+}
+
+.a-dhead,
+.a-lhead {
+  padding: var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+.a-dtitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+.a-dtime { white-space: nowrap; }
+.a-dback {
+  display: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+  color: var(--muted-fg);
+  align-items: center;
+  font-family: inherit;
+  cursor: pointer;
+}
+.a-dclose { margin-left: auto; }
+.a-dbody {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-7) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+.a-actions {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.a-ftab {
+  border-collapse: collapse;
+  width: 100%;
+}
+.a-ftab td {
+  padding: 2px var(--space-4) 2px 0;
+  font-size: var(--text-xs);
+  line-height: 20px;
+  border: 0;
+}
+.a-ftab-k {
+  color: var(--muted-fg);
+  width: 1%;
+  white-space: nowrap;
+  padding-right: var(--space-7);
+}
+.a-ftab-v {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+.a-ftab-v button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.a-tree {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 19px;
+}
+.a-tn {
+  display: flex;
+  gap: var(--space-3);
+  padding-left: var(--ind, 0px);
+}
+/* A recorded value is the app's text and can be any length — a 220-character string in a flex
+   row that cannot wrap pushes the whole tree past the drawer. `anywhere` because the value has
+   no spaces to break at; the toggle is `flex: none` and is untouched. */
+.a-tn > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.a-tog {
+  border: 0;
+  background: none;
+  padding: 0;
+  width: 12px;
+  color: var(--ring);
+  text-align: left;
+  flex: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.a-tkey { color: var(--muted-fg); }
+.a-tnum { color: var(--a-num); }
+.a-stub {
+  background: var(--muted);
+  border-radius: var(--space-2);
+  padding: 0 var(--space-2);
+  color: var(--fg-subtle);
+}
+.a-hit {
+  background: var(--a-hit);
+  border-radius: 2px;
+}
+.a-tcount { color: var(--ring); }
+
+.a-tl {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.a-tl button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--control-h-xs);
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  border-radius: 5px;
+  padding: 0 5px;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.a-tl button:hover { box-shadow: inset 0 0 0 1px var(--border); }
+.a-tl-t {
+  font-family: var(--font-mono);
+  color: var(--muted-fg);
+  width: 52px;
+  flex: none;
+}
+.a-tl-e { font-family: var(--font-mono); }
+.a-tl-r {
+  margin-left: auto;
+  color: var(--muted-fg);
+  padding-left: var(--space-4);
+}
+.a-tl--now { font-weight: 600; }
+
+/* The drawer's own search box has no minimum: it is the width of the drawer, not of a filter
+   bar that also has to hold chips. */
+.a-dbody .a-search { min-width: 0; }
+
+/* The Filters level — a full screen over the page, narrow only. */
+.audit-level {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+}
+.a-lbody {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-4) var(--space-4) var(--space-6);
+}
+.a-lfoot {
+  position: sticky;
+  bottom: 0;
+  padding: var(--space-6) var(--space-8);
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+}
+.a-lfoot .btn {
+  height: var(--control-h-touch);
+  flex: 1;
+  justify-content: center;
+  font-size: var(--text-base);
+}
+.a-lhead .a-lclear { margin-left: auto; }
+
+/* ── regular (768–1023): the rail above the main pane, a wrapping row of groups ──────── */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .a-body { flex-direction: column; }
+  .a-rail {
+    width: 100%;
+    position: static;
+    max-height: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 var(--space-10);
+    padding: var(--space-6) var(--space-7);
+  }
+  .a-rail-title,
+  .a-rail > .a-railnote { width: 100%; }
+  .a-rail .a-fgroup {
+    flex: 1 1 180px;
+    min-width: 180px;
+  }
+  .a-grid3,
+  .a-grid2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+
+/* ── the phone (< 768px) ───────────────────────────────────────────────────────────────
+   `design/concepts/AuditDemo.html`'s narrow block and `design/MobileAudit.dc.html`, rule for
+   rule. The demo prefixes every rule with `body ` so a board capture can re-scope the block
+   to one 390px frame; here that prefix is gone and nothing else is.
+
+   What this tier is FOR: the first event, session or summary line has to be ON SCREEN. A
+   phone that spends its first screen on chrome has answered nothing — so the header is a
+   two-column grid rather than a stack, the window text and the three presets share one row,
+   the lanes run at a ~25px pitch with each name directly above its cells, and Filters and the
+   search share one row. */
+@media (max-width: 767px) {
+  .audit {
+    padding-top: var(--space-5);
+    gap: var(--space-3);
+  }
+  .a-head {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "ttl exp" "sub sub" "seg seg";
+    row-gap: var(--space-2);
+  }
+  .a-head .a-exp {
+    height: var(--control-h-touch);
+    font-size: var(--text-base);
+    padding: 0 var(--space-7);
+  }
+  .a-views {
+    display: flex;
+    margin-top: 2px;
+  }
+  .a-views > * {
+    flex: 1;
+    height: var(--control-h-touch);
+    font-size: var(--text-base);
+  }
+
+  .a-strip {
+    padding: var(--space-4) var(--space-6);
+    gap: var(--space-2);
+  }
+  .a-striphead {
+    flex-wrap: wrap;
+    gap: var(--space-3) var(--space-4);
+    font-size: var(--text-xs);
+  }
+  .a-striprange {
+    font-size: var(--text-xs);
+    white-space: nowrap;
+  }
+  /* The presets pull right onto the window text's own row; `flex: 0 0 auto` keeps them their
+     own width rather than stretching to fill it. */
+  .a-presets {
+    margin-left: auto;
+    flex: 0 0 auto;
+    gap: var(--space-2);
+  }
+  .a-presets .btn {
+    height: var(--control-h-touch);
+    padding: 0 11px;
+    font-size: var(--text-xs);
+  }
+  /* No drag on touch — a drag is a scroll here, so the presets and the axis are the controls,
+     and the brush goes with it: there is nothing left to draw one from. */
+  .a-lanes {
+    --gut: 0px;
+    cursor: default;
+    gap: 2px;
+  }
+  .a-lane {
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  .a-lane-nm {
+    width: 100%;
+    flex: 1 1 100%;
+    line-height: 13px;
+  }
+  .a-cells {
+    flex: 1 1 100%;
+    height: 10px;
+    gap: 0;
+  }
+  .a-brush { display: none; }
+  .a-axis {
+    margin-left: 0;
+    gap: 2px;
+  }
+  .a-axis button {
+    min-height: var(--control-h-touch);
+    text-align: center;
+  }
+  .a-legend {
+    gap: var(--space-2) var(--space-5);
+    line-height: 16px;
+  }
+
+  .a-body { flex-direction: column; }
+  .a-rail { display: none; }
+  .a-fbar { gap: var(--space-4); }
+  .a-filtersbtn {
+    display: flex;
+    height: var(--control-h-touch);
+    justify-content: center;
+    font-size: var(--text-base);
+    flex: 0 0 auto;
+    padding: 0 var(--space-7);
+  }
+  .a-fbar .a-search {
+    height: var(--control-h-touch);
+    min-width: 0;
+    flex: 1 1 120px;
+  }
+  .a-fchip {
+    height: var(--control-h-touch);
+    border-radius: 9px;
+  }
+  .a-fchip button {
+    width: var(--control-h-touch);
+    height: var(--control-h-touch);
+  }
+  .a-fbar > .btn { height: var(--control-h-touch); }
+
+  .a-grid3,
+  .a-grid2 { grid-template-columns: minmax(0, 1fr); }
+  .a-topn button { height: var(--control-h-touch); }
+  .a-look li { line-height: 1.9; }
+
+  /* Event rows become two-line cards: time · principal · outcome on one line, the mono title
+     and the chain line under it. The preview goes — a third line of arguments at 375px is a
+     wrapped fragment nobody reads. */
+  .a-etab thead { display: none; }
+  .a-etab tr.a-ev {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3) var(--space-4);
+    padding: var(--space-5) var(--space-7);
+    border-bottom: 1px solid var(--row-border);
+  }
+  .a-etab td {
+    display: block;
+    border: 0;
+    padding: 0;
+  }
+  .a-etab td.a-when { order: 1; }
+  .a-etab td.a-who { order: 2; }
+  .a-etab td.a-out {
+    order: 3;
+    margin-left: auto;
+  }
+  .a-etab td.a-what {
+    order: 4;
+    flex: 0 0 100%;
+  }
+  .a-etab td.a-what .a-prev { display: none; }
+  .a-more .btn {
+    height: var(--control-h-touch);
+    flex: 1;
+    justify-content: center;
+  }
+
+  .a-shead {
+    flex-wrap: wrap;
+    padding: var(--space-5) var(--space-7);
+    min-height: var(--control-h-touch);
+  }
+  .a-counts {
+    margin-left: 0;
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+  .a-shead .a-meta { flex: 1 1 100%; }
+  /* Each label above its own bar, so a 230px mono name does not squeeze the track to nothing. */
+  .a-wfr {
+    flex-wrap: wrap;
+    gap: 2px var(--space-5);
+    padding: var(--space-3) var(--space-2);
+  }
+  .a-wflbl {
+    width: auto;
+    flex: 1 1 auto;
+    order: 2;
+  }
+  .a-wft { order: 1; }
+  .a-wfrt {
+    order: 3;
+    width: auto;
+    margin-left: auto;
+    text-align: right;
+  }
+  .a-wftrack {
+    order: 4;
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  /* The record is a full-screen level, not a drawer: a 620px panel over a 375px page IS the
+     page, so it may as well say so and take the level header. */
+  .audit-drawer {
+    width: 100vw;
+    left: 0;
+    border-left: 0;
+    box-shadow: none;
+  }
+  .audit-scrim { display: none; }
+  .a-dhead,
+  .a-lhead {
+    flex-wrap: wrap;
+    padding: var(--space-2) var(--space-8) var(--space-5);
+    row-gap: 2px;
+  }
+  /* `‹ Audit` takes its own 44px line above the title, which is what makes the level read as
+     a level rather than as a drawer with a back button wedged into its header. */
+  .a-dback {
+    display: inline-flex;
+    flex: 1 1 100%;
+    height: var(--control-h-touch);
+  }
+  .a-dtitle {
+    white-space: normal;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    flex: 0 1 auto;
+  }
+  .a-dbody { padding: var(--space-6) var(--space-8); }
+  .a-tl button { min-height: var(--control-h-touch); }
+
+  /* One grid row per field: a fixed key column, the value beside it, both centred, and a
+     hairline under EVERY row — not under some. A `<table>` cannot be asked for that, so the
+     table parts become blocks and the row becomes the grid. */
+  .a-ftab,
+  .a-ftab tbody { display: block; }
+  .a-ftab tr {
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr);
+    align-items: center;
+    min-height: var(--control-h-touch);
+    border-bottom: 1px solid var(--row-border);
+  }
+  .a-ftab td {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    padding: 5px 0;
+    line-height: 18px;
+    align-self: stretch;
+  }
+  .a-ftab-k {
+    width: auto;
+    padding-right: var(--space-5);
+  }
+  /* The value button fills its row, so the tap target is the row and not the text. */
+  .a-ftab-v button {
+    align-self: stretch;
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+  }
+
+  .audit-level .a-frow {
+    height: var(--control-h-touch);
+    font-size: var(--text-sm);
+  }
+  .audit-level .a-showall {
+    height: var(--control-h-touch);
+    font-size: var(--text-xs);
+  }
+}

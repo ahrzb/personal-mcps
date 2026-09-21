@@ -326,6 +326,64 @@ export type AuditRow = {
   detail?: Record<string, unknown>;
 };
 
+/**
+ * A whole body the ledger declined to store, replaced by its size and kind (§15's cap).
+ * `bytes` is what the ORIGINAL weighed, never what was stored, and no surface prints it:
+ * `derive.stubLabel` spells it `‹blob image/png · 4.2 MB›` / `‹oversize · 20 KB›`.
+ */
+export type BodyStub = {
+  /** `blob` — one unstructured content block; `oversize` — the whole body was over the cap. */
+  stub: "blob" | "oversize";
+  /** Blob stubs only, and absent where the block declared none. */
+  contentType?: string;
+  bytes: number;
+};
+
+/** A recorded body as a surface receives it: the masked JSON object, or one whole-body stub
+ *  where the body itself was replaced. A COPY of `pages/model.ts`'s `RecordedBody`. */
+export type RecordedBody = Record<string, unknown> | BodyStub;
+
+/**
+ * Why a call row carries no bodies — the server's own three-way answer (`pages/model.ts`'s
+ * `noBodiesReason`), computed there and never re-derived here: `refused` is decided first,
+ * because a refusal never had bodies whatever the app's setting, then `off` (the app's
+ * `log_bodies` is off NOW) and `unrecorded` (recorded before logging was on, or the app is
+ * gone). The three sentences that go with these names are `features/audit/derive.ts`'s
+ * `NO_BODIES_SENTENCE`.
+ */
+export type NoBodiesReason = "off" | "refused" | "unrecorded";
+
+/**
+ * One row of the explorer's window read — `audit.ts`'s `AuditSlimRow` minus the namespace id,
+ * plus `noBodies`: the whole row EXCEPT its two body columns, which the explorer must never
+ * ask for (§2: it reads thousands of rows and a body is up to `AUDIT_BODY_CAP_BYTES` each, so
+ * the projection happens in SQL and the Worker never parses one to throw it away).
+ *
+ * The two replacements are what a listing actually draws. A row "has bodies" exactly when
+ * `argsHead !== undefined || hasResult`, which is the test the server applies before it sets
+ * `noBodies` — so a client that recomputed it would be a second opinion about the same fact.
+ */
+export type AuditWindowRow = Omit<AuditRow, "ownerId" | "args" | "result"> & {
+  /** The first `AUDIT_ARGS_HEAD_CHARS` characters of the STORED args JSON (already masked,
+   *  possibly an oversize stub's own JSON), for the one-line preview. Absent when the row
+   *  recorded no args. */
+  argsHead?: string;
+  /** Whether a result column exists, without shipping it. */
+  hasResult: boolean;
+  noBodies?: NoBodiesReason;
+};
+
+/**
+ * One row as the RECORD drawer reads it — `pages/model.ts`'s `AuditEventRow`, the full row
+ * with its bodies typed for what they can hold. The drawer's field table is drawn from the
+ * slim row it already has; this arrives afterwards, for the body sections alone.
+ */
+export type AuditEventRow = Omit<AuditRow, "ownerId" | "args" | "result"> & {
+  args?: RecordedBody;
+  result?: RecordedBody;
+  noBodies?: NoBodiesReason;
+};
+
 /* ------------------------------ the responses ----------------------------- */
 
 export type AppsResponse = { apps: AppRow[] };
@@ -382,6 +440,30 @@ export type AuditResponse = {
   };
   page: { rows: AuditRow[]; total: number };
 };
+
+/**
+ * `/api/hub/audit/window`'s answer: one page of SLIM rows, newest first, plus everything the
+ * page would otherwise have to compute a second time.
+ *
+ * `since` and `until` are the window the SERVER resolved and echoes, so the client never
+ * computes "now" twice — the whole retention window ending now, unless the request named
+ * one. `total` is the match count and `ceiling` is `AUDIT_EXPLORER_ROWS`: the over-ceiling
+ * notice is a template over those two numbers and carries no literal of the constant itself.
+ */
+export type AuditWindowResponse = {
+  rows: AuditWindowRow[];
+  total: number;
+  since: number;
+  until: number;
+  /** §15's retention, in days — the subtitle's "kept for N days" and the strip's widest preset. */
+  retentionDays: number;
+  ceiling: number;
+};
+
+/** `/api/hub/audit/<id>`'s answer: the one full row. A 404 means the id is not in the
+ *  caller's namespace — unknown and foreign are deliberately indistinguishable. */
+export type AuditRecordResponse = { row: AuditEventRow };
+
 export type CatalogResponse = {
   family: CatalogFamily;
   items: ListedItem[];

@@ -52,12 +52,32 @@ export const APP_PANE_TABLE: readonly { pane: AppPane; label: string; group: str
  *  builds those entries from the grants it read. */
 export const AGENT_GROUP = "Agent";
 
+/** A search bag as a query string, or "" — the one spelling, so a hand-built `/audit?…` cannot
+ *  differ from what `router.tsx`'s codec would write and read back. */
+function query(search: Record<string, string | string[]>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(search)) {
+    if (Array.isArray(value)) for (const each of value) params.append(key, each);
+    else params.set(key, value);
+  }
+  const written = params.toString();
+  return written === "" ? "" : `?${written}`;
+}
+
 export const paths = {
   apps: "/apps",
   appNew: "/apps/new",
   agents: "/agents",
   agentNew: "/agents/new",
-  audit: "/audit",
+  /**
+   * The explorer, optionally carrying a selection. A FUNCTION rather than a bare string
+   * because every link to this page carries state now: the agent page's `?principal=`, the
+   * app page's `?app=`, a record's `?expand=` and the page's own `searchOf(selection)` are all
+   * this one path plus keys — and `/audit` itself is `paths.audit()`.
+   *
+   * Repeated keys ride as arrays, exactly as `router.tsx`'s `stringifySearch` writes them.
+   */
+  audit: (search: Record<string, string | string[]> = {}): string => `/audit${query(search)}`,
   approvals: "/approvals",
   settings: "/settings",
   /** The SSR sign-out target — a real form POST, because it is better-auth's own route and

@@ -23,7 +23,11 @@ import { approvalHistoryQuery, auditQuery, useOp } from "@/lib/queries";
 import { paths } from "@/lib/paths";
 import { formatLastSeen, formatUntil } from "@/lib/format";
 import { Skeleton } from "@/chrome/States";
-import type { ApprovalRow, AuditRow } from "@/lib/types";
+// The explorer's pure module owns §13's three no-bodies sentences: "no bodies" has three
+// causes, telling an owner the wrong one is worse than saying nothing, and two copies of the
+// three would eventually be two answers to one question.
+import { NO_BODIES_SENTENCE } from "@/features/audit/derive";
+import type { ApprovalRow, AuditRow, NoBodiesReason } from "@/lib/types";
 import { effectiveRolesOf, grantEntryOf, reachabilityFor, spelledOf } from "../door";
 import type { AgentPageData } from "../AgentFrame";
 import { Kv } from "./Kv";
@@ -58,14 +62,6 @@ const OUTCOME_WORD: Record<string, string> = {
 
 /** §15's four refusal outcomes — a refusal never had bodies, whatever the app's setting. */
 const REFUSAL_OUTCOMES = ["-32000", "-32001", "-32002", "-32003"];
-
-/** The audit page's own three sentences, not a fourth: "no bodies" has three causes and
- *  telling an owner the wrong one is worse than saying nothing (`pages/audit.tsx:258`). */
-const NO_BODIES_SENTENCE: Record<"off" | "refused" | "unrecorded", string> = {
-  off: "Call bodies aren't recorded for this app (body logging is off).",
-  refused: "Refused before the call was made, so there are no bodies to show.",
-  unrecorded: "No bodies were recorded for this call.",
-};
 
 /** `?calls=` as a page size: a positive multiple of `ACTIVITY_PAGE`, defaulting to one page.
  *  Anything else — a negative, a half-page, a word — is that default rather than a refusal:
@@ -113,7 +109,7 @@ export function ActivityPane({
 
   // Where this pane's window ends and the ledger's begins — named once, because the header
   // offers it and so does the foot of the walk.
-  const auditHref = `${paths.audit}?principal=agent:${agent}`;
+  const auditHref = paths.audit({ principal: `agent:${agent}` });
   const selected = selectionOf(sel, requests, rows);
 
   return (
@@ -426,7 +422,10 @@ function ActivityDetails({
           )}
           <p className="note">
             The same row the audit page shows.{" "}
-            <a href={`${paths.audit}?expand=${row.id}#event-${row.id}`}>Open in the audit trail</a>.
+            {/* The fragment names no element on the explorer and is inert rather than broken
+                (§13, 2026-09-21); it stays because the shape is a deep link somebody has
+                bookmarked, and `?expand=` is what opens the record. */}
+            <a href={`${paths.audit({ expand: String(row.id) })}#event-${row.id}`}>Open in the audit trail</a>.
           </p>
         </div>
       </div>
@@ -459,10 +458,7 @@ function ActivityDetails({
  * refusal check comes first for the reason §15 gives it: several refusals happen before any
  * redaction map exists, so no setting could have made bodies appear.
  */
-function noBodiesReason(
-  row: AuditRow,
-  apps: AgentPageData["byslug"],
-): "off" | "refused" | "unrecorded" | null {
+function noBodiesReason(row: AuditRow, apps: AgentPageData["byslug"]): NoBodiesReason | null {
   if (row.args !== undefined || row.result !== undefined) return null;
   if (REFUSAL_OUTCOMES.includes(row.outcome)) return "refused";
   return row.app !== undefined && apps.get(row.app)?.logBodies === false ? "off" : "unrecorded";

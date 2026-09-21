@@ -32,12 +32,26 @@ export type Seed = {
   /** Transient component state that no resource returns. See `./transient.ts` for why these
    *  four exist and nothing else does. */
   transient?: Transient;
+  /**
+   * API paths this state leaves IN FLIGHT — `/api/hub` prefixes the gallery's client answers
+   * with a promise that never settles, instead of the throw an unseeded path gets.
+   *
+   * The one way to show a LOADING state, and the reason it is a channel of its own rather than a
+   * missing seed: an unseeded read rejects, so the component would render its failure card, and
+   * a skeleton is a different screen from an error. `/audit`'s loading skeleton and its record
+   * skeleton are both this, and both are states §13 pins.
+   */
+  hanging?: string[];
 };
 
 /**
- * The six migrated pages, keyed exactly as `server/dev/preview.ts` keys them — so a state
+ * The seven migrated pages, keyed exactly as `server/dev/preview.ts` keys them — so a state
  * name in this gallery and a fixture name in that one are the same string, which is what
  * lets `visual-compare.mts` pair a screenshot with its baseline by filename.
+ *
+ * `audit` is the exception to "keyed as that one keys them": the server-rendered page it
+ * replaces had entirely different states, so its baselines are written from this gallery's
+ * own accepted render rather than inherited (§5, decision 36).
  */
 export const PREVIEW_PAGES = [
   "apps",
@@ -46,6 +60,7 @@ export const PREVIEW_PAGES = [
   "agents",
   "agent-detail",
   "agent-new",
+  "audit",
 ] as const;
 
 export type PreviewName = (typeof PREVIEW_PAGES)[number];

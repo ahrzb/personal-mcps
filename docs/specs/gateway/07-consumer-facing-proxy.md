@@ -187,8 +187,29 @@ either end of the wait — the row refused `-32003` at step 2 and the row dispat
 step 1's successful claim each record `detail.approvalId` (§15). That is a ledger join and
 not a wire change: the `-32003` already hands the caller `approvalId` in its `data`, a
 dispatch under a claimed approval stays byte-identical to one that needed no approval, and
-the `-32001` refusals this section makes indistinguishable gain no `reason` — the ledger
-never becomes the oracle a refusal withholds.)* Expiry is enforced **lazily**: every path
+~~the `-32001` refusals this section makes indistinguishable gain no `reason` — the ledger
+never becomes the oracle a refusal withholds~~.)*
+
+*(Amended 2026-09-21, decision 37 — the struck clause is **reversed**, by the owner, reading
+the live page: "can the codes come with some actual description", and, offered a recorded
+cause, "that would be nice" / "having a 'why' there would make things easier to
+understand/debug". A `-32001` now records **`detail.reason`**, a closed class naming which of
+this section's causes fired (§15's vocabulary). What the clause got wrong is the level it
+stated the rule at. **Indistinguishability is a property of the WIRE**: every `-32001` this
+section's door refuses with is byte-identical — the same `code`, the same pinned `message`,
+no `data` — whatever caused it, so a probing agent still cannot map its grants, enumerate a
+namespace, or learn that an app exists. (The one `-32001` that is **not** that object is
+`approval_decide`'s "no decidable approval request", which has carried its own message since
+before this amendment and is not a door refusal: the caller there is deciding on the owner's
+own surface, not probing for an app. Recorded because a rule stated as byte-identity must
+name its exception rather than be quietly false.) The cause rides `HubError.auditDetail`, the road `failureClass`
+already rides for `-32000`, and the error serializer emits `code`, `message` and `data` alone,
+so it cannot reach a consumer by construction. **The ledger may know because the ledger is the
+owner's**: an `agent` principal reaches no audit read at all — `adminOpsFor` hands it the
+empty set, `/audit` and `/api/hub/audit*` require the owner's cookie session, and the one
+machine credential that can read the trail is the owner's own admin token — so the oracle
+stays withheld from exactly the caller it was withheld from. The refusal is still the same
+refusal; only the owner's record of it is fuller.)* Expiry is enforced **lazily**: every path
 that reads or decides
 approvals — the step-1 and step-2 lookups, `approval_list`, `/approvals`,
 `approval_decide` — treats `expires_at < now` as expired regardless of stored status,
@@ -327,8 +348,14 @@ per direction, from two sources, unioned:
   no finite path list can express the mask). Violations are reported per tool at
   catalog warm — echoed to the app and logged; registration still succeeds —
   and such a tool is cached **schema-unsound**: it has no derivable redaction map,
-  so approval-gated calls refuse `-32001` (the catalog-miss rule below) and its
-  bodies are never recorded (§15). Inlining `$defs` client-side remains optional
+  so ~~approval-gated calls~~ **every call to it refuses** `-32001` (the catalog-miss rule
+  below) and its
+  bodies are never recorded (§15). *(2026-09-21, from the code: `dispatchTool` derives the
+  call's one map and refuses on a null **before** the approval gate, so an allow-mode call is
+  refused exactly as a gated one is — the narrower sentence described where the consequence
+  was first noticed, not where the check lives. Nothing else changes: the code is still
+  `-32001`, indistinguishable on the wire from not-permitted and from unknown, and the
+  ledger's own `detail.reason` for it is `unsound_schema`, §15.)* Inlining `$defs` client-side remains optional
   sugar, not a requirement.
 - **Owner-declared** (both kinds): redaction paths per tool —
   `redact: { "<tool-or-pattern>": ["password", "credentials.token"] }` for arguments and

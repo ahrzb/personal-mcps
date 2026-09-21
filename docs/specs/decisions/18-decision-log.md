@@ -554,6 +554,46 @@
     `outcome` splits into a mechanism and a reason — why a `-32001` was a `-32001` — which
     §7 today keeps indistinguishable on the wire and §15 therefore keeps indistinguishable in
     the ledger; the explorer is written to work without it, and its first insight sentence
-    ends at the outcome class for exactly that reason. And whether a weekly digest exists at
+    ends at the outcome class for exactly that reason *(2026-09-21: decided the same day, by
+    the owner — decision 37 below)*. And whether a weekly digest exists at
     all: the page answers a question being asked, and a digest asks the question for the
     owner, which is a different product decision.
+
+37. **A `-32001` records why, in the ledger and nowhere else** *(2026-09-21, §7/§15/§13;
+    supersedes decision 36's "left open" clause on the mechanism/reason split)*. The owner,
+    reading the live explorer: "can the codes come with some actual description", and, offered
+    a recorded cause, "that would be nice" / "having a 'why' there would make things easier to
+    understand/debug". So a `-32001` audit row now carries `detail.reason` — one of nine
+    closed classes (§15) naming which of §7's causes fired — beside the `failureClass` a
+    `-32000` has carried since it existed. This **reverses** one sentence written the same day,
+    conservatively, before the owner ruled: §7's "the `-32001` refusals this section makes
+    indistinguishable gain no `reason` — the ledger never becomes the oracle a refusal
+    withholds."
+
+    What that sentence got wrong is the level it stated the rule at, and the correction is
+    what makes this safe. **Indistinguishability is a property of the wire**: every `-32001`
+    the door refuses with stays byte-identical whatever caused it — same code, same pinned
+    message, no `data` — so a probing agent still cannot map its grants, enumerate a namespace
+    or learn that an app is real, which is the whole of what the refusal was protecting. (§7
+    names the one pre-existing exception, `approval_decide`'s own message, which this decision
+    does not touch.) The cause
+    rides `HubError.auditDetail`, the road `failureClass` already rides, and the serializer
+    emits `code`, `message` and `data` alone, so it cannot reach a consumer by construction
+    rather than by care. **The ledger may know because the ledger is the owner's**: an `agent`
+    principal reaches no audit read at all — `adminOpsFor` gives it the empty set, `/audit`
+    and `/api/hub/audit*` need the owner's cookie session, and the only machine credential
+    that reads the trail is the owner's own admin token. The oracle stays withheld from the
+    caller it was withheld from, and the owner stops having to read the source to learn why
+    their own agent was refused. Keeping the vocabulary **closed** is the other half: a class,
+    never free text and never a caller-typed name beyond what `app` and `tool` already hold,
+    so the field adds no new wire string to the ledger and nothing to scrub (§15's hygiene).
+
+    What was deliberately **not** done. The wire is untouched — no `data`, no second code, no
+    per-cause message, so no client can start branching on a cause the hub may re-classify.
+    `outcome` does not split into a mechanism and a reason: it keeps its six values and every
+    filter over it, and the reason is a field beside it. The page gains **no Cause facet, no
+    filter and no URL key** — `text` already searches `detail`, so typing `no_grant` finds
+    those rows, and a rail group waits for evidence the owner filters by one. No op, CLI flag
+    or contract changes: `audit_query` returns `detail` as it always did. And there is no
+    migration and no backfill — rows written before this date carry no reason, and every
+    reader says so rather than inferring one.

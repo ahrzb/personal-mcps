@@ -207,9 +207,12 @@ CREATE TABLE audit (
                                        -- (§7 step 1) — MERGED with whatever else the
                                        -- outcome owes, so a -32000 after a claim carries
                                        -- both failureClass and approvalId; `failureClass`
-                                       -- on a -32000 (§15); and the bounded decision
-                                       -- summary a mutating admin.<tool> row writes (§8).
-                                       -- An approval id is not token
+                                       -- on a -32000 (§15); `reason` on a -32001 (2026-09-21,
+                                       -- decision 37) — one of §15's nine closed classes,
+                                       -- never free text, absent on rows recorded before that
+                                       -- date (no migration, no backfill); and the bounded
+                                       -- decision summary a mutating admin.<tool> row
+                                       -- writes (§8). An approval id is not token
                                        -- material and no `reason` is ever recorded for a
                                        -- -32001 — §15 pins both.
 );

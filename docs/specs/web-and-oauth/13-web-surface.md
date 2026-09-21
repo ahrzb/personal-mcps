@@ -238,12 +238,43 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
 
   A `-32000` carrying a `detail.failureClass` appends "Cause: <failureClass>." to its
   sentence. An outcome the table does not know is labelled by its **raw value** and gets no
-  sentence — a vocabulary the page has not met is reported, never guessed at. The `-32001`
+  sentence — a vocabulary the page has not met is reported, never guessed at. ~~The `-32001`
   sentence names the two sources an owner can act on and then closes on *every such case*
   deliberately: §7 has a **third** — a tool for which no sound redaction map can be derived
   refuses with the same code — and listing it would hand a probing reader the map of the
   refusal that §7 withholds by construction, while a sentence claiming there are two would be
-  false.
+  false.~~
+
+  **A `-32001` says which cause fired** *(2026-09-21, decision 37, owner: "can the codes come
+  with some actual description")*. The struck paragraph was written while the ledger recorded
+  no cause; it now records one, `detail.reason` (§15's nine closed classes), and the row's
+  sentence becomes `The hub refused this call. <reason sentence> The caller was told only
+  "not permitted" — every cause gets the same answer.` — a **full stop** after *call*, not a
+  colon, because each reason sentence below starts with a capital and is a sentence of its
+  own. The nine sentences and the **short
+  words** the list rows use are pinned copy:
+
+  | `reason` | Short words | Sentence |
+  |---|---|---|
+  | `no_app` | no such app | The name leads to no app this caller can see — a typo, a deleted app, or a prefix that matches nothing. |
+  | `app_changed` | app changed mid-program | The name now points at a different app than when the program that made this call started. |
+  | `no_grant` | no grant reaches it | The app exists, but no grant this caller holds reaches this tool. |
+  | `not_in_catalog` | not in the app's catalog | The app's catalog has nothing by this name — a wrong name, or an app that has not re-registered since it gained it. |
+  | `unsound_schema` | schema can't be masked | The tool's schema cannot be masked safely, so the hub will not run it; the violation was reported to the app when it registered. |
+  | `credential_lapsed` | credential lapsed mid-program | The credential was revoked, expired or rebound while the program that made this call was still running. |
+  | `op_withheld` | op withheld from this credential | This kind of credential may not run this admin op. |
+  | `not_decidable` | nothing to decide | There is no pending approval request here for this credential to decide. |
+  | `wrong_endpoint` | wrong endpoint for this credential | This credential is not admitted at this endpoint. |
+
+  Two fallbacks, both saying what is true rather than guessing. A row carrying **no**
+  `detail.reason` — everything recorded before this shipped — keeps the table's original
+  `-32001` sentence with its closing clause replaced, so that it ends "…rows recorded before
+  2026-09-21 do not say which." rather than claiming the ledger never can. A `reason`
+  the page does not know prints as its **raw token**, `Recorded cause: <token>.` Through all
+  of it the label stays **not permitted** and the class stays **denied**: a cause is a fact
+  about the refusal, not a sixth outcome. And the page gains **no facet, no filter and no URL
+  key** for it — `text` already searches `detail` server-side (§8), so typing `no_grant` finds
+  those rows, and a Cause group in the rail waits for the owner to start filtering by one.
 
   **Where each shows.** The **record**'s outcome row reads chip · label · dim raw code
   (`denied` · not permitted · `-32001`) with the sentence on the line beneath it, as a note,
@@ -334,18 +365,28 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   something the page knows; on a day and a half of loaded rows every tool would look new, and
   an insight that is wrong is worse than an insight that is absent. And the **changes rule's
   show me applies every distinct change event** it counted, as one OR-ed group, so "10
-  changes to your setup" opens a list of ten and not one event name's worth. The ledger
+  changes to your setup" opens a list of ten and not one event name's worth. ~~The ledger
   records no *reason* for a refusal (§15),
   so the first rule's sentence ends at the outcome class: "**agent:cron was refused 214
-  times** calling `news/get_news` — denied."
+  times** calling `news/get_news` — denied."~~ *(2026-09-21, decision 37: the ledger records
+  one now. **Refusals** groups by (principal, app/tool, **cause**) — two causes on one pair
+  are two lines, since "refused 214 times" reads as one problem and is often two — and each
+  line ends in the reason's short words. The "worth a look" refusal insight names the cause
+  when its group has one, so the sentence reads "**agent:cron was refused 214 times** calling
+  `news/get_news` — no grant reaches it."; a group with no recorded cause, or a mix of them,
+  ends at the outcome class exactly as the struck sentence did.)*
 
   **Sessions**: one row per `client.sessionId` (§5's `client_session_id`), rows without one
   grouped under "<principal> · no session", newest first, forty at a time behind **Load
   more**. Opening one draws the salience waterfall: a run of more than two `ok`
   `tools/call` rows folds to "N ok calls — apps", and everything else keeps its own line
-  and opens its record. A line's right-hand text is the outcome's **label**, plus its
-  `failureClass` when it carries one, never a class and a code *(2026-09-21 — *A code never
-  stands alone* above)*.
+  and opens its record. A line's right-hand text is the outcome's **label**, plus ~~its
+  `failureClass` when it carries one~~ **its recorded cause when it has one, in the same words
+  the Events list uses** — the reason's short words on a `-32001`, the humanized
+  `failureClass` on a `-32000`, and "upstream status 502" for a numeric `upstreamStatus`
+  *(2026-09-21, decision 37, and the `upstream_status` clause with it)* — never a class and a
+  code
+  *(2026-09-21 — *A code never stands alone* above)*.
 
   **Events**: merged rows, newest first, a hundred and twenty at a time behind **Load
   more**. Rows sharing a `detail.approvalId` (§15) are **one chain row**, headed by the
@@ -366,7 +407,10 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   run row already shows its newest member's time, and this makes the two kinds of merged row
   agree.
   Consecutive un-chained rows with the same (event, app, tool, principal, outcome,
-  `detail.failureClass`, **`argsHead`** *(2026-09-21, same postmortem: a seventh field,
+  ~~`detail.failureClass`~~ **the recorded cause** *(2026-09-21, decision 37: one field,
+  whichever the outcome names — `detail.failureClass` on a `-32000`, `detail.reason` on a
+  `-32001` — because two refusals with different causes are two different facts and must not
+  collapse into one run)*, **`argsHead`** *(2026-09-21, same postmortem: a seventh field,
   because a run is the **same call repeated** — without the arguments preview in the
   signature, five calls with five different queries collapsed under the newest one's preview
   and the row claimed one thing had happened five times)*) collapse to **×N runs**, and a
@@ -381,8 +425,19 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   that still collapse into one run — and opening it shows the difference on the members' own
   records. The third
   line previews `argsHead` clipped (an oversize stub's head renders as its placeholder),
-  else the first three `detail` pairs. The foot: "N rows from M events — related events
-  merged, repeats collapsed."
+  else the first three `detail` pairs — **except where the row has a recorded cause, which it
+  prints in words**: the reason's short words on a `-32001`, and on a `-32000` its
+  `failureClass` **humanized**, underscores to spaces ("needs reconnect", never
+  `failureClass=needs_reconnect`), because one list must not mix words with raw pairs
+  *(2026-09-21, decision 37; every other `detail` pair is unchanged)*. **One `failureClass`
+  carries a number** *(2026-09-21, from the web agent's review of its own phone shot, which
+  read "upstream status upstreamStatus=502")*: when the class is `upstream_status` and
+  `detail.upstreamStatus` is a number, the cause words are "upstream status 502" and the
+  `upstreamStatus=` pair is **not printed again** on the same line — the words already say it,
+  and the record's Detail tree still shows both fields for anyone who wants them. A
+  non-numeric `upstreamStatus` falls back to the plain humanized words **plus** its pair,
+  because a value the page cannot read is reported rather than folded into prose. The foot:
+  "N rows from M events — related events merged, repeats collapsed."
 
   **The record** (`?expand=<id>`) — a right-hand drawer over a scrim at wide, a full-screen
   level on the phone, and a real dialog primitive (focus trap, Escape) rather than a
@@ -451,12 +506,17 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   **Filters · N** button opening a full-screen level headed `‹ Audit`, the same groups at
   the narrow tap height under a sticky **Show N events**. Event rows become ~~two-line~~
   cards (time · principal · outcome chip, then the mono title, the chain line, ×N, then —
-  **only when the row has one** — the arguments preview as **one clipped line**, never
-  wrapping) *(2026-09-21, from the boards, drawing the expanded run on the phone: the card is
-  no longer fixed at two lines, because the ×N signature splits on `argsHead` (**Events**
-  above), so five `search_news` calls with five queries are five cards — and without the
-  preview they would read as the same card five times. A consequence of that run rule, not a
-  product decision of its own)*; a session
+  ~~**only when the row has one** — the arguments preview as **one clipped line**, never
+  wrapping~~ **only when it is the row's own evidence — the arguments preview or the recorded
+  cause, the two things the ×N signature splits on — as one clipped line, never wrapping, and
+  dropped otherwise**) *(2026-09-21, from the boards, drawing the expanded run on the phone:
+  the card is no longer fixed at two lines, because the ×N signature splits on `argsHead` and
+  on the cause (**Events** above), so five `search_news` calls with five queries are five
+  cards and two refusals with two causes are two cards — without that line they would read as
+  the same card repeated. Restated the same day, from the boards review: the test is
+  **evidence for why this row is its own row**, not "has an arguments preview", so a refusal
+  with a cause and no arguments keeps its line and a row with neither drops to two. A
+  consequence of the run rule, not a product decision of its own)*; a session
   header wraps to two lines and its waterfall puts each label above its bar; and the record
   is a full-screen level headed `‹ Audit` rather than a drawer. Between that breakpoint and
   the side-by-side one the desktop layout stands, with the rail above the main pane as a

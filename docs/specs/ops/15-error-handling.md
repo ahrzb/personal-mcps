@@ -64,6 +64,49 @@
   redaction map — §7) stay as indistinguishable in the ledger as they are on the wire, so
   the trail can never be read as the oracle the refusal deliberately withholds. Whether
   `outcome` should split into a mechanism and a reason is left open, deliberately.)*
+  *(Amended 2026-09-21, decision 37 — that last clause is **answered**, by the owner: a
+  `-32001` row now carries **`detail.reason`** beside the `failureClass` a `-32000` carries,
+  naming which cause fired. `outcome` itself does not split — the column keeps its six values
+  and every filter over it is unchanged; the mechanism is the code and the reason is a field
+  beside it. The vocabulary is **closed**, nine classes, and the factory that builds a
+  `-32001` requires one, so no call site can omit it:*
+
+  | `reason` | Thrown where |
+  |---|---|
+  | `no_app` | the slug resolves to no app this caller can see *(2026-09-21, from the build: and nothing else — §23.1 removed the aggregated namespace, so a name with no app prefix is not an app lookup at all; it lands on the hub's own filter as `no_grant` or on the hub's tool lookup as `not_in_catalog`)* |
+  | `app_changed` | §23.6: a hub program's `expectAppId` no longer matches |
+  | `no_grant` | the access filter answers `deny` — tools, prompts, resources, and the hub's own fixed list |
+  | `not_in_catalog` | the backend has no catalog entry for the subject, the hub's own tools and resources included |
+  | `unsound_schema` | the tool is cached schema-unsound (§7), so no redaction map can be derived |
+  | `credential_lapsed` | §23.4: a hub program's `requireSamePrincipal` fails mid-run |
+  | `op_withheld` | §8: the admin op is not in `adminOpsFor(principal)` — an *unknown* op is `not_in_catalog` |
+  | `not_decidable` | no decidable approval request for this credential (§7) |
+  | `wrong_endpoint` | an admin credential presented at the aggregate endpoint (§8) |
+
+  *Hygiene, under this section's own rule: `reason` is a **class and never free text**, and
+  never a name the caller typed beyond what the row already records in `app` and `tool` — so
+  it adds no new string from the wire to the ledger and carries nothing to scrub. It is a
+  **ledger** field only: §7 pins that every `-32001` stays byte-identical on the wire, and the
+  serializer emits `code`, `message` and `data` alone. Which paths write an audit row is
+  unchanged — a refusal that leaves no row today still leaves none, and its reason is simply
+  never stored. There is no migration and no backfill: rows recorded **before 2026-09-21**
+  carry no `reason`, and every reader says so rather than guessing (§13).)*
+
+  *(2026-09-21, from the build — **the cause reaches the ledger on every audited path**, not
+  only `tools/call`. Four audited paths built their row without ever reading
+  `HubError.auditDetail`: the hub's own `resources/read` and `prompts/get`, an app's
+  `resources/read`, and `resources/subscribe`/`unsubscribe` (§21.6). Each now carries it into
+  its row exactly as the call path's catch does, and the visible consequence is wider than
+  decision 37's own field: a `-32000` on one of those paths now records its `failureClass`
+  too, where it recorded **nothing** before. No path starts writing a row and none stops.*
+
+  *Recorded so nobody hunts for rows that do not exist: the `-32001` sites that write **no**
+  audit row, whose reason is therefore constructed and never stored — an admin credential
+  presented at the aggregate endpoint (`wrong_endpoint`), the scoped listings, the hub's own
+  tool filter and tool-lookup refusals (they precede the audited block), `completion/complete`,
+  and the listen stream. That list is the pre-existing "listing/search/stream operations are
+  not recorded" rule of this section seen from the refusal's side; decision 37 did not change
+  it.)*
 - Audit bodies: a `tools/call` row carries the call's bodies when the app's
   `log_bodies` flag is on AND the call was actually dispatched. Refusal rows
   (`-32000`/`-32001`/`-32002`/`-32003`) never carry bodies — several refusals happen

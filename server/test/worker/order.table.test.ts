@@ -38,6 +38,13 @@
 // behind a -32000 (upstream-proxy.test.ts). This table pins WHICH answer, and which stage
 // produced it; the machinery behind each answer is its own file's.
 //
+// One LEDGER fact lives beside the table (2026-09-21, decision 36), for the same reason the
+// handshake cases do: §15 gives the gate's two `tools/call` rows — the one refused -32003
+// and the one dispatched under a claimed pass — a `detail.approvalId`, and an OrderRow can
+// observe the answer and four effect deltas but not a row's `detail`. What the field is FOR
+// is §13's explorer chain; what it must never do is appear on an ungated row or replace the
+// `failureClass` a failed post-claim dispatch also owes.
+//
 // deps: harness/seed (owner + one agent; one tunneled app never connected, one
 //   proxied app, plus grants in each mode) · harness/fake-upstream
 //   (miniflare.outboundService) · harness/push-service (one subscribed browser, because
@@ -49,6 +56,8 @@ import { describe, expect, it } from "vitest";
 import worker from "../../src/index";
 import type { Env } from "../../src/index";
 import { Approvals } from "../../src/approvals";
+import { query as auditQuery } from "../../src/audit";
+import type { AuditRow } from "../../src/audit";
 import type { JsonRpcResponse, Prompt, Resource, ResourceTemplate } from "../../src/gateway";
 import { AGGREGATED_LIST_DEADLINE_MS, APPROVAL_WINDOW_MS } from "../../src/limits";
 import { PMCP_SLUG, Registry } from "../../src/registry";
@@ -1350,6 +1359,123 @@ describe("§7's dispatch table, amended 2026-08-26 — the MCP handshake", () =>
     );
     expect(response.status, "a notification is absorbed, never answered").toBe(202);
     expect(await response.text(), "202 carries no body").toBe("");
+  });
+});
+
+describe("§15 — the approval id the gate leaves on its two call rows (decision 36)", () => {
+  // Beside the table for the same reason the handshake is: an OrderRow observes the answer
+  // and four effect deltas, and this is a fact about the LEDGER — the `detail` of the
+  // `tools/call` row the gate produced. Until decision 36 only the four `approval.*` rows
+  // carried the id, so nothing tied a call to the approval it waited on; §13's explorer
+  // draws "asked → you approved → ran" as one row from exactly this field.
+  //
+  // Three rows, because the field has three states worth pinning: the refusal that OPENED
+  // the approval, the dispatch that CONSUMED it, and — the one that a single-key
+  // implementation gets wrong — a dispatch that consumed a pass and then failed, whose
+  // `detail` owes §7's `failureClass` AND the id, merged.
+  //
+  // `prompts/get` and `resources/read` are deliberately absent: §18 decision 27 puts no
+  // approval gate on a read (gateway.ts's getPrompt/readResource comment), so `tools/call`
+  // is the only event that can sit behind one and the only one that can carry the field.
+
+  /**
+   * One world and the call it is about: the proxied app on the fake upstream, one agent
+   * holding `grant` on it, and the agent's key. Both inputs are per-row — `mode` is `ok`
+   * for the rows that dispatch and a 500 for the merged one, which is a dispatch failure
+   * rather than an availability refusal (probeAvailability reads the stored credential and
+   * never the wire, so the gate is reached and the pass IS claimed); `grant` is `approval`
+   * for the gated rows and `allow` for the ungated twin.
+   */
+  async function gatedWorld(
+    mode: UpstreamScenario["mode"],
+    grant: GrantMode = "approval",
+  ): Promise<{ ns: SeededNamespace; call(): Promise<JsonRpcResponse> }> {
+    const upstream: UpstreamScenario = { id: uniqueSlug("up"), mode, tools: UPSTREAM_TOOLS };
+    const ns = await seedNamespace(env.DB, {
+      apps: [
+        {
+          slug: NOTION,
+          kind: "proxy",
+          upstreamUrl: upstreamUrlFor(upstream),
+          upstreamAuthMode: "headers",
+          roles: { [ROLE]: [TOOL] },
+          logBodies: true,
+        },
+      ],
+      agents: [{ slug: AGENT, grants: { [NOTION]: [{ role: ROLE, mode: grant }] }, tokens: [{ as: TOKEN }] }],
+    });
+    const app = await new Registry(env.DB).getApp(ns.owner.userId, NOTION);
+    if (app === null) throw new Error("the gated fixture's proxied app vanished");
+    await setHeaders(app, FAKE_UPSTREAM_HEADERS);
+    return {
+      ns,
+      call: () =>
+        rpc(`${ORIGIN}/${ns.owner.username}/mcp/${NOTION}`, ns.tokens[TOKEN].token, {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: TOOL, arguments: ARGS },
+        }),
+    };
+  }
+
+  /** The newest `tools/call` row of the namespace, read through audit.query — the module's
+   *  one read path, never the column. */
+  async function lastCallRow(ns: SeededNamespace): Promise<AuditRow> {
+    const page = await auditQuery(env.DB, ns.owner.userId, { event: "tools/call", limit: 1 });
+    const row = page.rows[0];
+    if (row === undefined) throw new Error("the gated call left no tools/call row");
+    return row;
+  }
+
+  it("§15 · the `tools/call` row refused `-32003` carries `detail.approvalId` — the id of the very `approval` row the refusal opened, the same one its `data` handed the caller", async () => {
+    const world = await gatedWorld({ kind: "ok" });
+    const answered = await world.call();
+    const offered = (answered.error?.data as { approvalId?: string } | undefined)?.approvalId;
+    expect(answered.error?.code, JSON.stringify(answered)).toBe(-32003);
+    expect(offered, "the refusal carried no approvalId to tie the row to").toBeDefined();
+
+    const row = await lastCallRow(world.ns);
+    expect(row.outcome).toBe("-32003");
+    expect(row.detail).toEqual({ approvalId: offered });
+  });
+
+  it("§15 · the `tools/call` row DISPATCHED under a claimed approval carries the same `detail.approvalId` — so the refusal, the decision and the run are one chain on one id (and an ungated call, whose row carries no detail at all, is the twin)", async () => {
+    const world = await gatedWorld({ kind: "ok" });
+    const opened = (await world.call()).error?.data as { approvalId?: string } | undefined;
+    const approvalId = opened?.approvalId;
+    expect(approvalId, "the first call opened no approval").toBeDefined();
+    // Approved the way the owner approves it, through the gate's own seam.
+    await seedingGate(Date.now).decide(world.ns.owner.userId, approvalId ?? "", "approve");
+
+    const dispatched = await world.call();
+    expect(dispatched.error, JSON.stringify(dispatched.error)).toBeUndefined();
+    const row = await lastCallRow(world.ns);
+    expect(row.outcome).toBe("ok");
+    expect(row.detail).toEqual({ approvalId });
+
+    // The twin: the same call under an `allow` grant dispatches with no gate and its row
+    // carries no detail at all. A field that appeared on every dispatched row would say
+    // nothing about approvals.
+    const ungated = await gatedWorld({ kind: "ok" }, "allow");
+    expect((await ungated.call()).error).toBeUndefined();
+    expect((await lastCallRow(ungated.ns)).detail, "an ungated call row invented an approvalId").toBeUndefined();
+  });
+
+  it("§15 · a dispatch that claimed the pass and then FAILED records both facts, merged: §7's `failureClass` beside the `approvalId` — the row is the only place an owner can see that an approval was spent on a call that did not run", async () => {
+    const world = await gatedWorld({ kind: "status", status: 500 });
+    const approvalId = ((await world.call()).error?.data as { approvalId?: string } | undefined)?.approvalId;
+    expect(approvalId, "the first call opened no approval").toBeDefined();
+    await seedingGate(Date.now).decide(world.ns.owner.userId, approvalId ?? "", "approve");
+
+    const failed = await world.call();
+    expect(failed.error?.code, JSON.stringify(failed)).toBe(-32000);
+    const row = await lastCallRow(world.ns);
+    expect(row.outcome).toBe("-32000");
+    // Both keys at once: a merge written as an assignment keeps whichever was written last
+    // and fails here. What ELSE upstream puts beside its class is upstream-proxy.test.ts's,
+    // so this row reads the two facts it is about and does not pin that file's payload.
+    expect(row.detail).toMatchObject({ failureClass: "upstream_status", approvalId });
   });
 });
 

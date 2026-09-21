@@ -1564,54 +1564,8 @@ dialog .actions {
 
 /* ------------------------------------------------------------- app detail ---- */
 
-/* One Tools row (AppDetail.dc.html): a native <details> summary with the row's own
-   metrics — a full-bleed rule inside a padded card, and no open-state tint of its own. */
-.tool > summary {
-  padding: var(--space-5) 0;
-  border-bottom: 1px solid var(--row-border);
-  font-size: var(--text-sm);
-}
-
-.tool-name {
-  flex: 0 0 200px;
-  font-weight: 500;
-}
-
-/* The first line of the description, and only the first: the whole thing is one click
-   away in the block below, which is already in this same response. */
-.tool-summary {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--muted-fg);
-}
-
-.tool-args {
-  flex-shrink: 0;
-  font-size: var(--text-xs);
-  color: var(--ring);
-}
-
-.tool-detail {
-  gap: var(--space-7);
-  margin: 0 0 var(--space-8) var(--space-10);
-  padding: var(--space-8);
-  background: var(--sunken);
-  border: 1px solid var(--row-border);
-  border-radius: var(--radius);
-}
-
-.tool-description {
-  margin: 0;
-  font-size: var(--text-sm);
-  line-height: 1.6;
-  color: var(--fg-subtle);
-}
-
 /* An app's own description, rendered as the Markdown it is written in (markdown.ts). Only
-   the description CONTAINERS wear `.md` — the tool and prompt rows here, the agent page's
+   the description CONTAINERS wear `.md` — the catalog pane's rows and notes, the agent page's
    `.cr-detail` and its details note — and these rules are the whole of the styling app
    prose can ever earn: the renderer's whitelist strips the id, class and style attributes
    it would otherwise reach the stylesheet with.
@@ -1620,8 +1574,7 @@ dialog .actions {
 /* §2 "Prose": a paragraph that can run long is capped at 72ch even where its container is
    fluid — a workspace pane is as wide as the screen, and a description is still read. */
 .md,
-.note,
-.tool-description {
+.note {
   max-width: 72ch;
 }
 
@@ -1673,20 +1626,6 @@ dialog .actions {
   padding: 0;
   background: none;
   font-size: var(--text-sm);
-}
-
-/* §13's "what only the hub knows": four short lines that read as one band under the
-   Arguments table, wrapping rather than truncating — every one of them is a fact about
-   who can call this tool. */
-.tool-hub {
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: var(--space-9);
-  row-gap: var(--space-3);
-  padding-top: var(--space-6);
-  border-top: 1px solid var(--border);
-  font-size: var(--text-xs);
-  color: var(--muted-fg);
 }
 
 /* §23.6's alias editor — the add-app form and the Overview pane draw the same two-column

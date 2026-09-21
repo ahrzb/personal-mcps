@@ -11,6 +11,8 @@
 import { describe, expect, it } from "vitest";
 import {
   NO_BODIES_SENTENCE,
+  causeOf,
+  causeWords,
   ceilingNotice,
   changesOf,
   chainWords,
@@ -25,6 +27,8 @@ import {
   outcomeLabel,
   outcomeRow,
   outcomeSentence,
+  previewOf,
+  refusalPairsOf,
   runLine,
   selectedRows,
   selectionOf,
@@ -121,11 +125,7 @@ describe("a code never stands alone", () => {
     expect(outcomeSentence(row({ id: 2, outcome: "-32002" }))).toBe(
       "The app is archived, so the hub dispatches nothing to it.",
     );
-    // "every such case", not "both": §7 has THREE indistinguishable sources, so a count here
-    // would be a count the ledger cannot back. Straight apostrophe, as §13 writes it.
-    expect(outcomeSentence(row({ id: 3, outcome: "-32001" }))).toBe(
-      "The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, so the ledger cannot say which.",
-    );
+    // `-32001` has its own family of sentences now, one per recorded cause — see below.
     expect(outcomeSentence(row({ id: 4, outcome: "-32000" }))).toBe(
       "The app could not be reached or did not answer in time.",
     );
@@ -150,6 +150,63 @@ describe("a code never stands alone", () => {
     // Its label IS its raw value, so printing both would say it twice — it belongs in the code
     // slot, where the page sets a raw value in mono.
     expect(outcomeRow("-31999")).toEqual({ cls: "error", label: null, code: "-31999" });
+  });
+
+  /** A refused row that recorded why. */
+  const refusedFor = (reason: string): AuditWindowRow =>
+    row({ id: 1, outcome: "-32001", detail: { reason } });
+
+  it("says WHICH cause fired, for each of the nine closed reasons", () => {
+    // Every sentence verbatim from the brief's table (§2) and §13's copy of it. A full stop
+    // after "The hub refused this call." — the reason sentences start with a capital.
+    const said = (reason: string): string | null => outcomeSentence(refusedFor(reason));
+    const tail = ' The caller was told only "not permitted" — every cause gets the same answer.';
+    expect(said("no_app")).toBe(
+      "The hub refused this call. The name leads to no app this caller can see — a typo, a deleted app, or a prefix that matches nothing." + tail,
+    );
+    expect(said("app_changed")).toBe(
+      "The hub refused this call. The name now points at a different app than when the program that made this call started." + tail,
+    );
+    expect(said("no_grant")).toBe(
+      "The hub refused this call. The app exists, but no grant this caller holds reaches this tool." + tail,
+    );
+    expect(said("not_in_catalog")).toBe(
+      "The hub refused this call. The app's catalog has nothing by this name — a wrong name, or an app that has not re-registered since it gained it." + tail,
+    );
+    expect(said("unsound_schema")).toBe(
+      "The hub refused this call. The tool's schema cannot be masked safely, so the hub will not run it; the violation was reported to the app when it registered." + tail,
+    );
+    expect(said("credential_lapsed")).toBe(
+      "The hub refused this call. The credential was revoked, expired or rebound while the program that made this call was still running." + tail,
+    );
+    expect(said("op_withheld")).toBe(
+      "The hub refused this call. This kind of credential may not run this admin op." + tail,
+    );
+    expect(said("not_decidable")).toBe(
+      "The hub refused this call. There is no pending approval request here for this credential to decide." + tail,
+    );
+    expect(said("wrong_endpoint")).toBe(
+      "The hub refused this call. This credential is not admitted at this endpoint." + tail,
+    );
+  });
+
+  it("falls back to the pre-ship sentence when the row recorded no reason", () => {
+    // Everything written before this shipped. It says the ledger does not say WHICH — not that
+    // it never can, which is what the sentence claimed before the cause was recorded at all.
+    expect(outcomeSentence(row({ id: 1, outcome: "-32001" }))).toBe(
+      "The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, and rows recorded before 2026-09-21 do not say which.",
+    );
+  });
+
+  it("prints a reason it does not know as its raw token", () => {
+    expect(outcomeSentence(refusedFor("teapot"))).toBe(
+      'The hub refused this call. Recorded cause: teapot. The caller was told only "not permitted" — every cause gets the same answer.',
+    );
+  });
+
+  it("keeps not permitted as the label and denied as the class, whatever the cause", () => {
+    // A cause is a fact ABOUT the refusal, not a sixth outcome.
+    expect(outcomeRow("-32001")).toEqual({ cls: "denied", label: "not permitted", code: "-32001" });
   });
 
   it("appends the cause to an unavailable row that recorded one", () => {
@@ -312,6 +369,119 @@ describe("the chain merge", () => {
     // One row carrying an id nothing else shares is one row, not a chain of one.
     const merged = mergeEvents([row({ id: 20, detail: { approvalId: "ap_lonely" } })]);
     expect(merged[0]?.kind).toBe("one");
+  });
+});
+
+describe("the recorded cause, in the list's own words", () => {
+  const refused = (reason?: string): AuditWindowRow =>
+    row({ id: 1, outcome: "-32001", ...(reason === undefined ? {} : { detail: { reason } }) });
+  const unavailable = (failureClass: string): AuditWindowRow =>
+    row({ id: 2, outcome: "-32000", detail: { failureClass } });
+
+  it("reads the cause off the field each outcome records it in", () => {
+    expect(causeOf(refused("no_grant"))).toBe("no_grant");
+    expect(causeOf(unavailable("needs_reconnect"))).toBe("needs_reconnect");
+    expect(causeOf(refused())).toBe(null);
+    expect(causeOf(row({ id: 3, outcome: "ok" }))).toBe(null);
+  });
+
+  it("puts the SHORT words on a refusal's preview line, never the raw pair", () => {
+    // One list must not mix words and raw pairs, which `reason=no_grant` beside "no grant
+    // reaches it" would do.
+    expect(previewOf(refused("no_grant"))).toBe("no grant reaches it");
+    expect(previewOf(refused("not_in_catalog"))).toBe("not in the app's catalog");
+    expect(previewOf(refused("no_app"))).toBe("no such app");
+    expect(previewOf(refused("teapot"))).toBe("teapot");
+  });
+
+  it("humanizes a failureClass rather than printing its token", () => {
+    expect(previewOf(unavailable("needs_reconnect"))).toBe("needs reconnect");
+    expect(previewOf(unavailable("timeout"))).toBe("timeout");
+  });
+
+  describe("an upstream status", () => {
+    const withStatus = (upstreamStatus: unknown): AuditWindowRow =>
+      row({ id: 6, outcome: "-32000", detail: { failureClass: "upstream_status", upstreamStatus } });
+
+    it("is absorbed into the cause words and not repeated as a pair", () => {
+      // `upstream status upstreamStatus=502` said the same thing twice, once in words and once
+      // as a raw pair — the exact mixing the humanizing was for.
+      expect(causeWords(withStatus(502))).toBe("upstream status 502");
+      expect(previewOf(withStatus(502))).toBe("upstream status 502");
+    });
+
+    it("leaves the plain words when the row recorded no status", () => {
+      expect(causeWords(row({ id: 7, outcome: "-32000", detail: { failureClass: "upstream_status" } }))).toBe(
+        "upstream status",
+      );
+      expect(previewOf(row({ id: 7, outcome: "-32000", detail: { failureClass: "upstream_status" } }))).toBe(
+        "upstream status",
+      );
+    });
+
+    it("keeps a non-numeric status as an ordinary pair", () => {
+      // Only a NUMBER is a status the words can carry; anything else is data the line must not
+      // swallow, so it stays a pair and the words stay plain.
+      expect(causeWords(withStatus("502"))).toBe("upstream status");
+      expect(previewOf(withStatus("502"))).toBe("upstream status upstreamStatus=502");
+    });
+
+    it("absorbs nothing else — every other pair is still a pair", () => {
+      expect(previewOf(row({ id: 8, outcome: "-32000", detail: { failureClass: "timeout", tries: 3 } }))).toBe(
+        "timeout tries=3",
+      );
+      // And `upstreamStatus` beside a DIFFERENT failureClass is not the cause's to absorb.
+      expect(
+        previewOf(row({ id: 9, outcome: "-32000", detail: { failureClass: "timeout", upstreamStatus: 502 } })),
+      ).toBe("timeout upstreamStatus=502");
+    });
+  });
+
+  it("leaves every other detail pair as a pair, after the cause", () => {
+    expect(previewOf(row({ id: 4, event: "admin.app_create", detail: { slug: "linear", kind: "proxied" } }))).toBe(
+      "slug=linear kind=proxied",
+    );
+    expect(
+      previewOf(row({ id: 5, outcome: "-32001", detail: { reason: "no_grant", approvalId: "ap_1" } })),
+    ).toBe("no grant reaches it approvalId=ap_1");
+  });
+
+  it("splits a run on the CAUSE — two refusals with different causes are two facts", () => {
+    const at = (id: number, reason: string): AuditWindowRow =>
+      row({ id, ts: NOW - id * HOUR, app: "news", tool: "search_news", outcome: "-32001", detail: { reason } });
+    expect(mergeEvents([at(1, "no_grant"), at(2, "no_grant")])).toHaveLength(1);
+    expect(mergeEvents([at(1, "no_grant"), at(2, "not_in_catalog")])).toHaveLength(2);
+  });
+});
+
+describe("Summary's Refusals", () => {
+  const refusal = (id: number, tool: string, reason?: string): AuditWindowRow =>
+    row({
+      id,
+      principal: "agent:cron",
+      app: "news",
+      tool,
+      outcome: "-32001",
+      ...(reason === undefined ? {} : { detail: { reason } }),
+    });
+
+  it("groups by principal, target AND cause, and ends each line in the short words", () => {
+    const pairs = refusalPairsOf(
+      [
+        refusal(1, "search_news", "no_grant"),
+        refusal(2, "search_news", "no_grant"),
+        refusal(3, "search_news", "not_in_catalog"),
+      ],
+      4,
+    );
+    expect(pairs.map((pair) => [pair.principal, pair.target, pair.cause, pair.count])).toEqual([
+      ["agent:cron", "news/search_news", "no grant reaches it", 2],
+      ["agent:cron", "news/search_news", "not in the app's catalog", 1],
+    ]);
+  });
+
+  it("leaves a causeless refusal without a suffix", () => {
+    expect(refusalPairsOf([refusal(1, "search_news")], 4)[0]?.cause).toBe(null);
   });
 });
 
@@ -486,7 +656,7 @@ describe("the three worth-a-look rules", () => {
   });
 
   it("names the worst refused pair past five, ending at the outcome class", () => {
-    // No `reason` exists in the ledger (§15), so the sentence may not invent one.
+    // Without a recorded cause the sentence ends at the class — it may not invent one.
     const [worst] = insightsOf(refusals(6), refusals(6), NOW, WHOLE);
     expect(worst?.parts.map((part) => part.text).join("")).toBe(
       "agent:cron was refused 6 times calling news/get_news — denied.",
@@ -513,6 +683,24 @@ describe("the three worth-a-look rules", () => {
       "1 tool was called for the first time in the last two days: linear/create_issue.",
     );
     expect(fresh?.filters).toEqual([{ field: "tool", value: "linear/create_issue" }]);
+  });
+
+  it("names the cause when the refused group recorded one", () => {
+    const withCause = Array.from({ length: 6 }, (_, index) =>
+      row({
+        id: 200 + index,
+        ts: WEEK_START + index * HOUR,
+        principal: "agent:cron",
+        app: "news",
+        tool: "get_news",
+        outcome: "-32001",
+        detail: { reason: "no_grant" },
+      }),
+    );
+    const [worst] = insightsOf(withCause, withCause, NOW, WHOLE);
+    expect(worst?.parts.map((part) => part.text).join("")).toBe(
+      "agent:cron was refused 6 times calling news/get_news — denied, no grant reaches it.",
+    );
   });
 
   it("says nothing about first-seen when the loaded rows are not the whole window", () => {

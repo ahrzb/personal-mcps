@@ -68,10 +68,11 @@ const BOARD_CSS = `${baseCss}
   .phones{display:flex;gap:40px;align-items:flex-start}
   .slot{display:flex;flex-direction:column;gap:10px;width:390px;flex-shrink:0}
   .phone{position:relative;width:390px;min-height:844px;background:#fff;border:1px solid #d4d4d8;border-radius:14px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.14)}
-  .phone .level,.phone .drawer{position:absolute;inset:0;width:auto;height:auto;border:0;border-radius:0;box-shadow:none}
-  .phone .drawer{background:#fff}
-  .phone .rail{display:none}
 ${phoneCss()}
+  /* The phone BOX, and it must come after the narrow rules: those size the record level
+     with 100vw, which is the viewport on a board rather than this 390 px phone. */
+  .phone .level,.phone .drawer{position:absolute;inset:0;width:auto;height:auto;border:0;border-radius:0;box-shadow:none;background:#fff}
+  .phone .rail{display:none}
 `;
 
 const frame = (w, h, body) => `<!doctype html>
@@ -112,6 +113,15 @@ const HELPERS = `
     c.querySelector("#hint")?.remove();               // the demo's "Try:" line is not a page element
     return window.__clean(document.querySelector(".nav")).replace(/<span class="chip[^"]*">clickable demo<\\/span>/, "") + window.__clean(c);
   };
+  /* WHEN is the time the row SORTS by, so a rendered Events list must never step forward
+     going down. Cheap, and it catches the class of bug where a merged row prints one of
+     its members' times and sorts by another's. */
+  window.__whenOk = () => {
+    const at = [...document.querySelectorAll("tr.ev td.c-when")].map((td) => Date.parse(td.textContent.trim() + " 2026"));
+    const bad = [];
+    for (let i = 1; i < at.length; i++) if (at[i] > at[i - 1]) bad.push(i);
+    return bad.length ? "WHEN increases at rows " + bad.join(",") + " of " + at.length : "";
+  };
   window.__phone = () => {
     const wrap = document.querySelector(".wrap").cloneNode(true);
     wrap.querySelector("#hint")?.remove();
@@ -123,6 +133,11 @@ const HELPERS = `
 
 const browser = await chromium.launch();
 const errors = [];
+/** Fails the capture rather than shipping a board with a shuffled Events list. */
+async function assertWhen(p, where) {
+  const bad = await p.evaluate(() => window.__whenOk());
+  if (bad) throw new Error(`${where}: ${bad}`);
+}
 async function open(w, h, query = "") {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
   const p = await ctx.newPage();
@@ -145,13 +160,23 @@ const F = {};
 // ── 2 · the two other views ────────────────────────────────────────────────────────
 {
   const { p, ctx } = await open(1380, 1400);
+  // The invariant first, over more lists than the boards happen to draw.
+  for (const filters of [[], [{ f: "principal", v: "agent:claude" }], [{ f: "app", v: "linear" }], [{ f: "event", v: "approval.requested" }]]) {
+    for (const spans of [1, 7]) {
+      await p.evaluate(
+        ([f, d]) => { S.filters = f; S.view = "events"; S.from = NOW - d * 864e5; S.to = NOW; S.eventsShown = 120; render(); },
+        [filters, spans],
+      );
+      await assertWhen(p, `Events ${JSON.stringify(filters.map((x) => x.v))} ${spans}d`);
+    }
+  }
   // Events: a brush, two facet chips, and a body that holds BOTH a chain row and a ×N run.
   const picked = await p.evaluate(() => {
     const day = 864e5;
     const tries = [
+      [{ f: "principal", v: "agent:claude" }, { f: "outcome", v: "ok" }],
       [{ f: "principal", v: "agent:claude" }, { f: "app", v: "home" }],
       [{ f: "principal", v: "agent:claude" }, { f: "app", v: "linear" }],
-      [{ f: "principal", v: "agent:claude" }, { f: "app", v: "slack" }],
       [{ f: "app", v: "home" }, { f: "event", v: "tools/call" }],
     ];
     // A board draws the grammar, not the page size: ten rows, with the Load more foot
@@ -162,17 +187,24 @@ const F = {};
         S.filters = filters.map((x) => ({ ...x }));
         S.view = "events"; S.from = NOW - spans * day; S.to = NOW; S.open = null;
         render();
-        const html = document.querySelector("#main").innerHTML;
-        if (html.includes('class="chain"') && html.includes("runs</span>")) {
-          const sel = [...document.querySelectorAll("tr.ev")].find((r) => r.querySelector(".chain"));
-          S.open = Number(sel.dataset.idx); render();
-          return { filters, spans };
-        }
+        // A chain, a run of 4–8 whose members CARRY ARGUMENTS (the preview line is what
+        // proves "identical" to the reader), and at least one more run left collapsed.
+        const rows = merge(selected().slice().sort((a, b) => b.ms - a.ms));
+        const at = rows.findIndex((r) => r.runs >= 4 && r.runs <= 8 && argsPreview(r.head));
+        const chainAt = rows.findIndex((r) => r.kind === "chain");
+        const otherAt = rows.findIndex((r, i) => r.runs && i !== at);
+        if (at < 0 || chainAt < 0 || otherAt < 0) continue;
+        S.eventsShown = Math.max(10, Math.max(at, chainAt, otherAt) + 2);
+        S.runOpen = { [rows[at].head.idx]: true };
+        S.open = rows[chainAt].head.idx;
+        render();
+        return { filters, spans, run: rows[at].runs };
       }
     }
     return null;
   });
   if (!picked) throw new Error("no filter pair draws a chain and a run together");
+  await assertWhen(p, "AuditViews · Events");
   F.events = await p.evaluate(() => window.__page());
   F.eventsWhat = picked;
 
@@ -243,16 +275,19 @@ const F = {};
   });
   await ctx.close();
 }
-for (const [key, state, sel] of [
+for (const [key, state, sel, drive] of [
   ["stLoading", "loading", ["#strip", ".body"]],
   ["stFailed", "failed", ["#failcard"]],
   ["stEmpty", "empty", [".body"]],
   ["stNothing", "nomatch", ["#filterbar", ".main"]],
+  ["stSearching", "searching", ["#filterbar", ".main"], () => { S.view = "events"; S.eventsShown = 5; render(); }],
   ["stCeiling", "ceiling", ["#strip"]],
   ["recLoading", "recordloading", ["#drawer"]],
   ["recGone", "recordmissing", ["#drawer"]],
 ]) {
   const { p, ctx } = await open(1380, 1200, "?state=" + state);
+  if (drive) await p.evaluate(drive);          // a state that needs a view or a row count
+  await assertWhen(p, `state=${state}`);
   F[key] = await p.evaluate((s) => s.map((x) => window.__grab(x)).join(""), sel);
   await ctx.close();
 }
@@ -262,7 +297,26 @@ for (const [key, state, sel] of [
   const { p, ctx } = await open(390, 844);
   await p.evaluate(() => { S.eventsShown = 8; S.sessionsShown = 4; render(); });
   F.mSummary = await p.evaluate(() => window.__phone());
-  F.mEvents = await p.evaluate(() => { S.view = "events"; render(); return window.__phone(); });
+  F.mEvents = await p.evaluate(() => {
+    S.view = "events"; render();
+    // Open the first run, and show enough rows that the phone carries BOTH the open run
+    // and two same-tool cards the preview line is the only thing telling apart.
+    const rows = merge(selected().slice().sort((a, b) => b.ms - a.ms));
+    const at = rows.findIndex((r) => r.runs >= 2);
+    const seen = new Map();
+    let pairAt = -1;
+    for (let i = 0; i < rows.length && pairAt < 0; i++) {
+      const e = rows[i].head, a = argsPreview(e);
+      if (!a || !e.tool) continue;
+      const k = `${e.app}/${e.tool}`;
+      if (seen.has(k)) { if (seen.get(k) !== a) pairAt = i; } else seen.set(k, a);
+    }
+    if (at >= 0) S.runOpen = { [rows[at].head.idx]: true };
+    S.eventsShown = Math.max(6, at + 2, pairAt + 2);
+    render();
+    return window.__phone();
+  });
+  await assertWhen(p, "MobileAudit · Events");
   F.mSessions = await p.evaluate(() => {
     S.view = "sessions"; render();
     const best = [...document.querySelectorAll(".sess")].map((el) => ({ el, n: el.querySelectorAll(".counts .chip").length })).sort((a, b) => b.n - a.n)[0];
@@ -310,7 +364,7 @@ ${notes([
 const views = `<div class="sheet" style="width:1380px">
   <div class="note">The two readings ${mono("Audit")} does not draw. Same page, same state, same rail &mdash; only ${mono("view")} differs.</div>
 ${panel(
-  "EVENTS &mdash; brushed, two facets, a chain row, a &times;N run, a row selected",
+  "EVENTS &mdash; brushed, two facets, a chain row, one run OPEN beside collapsed ones, a row selected",
   `A ${picked(F.eventsWhat)} window; the chips above the pane repeat the rail&rsquo;s choices and remove with &times;.`,
   `<div class="board" style="width:1332px;border-radius:12px;overflow:hidden">${F.events}</div>`,
 )}
@@ -320,7 +374,9 @@ ${panel(
   `<div class="board" style="width:1332px;border-radius:12px;overflow:hidden">${F.sessions}</div>`,
 )}
 ${notes([
-  `<b>Events merges what belongs together.</b> Rows sharing a ${mono("detail.approvalId")} are one <b>chain row</b>, headed by the ${mono("approval.requested")} row but <b>titled by the call it is the story of</b> (${mono("home/set_scene")}, not ${mono("approval.requested")}) &mdash; the sentence beneath already says an approval was asked for. It carries that sentence (&ldquo;asked for approval &rarr; you approved 18:00 &rarr; ran ok 1.2 s&rdquo;) and the state of its LAST event; the refused ${mono("tools/call")} is the ask itself, not a step in it. Consecutive un-chained rows with the same (event, app, tool, principal, outcome, ${mono("detail.failureClass")}) collapse to <b>&times;N runs</b>; a chain never joins a run.`,
+  `<b>Events merges what belongs together.</b> Rows sharing a ${mono("detail.approvalId")} are one <b>chain row</b>, headed by the ${mono("approval.requested")} row but <b>titled by the call it is the story of</b> (${mono("home/set_scene")}, not ${mono("approval.requested")}) &mdash; the sentence beneath already says an approval was asked for. It carries that sentence (&ldquo;asked for approval &rarr; you approved 18:00 &rarr; ran ok 1.2 s&rdquo;) and the state of its LAST event; the refused ${mono("tools/call")} is the ask itself, not a step in it. Consecutive un-chained rows collapse to <b>&times;N runs</b> on a <b>seven-field signature</b> &mdash; event, app, tool, principal, outcome, ${mono("detail.failureClass")} and the <b>arguments preview</b>: a run is the SAME call repeated, so five searches with five different queries stay five rows, while the cron agent's refusals (which carry no arguments) still collapse. A chain never joins a run.`,
+  `<b>WHEN is the time the row sorts by</b>, which for a merged row is its <b>newest</b> event &mdash; not its head's. A chain row is titled by ${mono("approval.requested")}, the chain's OLDEST event, and a run row by its newest member; printing the head's time on a chain made a newest-first list read as shuffled (an ${mono("07:47")} chain landing between ${mono("11:47")} and ${mono("08:07")}). The capture asserts it over every rendered Events list: a WHEN that steps forward going down fails the board.`,
+  `<b>A run is a disclosure, not a summary that hides its evidence</b> <i>(owner, 2026-09-21: &ldquo;the x5 runs look weird, how can I look at all of them? or look at the bodies?&rdquo;)</i>. The <b>&times;N badge is a button</b> (${mono("aria-expanded")}); beneath the title the row reads &ldquo;N identical events &middot; &lt;first&gt; &rarr; &lt;last&gt;&rdquo;; opened, it lists its members newest first &mdash; time, duration, outcome chip &mdash; and <b>each line opens its OWN record</b>, bodies and all, 50 at a time behind <b>Show more</b> with <b>Hide</b> to collapse. The run's title still opens the newest member. The members sit inside the <i>What happened</i> cell, so the table's four columns hold. <b>Which runs are open is reading position, not URL state</b> &mdash; it does not belong in a link, and a reload starts closed.`,
   `<b>Only a call is titled like one.</b> ${mono("tools/call")}, ${mono("prompts/get")} and ${mono("resources/read")} are titled ${mono("&lt;app&gt;/&lt;tool&gt;")}; every other event is titled by its event name with ${mono("&lt;app&gt;/&lt;tool&gt;")} dim beside it &mdash; an ${mono("approval.requested")} carries an app and a tool too, and titling it like a call makes the request and the refused call it caused read as the same row. The one exception is a <b>chain row</b>, which is one call&rsquo;s story and takes that call&rsquo;s title; the record it opens is still headed ${mono("approval.requested home/set_scene")}. The rule holds in un-chained Events rows, the waterfall, the record head and the chain timeline.`,
   `<b>The third line is evidence, not decoration.</b> ${mono("argsHead")} clipped to 110 characters (an oversize stub renders as its placeholder), else the first three ${mono("detail")} pairs &mdash; which is how a ${mono("detail.approvalId")} or a ${mono("failureClass")} is readable without opening the record. 120 rows at a time behind <b>Load more</b>; the foot counts rows against events.`,
   `<b>Sessions is salience, not completeness.</b> Opening one draws the waterfall: runs of more than two ${mono("ok")} ${mono("tools/call")} rows fold to &ldquo;N ok calls &mdash; apps&rdquo;, everything else keeps its own line and opens its record. The right-hand text is the duration for an ${mono("ok")} and the outcome class plus its ${mono("failureClass")} or raw code otherwise.`,
@@ -349,6 +405,7 @@ ${panel("RECORD &mdash; not found", "an id outside the caller&rsquo;s namespace 
   </div>
 ${panel("PAGE &mdash; loading skeleton", "one query per (since, until, q): page 0, then the rest to the ceiling in parallel", `<div class="pane">${F.stLoading}</div>`)}
 ${panel("PAGE &mdash; over the ceiling", "the newest 5,000 of N, and the hours with nothing loaded hatched &mdash; never drawn as quiet", `<div class="pane">${F.stCeiling}</div>`)}
+${panel("PAGE &mdash; searching", "a search never unmounts the page: the previous rows stay, dimmed, and the box says so until the answer lands", `<div class="pane">${F.stSearching}</div>`)}
 ${panel("PAGE &mdash; filters match nothing", "the window and the facets are still there to widen; Clear drops both", `<div class="pane">${F.stNothing}</div>`)}
 ${panel("PAGE &mdash; empty ledger", "nothing recorded yet, which is not the same as nothing matching", `<div class="pane">${F.stEmpty}</div>`)}
 ${panel("PAGE &mdash; load failed", "the shell&rsquo;s error card and Try again; the header keeps the retention line, which needs no read", `<div class="pane">${F.stFailed}</div>`)}
@@ -367,7 +424,7 @@ const mobile = `<div class="sheet" style="width:2174px">
   <div class="note">${mono("/audit")} at 390 px. Not a second demo: the same file&rsquo;s ${mono("@media (max-width:767px)")} rules, re-scoped to one phone for this board.</div>
   <div class="phones">
 ${slot("SUMMARY", "the narrow shell: brand + hamburger; Export and the view segment full width at 44 px", F.mSummary)}
-${slot("EVENTS", "two-line cards: time &middot; principal &middot; outcome chip, then the mono title, the chain line and &times;N", F.mEvents)}
+${slot("EVENTS", "cards: time &middot; principal &middot; outcome chip, the mono title, and the arguments preview as one clipped line; a &times;N run opened inside its card, member rows at 44 px", F.mEvents)}
 ${slot("SESSIONS", "a header wrapped to two lines; the waterfall puts each label above its bar", F.mSessions)}
 ${slot("FILTERS", "the rail as a full-screen level headed &lsquo;&nbsp;Audit, 44 px rows, a sticky Show N events", F.mFilters)}
 ${slot("RECORD", "a full-screen level headed &lsquo;&nbsp;Audit, not a drawer", F.mRecord)}
@@ -376,11 +433,21 @@ ${notes([
   `<b>One column, and the window set without a drag.</b> Touch has no hover and no precise drag, so the brush is not drawn at narrow: the <b>1h &middot; 24h &middot; 7d</b> presets and <b>tapping a day</b> on the axis set the window, and the tapped day is marked. The lanes stay &mdash; each name sits <b>above</b> its cells, and the cells lose their 1 px gaps so an hour is still a readable band at this width.`,
   `<b>The rail becomes Filters &middot; N</b>, a full-screen level headed ${mono("&lsquo; Audit")} with the same groups at 44 px rows, the same exhaustive counts and <b>Show all N</b>, and a sticky <b>Show N events</b> at the foot. The level names itself, so the rail&rsquo;s own &ldquo;Filter&rdquo; title is dropped there &mdash; a listing header never repeats what the level header shows.`,
   `<b>The record is a level, not a drawer</b>, headed ${mono("&lsquo; Audit")}; Close belongs to the pointer rendering. Every id in the field table keeps its 44 px target, which is why the table reads as a list of rows here rather than the two tight columns the drawer draws.`,
-  `<b>An event card is two lines.</b> The ${mono("argsHead")} preview is the one thing the phone drops &mdash; it is the widest and the least answerable at this width, and the record is one tap away. 768&ndash;1023 keeps the desktop layout with the rail above the main pane as a wrapping row of groups.`,
+  `<b>An event card keeps its arguments.</b> Time &middot; principal &middot; outcome chip, then the mono title with the chain line and &times;N, then &mdash; <b>only when the row has one</b> &mdash; the ${mono("argsHead")} preview as ONE clipped line (mono, muted, ellipsis, never wrapping); a row with no arguments stays two lines. The phone cannot drop it: the run signature splits on ${mono("argsHead")}, so five ${mono("news/search_news")} calls with five queries are five cards, and without the line they would read as the same card five times <i>(owner ruling, 2026-09-21)</i>. 768&ndash;1023 keeps the desktop layout with the rail above the main pane as a wrapping row of groups.`,
   `<b>Same shell as the other phone boards</b> (${mono("MobileAppDetail")}, ${mono("MobileAgentDetail")}): the brand and a hamburger whose sidebar carries the five nav entries, the Approvals count and Sign out.`,
 ])}
   </div>`;
 
+/** Windows hands back a transient UNKNOWN when something else (an editor, a watcher, the
+ *  indexer) holds the file for a moment; the write is fine on the next tick. */
+function writeBoard(out, html) {
+  for (let i = 0; ; i++) {
+    try { return fs.writeFileSync(out, html); } catch (e) {
+      if (i >= 20) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+    }
+  }
+}
 const boards = {
   "Audit.dc.html": [1380, audit],
   "AuditViews.dc.html": [1380, views],
@@ -391,7 +458,7 @@ const sizes = {};
 const measure = await browser.newContext({ viewport: { width: 1400, height: 900 } });
 for (const [file, [w, body]] of Object.entries(boards)) {
   const out = path.join(REPO, "design", file);
-  fs.writeFileSync(out, frame(w, 100, body));
+  writeBoard(out, frame(w, 100, body));
   const p = await measure.newPage();
   await p.setViewportSize({ width: w, height: 800 });
   await p.goto("file:///" + out.split(path.sep).join("/"), { waitUntil: "load" });
@@ -399,7 +466,7 @@ for (const [file, [w, body]] of Object.entries(boards)) {
   const h = Math.ceil(((await p.evaluate(() => document.documentElement.scrollHeight)) + 20) / 20) * 20;
   await p.close();
   sizes[file] = [w, h];
-  fs.writeFileSync(out, frame(w, h, body));
+  writeBoard(out, frame(w, h, body));
   if (SHOTS) {
     const s = await browser.newContext({ viewport: { width: w, height: Math.min(h, 4000) }, deviceScaleFactor: 1 });
     const sp = await s.newPage();

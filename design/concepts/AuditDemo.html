@@ -137,6 +137,20 @@
   .rowline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
   .prev{margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .more{padding:10px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  /* a run, opened: its members sit inside the What cell, so the table's columns hold */
+  .runbadge{border:1px solid var(--border);background:#fff;padding:0 6px 0 7px;gap:4px}
+  .runbadge:hover{background:var(--muted)}
+  .runbadge.on{background:#18181b;color:#fafafa;border-color:#18181b}
+  .runbadge .caret{color:var(--dim);font-size:9px}
+  .runbadge.on .caret{color:#a1a1aa}
+  .runlist{display:flex;flex-direction:column;gap:1px;margin-top:6px;border-top:1px solid var(--row);padding-top:5px}
+  .runlist .m{display:flex;align-items:center;gap:12px;min-height:var(--control-h-xs);border-radius:5px;padding:0 5px;font-size:12px;border:0;background:none;width:100%;text-align:left}
+  .runlist .m:hover{background:#fff;box-shadow:inset 0 0 0 1px var(--border)}
+  .runlist .mt{font-family:var(--mono);color:var(--muted-fg);width:124px;flex:none}
+  .runlist .md{font-family:var(--mono);color:var(--subtle);width:64px;flex:none}
+  .runlist .mfoot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 5px 0}
+  .stale{opacity:.45;transition:opacity .15s}
+  .searching{display:inline-flex;align-items:center;gap:6px;color:var(--muted-fg);font-size:12px;white-space:nowrap}
 
   /* sessions */
   .sess{border-bottom:1px solid var(--row)}
@@ -242,7 +256,8 @@ body .brush{display:none}
 body .axis{margin-left:0;gap:2px}
 body .axis button{min-height:var(--control-h-touch);text-align:center}
 body .legend{gap:4px 10px;line-height:16px}
-body .body{flex-direction:column}
+/* align-items:flex-start would size the pane to its CONTENT in a column — one nowrap line then pushes the card past the phone. */
+body .body{flex-direction:column;align-items:stretch}
 body .rail{display:none}
 body .filters{gap:8px}
 body .filtersbtn{display:flex;height:var(--control-h-touch);justify-content:center;font-size:14px;flex:0 0 auto;padding:0 14px}
@@ -255,15 +270,30 @@ body .grid3{grid-template-columns:minmax(0,1fr)}
 body .grid2{grid-template-columns:minmax(0,1fr)}
 body .topn button{height:var(--control-h-touch)}
 body .look li{line-height:1.9}
+/* A <table> sizes to its content, so one nowrap preview line would widen the whole card past the phone — the cards are blocks here, not a table. */
+body .etab{display:block;width:100%;table-layout:fixed}
+body .etab tbody{display:block;width:100%}
 body .etab thead{display:none}
 body .etab tr.ev{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:10px 14px;border-bottom:1px solid var(--row)}
 body .etab td{display:block;border:0;padding:0}
 body .etab td.c-when{order:1}
 body .etab td.c-who{order:2}
 body .etab td.c-out{order:3;margin-left:auto}
-body .etab td.c-what{order:4;flex:0 0 100%}
+body .etab td.c-what{order:4;flex:0 0 100%;min-width:0;max-width:100%}
+/* The card keeps the ARGUMENTS preview as one clipped line (the signature splits on argsHead); a row with no arguments stays two lines. */
 body .etab td.c-what .prev{display:none}
-body .more .btn{height:var(--control-h-touch);flex:1;justify-content:center}
+body .etab td.c-what .prev-args{display:block}
+body .runlist .m{min-height:var(--control-h-touch);gap:10px}
+body .runlist .mt{width:auto;flex:1 1 auto}
+body .runlist .md{width:auto;margin-left:auto}
+body .runlist .mfoot .btn{height:var(--control-h-touch)}
+body .more{flex-wrap:wrap}
+body .more .btn{height:var(--control-h-touch);flex:0 0 auto;justify-content:center}
+body .more .note{flex:1 1 100%}
+body .runlist .m{min-width:0}
+body .runlist .mt{min-width:0;overflow:hidden;text-overflow:ellipsis}
+body .tree .n{flex-wrap:wrap}
+body .tree .n>span{min-width:0;word-break:break-all}
 body .sess .shead{flex-wrap:wrap;padding:10px 14px;min-height:var(--control-h-touch)}
 body .sess .counts{margin-left:0;flex:1 1 100%;justify-content:flex-start}
 body .sess .meta{flex:1 1 100%}
@@ -354,12 +384,19 @@ const STATE = new URLSearchParams(location.search).get('state') || '';
    bigger window. The fixture week is smaller than that, so the state uses a demo ceiling
    and says the true numbers it has. */
 const CEILING = STATE === 'ceiling' ? 900 : 5000;
+/* A search never unmounts the page: the box keeps the text the reader typed while the
+   previous rows stay on screen, dimmed, until the answer lands. */
+const SEARCHING = STATE === 'searching';
+const PENDING_Q = 'quarterly';
 
 const S = {
   view: 'summary', filters: [], q: '', from: WEEK_START, to: NOW,
   open: null, sessOpen: null, treeOpen: {}, drawerQ: '',
   showAll: {}, eventsShown: 120, sessionsShown: 40, filterLevel: false,
+  // Which runs are open, and how many members each shows. Reading position, not URL state.
+  runOpen: {}, runShown: {},
 };
+const RUN_PAGE = 50;
 
 const OUT = { ok: 'ok', '-32003': 'approval', '-32002': 'archived', '-32001': 'denied', '-32000': 'denied', error: 'error' };
 /* A code never stands alone (owner, 2026-09-21: "I literally won't know what -32001 is,
@@ -421,6 +458,16 @@ const rowTitleHtml = r => {
 /** A chain reads in the order the hub wrote it: ts, then id (approvals.check records
  *  `approval.requested` before the gateway records the refused call). */
 const inWriteOrder = (a, b) => a.ms - b.ms || a.id - b.id;
+/** The time a merged row SORTS by, and therefore the time WHEN prints: its newest event.
+ *  A chain row is titled by its HEAD — `approval.requested`, the chain's oldest event —
+ *  so printing the head's time would make a newest-first list read as shuffled. */
+const rowMs = r => Math.max(...r.group.map(g => g.ms));
+const kv = o => Object.entries(o).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`);
+/** `argsHead`: the recorded arguments as one line, or the stub that replaced them. Absent
+ *  arguments read as '' — which is why refusals still collapse into runs. */
+const argsPreview = e => e.args === undefined ? '' : isStub(e.args) ? stubLabel(e.args) : kv(e.args).join(' ');
+/** The row's third line: the arguments preview, else the first three `detail` pairs. */
+const previewOf = e => argsPreview(e) || (e.detail ? kv(e.detail).slice(0, 3).join(' ') : '');
 const val = (e, f) => f === 'outcome' ? OUT[e.outcome] : f === 'tool' ? (e.tool ? `${e.app}/${e.tool}` : null) : (e[f] ?? null);
 const $ = s => document.querySelector(s);
 
@@ -484,8 +531,10 @@ function merge(list) {
       rows.push({ head: group.find(g => g.event === 'approval.requested') ?? group[0], group, kind: 'chain' });
     } else rows.push({ head: e, group: [e], kind: 'one' });
   }
-  // Collapse consecutive rows with the same signature (a cron agent refused every 30 min).
-  const sig = r => [r.head.event, r.head.app, r.head.tool, r.head.principal, r.head.outcome, r.head.detail?.failureClass].join('|');
+  /* Collapse consecutive rows with the same signature — a run is the SAME call repeated,
+     so the arguments preview is part of it: five searches with five different queries are
+     five rows, and the cron agent's refusals (which carry no args) still collapse. */
+  const sig = r => [r.head.event, r.head.app, r.head.tool, r.head.principal, r.head.outcome, r.head.detail?.failureClass, argsPreview(r.head)].join('|');
   const out = [];
   for (const r of rows) {
     const last = out[out.length - 1];
@@ -751,6 +800,29 @@ function waterfall(s) {
   return `<div class="wf">${out}<p class="note" style="margin-top:6px">Any line opens its record. Folded runs are ok calls only.</p></div>`;
 }
 
+/* A run is a disclosure, not a summary that hides its evidence (owner, 2026-09-21: "how
+   can I look at all of them? or look at the bodies?"): the ×N badge opens the members, and
+   every member opens its OWN record, bodies and all. The run's title still opens the
+   newest of them. Which runs are open is reading position, never URL state. */
+function runBadge(r) {
+  const open = !!S.runOpen[r.head.idx];
+  return `<button class="chip runbadge${open ? ' on' : ''}" data-act="run" data-idx="${r.head.idx}" aria-expanded="${open}">×${r.runs} runs <span class="caret">${open ? '▾' : '▸'}</span></button>`;
+}
+function runLine(r) {
+  const at = r.group.map(g => g.ms);
+  return `<div class="chain"><b>${r.runs} identical events</b><span style="color:var(--dim)">·</span><span>${dts(Math.min(...at))} → ${dts(Math.max(...at))}</span></div>`;
+}
+function runList(r) {
+  const shown = S.runShown[r.head.idx] ?? RUN_PAGE;
+  const members = r.group.slice(0, shown);
+  return `<div class="runlist">
+    ${members.map(m => `<button class="m" data-act="openidx" data-idx="${m.idx}"><span class="mt">${dts(m.ms)}</span><span class="md">${dur(m.durationMs)}</span><span class="chip ${chipCls(OUT[m.outcome])}">${OUT[m.outcome]}</span></button>`).join('')}
+    <div class="mfoot">${r.group.length > members.length ? `<button class="btn mini" data-act="runmore" data-idx="${r.head.idx}">Show more</button>` : ''}
+      <button class="btn mini" data-act="run" data-idx="${r.head.idx}">Hide</button>
+      <span class="note">${fN(members.length)} of ${fN(r.group.length)} · each line opens its own record.</span></div>
+  </div>`;
+}
+
 const nothingMatches = () => `<div class="empty"><b>Nothing matches</b><p class="note">Widen the window or drop a filter.</p>
   <div style="margin-top:12px"><button class="btn" data-act="clear">Clear</button></div></div>`;
 
@@ -765,16 +837,15 @@ function viewEvents(list) {
       const chain = r.kind === 'chain' ? chainWords(r.group) : [];
       const last = r.group[r.group.length - 1];
       const state = r.kind === 'chain' ? OUT[last.outcome] : o;
-      const head = e.args && !isStub(e.args)
-        ? Object.entries(e.args).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ')
-        : isStub(e.args) ? stubLabel(e.args)
-        : (e.detail ? Object.entries(e.detail).slice(0, 3).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ') : '');
+      const prev = previewOf(e);
       return `<tr class="ev${S.open === e.idx ? ' sel' : ''}" data-act="openidx" data-idx="${e.idx}">
-        <td class="c-when t-dim t-mono">${dts(e.ms)}</td><td class="c-who t-mono">${esc(e.principal)}</td>
+        <td class="c-when t-dim t-mono">${dts(rowMs(r))}</td><td class="c-who t-mono">${esc(e.principal)}</td>
         <td class="c-what"><div class="rowline"><span class="t-mono" style="font-weight:600">${rowTitleHtml(r)}</span>
-          ${r.runs ? `<span class="chip">×${r.runs} runs</span>` : ''}${r.kind === 'chain' ? `<span class="chip">${r.group.length} events</span>` : ''}</div>
+          ${r.runs ? runBadge(r) : ''}${r.kind === 'chain' ? `<span class="chip">${r.group.length} events</span>` : ''}</div>
           ${chain.length ? `<div class="chain">${chain.map(c => `<b>${esc(c)}</b>`).join('<span style="color:var(--dim)">→</span>')}</div>` : ''}
-          ${head ? `<div class="note t-mono prev">${esc(head.slice(0, 110))}</div>` : ''}</td>
+          ${r.runs ? runLine(r) : ''}
+          ${prev ? `<div class="note t-mono prev${argsPreview(e) ? ' prev-args' : ''}">${esc(prev.slice(0, 110))}</div>` : ''}
+          ${r.runs && S.runOpen[e.idx] ? runList(r) : ''}</td>
         <td class="c-out"><span class="chip ${chipCls(state)}">${state}</span></td></tr>`;
     }).join('')}
     </tbody></table>
@@ -924,9 +995,12 @@ function render() {
   $('#filterbar').innerHTML =
     `<button class="btn filtersbtn" data-act="filters">Filters${S.filters.length ? ' · ' + S.filters.length : ''}</button>`
     + S.filters.map((c, i) => `<span class="fchip"><span class="k">${c.f}</span><span class="v">${esc(c.v)}</span><button data-act="unfilter" data-i="${i}" title="Remove">×</button></span>`).join('')
-    + `<div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="q" placeholder="Search events and bodies…  ( / )" value="${esc(S.q)}"></div>`
+    + `<div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="q" placeholder="Search events and bodies…  ( / )" value="${esc(SEARCHING ? PENDING_Q : S.q)}">${SEARCHING ? '<span class="searching">Searching…</span>' : ''}</div>`
     + (S.filters.length || S.q ? `<button class="btn" data-act="clear">Clear</button>` : '');
   $('#rail').innerHTML = railHtml(list);
+  // A search never unmounts the page: the previous rows stay while the next read is in
+  // flight, dimmed, with the box saying so (postmortem 2026-09-21).
+  $('#main').classList.toggle('stale', SEARCHING);
   $('#main').innerHTML = STATE === 'loading' ? skeletonMain()
     : STATE === 'empty' ? `<div class="card"><div class="empty"><b>Nothing recorded yet</b><p class="note">Calls, approvals and config changes will appear here.</p></div></div>`
     : S.view === 'summary' ? viewSummary(list) : S.view === 'sessions' ? viewSessions(list) : viewEvents(list);
@@ -953,6 +1027,8 @@ document.addEventListener('click', ev => {
   if (act === 'allwindow') { S.from = WEEK_START; S.to = NOW; return render(); }
   if (act === 'preset') { S.to = NOW; S.from = NOW - (+h) * 36e5; return render(); }
   if (act === 'day') { S.from = WEEK_START + (+i) * 864e5; S.to = S.from + 864e5; return render(); }
+  if (act === 'run') { S.runOpen[idx] = !S.runOpen[idx]; S.runShown[idx] = RUN_PAGE; return render(); }
+  if (act === 'runmore') { S.runShown[idx] = (S.runShown[idx] ?? RUN_PAGE) + RUN_PAGE; return render(); }
   if (act === 'morerows') { S.eventsShown += 120; return render(); }
   if (act === 'moresess') { S.sessionsShown += 40; return render(); }
   if (act === 'filters') { S.filterLevel = true; return render(); }

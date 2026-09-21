@@ -3,15 +3,18 @@
 // space, plus the READS that fill those props in.
 //
 // OWNS: one Props type per SERVER-RENDERED page of §13 (/login, /device, /settings,
-// /approvals, /approvals/<id>, /audit, /oauth/consent), the shared chrome those pages
+// /approvals, /approvals/<id>, /oauth/consent), the shared chrome those pages
 // render inside, the `paths` object every link, form action and client route is built
 // from, and one loader per such page — the seam where a props value stops being a
-// fixture and becomes a real read. /apps/* and /agents/* have no props here: they are a
+// fixture and becomes a real read. /apps/*, /agents/* and — since 2026-09-21, decision 36
+// — /audit have no props here: they are a
 // React SPA served from a shell document, and what this file still owns for them is
-// `paths` (the URL space they mirror) and the pure FORM COMPOSERS the JSON API calls
+// `paths` (the URL space they mirror), the pure FORM COMPOSERS the JSON API calls
 // (api.ts) — `composeOwnerRoles`, `composeRedaction`, `composeRoles`,
 // `composeTypescriptAliases`, `grantChoicesOf` — which stay on the server because they
-// are the rule a save is composed by, not a rendering concern.
+// are the rule a save is composed by, not a rendering concern, and the audit READ shapes
+// (`AuditEventRow`, `eventRow`, `noBodiesReason`, `auditFilters`, `auditExportQuery`),
+// which api.ts and web.ts answer their audit routes from.
 //
 // HIDES: nothing about the domain — every field here is either lifted straight from a
 // read model (registry / approvals / audit, via type-only imports) or is an explicitly
@@ -27,16 +30,12 @@
 // credential state is better-auth's, reached through identity's own mounted
 // endpoints because §4 gives that module sole custody.
 //
-// And ONE parity exception is a real one, stated here rather than left to be
-// discovered: /audit's four summary tiles and its histogram are AGGREGATIONS this
-// file computes over `audit_query` rows (auditStats/auditHistogram), because no op
-// returns stats or buckets. So the page shows something the CLI and the pmcp tools
-// cannot — the second such exception beside the JSONL export, and unlike that one it
-// is not merely a reframing of the same read. Closing it is an `audit_stats` op
-// (audit.ts owning the window, the buckets and the percentiles, both fronts reading
-// it), which is a change to the pinned op set in contracts/admin-ops.json and so
-// belongs to a dispatch that may move a contract. Until then the ceiling is
-// AUDIT_SCAN_ROWS's: the tiles silently lag `total` on a window past it.
+// The parity exception this file used to carry is CLOSED (2026-09-21, decision 36): the
+// four summary tiles and the histogram were aggregations computed here over `audit_query`
+// rows, and so were something the CLI could not show. They went with the server-rendered
+// page. §13's explorer derives its own tiles, lanes and facets in the browser over rows
+// `audit_query` answered, so nothing on this side aggregates anything the tools cannot
+// read — and the JSONL export is once again the only named exception.
 //
 // Two rules the templates depend on, stated once here:
 //
@@ -46,9 +45,8 @@
 //     makes a template renderable from a fixture (server/dev/fixtures.ts) and
 //     from a request with identical results.
 //  2. Desktop and mobile are ONE template. The Mobile*.dc.html artboards are the
-//     narrow breakpoint of these same props — e.g. /audit's numbered pages and
-//     its "Load more" are two presentations of the single offset/limit/total
-//     contract below, never two view models.
+//     narrow breakpoint of these same props — e.g. /approvals' wide rows and its
+//     narrow stack are two presentations of one approval list, never two view models.
 //
 // Timestamps are mixed on purpose and the mix is inherited, not invented: the
 // skeleton read models spell time two ways — ISO-8601 strings in approvals
@@ -65,7 +63,6 @@ import { renderSVG } from "uqr";
 import { ops } from "../admin";
 import type { AgentPane, AppPane } from "../app-routes";
 import type { AppRow as OpsAppRow } from "../admin";
-import { config as auditConfig } from "../audit";
 import type { TypescriptAliases } from "../hub-types";
 import {
   AUTH_BASE_PATH,
@@ -75,11 +72,11 @@ import {
   PASSWORD_MIN_LENGTH,
 } from "../identity";
 import type { TokenInfo } from "../identity";
-import { DEVICE_CODE_TTL_MS } from "../limits";
+import { AUDIT_EXPORT_MAX_VALUES, DEVICE_CODE_TTL_MS } from "../limits";
 import { ROLE_FAMILIES } from "../registry";
 import type { FamilyPatterns, RoleDeclaration, RoleFamily } from "../registry";
 import type { ApprovalListFilters, ApprovalRow, ApprovalStatus } from "../approvals";
-import type { AuditRow, BodyStub, AuditQuery } from "../audit";
+import type { AuditQuery, AuditRow, AuditSlimRow, BodyStub } from "../audit";
 // The one page-layer import: `sessionLabel` is a page string, and the revoke dialog and
 // the row it names must read the same definition of it (format.ts says why).
 import { sessionLabel } from "./format";
@@ -163,21 +160,6 @@ function query(params: Record<string, string | number | undefined | null>): stri
   const rendered = search.toString();
   return rendered ? `?${rendered}` : "";
 }
-
-/**
- * The filter fields that survive into a /audit link. Exactly `audit_query`'s
- * filter surface (§8) minus nothing and plus nothing: the page's query string IS
- * the tool's argument object, which is what lets "Export JSONL" be a
- * serialization of the same read rather than a second capability (§13).
- */
-export type AuditLinkQuery = Pick<
-  AuditQuery,
-  "principal" | "app" | "event" | "tool" | "session" | "since" | "until" | "limit" | "offset"
-> & {
-  /** The row the page opens (`?expand=<id>`) — a link concern, not a filter: the export
-   *  ignores it, and the only link that sets it is a row's own chevron (§13, G1). */
-  expand?: number;
-};
 
 /**
  * Every URL the browser surface serves or posts to, in one object — templates
@@ -274,7 +256,8 @@ export const paths = {
   agentPane(slug: string, pane: AgentPane): string {
     return `${paths.agentDetail(slug)}/${pane}`;
   },
-  /** Read-only view over audit.query with its exact filters. */
+  /** §13's audit explorer — the SPA's third route family since 2026-09-21 (decision 36), so
+   *  this is the SHELL's URL and the client owns every link under it. */
   audit: "/audit",
   /** §19.5's consent screen — an external client's authorization request, and the
    *  agent picker that decides how much power it gets. */
@@ -312,16 +295,6 @@ export const paths = {
   },
 
   /**
-   * /audit under a set of filters — nav links, paging, and the session link alike. A link
-   * that OPENS a row carries `#event-<id>` as well, so the scripting-off reload lands on
-   * the row it opened (§13); the closing link, built without `expand`, carries none, and
-   * neither does `auditExport`, which never receives one.
-   */
-  auditWith(filters: AuditLinkQuery): string {
-    return `/audit${query({ ...filters })}${filters.expand === undefined ? "" : `#event-${filters.expand}`}`;
-  },
-
-  /**
    * /approvals under approval_list's own filters (§8) — how "Older →" widens the
    * history limit. There is no offset: the tool takes `status` and `limit` and
    * nothing else, so the page cannot invent paging the read model doesn't have.
@@ -331,13 +304,12 @@ export const paths = {
   },
 
   /**
-   * The streaming JSONL export of the rows matching the current filters (§13).
-   * Deliberately the same query string as `auditWith`: same rows, different
-   * framing.
+   * The streaming JSONL export of the rows matching a selection (§13) — a bookmarkable URL
+   * since before the explorer and unchanged by it. A bare path rather than a builder: the
+   * keys it accepts are REPEATED ones (`auditExportQuery`), which the client composes and
+   * this module would only be able to compose one value of.
    */
-  auditExport(filters: AuditLinkQuery): string {
-    return `/audit/export.jsonl${query({ ...filters })}`;
-  },
+  auditExport: "/audit/export.jsonl",
 
   /* --- mutations posted by the pages --- */
 
@@ -967,22 +939,23 @@ export type DetailApproval =
 export type { ApprovalRow, ApprovalStatus };
 
 /* ------------------------------------------------------------------ *
- * /audit
+ * /audit — the ledger's read shapes (the PAGE is the SPA's, decision 36)
  * ------------------------------------------------------------------ */
 
 /**
- * The time window as the segmented control expresses it. "custom" means the
- * window came from an explicit since/until pair rather than one of the presets,
- * and is what the date-range control renders ("Aug 18 – Aug 24, 2026").
+ * The time window as a link may still spell it (`?range=`): a readable window ending now,
+ * kept because the agent page, the app page and old bookmarks emit it. "custom" means the
+ * window came from an explicit since/until pair instead.
  */
 export type AuditRange = "1h" | "24h" | "7d" | "30d" | "custom";
 
 /**
- * The page's current filter state — `audit_query`'s filters (§8) with limit and
- * offset resolved (never undefined here: the page always knows its page size and
- * position), plus the preset the window came from. `since`/`until` stay epoch
- * milliseconds, as AuditQuery states them, and are always set even for a preset,
- * so the export link and the histogram cover exactly the visible window.
+ * A caller's audit link, resolved — `audit_query`'s filters (§8) with limit and offset
+ * defaulted, plus the preset the window came from. `since`/`until` stay epoch milliseconds,
+ * as AuditQuery states them, and are always set, so the read covers exactly one window.
+ * This is what `/api/hub/audit` (the agent page's Activity pane) parses; §13's explorer
+ * parses its own state in the browser and reaches the ledger through the two reads in
+ * api.ts instead.
  */
 export type AuditFilters = Pick<
   AuditQuery,
@@ -996,31 +969,19 @@ export type AuditFilters = Pick<
 };
 
 /**
- * The values behind the three select controls, gathered from the namespace, not
- * from the visible rows — a filter must be able to select a principal whose
- * events fell outside the current window. `principals` are canonical principal
- * strings ("agent:claude", "user:ahrzb", "app:news"), the same spelling audit rows
- * and `audit_query.principal` use.
- */
-export type AuditFilterOptions = {
-  principals: string[];
-  apps: string[];
-  events: string[];
-};
-
-/**
- * A recorded body as /audit renders it: the masked JSON object, or one whole-body
- * BodyStub when the body was over the cap and was replaced entire (§15). The
- * detail view shows stubs as typed size placeholders (‹blob image/png · 4.2 MB›,
- * ‹oversize · 2.1 MB›) and never anything resembling bytes.
+ * A recorded body as a reader renders it: the masked JSON object, or one whole-body
+ * BodyStub when the body was over the cap and was replaced entire (§15). A renderer shows
+ * stubs as typed size placeholders (‹blob image/png · 4.2 MB›, ‹oversize · 2.1 MB›) and
+ * never anything resembling bytes.
  */
 export type RecordedBody = Record<string, unknown> | BodyStub;
 
 /**
- * One audit row as the page sees it: audit.query's row minus the namespace id
- * (every row on this page belongs to the viewer's own namespace — carrying it
- * would only invite rendering it) and with the two body columns typed for what
- * they can actually hold.
+ * One audit row as a reader of the owner's own namespace sees it: audit.query's row minus
+ * the namespace id (every row here belongs to the viewer's own — carrying it would only
+ * invite rendering it) and with the two body columns typed for what they can actually hold.
+ * What `GET /api/hub/audit/:id` answers with, and what the agent page's Activity pane
+ * reads.
  */
 export type AuditEventRow = Omit<AuditRow, "ownerId" | "args" | "result"> & {
   args?: RecordedBody;
@@ -1034,88 +995,6 @@ export type AuditEventRow = Omit<AuditRow, "ownerId" | "args" | "result"> & {
    * `unrecorded` (recorded before logging was switched on, or the app is gone).
    */
   noBodies?: "off" | "refused" | "unrecorded";
-};
-
-/**
- * The four summary tiles, computed over the SAME filtered window as `rows` — so
- * changing a filter moves the tiles with the table. Counts are of matching rows,
- * not of the page. Nulls mean "no basis to compute": `eventsDeltaPct` has none
- * when the previous window is outside retention (§15's 7 days), and the latency
- * figures have none when no matching row carried a duration (only tools/call
- * rows do).
- */
-export type AuditStats = {
-  events: number;
-  eventsDeltaPct: number | null;
-  toolCalls: number;
-  denied: number;
-  medianDurationMs: number | null;
-  p95DurationMs: number | null;
-};
-
-/** One histogram column: the bucket's start (ISO-8601) and how many rows fell in it. */
-export type AuditBucket = { start: string; count: number };
-
-/**
- * "Events over time". One bucket size for both breakpoints — the desktop note
- * ("6-hour buckets") and the mobile heading ("Events per day") are two labels
- * derived from `bucketMs`, not two datasets. `peak` is the scale the bars and the
- * y-axis tick are drawn against, carried rather than recomputed so an empty
- * window still draws an axis.
- */
-export type AuditHistogram = {
-  bucketMs: number;
-  buckets: AuditBucket[];
-  peak: number;
-};
-
-/**
- * The single paging contract behind both presentations (§13): desktop renders
- * numbered pages and a "1–50 of 1,284" line from it, mobile renders "Load more"
- * from the same three numbers. `total` is audit_query's total — every row
- * matching the filters, regardless of limit/offset — and also the "N events
- * match" line.
- */
-export type AuditPaging = {
-  offset: number;
-  limit: number;
-  total: number;
-};
-
-/**
- * /audit — read-only, so no CSRF token and no mutation targets. Every control on
- * the page is a GET: the filters submit as a query string, Export JSONL is a
- * link, and an expanded row is addressable.
- */
-export type AuditProps = ShellProps & {
-  section: "audit";
-  /** The one shelled page that never flashes: every control here is a GET, so nothing
-   *  redirects back to it with an outcome and the page draws no alert at all. */
-  notice: null;
-  filters: AuditFilters;
-  options: AuditFilterOptions;
-  rows: AuditEventRow[];
-  paging: AuditPaging;
-  stats: AuditStats;
-  histogram: AuditHistogram;
-  /**
-   * `AUDIT_SCAN_ROWS` when `paging.total` exceeds it, else `null` — the same constant
-   * that bounds `stats`/`histogram` also caps the scan `options` is read from (§13/G22),
-   * so this one field is the page's only "am I lagging total" question either reads.
-   */
-  scanCeiling: number | null;
-  /**
-   * The row whose <details> is rendered open — the EVENT DETAIL panel with the
-   * summary, the client metadata, and the recorded bodies. Deep-linkable, so a
-   * fixture and a shared link show the same thing; null means all collapsed.
-   */
-  expandedId: number | null;
-  /**
-   * How long the ledger keeps rows (§15, default 7): the "kept for N days" line
-   * and the empty state's advice both read it, and it is env-tunable, so it is
-   * data rather than copy.
-   */
-  retentionDays: number;
 };
 
 /* ------------------------------------------------------------------ *
@@ -1194,7 +1073,6 @@ export type PagePropsByName = {
   settings: SettingsProps;
   approvals: ApprovalsProps;
   "approval-detail": ApprovalDetailProps;
-  audit: AuditProps;
   /** Chromeless and reached only from the provider's redirect — but a §13 page with two
    *  boards all the same, so it is enumerated here like every other (`/oauth/consent`). */
   "oauth-consent": ConsentProps;
@@ -1657,23 +1535,11 @@ const APPROVAL_LOOKUP_LIMIT = 1000;
 
 /* ---------------------------------- /audit ------------------------------------ */
 
-/** The page size when the owner has not chosen one (the pager offers 25/50/100). */
+/** The page size a link that names none gets — `/api/hub/audit`'s default, which is the
+ *  Activity pane's page. */
 const AUDIT_PAGE_SIZE = 50;
 
-/**
- * How many matching rows the tiles and the histogram are computed over. The
- * stated ceiling of this page: `events` is `audit_query`'s exact total, and
- * everything derived per-row (tool calls, denials, the latency pair, every
- * bucket) is over at most the newest this-many rows of the same window. A
- * filtered window on a personal hub is far smaller than this; a window that is
- * not says so by the tiles lagging the total, which is the honest failure.
- */
-const AUDIT_SCAN_ROWS = 1000;
-
-/** How many columns "Events over time" draws, whatever the window. */
-const AUDIT_BUCKETS = 24;
-
-/** The window the segmented control starts on. */
+/** The window a link that carries no `range` and no usable since/until gets. */
 const AUDIT_DEFAULT_RANGE = "24h" as const;
 
 const RANGE_SPAN_MS: Record<Exclude<AuditRange, "custom">, number> = {
@@ -1684,61 +1550,9 @@ const RANGE_SPAN_MS: Record<Exclude<AuditRange, "custom">, number> = {
 };
 
 /**
- * /audit — four reads of one tool. The page's rows and its "N events match" line
- * are `audit_query`'s `{ rows, total }` verbatim (§8's one paging contract, which
- * the desktop pager and the mobile "Load more" are two presentations of); the
- * previous window's total is what the delta is a fact about; a bounded scan of
- * the same window feeds the tiles and the histogram; and an UNFILTERED scan
- * feeds the three select controls, because a filter must be able to name a
- * principal whose events fell outside the current window.
- */
-export async function auditProps(ctx: PageContext): Promise<AuditProps> {
-  const filters = auditFilters(ctx);
-  const scoped = auditQueryOf(filters);
-  const [page, scan, previous, everything, apps] = await Promise.all([
-    read<{ rows: AuditRow[]; total: number }>(ctx, "audit_query", {
-      ...scoped,
-      limit: filters.limit,
-      offset: filters.offset,
-    }),
-    read<{ rows: AuditRow[]; total: number }>(ctx, "audit_query", {
-      ...scoped,
-      limit: AUDIT_SCAN_ROWS,
-    }),
-    read<{ rows: AuditRow[]; total: number }>(ctx, "audit_query", {
-      ...scoped,
-      since: filters.since - (filters.until - filters.since),
-      until: filters.since - 1,
-      limit: 1,
-    }),
-    read<{ rows: AuditRow[]; total: number }>(ctx, "audit_query", { limit: AUDIT_SCAN_ROWS }),
-    // Why a bodiless call row is bodiless: the app's `log_bodies` as it stands NOW (§15).
-    // app_list's own rows, archived apps and the virtual `pmcp` builtin included — a row
-    // whose app is gone is simply absent from the map, which is the `unrecorded` case.
-    read<{ apps: OpsAppRow[] }>(ctx, "app_list"),
-  ]);
-  const logBodies = new Map(apps.apps.map((app) => [app.slug, app.logBodies]));
-  return {
-    ...(await shell(ctx, "audit")),
-    // Read-only page, so the flash the shell carries for the others is dropped here
-    // rather than rendered: no route redirects back to /audit with an outcome.
-    notice: null,
-    filters,
-    options: filterOptions(everything.rows),
-    rows: page.rows.map((row) => eventRow(row, logBodies)),
-    paging: { offset: filters.offset, limit: filters.limit, total: page.total },
-    stats: auditStats(page.total, previous.total, scan.rows),
-    histogram: auditHistogram(filters, scan.rows),
-    scanCeiling: page.total > AUDIT_SCAN_ROWS ? AUDIT_SCAN_ROWS : null,
-    expandedId: positive(ctx.query.get("expand")) ?? null,
-    retentionDays: auditConfig().retentionDays,
-  };
-}
-
-/**
- * The page's filter state, read off its own query string. `since`/`until` are
- * always resolved — a preset is a window, not a mode — so the export link, the
- * histogram and the tiles all cover exactly what the table shows.
+ * One audit link's filter state, read off its own query string. `since`/`until` are
+ * always resolved — a preset is a window, not a mode — so a caller never has to decide
+ * what "no window" means.
  *
  * The parameter is narrowed to the two fields it reads rather than taken as a whole
  * PageContext, because the JSON API's `/api/hub/audit` route parses the same filters and
@@ -1771,16 +1585,79 @@ export function auditFilters(ctx: Pick<PageContext, "now" | "query">): AuditFilt
 }
 
 /**
- * The filters as `audit_query` takes them — the page's state minus the two
- * fields that are the page's own (`range` is which preset produced the window,
- * `limit`/`offset` are the caller's page). This is also what the JSONL export
- * is handed, which is what makes the export a serialization of the same read
- * rather than a second one (§13).
+ * The filters as `audit_query` takes them — the link's state minus the three fields that
+ * are the caller's own (`range` is which preset produced the window, `limit`/`offset` are
+ * the page being looked at).
  */
 export function auditQueryOf(filters: AuditFilters): AuditQuery {
   const { range: _range, limit: _limit, offset: _offset, ...query } = filters;
   return query;
 }
+
+/** The export's filters, or the one sentence the route refuses with — the whole parse has
+ *  exactly two outcomes, and a caller that forgets the second cannot compile. */
+export type AuditExportQuery =
+  | { query: Omit<AuditQuery, "limit" | "offset" | "bodies"> }
+  | { reason: string };
+
+/**
+ * The JSONL export's filters, read off its own query string (§13, decision 36) — what makes
+ * the export a serialization of the one read rather than a second one.
+ *
+ * Three things differ from `auditFilters`, and all are about the export being a LINK rather
+ * than a page. Each exact filter is read with `getAll`, so a repeated key is a list
+ * (audit.AuditQuery's list form) and a single-valued old bookmark is the one-member list
+ * that means the same thing — `outcome` among them, in RAW recorded codes, because a display
+ * class is §13's own grouping and `denied` folds two. A repeated `target=<app>/<tool>` is a
+ * PAIR, split at the FIRST slash: an app slug never holds one and a `tool` column may hold a
+ * whole resource URI (§20.4), so the tool side keeps every slash it came with. And a link
+ * that names no window at all gets NO bounds instead of a preset: an export is the archive
+ * path (§15), so the honest default is everything the ledger still holds. `?range=` and a
+ * since/until pair still narrow, since every deep link that carries one means it; `limit`,
+ * `offset` and `expand` are ignored as they always were.
+ *
+ * REFUSES rather than ignores, twice, because both alternatives WIDEN a download: a `target`
+ * that is not a pair, and a selection whose values would not fit one prepared statement
+ * (limits.AUDIT_EXPORT_MAX_VALUES). An export that quietly carries rows the reader did not
+ * select is the failure a ledger may not have, and a D1 error partway through a stream is
+ * not a sentence anybody can act on.
+ */
+export function auditExportQuery(ctx: Pick<PageContext, "now" | "query">): AuditExportQuery {
+  const named = ctx.query.get("range") !== null || ctx.query.get("since") !== null || ctx.query.get("until") !== null;
+  const { since, until } = auditFilters(ctx);
+  const lists: Record<string, string[]> = {};
+  let bound = 0;
+  for (const field of EXPORT_LIST_FILTERS) {
+    const values = ctx.query.getAll(field).filter((value) => value !== "");
+    if (values.length > 0) lists[field] = values;
+    bound += values.length;
+  }
+  const targets: { app: string; tool: string }[] = [];
+  for (const raw of ctx.query.getAll("target")) {
+    const at = raw.indexOf("/");
+    // Both sides non-empty: "news/" names no tool and "/get_news" no app, and either would
+    // otherwise match nothing while reading like a filter that was applied.
+    if (at <= 0 || at === raw.length - 1) return { reason: "Bad target." };
+    targets.push({ app: raw.slice(0, at), tool: raw.slice(at + 1) });
+  }
+  // A pair binds two parameters, so it counts twice against the same bound.
+  bound += targets.length * 2;
+  if (bound > AUDIT_EXPORT_MAX_VALUES) {
+    return { reason: "Too many filter values for one export — narrow the selection." };
+  }
+  const needle = ctx.query.get("text") ?? "";
+  return {
+    query: {
+      ...(named ? { since, until } : {}),
+      ...lists,
+      ...(targets.length === 0 ? {} : { targets }),
+      ...(needle.trim() === "" ? {} : { text: needle }),
+    },
+  };
+}
+
+/** The exact filters the export accepts REPEATED — `audit_query`'s six, spelled once. */
+const EXPORT_LIST_FILTERS = ["principal", "app", "event", "tool", "session", "outcome"] as const;
 
 /** Which preset a window came from — a span that matches one exactly IS that
  *  preset, and anything else is the custom range the date control renders. */
@@ -1812,10 +1689,10 @@ function presetOf(raw: string | null): Exclude<AuditRange, "custom"> {
   return raw !== null && raw in RANGE_SPAN_MS ? (raw as Exclude<AuditRange, "custom">) : AUDIT_DEFAULT_RANGE;
 }
 
-/** One audit row as the page sees it: the namespace id dropped (every row here
- *  belongs to the viewer's own, and carrying it would only invite rendering it),
- *  plus why a call row carries no bodies. */
-function eventRow(row: AuditRow, logBodies: Map<string, boolean>): AuditEventRow {
+/** One audit row as a reader of the owner's own namespace sees it: the namespace id dropped
+ *  (every row here belongs to the viewer's own, and carrying it would only invite rendering
+ *  it), plus why a call row carries no bodies. What `GET /api/hub/audit/:id` answers with. */
+export function eventRow(row: AuditRow, logBodies: Map<string, boolean>): AuditEventRow {
   const { ownerId: _ownerId, args, result, ...rest } = row;
   const why = noBodiesReason(row, logBodies);
   return {
@@ -1837,82 +1714,27 @@ const BODY_EVENTS = new Set(["tools/call", "prompts/get", "resources/read"]);
 /** §15's four refusal outcomes — a refusal never had bodies, whatever the app's setting. */
 const REFUSAL_OUTCOMES = new Set(["-32000", "-32001", "-32002", "-32003"]);
 
-/** Why this row shows no bodies, or `undefined` when it has some or could never have had
- *  any. The refusal check comes first for the reason §15 gives it: several refusals happen
- *  before any redaction map exists, so no setting could have made bodies appear. */
-function noBodiesReason(row: AuditRow, logBodies: Map<string, boolean>): AuditEventRow["noBodies"] {
-  if (!BODY_EVENTS.has(row.event) || row.args !== undefined || row.result !== undefined) return undefined;
+/**
+ * Why this row shows no bodies, or `undefined` when it has some or could never have had
+ * any. The refusal check comes first for the reason §15 gives it: several refusals happen
+ * before any redaction map exists, so no setting could have made bodies appear.
+ *
+ * Takes either reading of a row, because both readers owe the sentence: a FULL row has
+ * bodies when either column parsed, and a SLIM one (decision 36) when it carries an
+ * `argsHead` or reports a result — the two body columns seen through the projection that
+ * never selected them (audit.AuditSlimRow).
+ */
+export function noBodiesReason(
+  row: AuditRow | AuditSlimRow,
+  logBodies: Map<string, boolean>,
+): AuditEventRow["noBodies"] {
+  const slim = row as AuditSlimRow;
+  const full = row as AuditRow;
+  const hasBodies =
+    full.args !== undefined || full.result !== undefined || slim.argsHead !== undefined || slim.hasResult === true;
+  if (!BODY_EVENTS.has(row.event) || hasBodies) return undefined;
   if (REFUSAL_OUTCOMES.has(row.outcome)) return "refused";
   return row.app !== undefined && logBodies.get(row.app) === false ? "off" : "unrecorded";
-}
-
-/** The three selects' values, from the namespace rather than from the visible
- *  page — sorted, so the control does not reshuffle as events arrive. */
-function filterOptions(rows: AuditRow[]): AuditFilterOptions {
-  const principals = new Set<string>();
-  const apps = new Set<string>();
-  const events = new Set<string>();
-  for (const row of rows) {
-    principals.add(row.principal);
-    if (row.app !== undefined) apps.add(row.app);
-    events.add(row.event);
-  }
-  const sorted = (values: Set<string>): string[] => [...values].sort();
-  return { principals: sorted(principals), apps: sorted(apps), events: sorted(events) };
-}
-
-/** The four tiles. `events` is exact; everything per-row is over the scan (see
- *  AUDIT_SCAN_ROWS), and a delta with no previous window to compare against is
- *  null rather than a number nobody can read. */
-function auditStats(total: number, previousTotal: number, scan: AuditRow[]): AuditStats {
-  const durations = scan
-    .map((row) => row.durationMs)
-    .filter((ms): ms is number => typeof ms === "number")
-    .sort((a, b) => a - b);
-  return {
-    events: total,
-    eventsDeltaPct: previousTotal === 0 ? null : Math.round(((total - previousTotal) / previousTotal) * 100),
-    toolCalls: scan.filter((row) => row.event === "tools/call").length,
-    // The two codes the row badge itself calls "denied" (§7's filter refusals);
-    // an approval-required row is not a denial, it is a question.
-    denied: scan.filter((row) => DENIED_OUTCOMES.has(row.outcome)).length,
-    medianDurationMs: percentile(durations, 0.5),
-    p95DurationMs: percentile(durations, 0.95),
-  };
-}
-
-/** §7's two "you may not" codes: not permitted, and not permitted on this tool. */
-const DENIED_OUTCOMES: ReadonlySet<string> = new Set(["-32000", "-32001"]);
-
-function percentile(sorted: number[], fraction: number): number | null {
-  if (sorted.length === 0) return null;
-  const at = Math.min(sorted.length - 1, Math.floor(fraction * sorted.length));
-  return sorted[at];
-}
-
-/** "Events over time" over the visible window: one bucket size for both
- *  breakpoints, and the peak carried so an empty window still draws an axis. */
-function auditHistogram(filters: AuditFilters, scan: AuditRow[]): AuditHistogram {
-  const span = Math.max(filters.until - filters.since, 60_000);
-  const bucketMs = Math.max(60_000, Math.ceil(span / AUDIT_BUCKETS));
-  // Nothing matched: no bars rather than 24 flat ones (G50). The bucket size stays
-  // derived because the caption describes the window, not the data. Page and scan share
-  // the window, so this always co-occurs with the table's own empty state — never the
-  // reverse, since an `offset` past `total` empties the table with the bars intact.
-  if (scan.length === 0) return { bucketMs, buckets: [], peak: 0 };
-  const counts = new Array<number>(AUDIT_BUCKETS).fill(0);
-  for (const row of scan) {
-    const at = Math.floor((row.ts - filters.since) / bucketMs);
-    if (at >= 0 && at < counts.length) counts[at] += 1;
-  }
-  return {
-    bucketMs,
-    buckets: counts.map((count, at) => ({
-      start: new Date(filters.since + at * bucketMs).toISOString(),
-      count,
-    })),
-    peak: counts.reduce((high, count) => Math.max(high, count), 0),
-  };
 }
 
 /* --------------------------------- /settings ----------------------------------- */

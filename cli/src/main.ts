@@ -1555,9 +1555,20 @@ export type AuditFilters = {
   event?: string;
   tool?: string;
   session?: string;
+  /** The raw recorded outcome (`ok`, `-32001`) — never one of the web explorer's display
+   *  classes, which fold two codes and belong to that page alone (§8). */
+  outcome?: string;
+  /** One row by id, as the web record drawer reads it. */
+  id?: number;
+  /** A case-insensitive substring over the row's strings AND its recorded bodies (§8). */
+  text?: string;
   since?: number;
   until?: number;
   limit?: number;
+  /** `false` for `--no-bodies`: the body-less projection, whose rows carry an args preview
+   *  instead of the bodies. ABSENT for the default, because the hub's default is true and a
+   *  flag nobody typed must not become an argument. */
+  bodies?: false;
 };
 
 /**
@@ -1565,7 +1576,8 @@ export type AuditFilters = {
  * newest first, plus the "N of M events match" line from `total`; the timestamp column is
  * the wire's epoch-ms `ts` (§8's AuditRow) formatted locally. Recorded bodies (§15 —
  * post-redaction and stub-substituted, the only stored form) render in a row's detail, with
- * stubs shown as typed size placeholders (`‹blob image/png · 4.2 MB›`), never raw.
+ * stubs shown as typed size placeholders (`‹blob image/png · 4.2 MB›`), never raw. Under
+ * `bodies: false` the rows carry no bodies to render and the args PREVIEW takes their place.
  * `exportJsonl` instead streams EVERY matching row to stdout, one JSON object per line —
  * bodies included verbatim as stored — by re-querying in limit-sized chunks, never held in
  * memory at once. Exit 0 even when nothing matches.
@@ -1582,6 +1594,10 @@ export async function audit(
     ...(filters.event === undefined ? {} : { event: filters.event }),
     ...(filters.tool === undefined ? {} : { tool: filters.tool }),
     ...(filters.session === undefined ? {} : { session: filters.session }),
+    ...(filters.outcome === undefined ? {} : { outcome: filters.outcome }),
+    ...(filters.id === undefined ? {} : { id: filters.id }),
+    ...(filters.text === undefined ? {} : { text: filters.text }),
+    ...(filters.bodies === undefined ? {} : { bodies: filters.bodies }),
     ...(filters.since === undefined ? {} : { since: filters.since }),
     ...(filters.until === undefined ? {} : { until: filters.until }),
     ...(filters.limit === undefined ? {} : { limit: filters.limit }),
@@ -1620,9 +1636,17 @@ export async function audit(
   }
 }
 
-/** A recorded body's detail line — stubs as typed size placeholders, never raw bytes (§15). */
+/**
+ * A recorded body's detail line — stubs as typed size placeholders, never raw bytes (§15).
+ *
+ * Under `--no-bodies` the row carries no bodies to describe, so what prints in their place
+ * is what the body-less read actually returned: the `argsHead` preview where the arguments
+ * would be, and — for the result, which has no preview — the one fact `hasResult` carries.
+ */
 function renderBodies(row: Record<string, unknown>): string {
   const parts: string[] = [];
+  if (typeof row.argsHead === "string") parts.push(`args=${row.argsHead}`);
+  if (row.hasResult === true) parts.push("result=‹recorded›");
   for (const key of ["args", "result"]) {
     const body = row[key];
     if (body === undefined || body === null) continue;
@@ -1773,7 +1797,7 @@ Admin
   approvals · approve <id> · reject <id>
   token issue|list|revoke · admin-token issue|list|revoke
   connect <app> · connections · connection revoke <id>
-  audit [--export jsonl]
+  audit [--text <s>] [--id <n>] [--outcome <code>] [--no-bodies] [--export jsonl]
 
 Global: --profile <name>, --json, --no-color, --yes, --version, -h
 `;
@@ -2293,22 +2317,32 @@ function buildProgram(): Command {
     .option("--event <name>", "exact event name")
     .option("--tool <name>", "exact unprefixed tool name")
     .option("--session <id>", "exact client session id")
+    .option("--outcome <code>", "exact outcome, e.g. ok or -32001")
+    .option("--id <n>", "one row by id")
+    .option("--text <s>", "substring over the row's fields and recorded bodies")
+    .option("--no-bodies", "omit the recorded bodies; print an args preview instead")
     .option("--since <when>", "7d | ISO-8601 | epoch ms")
     .option("--until <when>", "7d | ISO-8601 | epoch ms")
     .option("--limit <count>", "page size")
     .option("--export <format>", "jsonl streams every matching row")
-    .action(async (opts: Record<string, string | undefined>) => {
+    .action(async (opts: Record<string, string | boolean | undefined>) => {
       // The two translated flags resolve BEFORE the context: `await context()` is a network
       // whoami, and an unparseable `--since` resolved after it would be reported as a hub
       // failure rather than the malformed argv it is (§10).
       const filters: AuditFilters = {
-        agent: opts.agent,
-        app: opts.app,
-        event: opts.event,
-        tool: opts.tool,
-        session: opts.session,
-        since: instantMs("since", opts.since),
-        until: instantMs("until", opts.until),
+        agent: word(opts.agent),
+        app: word(opts.app),
+        event: word(opts.event),
+        tool: word(opts.tool),
+        session: word(opts.session),
+        outcome: word(opts.outcome),
+        id: opts.id === undefined ? undefined : Number(opts.id),
+        text: word(opts.text),
+        // commander spells a negated flag as `bodies: false` and its absence as `true`; the
+        // hub's own default is true, so only the false is worth sending.
+        bodies: opts.bodies === false ? false : undefined,
+        since: instantMs("since", word(opts.since)),
+        until: instantMs("until", word(opts.until)),
         limit: opts.limit === undefined ? undefined : Number(opts.limit),
       };
       pendingExit = (await audit(await context(), filters, { exportJsonl: opts.export === "jsonl" })) as 0 | 1;
@@ -2341,6 +2375,13 @@ function buildProgram(): Command {
 function requireWord(value: string | undefined, what: string, usage: string): string {
   if (value === undefined || value === "") throw new CliError("usage", `missing ${what}`, { usage });
   return value;
+}
+
+/** One commander option value as the STRING it is, or undefined. Needed only where a
+ *  command mixes value flags with a boolean one (`pmcp audit --no-bodies`), which makes
+ *  commander's options record `string | boolean` and every value flag nominally either. */
+function word(value: string | boolean | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 /**

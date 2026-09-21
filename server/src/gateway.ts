@@ -264,14 +264,22 @@ export type ListedItem = {
   outputSchema?: Record<string, unknown>;
 };
 
-/** The -32003 payload, in `data` and in the message text alike (§7 step 2). */
+/**
+ * The -32003 payload, in `data` and in the message text alike (§7 step 2) — and, since
+ * 2026-09-21 (decision 36), the same id on the `tools/call` row this refusal leaves behind:
+ * `auditDetail` is the road `failureClass` already rides (errors.HubError), so the ledger
+ * can tie the refusal to the `approval` row it opened without any of §7's wire shapes
+ * moving. §15 pins that an approval id is not token material.
+ */
 function approvalRequired(check: Extract<CheckResult, { outcome: "required" }>): HubError {
   const { approvalId, approvalUrl, expiresAt } = check;
-  return new HubError(CODES.approvalRequired, `approval required: ${approvalUrl}`, {
+  const refusal = new HubError(CODES.approvalRequired, `approval required: ${approvalUrl}`, {
     approvalId,
     approvalUrl,
     expiresAt,
   });
+  refusal.auditDetail = { approvalId };
+  return refusal;
 }
 
 /**
@@ -1487,6 +1495,11 @@ export async function dispatchTool(env: Env, input: ToolDispatch): Promise<JsonR
     const claim = mode === "approval"
       ? await passGate(env, app, input.tool, msg, redaction.args, ctx.principal)
       : undefined;
+    // §15 (decision 36): the row of a call that RAN under an approval names it, so the
+    // ledger can draw "asked → you approved → ran" as one chain. Set before the dispatch
+    // rather than after it, because the failing paths below owe the id too — the catch
+    // MERGES what the outcome adds onto whatever is already here.
+    if (claim !== undefined) detail = { approvalId: claim.id };
 
     // The forwarded message carries the canonical name, never a hub-local alias: the
     // address a consumer wrote is not the app's business.
@@ -1513,7 +1526,13 @@ export async function dispatchTool(env: Env, input: ToolDispatch): Promise<JsonR
     // at-most-once). ONE rule for every backend: whichever layer knew the cause attached
     // it to the error, and this function decides nothing about what a backend is allowed
     // to record. §15's hygiene travels with the field (HubError.auditDetail).
-    if (err instanceof HubError) detail = err.auditDetail;
+    //
+    // MERGED, not assigned (§15, decision 36): a claimed approval put its id here before
+    // the dispatch, and a -32000 after a claim owes the owner BOTH facts — the class that
+    // failed and the approval it spent. An assignment would keep only the last one written.
+    if (err instanceof HubError && err.auditDetail !== undefined) {
+      detail = { ...detail, ...err.auditDetail };
+    }
   }
   await recordDispatch(env, {
     ownerId,
@@ -1711,8 +1730,13 @@ async function recordDispatch(
     outcome: string;
     durationMs: number;
     bodies: CallBodies;
-    /** The upstream failure class, on the rows that had one (§7) — never a body fragment.
-     *  A read never carries one: only a call's refusal classes are worth a class. */
+    /**
+     * What this row's `detail` column holds (§15) — never a body fragment. Two things reach
+     * it, and a row may owe both: §7's upstream `failureClass` on a -32000, and (decision
+     * 36) the `approvalId` of the approval a `tools/call` row opened or consumed. A read
+     * never carries either — no read is gated (§18 decision 27) and only a call's refusal
+     * classes are worth a class.
+     */
     detail?: Record<string, unknown>;
   },
 ): Promise<void> {

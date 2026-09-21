@@ -694,12 +694,38 @@ async function main(): Promise<number> {
       return `/apps/${APP} 200 shell; GET /api/hub/apps/${APP}/catalog/tools lists ${TOOL} with ${derived.length} derivation(s); /apps/${APP}/prompts → 301 /apps/${APP}/catalog; /apps/${APP}/tools → 404`;
     });
 
-    await step("audit_query sees the calls", async () => {
+    await step("§13 · audit_query sees the calls, and the /audit explorer's shell and window read answer for the browser session", async () => {
       const rows = asArray((await owner("audit_query", { app: APP })).rows);
       const calls = rows.filter((row) => asRecord(row, "audit row").event === "tools/call");
       expect(calls.length >= 2, `only ${calls.length} tools/call rows`);
       const events = rows.map((row) => String(asRecord(row, "audit row").event));
-      return `${rows.length} rows for ${APP}, ${calls.length} tools/call — ${JSON.stringify(unique(events))}`;
+
+      // `/audit` is the SPA's third family (decision 36), so the page leg is the same two
+      // halves `/apps` has: the shell document, and the read the client makes behind the
+      // same cookie. A shell whose window read 500s is a blank screen on a live hub, and
+      // only the deployed worker can tell us the D1 projection actually runs there.
+      const rendered = await fetch(`${ORIGIN}/audit`, { headers: { Cookie: sessionCookie } });
+      expect(rendered.status === 200, `authenticated /audit → ${rendered.status}`);
+      const html = await rendered.text();
+      expect(html.includes(`id="pmcp-bootstrap"`), "/audit carried no bootstrap island");
+      expect(html.includes(`src="/app.js"`), "/audit linked no client bundle");
+      expect(
+        rendered.headers.get("cache-control") === "no-store",
+        `/audit Cache-Control ${rendered.headers.get("cache-control") ?? ""}`,
+      );
+
+      const windowRead = await hubJson("/api/hub/audit/window", sessionCookie);
+      const slim = asArray(windowRead.rows).map((row) => asRecord(row, "slim audit row"));
+      expect(Number(windowRead.total) >= rows.length, `window total ${String(windowRead.total)} < ${rows.length}`);
+      expect(slim.length > 0, "the window read answered no rows");
+      // The whole point of the body-less projection: a listing of thousands must never carry
+      // a body. One row carrying one would be invisible until the Worker ran out of memory.
+      for (const row of slim) {
+        expect(!("args" in row) && !("result" in row), `a window row shipped a body: ${JSON.stringify(row).slice(0, 120)}`);
+      }
+      expect(Number(windowRead.ceiling) > 0 && Number(windowRead.until) > Number(windowRead.since), "the window read echoed no window");
+
+      return `${rows.length} rows for ${APP}, ${calls.length} tools/call — ${JSON.stringify(unique(events))}; /audit 200 no-store with the bootstrap island; GET /api/hub/audit/window ${slim.length} slim rows of ${String(windowRead.total)}, ceiling ${String(windowRead.ceiling)}`;
     });
 
     await step(

@@ -29,8 +29,8 @@
   --danger-bg: #fef2f2;
   --danger-border: #fecaca;
   --dim-fg: #d4d4d8;        /* a dimmed rail entry's marker (AppDetail.dc.html) */
-  --sunken: #fafafa;        /* auth page ground, expanded audit row */
-  --fg-subtle: #52525b;     /* link hover, code text, chart peak */
+  --sunken: #fafafa;        /* auth page ground, a sunken panel inside a card */
+  --fg-subtle: #52525b;     /* link hover, code text */
   --row-border: #f4f4f5;    /* between table rows (lighter than --border) */
 
   /* type */
@@ -43,7 +43,7 @@
   --text-base: 14px;  /* body, controls */
   --text-sm: 13px;    /* helper text, small controls, table cells */
   --text-xs: 12px;    /* captions, badges, timestamps */
-  --text-2xs: 11px;   /* eyebrow labels, chart axis */
+  --text-2xs: 11px;   /* eyebrow labels */
 
   /* spacing (the ladder the boards actually use) */
   --space-1: 2px;
@@ -632,7 +632,7 @@ p {
   cursor: default;
 }
 
-/* square pager/step control */
+/* square icon-only control — a step arrow, a close */
 .btn-icon {
   display: inline-flex;
   align-items: center;
@@ -652,23 +652,6 @@ p {
 .btn-icon[aria-disabled="true"] {
   opacity: 0.5;
   cursor: default;
-}
-
-/* The audit row's expand chevron: a link drawn as a bare icon, not a bordered button. */
-.row-toggle {
-  display: inline-flex;
-  padding: 2px;
-  border-radius: var(--radius-sm);
-  color: var(--muted-fg);
-}
-
-.row-toggle:hover {
-  color: var(--fg);
-  background: var(--muted);
-}
-
-.row-open .row-toggle svg {
-  transform: rotate(180deg);
 }
 
 .actions {
@@ -918,27 +901,6 @@ select {
 
 .filters .input-group input {
   width: 260px;
-}
-
-/* Groups audit's two `.filters` rows so the narrow breakpoint can flatten them
-   (`.filters{display:contents}`) into one reorderable sequence without
-   reaching past this box into the surrounding form's other children (the
-   session-filter note, the narrow Export button). Wide: just the same
-   top-to-bottom stack the two rows always had. */
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-6);
-}
-
-/* Pairs "All agents"/"All apps" for the narrow breakpoint without
-   touching the wide layout: `display:contents` here is invisible to the wide
-   `.filters` row, so both selects stay flat, individually-ordered flex items
-   of it (Audit.dc.html). The narrow override below turns this into their own
-   shared row (MobileAudit.dc.html). */
-.filter-pair {
-  display: contents;
 }
 
 /* two full-width action buttons — device's Approve/Deny row. DOM order stays
@@ -1275,34 +1237,10 @@ select {
   font-family: var(--font-mono);
 }
 
-/* the expanded audit row and its detail panel */
-.row-open > td {
-  background: var(--sunken);
-  border-bottom: 0;
-}
-
-.row-detail > td {
-  background: var(--sunken);
-  padding-top: 0;
-}
-
 .detail {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-}
-
-.detail-body {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--fg-subtle);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.detail-meta {
-  font-size: var(--text-xs);
-  color: var(--muted-fg);
 }
 
 /* the mobile one-line summary of a table row: hidden on wide screens */
@@ -1636,74 +1574,6 @@ dialog::backdrop {
 .dialog .actions,
 dialog .actions {
   gap: var(--space-4);
-}
-
-/* ----------------------------------------------------------------- chart ---- */
-
-.chart {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-}
-
-.chart-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-5);
-}
-
-.chart-title {
-  font-size: var(--text-base);
-  font-weight: 500;
-}
-
-/* bars take their height from an inline style — that height is data */
-.chart-bars {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-  height: 140px;
-  border-bottom: 1px solid var(--border);
-}
-
-.chart-bar {
-  flex-grow: 1;
-  background: var(--muted-fg);
-  border-radius: 3px 3px 0 0;
-  min-height: 2px;
-}
-
-.chart-bar--peak {
-  background: var(--fg-subtle);
-}
-
-.chart-axis {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  font-size: var(--text-2xs);
-  color: var(--muted-fg);
-}
-
-/* ----------------------------------------------------------------- pager ---- */
-
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
-}
-
-.pager-group {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.pager-info {
-  font-size: var(--text-sm);
-  color: var(--muted-fg);
 }
 
 /* ------------------------------------------------------------ auth pages ---- */
@@ -2853,50 +2723,6 @@ dialog .actions {
     font-size: var(--text-base);
   }
 
-  /* MobileAudit.dc.html's control order (segmented, date range, paired
-     agents/apps, all events, tool search, Export) isn't the wide two-row
-     grouping (Audit.dc.html) — `.filter-group` takes over the column stack
-     `.filters` used to do itself, and each `.filters` row flattens
-     (display:contents) into it so `order` can reach every control at once
-     without touching the surrounding form's other children. */
-  .filter-group {
-    gap: var(--space-5);
-  }
-
-  .filters {
-    display: contents;
-  }
-
-  .filters select,
-  .filters input,
-  .filters .input-group,
-  .filters .input-group input {
-    width: 100%;
-  }
-
-  /* the tool search box sorts after the three selects instead of staying
-     where it sits on the wide row (right after date range). */
-  .filter-tool {
-    order: 1;
-  }
-
-  .filter-pair {
-    display: flex;
-    gap: var(--space-4);
-  }
-
-  .filter-pair select,
-  .filter-pair input {
-    width: auto;
-    flex: 1;
-  }
-
-  /* Apply sorts after the tool box it applies (`.filter-tool{order:1}`); flattened
-     rows put it at order 0, i.e. before the field the owner just typed in. */
-  .filters button[type="submit"] {
-    order: 2;
-  }
-
   .confirm-actions {
     flex-direction: column-reverse;
     gap: var(--space-5);
@@ -2966,10 +2792,6 @@ dialog .actions {
     margin-left: 0;
   }
 
-  .row-detail > td {
-    padding: 0 0 var(--space-6);
-  }
-
   .approval {
     padding: var(--space-8);
     gap: var(--space-6);
@@ -2983,11 +2805,6 @@ dialog .actions {
 
   .card--pad {
     padding: var(--space-8);
-  }
-
-  .chart-bars {
-    height: 110px;
-    gap: var(--space-3);
   }
 
   .code-grid {

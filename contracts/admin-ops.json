@@ -733,6 +733,22 @@
           "description": "Exact client session id.",
           "type": "string"
         },
+        "outcome": {
+          "description": "Exact outcome string, e.g. ok or -32001.",
+          "type": "string"
+        },
+        "id": {
+          "description": "One row by its id, scoped to this namespace like every other read.",
+          "type": "integer"
+        },
+        "text": {
+          "description": "Case-insensitive substring over the principal, event, app, tool, session id, detail and recorded bodies.",
+          "type": "string"
+        },
+        "bodies": {
+          "description": "Include the recorded bodies (default true); false returns an args preview and a result flag instead.",
+          "type": "boolean"
+        },
         "since": {
           "description": "Lower bound on the row timestamp, epoch ms.",
           "type": "integer"

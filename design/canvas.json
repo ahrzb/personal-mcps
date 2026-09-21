@@ -53,7 +53,7 @@
       "x": 3492,
       "y": 720,
       "w": 1380,
-      "h": 2140,
+      "h": 2160,
       "title": "Audit — Summary"
     },
     {
@@ -324,7 +324,7 @@
       "x": 0,
       "y": 13900,
       "w": 1380,
-      "h": 3260,
+      "h": 3340,
       "title": "Audit — Events & Sessions"
     },
     {
@@ -332,7 +332,7 @@
       "x": 1460,
       "y": 13900,
       "w": 1380,
-      "h": 5800,
+      "h": 6900,
       "title": "Audit — the record & the page states"
     },
     {

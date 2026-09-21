@@ -16,9 +16,10 @@
     --o-ok:#d4d4d8;--o-approval:#fab219;--o-archived:#8a5a00;--o-denied:#e5484d;--o-error:#7f1d1d;
     --rail-w:200px;--control-h-sm:32px;--control-h-xs:24px;--control-h-touch:44px;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:'Geist',system-ui,-apple-system,sans-serif;
   }
   *{box-sizing:border-box}
-  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:var(--fg);font-size:14px;background:#fff}
+  body{margin:0;font-family:var(--sans);color:var(--fg);font-size:14px;background:#fff}
   button{font:inherit;color:inherit;cursor:pointer}
   a{color:inherit}
   [hidden]{display:none!important}
@@ -170,6 +171,11 @@
   .ftab td{padding:2px 8px 2px 0;font-size:12px;line-height:20px;border:0}
   .ftab .k{color:var(--muted-fg);width:1%;white-space:nowrap;padding-right:14px}
   .ftab .v{font-family:var(--mono);word-break:break-all}
+  /* The outcome row: the hub's words beside the chip, the sentence beneath it. Neither
+     is mono, and neither breaks mid-word the way an id may. */
+  .ftab .v .olabel{font-family:var(--sans)}
+  .ftab tr.tall td{vertical-align:top;padding-top:5px}
+  .why{font-family:var(--sans);max-width:72ch;word-break:normal;margin:3px 0 4px}
   .ftab .v button{border:0;background:none;padding:0;font:inherit;font-family:var(--mono);text-decoration:underline;text-underline-offset:2px;cursor:pointer;text-align:left}
   .tree{font-family:var(--mono);font-size:12px;line-height:19px}
   .tree .n{display:flex;gap:6px;padding-left:var(--ind,0px)}
@@ -279,6 +285,8 @@ body .ftab tr{display:grid;grid-template-columns:84px minmax(0,1fr);align-items:
 body .ftab td{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;padding:5px 0;line-height:18px;align-self:stretch}
 body .ftab .k{width:auto;padding-right:10px}
 body .ftab .v button{align-self:stretch;display:inline-flex;align-items:center;padding:0}
+body .ftab tr.tall td{align-items:flex-start;padding-top:11px}
+body .why{flex:1 1 100%;max-width:none}
 body .scrim{display:none}
 body .level .frow{height:var(--control-h-touch);font-size:13px}
 body .level .showall{height:var(--control-h-touch);font-size:12px}
@@ -354,6 +362,25 @@ const S = {
 };
 
 const OUT = { ok: 'ok', '-32003': 'approval', '-32002': 'archived', '-32001': 'denied', '-32000': 'denied', error: 'error' };
+/* A code never stands alone (owner, 2026-09-21: "I literally won't know what -32001 is,
+   it's not like 404"). Every recorded outcome has a LABEL — the hub's own §7 words — and
+   the four refusals and `error` have a SENTENCE. One home; everything below reads it. An
+   outcome this table does not know is labelled by its raw value and gets no sentence. */
+const OUTCOME_WORDS = {
+  ok: ['ok', ''],
+  '-32003': ['approval required', 'This tool needs your approval for this agent. The call was held, not run — it waits on, or was settled in, Approvals.'],
+  '-32002': ['app archived', 'The app is archived, so the hub dispatches nothing to it.'],
+  '-32001': ['not permitted', "The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, so the ledger cannot say which."],
+  '-32000': ['app unavailable', 'The app could not be reached or did not answer in time.'],
+  error: ['error', 'The call was dispatched and the app answered with an error.'],
+};
+const label = o => OUTCOME_WORDS[o]?.[0] ?? o;
+/** The sentence the record prints under the outcome row, with the cause when one rode
+ *  along on the -32000 (errors.ts's `failureClass`). */
+const sentenceFor = e => {
+  const s = OUTCOME_WORDS[e.outcome]?.[1] ?? '';
+  return s && e.detail?.failureClass ? `${s} Cause: ${e.detail.failureClass}.` : s;
+};
 const CODES = { ok: ['ok'], approval: ['-32003'], archived: ['-32002'], denied: ['-32001', '-32000'], error: ['error'] };
 const LEVELS = ['ok', 'approval', 'archived', 'denied', 'error'];
 const FIELDS = ['outcome', 'principal', 'app', 'tool', 'event'];
@@ -426,7 +453,10 @@ function addFilter(f, v) {
   render();
 }
 
-/* ---- the export link: the same read, serialized ---- */
+/* ---- the export link: the same read, serialized ---- *
+ * An outcome CLASS is the page's own grouping, so the link expands it to the raw codes the
+ * column holds. The `tool` facet is a PAIR: splitting it into app= + tool= would export
+ * their cross product, so it travels whole as `target=<app>/<tool>` (§2). */
 function exportHref() {
   const p = new URLSearchParams();
   p.set('since', String(Math.round(S.from)));
@@ -434,10 +464,10 @@ function exportHref() {
   if (S.q) p.set('text', S.q);
   for (const c of S.filters) {
     if (c.f === 'outcome') for (const code of CODES[c.v]) p.append('outcome', code);
-    else if (c.f === 'tool') p.append('tool', c.v.split('/').slice(1).join('/'));
+    else if (c.f === 'tool') p.append('target', c.v);
     else p.append(c.f, c.v);
   }
-  return `/audit/export?${p}`;
+  return `/audit/export.jsonl?${p}`;
 }
 
 /* ---- merging: a call, its approval request and the dispatch after it are one row ---- */
@@ -497,9 +527,10 @@ function insights(list) {
 
 /* ---- lane strip ---- */
 let dragFrom = null;
-/* The class NAME is printed beside every swatch; the raw codes follow where they differ
-   from it, so colour is never the only carrier. */
-const LEGEND = [['ok', ''], ['approval', '−32003'], ['archived', '−32002'], ['denied', '−32001 · −32000'], ['error', '']];
+/* Colour is never the only carrier, and a raw code never stands alone: the legend names
+   each class in words where there is room, and by its class name on a phone. */
+const LEGEND = [['ok', 'ok'], ['approval', 'approval required'], ['archived', 'app archived'],
+  ['denied', 'denied — not permitted or unavailable'], ['error', 'error']];
 function laneSets() {
   const counts = new Map();
   for (const e of LOADED) counts.set(e.principal, (counts.get(e.principal) ?? 0) + 1);
@@ -553,7 +584,7 @@ function renderStrip(list) {
     </div>
     <div class="axis">${Array.from({ length: RETENTION }, (_, i) => `<button data-act="day" data-i="${i}" class="${dayOn(i) ? 'on' : ''}">${MON[new Date(day(i)).getUTCMonth()]} ${new Date(day(i)).getUTCDate()}</button>`).join('')}</div>
     <div class="legend"><span class="i wide-only" style="font-weight:500;color:var(--subtle)">Worst outcome in the hour:</span>
-      ${LEGEND.map(([l, code]) => `<span class="i"><span class="sw s-${l}"></span>${l}${code ? `<span class="code wide-only">${code}</span>` : ''}</span>`).join('')}
+      ${LEGEND.map(([l, words]) => `<span class="i"><span class="sw s-${l}"></span><span class="narrow-only">${l}</span><span class="wide-only">${words}</span></span>`).join('')}
       ${notLoadedBefore > 0 ? `<span class="i"><span class="sw" style="background:repeating-linear-gradient(45deg,#d4d4d8 0 2px,#fafafa 2px 4px)"></span>not loaded</span>` : ''}</div>`;
   const lanesEl = $('#lanes');
   const xToT = (clientX) => {
@@ -702,7 +733,9 @@ function waterfall(s) {
   const line = e => {
     const o = OUT[e.outcome];
     const l = (e.ms - s.first) / span * 100, w = Math.max(1.5, (e.durationMs ?? 6e4) / span * 100);
-    const right = o === 'ok' ? dur(e.durationMs) : e.detail?.failureClass ? `${o} · ${esc(e.detail.failureClass)}` : `${o} · ${esc(e.outcome)}`;
+    // Words, never `class · code`: the label, and the cause after it when one exists.
+    const right = o === 'ok' ? dur(e.durationMs)
+      : esc(label(e.outcome)) + (e.detail?.failureClass ? ` · ${esc(e.detail.failureClass)}` : '');
     return `<div class="r click${o !== 'ok' ? ' keep' : ''}" data-act="openidx" data-idx="${e.idx}">
       <span class="t">${hm(e.ms)}</span><span class="lbl">${titleHtml(e)}</span>
       <span class="track"><span class="bar ${o}" style="left:${Math.min(97, l)}%;width:${Math.min(w, 100 - l)}%"></span></span>
@@ -806,10 +839,20 @@ function renderDrawer() {
   const e = EV[S.open ?? EV.length - 1];
   const o = OUT[e.outcome];
   const link = (f, v) => v == null ? '—' : `<button data-act="facet" data-f="${f}" data-v="${esc(v)}">${esc(v)}</button>`;
+  // The ONE place a raw code is printed — it is the value `pmcp audit --outcome` and the
+  // export take — and it never stands alone: chip, the hub's own words, then the code,
+  // with the sentence beneath. No word is printed twice: the label shows only where it
+  // differs from the chip's class name, the code only where it differs from the label —
+  // so `ok` and `error` are the chip alone, and a refusal is all three.
+  const why = sentenceFor(e);
+  const oLabel = label(e.outcome);
+  const outcomeLine = `<span class="chip ${chipCls(o)}">${o}</span>`
+    + (oLabel === o ? '' : ` <span class="olabel">${esc(oLabel)}</span>`)
+    + (e.outcome === oLabel ? '' : ` <span class="t-dim mono">${esc(e.outcome)}</span>`);
   const meta = [
     ['when', dts(e.ms) + ' UTC'], ['principal', link('principal', e.principal)], ['event', link('event', e.event)],
     ['app', e.app ? link('app', e.app) : '—'], ['tool', e.tool ? link('tool', `${e.app}/${e.tool}`) : '—'],
-    ['outcome', `<span class="chip ${chipCls(o)}">${o}</span> <span class="t-dim mono">${esc(e.outcome)}</span>`],
+    ['outcome', outcomeLine + (why ? `<p class="note why">${esc(why)}</p>` : ''), why ? 'tall' : ''],
     ['duration', dur(e.durationMs)],
     ['client', e.client?.name ? `${esc(e.client.name)} ${esc(e.client.version ?? '')}` : '—'],
     ['session', e.client?.sessionId ? `<button data-act="session" data-id="${esc(e.client.sessionId)}">${esc(e.client.sessionId)}</button>` : '—'],
@@ -823,7 +866,7 @@ function renderDrawer() {
     `<div class="dbody">
       <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
         <input id="dq" placeholder="Search this record…" value="${esc(S.drawerQ)}"></div>
-      <div><p class="eyebrow">Record</p><table class="ftab">${meta.map(([k, v]) => `<tr><td class="k">${k}</td><td class="v">${v}</td></tr>`).join('')}</table></div>
+      <div><p class="eyebrow">Record</p><table class="ftab">${meta.map(([k, v, cls]) => `<tr class="${cls ?? ''}"><td class="k">${k}</td><td class="v">${v}</td></tr>`).join('')}</table></div>
       ${loadingBodies
         ? `<div><p class="eyebrow">Arguments</p><div class="skel" style="width:70%"></div><div class="skel" style="width:52%;margin-top:6px"></div></div>
            <div><p class="eyebrow">Result</p><div class="skel" style="width:84%"></div><div class="skel" style="width:40%;margin-top:6px"></div></div>
@@ -833,9 +876,9 @@ function renderDrawer() {
            ${e.noBodies ? `<p class="note">${NOB[e.noBodies]}</p>` : ''}
            ${section('Detail', e.detail)}`}
       ${siblings.length > 1 ? `<div><p class="eyebrow">This approval, end to end</p><div class="tl">${siblings.map(x => `
-        <button data-act="openidx" data-idx="${x.idx}"><span class="tt">${hm(x.ms)}</span><span class="te${x.idx === e.idx ? ' now' : ''}">${esc(x.event)}${subOf(x) ? `<span class="sub2"> ${esc(subOf(x))}</span>` : ''}</span>
+        <button data-act="openidx" data-idx="${x.idx}"><span class="tt">${hm(x.ms)}</span><span class="te${x.idx === e.idx ? ' now' : ''}">${titleHtml(x)}</span>
           <span class="chip ${chipCls(OUT[x.outcome])}">${OUT[x.outcome]}</span><span class="tr">${esc(x.principal)}</span></button>`).join('')}</div>
-        <p class="note" style="margin-top:6px">Every row carrying this <span class="mono">detail.approvalId</span>, oldest first — the refused call, the request, your answer, and the dispatch that followed.</p></div>` : ''}
+        <p class="note" style="margin-top:6px">Every row carrying this <span class="mono">detail.approvalId</span>, in the order the hub wrote them — the request, the call it refused, your answer, and the dispatch that followed.</p></div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="${esc(e.client?.sessionId ?? '')}" ${e.client?.sessionId ? '' : 'disabled'}>Show this session</button>
         <button class="btn" data-act="copy" data-idx="${e.idx}">Copy as JSON</button></div>
     </div>`;

@@ -211,10 +211,21 @@ const F = {};
     S.open = e.idx; S.drawerQ = ""; S.treeOpen = {}; renderDrawer();
   });
   for (const why of ["off", "refused", "unrecorded"]) {
+    // The "refused" panel is pinned to a -32001 so it also carries the not-permitted
+    // sentence; -32003 and -32000 get panels of their own below.
     F["rec_" + why] = await drawer(new Function("", `
-      const e = EV.find((x) => x.noBodies === ${JSON.stringify(why)} && x.event === "tools/call");
+      const e = EV.find((x) => x.noBodies === ${JSON.stringify(why)} && x.event === "tools/call"
+        && (${JSON.stringify(why)} !== "refused" || x.outcome === "-32001"));
       S.open = e.idx; S.drawerQ = ""; S.treeOpen = {}; renderDrawer();`));
   }
+  F.recApproval = await drawer(() => {
+    const e = EV.find((x) => x.outcome === "-32003");
+    S.open = e.idx; S.drawerQ = ""; S.treeOpen = {}; renderDrawer();
+  });
+  F.recUnavailable = await drawer(() => {
+    const e = EV.find((x) => x.outcome === "-32000" && x.detail?.failureClass);
+    S.open = e.idx; S.drawerQ = ""; S.treeOpen = {}; renderDrawer();
+  });
   F.recChain = await drawer(() => {
     const byId = new Map();
     for (const e of EV) if (e.detail?.approvalId) byId.set(e.detail.approvalId, (byId.get(e.detail.approvalId) ?? 0) + 1);
@@ -291,7 +302,7 @@ ${notes([
   `<b>Colour never carries an outcome alone.</b> Five classes &mdash; ${mono("ok")}, ${mono("approval")} (&minus;32003), ${mono("archived")} (&minus;32002), ${mono("denied")} (&minus;32001, &minus;32000), ${mono("error")} &mdash; and the class NAME is printed beside every swatch, chip and legend entry, with the raw codes after it where they differ.`,
   `<b>Facets count exhaustively</b> (Hearst): a value&rsquo;s count is taken under every other filter but its own group&rsquo;s, so a group never collapses to one row as you click. Several values in one group OR, groups AND, top 5 (6 for tool and event) with <b>Show all N</b> expanding in place. ${mono("session")} is never listed &mdash; it is set from a record.`,
   `<b>Worth a look</b> is three hand-written rules, each with <b>show me</b>: the worst refused (principal, target) pair past 5, tools first called in the last two days, and changes to the setup (${mono("admin.*")}, ${mono("upstream.*")}). With no ${mono("reason")} in the ledger the first sentence ends at the outcome class &mdash; &ldquo;refused 230 times calling ${mono("news/search_news")} &mdash; denied.&rdquo;`,
-  `<b>Export JSONL</b> is a plain link to ${mono("/audit/export")} carrying the current selection &mdash; the same read serialized, never a second one. An outcome class expands to its codes and ${mono("&lt;app&gt;/&lt;tool&gt;")} splits, because the export filters the columns the ledger has.`,
+  `<b>Export JSONL</b> is a plain link to ${mono("/audit/export.jsonl")} carrying the current selection &mdash; the same read serialized, never a second one. An outcome <i>class</i> is the page&rsquo;s own grouping, so the link expands it to the raw codes the column holds; the ${mono("tool")} facet is a <i>pair</i>, so it travels whole as ${mono("target=&lt;app&gt;/&lt;tool&gt;")} rather than as ${mono("app=")} + ${mono("tool=")}, which would export their cross product.`,
   `<b>One query per window.</b> Facets, lanes, merging and sessions are computed client-side over the loaded rows, so a facet click never fetches and dragging the brush never fetches. Over the ceiling (${mono("AUDIT_EXPLORER_ROWS")} = 5,000) the page says so and the hours it could not load draw hatched, never empty (${mono("AuditDetailStates")}).`,
 ])}
 </div>`;
@@ -329,7 +340,9 @@ ${panel("RECORD &mdash; a chain, with its timeline", "every row sharing one deta
 ${panel("RECORD &mdash; search within the record", "Search this record… highlights every match in the trees", F.recSearch)}
 ${panel("RECORD &mdash; a config change", "an admin.* row: no bodies to have, so no sentence either", F.recAdmin)}
 ${panel("RECORD &mdash; no bodies: body logging is off", "&sect;13&rsquo;s first sentence, verbatim", F.rec_off)}
-${panel("RECORD &mdash; no bodies: refused", "&sect;13&rsquo;s second sentence &mdash; a refusal never had bodies, whatever log_bodies says", F.rec_refused)}
+${panel("RECORD &mdash; no bodies: refused", "&sect;13&rsquo;s second sentence &mdash; a refusal never had bodies, whatever log_bodies says &mdash; over &minus;32001&rsquo;s own", F.rec_refused)}
+${panel("RECORD &mdash; the call that needed approval", "&minus;32003: the call was held, not run; its approvalId ties it to the rest of the chain", F.recApproval)}
+${panel("RECORD &mdash; the app was unavailable", "&minus;32000, with the sentence ending in Cause: &lt;failureClass&gt; &mdash; the one thing &sect;7 lets the ledger keep about a dispatch failure", F.recUnavailable)}
 ${panel("RECORD &mdash; no bodies: unrecorded", "&sect;13&rsquo;s third sentence", F.rec_unrecorded)}
 ${panel("RECORD &mdash; loading", "the field table is already drawn from the slim row; only the bodies wait on GET /api/hub/audit/:id", F.recLoading)}
 ${panel("RECORD &mdash; not found", "an id outside the caller&rsquo;s namespace and an id that aged out are one answer", F.recGone)}
@@ -345,6 +358,7 @@ ${notes([
   `<b>The three no-bodies sentences are &sect;13&rsquo;s, verbatim</b>, and the refusal one wins first: several refusals happen before any redaction map exists, so no setting could have made bodies appear.`,
   `<b>The chain timeline is the ledger&rsquo;s own join.</b> ${mono("detail.approvalId")} now rides the four ${mono("approval.*")} rows, the ${mono("tools/call")} refused &minus;32003, and the ${mono("tools/call")} dispatched after the claim (brief &sect;1) &mdash; which is the whole of what makes &ldquo;asked &rarr; you approved &rarr; ran&rdquo; drawable. It reads in WRITE order, ts then id: ${mono("approvals.check")} records the request before the gateway records the refusal it threw, so the request always takes the lower id.`,
   `<b>Bodies arrive on their own.</b> The window read is slim (no ${mono("args_json")} / ${mono("result_json")} &mdash; projected away in SQL, never parsed to be thrown away); the drawer fetches ${mono("GET /api/hub/audit/:id")} when it opens, so a record id outside the loaded rows still opens.`,
+  `<b>A code never stands alone</b> (owner, 2026-09-21: &ldquo;I literally won&rsquo;t know what &minus;32001 is, it&rsquo;s not like 404&rdquo;). Every outcome has a <b>label</b> in the hub&rsquo;s own &sect;7 words, and the four refusals and ${mono("error")} have a <b>sentence</b> &mdash; both live once, in ${mono("derive.ts")}. The record&rsquo;s outcome row reads chip &middot; label &middot; dim raw code (<b>denied</b> &middot; not permitted &middot; ${mono("-32001")}) with the sentence beneath; the legend drops the codes for words; a waterfall line reads the label plus its ${mono("failureClass")}, never ${mono("class &middot; code")}. Row chips and the facet rail keep the short class names. <b>The raw code is printed in exactly one place, the record</b> &mdash; because that is the value ${mono("pmcp audit --outcome")} and the export take.`,
   `<b>No reason is invented.</b> A &minus;32001 carries no ${mono("detail")} at all &mdash; &sect;7 keeps its three sources indistinguishable &mdash; so the record shows the class, the raw code, and nothing it does not have. A &minus;32000 carries ${mono("detail.failureClass")} (plus ${mono("upstreamStatus")} where an upstream answered one), which is what lets an owner tell a down upstream from a timed-out tunnel.`,
 ])}
 </div>`;

@@ -20,9 +20,10 @@
     --o-ok:#d4d4d8;--o-approval:#fab219;--o-archived:#8a5a00;--o-denied:#e5484d;--o-error:#7f1d1d;
     --rail-w:200px;--control-h-sm:32px;--control-h-xs:24px;--control-h-touch:44px;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:'Geist',system-ui,-apple-system,sans-serif;
   }
   *{box-sizing:border-box}
-  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:var(--fg);font-size:14px;background:#fff}
+  body{margin:0;font-family:var(--sans);color:var(--fg);font-size:14px;background:#fff}
   button{font:inherit;color:inherit;cursor:pointer}
   a{color:inherit}
   [hidden]{display:none!important}
@@ -174,6 +175,11 @@
   .ftab td{padding:2px 8px 2px 0;font-size:12px;line-height:20px;border:0}
   .ftab .k{color:var(--muted-fg);width:1%;white-space:nowrap;padding-right:14px}
   .ftab .v{font-family:var(--mono);word-break:break-all}
+  /* The outcome row: the hub's words beside the chip, the sentence beneath it. Neither
+     is mono, and neither breaks mid-word the way an id may. */
+  .ftab .v .olabel{font-family:var(--sans)}
+  .ftab tr.tall td{vertical-align:top;padding-top:5px}
+  .why{font-family:var(--sans);max-width:72ch;word-break:normal;margin:3px 0 4px}
   .ftab .v button{border:0;background:none;padding:0;font:inherit;font-family:var(--mono);text-decoration:underline;text-underline-offset:2px;cursor:pointer;text-align:left}
   .tree{font-family:var(--mono);font-size:12px;line-height:19px}
   .tree .n{display:flex;gap:6px;padding-left:var(--ind,0px)}
@@ -290,6 +296,8 @@
 .phone .ftab td{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;padding:5px 0;line-height:18px;align-self:stretch}
 .phone .ftab .k{width:auto;padding-right:10px}
 .phone .ftab .v button{align-self:stretch;display:inline-flex;align-items:center;padding:0}
+.phone .ftab tr.tall td{align-items:flex-start;padding-top:11px}
+.phone .why{flex:1 1 100%;max-width:none}
 .phone .scrim{display:none}
 .phone .level .frow{height:var(--control-h-touch);font-size:13px}
 .phone .level .showall{height:var(--control-h-touch);font-size:12px}
@@ -311,7 +319,7 @@
   <div class="head">
     <h1 class="ttl">Audit log</h1>
     <p class="note sub">1,395 events · Aug 17 14:47 → Aug 24 14:47 UTC · kept for 7 days</p>
-    <a class="btn exp" download="audit.jsonl" href="/audit/export?since=1786978020000&amp;until=1787582820000">Export<span class="wide-only">JSONL</span></a>
+    <a class="btn exp" download="audit.jsonl" href="/audit/export.jsonl?since=1786978020000&amp;until=1787582820000">Export<span class="wide-only">JSONL</span></a>
     <div class="seg views">
       <button data-view="summary" class="on">Summary</button>
       <button data-view="sessions">Sessions</button>
@@ -336,7 +344,7 @@
     </div>
     <div class="axis"><button data-act="day" data-i="0" class="on">Aug 17</button><button data-act="day" data-i="1" class="on">Aug 18</button><button data-act="day" data-i="2" class="on">Aug 19</button><button data-act="day" data-i="3" class="on">Aug 20</button><button data-act="day" data-i="4" class="on">Aug 21</button><button data-act="day" data-i="5" class="on">Aug 22</button><button data-act="day" data-i="6" class="on">Aug 23</button></div>
     <div class="legend"><span class="i wide-only" style="font-weight:500;color:var(--subtle)">Worst outcome in the hour:</span>
-      <span class="i"><span class="sw s-ok"></span>ok</span><span class="i"><span class="sw s-approval"></span>approval<span class="code wide-only">−32003</span></span><span class="i"><span class="sw s-archived"></span>archived<span class="code wide-only">−32002</span></span><span class="i"><span class="sw s-denied"></span>denied<span class="code wide-only">−32001 · −32000</span></span><span class="i"><span class="sw s-error"></span>error</span>
+      <span class="i"><span class="sw s-ok"></span><span class="narrow-only">ok</span><span class="wide-only">ok</span></span><span class="i"><span class="sw s-approval"></span><span class="narrow-only">approval</span><span class="wide-only">approval required</span></span><span class="i"><span class="sw s-archived"></span><span class="narrow-only">archived</span><span class="wide-only">app archived</span></span><span class="i"><span class="sw s-denied"></span><span class="narrow-only">denied</span><span class="wide-only">denied — not permitted or unavailable</span></span><span class="i"><span class="sw s-error"></span><span class="narrow-only">error</span><span class="wide-only">error</span></span>
       </div></div>
 
   <div class="filters"><button class="btn filtersbtn" data-act="filters">Filters</button><div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg><input placeholder="Search events and bodies…  ( / )" value=""></div></div>
@@ -381,7 +389,7 @@
   <div class="head">
     <h1 class="ttl">Audit log</h1>
     <p class="note sub">1,395 events · Aug 17 14:47 → Aug 24 14:47 UTC · kept for 7 days</p>
-    <a class="btn exp" download="audit.jsonl" href="/audit/export?since=1786978020000&amp;until=1787582820000">Export<span class="wide-only">JSONL</span></a>
+    <a class="btn exp" download="audit.jsonl" href="/audit/export.jsonl?since=1786978020000&amp;until=1787582820000">Export<span class="wide-only">JSONL</span></a>
     <div class="seg views">
       <button data-view="summary" class="">Summary</button>
       <button data-view="sessions">Sessions</button>
@@ -406,7 +414,7 @@
     </div>
     <div class="axis"><button data-act="day" data-i="0" class="on">Aug 17</button><button data-act="day" data-i="1" class="on">Aug 18</button><button data-act="day" data-i="2" class="on">Aug 19</button><button data-act="day" data-i="3" class="on">Aug 20</button><button data-act="day" data-i="4" class="on">Aug 21</button><button data-act="day" data-i="5" class="on">Aug 22</button><button data-act="day" data-i="6" class="on">Aug 23</button></div>
     <div class="legend"><span class="i wide-only" style="font-weight:500;color:var(--subtle)">Worst outcome in the hour:</span>
-      <span class="i"><span class="sw s-ok"></span>ok</span><span class="i"><span class="sw s-approval"></span>approval<span class="code wide-only">−32003</span></span><span class="i"><span class="sw s-archived"></span>archived<span class="code wide-only">−32002</span></span><span class="i"><span class="sw s-denied"></span>denied<span class="code wide-only">−32001 · −32000</span></span><span class="i"><span class="sw s-error"></span>error</span>
+      <span class="i"><span class="sw s-ok"></span><span class="narrow-only">ok</span><span class="wide-only">ok</span></span><span class="i"><span class="sw s-approval"></span><span class="narrow-only">approval</span><span class="wide-only">approval required</span></span><span class="i"><span class="sw s-archived"></span><span class="narrow-only">archived</span><span class="wide-only">app archived</span></span><span class="i"><span class="sw s-denied"></span><span class="narrow-only">denied</span><span class="wide-only">denied — not permitted or unavailable</span></span><span class="i"><span class="sw s-error"></span><span class="narrow-only">error</span><span class="wide-only">error</span></span>
       </div></div>
 
   <div class="filters"><button class="btn filtersbtn" data-act="filters">Filters</button><div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg><input placeholder="Search events and bodies…  ( / )" value=""></div></div>
@@ -485,7 +493,7 @@
   <div class="head">
     <h1 class="ttl">Audit log</h1>
     <p class="note sub">1,395 events · Aug 17 14:47 → Aug 24 14:47 UTC · kept for 7 days</p>
-    <a class="btn exp" download="audit.jsonl" href="/audit/export?since=1786978020000&amp;until=1787582820000">Export<span class="wide-only">JSONL</span></a>
+    <a class="btn exp" download="audit.jsonl" href="/audit/export.jsonl?since=1786978020000&amp;until=1787582820000">Export<span class="wide-only">JSONL</span></a>
     <div class="seg views">
       <button data-view="summary" class="">Summary</button>
       <button data-view="sessions" class="on">Sessions</button>
@@ -510,7 +518,7 @@
     </div>
     <div class="axis"><button data-act="day" data-i="0" class="on">Aug 17</button><button data-act="day" data-i="1" class="on">Aug 18</button><button data-act="day" data-i="2" class="on">Aug 19</button><button data-act="day" data-i="3" class="on">Aug 20</button><button data-act="day" data-i="4" class="on">Aug 21</button><button data-act="day" data-i="5" class="on">Aug 22</button><button data-act="day" data-i="6" class="on">Aug 23</button></div>
     <div class="legend"><span class="i wide-only" style="font-weight:500;color:var(--subtle)">Worst outcome in the hour:</span>
-      <span class="i"><span class="sw s-ok"></span>ok</span><span class="i"><span class="sw s-approval"></span>approval<span class="code wide-only">−32003</span></span><span class="i"><span class="sw s-archived"></span>archived<span class="code wide-only">−32002</span></span><span class="i"><span class="sw s-denied"></span>denied<span class="code wide-only">−32001 · −32000</span></span><span class="i"><span class="sw s-error"></span>error</span>
+      <span class="i"><span class="sw s-ok"></span><span class="narrow-only">ok</span><span class="wide-only">ok</span></span><span class="i"><span class="sw s-approval"></span><span class="narrow-only">approval</span><span class="wide-only">approval required</span></span><span class="i"><span class="sw s-archived"></span><span class="narrow-only">archived</span><span class="wide-only">app archived</span></span><span class="i"><span class="sw s-denied"></span><span class="narrow-only">denied</span><span class="wide-only">denied — not permitted or unavailable</span></span><span class="i"><span class="sw s-error"></span><span class="narrow-only">error</span><span class="wide-only">error</span></span>
       </div></div>
 
   <div class="filters"><button class="btn filtersbtn" data-act="filters">Filters</button><div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg><input placeholder="Search events and bodies…  ( / )" value=""></div></div>
@@ -538,19 +546,19 @@
       <span class="rt">—</span></div><div class="r click keep" data-act="openidx" data-idx="1384">
       <span class="t">13:40</span><span class="lbl"><span class="">home/set_scene</span></span>
       <span class="track"><span class="bar approval" style="left:68.53104492680464%;width:1.5%"></span></span>
-      <span class="rt">approval · -32003</span></div><div class="r click" data-act="openidx" data-idx="1386">
+      <span class="rt">approval required</span></div><div class="r click" data-act="openidx" data-idx="1386">
       <span class="t">13:44</span><span class="lbl"><span class="">home/set_scene</span></span>
       <span class="track"><span class="bar ok" style="left:71.04492680464412%;width:1.5%"></span></span>
       <span class="rt">318 ms</span></div><div class="r click keep" data-act="openidx" data-idx="1387">
       <span class="t">13:58</span><span class="lbl"><span class="">home/lights_on</span></span>
       <span class="track"><span class="bar archived" style="left:79.64664310954063%;width:1.5%"></span></span>
-      <span class="rt">archived · -32002</span></div><div class="r click" data-act="openidx" data-idx="1390">
+      <span class="rt">app archived</span></div><div class="r click" data-act="openidx" data-idx="1390">
       <span class="t">14:29</span><span class="lbl"><span class="">approval.requested</span><span class="sub2 "> home/set_scene</span></span>
       <span class="track"><span class="bar ok" style="left:97%;width:1.3326602725896066%"></span></span>
       <span class="rt">—</span></div><div class="r click keep" data-act="openidx" data-idx="1391">
       <span class="t">14:29</span><span class="lbl"><span class="">home/set_scene</span></span>
       <span class="track"><span class="bar approval" style="left:97%;width:1.3326602725896066%"></span></span>
-      <span class="rt">approval · -32003</span></div><div class="r click" data-act="openidx" data-idx="1393">
+      <span class="rt">approval required</span></div><div class="r click" data-act="openidx" data-idx="1393">
       <span class="t">14:31</span><span class="lbl"><span class="">notion/create_page</span></span>
       <span class="track"><span class="bar ok" style="left:97%;width:0.19182231196364796%"></span></span>
       <span class="rt">1.2 s</span></div><div class="r click" data-act="openidx" data-idx="1394">
@@ -594,7 +602,7 @@
   <div class="head">
     <h1 class="ttl">Audit log</h1>
     <p class="note sub">841 events · Aug 17 14:47 → Aug 24 14:47 UTC · kept for 7 days</p>
-    <a class="btn exp" download="audit.jsonl" href="/audit/export?since=1786978020000&amp;until=1787582820000&amp;principal=agent%3Aclaude">Export<span class="wide-only">JSONL</span></a>
+    <a class="btn exp" download="audit.jsonl" href="/audit/export.jsonl?since=1786978020000&amp;until=1787582820000&amp;principal=agent%3Aclaude">Export<span class="wide-only">JSONL</span></a>
     <div class="seg views">
       <button data-view="summary" class="">Summary</button>
       <button data-view="sessions" class="">Sessions</button>
@@ -619,7 +627,7 @@
     </div>
     <div class="axis"><button data-act="day" data-i="0" class="on">Aug 17</button><button data-act="day" data-i="1" class="on">Aug 18</button><button data-act="day" data-i="2" class="on">Aug 19</button><button data-act="day" data-i="3" class="on">Aug 20</button><button data-act="day" data-i="4" class="on">Aug 21</button><button data-act="day" data-i="5" class="on">Aug 22</button><button data-act="day" data-i="6" class="on">Aug 23</button></div>
     <div class="legend"><span class="i wide-only" style="font-weight:500;color:var(--subtle)">Worst outcome in the hour:</span>
-      <span class="i"><span class="sw s-ok"></span>ok</span><span class="i"><span class="sw s-approval"></span>approval<span class="code wide-only">−32003</span></span><span class="i"><span class="sw s-archived"></span>archived<span class="code wide-only">−32002</span></span><span class="i"><span class="sw s-denied"></span>denied<span class="code wide-only">−32001 · −32000</span></span><span class="i"><span class="sw s-error"></span>error</span>
+      <span class="i"><span class="sw s-ok"></span><span class="narrow-only">ok</span><span class="wide-only">ok</span></span><span class="i"><span class="sw s-approval"></span><span class="narrow-only">approval</span><span class="wide-only">approval required</span></span><span class="i"><span class="sw s-archived"></span><span class="narrow-only">archived</span><span class="wide-only">app archived</span></span><span class="i"><span class="sw s-denied"></span><span class="narrow-only">denied</span><span class="wide-only">denied — not permitted or unavailable</span></span><span class="i"><span class="sw s-error"></span><span class="narrow-only">error</span><span class="wide-only">error</span></span>
       </div></div>
 
   <div class="filters"><button class="btn filtersbtn" data-act="filters">Filters · 1</button><span class="fchip"><span class="k">principal</span><span class="v">agent:claude</span><button data-act="unfilter" data-i="0" title="Remove">×</button></span><div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg><input placeholder="Search events and bodies…  ( / )" value=""></div><button class="btn" data-act="clear">Clear</button></div>
@@ -702,7 +710,7 @@
   <div class="head">
     <h1 class="ttl">Audit log</h1>
     <p class="note sub">1,395 events · Aug 17 14:47 → Aug 24 14:47 UTC · kept for 7 days</p>
-    <a class="btn exp" download="audit.jsonl" href="/audit/export?since=1786978020000&amp;until=1787582820000">Export<span class="wide-only">JSONL</span></a>
+    <a class="btn exp" download="audit.jsonl" href="/audit/export.jsonl?since=1786978020000&amp;until=1787582820000">Export<span class="wide-only">JSONL</span></a>
     <div class="seg views">
       <button data-view="summary" class="">Summary</button>
       <button data-view="sessions" class="">Sessions</button>
@@ -727,7 +735,7 @@
     </div>
     <div class="axis"><button data-act="day" data-i="0" class="on">Aug 17</button><button data-act="day" data-i="1" class="on">Aug 18</button><button data-act="day" data-i="2" class="on">Aug 19</button><button data-act="day" data-i="3" class="on">Aug 20</button><button data-act="day" data-i="4" class="on">Aug 21</button><button data-act="day" data-i="5" class="on">Aug 22</button><button data-act="day" data-i="6" class="on">Aug 23</button></div>
     <div class="legend"><span class="i wide-only" style="font-weight:500;color:var(--subtle)">Worst outcome in the hour:</span>
-      <span class="i"><span class="sw s-ok"></span>ok</span><span class="i"><span class="sw s-approval"></span>approval<span class="code wide-only">−32003</span></span><span class="i"><span class="sw s-archived"></span>archived<span class="code wide-only">−32002</span></span><span class="i"><span class="sw s-denied"></span>denied<span class="code wide-only">−32001 · −32000</span></span><span class="i"><span class="sw s-error"></span>error</span>
+      <span class="i"><span class="sw s-ok"></span><span class="narrow-only">ok</span><span class="wide-only">ok</span></span><span class="i"><span class="sw s-approval"></span><span class="narrow-only">approval</span><span class="wide-only">approval required</span></span><span class="i"><span class="sw s-archived"></span><span class="narrow-only">archived</span><span class="wide-only">app archived</span></span><span class="i"><span class="sw s-denied"></span><span class="narrow-only">denied</span><span class="wide-only">denied — not permitted or unavailable</span></span><span class="i"><span class="sw s-error"></span><span class="narrow-only">error</span><span class="wide-only">error</span></span>
       </div></div>
 
   <div class="filters"><button class="btn filtersbtn" data-act="filters">Filters</button><div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg><input placeholder="Search events and bodies…  ( / )" value=""></div></div>
@@ -797,7 +805,7 @@
     <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody">
       <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
         <input placeholder="Search this record…" value=""></div>
-      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr><td class="k">when</td><td class="v">Aug 23 14:55:40 UTC</td></tr><tr><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="agent:claude">agent:claude</button></td></tr><tr><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="tools/call">tools/call</button></td></tr><tr><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="news">news</button></td></tr><tr><td class="k">tool</td><td class="v"><button data-act="facet" data-f="tool" data-v="news/search_news">news/search_news</button></td></tr><tr><td class="k">outcome</td><td class="v"><span class="chip ok">ok</span> <span class="t-dim mono">ok</span></td></tr><tr><td class="k">duration</td><td class="v">424 ms</td></tr><tr><td class="k">client</td><td class="v">claude-code 2.1.37</td></tr><tr><td class="k">session</td><td class="v"><button data-act="session" data-id="754ae655">754ae655</button></td></tr><tr><td class="k">id</td><td class="v">41211</td></tr></tbody></table></div>
+      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr class=""><td class="k">when</td><td class="v">Aug 23 14:55:40 UTC</td></tr><tr class=""><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="agent:claude">agent:claude</button></td></tr><tr class=""><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="tools/call">tools/call</button></td></tr><tr class=""><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="news">news</button></td></tr><tr class=""><td class="k">tool</td><td class="v"><button data-act="facet" data-f="tool" data-v="news/search_news">news/search_news</button></td></tr><tr class=""><td class="k">outcome</td><td class="v"><span class="chip ok">ok</span></td></tr><tr class=""><td class="k">duration</td><td class="v">424 ms</td></tr><tr class=""><td class="k">client</td><td class="v">claude-code 2.1.37</td></tr><tr class=""><td class="k">session</td><td class="v"><button data-act="session" data-id="754ae655">754ae655</button></td></tr><tr class=""><td class="k">id</td><td class="v">41211</td></tr></tbody></table></div>
       <div><p class="eyebrow">Arguments</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="arguments">▾</button><span class="key">arguments</span><span class="count">{2}</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">q:</span><span>"semiconductors"</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">since:</span><span>"24h"</span></div></div></div>
            <div><p class="eyebrow">Result</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="result">▾</button><span class="key">result</span><span class="count">{1}</span></div><div class="n" style="--ind:14px"><button class="tog" data-act="tree" data-path="result.structuredContent">▸</button><span class="key">structuredContent</span><span class="count">{1} …</span></div></div></div>
            

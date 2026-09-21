@@ -37,8 +37,8 @@ gutters:
 | Shape | Content | Artboard | Boards |
 |---|---|---|---|
 | **document** | 760 px (auth card 400) | 1080, or 480 for a card board | `Approvals`, `ApprovalDetail`, `AppNew`, `Login`, `TwoFactor`, `Device`, the states boards |
-| **table** | 1280 px, centred | 1380 | `Apps`, `Agents`, `Audit` |
-| **workspace** | full width inside 24 px gutters — 1332 — the *panes* capped (rail 200, listing 520, details the rest) | 1380 | `Settings`, `AppDetail`, `AgentDetail` |
+| **table** | 1280 px, centred | 1380 | `Apps`, `Agents` |
+| **workspace** | full width inside 24 px gutters — 1332 — the *panes* capped (rail 200, listing 520, details the rest) | 1380 | `Settings`, `AppDetail`, `AgentDetail`, `Audit` |
 
 `SettingsPanes`, `AppDetailPanes` and `AgentDetailPanes` are gallery boards, not pages:
 they draw one pane each at the width that pane has inside the frame, so their artboards
@@ -50,7 +50,7 @@ they draw one pane each at the width that pane has inside the frame, so their ar
 | Sign-in, 2FA, backup code, device | `Login`, `TwoFactor`, `Device` | `MobileLogin`, `MobileTwoFactor`, `MobileDevice` | `AuthStates` |
 | Approvals list + detail | `Approvals`, `ApprovalDetail` | `MobileApprovals`, `MobileApprovalDetail` | `ApprovalStates` |
 | Apps + add-app | `Apps`, `AppNew` | `MobileApps`, `MobileAppNew` | `AppNewStates`, `AppNewProxiedStates` |
-| Audit | `Audit` | `MobileAudit` | `AuditDetailStates` |
+| Audit (`/audit`) — the explorer: Summary · Sessions · Events over one filtered set | `Audit` (Summary, whole window), `AuditViews` (Events brushed and filtered; Sessions on a waterfall) | `MobileAudit` (Summary, Events, Sessions, the Filters level, the record level) | `AuditDetailStates` (the record, and the page's seven states) |
 | Settings — panes behind a left rail | `Settings` (password, the workspace shell: rail 200 in the framed box), `SettingsPanes` (the other five panes, at pane width — the shell and rail live on `Settings`) | `MobileSettings` | `SettingsStates` |
 | App detail (`/apps/<slug>`) — three panes behind a rail | `AppDetail` (Catalog: rail · listing · details), `AppDetailPanes` (Roles, Recording, Agents, Token, Overview, Danger zone) | `MobileAppDetail` (the three panes as three levels), `MobileAppDetailStates` (sidebar, Roles editor, Recording, the grant editor, Token) | `AppDetailStates` |
 | Agents + agent page (`/agents`, `/agents/<slug>`) — three panes behind a rail | `Agents` (the list), `AgentDetail` (an app's grants: rail · listing · details), `AgentDetailPanes` (Credentials, Activity, Grant another app, Danger zone) | `MobileAgents` (the list as cards, the row the link), `MobileAgentDetail` (the three panes as three levels with back buttons), `MobileAgentDetailStates` (sidebar, draft, grant step, credentials, paged activity, a request) | `AgentDetailStates` |
@@ -121,8 +121,10 @@ on 2026-09-03 (roadmap step 9: §13 gained `/agents`, `/agents/<slug>` and the g
 editor with the boards' strings pinned; the top nav's fifth slot rides the narrow nav's
 existing scroller). `AuditDetailStates` returned the same day (roadmap step 10: §13 pinned
 the three no-bodies sentences, the KB/MB stub sizes and the `event-<id>` anchor) — minus
-its LOADING panel: the audit detail is rendered in the page (hidden) and toggled in place
-by a click, never fetched (§13, 2026-09-03). `AppNewProxiedStates` returned with roadmap step 11 (§13 pinned the connecting
+its LOADING panel: the audit detail was rendered in the page (hidden) and toggled in place
+by a click, never fetched (§13, 2026-09-03). *That board was replaced on 2026-09-21 by the
+explorer's record drawer, which does fetch its bodies by id, and moved to page 1 with the
+rest of the audit cluster; the section below carries the new drawing.* `AppNewProxiedStates` returned with roadmap step 11 (§13 pinned the connecting
 page, the endpoint URL rule and the field-scoped refusals) — its CONNECTING panel redrawn
 as a link and a "Not now" rather than a progress bar, since decision 30 settled that a
 create may not depend on a tab a page cannot open. Mobile variants for the five are still
@@ -269,6 +271,68 @@ is the brand and the same **hamburger** sidebar. `AppDetailStates` and
 `publisher` row and its details, a proxied app's Roles and its Recording warning, a filter
 that matches nothing, the revoke confirm, the once-only token reveal, and the remove-agent
 confirm in the Agents foot.
+
+## The audit page, redrawn as an explorer (2026-09-21)
+
+The owner asked for `/audit` to stop being a plain table and chose the direction from
+`design/concepts/AuditDemo.html` ("this concept is insanely good", 2026-09-21); it stays
+there as the clickable reference the boards were captured from, as
+`AgentThreePaneDemo.html` and `AppThreePaneDemo.html` do. `Audit` is redrawn, `AuditViews`
+is new, and `AuditDetailStates` and `MobileAudit` replace the expanded-row and phone-table
+boards. The capture script is
+[`docs/superpowers/plans/tools/capture-audit.mjs`](../docs/superpowers/plans/tools/capture-audit.mjs).
+
+What the boards pin (the dispatch brief
+`docs/superpowers/plans/2026-09-21-audit-explorer.md` is what the code follows; where the
+demo and the brief differed, the brief won). **§13 is being amended in the same dispatch —
+until it is, the boards are ahead of the spec and nothing here is contract yet:**
+
+- **One page, three readings of one filtered set.** `view=summary|sessions|events`, and
+  the window, the facets and the search are one state in the URL (`since`/`until`,
+  repeated `principal` / `app` / `event` / `tool` / `outcome` / `session`, `q`, `expand`,
+  `open`) — so every state a board draws is a link. `/audit` becomes the SPA's third route
+  family; `server/src/pages/audit.tsx` goes.
+- **The workspace shape**, not the table shape: full width inside 24 px gutters, the facet
+  rail 200 px as its own card, 12 px between cards. `Audit` moves rows in the shape table
+  above. Rows are dense (32 px, 6 / 16), controls 32 / 24, badges and chips 20 / 11, and
+  the demo's 10 px axis labels and rail eyebrows came up to 11.
+- **A lane strip is the window control**: one lane per principal (at most six, busiest
+  first, the rest folded into "N others"), one cell per hour, each cell the *worst*
+  outcome in that hour under the current facets and search. Drag selects; **1h · 24h · 7d**
+  sit beside the title with the last labelled from `retentionDays`, and **Whole window**
+  clears — the label never names a week, because retention is a deploy-time knob. ←/→ move
+  the brush by an hour on the focused strip, Shift+←/→ resize it.
+- **Colour never carries an outcome alone.** Five classes — `ok`, `approval` (−32003),
+  `archived` (−32002), `denied` (−32001, −32000), `error` — and the class *name* is printed
+  beside every swatch, chip and legend entry, the raw codes after it where they differ.
+- **Facets count exhaustively** (Hearst): a value's count is taken under every other filter
+  but its own group's, so a group never collapses to one row as you click. Top 5 (6 for
+  tool and event) with **Show all N** in place; `session` is never listed — it is set from
+  a record.
+- **Events merges what belongs together.** Rows sharing a `detail.approvalId` are one
+  chain row with its sentence ("asked for approval → you approved 18:00 → ran ok 1.2 s");
+  consecutive un-chained rows with the same (event, app, tool, principal, outcome,
+  `detail.failureClass`) collapse to ×N runs. **Sessions** folds runs of more than two
+  `ok` calls inside its waterfall. Both page behind **Load more** (120 / 40).
+- **The record is a request inspector** — a 620 px drawer over a scrim: search within the
+  record, the field table with every id a button that filters by it, the bodies as JSON
+  trees with stubs and `‹redacted›` drawn as what they are, §13's three no-bodies
+  sentences verbatim, and a chain record's siblings as a timeline.
+- **The data is the ledger's own.** `AuditDemo.data.js` was rewritten against the
+  `record(` call sites in `server/src`: `detail.approvalId` on the four `approval.*` rows
+  (outcome `ok`) and on both call rows brief §1 adds, **no** `reason` on any refusal,
+  `detail.failureClass` on a −32000, and every other `detail` checked against its writer.
+  A board that draws an invented field is a board that teaches the wrong page.
+
+The phone rendering (`MobileAudit`) is **responsive rules in the same demo file**, not a
+second demo: one column, the view segment full width at 44 px, lane names above their
+cells and **no drag** — the presets and tapping a day on the axis set the window — the rail
+as a **Filters · N** full-screen level headed `‹ Audit` with a sticky **Show N events**,
+two-line event cards, two-line session headers with labels above their bars, and the record
+as a full-screen level rather than a drawer. 768–1023 keeps the desktop layout with the
+rail above the main pane as a wrapping row of groups. Because the rules are a media query
+rather than a file, the capture re-scopes them to one 390 px phone for the board — every
+rule in the demo's narrow block starts with `body ` so that swap is one token.
 
 ## Settings, split into panes (2026-09-02)
 

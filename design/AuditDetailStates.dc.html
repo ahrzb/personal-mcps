@@ -9,104 +9,475 @@
 <helmet>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
   <style>
-    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
-    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
-    a:hover { color: #52525b; }
+
+  /* Sizes are the layout & density ladder (design/layout-and-density.md §2): workspace
+     shape inside 24 px gutters, rail 200, dense rows 32 (6 / 16), controls 32 / 24,
+     badges and chips 20 / 11, nothing below 11 px. */
+  :root{
+    --fg:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;--row:#f4f4f5;--sunken:#fafafa;--subtle:#52525b;--dim:#a1a1aa;
+    --warn-fg:#92400e;--warn-bg:#fffbeb;--warn-br:#fde68a;--danger-fg:#b91c1c;--danger-bg:#fef2f2;--danger-br:#fecaca;
+    --ok-fg:#15803d;--ok-bg:#f0fdf4;--ok-br:#bbf7d0;
+    --o-ok:#d4d4d8;--o-approval:#fab219;--o-archived:#8a5a00;--o-denied:#e5484d;--o-error:#7f1d1d;
+    --rail-w:200px;--control-h-sm:32px;--control-h-xs:24px;--control-h-touch:44px;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:var(--fg);font-size:14px;background:#fff}
+  button{font:inherit;color:inherit;cursor:pointer}
+  a{color:inherit}
+  [hidden]{display:none!important}
+  .mono{font-family:var(--mono)}
+  .narrow-only{display:none}
+  /* A non-call event is titled by its event name; what it was about rides beside it. */
+  .sub2{color:var(--muted-fg);font-weight:400}
+  .note{font-size:12px;color:var(--muted-fg);line-height:1.6;margin:0}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg);margin:0 0 8px}
+  .card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .btn{display:inline-flex;align-items:center;gap:6px;height:var(--control-h-sm);padding:0 12px;border-radius:8px;font-size:12px;font-weight:500;border:1px solid var(--border);background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap;text-decoration:none}
+  .btn:hover{background:var(--sunken)}
+  .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+  .btn.mini{height:var(--control-h-xs);padding:0 8px;font-size:11px;box-shadow:none}
+  .btn.mini.on{background:#18181b;color:#fafafa;border-color:#18181b}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:var(--muted);color:var(--muted-fg);white-space:nowrap}
+  .chip.ok{background:var(--ok-bg);color:var(--ok-fg);border:1px solid var(--ok-br)}
+  .chip.warn{background:var(--warn-bg);color:var(--warn-fg);border:1px solid var(--warn-br)}
+  .chip.bad{background:var(--danger-bg);color:var(--danger-fg);border:1px solid var(--danger-br)}
+  .sw{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none}
+  .s-ok{background:var(--o-ok)}.s-approval{background:var(--o-approval)}.s-archived{background:var(--o-archived)}.s-denied{background:var(--o-denied)}.s-error{background:var(--o-error)}
+  .skel{background:linear-gradient(90deg,#f4f4f5,#ececee,#f4f4f5);border-radius:6px;height:12px}
+
+  .nav{height:56px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;gap:16px}
+  .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:var(--muted-fg)}
+  .navitem.on{background:var(--muted);color:var(--fg)}
+  .burger{display:none;width:var(--control-h-touch);height:var(--control-h-touch);border:1px solid var(--border);border-radius:9px;background:#fff;align-items:center;justify-content:center}
+  .wrap{padding:20px 24px 60px;display:flex;flex-direction:column;gap:12px;max-width:1500px;margin:0 auto}
+  /* Two rows of title, and the actions beside them; the phone re-areas the same grid.
+     Areas, not ids: the board capture strips every id attribute. */
+  .head{display:grid;grid-template-columns:1fr auto auto;grid-template-areas:"ttl exp seg" "sub exp seg";align-items:center;column-gap:12px}
+  .ttl{grid-area:ttl}.sub{grid-area:sub}.exp{grid-area:exp}.views{grid-area:seg}
+  h1{font-size:24px;font-weight:600;margin:0}
+  .seg{display:inline-flex;background:var(--muted);border-radius:9px;padding:3px}
+  .seg button{height:var(--control-h-sm);border:0;background:none;border-radius:7px;padding:0 14px;font-size:13px;color:var(--muted-fg)}
+  .seg button.on{background:#fff;color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08);font-weight:500}
+
+  /* filter bar */
+  .filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .fchip{display:inline-flex;align-items:center;height:var(--control-h-xs);border-radius:7px;background:var(--muted);font-family:var(--mono);font-size:12px;overflow:hidden}
+  .fchip .k{padding:0 4px 0 9px;color:var(--muted-fg)}
+  .fchip .v{padding-right:4px}
+  .fchip button{border:0;background:none;width:var(--control-h-xs);height:var(--control-h-xs);color:var(--dim);padding:0}
+  .fchip button:hover{background:#e4e4e7;color:var(--fg)}
+  .searchbox{display:flex;align-items:center;height:var(--control-h-sm);border:1px solid var(--border);border-radius:8px;padding:0 10px;gap:6px;min-width:260px}
+  .searchbox input{border:0;outline:0;font:inherit;font-size:13px;flex:1;min-width:0;background:none}
+
+  /* lane strip */
+  .strip{padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+  .striphead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .presets{display:inline-flex;gap:4px}
+  .lanes{--gut:114px;display:flex;flex-direction:column;gap:3px;position:relative;cursor:crosshair;user-select:none}
+  .lane{display:flex;align-items:center;gap:10px}
+  .lane .nm{width:104px;flex:none;font-family:var(--mono);font-size:11px;color:var(--subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lane .cells{flex:1;display:flex;gap:1px;height:16px;min-width:0}
+  .lane .c{flex:1;border-radius:1px;background:#f4f4f5}
+  .c.ok{background:var(--o-ok)}.c.approval{background:var(--o-approval)}.c.archived{background:var(--o-archived)}.c.denied{background:var(--o-denied)}.c.error{background:var(--o-error)}
+  /* not loaded, never empty: the window reaches further back than the ceiling allowed */
+  .c.nl{background:repeating-linear-gradient(45deg,#d4d4d8 0 2px,#fafafa 2px 4px)}
+  .brush{position:absolute;top:-3px;bottom:-3px;background:rgba(24,24,27,.07);border-left:2px solid #18181b;border-right:2px solid #18181b;border-radius:2px;pointer-events:none}
+  .axis{display:flex;margin-left:114px;font-size:11px;color:var(--muted-fg)}
+  .axis button{flex:1;border:0;background:none;padding:2px 0;text-align:left;font-size:11px;color:var(--muted-fg);border-radius:4px}
+  .axis button:hover{background:var(--muted);color:var(--fg)}
+  .axis button.on{background:var(--muted);color:var(--fg);font-weight:500}
+  .legend{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted-fg)}
+  .legend span.i{display:inline-flex;align-items:center;gap:5px}
+  .legend .code{font-family:var(--mono);color:var(--dim)}
+  .ceiling{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--warn-br);background:var(--warn-bg);border-radius:8px;font-size:12px;color:var(--warn-fg)}
+
+  .body{display:flex;gap:12px;align-items:flex-start}
+  .rail{width:var(--rail-w);flex:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto;padding:10px 8px}
+  .rail h3{font-size:12px;font-weight:600;margin:0 0 2px;padding:0 5px}
+  .fgroup{margin:10px 0 0}
+  .fgroup .eyebrow{margin:0 0 3px;padding:0 5px;font-size:11px}
+  .frow{display:flex;align-items:center;gap:7px;height:var(--control-h-xs);padding:0 5px;border-radius:5px;font-size:12px;position:relative;width:100%;border:0;background:none;text-align:left}
+  .frow .bar{position:absolute;left:0;top:2px;bottom:2px;background:#ececee;border-radius:4px}
+  .frow span{position:relative}
+  .frow .nm{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .frow .ct{margin-left:auto;color:var(--muted-fg);font-size:11px;padding-left:6px}
+  .frow:hover{box-shadow:inset 0 0 0 1px var(--border)}
+  .frow.on{background:#e4e4e7;font-weight:600}
+  .showall{border:0;background:none;padding:0 5px;height:var(--control-h-xs);font-size:11px;color:var(--muted-fg);text-decoration:underline;text-underline-offset:2px;width:100%;text-align:left;border-radius:5px}
+  .showall:hover{color:var(--fg)}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
+  .filtersbtn{display:none}
+
+  /* summary */
+  .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .grid2{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px}
+  .stat .v{font-size:24px;font-weight:600;letter-spacing:-.01em;line-height:1.2}
+  .stat .l{font-size:12px;color:var(--muted-fg)}
+  .look{border:1px solid var(--warn-br);background:var(--warn-bg);border-radius:10px;padding:12px 14px}
+  .look li{font-size:13px;line-height:1.75}
+  .look a{color:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+  .topn{display:flex;flex-direction:column;gap:2px}
+  .topn button{display:flex;align-items:center;gap:8px;height:var(--control-h-xs);font-size:12px;position:relative;border:0;background:none;width:100%;text-align:left;border-radius:5px;padding:0 5px}
+  .topn button:hover{box-shadow:inset 0 0 0 1px var(--border)}
+  .topn .bar{position:absolute;left:0;top:1px;bottom:1px;background:#f0f0f1;border-radius:4px}
+  .topn span{position:relative}
+  .topn .nm{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .topn .n{margin-left:auto;color:var(--muted-fg);font-variant-numeric:tabular-nums;padding-left:6px}
+
+  /* events — dense rows, 6 / 16 */
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg);padding:12px 16px;border-bottom:1px solid var(--border)}
+  td{padding:6px 16px;border-bottom:1px solid var(--row);font-size:13px;vertical-align:top}
+  tr.ev{cursor:pointer}
+  tr.ev:hover{background:var(--sunken)}
+  tr.ev.sel{background:var(--muted)}
+  .t-mono{font-family:var(--mono);font-size:12px}
+  td.c-when,td.c-who{white-space:nowrap}
+  .t-dim{color:var(--muted-fg)}
+  .chain{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--muted-fg);margin-top:2px}
+  .chain b{font-weight:500;color:var(--fg)}
+  .rowline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .prev{margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .more{padding:10px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px}
+
+  /* sessions */
+  .sess{border-bottom:1px solid var(--row)}
+  .sess .shead{display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;min-height:32px}
+  .sess .shead:hover{background:var(--sunken)}
+  .sess.open .shead{background:var(--muted)}
+  .sess .who{font-weight:600;font-size:13px}
+  .sess .meta{color:var(--muted-fg);font-size:12px}
+  .sess .counts{margin-left:auto;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+  .wf{padding:8px 14px 14px;background:var(--sunken);display:flex;flex-direction:column;gap:2px}
+  .wf .r{display:flex;align-items:center;gap:10px;font-size:12px;min-height:var(--control-h-xs);border-radius:5px;padding:0 4px}
+  .wf .r.click{cursor:pointer}
+  .wf .r.click:hover{background:#fff;box-shadow:inset 0 0 0 1px var(--border)}
+  .wf .t{width:52px;color:var(--muted-fg);font-family:var(--mono);flex:none}
+  .wf .lbl{width:230px;flex:none;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wf .track{flex:1;height:12px;position:relative;min-width:40px}
+  .wf .bar{position:absolute;top:1px;height:10px;min-width:3px;border-radius:3px;background:var(--o-ok)}
+  .wf .bar.approval{background:var(--o-approval)}.wf .bar.denied{background:var(--o-denied)}.wf .bar.archived{background:var(--o-archived)}.wf .bar.error{background:var(--o-error)}
+  .wf .rt{width:190px;flex:none;text-align:right;color:var(--muted-fg);font-size:11px}
+  .wf .fold{color:var(--muted-fg);font-style:italic}
+  .wf .r.keep .lbl{font-weight:600}
+
+  /* record — a drawer at wide, a full-screen level at narrow */
+  .scrim{position:fixed;inset:0;background:rgba(9,9,11,.18);z-index:40}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(620px,100vw);background:#fff;border-left:1px solid var(--border);box-shadow:-12px 0 40px rgba(0,0,0,.12);z-index:41;display:flex;flex-direction:column}
+  .dhead{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  .dhead b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+  .dtime{white-space:nowrap}
+  .dback{display:none;border:0;background:none;padding:0;font-size:14px;font-weight:500;color:var(--muted-fg);align-items:center}
+  .dbody{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+  .ftab{border-collapse:collapse;width:100%}
+  .ftab td{padding:2px 8px 2px 0;font-size:12px;line-height:20px;border:0}
+  .ftab .k{color:var(--muted-fg);width:1%;white-space:nowrap;padding-right:14px}
+  .ftab .v{font-family:var(--mono);word-break:break-all}
+  .ftab .v button{border:0;background:none;padding:0;font:inherit;font-family:var(--mono);text-decoration:underline;text-underline-offset:2px;cursor:pointer;text-align:left}
+  .tree{font-family:var(--mono);font-size:12px;line-height:19px}
+  .tree .n{display:flex;gap:6px;padding-left:var(--ind,0px)}
+  .tree .tog{border:0;background:none;padding:0;width:12px;color:var(--dim);text-align:left;flex:none}
+  .tree .key{color:var(--muted-fg)}
+  .tree .num{color:#1d4ed8}
+  .tree .stub{background:var(--muted);border-radius:4px;padding:0 4px;color:var(--subtle)}
+  .tree .hit,.hit{background:#fef08a;border-radius:2px}
+  .tree .count{color:var(--dim)}
+  .tl{display:flex;flex-direction:column;gap:2px}
+  .tl button{display:flex;align-items:center;gap:8px;min-height:var(--control-h-xs);width:100%;border:0;background:none;text-align:left;border-radius:5px;padding:0 5px;font-size:12px}
+  .tl button:hover{box-shadow:inset 0 0 0 1px var(--border)}
+  .tl .tt{font-family:var(--mono);color:var(--muted-fg);width:52px;flex:none}
+  .tl .te{font-family:var(--mono)}
+  .tl .tr{margin-left:auto;color:var(--muted-fg);padding-left:8px}
+  .tl .now{font-weight:600}
+  .empty{padding:40px 16px;text-align:center}
+  .empty b{display:block;margin-bottom:4px}
+
+  /* the Filters level — narrow only, a full screen over the page */
+  .level{position:fixed;inset:0;background:#fff;z-index:45;display:flex;flex-direction:column}
+  .lhead{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  .lbody{flex:1;overflow:auto;padding:8px 8px 12px}
+  .lfoot{position:sticky;bottom:0;padding:12px 16px;border-top:1px solid var(--border);background:#fff;display:flex}
+  .lfoot .btn{height:var(--control-h-touch);flex:1;justify-content:center;font-size:14px}
+
+  /* ── regular (768–1023): the rail above the main pane, as a wrapping row of groups ── */
+  
+
+  /* the board, not the page: nothing scrolls, nothing is fixed */
+  body{background:#fafafa}
+  .rail{position:static;max-height:none;overflow:visible}
+  .drawer{position:static;width:620px;height:auto;box-shadow:0 1px 2px rgba(0,0,0,.05);border:1px solid #e4e4e7;border-radius:12px;overflow:hidden}
+  .dbody{overflow:visible}
+  .board{box-sizing:border-box;background:#fff}
+  .sheet{box-sizing:border-box;background:#fafafa;padding:32px;display:flex;flex-direction:column;gap:28px}
+  .panel{display:flex;flex-direction:column;gap:8px}
+  .lab{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a}
+  .lab span{text-transform:none;letter-spacing:0;font-weight:400;color:#a1a1aa}
+  .notes{display:flex;flex-direction:column;gap:6px}
+  .notes .note{max-width:80ch}
+  .notes .note b{color:#09090b;font-weight:500}
+  .pane{background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .row2{display:grid;grid-template-columns:620px 620px;gap:32px;align-items:start}
+  .phones{display:flex;gap:40px;align-items:flex-start}
+  .slot{display:flex;flex-direction:column;gap:10px;width:390px;flex-shrink:0}
+  .phone{position:relative;width:390px;min-height:844px;background:#fff;border:1px solid #d4d4d8;border-radius:14px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.14)}
+  .phone .level,.phone .drawer{position:absolute;inset:0;width:auto;height:auto;border:0;border-radius:0;box-shadow:none}
+  .phone .drawer{background:#fff}
+  .phone .rail{display:none}
+.phone .wide-only{display:none!important}
+.phone .narrow-only{display:inline}
+.phone .burger{display:inline-flex}
+.phone .nav{padding:0 16px;height:56px}
+.phone .wrap{padding:10px 16px 40px;gap:6px}
+.phone h1{font-size:20px;line-height:26px}
+.phone .head{grid-template-columns:1fr auto;grid-template-areas:"ttl exp" "sub sub" "seg seg";row-gap:4px}
+.phone .head .exp{height:var(--control-h-touch);font-size:14px;padding:0 14px}
+.phone .head .seg{display:flex;padding:3px;margin-top:2px}
+.phone .head .seg button{flex:1;height:var(--control-h-touch);font-size:14px}
+.phone .strip{padding:8px 12px;gap:4px}
+.phone .striphead{flex-wrap:wrap;gap:6px 8px;font-size:12px}
+.phone .striphead>span:first-child{font-size:12px;white-space:nowrap}
+.phone .presets{margin-left:auto;flex:0 0 auto;gap:4px}
+.phone .presets .btn{height:var(--control-h-touch);padding:0 11px;font-size:12px}
+.phone .lanes{--gut:0px;cursor:default;gap:2px}
+.phone .lane{flex-wrap:wrap;gap:2px}
+.phone .lane .nm{width:100%;flex:1 1 100%;line-height:13px}
+.phone .lane .cells{flex:1 1 100%;height:10px;gap:0}
+.phone .brush{display:none}
+.phone .axis{margin-left:0;gap:2px}
+.phone .axis button{min-height:var(--control-h-touch);text-align:center}
+.phone .legend{gap:4px 10px;line-height:16px}
+.phone .body{flex-direction:column}
+.phone .rail{display:none}
+.phone .filters{gap:8px}
+.phone .filtersbtn{display:flex;height:var(--control-h-touch);justify-content:center;font-size:14px;flex:0 0 auto;padding:0 14px}
+.phone .filters .searchbox{height:var(--control-h-touch);min-width:0;flex:1 1 120px}
+.phone .dbody .searchbox{height:var(--control-h-touch);min-width:0;flex:none}
+.phone .fchip{height:var(--control-h-touch);border-radius:9px}
+.phone .fchip button{width:var(--control-h-touch);height:var(--control-h-touch)}
+.phone .filters>.btn{height:var(--control-h-touch)}
+.phone .grid3{grid-template-columns:minmax(0,1fr)}
+.phone .grid2{grid-template-columns:minmax(0,1fr)}
+.phone .topn button{height:var(--control-h-touch)}
+.phone .look li{line-height:1.9}
+.phone .etab thead{display:none}
+.phone .etab tr.ev{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:10px 14px;border-bottom:1px solid var(--row)}
+.phone .etab td{display:block;border:0;padding:0}
+.phone .etab td.c-when{order:1}
+.phone .etab td.c-who{order:2}
+.phone .etab td.c-out{order:3;margin-left:auto}
+.phone .etab td.c-what{order:4;flex:0 0 100%}
+.phone .etab td.c-what .prev{display:none}
+.phone .more .btn{height:var(--control-h-touch);flex:1;justify-content:center}
+.phone .sess .shead{flex-wrap:wrap;padding:10px 14px;min-height:var(--control-h-touch)}
+.phone .sess .counts{margin-left:0;flex:1 1 100%;justify-content:flex-start}
+.phone .sess .meta{flex:1 1 100%}
+.phone .wf .r{flex-wrap:wrap;gap:2px 10px;padding:6px 4px}
+.phone .wf .lbl{width:auto;flex:1 1 auto;order:2}
+.phone .wf .t{order:1}
+.phone .wf .rt{order:3;width:auto;margin-left:auto;text-align:right}
+.phone .wf .track{order:4;flex:1 1 100%;min-width:0}
+.phone .drawer{width:100vw;left:0;border-left:0;box-shadow:none}
+.phone .dhead,body .lhead{flex-wrap:wrap;padding:4px 16px 10px;row-gap:2px}
+.phone .dback{display:inline-flex;flex:1 1 100%;height:var(--control-h-touch)}
+.phone .dhead b{white-space:normal;overflow:visible;flex:0 1 auto}
+.phone .dbody{padding:12px 16px}
+.phone .tl button{min-height:var(--control-h-touch)}
+/* One grid row per field: a fixed key column, the value beside it, both centred, and a
+   hairline under every row — not under some. */
+.phone .ftab,body .ftab tbody{display:block}
+.phone .ftab tr{display:grid;grid-template-columns:84px minmax(0,1fr);align-items:center;min-height:var(--control-h-touch);border-bottom:1px solid var(--row)}
+.phone .ftab td{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;padding:5px 0;line-height:18px;align-self:stretch}
+.phone .ftab .k{width:auto;padding-right:10px}
+.phone .ftab .v button{align-self:stretch;display:inline-flex;align-items:center;padding:0}
+.phone .scrim{display:none}
+.phone .level .frow{height:var(--control-h-touch);font-size:13px}
+.phone .level .showall{height:var(--control-h-touch);font-size:12px}
   </style>
 </helmet>
-<div style="width: 560px; min-height: 880px; box-sizing: border-box; background: #fafafa; display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 32px 30px;">
-
-  <div style="width: 500px; display: flex; flex-direction: column; gap: 8px;">
-    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">EXPANDED — FULL DETAIL</div>
-    <div style="width: 500px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
-
-      <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f4f4f5;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">14:02:11</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
-        <div style="font-size: 13px;">tool.call</div>
-        <div style="font-size: 13px; color: #71717a;">news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">news_search</div>
-        <div style="flex-grow: 1;"></div>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
-      </div>
-
-      <div style="background: #fafafa; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
-        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-          <span style="display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 6px; background: #f4f4f5; font-size: 11px; font-weight: 500; color: #71717a;">client<span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #52525b;">claude-ai/1.2</span></span>
-          <span style="display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 6px; background: #f4f4f5; font-size: 11px; font-weight: 500; color: #71717a;">session<a href="#" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">s_8fk2…</a></span>
-          <span style="font-size: 12px; color: #71717a;">filter to session</span>
-        </div>
-
-        <div style="display: flex; flex-direction: column; gap: 6px;">
-          <div style="font-size: 12px; font-weight: 500; color: #71717a; letter-spacing: 0.06em; text-transform: uppercase;">Arguments</div>
-          <div style="background: #f4f4f5; border-radius: 8px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.7; color: #09090b; white-space: pre-line;">{
-&nbsp;&nbsp;"query": "cloudflare outage",
-&nbsp;&nbsp;"password": "‹redacted›"
-}</div>
-        </div>
-
-        <div style="display: flex; flex-direction: column; gap: 6px;">
-          <div style="font-size: 12px; font-weight: 500; color: #71717a; letter-spacing: 0.06em; text-transform: uppercase;">Result</div>
-          <div style="background: #f4f4f5; border-radius: 8px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.7; color: #09090b; white-space: pre-line;">{
-&nbsp;&nbsp;"structuredContent": {
-&nbsp;&nbsp;&nbsp;&nbsp;"headline": "Cloudflare restores service",
-&nbsp;&nbsp;&nbsp;&nbsp;"screenshot": <span style="display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 6px; background: #ffffff; border: 1px solid #e4e4e7; color: #52525b; font-size: 11px; font-weight: 500; vertical-align: -4px;">‹blob image/png · 4.2 MB›</span>
-&nbsp;&nbsp;}
-}</div>
-        </div>
-      </div>
-
-    </div>
+<div class="sheet" style="width:1380px">
+  <div class="note">The record (<span class="mono">?expand=&lt;id&gt;</span>) as a right-hand drawer over a scrim &mdash; a Base UI Dialog, 620 px, focus-trapped, Escape closes. Drawn here as a static panel. Below it, the page states.</div>
+  <div class="row2">
+<div class="panel"><div class="lab">RECORD &mdash; a call with bodies <span>— one blob stub per unstructured block, a &lsquo;redacted&rsquo; leaf; every id a button that filters by it and closes</span></div><aside class="drawer"><div class="dhead"><button class="dback" data-act="close">‹ Audit</button><span class="sw s-ok"></span>
+    <b><span class="">notion/get_page</span></b><span class="note dtime">Aug 17 15:31:08</span>
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody">
+      <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input placeholder="Search this record…" value=""></div>
+      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr><td class="k">when</td><td class="v">Aug 17 15:31:08 UTC</td></tr><tr><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="agent:claude">agent:claude</button></td></tr><tr><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="tools/call">tools/call</button></td></tr><tr><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="notion">notion</button></td></tr><tr><td class="k">tool</td><td class="v"><button data-act="facet" data-f="tool" data-v="notion/get_page">notion/get_page</button></td></tr><tr><td class="k">outcome</td><td class="v"><span class="chip ok">ok</span> <span class="t-dim mono">ok</span></td></tr><tr><td class="k">duration</td><td class="v">1.8 s</td></tr><tr><td class="k">client</td><td class="v">claude-code 2.1.36</td></tr><tr><td class="k">session</td><td class="v"><button data-act="session" data-id="49404b1e">49404b1e</button></td></tr><tr><td class="k">id</td><td class="v">39973</td></tr></tbody></table></div>
+      <div><p class="eyebrow">Arguments</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="arguments">▾</button><span class="key">arguments</span><span class="count">{3}</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">page_id:</span><span>"page_4b17"</span></div><div class="n" style="--ind:14px"><button class="tog" data-act="tree" data-path="arguments.credentials">▾</button><span class="key">credentials</span><span class="count">{1}</span></div><div class="n" style="--ind:28px"><span class="tog"></span><span class="key">token:</span><span><span class="stub">‹redacted›</span></span></div><div class="n" style="--ind:14px"><button class="tog" data-act="tree" data-path="arguments.include">▸</button><span class="key">include</span><span class="count">[2] …</span></div></div></div>
+           <div><p class="eyebrow">Result</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="result">▾</button><span class="key">result</span><span class="count">{2}</span></div><div class="n" style="--ind:14px"><button class="tog" data-act="tree" data-path="result.structuredContent">▾</button><span class="key">structuredContent</span><span class="count">{4}</span></div><div class="n" style="--ind:28px"><span class="tog"></span><span class="key">page_id:</span><span>"page_4b17"</span></div><div class="n" style="--ind:28px"><span class="tog"></span><span class="key">title:</span><span>"Q3 retro"</span></div><div class="n" style="--ind:28px"><span class="tog"></span><span class="key">author:</span><span><span class="stub">‹redacted›</span></span></div><div class="n" style="--ind:28px"><span class="tog"></span><span class="key">blocks:</span><span><span class="num">214</span></span></div><div class="n" style="--ind:14px"><button class="tog" data-act="tree" data-path="result.content">▾</button><span class="key">content</span><span class="count">[1]</span></div><div class="n" style="--ind:28px"><span class="tog"></span><span class="key">[0]:</span><span><span class="stub">‹blob image/png · 4.2 MB›</span></span></div></div></div>
+           
+           
+      
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="49404b1e">Show this session</button>
+        <button class="btn" data-act="copy" data-idx="4">Copy as JSON</button></div>
+    </div></aside></div>
+<div class="panel"><div class="lab">RECORD &mdash; a body over the cap <span>— past AUDIT_BODY_CAP_BYTES the whole column is replaced by one oversize stub &mdash; it is never a block inside content</span></div><aside class="drawer"><div class="dhead"><button class="dback" data-act="close">‹ Audit</button><span class="sw s-ok"></span>
+    <b><span class="">notion/get_page</span></b><span class="note dtime">Aug 17 18:18:57</span>
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody">
+      <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input placeholder="Search this record…" value=""></div>
+      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr><td class="k">when</td><td class="v">Aug 17 18:18:57 UTC</td></tr><tr><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="agent:claude">agent:claude</button></td></tr><tr><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="tools/call">tools/call</button></td></tr><tr><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="notion">notion</button></td></tr><tr><td class="k">tool</td><td class="v"><button data-act="facet" data-f="tool" data-v="notion/get_page">notion/get_page</button></td></tr><tr><td class="k">outcome</td><td class="v"><span class="chip ok">ok</span> <span class="t-dim mono">ok</span></td></tr><tr><td class="k">duration</td><td class="v">1.7 s</td></tr><tr><td class="k">client</td><td class="v">claude-code 2.1.36</td></tr><tr><td class="k">session</td><td class="v"><button data-act="session" data-id="f5ba00e6">f5ba00e6</button></td></tr><tr><td class="k">id</td><td class="v">40034</td></tr></tbody></table></div>
+      <div><p class="eyebrow">Arguments</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="arguments">▾</button><span class="key">arguments</span><span class="count">{1}</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">page_id:</span><span>"page_1938"</span></div></div></div>
+           <div><p class="eyebrow">Result</p><div class="tree"><div class="n" style="--ind:0px"><span class="tog"></span><span class="stub">‹oversize · 1.5 MB›</span></div></div></div>
+           
+           
+      
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="f5ba00e6">Show this session</button>
+        <button class="btn" data-act="copy" data-idx="65">Copy as JSON</button></div>
+    </div></aside></div>
+<div class="panel"><div class="lab">RECORD &mdash; a chain, with its timeline <span>— every row sharing one detail.approvalId in write order (ts, then id): requested &rarr; call refused &rarr; you approved &rarr; call ran</span></div><aside class="drawer"><div class="dhead"><button class="dback" data-act="close">‹ Audit</button><span class="sw s-ok"></span>
+    <b><span class="">linear/create_issue</span></b><span class="note dtime">Aug 17 18:00:16</span>
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody">
+      <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input placeholder="Search this record…" value=""></div>
+      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr><td class="k">when</td><td class="v">Aug 17 18:00:16 UTC</td></tr><tr><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="agent:claude">agent:claude</button></td></tr><tr><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="tools/call">tools/call</button></td></tr><tr><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="linear">linear</button></td></tr><tr><td class="k">tool</td><td class="v"><button data-act="facet" data-f="tool" data-v="linear/create_issue">linear/create_issue</button></td></tr><tr><td class="k">outcome</td><td class="v"><span class="chip ok">ok</span> <span class="t-dim mono">ok</span></td></tr><tr><td class="k">duration</td><td class="v">478 ms</td></tr><tr><td class="k">client</td><td class="v">claude-code 2.1.36</td></tr><tr><td class="k">session</td><td class="v"><button data-act="session" data-id="f5ba00e6">f5ba00e6</button></td></tr><tr><td class="k">id</td><td class="v">40015</td></tr></tbody></table></div>
+      <div><p class="eyebrow">Arguments</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="arguments">▾</button><span class="key">arguments</span><span class="count">{2}</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">title:</span><span>"Tracking: audit explorer"</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">team:</span><span>"HUB"</span></div></div></div>
+           <div><p class="eyebrow">Result</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="result">▾</button><span class="key">result</span><span class="count">{1}</span></div><div class="n" style="--ind:14px"><button class="tog" data-act="tree" data-path="result.structuredContent">▸</button><span class="key">structuredContent</span><span class="count">{2} …</span></div></div></div>
+           
+           <div><p class="eyebrow">Detail</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="detail">▾</button><span class="key">detail</span><span class="count">{1}</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">approvalId:</span><span>"72b19871-eea7-40a9-ac4f-54bf2a5af2dd"</span></div></div></div>
+      <div><p class="eyebrow">This approval, end to end</p><div class="tl">
+        <button data-act="openidx" data-idx="35"><span class="tt">17:54</span><span class="te">approval.requested<span class="sub2"> linear/create_issue</span></span>
+          <span class="chip ok">ok</span><span class="tr">agent:claude</span></button>
+        <button data-act="openidx" data-idx="36"><span class="tt">17:54</span><span class="te">tools/call</span>
+          <span class="chip warn">approval</span><span class="tr">agent:claude</span></button>
+        <button data-act="openidx" data-idx="44"><span class="tt">18:00</span><span class="te">approval.approved<span class="sub2"> linear/create_issue</span></span>
+          <span class="chip ok">ok</span><span class="tr">user:ahrzb</span></button>
+        <button data-act="openidx" data-idx="46"><span class="tt">18:00</span><span class="te now">tools/call</span>
+          <span class="chip ok">ok</span><span class="tr">agent:claude</span></button></div>
+        <p class="note" style="margin-top:6px">Every row carrying this <span class="mono">detail.approvalId</span>, oldest first — the refused call, the request, your answer, and the dispatch that followed.</p></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="f5ba00e6">Show this session</button>
+        <button class="btn" data-act="copy" data-idx="46">Copy as JSON</button></div>
+    </div></aside></div>
+<div class="panel"><div class="lab">RECORD &mdash; search within the record <span>— Search this record… highlights every match in the trees</span></div><aside class="drawer"><div class="dhead"><button class="dback" data-act="close">‹ Audit</button><span class="sw s-ok"></span>
+    <b><span class="">notion/create_page</span></b><span class="note dtime">Aug 17 17:27:59</span>
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody">
+      <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input placeholder="Search this record…" value="report"></div>
+      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr><td class="k">when</td><td class="v">Aug 17 17:27:59 UTC</td></tr><tr><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="agent:claude">agent:claude</button></td></tr><tr><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="tools/call">tools/call</button></td></tr><tr><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="notion">notion</button></td></tr><tr><td class="k">tool</td><td class="v"><button data-act="facet" data-f="tool" data-v="notion/create_page">notion/create_page</button></td></tr><tr><td class="k">outcome</td><td class="v"><span class="chip ok">ok</span> <span class="t-dim mono">ok</span></td></tr><tr><td class="k">duration</td><td class="v">725 ms</td></tr><tr><td class="k">client</td><td class="v">claude-code 2.1.36</td></tr><tr><td class="k">session</td><td class="v"><button data-act="session" data-id="821664fb">821664fb</button></td></tr><tr><td class="k">id</td><td class="v">39985</td></tr></tbody></table></div>
+      <div><p class="eyebrow">Arguments</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="arguments">▾</button><span class="key">arguments</span><span class="count">{3}</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">title:</span><span>"Incident 0823 review"</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">parent:</span><span>"<span class="hit">Report</span>s"</span></div><div class="n" style="--ind:14px"><button class="tog" data-act="tree" data-path="arguments.credentials">▸</button><span class="key">credentials</span><span class="count">{1} …</span></div></div></div>
+           <div><p class="eyebrow">Result</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="result">▾</button><span class="key">result</span><span class="count">{1}</span></div><div class="n" style="--ind:14px"><button class="tog" data-act="tree" data-path="result.structuredContent">▸</button><span class="key">structuredContent</span><span class="count">{2} …</span></div></div></div>
+           
+           
+      
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="821664fb">Show this session</button>
+        <button class="btn" data-act="copy" data-idx="16">Copy as JSON</button></div>
+    </div></aside></div>
+<div class="panel"><div class="lab">RECORD &mdash; a config change <span>— an admin.* row: no bodies to have, so no sentence either</span></div><aside class="drawer"><div class="dhead"><button class="dback" data-act="close">‹ Audit</button><span class="sw s-ok"></span>
+    <b><span class="">admin.grant_set</span><span class="sub2 "> notion</span></b><span class="note dtime">Aug 24 14:30:12</span>
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody">
+      <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input placeholder="Search this record…" value=""></div>
+      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr><td class="k">when</td><td class="v">Aug 24 14:30:12 UTC</td></tr><tr><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="user:ahrzb">user:ahrzb</button></td></tr><tr><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="admin.grant_set">admin.grant_set</button></td></tr><tr><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="notion">notion</button></td></tr><tr><td class="k">tool</td><td class="v">—</td></tr><tr><td class="k">outcome</td><td class="v"><span class="chip ok">ok</span> <span class="t-dim mono">ok</span></td></tr><tr><td class="k">duration</td><td class="v">—</td></tr><tr><td class="k">client</td><td class="v">—</td></tr><tr><td class="k">session</td><td class="v">—</td></tr><tr><td class="k">id</td><td class="v">41361</td></tr></tbody></table></div>
+      
+           
+           
+           <div><p class="eyebrow">Detail</p><div class="tree"><div class="n" style="--ind:0px"><button class="tog" data-act="tree" data-path="detail">▾</button><span class="key">detail</span><span class="count">{3}</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">agent:</span><span>"claude"</span></div><div class="n" style="--ind:14px"><span class="tog"></span><span class="key">app:</span><span>"notion"</span></div><div class="n" style="--ind:14px"><button class="tog" data-act="tree" data-path="detail.roles">▸</button><span class="key">roles</span><span class="count">[1] …</span></div></div></div>
+      
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="" disabled="">Show this session</button>
+        <button class="btn" data-act="copy" data-idx="1392">Copy as JSON</button></div>
+    </div></aside></div>
+<div class="panel"><div class="lab">RECORD &mdash; no bodies: body logging is off <span>— &sect;13&rsquo;s first sentence, verbatim</span></div><aside class="drawer"><div class="dhead"><button class="dback" data-act="close">‹ Audit</button><span class="sw s-ok"></span>
+    <b><span class="">linear/get_issue</span></b><span class="note dtime">Aug 17 17:22:15</span>
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody">
+      <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input placeholder="Search this record…" value=""></div>
+      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr><td class="k">when</td><td class="v">Aug 17 17:22:15 UTC</td></tr><tr><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="agent:claude">agent:claude</button></td></tr><tr><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="tools/call">tools/call</button></td></tr><tr><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="linear">linear</button></td></tr><tr><td class="k">tool</td><td class="v"><button data-act="facet" data-f="tool" data-v="linear/get_issue">linear/get_issue</button></td></tr><tr><td class="k">outcome</td><td class="v"><span class="chip ok">ok</span> <span class="t-dim mono">ok</span></td></tr><tr><td class="k">duration</td><td class="v">346 ms</td></tr><tr><td class="k">client</td><td class="v">claude-code 2.1.36</td></tr><tr><td class="k">session</td><td class="v"><button data-act="session" data-id="821664fb">821664fb</button></td></tr><tr><td class="k">id</td><td class="v">39981</td></tr></tbody></table></div>
+      
+           
+           <p class="note">Call bodies aren't recorded for this app (body logging is off).</p>
+           
+      
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="821664fb">Show this session</button>
+        <button class="btn" data-act="copy" data-idx="12">Copy as JSON</button></div>
+    </div></aside></div>
+<div class="panel"><div class="lab">RECORD &mdash; no bodies: refused <span>— &sect;13&rsquo;s second sentence &mdash; a refusal never had bodies, whatever log_bodies says</span></div><aside class="drawer"><div class="dhead"><button class="dback" data-act="close">‹ Audit</button><span class="sw s-denied"></span>
+    <b><span class="">news/search_news</span></b><span class="note dtime">Aug 17 15:00:07</span>
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody">
+      <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input placeholder="Search this record…" value=""></div>
+      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr><td class="k">when</td><td class="v">Aug 17 15:00:07 UTC</td></tr><tr><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="agent:cron">agent:cron</button></td></tr><tr><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="tools/call">tools/call</button></td></tr><tr><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="news">news</button></td></tr><tr><td class="k">tool</td><td class="v"><button data-act="facet" data-f="tool" data-v="news/search_news">news/search_news</button></td></tr><tr><td class="k">outcome</td><td class="v"><span class="chip bad">denied</span> <span class="t-dim mono">-32001</span></td></tr><tr><td class="k">duration</td><td class="v">3 ms</td></tr><tr><td class="k">client</td><td class="v">pmcp-cli 0.9.2</td></tr><tr><td class="k">session</td><td class="v">—</td></tr><tr><td class="k">id</td><td class="v">39969</td></tr></tbody></table></div>
+      
+           
+           <p class="note">Refused before the call was made, so there are no bodies to show.</p>
+           
+      
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="" disabled="">Show this session</button>
+        <button class="btn" data-act="copy" data-idx="0">Copy as JSON</button></div>
+    </div></aside></div>
+<div class="panel"><div class="lab">RECORD &mdash; no bodies: unrecorded <span>— &sect;13&rsquo;s third sentence</span></div><aside class="drawer"><div class="dhead"><button class="dback" data-act="close">‹ Audit</button><span class="sw s-ok"></span>
+    <b><span class="">news/get_news</span></b><span class="note dtime">Aug 17 17:19:32</span>
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody">
+      <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input placeholder="Search this record…" value=""></div>
+      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr><td class="k">when</td><td class="v">Aug 17 17:19:32 UTC</td></tr><tr><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="agent:claude">agent:claude</button></td></tr><tr><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="tools/call">tools/call</button></td></tr><tr><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="news">news</button></td></tr><tr><td class="k">tool</td><td class="v"><button data-act="facet" data-f="tool" data-v="news/get_news">news/get_news</button></td></tr><tr><td class="k">outcome</td><td class="v"><span class="chip ok">ok</span> <span class="t-dim mono">ok</span></td></tr><tr><td class="k">duration</td><td class="v">348 ms</td></tr><tr><td class="k">client</td><td class="v">claude-code 2.1.36</td></tr><tr><td class="k">session</td><td class="v"><button data-act="session" data-id="821664fb">821664fb</button></td></tr><tr><td class="k">id</td><td class="v">39979</td></tr></tbody></table></div>
+      
+           
+           <p class="note">No bodies were recorded for this call.</p>
+           
+      
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="821664fb">Show this session</button>
+        <button class="btn" data-act="copy" data-idx="10">Copy as JSON</button></div>
+    </div></aside></div>
+<div class="panel"><div class="lab">RECORD &mdash; loading <span>— the field table is already drawn from the slim row; only the bodies wait on GET /api/hub/audit/:id</span></div><aside class="drawer"><div class="dhead"><button class="dback" data-act="close">‹ Audit</button><span class="sw s-ok"></span>
+    <b><span class="">news/get_news</span></b><span class="note dtime">Aug 24 14:32:07</span>
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody">
+      <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input placeholder="Search this record…" value=""></div>
+      <div><p class="eyebrow">Record</p><table class="ftab"><tbody><tr><td class="k">when</td><td class="v">Aug 24 14:32:07 UTC</td></tr><tr><td class="k">principal</td><td class="v"><button data-act="facet" data-f="principal" data-v="agent:claude">agent:claude</button></td></tr><tr><td class="k">event</td><td class="v"><button data-act="facet" data-f="event" data-v="tools/call">tools/call</button></td></tr><tr><td class="k">app</td><td class="v"><button data-act="facet" data-f="app" data-v="news">news</button></td></tr><tr><td class="k">tool</td><td class="v"><button data-act="facet" data-f="tool" data-v="news/get_news">news/get_news</button></td></tr><tr><td class="k">outcome</td><td class="v"><span class="chip ok">ok</span> <span class="t-dim mono">ok</span></td></tr><tr><td class="k">duration</td><td class="v">340 ms</td></tr><tr><td class="k">client</td><td class="v">claude-code 2.1.37</td></tr><tr><td class="k">session</td><td class="v"><button data-act="session" data-id="a3f9c2d1">a3f9c2d1</button></td></tr><tr><td class="k">id</td><td class="v">41363</td></tr></tbody></table></div>
+      <div><p class="eyebrow">Arguments</p><div class="skel" style="width:70%"></div><div class="skel" style="width:52%;margin-top:6px"></div></div>
+           <div><p class="eyebrow">Result</p><div class="skel" style="width:84%"></div><div class="skel" style="width:40%;margin-top:6px"></div></div>
+           <p class="note">Bodies are read on their own, by id — the fields above came with the row.</p>
+      
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="a3f9c2d1">Show this session</button>
+        <button class="btn" data-act="copy" data-idx="1394">Copy as JSON</button></div>
+    </div></aside></div>
+<div class="panel"><div class="lab">RECORD &mdash; not found <span>— an id outside the caller&rsquo;s namespace and an id that aged out are one answer</span></div><aside class="drawer"><div class="dhead"><button class="dback" data-act="close">‹ Audit</button>
+    <b>Record 41 988</b>
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div><div class="dbody"><div class="empty"><b>That record is gone</b><p class="note">Audit rows are kept for 7 days.</p>
+        <div style="margin-top:12px"><button class="btn" data-act="close">Close</button></div></div></div></aside></div>
   </div>
-
-  <div style="width: 500px; display: flex; flex-direction: column; gap: 8px;">
-    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">BODIES NOT RECORDED</div>
-    <div style="width: 500px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
-
-      <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f4f4f5;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">14:02:11</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
-        <div style="font-size: 13px;">tool.call</div>
-        <div style="font-size: 13px; color: #71717a;">news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">news_search</div>
-        <div style="flex-grow: 1;"></div>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
+<div class="panel"><div class="lab">PAGE &mdash; loading skeleton <span>— one query per (since, until, q): page 0, then the rest to the ceiling in parallel</span></div><div class="pane"><div class="card strip"><div class="skel" style="width:280px;height:14px"></div>
+      <div style="display:flex;gap:10px;align-items:center"><span class="skel" style="width:104px;flex:none"></span><span class="skel" style="flex:1;height:16px"></span></div><div style="display:flex;gap:10px;align-items:center"><span class="skel" style="width:104px;flex:none"></span><span class="skel" style="flex:1;height:16px"></span></div><div style="display:flex;gap:10px;align-items:center"><span class="skel" style="width:104px;flex:none"></span><span class="skel" style="flex:1;height:16px"></span></div><div style="display:flex;gap:10px;align-items:center"><span class="skel" style="width:104px;flex:none"></span><span class="skel" style="flex:1;height:16px"></span></div><div style="display:flex;gap:10px;align-items:center"><span class="skel" style="width:104px;flex:none"></span><span class="skel" style="flex:1;height:16px"></span></div></div><div class="body">
+    <aside class="card rail"><h3>Filter</h3><div class="skel" style="margin:6px 5px;width:70%"></div><div class="skel" style="margin:6px 5px;width:90%"></div><div class="skel" style="margin:6px 5px;width:90%"></div><div class="skel" style="margin:6px 5px;width:70%"></div><div class="skel" style="margin:6px 5px;width:90%"></div><div class="skel" style="margin:6px 5px;width:90%"></div><div class="skel" style="margin:6px 5px;width:70%"></div><div class="skel" style="margin:6px 5px;width:90%"></div><div class="skel" style="margin:6px 5px;width:90%"></div><div class="skel" style="margin:6px 5px;width:70%"></div><div class="skel" style="margin:6px 5px;width:90%"></div><div class="skel" style="margin:6px 5px;width:90%"></div></aside>
+    <div class="main"><div class="card" style="padding:16px;display:flex;flex-direction:column;gap:14px">
+    <div class="grid3"><div><div class="skel" style="width:90px;height:26px"></div><div class="skel" style="width:70%;margin-top:8px"></div></div><div><div class="skel" style="width:90px;height:26px"></div><div class="skel" style="width:70%;margin-top:8px"></div></div><div><div class="skel" style="width:90px;height:26px"></div><div class="skel" style="width:70%;margin-top:8px"></div></div></div>
+    <div class="skel" style="height:64px"></div>
+    <div class="grid3"><div><div class="skel" style="margin:4px 0"></div><div class="skel" style="margin:4px 0"></div><div class="skel" style="margin:4px 0"></div><div class="skel" style="margin:4px 0"></div></div><div><div class="skel" style="margin:4px 0"></div><div class="skel" style="margin:4px 0"></div><div class="skel" style="margin:4px 0"></div><div class="skel" style="margin:4px 0"></div></div><div><div class="skel" style="margin:4px 0"></div><div class="skel" style="margin:4px 0"></div><div class="skel" style="margin:4px 0"></div><div class="skel" style="margin:4px 0"></div></div></div></div></div>
+  </div></div></div>
+<div class="panel"><div class="lab">PAGE &mdash; over the ceiling <span>— the newest 5,000 of N, and the hours with nothing loaded hatched &mdash; never drawn as quiet</span></div><div class="pane"><div class="card strip"><div class="striphead">
+      <span style="font-weight:600;font-size:13px">Aug 17 14:47 → Aug 24 14:47</span>
+      <div class="presets">
+        <button class="btn mini" data-act="preset" data-h="1">1h</button>
+        <button class="btn mini" data-act="preset" data-h="24">24h</button>
+        <button class="btn mini on" data-act="preset" data-h="168">7d</button>
       </div>
-
-      <div style="background: #fafafa; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
-        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-          <span style="display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 6px; background: #f4f4f5; font-size: 11px; font-weight: 500; color: #71717a;">client<span style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #52525b;">claude-ai/1.2</span></span>
-          <span style="display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 8px; border-radius: 6px; background: #f4f4f5; font-size: 11px; font-weight: 500; color: #71717a;">session<a href="#" style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;">s_8fk2…</a></span>
-          <span style="font-size: 12px; color: #71717a;">filter to session</span>
-        </div>
-        <div style="background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #71717a; line-height: 1.5;">Call bodies aren't recorded for this app (body logging is off).</div>
-      </div>
-
+      <span class="note wide-only">an hour per cell, coloured by the worst outcome in it — drag to select</span>
+      <span class="wide-only" style="margin-left:auto"></span>
+      <span class="chip wide-only">900 events selected</span></div>
+    <div class="ceiling"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v4M12 16h.01"></path></svg>
+      <span>Showing the newest 900 of 1,395 events — narrow the search, or export JSONL for all of them.</span></div>
+    <div class="lanes" tabindex="0">
+      <div class="lane"><span class="nm" title="agent:claude">agent:claude</span><span class="cells"><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c error"></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c approval"></span><span class="c denied"></span><span class="c error"></span><span class="c ok"></span><span class="c error"></span><span class="c "></span><span class="c ok"></span><span class="c approval"></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c denied"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c error"></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c approval"></span><span class="c error"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c denied"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c approval"></span><span class="c denied"></span><span class="c approval"></span><span class="c ok"></span><span class="c ok"></span><span class="c denied"></span><span class="c error"></span><span class="c ok"></span><span class="c approval"></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c approval"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c approval"></span><span class="c archived"></span></span></div><div class="lane"><span class="nm" title="agent:cron">agent:cron</span><span class="cells"><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c "></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c error"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c error"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c error"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c denied"></span><span class="c "></span></span></div><div class="lane"><span class="nm" title="agent:cursor">agent:cursor</span><span class="cells"><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c denied"></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c approval"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span></span></div><div class="lane"><span class="nm" title="user:ahrzb">user:ahrzb</span><span class="cells"><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c error"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span></span></div><div class="lane"><span class="nm" title="app:news">app:news</span><span class="cells"><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span></span></div><div class="lane"><span class="nm" title="app:home">app:home</span><span class="cells"><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span></span></div><div class="lane"><span class="nm" title="hub">1 other</span><span class="cells"><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c nl"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span></span></div>
+      
     </div>
-  </div>
-
-  <div style="width: 500px; display: flex; flex-direction: column; gap: 8px;">
-    <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.08em; text-transform: uppercase;">NON-CALL EVENT</div>
-    <div style="width: 500px; box-sizing: border-box; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
-
-      <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #f4f4f5;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">13:47:20</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">user:ahrzb</div>
-        <div style="font-size: 13px;">admin.grant_set</div>
-        <div style="font-size: 13px; color: #71717a;">news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa;">—</div>
-        <div style="flex-grow: 1;"></div>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg>
-      </div>
-
-      <div style="background: #fafafa; padding: 16px; font-size: 13px; color: #09090b; line-height: 1.5;">Replaced grants for claude on news: reader (allow), admin (approval).</div>
-
-    </div>
-  </div>
-
+    <div class="axis"><button data-act="day" data-i="0" class="on">Aug 17</button><button data-act="day" data-i="1" class="on">Aug 18</button><button data-act="day" data-i="2" class="on">Aug 19</button><button data-act="day" data-i="3" class="on">Aug 20</button><button data-act="day" data-i="4" class="on">Aug 21</button><button data-act="day" data-i="5" class="on">Aug 22</button><button data-act="day" data-i="6" class="on">Aug 23</button></div>
+    <div class="legend"><span class="i wide-only" style="font-weight:500;color:var(--subtle)">Worst outcome in the hour:</span>
+      <span class="i"><span class="sw s-ok"></span>ok</span><span class="i"><span class="sw s-approval"></span>approval<span class="code wide-only">−32003</span></span><span class="i"><span class="sw s-archived"></span>archived<span class="code wide-only">−32002</span></span><span class="i"><span class="sw s-denied"></span>denied<span class="code wide-only">−32001 · −32000</span></span><span class="i"><span class="sw s-error"></span>error</span>
+      <span class="i"><span class="sw" style="background:repeating-linear-gradient(45deg,#d4d4d8 0 2px,#fafafa 2px 4px)"></span>not loaded</span></div></div></div></div>
+<div class="panel"><div class="lab">PAGE &mdash; filters match nothing <span>— the window and the facets are still there to widen; Clear drops both</span></div><div class="pane"><div class="filters"><button class="btn filtersbtn" data-act="filters">Filters</button><div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg><input placeholder="Search events and bodies…  ( / )" value="wireguard"></div><button class="btn" data-act="clear">Clear</button></div><div class="main"><div class="card"><div class="empty"><b>Nothing matches</b><p class="note">Widen the window or drop a filter.</p>
+  <div style="margin-top:12px"><button class="btn" data-act="clear">Clear</button></div></div></div></div></div></div>
+<div class="panel"><div class="lab">PAGE &mdash; empty ledger <span>— nothing recorded yet, which is not the same as nothing matching</span></div><div class="pane"><div class="body">
+    <aside class="card rail"><h3>Filter</h3><p class="note" style="padding:0 5px">0 of 0 in window</p><div class="fgroup"><p class="eyebrow">session</p><p class="note" style="padding:0 5px">Opened from a record, never listed — too many to browse.</p></div></aside>
+    <div class="main"><div class="card"><div class="empty"><b>Nothing recorded yet</b><p class="note">Calls, approvals and config changes will appear here.</p></div></div></div>
+  </div></div></div>
+<div class="panel"><div class="lab">PAGE &mdash; load failed <span>— the shell&rsquo;s error card and Try again; the header keeps the retention line, which needs no read</span></div><div class="pane"><div class="card" style="padding: 40px 16px; text-align: center;"><b style="display:block;margin-bottom:4px">Couldn't load the audit log</b>
+        <p class="note">The request failed. Nothing was changed.</p>
+        <div style="margin-top:12px"><button class="btn">Try again</button></div></div></div></div>
+<div class="panel" style="padding:0 24px 24px"><div class="eyebrow">Board notes</div><div class="notes"><div class="note">&bull; <b>The record is a request inspector.</b> Head: the outcome swatch, the title, the time, Close. Body: <b>Search this record…</b>, the <b>Record</b> field table (when, principal, event, app, tool, outcome with its raw code, duration, client, session, id &mdash; every id a button that filters by it and closes the drawer), then <b>Arguments</b> / <b>Result</b> / <b>Detail</b> as collapsible JSON trees with the first level open.</div><div class="note">&bull; <b>Stubs and redactions are shown as what they are</b>, and the two stubs are not the same thing: <span class="mono">content</span> holds one <span class="mono">&lsquo;blob image/png &middot; 4.2 MB&rsquo;</span> per unstructured block, while a body past <span class="mono">AUDIT_BODY_CAP_BYTES</span> replaces its whole column with a single <span class="mono">&lsquo;oversize &middot; 20 KB&rsquo;</span> (&sect;15) &mdash; sizes per &sect;13&rsquo;s KB/MB rule. <span class="mono">&lsquo;redacted&rsquo;</span> draws as a stub chip: a masked leaf is never an empty string.</div><div class="note">&bull; <b>The three no-bodies sentences are &sect;13&rsquo;s, verbatim</b>, and the refusal one wins first: several refusals happen before any redaction map exists, so no setting could have made bodies appear.</div><div class="note">&bull; <b>The chain timeline is the ledger&rsquo;s own join.</b> <span class="mono">detail.approvalId</span> now rides the four <span class="mono">approval.*</span> rows, the <span class="mono">tools/call</span> refused &minus;32003, and the <span class="mono">tools/call</span> dispatched after the claim (brief &sect;1) &mdash; which is the whole of what makes &ldquo;asked &rarr; you approved &rarr; ran&rdquo; drawable. It reads in WRITE order, ts then id: <span class="mono">approvals.check</span> records the request before the gateway records the refusal it threw, so the request always takes the lower id.</div><div class="note">&bull; <b>Bodies arrive on their own.</b> The window read is slim (no <span class="mono">args_json</span> / <span class="mono">result_json</span> &mdash; projected away in SQL, never parsed to be thrown away); the drawer fetches <span class="mono">GET /api/hub/audit/:id</span> when it opens, so a record id outside the loaded rows still opens.</div><div class="note">&bull; <b>No reason is invented.</b> A &minus;32001 carries no <span class="mono">detail</span> at all &mdash; &sect;7 keeps its three sources indistinguishable &mdash; so the record shows the class, the raw code, and nothing it does not have. A &minus;32000 carries <span class="mono">detail.failureClass</span> (plus <span class="mono">upstreamStatus</span> where an upstream answered one), which is what lets an owner tell a down upstream from a timed-out tunnel.</div></div></div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":560,"height":880}}'>
+<script data-dc-script data-props='{"$preview":{"width":1380,"height":5800}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

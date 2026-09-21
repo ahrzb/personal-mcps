@@ -1,0 +1,945 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit · clickable demo</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap">
+<style>
+  /* Sizes are the layout & density ladder (design/layout-and-density.md §2): workspace
+     shape inside 24 px gutters, rail 200, dense rows 32 (6 / 16), controls 32 / 24,
+     badges and chips 20 / 11, nothing below 11 px. */
+  :root{
+    --fg:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;--row:#f4f4f5;--sunken:#fafafa;--subtle:#52525b;--dim:#a1a1aa;
+    --warn-fg:#92400e;--warn-bg:#fffbeb;--warn-br:#fde68a;--danger-fg:#b91c1c;--danger-bg:#fef2f2;--danger-br:#fecaca;
+    --ok-fg:#15803d;--ok-bg:#f0fdf4;--ok-br:#bbf7d0;
+    --o-ok:#d4d4d8;--o-approval:#fab219;--o-archived:#8a5a00;--o-denied:#e5484d;--o-error:#7f1d1d;
+    --rail-w:200px;--control-h-sm:32px;--control-h-xs:24px;--control-h-touch:44px;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:var(--fg);font-size:14px;background:#fff}
+  button{font:inherit;color:inherit;cursor:pointer}
+  a{color:inherit}
+  [hidden]{display:none!important}
+  .mono{font-family:var(--mono)}
+  .narrow-only{display:none}
+  /* A non-call event is titled by its event name; what it was about rides beside it. */
+  .sub2{color:var(--muted-fg);font-weight:400}
+  .note{font-size:12px;color:var(--muted-fg);line-height:1.6;margin:0}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg);margin:0 0 8px}
+  .card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .btn{display:inline-flex;align-items:center;gap:6px;height:var(--control-h-sm);padding:0 12px;border-radius:8px;font-size:12px;font-weight:500;border:1px solid var(--border);background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap;text-decoration:none}
+  .btn:hover{background:var(--sunken)}
+  .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+  .btn.mini{height:var(--control-h-xs);padding:0 8px;font-size:11px;box-shadow:none}
+  .btn.mini.on{background:#18181b;color:#fafafa;border-color:#18181b}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:var(--muted);color:var(--muted-fg);white-space:nowrap}
+  .chip.ok{background:var(--ok-bg);color:var(--ok-fg);border:1px solid var(--ok-br)}
+  .chip.warn{background:var(--warn-bg);color:var(--warn-fg);border:1px solid var(--warn-br)}
+  .chip.bad{background:var(--danger-bg);color:var(--danger-fg);border:1px solid var(--danger-br)}
+  .sw{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none}
+  .s-ok{background:var(--o-ok)}.s-approval{background:var(--o-approval)}.s-archived{background:var(--o-archived)}.s-denied{background:var(--o-denied)}.s-error{background:var(--o-error)}
+  .skel{background:linear-gradient(90deg,#f4f4f5,#ececee,#f4f4f5);border-radius:6px;height:12px}
+
+  .nav{height:56px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;gap:16px}
+  .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:var(--muted-fg)}
+  .navitem.on{background:var(--muted);color:var(--fg)}
+  .burger{display:none;width:var(--control-h-touch);height:var(--control-h-touch);border:1px solid var(--border);border-radius:9px;background:#fff;align-items:center;justify-content:center}
+  .wrap{padding:20px 24px 60px;display:flex;flex-direction:column;gap:12px;max-width:1500px;margin:0 auto}
+  /* Two rows of title, and the actions beside them; the phone re-areas the same grid.
+     Areas, not ids: the board capture strips every id attribute. */
+  .head{display:grid;grid-template-columns:1fr auto auto;grid-template-areas:"ttl exp seg" "sub exp seg";align-items:center;column-gap:12px}
+  .ttl{grid-area:ttl}.sub{grid-area:sub}.exp{grid-area:exp}.views{grid-area:seg}
+  h1{font-size:24px;font-weight:600;margin:0}
+  .seg{display:inline-flex;background:var(--muted);border-radius:9px;padding:3px}
+  .seg button{height:var(--control-h-sm);border:0;background:none;border-radius:7px;padding:0 14px;font-size:13px;color:var(--muted-fg)}
+  .seg button.on{background:#fff;color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08);font-weight:500}
+
+  /* filter bar */
+  .filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .fchip{display:inline-flex;align-items:center;height:var(--control-h-xs);border-radius:7px;background:var(--muted);font-family:var(--mono);font-size:12px;overflow:hidden}
+  .fchip .k{padding:0 4px 0 9px;color:var(--muted-fg)}
+  .fchip .v{padding-right:4px}
+  .fchip button{border:0;background:none;width:var(--control-h-xs);height:var(--control-h-xs);color:var(--dim);padding:0}
+  .fchip button:hover{background:#e4e4e7;color:var(--fg)}
+  .searchbox{display:flex;align-items:center;height:var(--control-h-sm);border:1px solid var(--border);border-radius:8px;padding:0 10px;gap:6px;min-width:260px}
+  .searchbox input{border:0;outline:0;font:inherit;font-size:13px;flex:1;min-width:0;background:none}
+
+  /* lane strip */
+  .strip{padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+  .striphead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .presets{display:inline-flex;gap:4px}
+  .lanes{--gut:114px;display:flex;flex-direction:column;gap:3px;position:relative;cursor:crosshair;user-select:none}
+  .lane{display:flex;align-items:center;gap:10px}
+  .lane .nm{width:104px;flex:none;font-family:var(--mono);font-size:11px;color:var(--subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lane .cells{flex:1;display:flex;gap:1px;height:16px;min-width:0}
+  .lane .c{flex:1;border-radius:1px;background:#f4f4f5}
+  .c.ok{background:var(--o-ok)}.c.approval{background:var(--o-approval)}.c.archived{background:var(--o-archived)}.c.denied{background:var(--o-denied)}.c.error{background:var(--o-error)}
+  /* not loaded, never empty: the window reaches further back than the ceiling allowed */
+  .c.nl{background:repeating-linear-gradient(45deg,#d4d4d8 0 2px,#fafafa 2px 4px)}
+  .brush{position:absolute;top:-3px;bottom:-3px;background:rgba(24,24,27,.07);border-left:2px solid #18181b;border-right:2px solid #18181b;border-radius:2px;pointer-events:none}
+  .axis{display:flex;margin-left:114px;font-size:11px;color:var(--muted-fg)}
+  .axis button{flex:1;border:0;background:none;padding:2px 0;text-align:left;font-size:11px;color:var(--muted-fg);border-radius:4px}
+  .axis button:hover{background:var(--muted);color:var(--fg)}
+  .axis button.on{background:var(--muted);color:var(--fg);font-weight:500}
+  .legend{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted-fg)}
+  .legend span.i{display:inline-flex;align-items:center;gap:5px}
+  .legend .code{font-family:var(--mono);color:var(--dim)}
+  .ceiling{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--warn-br);background:var(--warn-bg);border-radius:8px;font-size:12px;color:var(--warn-fg)}
+
+  .body{display:flex;gap:12px;align-items:flex-start}
+  .rail{width:var(--rail-w);flex:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto;padding:10px 8px}
+  .rail h3{font-size:12px;font-weight:600;margin:0 0 2px;padding:0 5px}
+  .fgroup{margin:10px 0 0}
+  .fgroup .eyebrow{margin:0 0 3px;padding:0 5px;font-size:11px}
+  .frow{display:flex;align-items:center;gap:7px;height:var(--control-h-xs);padding:0 5px;border-radius:5px;font-size:12px;position:relative;width:100%;border:0;background:none;text-align:left}
+  .frow .bar{position:absolute;left:0;top:2px;bottom:2px;background:#ececee;border-radius:4px}
+  .frow span{position:relative}
+  .frow .nm{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .frow .ct{margin-left:auto;color:var(--muted-fg);font-size:11px;padding-left:6px}
+  .frow:hover{box-shadow:inset 0 0 0 1px var(--border)}
+  .frow.on{background:#e4e4e7;font-weight:600}
+  .showall{border:0;background:none;padding:0 5px;height:var(--control-h-xs);font-size:11px;color:var(--muted-fg);text-decoration:underline;text-underline-offset:2px;width:100%;text-align:left;border-radius:5px}
+  .showall:hover{color:var(--fg)}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
+  .filtersbtn{display:none}
+
+  /* summary */
+  .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .grid2{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px}
+  .stat .v{font-size:24px;font-weight:600;letter-spacing:-.01em;line-height:1.2}
+  .stat .l{font-size:12px;color:var(--muted-fg)}
+  .look{border:1px solid var(--warn-br);background:var(--warn-bg);border-radius:10px;padding:12px 14px}
+  .look li{font-size:13px;line-height:1.75}
+  .look a{color:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+  .topn{display:flex;flex-direction:column;gap:2px}
+  .topn button{display:flex;align-items:center;gap:8px;height:var(--control-h-xs);font-size:12px;position:relative;border:0;background:none;width:100%;text-align:left;border-radius:5px;padding:0 5px}
+  .topn button:hover{box-shadow:inset 0 0 0 1px var(--border)}
+  .topn .bar{position:absolute;left:0;top:1px;bottom:1px;background:#f0f0f1;border-radius:4px}
+  .topn span{position:relative}
+  .topn .nm{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .topn .n{margin-left:auto;color:var(--muted-fg);font-variant-numeric:tabular-nums;padding-left:6px}
+
+  /* events — dense rows, 6 / 16 */
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg);padding:12px 16px;border-bottom:1px solid var(--border)}
+  td{padding:6px 16px;border-bottom:1px solid var(--row);font-size:13px;vertical-align:top}
+  tr.ev{cursor:pointer}
+  tr.ev:hover{background:var(--sunken)}
+  tr.ev.sel{background:var(--muted)}
+  .t-mono{font-family:var(--mono);font-size:12px}
+  td.c-when,td.c-who{white-space:nowrap}
+  .t-dim{color:var(--muted-fg)}
+  .chain{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--muted-fg);margin-top:2px}
+  .chain b{font-weight:500;color:var(--fg)}
+  .rowline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .prev{margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .more{padding:10px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px}
+
+  /* sessions */
+  .sess{border-bottom:1px solid var(--row)}
+  .sess .shead{display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;min-height:32px}
+  .sess .shead:hover{background:var(--sunken)}
+  .sess.open .shead{background:var(--muted)}
+  .sess .who{font-weight:600;font-size:13px}
+  .sess .meta{color:var(--muted-fg);font-size:12px}
+  .sess .counts{margin-left:auto;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+  .wf{padding:8px 14px 14px;background:var(--sunken);display:flex;flex-direction:column;gap:2px}
+  .wf .r{display:flex;align-items:center;gap:10px;font-size:12px;min-height:var(--control-h-xs);border-radius:5px;padding:0 4px}
+  .wf .r.click{cursor:pointer}
+  .wf .r.click:hover{background:#fff;box-shadow:inset 0 0 0 1px var(--border)}
+  .wf .t{width:52px;color:var(--muted-fg);font-family:var(--mono);flex:none}
+  .wf .lbl{width:230px;flex:none;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wf .track{flex:1;height:12px;position:relative;min-width:40px}
+  .wf .bar{position:absolute;top:1px;height:10px;min-width:3px;border-radius:3px;background:var(--o-ok)}
+  .wf .bar.approval{background:var(--o-approval)}.wf .bar.denied{background:var(--o-denied)}.wf .bar.archived{background:var(--o-archived)}.wf .bar.error{background:var(--o-error)}
+  .wf .rt{width:190px;flex:none;text-align:right;color:var(--muted-fg);font-size:11px}
+  .wf .fold{color:var(--muted-fg);font-style:italic}
+  .wf .r.keep .lbl{font-weight:600}
+
+  /* record — a drawer at wide, a full-screen level at narrow */
+  .scrim{position:fixed;inset:0;background:rgba(9,9,11,.18);z-index:40}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(620px,100vw);background:#fff;border-left:1px solid var(--border);box-shadow:-12px 0 40px rgba(0,0,0,.12);z-index:41;display:flex;flex-direction:column}
+  .dhead{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  .dhead b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+  .dtime{white-space:nowrap}
+  .dback{display:none;border:0;background:none;padding:0;font-size:14px;font-weight:500;color:var(--muted-fg);align-items:center}
+  .dbody{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+  .ftab{border-collapse:collapse;width:100%}
+  .ftab td{padding:2px 8px 2px 0;font-size:12px;line-height:20px;border:0}
+  .ftab .k{color:var(--muted-fg);width:1%;white-space:nowrap;padding-right:14px}
+  .ftab .v{font-family:var(--mono);word-break:break-all}
+  .ftab .v button{border:0;background:none;padding:0;font:inherit;font-family:var(--mono);text-decoration:underline;text-underline-offset:2px;cursor:pointer;text-align:left}
+  .tree{font-family:var(--mono);font-size:12px;line-height:19px}
+  .tree .n{display:flex;gap:6px;padding-left:var(--ind,0px)}
+  .tree .tog{border:0;background:none;padding:0;width:12px;color:var(--dim);text-align:left;flex:none}
+  .tree .key{color:var(--muted-fg)}
+  .tree .num{color:#1d4ed8}
+  .tree .stub{background:var(--muted);border-radius:4px;padding:0 4px;color:var(--subtle)}
+  .tree .hit,.hit{background:#fef08a;border-radius:2px}
+  .tree .count{color:var(--dim)}
+  .tl{display:flex;flex-direction:column;gap:2px}
+  .tl button{display:flex;align-items:center;gap:8px;min-height:var(--control-h-xs);width:100%;border:0;background:none;text-align:left;border-radius:5px;padding:0 5px;font-size:12px}
+  .tl button:hover{box-shadow:inset 0 0 0 1px var(--border)}
+  .tl .tt{font-family:var(--mono);color:var(--muted-fg);width:52px;flex:none}
+  .tl .te{font-family:var(--mono)}
+  .tl .tr{margin-left:auto;color:var(--muted-fg);padding-left:8px}
+  .tl .now{font-weight:600}
+  .empty{padding:40px 16px;text-align:center}
+  .empty b{display:block;margin-bottom:4px}
+  .toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,16px);opacity:0;transition:.18s;background:#18181b;color:#fafafa;font-size:13px;padding:8px 14px;border-radius:8px;z-index:60;pointer-events:none}
+  .toast.on{opacity:1;transform:translate(-50%,0)}
+
+  /* the Filters level — narrow only, a full screen over the page */
+  .level{position:fixed;inset:0;background:#fff;z-index:45;display:flex;flex-direction:column}
+  .lhead{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  .lbody{flex:1;overflow:auto;padding:8px 8px 12px}
+  .lfoot{position:sticky;bottom:0;padding:12px 16px;border-top:1px solid var(--border);background:#fff;display:flex}
+  .lfoot .btn{height:var(--control-h-touch);flex:1;justify-content:center;font-size:14px}
+
+  /* ── regular (768–1023): the rail above the main pane, as a wrapping row of groups ── */
+  @media (min-width:768px) and (max-width:1023px){
+    .wrap{padding:16px 16px 48px}
+    .body{flex-direction:column}
+    .rail{width:100%;position:static;max-height:none;display:flex;flex-wrap:wrap;gap:0 24px;padding:12px 14px}
+    .rail h3,.rail>.note{width:100%}
+    .rail .fgroup{flex:1 1 180px;min-width:180px}
+    .grid3,.grid2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  }
+
+  /* ── the phone (< 768 px) ─────────────────────────────────────────────────────────
+     EVERY rule in this block starts with `body ` so the board capture can re-scope the
+     whole block to one 390 px phone by swapping that one token for `.phone`
+     (docs/superpowers/plans/tools/capture-audit.mjs). One rule per line, no nesting. */
+  @media (max-width:767px){
+body .wide-only{display:none!important}
+body .narrow-only{display:inline}
+body .burger{display:inline-flex}
+body .nav{padding:0 16px;height:56px}
+body .wrap{padding:10px 16px 40px;gap:6px}
+body h1{font-size:20px;line-height:26px}
+body .head{grid-template-columns:1fr auto;grid-template-areas:"ttl exp" "sub sub" "seg seg";row-gap:4px}
+body .head .exp{height:var(--control-h-touch);font-size:14px;padding:0 14px}
+body .head .seg{display:flex;padding:3px;margin-top:2px}
+body .head .seg button{flex:1;height:var(--control-h-touch);font-size:14px}
+body .strip{padding:8px 12px;gap:4px}
+body .striphead{flex-wrap:wrap;gap:6px 8px;font-size:12px}
+body .striphead>span:first-child{font-size:12px;white-space:nowrap}
+body .presets{margin-left:auto;flex:0 0 auto;gap:4px}
+body .presets .btn{height:var(--control-h-touch);padding:0 11px;font-size:12px}
+body .lanes{--gut:0px;cursor:default;gap:2px}
+body .lane{flex-wrap:wrap;gap:2px}
+body .lane .nm{width:100%;flex:1 1 100%;line-height:13px}
+body .lane .cells{flex:1 1 100%;height:10px;gap:0}
+body .brush{display:none}
+body .axis{margin-left:0;gap:2px}
+body .axis button{min-height:var(--control-h-touch);text-align:center}
+body .legend{gap:4px 10px;line-height:16px}
+body .body{flex-direction:column}
+body .rail{display:none}
+body .filters{gap:8px}
+body .filtersbtn{display:flex;height:var(--control-h-touch);justify-content:center;font-size:14px;flex:0 0 auto;padding:0 14px}
+body .filters .searchbox{height:var(--control-h-touch);min-width:0;flex:1 1 120px}
+body .dbody .searchbox{height:var(--control-h-touch);min-width:0;flex:none}
+body .fchip{height:var(--control-h-touch);border-radius:9px}
+body .fchip button{width:var(--control-h-touch);height:var(--control-h-touch)}
+body .filters>.btn{height:var(--control-h-touch)}
+body .grid3{grid-template-columns:minmax(0,1fr)}
+body .grid2{grid-template-columns:minmax(0,1fr)}
+body .topn button{height:var(--control-h-touch)}
+body .look li{line-height:1.9}
+body .etab thead{display:none}
+body .etab tr.ev{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:10px 14px;border-bottom:1px solid var(--row)}
+body .etab td{display:block;border:0;padding:0}
+body .etab td.c-when{order:1}
+body .etab td.c-who{order:2}
+body .etab td.c-out{order:3;margin-left:auto}
+body .etab td.c-what{order:4;flex:0 0 100%}
+body .etab td.c-what .prev{display:none}
+body .more .btn{height:var(--control-h-touch);flex:1;justify-content:center}
+body .sess .shead{flex-wrap:wrap;padding:10px 14px;min-height:var(--control-h-touch)}
+body .sess .counts{margin-left:0;flex:1 1 100%;justify-content:flex-start}
+body .sess .meta{flex:1 1 100%}
+body .wf .r{flex-wrap:wrap;gap:2px 10px;padding:6px 4px}
+body .wf .lbl{width:auto;flex:1 1 auto;order:2}
+body .wf .t{order:1}
+body .wf .rt{order:3;width:auto;margin-left:auto;text-align:right}
+body .wf .track{order:4;flex:1 1 100%;min-width:0}
+body .drawer{width:100vw;left:0;border-left:0;box-shadow:none}
+body .dhead,body .lhead{flex-wrap:wrap;padding:4px 16px 10px;row-gap:2px}
+body .dback{display:inline-flex;flex:1 1 100%;height:var(--control-h-touch)}
+body .dhead b{white-space:normal;overflow:visible;flex:0 1 auto}
+body .dbody{padding:12px 16px}
+body .tl button{min-height:var(--control-h-touch)}
+/* One grid row per field: a fixed key column, the value beside it, both centred, and a
+   hairline under every row — not under some. */
+body .ftab,body .ftab tbody{display:block}
+body .ftab tr{display:grid;grid-template-columns:84px minmax(0,1fr);align-items:center;min-height:var(--control-h-touch);border-bottom:1px solid var(--row)}
+body .ftab td{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;padding:5px 0;line-height:18px;align-self:stretch}
+body .ftab .k{width:auto;padding-right:10px}
+body .ftab .v button{align-self:stretch;display:inline-flex;align-items:center;padding:0}
+body .scrim{display:none}
+body .level .frow{height:var(--control-h-touch);font-size:13px}
+body .level .showall{height:var(--control-h-touch);font-size:12px}
+  }
+</style>
+</head>
+<body>
+<div class="nav">
+  <div style="display:flex;align-items:center;gap:24px;min-width:0">
+    <div style="display:flex;align-items:center;gap:8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 8.5V3.5"/><path d="M14.5 14.5L18.5 18.5"/><path d="M9.5 14.5L5.5 18.5"/></svg><div style="font-size:15px;font-weight:600">personal-mcps</div><span class="chip wide-only">clickable demo</span></div>
+    <div class="wide-only" style="display:flex;gap:4px"><div class="navitem">Apps</div><div class="navitem">Agents</div><div class="navitem on">Audit</div><div class="navitem">Approvals</div><div class="navitem">Settings</div></div>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span class="note wide-only" style="font-size:14px">ahrzb</span><span class="btn wide-only">Sign out</span>
+    <button class="burger" aria-label="Menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="head">
+    <h1 class="ttl">Audit log</h1>
+    <p class="note sub" id="sub"></p>
+    <a class="btn exp" id="exp" download="audit.jsonl">Export<span class="wide-only">JSONL</span></a>
+    <div class="seg views" id="views">
+      <button data-view="summary" class="on">Summary</button>
+      <button data-view="sessions">Sessions</button>
+      <button data-view="events">Events</button>
+    </div>
+  </div>
+
+  <div class="card strip" id="strip"></div>
+
+  <div class="filters" id="filterbar"></div>
+
+  <div class="body">
+    <aside class="card rail" id="rail"></aside>
+    <div class="main" id="main"></div>
+  </div>
+
+  <p class="note" id="hint"></p>
+</div>
+
+<aside class="level" id="flevel" hidden></aside>
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden></aside>
+<div class="toast" id="toast"></div>
+
+<script src="./AuditDemo.data.js"></script>
+<script>
+/* ------------------------------------------------------------------ *
+ * The demo's whole state. Views are three readings of one filtered set;
+ * nothing below fetches, and the data file is the fixture week with the
+ * real writers' `detail` shapes.
+ * ------------------------------------------------------------------ */
+const EV = window.EVENTS.map((e, i) => ({ ...e, ms: Date.parse(e.ts), idx: i }));
+const NOW = Date.parse(window.NOW);
+const RETENTION = window.RETENTION_DAYS;
+const WEEK_START = NOW - RETENTION * 864e5;
+const HOURS = RETENTION * 24;
+
+/* The page states of the brief, reachable as ?state=<name> — no control draws it, so a
+   captured board never carries the switch. */
+const STATE = new URLSearchParams(location.search).get('state') || '';
+/* Over the ceiling: the shipped page loads the newest AUDIT_EXPLORER_ROWS = 5,000 of a
+   bigger window. The fixture week is smaller than that, so the state uses a demo ceiling
+   and says the true numbers it has. */
+const CEILING = STATE === 'ceiling' ? 900 : 5000;
+
+const S = {
+  view: 'summary', filters: [], q: '', from: WEEK_START, to: NOW,
+  open: null, sessOpen: null, treeOpen: {}, drawerQ: '',
+  showAll: {}, eventsShown: 120, sessionsShown: 40, filterLevel: false,
+};
+
+const OUT = { ok: 'ok', '-32003': 'approval', '-32002': 'archived', '-32001': 'denied', '-32000': 'denied', error: 'error' };
+const CODES = { ok: ['ok'], approval: ['-32003'], archived: ['-32002'], denied: ['-32001', '-32000'], error: ['error'] };
+const LEVELS = ['ok', 'approval', 'archived', 'denied', 'error'];
+const FIELDS = ['outcome', 'principal', 'app', 'tool', 'event'];
+const TOP = { outcome: 5, principal: 5, app: 5, tool: 6, event: 6 };
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const p2 = n => String(n).padStart(2, '0');
+const hm = ms => `${p2(new Date(ms).getUTCHours())}:${p2(new Date(ms).getUTCMinutes())}`;
+const dt = ms => `${MON[new Date(ms).getUTCMonth()]} ${new Date(ms).getUTCDate()} ${hm(ms)}`;
+const dts = ms => `${dt(ms)}:${p2(new Date(ms).getUTCSeconds())}`;
+/** A session that ends on another day says which — "Aug 17 16:05 → 14:30" is a lie. */
+const sameDay = (a, b) => new Date(a).toISOString().slice(0, 10) === new Date(b).toISOString().slice(0, 10);
+const dur = ms => ms == null ? '—' : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+const fN = n => n.toLocaleString('en-US');
+const fSize = b => b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const isStub = v => v && typeof v === 'object' && (v.stub === 'blob' || v.stub === 'oversize') && 'bytes' in v;
+const stubLabel = s => s.stub === 'blob' ? `‹blob ${s.contentType} · ${fSize(s.bytes)}›` : `‹oversize · ${fSize(s.bytes)}›`;
+const chipCls = o => o === 'ok' ? 'ok' : (o === 'denied' || o === 'error') ? 'bad' : 'warn';
+/* Only these three events ARE a call, so only these are titled `<app>/<tool>`. An
+   approval, a connect or an admin row carries app and tool too, and titling it like a
+   call makes an approval.requested read as one. */
+const CALL_EVENTS = new Set(['tools/call', 'prompts/get', 'resources/read']);
+const isCall = e => CALL_EVENTS.has(e.event);
+const target = e => e.tool ? `${e.app}/${e.tool}` : (e.app ?? '');
+const titleOf = e => isCall(e) && e.tool ? target(e) : e.event;
+const subOf = e => (isCall(e) && e.tool) ? '' : target(e);
+/** The title, with what the row is about beside it when the title is an event name. */
+const titleHtml = (e, cls = '') => `<span class="${cls}">${esc(titleOf(e))}</span>${subOf(e) ? `<span class="sub2 ${cls}"> ${esc(subOf(e))}</span>` : ''}`;
+/** An Events row. A CHAIN row is the story of one call, so it takes that call's
+ *  `<app>/<tool>` whichever row heads it — the chain sentence beneath already says the
+ *  approval was asked for. Everything else follows the general rule, including the record
+ *  the chain row opens, which is still headed by its own event name. */
+const rowTitleHtml = r => {
+  if (r.kind !== 'chain') return titleHtml(r.head);
+  const call = r.group.find(g => isCall(g) && g.tool);
+  return call ? `<span>${esc(target(call))}</span>` : titleHtml(r.head);
+};
+/** A chain reads in the order the hub wrote it: ts, then id (approvals.check records
+ *  `approval.requested` before the gateway records the refused call). */
+const inWriteOrder = (a, b) => a.ms - b.ms || a.id - b.id;
+const val = (e, f) => f === 'outcome' ? OUT[e.outcome] : f === 'tool' ? (e.tool ? `${e.app}/${e.tool}` : null) : (e[f] ?? null);
+const $ = s => document.querySelector(s);
+
+/* ---- what is loaded ---- *
+ * The window asked for is always the whole retention window; the ceiling decides how much
+ * of it came back, and `from`/`to` are the brush, applied over the loaded rows. */
+const ALL = STATE === 'empty' ? [] : EV;
+const LOADED = ALL.slice(Math.max(0, ALL.length - CEILING));
+const TOTAL = ALL.length;
+const OVER = TOTAL > CEILING;
+const OLDEST_LOADED = LOADED.length ? LOADED[0].ms : NOW;
+
+/* ---- filtering ---- */
+function chipsOk(e, except) {
+  const by = {};
+  for (const c of S.filters) if (c.f !== except) (by[c.f] ??= []).push(c.v);
+  for (const f in by) if (!by[f].includes(val(e, f))) return false;
+  return true;
+}
+function hay(e) { return e._h ??= [e.principal, e.event, e.app, e.tool, OUT[e.outcome], JSON.stringify(e.args ?? ''), JSON.stringify(e.result ?? ''), JSON.stringify(e.detail ?? ''), e.client?.sessionId].filter(Boolean).join(' ').toLowerCase(); }
+const qOk = e => !S.q || hay(e).includes(S.q.toLowerCase());
+const inWin = e => e.ms >= S.from && e.ms <= S.to;
+const facetSet = () => LOADED.filter(e => chipsOk(e) && qOk(e));
+function selected() { return LOADED.filter(e => inWin(e) && chipsOk(e) && qOk(e)); }
+function addFilter(f, v) {
+  if (v == null) return;
+  const i = S.filters.findIndex(c => c.f === f && c.v === v);
+  if (i >= 0) S.filters.splice(i, 1); else S.filters.push({ f, v });
+  S.eventsShown = 120; S.sessionsShown = 40;
+  render();
+}
+
+/* ---- the export link: the same read, serialized ---- */
+function exportHref() {
+  const p = new URLSearchParams();
+  p.set('since', String(Math.round(S.from)));
+  p.set('until', String(Math.round(S.to)));
+  if (S.q) p.set('text', S.q);
+  for (const c of S.filters) {
+    if (c.f === 'outcome') for (const code of CODES[c.v]) p.append('outcome', code);
+    else if (c.f === 'tool') p.append('tool', c.v.split('/').slice(1).join('/'));
+    else p.append(c.f, c.v);
+  }
+  return `/audit/export?${p}`;
+}
+
+/* ---- merging: a call, its approval request and the dispatch after it are one row ---- */
+function merge(list) {
+  const byApproval = new Map();
+  for (const e of list) { const id = e.detail?.approvalId; if (id) (byApproval.get(id) ?? byApproval.set(id, []).get(id)).push(e); }
+  const used = new Set(), rows = [];
+  for (const e of list) {
+    if (used.has(e.idx)) continue;
+    const id = e.detail?.approvalId;
+    if (id && byApproval.get(id)?.length > 1) {
+      const group = byApproval.get(id).sort(inWriteOrder);
+      group.forEach(g => used.add(g.idx));
+      rows.push({ head: group.find(g => g.event === 'approval.requested') ?? group[0], group, kind: 'chain' });
+    } else rows.push({ head: e, group: [e], kind: 'one' });
+  }
+  // Collapse consecutive rows with the same signature (a cron agent refused every 30 min).
+  const sig = r => [r.head.event, r.head.app, r.head.tool, r.head.principal, r.head.outcome, r.head.detail?.failureClass].join('|');
+  const out = [];
+  for (const r of rows) {
+    const last = out[out.length - 1];
+    if (r.kind === 'one' && last && last.kind === 'one' && sig(last) === sig(r)) { last.runs = (last.runs ?? 1) + 1; last.group.push(r.head); }
+    else out.push(r);
+  }
+  return out;
+}
+/** The words a chain row says, in order. The -32003 tools/call IS the ask, not a step. */
+function chainWords(group) {
+  return group.filter(g => !(g.event === 'tools/call' && g.outcome === '-32003')).map(g =>
+    g.event === 'approval.requested' ? 'asked for approval'
+    : g.event === 'approval.approved' ? `you approved ${hm(g.ms)}`
+    : g.event === 'approval.rejected' ? `you rejected ${hm(g.ms)}`
+    : g.event === 'approval.expired' ? 'expired unanswered'
+    : `ran ${OUT[g.outcome]}${g.durationMs != null ? ' ' + dur(g.durationMs) : ''}`);
+}
+
+/* ---- the three hand-written "worth a look" rules ---- *
+ * No `reason` exists in the ledger, so the first sentence ends at the outcome class. */
+function insights(list) {
+  const out = [];
+  const refused = list.filter(e => ['denied', 'approval', 'archived'].includes(OUT[e.outcome]));
+  const byPair = new Map();
+  for (const e of refused) { const k = `${e.principal}|${e.app}/${e.tool ?? e.event}|${OUT[e.outcome]}`; byPair.set(k, (byPair.get(k) ?? 0) + 1); }
+  const worst = [...byPair].sort((a, b) => b[1] - a[1])[0];
+  if (worst && worst[1] > 5) {
+    const [principal, target, cls] = worst[0].split('|');
+    out.push({ text: `<b>${esc(principal)} was refused ${worst[1]} times</b> calling <span class="mono">${esc(target)}</span> — ${esc(cls)}.`, f: [['principal', principal], ['tool', target]] });
+  }
+  const firstSeen = new Map();
+  for (const e of LOADED) if (e.tool) { const k = `${e.app}/${e.tool}`; if (!firstSeen.has(k)) firstSeen.set(k, e); }
+  const fresh = [...firstSeen.values()].filter(e => e.ms > NOW - 2 * 864e5);
+  if (fresh.length) out.push({ text: `<b>${fresh.length} tool${fresh.length > 1 ? 's were' : ' was'} called for the first time</b> in the last two days: ${fresh.slice(0, 3).map(e => `<span class="mono">${esc(e.app)}/${esc(e.tool)}</span>`).join(', ')}.`, f: [['tool', `${fresh[0].app}/${fresh[0].tool}`]] });
+  const admin = list.filter(e => e.event.startsWith('admin.') || e.event.startsWith('upstream.'));
+  if (admin.length) out.push({ text: `<b>${admin.length} change${admin.length > 1 ? 's' : ''} to your setup</b>: ${[...new Set(admin.map(e => e.event))].slice(0, 3).map(x => `<span class="mono">${esc(x)}</span>`).join(', ')}.`, f: [['event', admin[admin.length - 1].event]] });
+  return out;
+}
+
+/* ---- lane strip ---- */
+let dragFrom = null;
+/* The class NAME is printed beside every swatch; the raw codes follow where they differ
+   from it, so colour is never the only carrier. */
+const LEGEND = [['ok', ''], ['approval', '−32003'], ['archived', '−32002'], ['denied', '−32001 · −32000'], ['error', '']];
+function laneSets() {
+  const counts = new Map();
+  for (const e of LOADED) counts.set(e.principal, (counts.get(e.principal) ?? 0) + 1);
+  const byBusy = [...counts].sort((a, b) => b[1] - a[1]).map(([p]) => p);
+  // A phone has room for fewer lanes than a desktop, and a 2 px band nobody can read is
+  // worse than a fold: four named, the rest in "N others".
+  const max = matchMedia('(max-width:767px)').matches ? 4 : 6;
+  const named = byBusy.slice(0, max);
+  const rest = byBusy.slice(max);
+  const out = named.map(p => ({ name: p, of: new Set([p]), title: p }));
+  if (rest.length) out.push({ name: `${rest.length} other${rest.length > 1 ? 's' : ''}`, of: new Set(rest), title: rest.join(', ') });
+  return out;
+}
+function renderStrip(list) {
+  if (STATE === 'loading') {
+    $('#strip').innerHTML = `<div class="skel" style="width:280px;height:14px"></div>
+      ${Array.from({ length: 5 }, () => `<div style="display:flex;gap:10px;align-items:center"><span class="skel" style="width:104px;flex:none"></span><span class="skel" style="flex:1;height:16px"></span></div>`).join('')}`;
+    return;
+  }
+  const t0 = WEEK_START, span = NOW - WEEK_START;
+  const sets = laneSets();
+  const lanes = sets.map(() => Array(HOURS).fill(null));
+  const rank = { ok: 1, approval: 2, archived: 3, denied: 4, error: 5 };
+  for (const e of facetSet()) {
+    const li = sets.findIndex(s => s.of.has(e.principal)); if (li < 0) continue;
+    const i = Math.floor((e.ms - t0) / 36e5); if (i < 0 || i >= HOURS) continue;
+    const o = OUT[e.outcome];
+    if (!lanes[li][i] || rank[o] > rank[lanes[li][i]]) lanes[li][i] = o;
+  }
+  const notLoadedBefore = OVER ? Math.floor((OLDEST_LOADED - t0) / 36e5) : 0;
+  const brushed = S.from > WEEK_START || S.to < NOW;
+  const sel = brushed
+    ? `<div class="brush" style="left:calc(var(--gut) + (100% - var(--gut)) * ${(S.from - t0) / span}); width:calc((100% - var(--gut)) * ${(S.to - S.from) / span})"></div>` : '';
+  const day = i => t0 + i * 864e5;
+  const dayOn = i => S.from <= day(i) + 864e5 - 1 && S.to >= day(i);
+  $('#strip').innerHTML = `<div class="striphead">
+      <span style="font-weight:600;font-size:13px">${dt(S.from)} → ${dt(S.to)}</span>
+      <div class="presets">
+        <button class="btn mini${S.to - S.from <= 36e5 ? ' on' : ''}" data-act="preset" data-h="1">1h</button>
+        <button class="btn mini${S.to - S.from === 24 * 36e5 ? ' on' : ''}" data-act="preset" data-h="24">24h</button>
+        <button class="btn mini${!brushed ? ' on' : ''}" data-act="preset" data-h="${HOURS}">${RETENTION}d</button>
+      </div>
+      <span class="note wide-only">an hour per cell, coloured by the worst outcome in it — drag to select</span>
+      ${brushed ? `<button class="btn mini" data-act="allwindow" style="margin-left:auto">Whole window</button>` : '<span class="wide-only" style="margin-left:auto"></span>'}
+      <span class="chip wide-only">${fN(list.length)} events selected</span></div>
+    ${OVER ? `<div class="ceiling"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+      <span>Showing the newest ${fN(CEILING)} of ${fN(TOTAL)} events — narrow the search, or export JSONL for all of them.</span></div>` : ''}
+    <div class="lanes" id="lanes" tabindex="0">
+      ${sets.map((s, li) => `<div class="lane"><span class="nm" title="${esc(s.title)}">${esc(s.name)}</span><span class="cells">${lanes[li].map((c, i) => `<span class="c ${i < notLoadedBefore ? 'nl' : (c ?? '')}"></span>`).join('')}</span></div>`).join('')}
+      ${sel}
+    </div>
+    <div class="axis">${Array.from({ length: RETENTION }, (_, i) => `<button data-act="day" data-i="${i}" class="${dayOn(i) ? 'on' : ''}">${MON[new Date(day(i)).getUTCMonth()]} ${new Date(day(i)).getUTCDate()}</button>`).join('')}</div>
+    <div class="legend"><span class="i wide-only" style="font-weight:500;color:var(--subtle)">Worst outcome in the hour:</span>
+      ${LEGEND.map(([l, code]) => `<span class="i"><span class="sw s-${l}"></span>${l}${code ? `<span class="code wide-only">${code}</span>` : ''}</span>`).join('')}
+      ${notLoadedBefore > 0 ? `<span class="i"><span class="sw" style="background:repeating-linear-gradient(45deg,#d4d4d8 0 2px,#fafafa 2px 4px)"></span>not loaded</span>` : ''}</div>`;
+  const lanesEl = $('#lanes');
+  const xToT = (clientX) => {
+    const r = lanesEl.getBoundingClientRect();
+    const gut = parseFloat(getComputedStyle(lanesEl).getPropertyValue('--gut')) || 0;
+    const x0 = r.left + gut, w = r.width - gut;
+    return t0 + Math.max(0, Math.min(1, (clientX - x0) / w)) * span;
+  };
+  lanesEl.addEventListener('mousedown', ev => { dragFrom = xToT(ev.clientX); ev.preventDefault(); });
+  window.addEventListener('mouseup', ev => {
+    if (dragFrom == null) return;
+    const a = dragFrom, b = xToT(ev.clientX); dragFrom = null;
+    if (Math.abs(a - b) < 36e5) return;
+    S.from = Math.min(a, b); S.to = Math.max(a, b); render();
+  }, { once: true });
+  lanesEl.addEventListener('keydown', ev => {
+    const step = 36e5, k = ev.key;
+    if (k !== 'ArrowLeft' && k !== 'ArrowRight') return;
+    ev.preventDefault();
+    const d = k === 'ArrowLeft' ? -step : step;
+    if (ev.shiftKey) S.to = Math.max(S.from + step, Math.min(NOW, S.to + d));
+    else { const w = S.to - S.from; S.from = Math.max(WEEK_START, Math.min(NOW - w, S.from + d)); S.to = S.from + w; }
+    render();
+  });
+}
+
+/* ---- rail: Hearst's exhaustive counts — a value counts under every filter but its own ---- */
+function railHtml(list, titled = true) {
+  // The Filters level names itself in its own header, so the rail's title is dropped there.
+  const h3 = titled ? '<h3>Filter</h3>' : '';
+  if (STATE === 'loading') return `${h3}${Array.from({ length: 12 }, (_, i) => `<div class="skel" style="margin:6px 5px;width:${i % 3 === 0 ? 70 : 90}%"></div>`).join('')}`;
+  let html = `${h3}<p class="note" style="padding:0 5px">${fN(list.length)} of ${fN(LOADED.filter(inWin).length)} in window</p>`;
+  for (const f of FIELDS) {
+    const c = new Map();
+    for (const e of LOADED) { if (!inWin(e) || !chipsOk(e, f) || !qOk(e)) continue; const v = val(e, f); if (v == null) continue; c.set(v, (c.get(v) ?? 0) + 1); }
+    const all = [...c].sort((a, b) => b[1] - a[1]);
+    if (!all.length) continue;
+    const cap = TOP[f];
+    const rows = S.showAll[f] ? all : all.slice(0, cap);
+    const max = all[0][1];
+    html += `<div class="fgroup"><p class="eyebrow">${f}</p>${rows.map(([v, n]) => {
+      const on = S.filters.some(x => x.f === f && x.v === v);
+      return `<button class="frow${on ? ' on' : ''}" data-act="facet" data-f="${f}" data-v="${esc(v)}" title="${esc(v)}"><span class="bar" style="width:${n / max * 100}%"></span>${f === 'outcome' ? `<span class="sw s-${v}"></span>` : ''}<span class="nm">${esc(v)}</span><span class="ct">${fN(n)}</span></button>`;
+    }).join('')}${all.length > cap ? `<button class="showall" data-act="showall" data-f="${f}">${S.showAll[f] ? 'Show top ' + cap : 'Show all ' + all.length}</button>` : ''}</div>`;
+  }
+  html += `<div class="fgroup"><p class="eyebrow">session</p><p class="note" style="padding:0 5px">Opened from a record, never listed — too many to browse.</p></div>`;
+  return html;
+}
+
+/* ---- views ---- */
+function skeletonMain() {
+  return `<div class="card" style="padding:16px;display:flex;flex-direction:column;gap:14px">
+    <div class="grid3">${Array.from({ length: 3 }, () => `<div><div class="skel" style="width:90px;height:26px"></div><div class="skel" style="width:70%;margin-top:8px"></div></div>`).join('')}</div>
+    <div class="skel" style="height:64px"></div>
+    <div class="grid3">${Array.from({ length: 3 }, () => `<div>${Array.from({ length: 4 }, () => '<div class="skel" style="margin:4px 0"></div>').join('')}</div>`).join('')}</div></div>`;
+}
+function viewSummary(list) {
+  // Three tiles of zero and an empty "Worth a look" answer nothing: when the selection is
+  // empty, every view says the same thing.
+  if (!list.length) return `<div class="card">${nothingMatches()}</div>`;
+  const calls = list.filter(e => e.event === 'tools/call');
+  const refused = list.filter(e => ['denied', 'approval', 'archived'].includes(OUT[e.outcome]));
+  const d = calls.filter(e => e.outcome === 'ok' && e.durationMs != null).map(e => e.durationMs).sort((a, b) => a - b);
+  const q = p => d.length ? dur(d[Math.floor(p * d.length)]) : '—';
+  const top = (f, n = 4) => {
+    const c = new Map();
+    for (const e of list) { const v = val(e, f); if (v == null) continue; c.set(v, (c.get(v) ?? 0) + 1); }
+    const rows = [...c].sort((a, b) => b[1] - a[1]).slice(0, n);
+    const max = rows[0]?.[1] ?? 1;
+    return `<div class="topn">${rows.map(([v, k]) => `<button data-act="facet" data-f="${f}" data-v="${esc(v)}" title="${esc(v)}"><span class="bar" style="width:${k / max * 100}%"></span><span class="nm">${esc(v)}</span><span class="n">${fN(k)}</span></button>`).join('')}</div>`;
+  };
+  const ins = insights(list);
+  const admin = list.filter(e => e.event.startsWith('admin.') || e.event.startsWith('upstream.')).slice(-5).reverse();
+  return `<div class="card" style="padding:16px;display:flex;flex-direction:column;gap:14px">
+    <div class="grid3">
+      <div class="stat"><div class="v">${fN(list.length)}</div><div class="l">events · ${fN(calls.length)} tool calls</div></div>
+      <div class="stat"><div class="v" style="color:${refused.length ? 'var(--danger-fg)' : 'inherit'}">${fN(refused.length)}</div><div class="l">refused or waiting on you</div></div>
+      <div class="stat"><div class="v">${q(.5)}</div><div class="l">median call · p95 ${q(.95)}</div></div>
+    </div>
+    ${ins.length ? `<div class="look"><p class="eyebrow" style="color:var(--warn-fg);margin:0 0 4px">Worth a look</p><ul style="margin:0;padding-left:18px">
+      ${ins.map((x, i) => `<li>${x.text} <a data-act="insight" data-i="${i}">show me</a></li>`).join('')}</ul></div>` : ''}
+    <div class="grid3">
+      <div><p class="eyebrow">Agents</p>${top('principal')}</div>
+      <div><p class="eyebrow">Apps</p>${top('app')}</div>
+      <div><p class="eyebrow">Tools</p>${top('tool')}</div>
+    </div>
+    <div class="grid2">
+      <div><p class="eyebrow">Refusals</p>${(() => {
+        const c = new Map();
+        for (const e of refused) { const k = `${e.principal} → ${e.app}/${e.tool ?? e.event}`; c.set(k, (c.get(k) ?? 0) + 1); }
+        const rows = [...c].sort((a, b) => b[1] - a[1]).slice(0, 4); const max = rows[0]?.[1] ?? 1;
+        return `<div class="topn">${rows.map(([v, k]) => `<button data-act="facet" data-f="principal" data-v="${esc(v.split(' → ')[0])}" title="${esc(v)}"><span class="bar" style="width:${k / max * 100}%"></span><span class="nm">${esc(v)}</span><span class="n">${fN(k)}</span></button>`).join('') || '<p class="note">None.</p>'}</div>`;
+      })()}</div>
+      <div><p class="eyebrow">Changes you made</p>${admin.map(e => `<button class="frow" data-act="openidx" data-idx="${e.idx}" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">${esc(e.event)}</span><span class="ct">${dt(e.ms)}</span></button>`).join('') || '<p class="note">None this window.</p>'}</div>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span class="note">The log itself is a click away — this page is the answer, not the record.</span>
+      <button class="btn primary" data-act="view" data-view="events" style="margin-left:auto">All ${fN(list.length)} events →</button></div>
+  </div>`;
+}
+
+function viewSessions(list) {
+  const map = new Map();
+  for (const e of list) {
+    const id = e.client?.sessionId ?? `${e.principal} · no session`;
+    const s = map.get(id) ?? { id, principal: e.principal, client: e.client, first: e.ms, last: e.ms, events: [] };
+    s.first = Math.min(s.first, e.ms); s.last = Math.max(s.last, e.ms); s.events.push(e); map.set(id, s);
+  }
+  const ordered = [...map.values()].sort((a, b) => b.last - a.last);
+  const sessions = ordered.slice(0, S.sessionsShown);
+  if (!sessions.length) return `<div class="card">${nothingMatches()}</div>`;
+  return `<div class="card">
+    <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-weight:600">${fN(map.size)} sessions</span><span class="note">newest first · runs of ok fold away inside</span></div>
+    ${sessions.map(s => {
+      const counts = {};
+      for (const e of s.events) counts[OUT[e.outcome]] = (counts[OUT[e.outcome]] ?? 0) + 1;
+      const worst = LEVELS.slice().reverse().find(l => counts[l]) ?? 'ok';
+      const open = S.sessOpen === s.id;
+      return `<div class="sess${open ? ' open' : ''}">
+        <div class="shead" data-act="sess" data-id="${esc(s.id)}">
+          <span class="sw s-${worst}"></span><span class="who">${esc(s.principal)}</span>
+          <span class="meta mono">${esc(s.client?.name ?? 'no client')} ${esc(s.client?.version ?? '')} · ${esc(s.client?.sessionId ? s.id.slice(0, 8) : 'no session')}</span>
+          <span class="meta">${dt(s.first)} → ${sameDay(s.first, s.last) ? hm(s.last) : dt(s.last)} · ${s.events.length} events · ${[...new Set(s.events.map(e => e.app).filter(Boolean))].slice(0, 3).join(', ')}</span>
+          <span class="counts">${LEVELS.filter(l => counts[l]).map(l => `<span class="chip ${chipCls(l)}">${l} ${counts[l]}</span>`).join('')}</span></div>
+        ${open ? waterfall(s) : ''}</div>`;
+    }).join('')}
+    ${ordered.length > sessions.length
+      ? `<div class="more"><button class="btn" data-act="moresess">Load more</button><span class="note">${fN(sessions.length)} of ${fN(ordered.length)} sessions — 40 at a time.</span></div>`
+      : `<div class="more"><span class="note">All ${fN(ordered.length)} sessions in this window.</span></div>`}
+  </div>`;
+}
+
+/** Salience: runs of more than two ok tools/call rows fold to one line; refusals,
+ *  approvals and config changes keep their own. */
+function waterfall(s) {
+  const span = Math.max(6e4, s.last - s.first);
+  const rows = [];
+  for (const e of s.events.slice().sort((a, b) => a.ms - b.ms)) {
+    const keep = OUT[e.outcome] !== 'ok' || e.event !== 'tools/call';
+    const last = rows[rows.length - 1];
+    if (!keep && last && last.fold) { last.n++; last.to = e.ms; last.apps.add(e.app); last.members.push(e); }
+    else if (!keep) rows.push({ fold: true, n: 1, from: e.ms, to: e.ms, apps: new Set([e.app]), members: [e] });
+    else rows.push({ e });
+  }
+  const line = e => {
+    const o = OUT[e.outcome];
+    const l = (e.ms - s.first) / span * 100, w = Math.max(1.5, (e.durationMs ?? 6e4) / span * 100);
+    const right = o === 'ok' ? dur(e.durationMs) : e.detail?.failureClass ? `${o} · ${esc(e.detail.failureClass)}` : `${o} · ${esc(e.outcome)}`;
+    return `<div class="r click${o !== 'ok' ? ' keep' : ''}" data-act="openidx" data-idx="${e.idx}">
+      <span class="t">${hm(e.ms)}</span><span class="lbl">${titleHtml(e)}</span>
+      <span class="track"><span class="bar ${o}" style="left:${Math.min(97, l)}%;width:${Math.min(w, 100 - l)}%"></span></span>
+      <span class="rt">${right}</span></div>`;
+  };
+  const out = rows.map(r => {
+    if (!r.fold) return line(r.e);
+    if (r.n <= 2) return r.members.map(line).join('');
+    const l = (r.from - s.first) / span * 100, w = Math.max(2, (r.to - r.from) / span * 100);
+    return `<div class="r"><span class="t"></span><span class="lbl fold">${r.n} ok calls — ${[...r.apps].join(', ')}</span>
+      <span class="track"><span class="bar" style="left:${l}%;width:${w}%;background:repeating-linear-gradient(90deg,#e4e4e7 0 5px,transparent 5px 9px)"></span></span><span class="rt"></span></div>`;
+  }).join('');
+  return `<div class="wf">${out}<p class="note" style="margin-top:6px">Any line opens its record. Folded runs are ok calls only.</p></div>`;
+}
+
+const nothingMatches = () => `<div class="empty"><b>Nothing matches</b><p class="note">Widen the window or drop a filter.</p>
+  <div style="margin-top:12px"><button class="btn" data-act="clear">Clear</button></div></div>`;
+
+function viewEvents(list) {
+  const all = merge(list.slice().sort((a, b) => b.ms - a.ms));
+  const rows = all.slice(0, S.eventsShown);
+  if (!rows.length) return `<div class="card">${nothingMatches()}</div>`;
+  return `<div class="card">
+    <table class="etab"><thead><tr><th style="width:152px">When</th><th style="width:128px">Who</th><th>What happened</th><th style="width:128px">Outcome</th></tr></thead><tbody>
+    ${rows.map(r => {
+      const e = r.head, o = OUT[e.outcome];
+      const chain = r.kind === 'chain' ? chainWords(r.group) : [];
+      const last = r.group[r.group.length - 1];
+      const state = r.kind === 'chain' ? OUT[last.outcome] : o;
+      const head = e.args && !isStub(e.args)
+        ? Object.entries(e.args).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ')
+        : isStub(e.args) ? stubLabel(e.args)
+        : (e.detail ? Object.entries(e.detail).slice(0, 3).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ') : '');
+      return `<tr class="ev${S.open === e.idx ? ' sel' : ''}" data-act="openidx" data-idx="${e.idx}">
+        <td class="c-when t-dim t-mono">${dts(e.ms)}</td><td class="c-who t-mono">${esc(e.principal)}</td>
+        <td class="c-what"><div class="rowline"><span class="t-mono" style="font-weight:600">${rowTitleHtml(r)}</span>
+          ${r.runs ? `<span class="chip">×${r.runs} runs</span>` : ''}${r.kind === 'chain' ? `<span class="chip">${r.group.length} events</span>` : ''}</div>
+          ${chain.length ? `<div class="chain">${chain.map(c => `<b>${esc(c)}</b>`).join('<span style="color:var(--dim)">→</span>')}</div>` : ''}
+          ${head ? `<div class="note t-mono prev">${esc(head.slice(0, 110))}</div>` : ''}</td>
+        <td class="c-out"><span class="chip ${chipCls(state)}">${state}</span></td></tr>`;
+    }).join('')}
+    </tbody></table>
+    <div class="more">${all.length > rows.length ? `<button class="btn" data-act="morerows">Load more</button>` : ''}
+      <span class="note">${fN(rows.length)} rows from ${fN(list.length)} events — related events merged, repeats collapsed.${all.length > rows.length ? ` ${fN(all.length)} rows in all, 120 at a time.` : ''}</span></div>
+  </div>`;
+}
+
+/* ---- the record: a request inspector ---- */
+function escRx(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function hlText(s) {
+  if (!S.drawerQ) return esc(s);
+  return String(s).split(new RegExp(`(${escRx(S.drawerQ)})`, 'gi'))
+    .map((p, i) => i % 2 ? `<span class="hit">${esc(p)}</span>` : esc(p)).join('');
+}
+function tree(v, path = '', depth = 0) {
+  const ind = depth * 14;
+  if (isStub(v)) return `<div class="n" style="--ind:${ind}px"><span class="tog"></span><span class="stub">${hlText(stubLabel(v))}</span></div>`;
+  if (v === null || typeof v !== 'object') {
+    const s = typeof v === 'string' ? (v === '‹redacted›' ? `<span class="stub">‹redacted›</span>` : `"${hlText(v)}"`) : `<span class="num">${hlText(String(v))}</span>`;
+    return `<div class="n" style="--ind:${ind}px"><span class="tog"></span><span>${s}</span></div>`;
+  }
+  const entries = Array.isArray(v) ? v.map((x, i) => [`[${i}]`, x]) : Object.entries(v);
+  const open = S.treeOpen[path] ?? depth < 1;
+  const head = `<div class="n" style="--ind:${ind}px"><button class="tog" data-act="tree" data-path="${esc(path)}">${open ? '▾' : '▸'}</button><span class="key">${hlText(path.split('.').pop() || (Array.isArray(v) ? 'array' : 'object'))}</span><span class="count">${Array.isArray(v) ? `[${entries.length}]` : `{${entries.length}}`}${open ? '' : ' …'}</span></div>`;
+  if (!open) return head;
+  return head + entries.map(([k, x]) => {
+    const p = path ? `${path}.${k}` : k;
+    if (x !== null && typeof x === 'object' && !isStub(x)) return tree(x, p, depth + 1);
+    const leaf = isStub(x) ? `<span class="stub">${hlText(stubLabel(x))}</span>`
+      : typeof x === 'string' ? (x === '‹redacted›' ? '<span class="stub">‹redacted›</span>' : `"${hlText(x)}"`)
+      : `<span class="num">${hlText(String(x))}</span>`;
+    return `<div class="n" style="--ind:${(depth + 1) * 14}px"><span class="tog"></span><span class="key">${hlText(k)}:</span><span>${leaf}</span></div>`;
+  }).join('');
+}
+const NOB = {
+  off: "Call bodies aren't recorded for this app (body logging is off).",
+  refused: 'Refused before the call was made, so there are no bodies to show.',
+  unrecorded: 'No bodies were recorded for this call.',
+};
+/** The record's head, as the other phone boards draw a level: `‹ Audit` on its own line at
+ *  narrow, the swatch, the title and the time beneath it. */
+function drawerHead(title, time, o) {
+  return `<div class="dhead"><button class="dback" data-act="close">‹ Audit</button>${o ? `<span class="sw s-${o}"></span>` : ''}
+    <b>${title}</b>${time ? `<span class="note dtime">${time}</span>` : ''}
+    <button class="btn wide-only" data-act="close" style="margin-left:auto">Close</button></div>`;
+}
+function renderDrawer() {
+  if (STATE === 'recordmissing' || STATE === 'recordloading') {
+    $('#scrim').hidden = false; $('#drawer').hidden = false;
+  } else {
+    const has = S.open != null;
+    $('#scrim').hidden = !has; $('#drawer').hidden = !has;
+    if (!has) return;
+  }
+  if (STATE === 'recordmissing') {
+    $('#drawer').innerHTML = drawerHead('Record 41 988', '', null) +
+      `<div class="dbody"><div class="empty"><b>That record is gone</b><p class="note">Audit rows are kept for ${RETENTION} days.</p>
+        <div style="margin-top:12px"><button class="btn" data-act="close">Close</button></div></div></div>`;
+    return;
+  }
+  const e = EV[S.open ?? EV.length - 1];
+  const o = OUT[e.outcome];
+  const link = (f, v) => v == null ? '—' : `<button data-act="facet" data-f="${f}" data-v="${esc(v)}">${esc(v)}</button>`;
+  const meta = [
+    ['when', dts(e.ms) + ' UTC'], ['principal', link('principal', e.principal)], ['event', link('event', e.event)],
+    ['app', e.app ? link('app', e.app) : '—'], ['tool', e.tool ? link('tool', `${e.app}/${e.tool}`) : '—'],
+    ['outcome', `<span class="chip ${chipCls(o)}">${o}</span> <span class="t-dim mono">${esc(e.outcome)}</span>`],
+    ['duration', dur(e.durationMs)],
+    ['client', e.client?.name ? `${esc(e.client.name)} ${esc(e.client.version ?? '')}` : '—'],
+    ['session', e.client?.sessionId ? `<button data-act="session" data-id="${esc(e.client.sessionId)}">${esc(e.client.sessionId)}</button>` : '—'],
+    ['id', String(e.id)],
+  ];
+  const section = (label, v) => v === undefined ? '' : `<div><p class="eyebrow">${label}</p><div class="tree">${tree(v, label.toLowerCase())}</div></div>`;
+  const loadingBodies = STATE === 'recordloading';
+  const siblings = e.detail?.approvalId
+    ? EV.filter(x => x.detail?.approvalId === e.detail.approvalId).sort(inWriteOrder) : [];
+  $('#drawer').innerHTML = drawerHead(titleHtml(e), dts(e.ms), o) +
+    `<div class="dbody">
+      <div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="dq" placeholder="Search this record…" value="${esc(S.drawerQ)}"></div>
+      <div><p class="eyebrow">Record</p><table class="ftab">${meta.map(([k, v]) => `<tr><td class="k">${k}</td><td class="v">${v}</td></tr>`).join('')}</table></div>
+      ${loadingBodies
+        ? `<div><p class="eyebrow">Arguments</p><div class="skel" style="width:70%"></div><div class="skel" style="width:52%;margin-top:6px"></div></div>
+           <div><p class="eyebrow">Result</p><div class="skel" style="width:84%"></div><div class="skel" style="width:40%;margin-top:6px"></div></div>
+           <p class="note">Bodies are read on their own, by id — the fields above came with the row.</p>`
+        : `${section('Arguments', e.args)}
+           ${section('Result', e.result)}
+           ${e.noBodies ? `<p class="note">${NOB[e.noBodies]}</p>` : ''}
+           ${section('Detail', e.detail)}`}
+      ${siblings.length > 1 ? `<div><p class="eyebrow">This approval, end to end</p><div class="tl">${siblings.map(x => `
+        <button data-act="openidx" data-idx="${x.idx}"><span class="tt">${hm(x.ms)}</span><span class="te${x.idx === e.idx ? ' now' : ''}">${esc(x.event)}${subOf(x) ? `<span class="sub2"> ${esc(subOf(x))}</span>` : ''}</span>
+          <span class="chip ${chipCls(OUT[x.outcome])}">${OUT[x.outcome]}</span><span class="tr">${esc(x.principal)}</span></button>`).join('')}</div>
+        <p class="note" style="margin-top:6px">Every row carrying this <span class="mono">detail.approvalId</span>, oldest first — the refused call, the request, your answer, and the dispatch that followed.</p></div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="session" data-id="${esc(e.client?.sessionId ?? '')}" ${e.client?.sessionId ? '' : 'disabled'}>Show this session</button>
+        <button class="btn" data-act="copy" data-idx="${e.idx}">Copy as JSON</button></div>
+    </div>`;
+  const dq = $('#dq');
+  dq?.addEventListener('input', () => { S.drawerQ = dq.value; const at = dq.selectionStart; renderDrawer(); const n = $('#dq'); n.focus(); n.setSelectionRange(at, at); });
+}
+
+/* ---- the Filters level (narrow) ---- */
+function renderLevel(list) {
+  $('#flevel').hidden = !S.filterLevel;
+  if (!S.filterLevel) return;
+  $('#flevel').innerHTML = `<div class="lhead"><button class="dback" style="display:inline-flex" data-act="closefilters">‹ Audit</button>
+      <b style="font-size:14px">Filters</b>${S.filters.length ? `<span class="chip">${S.filters.length} on</span>` : ''}
+      <button class="btn" data-act="clear" style="margin-left:auto">Clear</button></div>
+    <div class="lbody">${railHtml(list, false)}</div>
+    <div class="lfoot"><button class="btn primary" data-act="closefilters">Show ${fN(list.length)} events</button></div>`;
+}
+
+/* ---- render ---- */
+function render() {
+  const list = selected();
+  $('#sub').textContent = STATE === 'failed' ? `kept for ${RETENTION} days`
+    : `${fN(list.length)} events · ${dt(S.from)} → ${dt(S.to)} UTC · kept for ${RETENTION} days`;
+  $('#exp').href = exportHref();
+  document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.view === S.view));
+
+  if (STATE === 'failed') {
+    $('#strip').hidden = true; $('#filterbar').hidden = true; $('.body').hidden = true; $('#hint').hidden = true;
+    $('#main').innerHTML = '';
+    if (!$('#failcard')) {
+      const card = document.createElement('div');
+      card.className = 'card'; card.id = 'failcard';
+      card.style.cssText = 'padding:40px 16px;text-align:center';
+      card.innerHTML = `<b style="display:block;margin-bottom:4px">Couldn't load the audit log</b>
+        <p class="note">The request failed. Nothing was changed.</p>
+        <div style="margin-top:12px"><button class="btn">Try again</button></div>`;
+      $('.wrap').appendChild(card);
+    }
+    return;
+  }
+
+  renderStrip(list);
+  $('#filterbar').innerHTML =
+    `<button class="btn filtersbtn" data-act="filters">Filters${S.filters.length ? ' · ' + S.filters.length : ''}</button>`
+    + S.filters.map((c, i) => `<span class="fchip"><span class="k">${c.f}</span><span class="v">${esc(c.v)}</span><button data-act="unfilter" data-i="${i}" title="Remove">×</button></span>`).join('')
+    + `<div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input id="q" placeholder="Search events and bodies…  ( / )" value="${esc(S.q)}"></div>`
+    + (S.filters.length || S.q ? `<button class="btn" data-act="clear">Clear</button>` : '');
+  $('#rail').innerHTML = railHtml(list);
+  $('#main').innerHTML = STATE === 'loading' ? skeletonMain()
+    : STATE === 'empty' ? `<div class="card"><div class="empty"><b>Nothing recorded yet</b><p class="note">Calls, approvals and config changes will appear here.</p></div></div>`
+    : S.view === 'summary' ? viewSummary(list) : S.view === 'sessions' ? viewSessions(list) : viewEvents(list);
+  $('#hint').innerHTML = S.view === 'summary'
+    ? 'Try: <b>show me</b> on a “worth a look” line jumps to the events behind it · a top-N bar filters everything · a change opens its record · <b>Export JSONL</b> carries the selection.'
+    : S.view === 'sessions'
+      ? 'Try: open a session — runs of ok fold to one line, refusals and approvals stay. Any line opens its record.'
+      : 'Try: a call, its approval and the dispatch after it are one row · repeated refusals collapse to ×N · a row opens the record, and every id in it filters the list.';
+  const q = $('#q');
+  q.addEventListener('input', () => { S.q = q.value; S.eventsShown = 120; S.sessionsShown = 40; const at = q.selectionStart; render(); const n = $('#q'); n.focus(); n.setSelectionRange(at, at); });
+  renderLevel(list);
+  renderDrawer();
+}
+
+/* ---- events ---- */
+document.addEventListener('click', ev => {
+  const a = ev.target.closest('[data-act]'); if (!a) return;
+  const { act, f, v, i, idx, id, path, view, h } = a.dataset;
+  if (act === 'facet') return addFilter(f, v);
+  if (act === 'unfilter') { S.filters.splice(+i, 1); return render(); }
+  if (act === 'clear') { S.filters = []; S.q = ''; S.showAll = {}; S.eventsShown = 120; S.sessionsShown = 40; return render(); }
+  if (act === 'showall') { S.showAll[f] = !S.showAll[f]; return render(); }
+  if (act === 'view') { S.view = view; return render(); }
+  if (act === 'allwindow') { S.from = WEEK_START; S.to = NOW; return render(); }
+  if (act === 'preset') { S.to = NOW; S.from = NOW - (+h) * 36e5; return render(); }
+  if (act === 'day') { S.from = WEEK_START + (+i) * 864e5; S.to = S.from + 864e5; return render(); }
+  if (act === 'morerows') { S.eventsShown += 120; return render(); }
+  if (act === 'moresess') { S.sessionsShown += 40; return render(); }
+  if (act === 'filters') { S.filterLevel = true; return render(); }
+  if (act === 'closefilters') { S.filterLevel = false; return render(); }
+  if (act === 'openidx') { S.open = +idx; S.drawerQ = ''; S.treeOpen = {}; return renderDrawer(); }
+  if (act === 'close') { S.open = null; $('#scrim').hidden = true; $('#drawer').hidden = true; return; }
+  if (act === 'tree') { S.treeOpen[path] = !(S.treeOpen[path] ?? (path.split('.').length <= 1)); return renderDrawer(); }
+  if (act === 'sess') { S.sessOpen = S.sessOpen === id ? null : id; return render(); }
+  if (act === 'session') {
+    if (!id) return;
+    S.view = 'sessions'; S.sessOpen = id; S.open = null;
+    const ss = LOADED.filter(e => e.client?.sessionId === id);
+    if (ss.length) { S.from = Math.min(...ss.map(e => e.ms)) - 6e5; S.to = Math.max(...ss.map(e => e.ms)) + 6e5; }
+    return render();
+  }
+  if (act === 'insight') {
+    const list = selected(), ins = insights(list)[+i];
+    if (ins) { ins.f.forEach(([ff, vv]) => { if (!S.filters.some(c => c.f === ff && c.v === vv)) S.filters.push({ f: ff, v: vv }); }); S.view = 'events'; render(); }
+    return;
+  }
+  if (act === 'copy') { navigator.clipboard?.writeText(JSON.stringify(EV[+idx], (k, x) => k === 'ms' || k === 'idx' || k === '_h' ? undefined : x, 1)).catch(() => {}); const t = $('#toast'); t.textContent = 'Record copied as JSON'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 1800); return; }
+});
+document.querySelectorAll('#views button').forEach(b => b.addEventListener('click', () => { S.view = b.dataset.view; S.eventsShown = 120; S.sessionsShown = 40; render(); }));
+$('#scrim').addEventListener('click', () => { S.open = null; $('#scrim').hidden = true; $('#drawer').hidden = true; });
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') { S.open = null; S.filterLevel = false; $('#scrim').hidden = true; $('#drawer').hidden = true; $('#flevel').hidden = true; }
+  if (ev.key === '/' && !ev.target.closest('input')) { ev.preventDefault(); $('#q')?.focus(); }
+});
+if (STATE === 'nomatch') S.q = 'wireguard';
+render();
+</script>
+</body>
+</html>

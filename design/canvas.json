@@ -53,8 +53,8 @@
       "x": 3492,
       "y": 720,
       "w": 1380,
-      "h": 1460,
-      "title": "Audit log"
+      "h": 2140,
+      "title": "Audit — Summary"
     },
     {
       "file": "Approvals.dc.html",
@@ -121,16 +121,8 @@
       "title": "Settings · Mobile"
     },
     {
-      "file": "MobileAudit.dc.html",
-      "x": 1800,
-      "y": 2900,
-      "w": 390,
-      "h": 1710,
-      "title": "Audit · Mobile"
-    },
-    {
       "file": "MobileApprovals.dc.html",
-      "x": 2250,
+      "x": 1800,
       "y": 2900,
       "w": 390,
       "h": 1230,
@@ -138,7 +130,7 @@
     },
     {
       "file": "MobileApprovalDetail.dc.html",
-      "x": 2700,
+      "x": 2250,
       "y": 2900,
       "w": 390,
       "h": 800,
@@ -146,7 +138,7 @@
     },
     {
       "file": "MobileApps.dc.html",
-      "x": 3150,
+      "x": 2700,
       "y": 2900,
       "w": 390,
       "h": 1280,
@@ -154,7 +146,7 @@
     },
     {
       "file": "MobileAppNew.dc.html",
-      "x": 3600,
+      "x": 3150,
       "y": 2900,
       "w": 390,
       "h": 1080,
@@ -162,7 +154,7 @@
     },
     {
       "file": "MobileAgents.dc.html",
-      "x": 4050,
+      "x": 3600,
       "y": 2900,
       "w": 390,
       "h": 1320,
@@ -271,15 +263,6 @@
       "page": "page-2"
     },
     {
-      "file": "AuditDetailStates.dc.html",
-      "x": 580,
-      "y": 4780,
-      "w": 560,
-      "h": 880,
-      "title": "Audit detail · States",
-      "page": "page-2"
-    },
-    {
       "file": "AppNewProxiedStates.dc.html",
       "x": 1240,
       "y": 4780,
@@ -335,6 +318,30 @@
       "w": 2620,
       "h": 1760,
       "title": "Agent page · mobile · States"
+    },
+    {
+      "file": "AuditViews.dc.html",
+      "x": 0,
+      "y": 13900,
+      "w": 1380,
+      "h": 3260,
+      "title": "Audit — Events & Sessions"
+    },
+    {
+      "file": "AuditDetailStates.dc.html",
+      "x": 1460,
+      "y": 13900,
+      "w": 1380,
+      "h": 5800,
+      "title": "Audit — the record & the page states"
+    },
+    {
+      "file": "MobileAudit.dc.html",
+      "x": 2940,
+      "y": 13900,
+      "w": 2174,
+      "h": 2680,
+      "title": "Audit — mobile"
     }
   ],
   "annotations": [
@@ -345,6 +352,14 @@
       "w": 520,
       "page": "page-1",
       "text": "Settings split into panes behind a left rail — 2026-09-02. Password is NEW: §4 currently forbids self-serve password change (the users script is the only path), so shipping this needs a §4 + §13 amendment. Recovery stays with the script: no email on file means no reset link."
+    },
+    {
+      "id": "audit-explorer-note",
+      "x": 0,
+      "y": 13700,
+      "w": 1380,
+      "page": "page-1",
+      "text": "The audit explorer — 2026-09-21, captured from design/concepts/AuditDemo.html (the adopted prototype). Audit above draws Summary; these three draw the other two views, the record with the page's seven states, and the phone. §13 is being amended in the same dispatch, so the boards are ahead of the spec until then."
     }
   ],
   "pages": [

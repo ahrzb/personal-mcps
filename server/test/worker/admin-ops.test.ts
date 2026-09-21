@@ -726,16 +726,17 @@ export function runAdminOpTable(rows: readonly AdminOpRow[]): void {
       }
     });
 
-    it("§8 · adminBackend.sensitivePaths answers `{ args: [], results: [...] }` for known ops and null for an unknown name", async () => {
+    it("§8 · adminBackend.sensitivePaths answers `{ args: [], results: [...] }` for known ops · an unknown name is refused with the cause the ledger records — `not_in_catalog`, because the builtin's catalog IS the ops table and it has nothing by that name (decision 37)", async () => {
       const app = pmcpApp(OWNERLESS);
       for (const row of rows) {
         const paths = await adminBackend.sensitivePaths(app, row.op);
-        expect(paths?.args, `${row.op}: no admin tool takes a sensitive argument`).toEqual([]);
-        expect(paths?.results, `${row.op}: the only sensitive result is token_issue's key`).toEqual(
-          row.declaresOutputSchema ? [TOKEN_FIELD] : [],
-        );
+        expect("reason" in paths, `${row.op}: a known op was refused`).toBe(false);
+        expect(paths, row.op).toEqual({
+          args: [],
+          results: row.declaresOutputSchema ? [TOKEN_FIELD] : [],
+        });
       }
-      expect(await adminBackend.sensitivePaths(app, "no_such_op")).toBeNull();
+      expect(await adminBackend.sensitivePaths(app, "no_such_op")).toEqual({ reason: "not_in_catalog" });
     });
   });
 }

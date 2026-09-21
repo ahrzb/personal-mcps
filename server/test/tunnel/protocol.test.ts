@@ -728,7 +728,7 @@ describe("§6 registration", () => {
     }
   });
 
-  it("4a. §7 · a catalog answer carrying a tool whose schema trips the indirection refuse-line is reported LOUDLY and survives: the app receives a warning frame naming that tool's violations, the registration still succeeds, the app reads online, and that tool is cached schema-unsound (what unsoundness then costs a call — sensitivePaths null, -32001, no recorded bodies — is the worker project's)", async () => {
+  it("4a. §7 · a catalog answer carrying a tool whose schema trips the indirection refuse-line is reported LOUDLY and survives: the app receives a warning frame naming that tool's violations, the registration still succeeds, the app reads online, and that tool is cached schema-unsound (what unsoundness then costs a call — sensitivePaths refusing `unsound_schema`, -32001, no recorded bodies — is the worker project's)", async () => {
     const fixture = await seedFixture();
     const app = await connect(fixture, { tools: [UNSOUND_TOOL] });
     expect(await app.registered).toEqual({ ok: true });
@@ -736,7 +736,9 @@ describe("§6 registration", () => {
     expect(warning, "the app was never told which tool is unsound").toBeDefined();
     expect((warning?.violations as string[]).join(" ")).toContain("$ref");
     expect(await status(fixture.app.id)).toBe("online");
-    expect(await tunnelBackend.sensitivePaths(await appRow(fixture), UNSOUND_TOOL.name)).toBeNull();
+    expect(await tunnelBackend.sensitivePaths(await appRow(fixture), UNSOUND_TOOL.name)).toEqual({
+      reason: "unsound_schema",
+    });
   });
 
   it("4b. §7 · the same catalog with a walkable schema draws no warning frame and caches the tool sound — the allow-twin without which a warm that warns about everything, or that refuses to register at all, passes case 4a", async () => {
@@ -757,7 +759,7 @@ describe("§6 registration", () => {
     expect(await app.registered).toEqual({ ok: true });
     expect(await waitFor(() => app.lists.length > 0)).toBe(true);
     const row = await appRow(fixture);
-    expect(await tunnelBackend.sensitivePaths(row, UNSOUND_TOOL.name)).toBeNull();
+    expect(await tunnelBackend.sensitivePaths(row, UNSOUND_TOOL.name)).toEqual({ reason: "unsound_schema" });
     expect(await tunnelBackend.sensitivePaths(row, WALKABLE_TOOL.name)).toEqual({
       args: ["token"],
       results: [],
@@ -790,7 +792,7 @@ describe("§6 registration", () => {
       // map, which is §7's -32001 at the gate — the wedge this case exists for.
       expect(await status(fixture.app.id)).toBe("online");
       expect(await tunnelBackend.listTools(row, backendCtx())).toEqual([]);
-      expect(await tunnelBackend.sensitivePaths(row, WALKABLE_TOOL.name)).toBeNull();
+      expect(await tunnelBackend.sensitivePaths(row, WALKABLE_TOOL.name)).toEqual({ reason: "not_in_catalog" });
       // §15 hygiene: the slug so an operator can find the app, and no credential.
       expect(warnings.some((line) => line.includes(fixture.app.slug)), warnings.join(" | ")).toBe(true);
       expect(warnings.join(" ")).not.toContain(fixture.token);

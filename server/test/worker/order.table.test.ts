@@ -62,6 +62,7 @@ import type { JsonRpcResponse, Prompt, Resource, ResourceTemplate } from "../../
 import { AGGREGATED_LIST_DEADLINE_MS, APPROVAL_WINDOW_MS } from "../../src/limits";
 import { PMCP_SLUG, Registry } from "../../src/registry";
 import type { GrantEntry, GrantMode, RoleDeclaration, App } from "../../src/registry";
+import { issueAdminToken } from "../../src/identity";
 import type { Principal } from "../../src/identity";
 import { status } from "../../src/tunnel";
 import { setHeaders } from "../../src/upstream";
@@ -1533,7 +1534,216 @@ describe("the table's own invariants", () => {
       answers.size,
       `every -32001 answers alike, or the differences map grant patterns: ${JSON.stringify([...answers])}`,
     ).toBe(1);
+    // …and decision 37 changed nothing about that: the cause the ledger now learns rides
+    // `auditDetail`, which toWire does not serialize, so the word is nowhere in the answer.
+    const [wire] = [...answers.keys()];
+    expect(wire, "the recorded cause reached the consumer").not.toContain("reason");
   });
+});
+
+// ══ §15/decision 37 — the cause the ledger learns, and the wire still does not ═════════
+//
+// §7 answers nine different situations with one -32001 so that a probing agent cannot map
+// its grants or enumerate a namespace; the owner reading /audit then sees "not permitted"
+// nine times with no way to tell them apart, which is the complaint decision 37 answers.
+// The cause rides `HubError.auditDetail` — the road `failureClass` already rides — and
+// lands as `detail.reason` on the row. Recording it is safe because the ledger is the
+// OWNER's: an `agent` principal reaches no audit read at all (`adminOpsFor` gives it the
+// empty set), so the oracle stays withheld from exactly the caller it was withheld from.
+//
+// Beside the table rather than in it, like the handshake and the approval-id cases: an
+// OrderRow observes the answer and four effect deltas, and this is a fact about the ROW.
+// The reasons driven here are the ones a consumer door reaches in THIS project. The other
+// five are named in the report and pinned where their machinery already lives —
+// `unsound_schema` needs a live socket carrying a schema-unsound tool
+// (worker/hygiene.test.ts case 14a), and `no_app`, `app_changed` and `credential_lapsed`
+// are reachable only through §23.10's program bridge, which pins a snapshot's app id and
+// re-authorizes a credential mid-run.
+
+describe("§15 — every refused call names its cause in the ledger, and nowhere else", () => {
+  /**
+   * One refusal a consumer door can reach, and the cause §2's vocabulary gives it. Rows are
+   * data: the runner drives each through the real worker entry, reads back the one row it
+   * left, and asserts the same three things about all of them — so a reason that stopped
+   * being recorded fails naming itself rather than as an anonymous missing key.
+   */
+  type ReasonRow = {
+    title: string;
+    reason: string;
+    /** The app the row is recorded under — `pmcp` for the builtin's own refusals. */
+    app: string;
+    /**
+     * Whether this refusal is §7's generic one, word for word. Every row here answers
+     * -32001, but `approval_decide` keeps its own pinned message ("no decidable approval
+     * request", §8) because a caller deciding an approval is not being told a tool is off
+     * limits. So the sameness claim below is over the rows that DO claim it, and the one
+     * that does not is asserted for what it does promise instead.
+     */
+    sameWire: boolean;
+    /** The request, built against a world this row seeds for itself. */
+    drive(ns: SeededNamespace): Promise<JsonRpcResponse>;
+  };
+
+  /** The namespace every row below drives against: a proxied app the agent holds `ROLE` on
+   *  (which covers `TOOL` and nothing else), plus an admin token — the one credential that
+   *  reaches `/mcp/pmcp` and is refused an op there. */
+  async function reasonWorld(): Promise<SeededNamespace> {
+    return seedNamespace(env.DB, {
+      apps: [
+        {
+          slug: NOTION,
+          kind: "proxy",
+          upstreamUrl: upstreamUrlFor({ id: uniqueSlug("up"), mode: { kind: "ok" }, tools: UPSTREAM_TOOLS }),
+          upstreamAuthMode: "headers",
+          roles: { [ROLE]: [TOOL] },
+        },
+      ],
+      agents: [{ slug: AGENT, grants: { [NOTION]: [{ role: ROLE, mode: "allow" }] }, tokens: [{ as: TOKEN }] }],
+    });
+  }
+
+  /** One `tools/call` on the builtin as the OWNER, whose session reaches `/mcp/pmcp`. */
+  const asOwner = async (ns: SeededNamespace, name: string, args: Record<string, unknown>) =>
+    rpc(`${ORIGIN}/${ns.owner.username}/mcp/${PMCP_SLUG}`, (await seedOwnerSession(ns.owner)).token, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name, arguments: args },
+    });
+
+  const REASON_ROWS: readonly ReasonRow[] = [
+    {
+      // §7 step 2's filter, the commonest refusal there is: the app is real and the caller
+      // holds a grant on it, but no role it holds reaches this tool.
+      title: "a tool no grant reaches → no_grant",
+      reason: "no_grant",
+      sameWire: true,
+      app: NOTION,
+      drive: (ns) =>
+        rpc(`${ORIGIN}/${ns.owner.username}/mcp/${NOTION}`, ns.tokens[TOKEN].token, {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: UNGRANTED_TOOL, arguments: ARGS },
+        }),
+    },
+    {
+      // The redaction gate, reached before the backend is called at all: `sensitivePaths`
+      // has no entry for the name, so no sound map can exist and nothing may run.
+      title: "a name the backend's catalog does not hold → not_in_catalog",
+      reason: "not_in_catalog",
+      sameWire: true,
+      app: PMCP_SLUG,
+      drive: (ns) => asOwner(ns, "no_such_op", {}),
+    },
+    {
+      // §22.1: an admin token may run every op but the two a machine credential must not —
+      // and the op EXISTS, so the redaction gate passes and the backend itself refuses.
+      title: "an op this kind of credential may not run → op_withheld",
+      reason: "op_withheld",
+      sameWire: true,
+      app: PMCP_SLUG,
+      drive: async (ns) =>
+        rpc(`${ORIGIN}/${ns.owner.username}/mcp/${PMCP_SLUG}`, await adminTokenFor(ns), {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "approval_decide", arguments: { id: "apr_FAKE0000", decision: "approve" } },
+        }),
+    },
+    {
+      // approvals' own refusal, which builds its own HubError and keeps its own message:
+      // every non-decidable id is one answer (§7's probe rule), and the cause says which.
+      title: "an approval that is not this caller's to decide → not_decidable",
+      reason: "not_decidable",
+      sameWire: false,
+      app: PMCP_SLUG,
+      drive: (ns) => asOwner(ns, "approval_decide", { id: "apr_FAKE0000", decision: "approve" }),
+    },
+  ];
+
+  /** A `pmcp_adm_` bearer for this namespace — the credential §22.1 admits to `/mcp/pmcp`
+   *  and to no other endpoint. */
+  async function adminTokenFor(ns: SeededNamespace): Promise<string> {
+    return (await issueAdminToken(ns.owner.userId, undefined)).token;
+  }
+
+  for (const row of REASON_ROWS) {
+    it(`§15 · ${row.title} — one row, that cause, and no bodies`, async () => {
+      const ns = await reasonWorld();
+      const before = await auditQuery(env.DB, ns.owner.userId, { event: "tools/call" });
+      const answered = await row.drive(ns);
+
+      expect(answered.error?.code, `${row.title}: ${JSON.stringify(answered)}`).toBe(-32001);
+      const after = await auditQuery(env.DB, ns.owner.userId, { event: "tools/call" });
+      // Exactly one row, so a reason cannot be "recorded" by a path that also writes a
+      // second row, or by one that writes none and leaves an older row to be read.
+      expect(after.total - before.total, `${row.title}: rows written`).toBe(1);
+      const [written] = after.rows;
+      expect(written.app, row.title).toBe(row.app);
+      expect(written.outcome, row.title).toBe("-32001");
+      expect(written.detail, row.title).toMatchObject({ reason: row.reason });
+      // §15 stands where it stood: a refusal row never carries bodies, whatever else its
+      // detail has learned to say.
+      expect(written.args, `${row.title}: a refusal recorded arguments`).toBeUndefined();
+      expect(written.result, `${row.title}: a refusal recorded a result`).toBeUndefined();
+    });
+  }
+
+  it("§7 · the causes answer the CONSUMER identically — deep-equal error objects with the cause nowhere in any of them, `approval_decide`'s own pinned message included — which is the whole trade: the ledger tells the owner apart what the wire may not tell the caller", async () => {
+    const answers = new Map<string, Record<string, unknown>>();
+    for (const row of REASON_ROWS) {
+      const ns = await reasonWorld();
+      answers.set(row.reason, (await row.drive(ns)).error as unknown as Record<string, unknown>);
+    }
+
+    // The sameness claim, over the rows that make it: §7's -32001 is ONE answer, message
+    // included, whatever the ledger learned.
+    const generic = REASON_ROWS.filter((row) => row.sameWire).map((row) => answers.get(row.reason));
+    expect(generic.length, "the rows claiming §7's generic refusal").toBeGreaterThan(2);
+    for (const answer of generic) expect(answer, "two causes answered differently").toEqual(generic[0]);
+
+    // …and the one that keeps its own words still keeps exactly those (§8), so this row
+    // fails if a refactor ever quietly rewrites it into the generic sentence.
+    expect(answers.get("not_decidable")).toEqual({ code: -32001, message: "no decidable approval request" });
+
+    // The half that holds for every one of them: the cause is nowhere a consumer can read.
+    for (const [reason, answer] of answers) {
+      const serialized = JSON.stringify(answer);
+      expect(serialized, reason).not.toContain("reason");
+      for (const row of REASON_ROWS) expect(serialized, reason).not.toContain(row.reason);
+    }
+  });
+
+  it("§15 · a READ's row now carries what its refusal knew too: a `resources/read` that reached a failing upstream records `detail.failureClass`, where before decision 37 the four audited read paths forwarded no `auditDetail` at all and the column stayed empty · the same read against a healthy upstream records no detail (the twin)", async () => {
+    // The side effect of giving every audited method one reader of `auditDetail`
+    // (`gateway.auditDetailOf`): §7's -32000 class was already attached to the error by the
+    // layer that knew it, and only `tools/call` had ever carried it to a row. Driven on the
+    // §20 fixture because it is the one that grants a RESOURCE family — a bare pattern list
+    // is tools-only (§20.3), so a read on any other world is refused `no_grant` first.
+    const failing = await seedD13({ serves: { mode: { kind: "status", status: 500 } } });
+    const refused = await rpc(failing.url(NOTION), failing.agent, readResource(URI));
+    expect(refused.error?.code, JSON.stringify(refused)).toBe(-32000);
+    const row = await lastRowOf(failing.ns, "resources/read");
+    expect(row.outcome).toBe("-32000");
+    expect(row.detail).toMatchObject({ failureClass: "upstream_status" });
+
+    // The twin: nothing to say, nothing recorded — a row with no cause keeps a NULL column
+    // rather than an empty object, which is what the guarded merge in dispatchTool and the
+    // bare assignment here both exist to preserve.
+    const healthy = await seedD13();
+    expect((await rpc(healthy.url(NOTION), healthy.agent, readResource(URI))).error).toBeUndefined();
+    expect((await lastRowOf(healthy.ns, "resources/read")).detail).toBeUndefined();
+  });
+
+  /** The newest row of one event in a namespace, through audit.query like every other
+   *  ledger read in this file. */
+  async function lastRowOf(ns: SeededNamespace, event: string): Promise<AuditRow> {
+    const page = await auditQuery(env.DB, ns.owner.userId, { event, limit: 1 });
+    const row = page.rows[0];
+    if (row === undefined) throw new Error(`the call left no ${event} row`);
+    return row;
+  }
 });
 
 // ══ §20 — the MCP data model beyond tools ═════════════════════════════════════════════

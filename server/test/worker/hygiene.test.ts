@@ -41,9 +41,13 @@
 // nothing because nothing was written is a green test proving nothing: the sweep asserts its
 // own reach with a control value that MUST be found (see sweepForSentinels).
 //
-// Also pinned by omission: no assertion here reads an audit `detail` layout, a column
-// name, or a byte literal — §7 puts all three on the incidental side. Sizes are expressed
-// against the cap in force, never as numbers (see AuditBodyRow.bodySize).
+// Also pinned by omission: no assertion here reads a column name or a byte literal — §7
+// puts both on the incidental side. Sizes are expressed against the cap in force, never as
+// numbers (see AuditBodyRow.bodySize). ONE audit `detail` key is read, and it earns the
+// exception on this file's own terms: decision 37's `reason` is a CLOSED vocabulary of
+// classes, so case 14a asserting the exact token it lands is a hygiene claim — the column
+// may hold a class the hub chose and never text a caller typed — and 14a owns the only
+// socket that can produce `unsound_schema` at all.
 
 // deps: harness/seed · harness/fake-upstream · src/index (exports.default.fetch) · src/audit (query, beforeSend) · src/registry (writeOnlyPaths, applyRedaction, redactPathsFor, REDACTED) · src/principal (tokenPattern) · src/approvals (canonicalJson) · src/admin (ops.token_issue) · src/limits · applyD1Migrations · miniflare.outboundService
 
@@ -1327,6 +1331,12 @@ describe("§15 · what may reach the two body columns", () => {
       const unmapped = await lastCallRow(world.ns.owner.userId);
       expect(unmapped.args, "no derivable map, no body").toBeUndefined();
       expect(unmapped.result, "in either column").toBeUndefined();
+      // Decision 37: the row also says WHY it was refused, and this is the one producer of
+      // `unsound_schema` anywhere in the suite — a live socket carrying a tool whose cached
+      // schema tripped the refuse-line. A hygiene fact as much as a §7 one: `reason` is a
+      // closed vocabulary of classes, so what lands here is a token this file can name and
+      // never the caller's text (the sentinel sweep below reads the same column).
+      expect(unmapped.detail, "the unsound refusal recorded no cause").toEqual({ reason: "unsound_schema" });
 
       // The allow-twin, on a walkable schema: both columns land, masked at the marked path.
       await callTool(world.ns, world.credential, APP, TOOL, { q: "visible-case14a-arg" });

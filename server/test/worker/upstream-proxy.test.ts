@@ -1498,7 +1498,7 @@ describe("§10 — subrequest budgets asserted explicitly (workerd enforces none
 });
 
 describe("§7 — proxied redaction has no schema half", () => {
-  it("§7 · upstreamBackend.sensitivePaths resolves `{ args: [], results: [] }` and never null", async () => {
+  it("§7 · upstreamBackend.sensitivePaths resolves `{ args: [], results: [] }` and never refuses — it has no cause to give, because it has no catalog to miss in", async () => {
     const world = await buildHeadersWorld(healthy(uniqueSlug("paths")));
     // Both a tool the upstream lists and one it has never heard of: with no cached catalog
     // there is no "unknown", so neither direction has a writeOnly map to derive.

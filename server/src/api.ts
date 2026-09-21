@@ -31,6 +31,8 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { ops } from "./admin";
 import type { AppRow as OpsAppRow } from "./admin";
+import { config as auditConfig } from "./audit";
+import type { AuditRow, AuditSlimRow } from "./audit";
 import { DEFAULT_APP_CAPABILITIES } from "./capabilities";
 import { argumentRows, schemaLeaves } from "./catalog-view";
 import type { ArgumentRow, SchemaLeaf } from "./catalog-view";
@@ -55,8 +57,52 @@ import {
   composeRedaction,
   composeRoles,
   composeTypescriptAliases,
+  eventRow,
   grantChoicesOf,
+  noBodiesReason,
 } from "./pages/model";
+import type { AuditEventRow } from "./pages/model";
+import { AUDIT_EXPLORER_PAGE, AUDIT_EXPLORER_ROWS } from "./limits";
+
+/* ------------------------------------------------------------------ *
+ * The two audit reads' answers (§13's explorer, decision 36)
+ * ------------------------------------------------------------------ */
+
+/**
+ * One row of the window read: `audit.AuditSlimRow` minus the namespace id, plus the
+ * no-bodies sentence. A slim row "has bodies" when it carries an `argsHead` or reports a
+ * result, which is what `noBodiesReason` reads it by.
+ *
+ * Exported so the browser client's own copy of this shape can be checked against it — the
+ * wire shapes are deliberately copied rather than shared (contracts/README.md), and a copy
+ * with no original to compare to is where the two drift.
+ */
+export type AuditWindowRow = Omit<AuditSlimRow, "ownerId"> & { noBodies?: AuditEventRow["noBodies"] };
+
+/**
+ * `GET /api/hub/audit/window` — one page of body-less rows, newest first, over a resolved
+ * window.
+ *
+ * `since`/`until` are ECHOED rather than merely accepted: the client asks for a window it
+ * may have left open at either end, and the server answers with the one it actually read, so
+ * "now" is computed once. `total` counts the whole match regardless of the page or the
+ * ceiling; `ceiling` is `AUDIT_EXPLORER_ROWS`, carried so the page's "showing the newest N
+ * of M" notice holds no second literal of it. `retentionDays` is §15's window, which is
+ * env-tunable and therefore data rather than copy.
+ */
+export type AuditWindow = {
+  rows: AuditWindowRow[];
+  total: number;
+  since: number;
+  until: number;
+  retentionDays: number;
+  ceiling: number;
+};
+
+/** `GET /api/hub/audit/:id` — the one full row, bodies and no-bodies sentence included. A
+ *  wrapper object rather than the bare row, like every other answer on this surface: a
+ *  field can be added beside it without changing what the client parses. */
+export type AuditRecord = { row: AuditEventRow };
 
 /* ------------------------------------------------------------------ *
  * The drafts a typed route takes
@@ -352,6 +398,59 @@ export function hubApiRoutes(): unknown {
         offset: filters.offset,
       });
       return json({ filters, page });
+    }),
+  );
+
+  // Registered AHEAD of `/hub/audit/:id`, or the literal segment is read as an id: hono
+  // matches in declaration order, and `window` is not a number but `:id` does not know that.
+  app.get(
+    "/hub/audit/window",
+    reader(async (session, c) => {
+      const asked = new URL(c.req.url).searchParams;
+      const { retentionDays } = auditConfig();
+      // The server resolves the window and echoes it, so the client never computes "now"
+      // twice — and an absent or unusable bound means the whole retention window rather
+      // than a guess either side could make differently.
+      const until = wholeNumber(asked.get("until")) ?? Date.now();
+      const since = wholeNumber(asked.get("since")) ?? until - retentionDays * DAY_MS;
+      const offset = wholeNumber(asked.get("offset")) ?? 0;
+      const text = asked.get("text") ?? "";
+      const page = await read<{ rows: AuditSlimRow[]; total: number }>(session, "audit_query", {
+        since,
+        until,
+        ...(text.trim() === "" ? {} : { text }),
+        bodies: false,
+        // Clamped to what is LEFT under the ceiling, not to the page size: an offset the
+        // client did not align (a deep link, a retried page) would otherwise answer rows
+        // beyond the very ceiling this response echoes. At or past it the remainder is 0,
+        // which is the empty page — the signal the client walks pages until it gets, and it
+        // still costs the COUNT that `total` is.
+        limit: Math.max(0, Math.min(AUDIT_EXPLORER_PAGE, AUDIT_EXPLORER_ROWS - offset)),
+        offset,
+      });
+      const logBodies = await logBodiesOf(session);
+      return json({
+        rows: page.rows.map((row) => windowRow(row, logBodies)),
+        total: page.total,
+        since,
+        until,
+        retentionDays,
+        ceiling: AUDIT_EXPLORER_ROWS,
+      } satisfies AuditWindow);
+    }),
+  );
+
+  app.get(
+    "/hub/audit/:id",
+    reader(async (session, c) => {
+      const id = wholeNumber(c.req.param("id") ?? null);
+      // A non-numeric segment is not an id at all, and answers exactly as an id in another
+      // namespace does — one 404, so a probe learns nothing about either (§8).
+      if (id === null) return noSuchRecord();
+      const page = await read<{ rows: AuditRow[] }>(session, "audit_query", { id, limit: 1 });
+      const row = page.rows[0];
+      if (row === undefined) return noSuchRecord();
+      return json({ row: eventRow(row, await logBodiesOf(session)) } satisfies AuditRecord);
     }),
   );
 
@@ -672,6 +771,43 @@ function signIn(): Response {
  *  probe learns nothing about another namespace (§13's document 404 as JSON). */
 function noSuchApp(): Response {
   return refuse(404, "No such app.");
+}
+
+/** The record read's own version of the same rule: an id that never existed, one another
+ *  namespace holds, and a segment that is not a number are one answer (§8). */
+function noSuchRecord(): Response {
+  return refuse(404, "No such audit record.");
+}
+
+/** A whole non-negative number off a query parameter or a path segment, or null for
+ *  everything else — `?offset=drop table` is not an offset and `/audit/window` is not an id. */
+function wholeNumber(raw: string | null): number | null {
+  if (raw === null || raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+/** Retention is configured in DAYS and every timestamp in the system is epoch ms. */
+const DAY_MS = 24 * 60 * 60_000;
+
+/**
+ * Why a bodiless call row is bodiless: each app's `log_bodies` as it stands NOW (§15), read
+ * through `app_list` like the server-rendered page read it. Archived apps and the virtual
+ * `pmcp` builtin are in it; an app that is GONE is simply absent, which is the `unrecorded`
+ * case rather than a missing answer.
+ */
+async function logBodiesOf(session: OwnerSession): Promise<Map<string, boolean>> {
+  const listed = await read<{ apps: OpsAppRow[] }>(session, "app_list");
+  return new Map(listed.apps.map((app) => [app.slug, app.logBodies]));
+}
+
+/** One slim row as the window read answers it: the namespace id dropped (every row is the
+ *  viewer's own) and the no-bodies sentence computed here, once, for the same reason the
+ *  record read has `eventRow` do it — two readers of one ledger owe one explanation. */
+function windowRow(row: AuditSlimRow, logBodies: Map<string, boolean>): AuditWindowRow {
+  const { ownerId: _ownerId, ...rest } = row;
+  const why = noBodiesReason(row, logBodies);
+  return { ...rest, ...(why === undefined ? {} : { noBodies: why }) };
 }
 
 /** One ops answer as this surface renders it: the value, or §8's field-scoped refusal. */

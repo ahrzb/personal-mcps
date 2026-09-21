@@ -510,3 +510,50 @@
     execution with declarations as documentation—was smaller and operationally simpler,
     but its opaque `syntax_error`/`program_error` labels and downstream schema failures
     made orchestration materially harder to correct.
+
+36. **`/audit` is the SPA's third route family, redrawn as an explorer**
+    *(2026-09-21, §13; `design/concepts/AuditDemo.html` adopted whole, the research behind
+    it in `docs/superpowers/reports/2026-09-20-audit-visualization-research.md`)*. The
+    server-rendered table is deleted, not decorated: it answered "what happened" with one
+    ordering, one page at a time, and every other question — which agent is being refused,
+    which session did this, what ran under that approval — by retyping filters into a form
+    and losing the place. The explorer is **three readings of one filtered set** (Summary,
+    Sessions, Events) under a per-principal lane strip with a brush and a facet rail with
+    live counts, each reading over the same rows, so a question is asked by narrowing rather
+    than by navigating.
+
+    Three things make it hold, and each is a deliberate cost. **The window is loaded, not
+    paged**: one body-less read of the whole retention window up to
+    `AUDIT_EXPLORER_ROWS`, after which facets, brush, merging and sessions are arithmetic
+    in the client and no click waits on the network — the cost is the ceiling, which the
+    page states in words and points at the export for, and a body-less projection done in
+    SQL because a Worker that parsed thousands of capped bodies to discard them would meet a
+    memory ceiling no in-process test can see (§16). **Related rows merge**: rows sharing a
+    `detail.approvalId` read as one chain and consecutive identical rows as one ×N run, which
+    is why §15 records that id on the refused and the claimed `tools/call` rows — a ledger
+    join, changing nothing on the wire (§7). **Every colour is named**: the five outcome
+    classes always print their class beside their swatch, since a ledger read in a hurry is
+    exactly where colour-only encoding fails.
+
+    The rejected alternative was **modelling the page on a generic log viewer** — Grafana's
+    Loki UI, which the owner first asked for by name: a flat list of log lines carrying a
+    level and a label set, filtered by labels, each line expanding to its fields. A concept
+    was drawn on that model, and then, rather than trusting a memory of the tool, Loki and
+    Grafana were run locally and our own rows — our schema, a fixture week — pushed through
+    them. The model does not fit the rows. Its JSON parser flattens a nested body into
+    underscore-joined keys and silently drops arrays, so a blob stub inside `content` simply
+    vanishes; it renames any field that collides with a stream label (`…_extracted`); and it
+    classed 1,287 of 1,319 events as level `unknown`, because a JSON-RPC outcome code is not
+    a log level. The owner's verdict on the rendered result was that it looked awful, the
+    direction was dropped, and the research above is what replaced it. The reason it loses is
+    structural rather than aesthetic: an audit row is a nested call record with an outcome, an
+    approval and a session, not a line with a level and labels, and a viewer whose primitives
+    are lines and labels has to destroy the first in order to display the second.
+
+    **Two questions are deliberately left open** and are not part of this decision. Whether
+    `outcome` splits into a mechanism and a reason — why a `-32001` was a `-32001` — which
+    §7 today keeps indistinguishable on the wire and §15 therefore keeps indistinguishable in
+    the ledger; the explorer is written to work without it, and its first insight sentence
+    ends at the outcome class for exactly that reason. And whether a weekly digest exists at
+    all: the page answers a question being asked, and a digest asks the question for the
+    owner, which is a different product decision.

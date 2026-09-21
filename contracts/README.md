@@ -33,8 +33,8 @@ otherwise here would make this table the drift it exists to prevent.
 | whoami | `GET /api/whoami`'s `{ principal, namespace }` for both credential kinds, and the 401 | producer only — `cli`'s `WhoamiResponse` is pinned as a *type* in `contracts.test.ts` |
 | initialize | the hub's fixed handshake capability picture and the four scoped application capability pictures (§7, §20, §21, §23) | producer only — consumer capabilities are pinned as types and behavior |
 | error codes | the six JSON-RPC codes (§7) and their data shapes | producer only — `cli`'s `HUB_ERRORS` and `ApprovalRequiredData` are pinned as types there |
-| tunnel frames | `hub/register` and its ack, `hub/replaced`, the forwarded-call `_meta` key names (§6, §7) — emitted from `tunnel.ts`'s exported `HUB_METHODS` | `clients/js/test/contracts-consumer.test.ts`, `clients/py/tests/test_contracts.py`, `clients/go/pmcp_test.go` |
-| close codes | close code → **required client behavior**, one of `stop_fatal` / `stop_quiet` / `reconnect`, plus a `schedule` attribute (`exponential` / `max_only`) on the entries that reconnect (§6's upgrade matrix and 4000–4004) — emitted from `tunnel.ts`'s exported `CLOSE_*` vocabulary | the same three consumer suites and their reconnect tables |
+| tunnel frames | `hub/register` and its ack, `hub/replaced`, the forwarded-call `_meta` key names (§6, §7) — emitted from `tunnel.ts`'s exported `HUB_METHODS` | `clients/js/test/contracts-consumer.test.ts`, `clients/py/tests/test_contracts.py`, `clients/go/pmcp_test.go`, `clients/rust/src/lib.rs` |
+| close codes | close code → **required client behavior**, one of `stop_fatal` / `stop_quiet` / `reconnect`, plus a `schedule` attribute (`exponential` / `max_only`) on the entries that reconnect (§6's upgrade matrix and 4000–4004) — emitted from `tunnel.ts`'s exported `CLOSE_*` vocabulary | the same four consumer suites and their reconnect tables |
 | bootstrap | the `POST /internal/users` request and response bodies per op (§12) | `scripts/test/bootstrap-contract.test.ts` |
 | admin ops | op names and their rendered input/output schemas (§8) | `cli/test/commands.test.ts` and the provider parity check (§22.5) |
 | audit body stubs | the wire spelling of the two typed size stubs §15 defers to this directory: the `blob` stub an unstructured result block collapses into and the `oversize` stub that replaces a whole over-cap body — the discriminator, the field names, and which fields carry a variable value | `server/test/worker/hygiene.test.ts` (its `BodyColumnShape` / `BodyStub` rows), and any client-side renderer of a recorded body |
@@ -98,7 +98,7 @@ directory exists to prevent.
 
 **Consumers are read-only.** Today those are
 `clients/js/test/contracts-consumer.test.ts`, `clients/py/tests/test_contracts.py`,
-`clients/go/pmcp_test.go` (close codes and tunnel frames),
+`clients/go/pmcp_test.go`, `clients/rust/src/lib.rs` (close codes and tunnel frames),
 `scripts/test/bootstrap-contract.test.ts` (bootstrap),
 `cli/test/commands.test.ts` (admin operation schemas), and
 `server/test/worker/hygiene.test.ts` (audit body stubs). A consumer asserts against a

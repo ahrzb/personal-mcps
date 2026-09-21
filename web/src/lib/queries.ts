@@ -1,12 +1,17 @@
-import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient, UseMutationResult } from "@tanstack/react-query";
 import { useApi } from "./api-context";
+// The explorer's pure module owns the window read's page URL: the rule that every page after
+// the first rides page 0's echoed window is a rule with a test, not a string built inline.
+import { windowPagePath } from "@/features/audit/derive";
 import type {
   AgentResponse,
   AgentsResponse,
   AppResponse,
   AppsResponse,
+  AuditRecordResponse,
   AuditResponse,
+  AuditWindowResponse,
   ApprovalsResponse,
   CapabilitiesResponse,
   CatalogFamily,
@@ -37,6 +42,11 @@ export const keys = {
   agent: (slug: string) => ["agent", slug] as const,
   tokens: () => ["tokens"] as const,
   audit: (filters: Record<string, unknown>) => ["audit", filters] as const,
+  /** The explorer's window. Keyed on the SEARCH TEXT alone, because that is the only control
+   *  that refetches: the window asked for is always the whole retention window, and the brush,
+   *  the facets, the views and the merge are computed over the rows already held. */
+  auditWindow: (q: string) => ["audit", "window", { q }] as const,
+  auditRecord: (id: string) => ["audit", "record", id] as const,
   approvalsPending: () => ["approvals", "pending"] as const,
   approvalsHistory: (limit: number) => ["approvals", "history", { limit }] as const,
 } as const;
@@ -124,15 +134,93 @@ export function tokensQuery(api: ApiClient) {
 }
 
 /**
- * The audit ledger under a set of filters. Every consumer is a NARROW read of it — an
- * agent's recent calls, an app's, a token's last use — because `/audit` itself is still
- * server-rendered; the filters are `audit_query`'s own keys, spelled as a query string.
+ * The audit ledger under a set of filters, bodies included. Every consumer is a NARROW read of
+ * it — an agent's recent calls, an app's, a token's last use; the filters are `audit_query`'s
+ * own keys, spelled as a query string.
+ *
+ * NOT the explorer's read: `/audit` loads thousands of rows and must never ship a body it will
+ * throw away, so it has `auditWindowQuery` below. This one stays for the panes that want a
+ * handful of rows with everything on them.
  */
 export function auditQuery(api: ApiClient, filters: Record<string, string>) {
   return queryOptions({
     queryKey: keys.audit(filters),
     queryFn: () => api.get<AuditResponse>(`/audit?${new URLSearchParams(filters).toString()}`),
     staleTime: STALE.audit,
+  });
+}
+
+/**
+ * The explorer's window: the whole retention window of SLIM rows, up to the ceiling, as one
+ * cache entry.
+ *
+ * Page 0 first, then every remaining page in PARALLEL — the pages are independent offsets into
+ * one ordered read, and walking them in series would make the page's time to first paint the
+ * sum of five round trips instead of two. The rows come back newest first per page, so the
+ * concatenation is already in order.
+ *
+ * Every page after the first is PINNED to the window page 0 echoed. Left open, each request
+ * resolves its own `until = now`, so one row written between two of them shifts every later
+ * offset by one and the concatenation carries a duplicate at each page seam. That is what the
+ * echoed `since`/`until` are for, and `derive.windowPagePath` is where the rule is written down
+ * and tested.
+ *
+ * The page SIZE is read off page 0's own length rather than written down here: it is
+ * `AUDIT_EXPLORER_PAGE`, which the server owns, and a second literal of it in the client is a
+ * number that can silently disagree. A short page 0 means the read is exhausted, so there is
+ * nothing to walk.
+ *
+ * `q` is sent as `text` — the read's own name for it — and is debounced by the caller, which is
+ * what makes this key change at most four times a second.
+ */
+export function auditWindowQuery(api: ApiClient, q: string) {
+  const text = q.trim();
+  return queryOptions({
+    queryKey: keys.auditWindow(text),
+    queryFn: async (): Promise<AuditWindowResponse> => {
+      const first = await api.get<AuditWindowResponse>(windowPagePath({ offset: 0, text }));
+      const size = first.rows.length;
+      const wanted = Math.min(first.total, first.ceiling);
+      if (size === 0 || size >= wanted) return first;
+      const offsets: number[] = [];
+      for (let offset = size; offset < wanted; offset += size) offsets.push(offset);
+      const rest = await Promise.all(
+        offsets.map((offset) =>
+          api.get<AuditWindowResponse>(
+            windowPagePath({ offset, text, since: first.since, until: first.until }),
+          ),
+        ),
+      );
+      return { ...first, rows: [...first.rows, ...rest.flatMap((page) => page.rows)] };
+    },
+    staleTime: STALE.audit,
+    /**
+     * The previous answer STAYS while a new search loads, and this one line is a bug fix rather
+     * than a nicety (postmortem 2026-09-21). `text` belongs in the key — it is the one filter
+     * the server applies — but a new key has no data, so without a placeholder the page's
+     * `isPending` branch replaced the whole explorer with a skeleton on every settled
+     * keystroke: the `<input>` was unmounted and remounted, and focus, caret, "Load more"
+     * counts, expanded facet groups and scroll position went with it. Typing past one word was
+     * impossible. With it, only the FIRST load has nothing to draw.
+     */
+    placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * One full row, by id — the record drawer's own read, made when the drawer opens.
+ *
+ * It does not need the window: a record id outside the loaded rows still opens, which is what
+ * keeps an `?expand=` deep link from a month-old email working. `retry: false` because the one
+ * refusal it can make is a 404, and a 404 here is an ANSWER — "that record is gone" — not a
+ * transient failure worth three more round trips.
+ */
+export function auditRecordQuery(api: ApiClient, id: string) {
+  return queryOptions({
+    queryKey: keys.auditRecord(id),
+    queryFn: () => api.get<AuditRecordResponse>(`/audit/${encodeURIComponent(id)}`),
+    staleTime: Infinity,
+    retry: false,
   });
 }
 

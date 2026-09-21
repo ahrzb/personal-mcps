@@ -29,8 +29,8 @@
   --danger-bg: #fef2f2;
   --danger-border: #fecaca;
   --dim-fg: #d4d4d8;        /* a dimmed rail entry's marker (AppDetail.dc.html) */
-  --sunken: #fafafa;        /* auth page ground, expanded audit row */
-  --fg-subtle: #52525b;     /* link hover, code text, chart peak */
+  --sunken: #fafafa;        /* auth page ground, a sunken panel inside a card */
+  --fg-subtle: #52525b;     /* link hover, code text */
   --row-border: #f4f4f5;    /* between table rows (lighter than --border) */
 
   /* type */
@@ -43,7 +43,7 @@
   --text-base: 14px;  /* body, controls */
   --text-sm: 13px;    /* helper text, small controls, table cells */
   --text-xs: 12px;    /* captions, badges, timestamps */
-  --text-2xs: 11px;   /* eyebrow labels, chart axis */
+  --text-2xs: 11px;   /* eyebrow labels */
 
   /* spacing (the ladder the boards actually use) */
   --space-1: 2px;
@@ -632,7 +632,7 @@ p {
   cursor: default;
 }
 
-/* square pager/step control */
+/* square icon-only control — a step arrow, a close */
 .btn-icon {
   display: inline-flex;
   align-items: center;
@@ -652,23 +652,6 @@ p {
 .btn-icon[aria-disabled="true"] {
   opacity: 0.5;
   cursor: default;
-}
-
-/* The audit row's expand chevron: a link drawn as a bare icon, not a bordered button. */
-.row-toggle {
-  display: inline-flex;
-  padding: 2px;
-  border-radius: var(--radius-sm);
-  color: var(--muted-fg);
-}
-
-.row-toggle:hover {
-  color: var(--fg);
-  background: var(--muted);
-}
-
-.row-open .row-toggle svg {
-  transform: rotate(180deg);
 }
 
 .actions {
@@ -869,7 +852,7 @@ select {
   box-shadow: none;
 }
 
-/* segmented control — audit's 1h/24h/7d/30d */
+/* segmented control — settings' token-kind filter and /audit's view segment */
 .segmented {
   display: flex;
   align-items: center;
@@ -901,44 +884,6 @@ select {
   background: var(--bg);
   color: var(--fg);
   box-shadow: var(--shadow);
-}
-
-/* filter bar rows above a table */
-.filters {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-6);
-}
-
-.filters select,
-.filters input {
-  width: 170px;
-}
-
-.filters .input-group input {
-  width: 260px;
-}
-
-/* Groups audit's two `.filters` rows so the narrow breakpoint can flatten them
-   (`.filters{display:contents}`) into one reorderable sequence without
-   reaching past this box into the surrounding form's other children (the
-   session-filter note, the narrow Export button). Wide: just the same
-   top-to-bottom stack the two rows always had. */
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-6);
-}
-
-/* Pairs "All agents"/"All apps" for the narrow breakpoint without
-   touching the wide layout: `display:contents` here is invisible to the wide
-   `.filters` row, so both selects stay flat, individually-ordered flex items
-   of it (Audit.dc.html). The narrow override below turns this into their own
-   shared row (MobileAudit.dc.html). */
-.filter-pair {
-  display: contents;
 }
 
 /* two full-width action buttons — device's Approve/Deny row. DOM order stays
@@ -1101,13 +1046,6 @@ select {
   color: var(--muted-fg);
 }
 
-/* audit's four summary tiles */
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-8);
-}
-
 .stat {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1132,11 +1070,6 @@ select {
 
 .stat-value--danger {
   color: var(--danger-fg);
-}
-
-.stat-hint {
-  font-size: var(--text-xs);
-  color: var(--muted-fg);
 }
 
 /* plain rows inside a padded card — passkeys, sessions on narrow */
@@ -1176,13 +1109,6 @@ select {
   text-align: left;
 }
 
-/* table-layout:auto lets an unbreakable cell (a long tool name) steal width
-   from every other column via <colgroup>-ignoring content sizing — fixed
-   layout makes the <colgroup> widths authoritative regardless of content. */
-.table--fixed {
-  table-layout: fixed;
-}
-
 .table th {
   padding: var(--space-6) var(--space-9);
   border-bottom: 1px solid var(--border);
@@ -1203,14 +1129,6 @@ select {
   border-bottom: 0;
 }
 
-/* The dense tier (§2 "The density ladder"): 32px rows for a table OF EVENTS — audit's
-   list is read by scanning a week, not by reading each line, and the default 40px row
-   costs a fifth of the screen per page of it. */
-.table--dense th,
-.table--dense td {
-  padding: var(--space-3) var(--space-8);
-}
-
 /* A row that is still listed but no longer live — the expired token on
    SettingsTokens.dc.html. The whole row recedes to `--ring` (the board's #a1a1aa),
    including the cells and links that set a colour of their own, so what still reads at
@@ -1228,14 +1146,6 @@ select {
 }
 
 .table .cell-time {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--muted-fg);
-  white-space: nowrap;
-}
-
-.table .cell-num {
-  text-align: right;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--muted-fg);
@@ -1275,62 +1185,9 @@ select {
   font-family: var(--font-mono);
 }
 
-/* the expanded audit row and its detail panel */
-.row-open > td {
-  background: var(--sunken);
-  border-bottom: 0;
-}
-
-.row-detail > td {
-  background: var(--sunken);
-  padding-top: 0;
-}
-
-.detail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.detail-body {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--fg-subtle);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.detail-meta {
-  font-size: var(--text-xs);
-  color: var(--muted-fg);
-}
-
 /* the mobile one-line summary of a table row: hidden on wide screens */
 .cell-summary {
   display: none;
-}
-
-/* an expandable event rendered as a native <details> (audit's EVENT DETAIL panel) */
-.disclosure > summary {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-6);
-  padding: var(--space-6) var(--space-8);
-  list-style: none;
-  cursor: pointer;
-}
-
-.disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-
-.disclosure[open] {
-  background: var(--sunken);
-}
-
-.disclosure > .detail {
-  padding: 0 var(--space-8) var(--space-6);
 }
 
 /* ------------------------------------------------------------- approvals ---- */
@@ -1638,74 +1495,6 @@ dialog .actions {
   gap: var(--space-4);
 }
 
-/* ----------------------------------------------------------------- chart ---- */
-
-.chart {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-}
-
-.chart-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-5);
-}
-
-.chart-title {
-  font-size: var(--text-base);
-  font-weight: 500;
-}
-
-/* bars take their height from an inline style — that height is data */
-.chart-bars {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-  height: 140px;
-  border-bottom: 1px solid var(--border);
-}
-
-.chart-bar {
-  flex-grow: 1;
-  background: var(--muted-fg);
-  border-radius: 3px 3px 0 0;
-  min-height: 2px;
-}
-
-.chart-bar--peak {
-  background: var(--fg-subtle);
-}
-
-.chart-axis {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  font-size: var(--text-2xs);
-  color: var(--muted-fg);
-}
-
-/* ----------------------------------------------------------------- pager ---- */
-
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
-}
-
-.pager-group {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.pager-info {
-  font-size: var(--text-sm);
-  color: var(--muted-fg);
-}
-
 /* ------------------------------------------------------------ auth pages ---- */
 
 .auth {
@@ -1775,59 +1564,8 @@ dialog .actions {
 
 /* ------------------------------------------------------------- app detail ---- */
 
-/* One Tools row (AppDetail.dc.html): the disclosure the audit page already uses, with
-   the row's own metrics — a full-bleed rule inside a padded card, and no open-state tint,
-   because here the tint belongs to the expanded block rather than to the whole row. */
-.tool > summary {
-  padding: var(--space-5) 0;
-  border-bottom: 1px solid var(--row-border);
-  font-size: var(--text-sm);
-}
-
-.disclosure.tool[open] {
-  background: none;
-}
-
-.tool-name {
-  flex: 0 0 200px;
-  font-weight: 500;
-}
-
-/* The first line of the description, and only the first: the whole thing is one click
-   away in the block below, which is already in this same response. */
-.tool-summary {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--muted-fg);
-}
-
-.tool-args {
-  flex-shrink: 0;
-  font-size: var(--text-xs);
-  color: var(--ring);
-}
-
-.tool-detail {
-  gap: var(--space-7);
-  margin: 0 0 var(--space-8) var(--space-10);
-  padding: var(--space-8);
-  background: var(--sunken);
-  border: 1px solid var(--row-border);
-  border-radius: var(--radius);
-}
-
-.tool-description {
-  margin: 0;
-  font-size: var(--text-sm);
-  line-height: 1.6;
-  color: var(--fg-subtle);
-}
-
 /* An app's own description, rendered as the Markdown it is written in (markdown.ts). Only
-   the description CONTAINERS wear `.md` — the tool and prompt rows here, the agent page's
+   the description CONTAINERS wear `.md` — the catalog pane's rows and notes, the agent page's
    `.cr-detail` and its details note — and these rules are the whole of the styling app
    prose can ever earn: the renderer's whitelist strips the id, class and style attributes
    it would otherwise reach the stylesheet with.
@@ -1836,8 +1574,7 @@ dialog .actions {
 /* §2 "Prose": a paragraph that can run long is capped at 72ch even where its container is
    fluid — a workspace pane is as wide as the screen, and a description is still read. */
 .md,
-.note,
-.tool-description {
+.note {
   max-width: 72ch;
 }
 
@@ -1889,20 +1626,6 @@ dialog .actions {
   padding: 0;
   background: none;
   font-size: var(--text-sm);
-}
-
-/* §13's "what only the hub knows": four short lines that read as one band under the
-   Arguments table, wrapping rather than truncating — every one of them is a fact about
-   who can call this tool. */
-.tool-hub {
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: var(--space-9);
-  row-gap: var(--space-3);
-  padding-top: var(--space-6);
-  border-top: 1px solid var(--border);
-  font-size: var(--text-xs);
-  color: var(--muted-fg);
 }
 
 /* §23.6's alias editor — the add-app form and the Overview pane draw the same two-column
@@ -2853,57 +2576,8 @@ dialog .actions {
     font-size: var(--text-base);
   }
 
-  /* MobileAudit.dc.html's control order (segmented, date range, paired
-     agents/apps, all events, tool search, Export) isn't the wide two-row
-     grouping (Audit.dc.html) — `.filter-group` takes over the column stack
-     `.filters` used to do itself, and each `.filters` row flattens
-     (display:contents) into it so `order` can reach every control at once
-     without touching the surrounding form's other children. */
-  .filter-group {
-    gap: var(--space-5);
-  }
-
-  .filters {
-    display: contents;
-  }
-
-  .filters select,
-  .filters input,
-  .filters .input-group,
-  .filters .input-group input {
-    width: 100%;
-  }
-
-  /* the tool search box sorts after the three selects instead of staying
-     where it sits on the wide row (right after date range). */
-  .filter-tool {
-    order: 1;
-  }
-
-  .filter-pair {
-    display: flex;
-    gap: var(--space-4);
-  }
-
-  .filter-pair select,
-  .filter-pair input {
-    width: auto;
-    flex: 1;
-  }
-
-  /* Apply sorts after the tool box it applies (`.filter-tool{order:1}`); flattened
-     rows put it at order 0, i.e. before the field the owner just typed in. */
-  .filters button[type="submit"] {
-    order: 2;
-  }
-
   .confirm-actions {
     flex-direction: column-reverse;
-    gap: var(--space-5);
-  }
-
-  .stat-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-5);
   }
 
@@ -2966,10 +2640,6 @@ dialog .actions {
     margin-left: 0;
   }
 
-  .row-detail > td {
-    padding: 0 0 var(--space-6);
-  }
-
   .approval {
     padding: var(--space-8);
     gap: var(--space-6);
@@ -2983,11 +2653,6 @@ dialog .actions {
 
   .card--pad {
     padding: var(--space-8);
-  }
-
-  .chart-bars {
-    height: 110px;
-    gap: var(--space-3);
   }
 
   .code-grid {

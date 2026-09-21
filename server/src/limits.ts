@@ -93,6 +93,45 @@ export const ROLE_NAME_MAX_LENGTH = 64;
 export const AUDIT_BODY_CAP_BYTES = 16 * 1024;
 
 /**
+ * §15/§13 — the most body-less audit rows §13's explorer loads for one window, and what the
+ * window read echoes as its `ceiling` so the page's "showing the newest N of M" notice
+ * carries no second literal of this number. A READ bound, never a bound on the table:
+ * retention above stays the only limit on what the ledger holds, and the JSONL export stays
+ * unbounded — which is why the page points at the export on reaching this rather than
+ * loading more.
+ */
+export const AUDIT_EXPLORER_ROWS = 5_000;
+
+/**
+ * §15/§13 — one window request's worth of those rows: the page fetches page 0, then the
+ * rest up to AUDIT_EXPLORER_ROWS in parallel. Its own knob rather than the ceiling divided
+ * by a fixed count, because the two answer different questions — how much one response may
+ * cost, and how much one window may be.
+ */
+export const AUDIT_EXPLORER_PAGE = 1_000;
+
+/**
+ * §13 — the most filter VALUES one JSONL export link may carry across all of its repeated
+ * keys, a `target` pair counting two because it binds two. The reason is D1's, not a
+ * policy: a prepared statement binds at most 100 parameters, and the export's own statement
+ * already spends some on the namespace, the window pair, `text`'s eight columns, the seek
+ * key and the chunk limit — so this leaves that fixed cost a wide margin under the hundred.
+ * The page's facet rail can tick more values than this (a namespace may hold more tools than
+ * that), which is why the export ROUTE refuses at the boundary with a sentence: the
+ * alternative is a D1 error partway through a download.
+ */
+export const AUDIT_EXPORT_MAX_VALUES = 64;
+
+/**
+ * §15/§13 — how many characters of the STORED args JSON a body-less read returns in place
+ * of the arguments column (`audit.AuditSlimRow.argsHead`). Characters, not bytes: it is a
+ * `substr` in SQL over text the hub itself serialized, and the value is a one-line preview
+ * for a reader, never a body. The rows either side of it are AUDIT_BODY_CAP_BYTES, which
+ * bounds what may be STORED — this bounds only what a listing ships.
+ */
+export const AUDIT_ARGS_HEAD_CHARS = 160;
+
+/**
  * §20.4 — a resource URI's `tool` column, after its query component is dropped and
  * replaced with `audit.REDACTED_QUERY`, is capped at this many UTF-8 bytes — like every
  * other caller-supplied string the hub persists, and unlike AUDIT_BODY_CAP_BYTES: this is

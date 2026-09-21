@@ -9,16 +9,17 @@
 // wrangler.jsonc, and is never deployed. No auth, no bindings, no router dependency — a
 // plain fetch handler is all two GET routes need.
 //
-// The six pages of `/apps/*` and `/agents/*` are NOT here: they are a React SPA now, and
-// their gallery of states is web/src/preview/. This file covers the pages that still
-// render server-side, and nothing else.
+// The six pages of `/apps/*` and `/agents/*` are NOT here, and neither is `/audit` since
+// 2026-09-21 (decision 36): all three families are a React SPA now, and their gallery of
+// states is web/src/preview/. This file covers the pages that still render server-side, and
+// nothing else.
 //
 //   GET /                          — an index linking every page × fixture pair.
 //   GET /preview/<page>/<fixture>  — that page rendered with that fixture's exact props.
 //
 // Each page component already renders its complete document — the chromeless pages
 // (login, device, approval-detail, oauth-consent) draw their own <html>, the shelled pages
-// (settings, approvals, audit) wrap themselves in ./layout's Layout internally — so
+// (settings, approvals) wrap themselves in ./layout's Layout internally — so
 // rendering here is just the component's own JSX stringified. Nothing here re-wraps a page
 // in a second layout.
 
@@ -30,7 +31,6 @@ import { Device } from "../src/pages/device";
 import { SettingsPage } from "../src/pages/settings";
 import { ApprovalsPage } from "../src/pages/approvals";
 import { ApprovalDetail } from "../src/pages/approval-detail";
-import { AuditPage } from "../src/pages/audit";
 import { ConsentPage } from "../src/pages/consent";
 
 /** page key (fixtures.ts / model.ts's PageName) → the component that renders it. */
@@ -40,7 +40,6 @@ const PAGES: Record<PageName, FC<any>> = {
   settings: SettingsPage,
   approvals: ApprovalsPage,
   "approval-detail": ApprovalDetail,
-  audit: AuditPage,
   "oauth-consent": ConsentPage,
 };
 

@@ -3,12 +3,12 @@
 The client libraries do one thing: keep an ordinary MCP server object reachable
 through the hub's reverse tunnel. You write the server with the official MCP SDK;
 `serve()` dials the hub, registers, reconnects forever, and never shows you a
-socket. Python, TypeScript, and Go expose the same options, lifecycle, and
-close-code policy (spec §6, §11).
+socket. Python, TypeScript, Go, and Rust expose the same options, lifecycle,
+and close-code policy (spec §6, §11).
 
 The packages install from this git repo. Their roots are
-[clients/py](../clients/py), [clients/js](../clients/js), and
-[clients/go](../clients/go).
+[clients/py](../clients/py), [clients/js](../clients/js),
+[clients/go](../clients/go), and [clients/rust](../clients/rust).
 
 ## 0. One-time setup
 
@@ -173,7 +173,58 @@ func main() {
 For a hand-rolled SDK session, pass `pmcp.NewHubTransport(...)` to
 `server.Run`.
 
-## 4. Roles
+## 4. Rust
+
+```bash
+cargo add personal-mcp-client --git https://github.com/ahrzb/personal-mcps
+```
+
+Requires Rust ≥ 1.88 and the official `rmcp` SDK. A tools-only RMCP server can
+be handed directly to `serve`:
+
+```rust
+use pmcp::{Options, Role, serve};
+use rmcp::{handler::server::wrapper::Parameters, schemars, tool, tool_router};
+use serde::Deserialize;
+use std::collections::BTreeMap;
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct WeatherInput {
+    city: String,
+}
+
+#[derive(Clone)]
+struct Weather;
+
+#[tool_router(server_handler)]
+impl Weather {
+    #[tool(description = "Current weather for a city")]
+    fn get_weather(&self, Parameters(input): Parameters<WeatherInput>) -> String {
+        format!("sunny in {}", input.city)
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), pmcp::Error> {
+    serve(
+        Weather,
+        Options {
+            roles: BTreeMap::from([(
+                "reader".into(),
+                Role::Tools(vec!["get_*".into()]),
+            )]),
+            ..Options::default()
+        },
+    )
+    .await
+}
+```
+
+`Options::url` and `Options::token` override `PMCP_URL` /
+`PMCP_APP_TOKEN`. Construct `HubTransport` directly for a hand-rolled RMCP
+session.
+
+## 5. Roles
 
 The `roles` declaration maps role names to anchored patterns over tool names
 (`get_*` matches `get_weather`; a bare name matches itself; `*` matches all).
@@ -187,7 +238,7 @@ pmcp call pmcp grant_set \
 
 For managed infrastructure, declare the same grant with `pmcp_grant` in OpenTofu.
 
-## 5. Who is calling?
+## 6. Who is calling?
 
 Inside a tool handler, read the hub-asserted caller off the request's `_meta` —
 consumers cannot forge these fields:
@@ -210,10 +261,17 @@ if !who.HasRole("admin") {
 }
 ```
 
+```rust
+let who = pmcp::caller(&context.meta);
+if !who.has_role("admin") {
+    return Err(rmcp::ErrorData::invalid_request("admin only", None));
+}
+```
+
 On a request that never passed through the hub (local testing), the fields are
 simply absent: empty principal, no roles, no error.
 
-## 6. Secrets in tool schemas
+## 7. Secrets in tool schemas
 
 Mark fields whose values must never land in logs, audit, or approval prompts —
 the hub masks them before anything is persisted or shown:
@@ -244,7 +302,13 @@ schema, err = pmcp.Sensitive(schema, "credentials.token")
 // Pass schema as mcp.Tool.InputSchema or OutputSchema.
 ```
 
-## 7. Connect a consumer
+```rust
+let schema = rmcp::schemars::schema_for!(Login);
+let schema = pmcp::sensitive(&schema, ["credentials.token"])?;
+// Pass the marked schema as the tool's input or output schema.
+```
+
+## 8. Connect a consumer
 
 Issue an agent key (shown once, `pmcp_agt_…`):
 

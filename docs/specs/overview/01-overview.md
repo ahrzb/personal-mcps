@@ -19,7 +19,7 @@ Components:
 | **clients** (py + js) | Libraries an app author uses: write a normal MCP server, hand it to the lib, it maintains the reverse connection. |
 | **cli** (`pmcp`) | Login via device flow, inspect the namespace, invoke MCP and admin tools. |
 | **admin MCP** | The hub's management app named `pmcp`, reached directly at scoped `/mcp/pmcp` or from an authorized §23 program; it is no longer published as prefixed aggregate tools. |
-| **web pages** | Two renderings, one design language (§13): `/apps/*` and `/agents/*` are a React SPA (TanStack Query + Router, shadcn on Base UI) over the cookie-authenticated JSON surface at `/api/hub`; login/device, seven-pane Settings including Execution, approvals, audit and the OAuth consent screen stay server-rendered (Hono JSX). Both front shared operations except the pinned browser/auth/export exceptions. |
+| **web pages** | Two renderings, one design language (§13): `/apps/*`, `/agents/*` and `/audit` *(2026-09-21, decision 36)* are a React SPA (TanStack Query + Router, shadcn on Base UI) over the cookie-authenticated JSON surface at `/api/hub`; login/device, seven-pane Settings including Execution, approvals and the OAuth consent screen stay server-rendered (Hono JSX). Both front shared operations except the pinned browser/auth/export exceptions. |
 
 Non-goals (v1): cross-namespace sharing, persistent execution
 workspaces, package installation, saved programs, and asynchronous execution jobs.

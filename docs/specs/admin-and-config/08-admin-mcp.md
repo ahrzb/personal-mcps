@@ -116,6 +116,36 @@ Tools (names final, shapes reviewed at implementation time):
   the recorded body columns when present (§15) — post-redaction and stub-substituted,
   like everything persisted. Read-only;
   like everything else, `pmcp audit` is sugar over this tool.
+  *(Amended 2026-09-21, decision 36 — four options, each described to the model in the
+  house style. `id?` (a count): one row by id, owner-scoped like every other read, so a row
+  in another namespace is absent exactly as an id that never existed is — §13's record read.
+  `text?`: a case-insensitive substring over `principal`, `event`, `app`, `tool`,
+  `client_session_id`, `detail`, `args_json` and `result_json`, OR-ed across the eight; a
+  `LIKE` with an explicit `ESCAPE` character, and `%`, `_` and the escape character itself
+  escaped in the needle, so a search for `%` matches a literal `%` and not every row. It is
+  a scan of a retention-pruned table and gets **no index**, by decision: the window is seven
+  days (§15), and an index over eight columns would tax every write of the hub to speed up
+  one reader's search box. Blank or whitespace-only is no filter, so an empty box is not a
+  filter matching nothing. `bodies?` (a flag, default true): `false` selects every column
+  **except** the two body ones and adds `argsHead` — the first `AUDIT_ARGS_HEAD_CHARS`
+  characters of the STORED arguments JSON, already masked and possibly an oversize stub's own
+  JSON, absent when the row recorded no arguments — and `hasResult`, which says a result
+  column exists without shipping it. The projection happens in **SQL**, not in the Worker: a
+  reader that lists thousands of rows must never parse a body of up to
+  `AUDIT_BODY_CAP_BYTES` in order to throw it away, which is a memory ceiling in-process
+  tests cannot see (§16). And `outcome?`: a **sixth exact filter** beside the five, a
+  single-valued `text` field like them — "Exact outcome string, e.g. ok or -32001." — the
+  raw recorded value (§5) and never one of §13's five display classes, which fold two codes
+  into `denied` and are the page's own grouping. All six exact filters stay
+  **single-valued** on the op. What is *not* on the op is the module read's own two forms:
+  the **list form** — one value **or a list** per exact filter, a list matching any of its
+  values, an empty list being no filter — and the **pair form**, `targets`, which matches
+  `(app, tool)` pairs rather than the two columns independently, because §13's export selects
+  tools by their app and two independent lists would widen to their cross product. Exactly
+  one caller uses either: the JSONL export, which §13's explorer links with a whole selection
+  in it. Neither is an op capability, so the parity list below is unchanged, and so is the
+  form-fields parity direction — `/audit` renders no form at all. A body-less row is the same
+  row minus two columns, never a second shape with a second meaning.)*
 
 Every tool that takes an app slug rejects both virtual slugs `pmcp` and `hub` uniformly.
 `app_create` additionally refuses static `/apps/` route segments. Mutating tools write
@@ -140,7 +170,14 @@ for the same reason: `/oauth/consent` and every `/api/auth/oauth2/*` endpoint un
 are a browser interaction that mints authority, so they get no tool, while
 `connection_list`/`connection_revoke` cover everything the connections page can do)* —
 and `/audit`'s JSONL export (a streaming serialization of `audit_query` — same
-rows, different framing).
+rows, different framing) *(amended 2026-09-21, decision 36: the export's repeated
+`principal` / `app` / `event` / `tool` / `session` / `outcome` and `target` keys sit inside
+this same exception and do not widen it — they are the module read's list form and its pair
+form, reached only through the serialization that was already excepted, and every one of them
+is expressible to `audit_query` one value, or one `app` + `tool` pair, per call, which is why
+`outcome` is on the op and not only in the module. The explorer itself is not an exception:
+its two reads are that op with `bodies: false` and with `id`, both of which an admin token
+can call)*.
 
 The CLI performs admin operations on scoped `/mcp/pmcp`; there is no aggregate admin
 alias. Its generic `pmcp call pmcp <operation>` form reaches every operation admitted by

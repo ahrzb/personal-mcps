@@ -50,7 +50,6 @@ import { approvalsFromEnv } from "./wiring";
 import { SettingsPage } from "./pages/settings";
 import { ApprovalDetail } from "./pages/approval-detail";
 import { ApprovalsPage } from "./pages/approvals";
-import { AuditPage } from "./pages/audit";
 import { ConsentPage } from "./pages/consent";
 import { Device } from "./pages/device";
 import { Login } from "./pages/login";
@@ -59,9 +58,7 @@ import {
   settingsProps,
   approvalDetailProps,
   approvalsProps,
-  auditFilters,
-  auditProps,
-  auditQueryOf,
+  auditExportQuery,
   consentProps,
   deviceProps,
   enrollmentOf,
@@ -75,6 +72,7 @@ import {
 } from "./pages/model";
 import { ICON_192, ICON_512 } from "./pages/icon";
 import type {
+  AuditExportQuery,
   Notice,
   PageContext,
   PasswordField,
@@ -122,10 +120,10 @@ type PageRouter = unknown;
  * - /settings — TOTP/passkey enrollment and removal, active sessions; requires recent
  *   authentication (§4), and its mutations ride better-auth's own endpoints — the
  *   pinned parity exception: no pmcp tool ever reaches credentials.
- * - /audit — read-only view over audit_query with its exact filters; desktop page
- *   numbers and mobile "Load more" are two presentations of the one { rows, total }
- *   offset/limit contract, and a row's client session id links back here as
- *   ?session=…. "Export JSONL" streams via streamAuditJsonl. No mutations, no CSRF.
+ * - /audit — the SPA shell, gated exactly like /apps and /agents (decision 36); the
+ *   explorer itself reads `/api/hub/audit/window` and `/api/hub/audit/<id>`. What survives
+ *   here is `/audit/export.jsonl`, which streams via streamAuditJsonl and is a download
+ *   rather than a page. No mutations, no CSRF.
  * - /approvals, /approvals/<id> — pending requests and decision history; approve and
  *   reject POST into the approval_decide admin op; the per-browser "Enable
  *   notifications" control POSTs the browser's push subscription to
@@ -484,18 +482,27 @@ export function pageRoutes(): PageRouter {
   );
 
   /* ---------------------------------- /audit ---------------------------------- */
+  //
+  // §13's explorer, as the SPA's third route family (2026-09-21, decision 36). One shell
+  // behind the same session gate as `/apps` and `/agents`, and the export beside it — which
+  // was never the page's: it is a Worker route because a JSONL stream is a download, and it
+  // stays at its own URL because a bookmark must not break.
 
-  app.get(paths.audit, async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    return render(AuditPage(await auditProps(ctx)));
-  });
+  app.get(paths.audit, shell("Audit"));
 
   // The same read, framed as lines instead of a page (§8's pinned parity exception):
   // same filters, same order, and never a capability of its own.
-  app.get(paths.auditExport({}), async (c) => {
+  //
+  // The link is a TRUST BOUNDARY and the only place a refusal can still be a sentence: once
+  // the stream is open, an unusable selection is a D1 error partway through a download.
+  // So the parse refuses here — a malformed `target`, and a selection with more values than
+  // one prepared statement can bind — and nothing is read.
+  app.get(paths.auditExport, async (c) => {
     const session = await requireOwnerSession(c.req.raw);
     const ctx = await context(c.req.raw, session);
-    return streamAuditJsonl(session.user.userId, auditQueryOf(auditFilters(ctx)));
+    const asked = auditExportQuery(ctx);
+    if ("reason" in asked) return new Response(`${asked.reason}\n`, { status: 400, headers: TEXT });
+    return streamAuditJsonl(session.user.userId, asked.query);
   });
 
   /* -------------------------------- /approvals -------------------------------- */
@@ -1252,14 +1259,17 @@ async function context(req: Request, session: OwnerSession): Promise<PageContext
 }
 
 /**
- * The /audit "Export JSONL" response: every audit row matching the page's current
- * filters, one JSON object per line, newest first. A thin Response wrapper over
+ * The /audit "Export JSONL" response: every audit row matching the link's filters, one JSON
+ * object per line, newest first. A thin Response wrapper over
  * audit's streaming export — how the stream is chunked and bounded in memory is
  * audit's owned decision, not repeated here. A serialization of audit_query, not
  * a capability of its own (§8's pinned parity exception); `ownerId` scopes the export
  * to the caller's namespace.
  */
-function streamAuditJsonl(ownerId: string, filters: ReturnType<typeof auditQueryOf>): Response {
+function streamAuditJsonl(
+  ownerId: string,
+  filters: Extract<AuditExportQuery, { query: unknown }>["query"],
+): Response {
   // deps: audit.exportJsonl
   return new Response(exportJsonl(env.DB, ownerId, filters), {
     headers: {
@@ -1460,7 +1470,9 @@ async function render(node: unknown, status = 200): Promise<Response> {
 }
 
 /**
- * The SPA shell document — what `/apps/*` and `/agents/*` answer with (§13, 2026-09-18).
+ * The SPA shell document — what `/apps/*` and `/agents/*` answer with (§13, 2026-09-18), and
+ * `/audit` since decision 36. That third family passes no `exists`: a window, not a row, is
+ * what it addresses, and the record id in `?expand=` is the client's own read to 404.
  *
  * It is a gate and a head, in that order, and the order is the whole point:
  *

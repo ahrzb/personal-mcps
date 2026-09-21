@@ -13,16 +13,18 @@ import { AgentsPage } from "@/features/agents/AgentsPage";
 import { AgentNewPage } from "@/features/agents/AgentNewPage";
 import { AgentDetailPage } from "@/features/agents/AgentDetailPage";
 import { AgentAppPage } from "@/features/agents/AgentAppPage";
+import { AuditPage } from "@/features/audit/AuditPage";
 import { APP_PANES, AGENT_PANES, paths } from "@/lib/paths";
 import type { AppPane, AgentPane } from "@/lib/paths";
 
 /**
- * The two route families this client owns, and nothing else. `/audit`, `/approvals`,
- * `/settings`, `/login`, `/device` and `/oauth/consent` are still server-rendered pages —
- * the router never sees one, and the shell's nav links to them are plain anchors.
+ * The three route families this client owns, and nothing else. `/approvals`, `/settings`,
+ * `/login`, `/device` and `/oauth/consent` are still server-rendered pages — the router never
+ * sees one, and the shell's nav links to them are plain anchors.
  *
- * The two families are all this router owns: adding a third would be adding a page, and a
- * page the Worker does not serve a shell for is unreachable.
+ * The three families are all this router owns: adding a fourth would be adding a page, and a
+ * page the Worker does not serve a shell for is unreachable. `/audit` became the third on
+ * 2026-09-21 (decision 36) when the server-rendered table became the explorer.
  */
 
 /**
@@ -173,6 +175,27 @@ const agentPaneRoute = createRoute({
   component: AgentDetailPage,
 });
 
+/**
+ * `/audit` — the explorer, and the one family that is a single route.
+ *
+ * It has no segments because it has no panes: the three views, the brush, the facets, the open
+ * record and the open session are all SEARCH keys, which is what §13's "one state, in the URL"
+ * means here. A `view=` segment would have been the alternative and is wrong for a concrete
+ * reason: the three views are three readings of one filtered set, so every key but `view` has
+ * to survive switching one, and a path segment would invite a route-level loader per view and
+ * a second read with it.
+ *
+ * Every legacy deep link therefore lands on this route and is read by `derive.selectionOf`:
+ * `?principal=`, `?app=`, `?session=`, `?expand=<id>#event-<id>`, `?since=`/`?until=`,
+ * `?range=`, and the `?limit=` / `?offset=` that are now ignored.
+ */
+const auditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/audit",
+  validateSearch: passThroughSearch,
+  component: AuditPage,
+});
+
 /** The one pane carrying an argument, which is why it is two segments and not in
  *  `AGENT_PANES`. */
 const agentAppRoute = createRoute({
@@ -195,6 +218,7 @@ export const routeTree = rootRoute.addChildren([
   agentPaneRoute,
   agentDetailRoute,
   agentsRoute,
+  auditRoute,
 ]);
 
 /** The router, built once. No lazy routes: the build is one file by configuration (the
@@ -227,4 +251,5 @@ export {
   agentDetailRoute,
   agentPaneRoute,
   agentAppRoute,
+  auditRoute,
 };

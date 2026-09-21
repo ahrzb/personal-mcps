@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit — four directions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --fg:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;--row:#f4f4f5;--sunken:#fafafa;--subtle:#52525b;--dim:#a1a1aa;
+    --warn-fg:#92400e;--warn-bg:#fffbeb;--warn-br:#fde68a;--danger-fg:#b91c1c;--danger-bg:#fef2f2;--danger-br:#fecaca;
+    --ok-fg:#15803d;--ok-bg:#f0fdf4;--ok-br:#bbf7d0;
+    --o-ok:#d4d4d8;--o-approval:#fab219;--o-archived:#8a5a00;--o-denied:#e5484d;--o-error:#7f1d1d;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Geist',system-ui,-apple-system,sans-serif;color:var(--fg);font-size:14px;background:#fff}
+  .page{width:1300px;margin:0 auto;padding:24px 0 64px;display:flex;flex-direction:column;gap:36px}
+  h1{font-size:26px;font-weight:600;margin:0}
+  h2{font-size:16px;font-weight:600;margin:0}
+  .lede{color:var(--muted-fg);font-size:13px;line-height:1.6;margin:8px 0 0;max-width:96ch}
+  .note{font-size:12px;color:var(--muted-fg);line-height:1.6;margin:0}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg);margin:0 0 8px}
+  .mono{font-family:var(--mono)}
+  section{display:flex;flex-direction:column;gap:10px}
+  .shead{display:flex;align-items:baseline;gap:12px}
+  .tag{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+  .answers{margin-left:auto;font-size:12px;color:var(--muted-fg)}
+  .card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);overflow:hidden}
+  .pad{padding:16px}
+  .btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:8px;font-size:12px;font-weight:500;border:1px solid var(--border);background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap}
+  .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:6px;font-size:11px;font-weight:500;background:var(--muted);color:var(--muted-fg)}
+  .chip.ok{background:var(--ok-bg);color:var(--ok-fg);border:1px solid var(--ok-br)}
+  .chip.warn{background:var(--warn-bg);color:var(--warn-fg);border:1px solid var(--warn-br)}
+  .chip.bad{background:var(--danger-bg);color:var(--danger-fg);border:1px solid var(--danger-br)}
+  .sw{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none}
+  .s-ok{background:var(--o-ok)}.s-approval{background:var(--o-approval)}.s-archived{background:var(--o-archived)}.s-denied{background:var(--o-denied)}.s-error{background:var(--o-error)}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg);padding:10px 12px;border-bottom:1px solid var(--border)}
+  td{padding:7px 12px;border-bottom:1px solid var(--row);font-size:13px;vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  .t-mono{font-family:var(--mono);font-size:12px}
+  .t-dim{color:var(--muted-fg)}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+
+  /* shared: facet rail */
+  .rail{width:210px;flex:none;border-right:1px solid var(--border);padding:12px 10px;background:var(--sunken)}
+  .rail h3{font-size:12px;font-weight:600;margin:0 0 2px;padding:0 4px}
+  .fgroup{margin:10px 0 0}
+  .fgroup .eyebrow{margin:0 0 4px;padding:0 4px;font-size:10px}
+  .frow{display:flex;align-items:center;gap:7px;height:24px;padding:0 4px;border-radius:5px;font-size:12px;position:relative}
+  .frow .bar{position:absolute;left:0;top:2px;bottom:2px;background:#ececee;border-radius:4px}
+  .frow span{position:relative}
+  .frow .nm{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .frow .ct{margin-left:auto;color:var(--muted-fg);font-size:11px}
+  .frow.on{background:#e4e4e7;font-weight:600}
+  .split{display:flex;align-items:stretch}
+  .split .body{flex:1;min-width:0}
+
+  /* A: merged rows */
+  .chain{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted-fg)}
+  .chain b{font-weight:500;color:var(--fg)}
+  .arrow{color:var(--dim)}
+  .rowline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+
+  /* B: summary panels */
+  .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .grid2{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px}
+  .stat{display:flex;flex-direction:column;gap:2px}
+  .stat .v{font-size:26px;font-weight:600;letter-spacing:-.01em}
+  .stat .l{font-size:12px;color:var(--muted-fg)}
+  .look{border:1px solid var(--warn-br);background:var(--warn-bg);border-radius:10px;padding:12px 14px}
+  .look ul{margin:6px 0 0;padding-left:18px}
+  .look li{font-size:13px;line-height:1.7}
+  .topn{display:flex;flex-direction:column;gap:3px}
+  .topn .r{display:flex;align-items:center;gap:8px;height:22px;font-size:12px;position:relative}
+  .topn .r .bar{position:absolute;left:0;top:1px;bottom:1px;background:#f0f0f1;border-radius:4px}
+  .topn .r span{position:relative}
+  .topn .r .n{margin-left:auto;color:var(--muted-fg);font-variant-numeric:tabular-nums}
+
+  /* C: sessions */
+  .sess{border-bottom:1px solid var(--row);padding:11px 14px}
+  .sess.open{background:var(--sunken)}
+  .sess .head{display:flex;align-items:center;gap:10px}
+  .sess .who{font-weight:600;font-size:13px}
+  .sess .meta{color:var(--muted-fg);font-size:12px}
+  .sess .counts{margin-left:auto;display:flex;gap:5px}
+  .wf{margin:10px 0 2px 0;display:flex;flex-direction:column;gap:2px}
+  .wf .r{display:flex;align-items:center;gap:10px;font-size:12px;height:22px}
+  .wf .r .t{width:58px;color:var(--muted-fg);font-family:var(--mono);flex:none}
+  .wf .r .lbl{width:210px;flex:none;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wf .track{flex:1;height:14px;position:relative;background:linear-gradient(90deg,#f4f4f5 1px,transparent 1px) 0 0/ 12.5% 100%}
+  .wf .bar{position:absolute;top:2px;height:10px;border-radius:3px;background:var(--o-ok)}
+  .wf .bar.approval{background:var(--o-approval)}.wf .bar.denied{background:var(--o-denied)}.wf .bar.archived{background:var(--o-archived)}.wf .bar.error{background:var(--o-error)}
+  .wf .fold{color:var(--muted-fg);font-style:italic}
+  .wf .r.keep{font-weight:600}
+
+  /* D: lanes + divergence */
+  .lanes{display:flex;flex-direction:column;gap:4px;position:relative}
+  .lane{display:flex;align-items:center;gap:10px}
+  .lane .nm{width:110px;flex:none;font-family:var(--mono);font-size:11px;color:var(--subtle)}
+  .lane .cells{flex:1;display:flex;gap:1px;height:18px}
+  .lane .c{flex:1;border-radius:1px;background:#f4f4f5}
+  .lane .c.ok{background:var(--o-ok)}.lane .c.approval{background:var(--o-approval)}.lane .c.archived{background:var(--o-archived)}.lane .c.denied{background:var(--o-denied)}.lane .c.error{background:var(--o-error)}
+  .brush{position:absolute;top:-4px;bottom:16px;background:rgba(24,24,27,.07);border-left:2px solid #18181b;border-right:2px solid #18181b;border-radius:2px}
+  .axis{display:flex;margin-left:120px;font-size:10px;color:var(--muted-fg);margin-top:2px}
+  .axis span{flex:1}
+  .div .r{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0}
+  .div .k{width:92px;flex:none;color:var(--muted-fg)}
+  .div .v{width:150px;flex:none;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .div .bars{flex:1;display:flex;flex-direction:column;gap:2px}
+  .div .b{height:7px;border-radius:2px;background:#18181b}
+  .div .b.base{background:#d4d4d8}
+  .div .pct{width:96px;flex:none;text-align:right;font-variant-numeric:tabular-nums;color:var(--muted-fg);font-size:11px}
+  .calstrip{display:flex;gap:3px}
+  .calstrip .d{flex:1;height:34px;border-radius:5px;background:#f4f4f5;position:relative;display:flex;align-items:flex-end;justify-content:center;padding-bottom:3px;font-size:10px;color:var(--muted-fg)}
+  .calstrip .d .fill{position:absolute;left:0;right:0;bottom:0;border-radius:5px;background:#e4e4e7}
+  .calstrip .d .bad{position:absolute;left:0;right:0;bottom:0;border-radius:0 0 5px 5px;background:var(--o-denied);opacity:.75}
+  .calstrip .d.sel{outline:2px solid #18181b;outline-offset:1px}
+</style>
+</head>
+<body>
+<div class="page">
+  <div>
+    <h1>Audit — four directions</h1>
+    <p class="lede">Four whole-page alternatives, all drawn over the same fixture week (1,319 events, 1,198 tool calls, 293 refusals). They differ in what the page is <em>for</em>, not in styling: A keeps the log as the page, B makes the page a summary, C makes the session the unit, D makes the page an investigation surface. Each one's research backing is in <span class="mono">docs/superpowers/reports/2026-09-20-audit-visualization-research.md</span>. Nothing here is interactive — states are painted in.</p>
+  </div>
+  <section id="a"></section>
+  <section id="b"></section>
+  <section id="c"></section>
+  <section id="d"></section>
+</div>
+
+<script src="./AuditDirections.data.js"></script>
+<script>
+const D = window.AUDIT;
+const fN = n => n.toLocaleString('en-US');
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const p2 = n => String(n).padStart(2,'0');
+const hm = ms => `${p2(new Date(ms).getUTCHours())}:${p2(new Date(ms).getUTCMinutes())}`;
+const dt = ms => `${MON[new Date(ms).getUTCMonth()]} ${new Date(ms).getUTCDate()} ${hm(ms)}`;
+const dur = ms => ms == null ? '' : ms < 1000 ? `${ms} ms` : `${(ms/1000).toFixed(1)} s`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const cls = o => o === 'ok' ? 'ok' : o === 'error' || o === 'denied' ? 'bad' : 'warn';
+
+function head(tag, title, answers, lede) {
+  return `<div class="shead"><span class="tag">${tag}</span><h2>${title}</h2><span class="answers">${answers}</span></div><p class="note">${lede}</p>`;
+}
+function facets(active) {
+  const grp = (label, rows) => `<div class="fgroup"><p class="eyebrow">${label}</p>${rows.map(([v,n]) => {
+    const max = rows[0][1];
+    return `<div class="frow${active===v?' on':''}"><span class="bar" style="width:${n/max*100}%"></span><span class="nm">${esc(v)}</span><span class="ct">${fN(n)}</span></div>`;
+  }).join('')}</div>`;
+  return `<div class="rail"><h3>Filter</h3><p class="note" style="padding:0 4px">1,319 events · 7 days</p>
+    ${grp('outcome', D.byOutcome)}${grp('principal', D.byPrincipal.slice(0,5))}${grp('app', D.byApp.slice(0,5))}
+    <div class="fgroup"><p class="eyebrow">session</p><p class="note" style="padding:0 4px">63 this week — too many to list. Opened from a row.</p></div></div>`;
+}
+
+/* ---------------- A · the log, with better rows ---------------- */
+function rowsA() {
+  const merged = [
+    { t: Date.parse('2026-08-24T14:29:55Z'), who: 'agent:claude', what: 'home/set_scene', chain: ['approval asked 14:29', 'you approved 13:44', 'ran ok 340 ms'], state: 'approved', n: 3 },
+    { t: Date.parse('2026-08-24T14:32:07Z'), who: 'agent:claude', what: 'news/get_news', chain: ['ok 340 ms'], state: 'ok', n: 1, body: 'topic=semiconductors limit=5' },
+    { t: Date.parse('2026-08-24T14:31:48Z'), who: 'agent:claude', what: 'notion/create_page', chain: ['ok 1.2 s'], state: 'ok', n: 1, body: 'title="Weekly report" · token ‹redacted›' },
+    { t: Date.parse('2026-08-24T14:30:12Z'), who: 'user:ahrzb', what: 'admin.grant_set · notion', chain: ['claude gained editor, lost reader'], state: 'config', n: 1 },
+    { t: Date.parse('2026-08-24T13:58:31Z'), who: 'agent:claude', what: 'home/lights_on', chain: ['refused — app archived'], state: 'archived', n: 1 },
+    { t: Date.parse('2026-08-24T12:59:47Z'), who: 'agent:cron', what: 'news/search_news', chain: ['refused — not permitted'], state: 'denied', n: 48, run: 'every 30 min since Aug 22 11:32' },
+  ];
+  const stateChip = s => s === 'ok' ? '<span class="chip ok">ok</span>' : s === 'config' ? '<span class="chip">config change</span>' : s === 'approved' ? '<span class="chip warn">approved by you</span>' : s === 'archived' ? '<span class="chip warn">archived</span>' : '<span class="chip bad">denied</span>';
+  return `<div class="card"><div class="split">${facets()}<div class="body">
+    <table><thead><tr><th style="width:120px">When</th><th style="width:130px">Who</th><th>What happened</th><th style="width:150px">Outcome</th></tr></thead><tbody>
+    ${merged.map(m => `<tr><td class="t-dim t-mono">${dt(m.t)}</td><td class="t-mono">${m.who}</td>
+      <td><div class="rowline"><span class="t-mono" style="font-weight:600">${esc(m.what)}</span>
+        ${m.n > 1 ? `<span class="chip">${m.n === 48 ? '×48 runs' : m.n + ' events'}</span>` : ''}</div>
+        <div class="chain" style="margin-top:2px">${m.chain.map((c,i)=>`${i?'<span class="arrow">→</span>':''}<b>${esc(c)}</b>`).join(' ')}</div>
+        ${m.body ? `<div class="note t-mono" style="margin-top:2px">${esc(m.body)}</div>` : ''}
+        ${m.run ? `<div class="note" style="margin-top:2px">${esc(m.run)} — <u>open the 48</u></div>` : ''}</td>
+      <td>${stateChip(m.state)}</td></tr>`).join('')}
+    </tbody></table>
+    <div class="pad" style="border-top:1px solid var(--border);display:flex;gap:10px;align-items:center">
+      <span class="note">Row opens a side drawer: metadata · request · response · timing, ids link back into this list.</span>
+      <span class="btn" style="margin-left:auto">Export JSONL</span></div>
+  </div></div></div>`;
+}
+
+/* ---------------- B · summary first ---------------- */
+function panelB() {
+  const topn = rows => `<div class="topn">${rows.map(([v,n]) => `<div class="r"><span class="bar" style="width:${n/rows[0][1]*100}%"></span><span class="t-mono">${esc(v)}</span><span class="n">${fN(n)}</span></div>`).join('')}</div>`;
+  return `<div class="card pad" style="display:flex;flex-direction:column;gap:14px">
+    <div class="grid3">
+      <div class="stat"><span class="v">${fN(D.totals.events)}</span><span class="l">events this week · ${fN(D.totals.calls)} tool calls</span></div>
+      <div class="stat"><span class="v" style="color:var(--danger-fg)">${fN(D.totals.refused)}</span><span class="l">refused — 230 of them one agent, one tool</span></div>
+      <div class="stat"><span class="v">${dur(D.totals.p50)}</span><span class="l">median call · p95 ${dur(D.totals.p95)}</span></div>
+    </div>
+    <div class="look">
+      <p class="eyebrow" style="color:var(--warn-fg);margin:0 0 2px">Worth a look — three rules, no machine learning</p>
+      <ul>
+        <li><b>agent:cron has been refused 230 times</b> calling <span class="mono">news/search_news</span> — every 30 minutes since you revoked it on Aug 22. <u>Grant it back</u> · <u>stop the schedule</u></li>
+        <li><b>github/search_code was called for the first time</b> by agent:claude, and refused 15 times. Never granted.</li>
+        <li><b>Two config changes</b>: notion grants edited, news body logging turned on.</li>
+      </ul>
+    </div>
+    <div class="grid3">
+      <div><p class="eyebrow">Agents</p>${topn(D.byPrincipal.slice(0,4))}</div>
+      <div><p class="eyebrow">Apps</p>${topn(D.byApp.slice(0,4))}</div>
+      <div><p class="eyebrow">Tools</p>${topn(D.byTool.slice(0,4))}</div>
+    </div>
+    <div class="grid2">
+      <div><p class="eyebrow">Refusals, grouped</p>${topn(D.refusals.slice(0,4).map(([k,n])=>[k.replace(' · ',' → '),n]))}</div>
+      <div><p class="eyebrow">Changes you made</p>${D.admin.slice(-4).reverse().map(a=>`<div class="r" style="display:flex;gap:8px;font-size:12px;padding:3px 0"><span class="t-dim t-mono" style="width:74px">${dt(Date.parse(a.ts))}</span><span class="t-mono">${esc(a.event)}</span><span class="t-dim">${esc(a.app??'')}</span></div>`).join('')}</div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;border-top:1px solid var(--border);padding-top:12px">
+      <span class="note">The full log is one click away, not the front page.</span>
+      <span class="btn" style="margin-left:auto">All 1,319 events →</span></div>
+  </div>`;
+}
+
+/* ---------------- C · sessions, not lines ---------------- */
+function panelC() {
+  const s = D.sessions[0];
+  const span = Math.max(1, s.last - s.first);
+  const wfRows = [
+    { t: s.first, lbl: 'news/get_news', o: 'ok', d: 340, x: 2, w: 8 },
+    { fold: '9 more ok calls — news, notion', from: 12, to: 46 },
+    { t: s.first + span*0.55, lbl: 'home/set_scene', o: 'approval', d: null, x: 50, w: 6, keep: 1, note: 'waited 14 min for you' },
+    { t: s.first + span*0.72, lbl: 'home/lights_on', o: 'archived', d: 8, x: 68, w: 4, keep: 1, note: 'app archived 12:02' },
+    { fold: '4 more ok calls', from: 74, to: 88 },
+    { t: s.last, lbl: 'notion/create_page', o: 'ok', d: 1204, x: 90, w: 8 },
+  ];
+  const sessRow = (x, open) => `<div class="sess${open?' open':''}">
+    <div class="head"><span class="sw s-${Object.keys(x.counts).includes('denied')?'denied':Object.keys(x.counts).includes('approval')?'approval':'ok'}"></span>
+      <span class="who">${esc(x.principal)}</span>
+      <span class="meta t-mono">${esc(x.client?.name??'')} ${esc(x.client?.version??'')} · ${esc(x.id)}</span>
+      <span class="meta">${dt(x.first)} → ${hm(x.last)} · ${x.events.length>=14?'14+':x.events.length} events · ${x.apps.join(', ')}</span>
+      <span class="counts">${Object.entries(x.counts).map(([k,n])=>`<span class="chip ${cls(k)}">${k} ${n}</span>`).join('')}</span></div>
+    ${open ? `<div class="wf">${wfRows.map(r => r.fold
+      ? `<div class="r"><span class="t"></span><span class="lbl fold">${esc(r.fold)}</span><span class="track"><span class="bar" style="left:${r.from}%;width:${r.to-r.from}%;background:repeating-linear-gradient(90deg,#e4e4e7 0 6px,transparent 6px 10px)"></span></span></div>`
+      : `<div class="r${r.keep?' keep':''}"><span class="t">${hm(r.t)}</span><span class="lbl">${esc(r.lbl)}</span>
+         <span class="track"><span class="bar ${r.o}" style="left:${r.x}%;width:${r.w}%"></span></span>
+         <span class="meta" style="width:190px;text-align:right">${r.note?esc(r.note):(r.o==='ok'?dur(r.d):r.o)}</span></div>`).join('')}
+      <p class="note" style="margin-top:6px">Runs of <span class="mono">ok</span> fold away; refusals, approvals and config changes stay at full weight.</p></div>` : ''}
+  </div>`;
+  return `<div class="card">
+    <div class="pad" style="display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+      <span style="font-weight:600">63 sessions this week</span>
+      <span class="note">grouped by client session id · newest first</span>
+      <span class="btn" style="margin-left:auto">Events view</span></div>
+    ${sessRow(D.sessions[0], true)}${D.sessions.slice(1,4).map(x=>sessRow(x,false)).join('')}
+    <div class="pad"><span class="note">A session is the unit an agent actually works in — the page answers “what did claude do this afternoon” without a filter.</span></div>
+  </div>`;
+}
+
+/* ---------------- D · investigation surface ---------------- */
+function panelD() {
+  const lane = (name, cells) => `<div class="lane"><span class="nm">${esc(name)}</span><span class="cells">${cells.map(c=>`<span class="c ${c??''}"></span>`).join('')}</span></div>`;
+  const days = Object.entries(D.days).slice(-8);
+  const maxDay = Math.max(...days.map(([,v])=>v.n));
+  const diverge = [
+    ['principal','agent:cron', 96, 17],
+    ['tool','news/search_news', 92, 9],
+    ['outcome','denied', 100, 22],
+    ['client','pmcp-cli 0.9.2', 96, 18],
+    ['app','news', 96, 44],
+  ];
+  return `<div class="card"><div class="pad" style="border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font-weight:600">Aug 18 – Aug 24</span>
+        <span class="note">one row per principal, one cell per hour, coloured by the worst outcome in it</span>
+        <span class="chip" style="margin-left:auto">selection: Tue 06:00 – 18:00 · 214 events</span></div>
+      <div class="lanes">
+        ${lane('agent:claude', D.lanes['agent:claude'])}
+        ${lane('agent:cron', D.lanes['agent:cron'])}
+        ${lane('agent:cursor', D.lanes['agent:cursor'])}
+        ${lane('user:ahrzb', D.lanes['user:ahrzb'])}
+        <div class="brush" style="left:calc(120px + (100% - 120px) * 0.57);width:calc((100% - 120px) * 0.07)"></div>
+      </div>
+      <div class="axis">${['Aug 18','19','20','21','22','23','24'].map(d=>`<span>${d}</span>`).join('')}</div>
+      <div class="calstrip">${days.map(([d,v],i)=>`<div class="d${i===5?' sel':''}"><span class="fill" style="height:${v.n/maxDay*100}%"></span>${v.bad?`<span class="bad" style="height:${v.bad/maxDay*100}%"></span>`:''}<span style="position:relative">${d.slice(8)}</span></div>`).join('')}</div>
+    </div>
+    <div class="split">${facets('denied')}<div class="body">
+      <div class="pad" style="border-bottom:1px solid var(--border)">
+        <p class="eyebrow">What is different about this selection</p>
+        <div class="div">${diverge.map(([k,v,sel,base])=>`<div class="r"><span class="k">${k}</span><span class="v">${esc(v)}</span>
+          <span class="bars"><span class="b" style="width:${sel}%"></span><span class="b base" style="width:${base}%"></span></span>
+          <span class="pct">${sel}% vs ${base}%</span></div>`).join('')}</div>
+        <p class="note" style="margin-top:8px">Every field ranked by how far the selection departs from the rest of the week. Plain counting, no model.</p>
+      </div>
+      <table><thead><tr><th style="width:116px">When</th><th style="width:120px">Principal</th><th>Tool</th><th style="width:120px">Outcome</th></tr></thead><tbody>
+      ${D.recent.filter(e=>e.outcome!=='ok').slice(0,6).map(e=>`<tr><td class="t-dim t-mono">${dt(Date.parse(e.ts))}</td><td class="t-mono">${esc(e.principal)}</td>
+        <td class="t-mono">${esc(e.app??'')}${e.tool?'/'+esc(e.tool):''} <span class="t-dim">${esc(e.detail?.reason??'')}</span></td>
+        <td><span class="chip ${cls(e.outcome)}">${e.outcome}</span></td></tr>`).join('')}
+      </tbody></table>
+    </div></div></div>`;
+}
+
+document.getElementById('a').innerHTML = head('A', 'The log, with better rows', 'what did my agents do · what was refused',
+  'The page you have now, with three changes from the research: related events merge into one row with a state (a call, its approval request and the approval are one line), repeated runs collapse with a count, and the detail opens in a side drawer laid out like a request inspector rather than as pretty-printed JSON. The rail is a faceted filter with exhaustive counts; session id is deliberately not a facet.') + rowsA();
+
+document.getElementById('b').innerHTML = head('B', 'Summary first, log on demand', 'is anything abnormal · what changed',
+  'The page stops being a log and becomes an answer. Top-N panels over a closed dimension set, a “worth a look” block written from three hand-written rules (first-ever call of a tool, first refusal for a principal, error rate above last week), and the changes you made. The full log is one click away. Cheapest thing in the research to build, and it is the shape a weekly digest email would take.') + panelB();
+
+document.getElementById('c').innerHTML = head('C', 'Sessions, not lines', 'what did my agents do · what happened in this session',
+  'The unit becomes the session an agent worked in, not the individual event. Each row is one session with its client, window, apps and outcome counts; opening it draws a waterfall where runs of ok fold away and refusals, approvals and config changes stay at full weight — the salience rule Jaeger’s own users asked for on agent traces. Individual events still exist, one level down.') + panelC();
+
+document.getElementById('d').innerHTML = head('D', 'An investigation surface', 'is anything abnormal · what was refused and why',
+  'Overview first: a lane per principal, an hour per cell, coloured by the worst outcome in that hour, with a brush that filters everything below it — plus a day strip that doubles as the date picker and shows absence. Selecting anything ranks every field by how far the selection departs from the baseline, which is the useful half of Honeycomb’s BubbleUp and is plain counting.') + panelD();
+</script>
+</body>
+</html>

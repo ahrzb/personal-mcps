@@ -12,7 +12,7 @@
 // private to this module: every write goes through record(), every read through query().
 
 import { env } from "cloudflare:workers";
-import { AUDIT_BODY_CAP_BYTES, RETENTION_DAYS } from "./limits";
+import { AUDIT_ARGS_HEAD_CHARS, AUDIT_BODY_CAP_BYTES, RETENTION_DAYS } from "./limits";
 import { tokenPattern } from "./principal";
 import { REDACTED } from "./registry";
 
@@ -150,8 +150,17 @@ export type AuditEntry = {
 
 /** A persisted entry as read back: the entry plus its row id and the hub-stamped
  *  timestamp (Unix epoch ms). The one shape all three read surfaces see — `audit_query`
- *  rows, the /audit page, and each JSONL export line. */
+ *  rows, the /audit record read, and each JSONL export line. */
 export type AuditRow = AuditEntry & { id: number; ts: number };
+
+/**
+ * An audit row without its bodies — what a caller that lists thousands reads (§13's
+ * explorer). `argsHead` is the first AUDIT_ARGS_HEAD_CHARS characters of the STORED args
+ * JSON (already masked, possibly an oversize stub's own JSON), for a one-line preview;
+ * absent when the row recorded no args. `hasResult` says a result column exists without
+ * shipping it.
+ */
+export type AuditSlimRow = Omit<AuditRow, "args" | "result"> & { argsHead?: string; hasResult: boolean };
 
 /**
  * The `owner_id` a hub-wide machine action is recorded under. A SEPARATE decision from the
@@ -169,22 +178,61 @@ export const HUB_NAMESPACE = "hub";
  * Filters for query() and exportJsonl(), mirroring `audit_query` (§8). The
  * namespace is deliberately NOT a filter: every read is scoped by the separate
  * `ownerId` parameter, which callers hold only post-authentication — a filter
- * field could be forgotten; a parameter cannot. All string
- * filters are exact matches; `session` matches the client-declared session id.
+ * field could be forgotten; a parameter cannot. Every filter AND-s with the others.
  * `since`/`until` bound the entry timestamp, inclusive, Unix epoch ms. `limit` defaults
  * to 100, `offset` to 0; both are ignored by exportJsonl (an export is always the
  * complete match).
  */
 export type AuditQuery = {
-  principal?: string;
-  app?: string;
-  event?: string;
-  tool?: string;
-  session?: string;
+  /**
+   * The six exact filters, each taking ONE value or a LIST of them — a list matches any of
+   * its values, an empty list is no filter at all. The list form is this module's own and
+   * has exactly one caller, §13's JSONL export with a whole selection in it: `audit_query`
+   * keeps all six single-valued (§8), so nothing on the tool surface can express a list.
+   * `session` matches the client-declared session id; `outcome` matches the RAW recorded
+   * value (`ok`, `-32001`, …), never one of §13's five display classes, which fold two
+   * codes and are the page's own grouping.
+   */
+  principal?: string | string[];
+  app?: string | string[];
+  event?: string | string[];
+  tool?: string | string[];
+  session?: string | string[];
+  outcome?: string | string[];
+  /**
+   * (app, tool) PAIRS, matching any of them — `(app = ? AND tool = ?) OR …`, AND-ed with
+   * every other filter; an empty list is no filter. The list form's sibling, and module-level
+   * for the same reason (§8): only §13's export needs it, and it is expressible to
+   * `audit_query` one pair per call as `app` plus `tool`.
+   *
+   * It exists because a tool is named BY ITS APP on that page, and the same tool name lives
+   * under several apps. Handing the two sides in as separate lists would ask for the CROSS
+   * PRODUCT — two selected pairs would export four — and an export that silently returns
+   * rows the reader never selected is the one failure a ledger may not have.
+   */
+  targets?: { app: string; tool: string }[];
+  /** One row by its id — the record drawer's read (§13). Owner-scoped like every other, so
+   *  an id in another namespace is absent exactly as an id that never existed is. */
+  id?: number;
+  /**
+   * A case-insensitive substring over `principal`, `event`, `app`, `tool`,
+   * `client_session_id`, `detail`, `args_json` and `result_json`, OR-ed across the eight.
+   * Blank or whitespace-only is NO filter, so an empty search box is not a filter matching
+   * nothing. Unindexed by decision (§8): a seven-day table (§15) is a cheap scan, and an
+   * index over eight columns would tax every write of the hub for one reader's search box.
+   */
+  text?: string;
   since?: number;
   until?: number;
   limit?: number;
   offset?: number;
+  /**
+   * `false` selects every column EXCEPT the two body ones, answering AuditSlimRow instead
+   * (see query()'s overloads). Default true. The projection happens in SQL: a reader that
+   * lists thousands of rows must never parse a body of up to AUDIT_BODY_CAP_BYTES in order
+   * to throw it away, which is a Worker memory ceiling in-process tests cannot see (§16).
+   */
+  bodies?: boolean;
 };
 
 /**
@@ -257,37 +305,74 @@ function cappedBody(body: Record<string, unknown> | undefined, capBytes: number)
 }
 
 /**
- * The single read path over the ledger — `audit_query`, the /audit page, and the JSONL
- * export all sit on it. Returns one page of matching rows, newest first, plus `total`:
- * the count of ALL rows matching the filters regardless of limit/offset (backs the web
- * UI's page numbers and "N events match" line — a COUNT over the retention-pruned
+ * The single read path over the ledger — `audit_query`, §13's two explorer reads and the
+ * JSONL export all sit on it. Returns one page of matching rows, newest first, plus
+ * `total`: the count of ALL rows matching the filters regardless of limit/offset (backs
+ * "N events match" and the explorer's ceiling notice — a COUNT over the retention-pruned
  * table is cheap, §8). Rows carry the body fields when recorded — post-redaction and
- * stub-substituted, the only form ever stored. Read-only; no matches is
- * `{ rows: [], total: 0 }`, never an error.
+ * stub-substituted, the only form ever stored — unless `bodies: false`, which answers
+ * AuditSlimRow: the same rows with the two body columns never selected. Read-only; no
+ * matches is `{ rows: [], total: 0 }`, never an error.
+ *
+ * Overloaded on `bodies` so neither kind of caller casts: a body-less read is a different
+ * ROW TYPE, not the same type with two fields that happen to be missing.
  */
+export function query(
+  db: D1Database,
+  ownerId: string,
+  filters: AuditQuery & { bodies: false },
+): Promise<{ rows: AuditSlimRow[]; total: number }>;
+export function query(
+  db: D1Database,
+  ownerId: string,
+  filters: AuditQuery,
+): Promise<{ rows: AuditRow[]; total: number }>;
 export async function query(
   db: D1Database,
   ownerId: string,
   filters: AuditQuery,
-): Promise<{ rows: AuditRow[]; total: number }> {
+): Promise<{ rows: AuditRow[] | AuditSlimRow[]; total: number }> {
   // deps: D1 `audit`
   const where = whereClause(ownerId, filters);
   const binding = db as D1Like;
+  const slim = filters.bodies === false;
   const page = await binding
     .prepare(
-      `SELECT * FROM audit WHERE ${where.sql}
+      `SELECT ${slim ? SLIM_COLUMNS : "*"} FROM audit WHERE ${where.sql}
         ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`,
     )
-    .bind(...where.values, filters.limit ?? DEFAULT_LIMIT, filters.offset ?? 0)
-    .all<AuditDbRow>();
+    // The head length leads the bindings because it is in the SELECT list, which precedes
+    // the WHERE clause — the one place in this module where a parameter is not a filter.
+    .bind(
+      ...(slim ? [AUDIT_ARGS_HEAD_CHARS] : []),
+      ...where.values,
+      filters.limit ?? DEFAULT_LIMIT,
+      filters.offset ?? 0,
+    )
+    .all<AuditDbRow & AuditSlimDbRow>();
   // The COUNT ignores limit/offset by design (§8): it backs "N events match", which is a
   // fact about the filters, not about the page being looked at.
   const counted = await binding
     .prepare(`SELECT COUNT(*) AS n FROM audit WHERE ${where.sql}`)
     .bind(...where.values)
     .first<{ n: number }>();
-  return { rows: page.results.map(toRow), total: counted?.n ?? 0 };
+  return {
+    rows: slim ? page.results.map(toSlimRow) : page.results.map(toRow),
+    total: counted?.n ?? 0,
+  };
 }
+
+/**
+ * Every column but the two bodies, plus what stands in for them. `args_head` is a `substr`
+ * and `has_result` a comparison, both evaluated by SQLite: the point of a body-less read is
+ * that a body of up to AUDIT_BODY_CAP_BYTES never crosses into the Worker's heap at all, so
+ * a projection that selected `args_json` and dropped it in JavaScript would be this read
+ * with its one reason removed (§16 — no in-process test can see that ceiling).
+ */
+const SLIM_COLUMNS = `id, ts, owner_id, principal, event, app, tool, outcome, duration_ms,
+         client_name, client_version, client_session_id, detail,
+         substr(args_json, 1, ?) AS args_head,
+         (result_json IS NOT NULL) AS has_result`;
 
 /** `limit`'s default, pinned by §8 beside audit_query's own — one number, one owner. */
 const DEFAULT_LIMIT = 100;
@@ -300,17 +385,31 @@ const DEFAULT_LIMIT = 100;
 function whereClause(ownerId: string, filters: AuditQuery): { sql: string; values: unknown[] } {
   const clauses = [`owner_id = ?`];
   const values: unknown[] = [ownerId];
-  const exact: [keyof AuditQuery, string][] = [
-    ["principal", "principal"],
-    ["app", "app"],
-    ["event", "event"],
-    ["tool", "tool"],
-    ["session", "client_session_id"],
-  ];
-  for (const [field, column] of exact) {
-    if (filters[field] === undefined) continue;
-    clauses.push(`${column} = ?`);
-    values.push(filters[field]);
+  for (const [field, column] of EXACT_COLUMNS) {
+    const wanted = filters[field];
+    if (wanted === undefined) continue;
+    // One value and a one-value list are the same clause: `IN (?)` is `= ?`, so the two
+    // spellings cannot answer differently. An EMPTY list is no filter — it is the absence
+    // of a selection, not a selection nothing satisfies (§8).
+    const list = Array.isArray(wanted) ? wanted : [wanted];
+    if (list.length === 0) continue;
+    clauses.push(`${column} IN (${list.map(() => "?").join(", ")})`);
+    values.push(...list);
+  }
+  // The pairs, as pairs: one AND per target, OR-ed. Never two IN lists, which would be the
+  // cross product (see AuditQuery.targets). An empty list is the absent filter, like above.
+  if (filters.targets !== undefined && filters.targets.length > 0) {
+    clauses.push(`(${filters.targets.map(() => `(app = ? AND tool = ?)`).join(" OR ")})`);
+    for (const target of filters.targets) values.push(target.app, target.tool);
+  }
+  if (filters.id !== undefined) {
+    clauses.push(`id = ?`);
+    values.push(filters.id);
+  }
+  const needle = likeNeedle(filters.text);
+  if (needle !== null) {
+    clauses.push(`(${TEXT_COLUMNS.map((column) => `${column} LIKE ? ESCAPE '${LIKE_ESCAPE}'`).join(" OR ")})`);
+    values.push(...TEXT_COLUMNS.map(() => needle));
   }
   if (filters.since !== undefined) {
     clauses.push(`ts >= ?`);
@@ -321,6 +420,48 @@ function whereClause(ownerId: string, filters: AuditQuery): { sql: string; value
     values.push(filters.until);
   }
   return { sql: clauses.join(" AND "), values };
+}
+
+/** The six exact filters and the column each names — the one place a filter name and a
+ *  column name meet, so a rename cannot bind a value to the wrong column. */
+const EXACT_COLUMNS: readonly [keyof AuditQuery, string][] = [
+  ["principal", "principal"],
+  ["app", "app"],
+  ["event", "event"],
+  ["tool", "tool"],
+  ["session", "client_session_id"],
+  ["outcome", "outcome"],
+];
+
+/** The columns `text` searches, OR-ed (§8). The two body columns are in it on purpose: a
+ *  reader hunting a value they remember passing does not know which half of the call held
+ *  it. A NULL column simply never matches, which OR already handles. */
+const TEXT_COLUMNS = [
+  "principal",
+  "event",
+  "app",
+  "tool",
+  "client_session_id",
+  "detail",
+  "args_json",
+  "result_json",
+] as const;
+
+/** The `ESCAPE` character the `text` clauses declare. A backslash rather than SQLite's
+ *  absent default: without an explicit one there is no way to spell a literal `%`, and a
+ *  search for `%` would match every row in the namespace. */
+const LIKE_ESCAPE = "\\";
+
+/**
+ * One `text` filter as a LIKE pattern, or null for "no filter" — blank and whitespace-only
+ * alike (§8: an empty search box is not a filter matching nothing). The needle's own `%`,
+ * `_` and backslash are escaped, the backslash FIRST so the escapes this adds are not
+ * escaped again, which is what makes a search for `%` a search for a literal percent sign.
+ */
+function likeNeedle(text: string | undefined): string | null {
+  if (text === undefined || text.trim() === "") return null;
+  const escaped = text.replace(/[\\%_]/g, (character) => `${LIKE_ESCAPE}${character}`);
+  return `%${escaped}%`;
 }
 
 /** The `audit` row as §5 declares it — the column format this module alone reads. */
@@ -342,12 +483,40 @@ type AuditDbRow = {
   detail: string | null;
 };
 
+/** The body-less projection SLIM_COLUMNS selects: the same columns minus the two bodies,
+ *  plus SQLite's answers for them — a `substr` that is NULL when the column is, and a
+ *  comparison D1 reports as 0 or 1 because SQLite has no boolean of its own. */
+type AuditSlimDbRow = Omit<AuditDbRow, "args_json" | "result_json"> & {
+  args_head: string | null;
+  has_result: number;
+};
+
 /**
  * One stored row as every reader sees it. Absent columns are OMITTED rather than set to
  * null: an AuditEntry's optional fields mean "this event has none", and a reader that has
  * to tell `undefined` from `null` is reading two vocabularies for one absence.
  */
 function toRow(row: AuditDbRow): AuditRow {
+  return {
+    ...common(row),
+    ...(row.args_json === null ? {} : { args: JSON.parse(row.args_json) as Record<string, unknown> }),
+    ...(row.result_json === null ? {} : { result: JSON.parse(row.result_json) as Record<string, unknown> }),
+  };
+}
+
+/** The same row from the body-less projection: `argsHead` absent exactly where the column
+ *  was null, and `hasResult` as the boolean the caller reads rather than SQLite's 0/1. */
+function toSlimRow(row: AuditSlimDbRow): AuditSlimRow {
+  return {
+    ...common(row),
+    ...(row.args_head === null ? {} : { argsHead: row.args_head }),
+    hasResult: row.has_result === 1,
+  };
+}
+
+/** Everything both shapes carry — the whole row but its bodies, so the two readings above
+ *  cannot drift in the twelve columns that have nothing to do with the bodies. */
+function common(row: Omit<AuditDbRow, "args_json" | "result_json">): Omit<AuditRow, "args" | "result"> {
   const client = {
     ...(row.client_name === null ? {} : { name: row.client_name }),
     ...(row.client_version === null ? {} : { version: row.client_version }),
@@ -364,8 +533,6 @@ function toRow(row: AuditDbRow): AuditRow {
     outcome: row.outcome,
     ...(row.duration_ms === null ? {} : { durationMs: row.duration_ms }),
     ...(Object.keys(client).length === 0 ? {} : { client }),
-    ...(row.args_json === null ? {} : { args: JSON.parse(row.args_json) as Record<string, unknown> }),
-    ...(row.result_json === null ? {} : { result: JSON.parse(row.result_json) as Record<string, unknown> }),
     ...(row.detail === null ? {} : { detail: JSON.parse(row.detail) as Record<string, unknown> }),
   };
 }
@@ -382,7 +549,9 @@ function toRow(row: AuditDbRow): AuditRow {
 export function exportJsonl(
   db: D1Database,
   ownerId: string,
-  filters: Omit<AuditQuery, "limit" | "offset">,
+  // `bodies` is out as well as the paging pair: an export is the archive path (§15), so it
+  // ships whole rows — a body-less export would be a serialization of a different read.
+  filters: Omit<AuditQuery, "limit" | "offset" | "bodies">,
 ): ReadableStream<Uint8Array> {
   // deps: D1 `audit` · ReadableStream · TextEncoder
   const encoder = new TextEncoder();

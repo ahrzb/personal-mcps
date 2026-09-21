@@ -368,6 +368,66 @@ describe("§10 · the argv grammar, where a misreading is silent", () => {
     expect(rejected.calls, "a malformed --since must be caught before any request").toBe(0);
   });
 
+  // §10's four 2026-09-21 flags (decision 36) — `audit_query`'s four new options and
+  // nothing more. Two cases: what reaches the wire (and that the hub declares each field
+  // the type the flag sends, read off the contract rather than asserted here), and what
+  // `--no-bodies` PRINTS, which is the only flag that changes a rendering.
+  it("§10 · `pmcp audit --text --id --outcome --no-bodies` reach the wire as audit_query's four new options — `bodies: false` as the boolean the negated flag means, `id` as an integer, `text` and `outcome` as strings — and the flags' absence sends nothing at all (the twin)", async () => {
+    const frames = recordingHub();
+    expect(await main(["audit", "--text", "needle", "--id", "4129", "--outcome", "-32001", "--no-bodies"])).toBe(0);
+    expect(frames.map((frame) => frame.name)).toEqual(["audit_query"]);
+    expect(frames[0].arguments).toEqual({ text: "needle", id: 4129, outcome: "-32001", bodies: false });
+    // What makes each the RIGHT type is the hub's own declaration of the field (§8).
+    expect(declared("audit_query", "text")).toMatchObject({ type: "string" });
+    expect(declared("audit_query", "id")).toMatchObject({ type: "integer" });
+    expect(declared("audit_query", "outcome")).toMatchObject({ type: "string" });
+    expect(declared("audit_query", "bodies")).toMatchObject({ type: "boolean" });
+
+    // The twin: bodies defaults to ON at the hub, so an un-negated run sends no `bodies` key
+    // rather than `true` — a flag nobody typed must not become an argument.
+    const plain = recordingHub();
+    expect(await main(["audit", "--app", "news"])).toBe(0);
+    expect(plain[0].arguments).toEqual({ app: "news" });
+  });
+
+  it("§10 · `--no-bodies` prints the `argsHead` preview where the arguments would be, and says a result exists without shipping it — a body-less page still renders one line per row", async () => {
+    vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+      if (String(url).endsWith("/api/whoami")) {
+        return json({ principal: `user:${NAMESPACE}`, namespace: NAMESPACE });
+      }
+      const message = JSON.parse(init?.body ?? "{}") as { params?: { name?: string } };
+      if (message.params?.name !== "audit_query") return json({ jsonrpc: "2.0", id: 1, result: {} });
+      return json({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+          structuredContent: {
+            rows: [
+              {
+                id: 41287,
+                ts: 0,
+                principal: "agent:claude",
+                event: "tools/call",
+                app: "news",
+                tool: "get_news",
+                outcome: "ok",
+                argsHead: '{"topic":"semiconductors"',
+                hasResult: true,
+              },
+            ],
+            total: 1,
+          },
+        },
+      });
+    });
+    expect(await main(["audit", "--no-bodies"])).toBe(0);
+    const printed = (process.stdout.write as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .map((call) => String(call[0]))
+      .join("");
+    expect(printed).toContain('{"topic":"semiconductors"');
+    expect(printed).toContain("1 of 1 events match");
+  });
+
   it("§10 · a refusal the hub DOES send is reported rather than absorbed, and a refused page is not retried: `audit --export jsonl` is the one command that re-queries, and it stops at the first error", async () => {
     const frames = recordingHub({ code: INVALID_PARAMS, message: '"tool" has the wrong type' });
     expect(await main(["audit", "--tool", "echo", "--export", "jsonl"])).toBe(1);

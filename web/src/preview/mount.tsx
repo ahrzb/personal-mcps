@@ -95,7 +95,7 @@ function mount(target: HTMLElement, name: PreviewName, state: string, seed: Seed
 
   createRoot(target).render(
     <StrictMode>
-      <AppEnvProvider value={{ api: refusingClient(name, state), bootstrap: BOOTSTRAP }}>
+      <AppEnvProvider value={{ api: refusingClient(name, state, seed.hanging ?? [], seed.respond), bootstrap: BOOTSTRAP }}>
         <QueryClientProvider client={client}>
           <TransientProvider value={seed.transient ?? {}}>
             <RouterProvider router={router} />
@@ -137,11 +137,33 @@ const BOOTSTRAP = {
  * An API client that answers nothing. A gallery render is a function of its seed, so a call
  * that escapes it is a seed that is incomplete — and a throw says so, where a stub that
  * resolved `{}` would quietly render an empty screen and be mistaken for a state.
+ *
+ * Two deliberate exceptions, tried in order. `respond` ANSWERS a path late, which is the only
+ * way to show a page that refetches — what a seeded cache structurally cannot do. `hanging`
+ * leaves a path in flight forever, which is the only way to hold a component in its loading
+ * state. Everything else still throws, so an incomplete seed fails loudly.
  */
-function refusingClient(name: string, state: string): ApiClient {
-  const refuse = <T,>(path: string): Promise<T> =>
-    Promise.reject(new Error(`preview ${name}/${state}: unseeded request to ${path}`));
-  return { get: refuse, post: refuse, put: refuse };
+function refusingClient(
+  name: string,
+  state: string,
+  hanging: string[],
+  respond: Seed["respond"],
+): ApiClient {
+  const answer = <T,>(path: string): Promise<T> => {
+    // Every call this client handles, recorded for a browser walk to count. The gallery's reads
+    // never reach the network — `respond` answers them in-page — so `page.on("request")` sees
+    // nothing, and "how many times did that burst of typing read the window?" has no other
+    // answer. Dev-only, like everything in this module.
+    ((globalThis as unknown as { __pmcpReads?: string[] }).__pmcpReads ??= []).push(path);
+    const answered = respond?.(path) ?? null;
+    if (answered !== null) {
+      return new Promise<T>((resolve) => setTimeout(() => resolve(answered.data as T), answered.delayMs));
+    }
+    return hanging.some((prefix) => path.startsWith(prefix))
+      ? new Promise<T>(() => undefined)
+      : Promise.reject(new Error(`preview ${name}/${state}: unseeded request to ${path}`));
+  };
+  return { get: answer, post: answer, put: answer };
 }
 
 /** A seeded failure as the client's own error type, so a pane's `instanceof ApiError` test

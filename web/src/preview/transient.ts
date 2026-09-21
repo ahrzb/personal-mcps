@@ -34,6 +34,26 @@ export type Transient = {
   created?: { slug: string; name: string; token?: string | null };
   /** §13's connecting screen, mid-flow. */
   connecting?: { slug: string; name: string; authorizeUrl: string };
+  /**
+   * What the audit record's **Search this record…** box holds.
+   *
+   * A fifth arm, and it earns one the same way the four above do: it is typed into a box, so no
+   * resource returns it, and it is NOT in the URL — the record search filters what is drawn
+   * inside one open record rather than what the page selected, and putting it in the query
+   * string would make it survive closing the drawer. Without this the gallery cannot show the
+   * one state where a search opens a collapsed subtree.
+   */
+  recordSearch?: string;
+  /**
+   * The ×N run the Events view has UNFOLDED, by its head row's id.
+   *
+   * Which runs are open is reading position — where somebody got to inside one row — so it is
+   * component state rather than URL state, and a seed has no other way to reach it. The board
+   * has to draw a collapsed row's expanded form: "how do I see what is inside" is part of that
+   * row's contract, and the one time it was not drawn the members turned out to be unreachable
+   * (postmortem 2026-09-21).
+   */
+  openRun?: number;
 };
 
 const TransientContext = createContext<Transient>({});

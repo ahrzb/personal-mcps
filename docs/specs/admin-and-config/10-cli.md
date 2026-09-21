@@ -23,6 +23,7 @@ pmcp connections | connection revoke <id>        # connection_list / connection_
 pmcp token issue (--agent <slug> | --app <slug>) [--expires 90d]
 pmcp token list | revoke <id>
 pmcp audit [--agent <slug>] [--app <slug>] [--session <id>] [--since 7d]
+           [--text <s>] [--id <n>] [--outcome <s>] [--no-bodies]   # 2026-09-21, decision 36
 pmcp audit --export jsonl > events.jsonl         # streams the same rows as the web export
 pmcp approvals | approve <id> | reject <id>
 pmcp connect <app>                               # prints the /apps OAuth connect URL (§7)
@@ -35,6 +36,15 @@ pmcp hub settings set --default-timeout-ms <int> --max-timeout-ms <int>
 pmcp app create <slug> ... [--typescript-aliases '<json>']
 pmcp app aliases set <slug> --args '{"service":"...","tools":{...}}'
 ```
+
+*(Amended 2026-09-21, decision 36 — `pmcp audit`'s four new flags are `audit_query`'s four
+new options (§8) and nothing more: `--text <s>` the case-insensitive substring over the row's
+strings and its bodies, `--id <n>` one row by id, `--outcome <s>` the sixth exact filter
+taking a raw recorded outcome (`ok`, `-32001` — never one of §13's display classes), and
+`--no-bodies` the body-less projection, which prints the `argsHead` preview where the
+arguments would be. They add no rows to the command table — one command gains flags — so the
+frozen parity table is untouched, and `--export jsonl` still streams the same rows as the web
+export.)*
 
 **Refs.** `describe` and `get` take one path-style ref whose **first segment names
 the kind of thing** (`app/`, `agent/`, `prompt/`, `resource/`); splitting

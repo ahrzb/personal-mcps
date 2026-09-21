@@ -7,6 +7,11 @@
 - **clients/py**: pytest; the WS↔anyio bridge tested against an in-process websocket
   server; reconnect/backoff logic unit-tested with a fake clock.
 - **clients/js**: vitest; same shape.
+- **clients/go**: `go test`; official SDK dispatch, tunnel contracts, reconnect policy, and
+  caller/schema helpers run against an in-process WebSocket hub.
+- **clients/rust**: `cargo test`; official RMCP discovery and legacy resource subscriptions,
+  tunnel contracts, reconnect policy, and caller/schema helpers run against an in-process
+  WebSocket hub.
 - **cli**: command parsing, profile precedence, output/error contracts, and admin/MCP dispatch.
 - **pattern matching**: regression tests pinned by §7 — `foo|bar` must NOT match
   `foox` (naive `^foo|bar$` parses as `(^foo)|(bar$)` and matches it via the `^foo`
@@ -35,6 +40,62 @@
   `_meta` key under `hub/` (e.g. a forged `hub/roles`) is stripped before forwarding
   while non-reserved keys like `progressToken` survive; `X-Pmcp-*` headers present
   only with `forward_identity: true` and absent by default.
+- **the audit explorer** (§13, decision 36) — **written before the implementation it pins**.
+  Worker rows: `audit_query`'s additions, each on its own (`id`, owner-scoped, so
+  another namespace's id is absent and not a row; `text`, over every string column and both
+  body columns, with the `LIKE` escaping proved by a needle of `%` matching only a literal
+  `%`; `bodies: false`, whose rows carry `argsHead` and `hasResult` and **never** `args` or
+  `result`; `outcome` as a sixth exact filter **on the op**, taking a raw recorded value; and
+  the module read's list form of those six, an empty list being no filter); the
+  two new `/api/hub` reads (401 without a session, the `404` for an id outside the namespace,
+  an `offset` past `AUDIT_EXPLORER_ROWS` answering an empty page, an offset **not** aligned to
+  `AUDIT_EXPLORER_PAGE` never reading past the ceiling either, the echoed window); the
+  export's repeated keys, `outcome=` among them in raw codes, plus the three rules review
+  added — two `target=` pairs export **neither** cross-product row, a malformed `target` is a
+  `400` rather than an ignored filter, and a selection past `AUDIT_EXPORT_MAX_VALUES` is a
+  `400` **before any read**, beside its allow-twin one value under the bound; the window rule
+  (a `range` or a `since`/`until` pair narrows; no window at all exports the whole ledger, not
+  a 24-hour default); `detail.approvalId` on **both**
+  call rows — the one refused `-32003` and the one dispatched after a claim, the latter
+  merged with a `failureClass` when the dispatch then failed; and the SPA shell on
+  `GET /audit` behind the session gate, `no-store`. Pure rows:
+  `server/test/unit/audit-derive.test.ts` over the page's one pure module — outcome classes
+  with their **labels and sentences verbatim**, the `Cause: <failureClass>.` suffix on a
+  `-32000` that carries one, an outcome the table does not know falling back to its raw
+  value with no sentence, and **what the record's outcome row prints for a given outcome** —
+  no word twice, so `ok` is the chip alone, `error` the chip over its sentence, a refusal
+  chip · label · code;
+  titles (`<app>/<tool>` for the three call events alone, the event name for everything else,
+  so an `approval.*` row naming an app and a tool never reads as a call, **and the chain-row
+  exception** — a chain titled by its call while the record it opens keeps the head row's
+  title), facet counts
+  excluding their own group, the chain merge and its **(ts, id)** order (`approval.requested`
+  heads the chain although the refused call may share its millisecond), a chain's **when**
+  being its newest event's `ts` while its head still titles it — and, over the fixture week,
+  the merged list's `when` never increasing — ×N runs **keyed on
+  seven fields incl. `argsHead`** (so five calls with five different queries stay five rows)
+  and that a chain never joins one, the waterfall fold threshold, the three insight rules — including
+  that the first-seen one is **absent** on a partial load (over the ceiling, or a search text
+  active) and that the changes one's "show me" carries **every** distinct change event it
+  counted — the export href (class → raw codes, the tool pair as `target=`, repeated keys,
+  `q` → `text`), the JSON tree's open paths for a tree and a query (the first two levels, plus
+  every ancestor of a match) and its match finding, and the
+  lanes' worst-outcome and not-loaded cells. The
+  two `/audit` `describe`s in `server/test/worker/web-pages.test.ts` go with the page they
+  pinned; what they pinned that still holds — the three no-bodies sentences and the stub
+  size spellings — moves to that unit file rather than being dropped. The preview gallery
+  gains an `audit` fixture set, one seed per page state §13 names plus the views, a session
+  opened, the record in each of its no-bodies and stub shapes, a chain record, a
+  `recordSearch` seed (a query with its ancestors opened, and one with no match),
+  `eventsRunOpen` (a run expanded on its members), `searchLive` — a read that **answers
+  late** rather than a seeded cache, because a seed that is permanently fresh cannot express a
+  refetch and that is exactly the gap the 2026-09-21 postmortem names — and one
+  long-data seed; the visual gate is the gallery beside the boards at both widths. One
+  **dev-only browser walk** joins `visual-compare.mts` and `drawer-check.mts`,
+  `web/scripts/audit-search-check.mts`: it types with pauses longer than the debounce and
+  asserts that the input is the **same node**, still focused, its value intact, and that no
+  skeleton was ever attached — the one thing no fixture and no pure test can see, since the
+  actor is the network.
 - **upstream oauth**: fake AS in-test — expired access token triggers refresh before
   forwarding; failed refresh surfaces needs-reconnect and calls fail `-32000`; a
   callback carrying a valid code but a missing, consumed, expired, or other-session

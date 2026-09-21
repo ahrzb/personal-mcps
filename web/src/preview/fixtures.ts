@@ -1,6 +1,7 @@
 import { appNewSeeds, appsSeeds } from "./fixtures/apps";
 import { appDetailSeeds } from "./fixtures/app-detail";
 import { agentDetailSeeds, agentNewSeeds, agentsSeeds } from "./fixtures/agents";
+import { auditSeeds } from "./fixtures/audit";
 import type { PreviewSeeds } from "./seed";
 
 /**
@@ -21,4 +22,5 @@ export const seeds: PreviewSeeds = {
   agents: agentsSeeds,
   "agent-detail": agentDetailSeeds,
   "agent-new": agentNewSeeds,
+  audit: auditSeeds,
 };

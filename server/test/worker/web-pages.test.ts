@@ -2,10 +2,16 @@
 // business logic, so this suite deliberately pins only what is TRUE OF THE PAGES and false
 // nowhere else: the CSRF gate (with the ops handler provably not run — a 403 that still
 // mutated is the failure this file exists to catch), cookie-session-only access with
-// `/approvals/<id>` owner-only, the one paging contract behind two presentations
-// (`{ rows, total }`) with the JSONL export's line count equal to `total`, parity
+// `/approvals/<id>` owner-only, the JSONL export's line count equal to `audit_query`'s
+// `total`, parity
 // DIRECTION B: every mutating form's fields are exactly the fronted op's schema keys — and
 // §4's recent-auth gate on /settings's credential MUTATIONS, not merely on its read.
+//
+// SINCE 2026-09-21 (decision 36) `/audit` is a THIRD SPA family, so the four describes that
+// walked its table, its filter row, its expanded row and its scan ceiling are gone with the
+// page they pinned — the same trade the eleven `/apps`/`/agents` describes made below. What
+// stands in their place is the boundary: the shell on `/audit`, the two `/api/hub` audit
+// reads, and the export route (which was never the page's and keeps its own describe).
 //
 // SINCE 2026-09-18, "the pages" means TWO surfaces and this file describes both.
 // `/apps/*` and `/agents/*` are a browser SPA: they answer one shell document with a
@@ -71,7 +77,15 @@ import {
 import type { TokenInfo } from "../../src/identity";
 import worker from "../../src/index";
 import type { Env } from "../../src/index";
-import { HUB_HARD_MAX_TIMEOUT_MS, HUB_MIN_TIMEOUT_MS } from "../../src/limits";
+import {
+  AUDIT_ARGS_HEAD_CHARS,
+  AUDIT_EXPLORER_PAGE,
+  AUDIT_EXPLORER_ROWS,
+  AUDIT_EXPORT_MAX_VALUES,
+  HUB_HARD_MAX_TIMEOUT_MS,
+  HUB_MIN_TIMEOUT_MS,
+  RETENTION_DAYS,
+} from "../../src/limits";
 import { generatedAlias } from "../../src/hub-types";
 import { paths, SETTINGS_CONFIRM_PANE } from "../../src/pages/model";
 import type { ConnectionRow, SettingsConfirm } from "../../src/pages/model";
@@ -171,7 +185,7 @@ const ORIGIN = (env as unknown as Env).PUBLIC_ORIGIN;
 /** The RFC 8628 client id the CLI presents — the same string /device sees. */
 const DEVICE_CLIENT_ID = "pmcp-cli";
 
-/** How many audit rows the paging and export cases are written against. */
+/** How many audit rows the window, record and export cases are written against. */
 const SEEDED_EVENTS = 9;
 
 /** The tool name every seeded audit row carries a numbered variant of, so a row is
@@ -281,9 +295,9 @@ async function openApproval(ns: SeededNamespace, slug: string): Promise<string> 
 }
 
 /**
- * The audit rows every paging and export case reads. Written through `audit.record` —
- * the one write path — so what the page pages over is what the hub actually stores,
- * bodies and stubs included (§15).
+ * The audit rows every audit case reads. Written through `audit.record` —
+ * the one write path — so what the two reads and the export answer with is what the hub
+ * actually stores, bodies and stubs included (§15).
  */
 async function seedAuditRows(ownerId: string): Promise<void> {
   for (let at = 0; at < SEEDED_EVENTS; at++) {
@@ -940,19 +954,12 @@ describe("§13 · CSRF on every mutating POST", () => {
     });
   });
 
-  it("5. §13 · /audit renders no mutating form and needs no token (no mutations, no CSRF surface)", async () => {
+  it("5. §13 · /audit renders no mutating form at all — the shell it answers with since decision 36 carries no form and no `name=\"csrf\"` field, so \"no mutations, no CSRF surface\" holds by construction rather than by inspection", async () => {
     const html = await page(paths.audit);
-    // Nothing on this page fronts a tool, and the one POST form it carries is the signed-in
-    // shell's Sign out — better-auth's endpoint, present on every shelled page and owned by
-    // §4 rather than by /audit.
-    for (const form of formsRenderedOn(html)) {
-      expect(Object.prototype.hasOwnProperty.call(ops, form.op), `/audit fronts "${form.op}"`).toBe(false);
-      expect(BETTER_AUTH_ACTIONS.has(form.op), `/audit posts to "${form.op}"`).toBe(true);
-    }
-    // No token is rendered at all, because the props carry none: /audit mutates nothing.
+    // The shell document renders NO form — not even Sign out, which lives in the client's
+    // own chrome — so the walk is total over an empty set and the field cannot be there.
+    expect(formsRenderedOn(html)).toEqual([]);
     expect(html).not.toContain('name="csrf"');
-    // Its own controls are all GETs — the filter form included, which is why it needs none.
-    expect(html).toContain('method="get"');
   });
 
   it("5b. §13 · the one surviving mutating POST under /apps — `/apps/connect`, whose 303 goes to a third-party authorize URL and so cannot be a fetch — is refused 403 without the CSRF field, and the connect it would have started never happened: no upstream_oauth_state row was written (the twin: the same post WITH the field starts one)", async () => {
@@ -1408,173 +1415,35 @@ describe("§4/§13 · cookie sessions are the only page credential", () => {
   });
 });
 
-describe("§8/§13 · one paging contract, two presentations", () => {
-  it("10. §8 · the page's \"N events match\" line is audit.query's `total`, not the rendered row count — they differ whenever a page is not the last one", async () => {
-    const filters = { event: "tools/call", app: "news" };
-    const first = await page(auditPath({ ...filters, limit: 3, offset: 0 }));
-    const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
-    expect(matchedLine(first)).toBe(truth.total);
-    // …and the two numbers really do differ on this page, which is what makes the
-    // assertion above worth making.
-    expect(renderedTools(first).length).toBe(3);
-    expect(truth.total).toBeGreaterThan(3);
-  });
-
-  it("11. §13 · desktop page numbers and mobile \"Load more\" walk the same offset/limit contract to the same final row set", async () => {
-    const filters = { event: "tools/call", app: "news", limit: 4 };
-    // Desktop: follow the pager's own next-page links until it stops offering one.
-    const desktop: string[] = [];
-    let path = auditPath({ ...filters, offset: 0 });
-    for (;;) {
-      const html = await page(path);
-      desktop.push(...renderedTools(html));
-      const next = nextPageLink(html);
-      if (next === null) break;
-      path = next;
-    }
-    // Mobile: follow "Load more", which widens the limit against the same offset.
-    let mobile: string[] = [];
-    let mobilePath = auditPath({ ...filters, offset: 0 });
-    for (;;) {
-      const html = await page(mobilePath);
-      mobile = renderedTools(html);
-      const more = loadMoreLink(html);
-      if (more === null) break;
-      mobilePath = more;
-    }
-    expect(mobile.length).toBeGreaterThan(filters.limit);
-    expect(new Set(mobile)).toEqual(new Set(desktop));
-    expect(mobile).toEqual(desktop);
-  });
-
-  it("12. §13 · Export JSONL emits exactly `total` lines for the current filters", async () => {
-    const filters = { event: "tools/call", app: "news" };
-    const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
-    const lines = await exportLines({ ...filters, limit: 3, offset: 0 });
-    // The page's limit/offset are the PAGE's, never the export's (§8).
-    expect(lines.length).toBe(truth.total);
-  });
-
-  it("13. §13 · the export applies the page's filters verbatim — a filtered export is a strict subset of the unfiltered one over the same seed", async () => {
-    const all = await exportLines({});
-    const filtered = await exportLines({ session: SHARED_SESSION });
-    const idsOf = (lines: AuditRow[]) => new Set(lines.map((row) => row.id));
-    const everything = idsOf(all);
-    expect(filtered.length).toBeGreaterThan(0);
-    expect(filtered.length).toBeLessThan(all.length);
-    for (const row of filtered) expect(everything.has(row.id)).toBe(true);
-    for (const row of filtered) expect(row.client?.sessionId).toBe(SHARED_SESSION);
-  });
-
-  it("14. §15 · an exported row carries its recorded bodies post-redaction, with stubs rendered as typed placeholders · never the bytes a blob stub stands for", async () => {
-    const [row] = await exportLines({ tool: `${TOOL_PREFIX}1` });
-    expect(row.args).toEqual({ q: "term", token: "‹redacted›" });
-    // The stub is what was stored, and it is all that leaves: a type and a size.
-    expect(row.result).toEqual({ content: [{ stub: "blob", contentType: "image/png", bytes: 4_200_000 }] });
-    // The same row on the page, expanded: a typed size placeholder, never bytes.
-    const expanded = await page(auditPath({ tool: `${TOOL_PREFIX}1`, expand: row.id }));
-    expect(expanded).toContain("‹blob image/png");
-    expect(expanded).toContain("‹redacted›");
-  });
-
-  it("15. §13 · a row's client session id links back to this same view as ?session=… and that link returns exactly the rows sharing the session", async () => {
-    const [row] = await exportLines({ tool: `${TOOL_PREFIX}0` });
-    // Expanded from the UNFILTERED view, because the link carries the page's other filters
-    // forward: what is being pinned is that the session narrows the view, not that a tool
-    // filter survives it.
-    const expanded = await page(auditPath({ expand: row.id }));
-    const link = sessionLink(expanded);
-    expect(link, "the expanded row rendered no session link").not.toBeNull();
-    expect(new URL(link ?? "", ORIGIN).searchParams.get("session")).toBe(SHARED_SESSION);
-    const shared = await page(link ?? "");
-    const truth = await query(env.DB, world.ns.owner.userId, { session: SHARED_SESSION });
-    expect(matchedLine(shared)).toBe(truth.total);
-    expect(new Set(renderedTools(shared))).toEqual(
-      new Set(truth.rows.map((event) => event.tool).filter((tool): tool is string => tool !== undefined)),
-    );
-  });
-
-  it("16. §13 · a row's chevron is a link to this same view with ?expand=<id> carrying the page's filters — exactly the rows with something to show draw one, so a bodiless auth row draws none — and the open row's own chevron links back without expand (G1)", async () => {
-    const filters = { limit: 50, offset: 0 };
-    const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
-    const showable = (row: AuditRow) => Boolean(row.client || row.detail || row.args || row.result);
-    // The twin needs a subject: the world's device approval is a fact about a credential
-    // and carries no bodies (§15), so it is a row with nothing to expand.
-    expect(truth.rows.filter((row) => !showable(row)).map((row) => row.event)).toContain("auth.device_approved");
-
-    // A row draws its chevron twice — the wide row and the compact cell, one per
-    // breakpoint (CSS hides the other) — so every count below is per width.
-    const closed = expandLinks(await page(auditPath(filters)));
-    expect(closed.every((link) => link.label === "Show detail")).toBe(true);
-    const ids = closed.map((link) => Number(link.query.get("expand")));
-    expect(new Set(ids)).toEqual(new Set(truth.rows.filter(showable).map((row) => row.id)));
-    expect(ids.length).toBe(new Set(ids).size * 2);
-    for (const link of closed) expect(link.query.get("limit"), "the page's filters ride along").toBe("50");
-
-    // Follow one: that row is open, its own chevron links back without expand (filters
-    // kept), and every other chevron still opens its own row.
-    const [first] = closed;
-    expect(first).toBeDefined();
-    const open = expandLinks(await page(first?.href ?? ""));
-    const back = open.filter((link) => link.label === "Hide detail");
-    expect(back.length).toBe(2);
-    for (const link of back) {
-      expect(link.query.get("expand")).toBeNull();
-      expect(link.query.get("limit")).toBe("50");
-    }
-    expect(open.filter((link) => link.label === "Show detail").length).toBe(closed.length - 2);
-  });
-
-  it("17. §13 · every expandable row's detail is already in the page, hidden unless it is the addressed row (whose summary row is row-open), so the toggle script opens it in place with no reload and keeps ?expand=<id> in the address — a row with nothing to show renders no detail row, and the script rides the page (the twin: scripting off leaves the addressed row the only open one)", async () => {
-    const filters = { limit: 50, offset: 0 };
-    const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
-    const showable = (row: AuditRow) => Boolean(row.client || row.detail || row.args || row.result);
-    // The detail row as rendered; group 1 is present exactly when the row is hidden.
-    const detailRow = (html: string, id: number) => new RegExp(`<tr class="row-detail" id="detail-${id}"( hidden[^>]*)?>`).exec(html);
-
-    const closed = await page(auditPath(filters));
-    expect(closed, "the toggle script rides the page").toContain('closest("a.row-toggle")');
-    expect(closed).not.toContain('class="row-open"');
-    for (const row of truth.rows) {
-      const found = detailRow(closed, row.id);
-      if (!showable(row)) {
-        expect(found, `bodiless row ${row.id} rendered a detail row`).toBeNull();
-        continue;
-      }
-      expect(found, `row ${row.id} has no detail row in the page`).not.toBeNull();
-      expect(found?.[1], `row ${row.id} is open on a page that addresses none`).toBeDefined();
-    }
-
-    const [addressed] = truth.rows.filter(showable);
-    expect(addressed).toBeDefined();
-    const open = await page(auditPath({ ...filters, expand: addressed?.id ?? 0 }));
-    expect(open.match(/class="row-open"/g)?.length, "exactly one summary row is open").toBe(1);
-    for (const row of truth.rows.filter(showable)) {
-      const found = detailRow(open, row.id);
-      expect(found, `row ${row.id} lost its detail row`).not.toBeNull();
-      if (row.id === addressed?.id) expect(found?.[1], "the addressed row is hidden").toBeUndefined();
-      else expect(found?.[1], `row ${row.id} is open beside the addressed one`).toBeDefined();
-    }
-  });
-
-  // Row 18 moved to its own describe below (§13/§22 · past the scan ceiling): it needs a
-  // window of 1,001 rows, and seeding that many inline here would move the counts every
-  // other row in this describe reads off `query(env.DB, …)`. Title kept byte-identical.
-});
-
-describe("§13/§15 · /audit's expanded row — the bodies, the stubs, and the sentence for their absence", () => {
-  // Six rows of this describe's own, written through `audit.record` like every other row
-  // in the file, each under a tool name nothing else uses so `?tool=` addresses exactly
-  // one. The seeded world supplies both twins: `walk-tool-1` carries bodies and a blob
-  // stub, `walk-tool-0` is a refusal that carries them too.
+describe("§13 · /audit — the explorer's shell, its two reads, and the export beneath them", () => {
+  // The page the four describes here used to walk is gone (decision 36): `/audit` is the
+  // SPA's third route family, so what this file owns about it is the BOUNDARY — the shell
+  // document and its gate, the two JSON reads the client makes, and the export route that
+  // was always a Worker route and stays one. What the deleted describes proved about
+  // RENDERING (the three no-bodies sentences, the stub spellings, the merge, the facets) is
+  // `server/test/unit/audit-derive.test.ts`'s and the gallery's now.
   //
-  // The two apps are the seeded world's own, and which sentence a row gets is §15's
-  // default for the app's KIND: `notion` is proxied (log_bodies off), `news` tunneled
-  // (on). Both defaults are read back off `app_list` inside the cases rather than
-  // assumed, because "the app's setting" is the whole subject here.
-  const OFF_APP = "notion";
-  const ON_APP = "news";
-  const CLIENT = { name: "walker", version: "1.0", sessionId: "sess-off" };
+  // Two rows of the deleted paging describe survive in spirit and are kept below, because
+  // their subject is the export rather than the page: the line count equals `total`, and an
+  // exported row carries its stubs and never the bytes they stand for.
+
+  /** A dispatched call row with NO bodies, on the seeded proxied app whose §15 default is
+   *  bodies-off — the window read's `noBodies` needs a subject, and the world's own nine
+   *  rows all carry bodies. */
+  const BODILESS_TOOL = "window-bodiless-tool";
+
+  /**
+   * The four rows that make a cross product observable: the same two tool names under both
+   * seeded apps. An export of two (app, tool) PAIRS must return two of these four — a split
+   * into `app IN (…) AND tool IN (…)` returns all four and the owner never sees that it
+   * widened.
+   */
+  const CROSS_TOOLS = ["cross-a", "cross-b"] as const;
+  const CROSS_APPS = ["news", "notion"] as const;
+
+  /** A `tool` column holding a resource URI (§20.4) — the reason a pair travels as its own
+   *  key split at the FIRST slash rather than as two keys or one slash-joined `tool=`. */
+  const URI_TOOL = "news://articles/1";
 
   beforeAll(async () => {
     const call = {
@@ -1582,384 +1451,262 @@ describe("§13/§15 · /audit's expanded row — the bodies, the stubs, and the 
       principal: "agent:agent",
       event: "tools/call",
       outcome: "ok",
-      durationMs: 12,
+      durationMs: 7,
+      client: { name: "walker", version: "1.0", sessionId: SHARED_SESSION },
     };
-    await record(env.DB, { ...call, app: OFF_APP, tool: "off-tool", client: CLIENT });
-    // The same row without a client: the sentence is then the whole panel, which is what
-    // makes "expandable for that sentence alone" a claim about the row being expandable
-    // at all rather than about the client line it usually sits beside.
-    await record(env.DB, { ...call, app: OFF_APP, tool: "off-only-tool" });
-    // A refusal on the app whose logging is OFF — the refusal is the reason whatever the
-    // app's setting, which is only checkable when the two answers differ.
-    await record(env.DB, { ...call, app: OFF_APP, tool: "refused-tool", outcome: "-32001", client: CLIENT });
-    await record(env.DB, { ...call, app: ON_APP, tool: "unrecorded-tool", client: CLIENT });
-    // An app that is gone: no `app_list` row at all, so there is no setting to read.
-    await record(env.DB, { ...call, app: "vanished", tool: "vanished-tool", client: CLIENT });
-    // Over the 16 KiB cap, so what is STORED is one oversize stub — the page never sees
-    // the string of x's, because the hub never kept it (§15).
-    await record(env.DB, { ...call, app: ON_APP, tool: "oversize-tool", client: CLIENT, args: { blob: "x".repeat(20_000) } });
+    await record(env.DB, { ...call, app: "notion", tool: BODILESS_TOOL });
+    for (const app of CROSS_APPS) {
+      for (const tool of CROSS_TOOLS) await record(env.DB, { ...call, app, tool });
+    }
+    await record(env.DB, { ...call, app: "news", event: "resources/read", tool: URI_TOOL });
   });
 
-  /** The rendered text of ONE row's detail panel, read from the open row only: every
-   *  expandable row's detail rides the page, and the open one is the one without `hidden`
-   *  (the same shape `sessionLink` reads). */
-  function detailText(html: string, id: number): string {
-    const open = new RegExp(`<tr class="row-detail" id="detail-${id}">([\\s\\S]*?)</tr>`).exec(html);
-    expect(open, `row ${id} is not the open row on this page`).not.toBeNull();
-    return textOf(open?.[1] ?? "");
+  /** One window read, as the client makes it: the session cookie and nothing else. */
+  async function windowRead(search = ""): Promise<Record<string, unknown>> {
+    const answered = await hub("GET", `/api/hub/audit/window${search}`);
+    expect(answered.status, `GET /api/hub/audit/window${search}`).toBe(200);
+    expect(answered.headers.get("Cache-Control")).toBe("no-store");
+    return jsonOf(answered);
   }
 
-  /** One row by the tool name it was recorded under — the id is the ledger's, never a
-   *  guess, so `?expand=` addresses the row this case is about. */
-  async function rowOf(tool: string): Promise<AuditRow> {
-    const lines = await exportLines({ tool });
-    expect(lines.length, `no ledger row for tool "${tool}"`).toBe(1);
-    return lines[0] as AuditRow;
+  /** The window's rows as the slim shape they are — the client's own type, checked here
+   *  only for the fields this file asserts on. */
+  function windowRows(body: Record<string, unknown>): Record<string, unknown>[] {
+    return body.rows as Record<string, unknown>[];
   }
 
-  /** §15's `log_bodies` as the hub reports it, through the same read the loader makes. */
-  async function logBodiesOf(slug: string): Promise<boolean | undefined> {
-    const { apps } = (await ops.app_list.handler(world.ns.owner.userId, {})) as {
-      apps: { slug: string; logBodies: boolean }[];
-    };
-    return apps.find((app) => app.slug === slug)?.logBodies;
-  }
+  it("§13 · GET /audit answers the SPA shell exactly as /apps and /agents do — 200, `no-store`, this session's `#pmcp-bootstrap` island and the `/app.js` tag — and the session gate still runs before the document: no cookie is the 302 to /login carrying /audit as next=", async () => {
+    const answered = await get(paths.audit);
+    expect(answered.status).toBe(200);
+    expect(answered.headers.get("Cache-Control")).toBe("no-store");
+    const html = await answered.text();
+    expect(html).toContain('id="pmcp-bootstrap"');
+    expect(html).toContain('src="/app.js"');
+    // The same session token every other shell carries: it is the session's, not the route's.
+    expect(bootstrapCsrfOf(html)).toBe(bootstrapCsrfOf(await page(paths.apps)));
 
-  it("a dispatched tools/call row with no bodies on an app whose body logging is off opens to \"Call bodies aren't recorded for this app (body logging is off).\" beside its client line — expandable for that sentence alone · a row with recorded bodies shows them and never that sentence (the twin)", async () => {
-    expect(await logBodiesOf(OFF_APP), "the proxied app's §15 default is off").toBe(false);
-    const row = await rowOf("off-tool");
-    expect(row.args, "the row under test recorded an args body").toBeUndefined();
-    expect(row.result, "the row under test recorded a result body").toBeUndefined();
-
-    const detail = detailText(await page(auditPath({ tool: "off-tool", expand: row.id })), row.id);
-    expect(detail).toContain("Call bodies aren't recorded for this app (body logging is off).");
-    expect(detail, "the sentence stands beside the client line, not instead of it").toContain(CLIENT.sessionId);
-
-    // Expandable for that sentence alone: the clientless row has nothing else to show, and
-    // still draws a chevron and carries a detail panel that is exactly the sentence.
-    const alone = await rowOf("off-only-tool");
-    const closed = await page(auditPath({ tool: "off-only-tool" }));
-    expect(expandLinks(closed).map((link) => link.query.get("expand"))).toContain(String(alone.id));
-    const solo = await page(auditPath({ tool: "off-only-tool", expand: alone.id }));
-    expect(detailText(solo, alone.id)).toBe(
-      "Event detail Call bodies aren't recorded for this app (body logging is off).",
-    );
-
-    // The twin: a row that DID record bodies shows them and says nothing about logging.
-    const bodied = await rowOf(`${TOOL_PREFIX}1`);
-    const shown = detailText(await page(auditPath({ tool: `${TOOL_PREFIX}1`, expand: bodied.id })), bodied.id);
-    expect(shown).toContain("Arguments:");
-    expect(shown).not.toContain("body logging is off");
+    const anonymous = await call(new Request(`${ORIGIN}${paths.audit}`));
+    expect(anonymous.status).toBe(302);
+    expect(anonymous.headers.get("Location")).toBe(`/login?next=${encodeURIComponent(paths.audit)}`);
   });
 
-  it("a refused call (-32001) with no bodies opens to \"Refused before the call was made, so there are no bodies to show.\" — never the bodies-off sentence, whatever the app's setting · the seed's refusal that does carry bodies shows them and no sentence (the twin)", async () => {
-    const row = await rowOf("refused-tool");
-    expect(row.outcome).toBe("-32001");
-    // The app's logging is off, so the two reasons disagree — and the refusal wins.
-    expect(await logBodiesOf(OFF_APP)).toBe(false);
-    const detail = detailText(await page(auditPath({ tool: "refused-tool", expand: row.id })), row.id);
-    expect(detail).toContain("Refused before the call was made, so there are no bodies to show.");
-    expect(detail).not.toContain("body logging is off");
-
-    // The twin: the seed's own -32001 row carries bodies, so it shows them and explains
-    // nothing — the sentence is for a row with no bodies, not for every refusal.
-    const seeded = await rowOf(`${TOOL_PREFIX}0`);
-    expect(seeded.outcome).toBe("-32001");
-    const shown = detailText(await page(auditPath({ tool: `${TOOL_PREFIX}0`, expand: seeded.id })), seeded.id);
-    expect(shown).toContain("Arguments:");
-    expect(shown).not.toContain("there are no bodies to show");
-  });
-
-  it("a dispatched tools/call row with no bodies on an app whose body logging is on opens to \"No bodies were recorded for this call.\" — a row from before logging was switched on, or from an app that is gone, is explained rather than left blank", async () => {
-    expect(await logBodiesOf(ON_APP), "the tunneled app's §15 default is on").toBe(true);
-    const row = await rowOf("unrecorded-tool");
-    const detail = detailText(await page(auditPath({ tool: "unrecorded-tool", expand: row.id })), row.id);
-    expect(detail).toContain("No bodies were recorded for this call.");
-    expect(detail).not.toContain("body logging is off");
-
-    // The other half of "otherwise": an app that is gone has no setting to read, and the
-    // panel is still a sentence rather than a blank.
-    expect(await logBodiesOf("vanished"), "the vanished app is not in app_list").toBeUndefined();
-    const gone = await rowOf("vanished-tool");
-    expect(detailText(await page(auditPath({ tool: "vanished-tool", expand: gone.id })), gone.id)).toContain(
-      "No bodies were recorded for this call.",
-    );
-  });
-
-  it("an over-cap body is stored as one oversize stub and reaches the page through the loader as ‹oversize · N KB› — KB under a megabyte, MB with one decimal above — and the export carries the same stub, never the bytes", async () => {
-    const row = await rowOf("oversize-tool");
-    const args = row.args as { stub?: string; bytes?: number } | undefined;
-    expect(args?.stub, "the over-cap body was not replaced whole").toBe("oversize");
-    expect(args?.bytes).toBeGreaterThan(16 * 1024);
-    expect(JSON.stringify(row), "the export carries the bytes the cap refused").not.toContain("xxxxxxxx");
-
-    const expanded = await page(auditPath({ tool: "oversize-tool", expand: row.id }));
-    expect(detailText(expanded, row.id)).toContain("‹oversize · 20 KB›");
-    expect(expanded).not.toContain("xxxxxxxx");
-
-    // Above a megabyte the same placeholder reads in MB with one decimal — the seed's
-    // 4,200,000-byte image block, which is the other side of the same formatter.
-    const bodied = await rowOf(`${TOOL_PREFIX}1`);
-    expect(detailText(await page(auditPath({ tool: `${TOOL_PREFIX}1`, expand: bodied.id })), bodied.id)).toContain(
-      "‹blob image/png · 4.0 MB›",
-    );
-  });
-
-  it("the summary row carries id=\"event-<id>\" and an opening chevron's link ends in #event-<id>, so the scripting-off reload lands on the row it opened · the open row's closing link carries no fragment (the twin)", async () => {
-    const row = await rowOf("unrecorded-tool");
-    const closed = await page(auditPath({ tool: "unrecorded-tool" }));
-    expect(closed, "the summary row carries no anchor").toMatch(new RegExp(`<tr[^>]* id="event-${row.id}"`));
-
-    // The opening chevron: the same URL the closed page would be reloaded with, plus the
-    // fragment that scrolls the reload to the row it opened.
-    const opening = expandLinks(closed).filter((link) => link.query.get("expand") === String(row.id));
-    expect(opening.length, "one chevron per breakpoint").toBe(2);
-    for (const link of opening) expect(new URL(link.href, ORIGIN).hash).toBe(`#event-${row.id}`);
-
-    // Follow it as a browser with no script does: the row is open, still anchored, and its
-    // own chevron — which closes the row — carries no fragment to scroll to.
-    const open = await page(opening[0]?.href ?? "");
-    expect(open).toMatch(new RegExp(`<tr class="row-open" id="event-${row.id}"`));
-    const back = expandLinks(open).filter((link) => link.label === "Hide detail");
-    expect(back.length).toBe(2);
-    for (const link of back) {
-      expect(link.query.get("expand")).toBeNull();
-      expect(new URL(link.href, ORIGIN).hash).toBe("");
+  it("§13 · both new reads are `reader` routes like the other ten: with no cookie each is a 401 JSON body telling the client to sign in — never a 302 a `fetch` could not follow", async () => {
+    for (const path of ["/api/hub/audit/window", "/api/hub/audit/1"]) {
+      const answered = await hub("GET", path, undefined, { cookie: null });
+      expect(answered.status, path).toBe(401);
+      expect(await reasonOf(answered), path).toBe("Sign in again.");
     }
   });
-});
 
-describe(`§13 · /audit's filter row — the window it names and the window it empties`, () => {
-  // Rows first (§9 rule 1), bodies written against the page as it was: the filter row had
-  // no way to apply with scripting off, its window was a readonly box over a hidden epoch
-  // pair, and an empty window drew 24 flat bars. The helpers below ARE the scripting-off
-  // browser, which is why this describe reads the form's markup the rest of the file does
-  // not: a submit control hidden at the breakpoint is the defect §9 rule 4(b) names.
+  it("§13 · the window read answers one page of SLIM rows — never `args`, never `result`, never the namespace id, and `argsHead`/`hasResult`/`noBodies` in their place — over the whole retention window it resolved and echoed, with `total` the count audit.query holds for that window and `ceiling` the AUDIT_EXPLORER_ROWS the notice is rendered from", async () => {
+    const body = await windowRead();
+    const since = body.since as number;
+    const until = body.until as number;
+    // The server resolves "now" and echoes both ends, so the client never computes it
+    // twice — and the window it resolved is the retention window, not a page-sized guess.
+    expect(until - since).toBe(RETENTION_DAYS * 86_400_000);
+    expect(body.retentionDays).toBe(RETENTION_DAYS);
+    expect(body.ceiling).toBe(AUDIT_EXPLORER_ROWS);
+    const truth = await query(env.DB, world.ns.owner.userId, { since, until });
+    expect(body.total).toBe(truth.total);
 
-  /** #audit-filters exactly as a browser submits it: method and action off the start tag,
-   *  params from the form's own named controls in document order (a select contributes its
-   *  selected option, else its first) plus the pager's `form="audit-filters"` limit, and
-   *  whether a submit control sits in the form OUTSIDE every wide-only subtree (non-greedy;
-   *  none nests a div today). */
-  function formSubmission(html: string): {
-    method: string;
-    action: string;
-    params: URLSearchParams;
-    submitOutsideWideOnly: boolean;
-  } {
-    const form = /<form id="audit-filters"([^>]*)>([\s\S]*?)<\/form>/.exec(html);
-    expect(form, "the page rendered no #audit-filters form").not.toBeNull();
-    const [, attrs, body] = form ?? ["", "", ""];
-    const params = new URLSearchParams();
-    const selectValue = (options: string): string => {
-      const all = [...options.matchAll(/<option\b([^>]*)>/g)].map((o) => o[1]);
-      const picked = all.find((o) => /\bselected\b/.test(o)) ?? all[0] ?? "";
-      return decodeEntities(attributeOf(picked, "value") ?? "");
-    };
-    for (const control of body.matchAll(/<input\b([^>]*)>|<select\b([^>]*)>([\s\S]*?)<\/select>/g)) {
-      const attributes = control[1] ?? control[2];
-      const name = attributeOf(attributes, "name");
-      if (name === null || /type="(submit|button)"/.test(attributes)) continue;
-      params.append(
-        name,
-        control[1] === undefined ? selectValue(control[3]) : decodeEntities(attributeOf(attributes, "value") ?? ""),
-      );
+    const rows = windowRows(body);
+    expect(rows.length).toBe(Math.min(truth.total, AUDIT_EXPLORER_PAGE));
+    for (const row of rows) {
+      expect(row, `row ${String(row.id)} shipped a body`).not.toHaveProperty("args");
+      expect(row, `row ${String(row.id)} shipped a body`).not.toHaveProperty("result");
+      expect(row, `row ${String(row.id)} shipped the namespace id`).not.toHaveProperty("ownerId");
+      expect(typeof row.hasResult, `row ${String(row.id)} has no hasResult`).toBe("boolean");
     }
-    for (const outside of html.matchAll(/<select\b([^>]*form="audit-filters"[^>]*)>([\s\S]*?)<\/select>/g)) {
-      params.append(attributeOf(outside[1], "name") ?? "", selectValue(outside[2]));
-    }
-    const submit = /<button type="submit"/;
-    const withoutWideOnly = body.replace(/<div class="[^"]*\bwide-only\b[^"]*"[^>]*>[\s\S]*?<\/div>/g, "");
-    return {
-      method: (attributeOf(attrs, "method") ?? "").toLowerCase(),
-      action: decodeEntities(attributeOf(attrs, "action") ?? ""),
-      params,
-      submitOutsideWideOnly: submit.test(body) && submit.test(withoutWideOnly),
-    };
-  }
 
-  /** The four range segments: each key's href and whether it is the current one. */
-  function segments(html: string): Record<string, { href: string; current: boolean }> {
-    const block = /<div class="segmented">([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
-    const out: Record<string, { href: string; current: boolean }> = {};
-    for (const a of block.matchAll(/<a href="([^"]*)"([^>]*)>(\w+)<\/a>/g)) {
-      out[a[3]] = { href: decodeEntities(a[1]), current: /aria-current="page"/.test(a[2]) };
-    }
-    return out;
-  }
+    // A row that recorded bodies says so without shipping them…
+    const bodied = rows.find((row) => row.tool === `${TOOL_PREFIX}1`);
+    expect(bodied, "the seeded bodied row is not in the window").toBeDefined();
+    expect(String(bodied?.argsHead)).toBe(JSON.stringify({ q: "term", token: "‹redacted›" }).slice(0, AUDIT_ARGS_HEAD_CHARS));
+    expect(bodied?.hasResult).toBe(true);
+    expect(bodied, "a row WITH bodies explained their absence").not.toHaveProperty("noBodies");
 
-  /** The two date inputs' `value` attributes, by name — absent when the input is not drawn. */
-  function dateInputs(html: string): Partial<Record<"since" | "until", string>> {
-    const out: Partial<Record<"since" | "until", string>> = {};
-    for (const input of html.matchAll(/<input type="date" name="(since|until)"([^>]*)>/g)) {
-      out[input[1] as "since" | "until"] = attributeOf(input[2], "value") ?? "";
-    }
-    return out;
-  }
-
-  /** The UTC day every seeded row is stamped on — asserted, so a midnight straddle fails
-   *  here by name rather than as a wrong count further down. */
-  async function seededDay(): Promise<{ day: string; total: number }> {
-    const truth = await query(env.DB, world.ns.owner.userId, {});
-    const stamps = truth.rows.map((row) => row.ts);
-    const day = new Date(Math.min(...stamps)).toISOString().slice(0, 10);
-    expect(new Date(Math.max(...stamps)).toISOString().slice(0, 10), "the seed straddles midnight").toBe(day);
-    return { day, total: truth.total };
-  }
-
-  const nextDay = (day: string): string => new Date(Date.parse(day) + 86_400_000).toISOString().slice(0, 10);
-
-  // plan row 1. §9 rule 4(b)'s discharge for #audit-filters: the form is replayed exactly as
-  // a browser submits it, so the submit control has to exist outside every wide-only subtree
-  // and the tool the owner typed has to reach query(env.DB, …) over the window that
-  // submission names — the untouched replay, which is what a select's onchange sends, is the
-  // twin that must come back with the default window intact. The wide-only read is that
-  // discharge and not the header's "layout": a submit control hidden at the breakpoint is
-  // the defect rule 4(b) names, so the header's one exception is not being spent twice.
-  it(`§13 · with scripting off the filter row still applies: #audit-filters renders a submit control that sits in no wide-only subtree, and its own method, action and fields replayed as a browser submits them (§9 rule 4(b), no onchange) return exactly the rows query(env.DB, …) holds for the tool the owner typed over the window that submission names, with since and until each submitted once (the hidden pair is gone, so the value the owner set is the value the loader reads) · the same form replayed untouched returns the default 24h window unchanged — the same seeded rows, the same tool box, 24h still current, carried by the form's own hidden range field — which is also exactly what a select's onchange submits (the twin)`, async () => {
-    const ownerId = world.ns.owner.userId;
-    const form = formSubmission(await page(paths.audit));
-    expect(form.submitOutsideWideOnly, "no submit control outside every wide-only subtree").toBe(true);
-    expect(form.method).toBe("get");
-    expect(form.action).toBe(paths.audit);
-    // The pair the owner can set, each carried ONCE: a second control of the same name
-    // would be the one URLSearchParams.get returns, and the owner's value would never take.
-    expect(form.params.getAll("since")).toHaveLength(1);
-    expect(form.params.getAll("until")).toHaveLength(1);
-
-    // The owner types a tool and presses Apply (or Return): the form, its fields, nothing else.
-    const typed = new URLSearchParams(form.params);
-    const tool = `${TOOL_PREFIX}3`;
-    typed.set("tool", tool);
-    const applied = await page(`${form.action}?${typed.toString()}`);
-    const truth = await query(env.DB, ownerId, { tool });
-    expect(truth.total).toBeGreaterThan(0);
-    expect(matchedLine(applied)).toBe(truth.total);
-    expect(renderedTools(applied)).toEqual(truth.rows.map((row) => row.tool));
-    expect(formSubmission(applied).params.get("tool")).toBe(tool);
-
-    // The twin: the same form replayed untouched — which is what a select's onchange sends
-    // minus nothing — is the default window again, not a custom one and not an empty one.
-    const replayed = await page(`${form.action}?${form.params.toString()}`);
-    const everything = await query(env.DB, ownerId, {});
-    expect(matchedLine(replayed)).toBe(everything.total);
-    expect(renderedTools(replayed)).toEqual(renderedTools(await page(paths.audit)));
-    const again = formSubmission(replayed);
-    expect(again.params.get("tool")).toBe("");
-    expect(again.params.get("range")).toBe("24h");
-    expect(segments(replayed)["24h"]?.current).toBe(true);
+    // …and one that recorded none carries the same sentence key the page-rendered row did.
+    const bare = rows.find((row) => row.tool === BODILESS_TOOL);
+    expect(bare, "the bodiless row is not in the window").toBeDefined();
+    expect(bare).not.toHaveProperty("argsHead");
+    expect(bare?.hasResult).toBe(false);
+    expect(bare?.noBodies).toBe("off");
   });
 
-  // plan row 2. The two carriers of the window, pinned apart: a typed pair is whole days
-  // echoed back as the two value attributes with no segment current, and a preset arrives as
-  // the segment's own epoch-ms link with both inputs empty beside a hidden range. Every
-  // seeded row is stamped ≈now, so the preset's previous window is the empty one. Carry row
-  // 3's min(ts)/max(ts) guard into this body too — "<the seed's day>" is only one day while
-  // every seeded row shares it.
-  it(`§13 · the range inputs are named since/until and take a day, not epoch ms: a submission carrying since=<the seed's day>&until=<the same day> renders that day's rows, echoes both days back as the two value attributes, and marks no segment aria-current="page" — a custom window has no current preset · the 24h segment's own epoch-ms link over the same seed marks 24h current, renders both date inputs empty beside a hidden range=24h, and reads "No comparison available", every row being stamped now and a preset's previous window lying one span further back (the preset twin)`, async () => {
-    const { day, total } = await seededDay();
-    const custom = await page(auditPath({ since: day, until: day }));
-    expect(matchedLine(custom)).toBe(total);
-    expect(dateInputs(custom)).toEqual({ since: day, until: day });
-    expect(Object.values(segments(custom)).some((s) => s.current), "a custom window marked a preset current").toBe(false);
+  it("§13 · the window read takes the search as `text` and the page as `offset`: a needle narrows to the rows that carry it, and an `offset` at AUDIT_EXPLORER_ROWS answers an EMPTY page while `total` still reports the whole match — the ceiling bounds what is loaded, never what matched", async () => {
+    const narrowed = await windowRead(`?text=${encodeURIComponent(BODILESS_TOOL)}`);
+    expect(narrowed.total).toBe(1);
+    expect(windowRows(narrowed).map((row) => row.tool)).toEqual([BODILESS_TOOL]);
 
-    // The preset twin, reached the way the page offers it: the segment's own link.
-    const link = segments(custom)["24h"]?.href;
-    expect(link, "the custom page drew no 24h segment").toBeDefined();
-    const preset = await page(link ?? "");
-    expect(segments(preset)["24h"]?.current).toBe(true);
-    expect(dateInputs(preset)).toEqual({ since: "", until: "" });
-    expect(/<input type="hidden" name="range" value="24h"/.test(preset)).toBe(true);
-    expect(matchedLine(preset)).toBe(total);
-    expect(textOf(preset)).toContain("No comparison available");
+    const past = await windowRead(`?offset=${AUDIT_EXPLORER_ROWS}`);
+    expect(windowRows(past)).toEqual([]);
+    expect(past.total, "the ceiling emptied the count as well as the page").toBe((await windowRead()).total);
   });
 
-  // plan row 3. G50: the empty histogram is one early return, so it must co-occur with the
-  // table's own empty line and never the reverse. The window is the UTC day AFTER the
-  // ledger's, derived from the rows themselves so a midnight straddle fails by name; the
-  // seeded day is the twin that draws bars, an axis and no comparison at all.
-  it(`§13 · a window with nothing in it draws the empty histogram, not 24 flat bars: over the UTC day AFTER the ledger's own — the case derives that day from the rows and asserts min(ts) and max(ts) share it, so a midnight straddle fails by name — /audit renders "No events in this window." with no day axis AND the table's "No events in this range", and, that day being the previous window, an events tile reading "-100% vs previous period" · the seeded day itself draws bars, a day axis and "No comparison available", its own previous window being empty (the twin)`, async () => {
-    const { day } = await seededDay();
-    const after = nextDay(day);
-    const empty = await page(auditPath({ since: after, until: after }));
-    expect(matchedLine(empty)).toBe(0);
-    expect(empty).toContain("No events in this window.");
-    expect(empty).not.toContain('class="chart-axis"');
-    // A bar is `chart-bar` or `chart-bar chart-bar--peak`; their container is `chart-bars`.
-    expect(empty).not.toMatch(/class="chart-bar[" ]/);
-    expect(empty).toContain("No events in this range");
-    // The day before an empty day is the seeded one, so the comparison is a real -100%.
-    expect(textOf(empty)).toContain("-100% vs previous period");
-
-    // The twin: the seeded day draws, and its own previous day has nothing to compare to.
-    const drawn = await page(auditPath({ since: day, until: day }));
-    expect(drawn).toMatch(/class="chart-bar[" ]/);
-    expect(drawn).toContain('class="chart-axis"');
-    expect(textOf(drawn)).toContain("No comparison available");
-  });
-});
-
-describe("§13/§22 · past the scan ceiling", () => {
-  // One app and one principal vocabulary, apart from every other describe's own, so this
-  // window is addressable by app filter alone. 1,001 rows: one past model.ts's
-  // AUDIT_SCAN_ROWS (1000) — the least that flips `scanCeiling` from null to the constant.
-  const CEILING_APP = "walk-ceiling";
-  const CEILING_ROWS = 1001;
-  const OLDEST_ONLY_PRINCIPAL = "agent:walk-ceiling-oldest";
-  const NEWEST_PRINCIPAL = "agent:walk-ceiling-newest";
-
-  beforeAll(async () => {
-    const ownerId = world.ns.owner.userId;
-    const row = (principal: string, at: number) => ({
-      ownerId,
-      principal,
-      event: "tools/call",
-      app: CEILING_APP,
-      tool: `walk-ceiling-tool-${at}`,
-      outcome: "ok",
-      durationMs: 5,
+  it("§13 · the last page never crosses the ceiling: the window read asks `audit_query` for AUDIT_EXPLORER_PAGE rows at offset 0, for exactly the remainder at a non-aligned offset near the ceiling, and for none at or past it — a page size the route did not clamp would load rows beyond the ceiling it echoes", async () => {
+    // Read at the SEAM rather than from the answer: observing a clamp behaviourally would
+    // need a ledger of AUDIT_EXPLORER_ROWS rows, and what the clamp actually is is the
+    // `limit` this route asks the op for.
+    const asked = await withStubbedAuditQuery(async (inputs) => {
+      for (const offset of [0, AUDIT_EXPLORER_ROWS - 1, AUDIT_EXPLORER_ROWS, AUDIT_EXPLORER_ROWS + 500]) {
+        await windowRead(`?offset=${offset}`);
+      }
+      return inputs.map((input) => ({ offset: input.offset, limit: input.limit }));
     });
-    // audit.query orders `ts DESC, id DESC` (audit.ts) — id is insertion order, so
-    // whatever ties back-to-back `Date.now()` writes draw on `ts`, id alone decides
-    // "newest". Written FIRST, this row holds the lowest id of the batch and of the
-    // whole namespace at write time, so it ranks last among every scan that follows.
-    await record(env.DB, row(OLDEST_ONLY_PRINCIPAL, 0));
-    for (let at = 1; at < CEILING_ROWS - 1; at++) await record(env.DB, row("agent:walk-ceiling", at));
-    // Written LAST: the highest id in the whole namespace, so it ranks first in every scan.
-    await record(env.DB, row(NEWEST_PRINCIPAL, CEILING_ROWS - 1));
+    expect(asked).toEqual([
+      { offset: 0, limit: AUDIT_EXPLORER_PAGE },
+      { offset: AUDIT_EXPLORER_ROWS - 1, limit: 1 },
+      { offset: AUDIT_EXPLORER_ROWS, limit: 0 },
+      { offset: AUDIT_EXPLORER_ROWS + 500, limit: 0 },
+    ]);
   });
 
-  /** One tile's hint text, read off its own `stat-hint` div — never the whole page's text,
-   *  so a phrase that landed on the wrong tile fails by name. */
-  function hintOf(html: string, label: string): string {
-    const found = new RegExp(`<div class="stat-label">${label}</div>[\\s\\S]*?<div class="stat-hint">\\s*([^<]*?)\\s*</div>`).exec(html);
-    expect(found, `no "${label}" tile on the page`).not.toBeNull();
-    return found?.[1] ?? "";
+  /**
+   * Runs `work` with `audit_query` substituted for one that records its input and answers an
+   * empty page — the `withCountedOps` mechanism (its comment says why a substitution is how
+   * "what did the route ask for" is asked at all), with a body this route can actually
+   * consume. Restored in a `finally`, so a leaked substitution cannot reach a sibling case.
+   */
+  async function withStubbedAuditQuery<T>(
+    work: (inputs: Record<string, unknown>[]) => Promise<T>,
+  ): Promise<T> {
+    const real = ops.audit_query;
+    const inputs: Record<string, unknown>[] = [];
+    ops.audit_query = {
+      schema: real.schema,
+      handler: async (_ownerId: string, input: unknown) => {
+        inputs.push(input as Record<string, unknown>);
+        return { rows: [], total: 0 };
+      },
+    };
+    try {
+      return await work(inputs);
+    } finally {
+      ops.audit_query = real;
+    }
   }
 
-  it("18. §13 · past the scan ceiling the per-row tiles and the chart say \"over the newest 1,000\" while the Events count stays audit_query's exact total, and the filter selects list only what the newest 1,000 rows mention · a window under the ceiling carries no such label (the twin)", async () => {
-    const over = await page(auditPath({ app: CEILING_APP, limit: 50 }));
-    // The Events count is exact — audit_query's `total` for this app, all 1,001 of them —
-    // while everything per-row is capped at the newest 1,000 of the same window.
-    expect(matchedLine(over)).toBe(CEILING_ROWS);
+  it("§13 · the record read answers ONE full row by id — bodies, stubs and the `noBodies` sentence included — and its 404 covers a row outside the caller's namespace exactly as it covers one that never existed and a segment that is not an id at all · the same row IS readable under its own namespace's session (the allow-twin)", async () => {
+    const [bodied] = await exportLines(new URLSearchParams({ tool: `${TOOL_PREFIX}1` }));
+    const own = await hub("GET", `/api/hub/audit/${bodied.id}`);
+    expect(own.status).toBe(200);
+    expect(own.headers.get("Cache-Control")).toBe("no-store");
+    const read = (await jsonOf(own)).row as Record<string, unknown>;
+    expect(read.id).toBe(bodied.id);
+    expect(read.args).toEqual({ q: "term", token: "‹redacted›" });
+    expect(read.result).toEqual({ content: [{ stub: "blob", contentType: "image/png", bytes: 4_200_000 }] });
+    expect(read, "the record read shipped the namespace id").not.toHaveProperty("ownerId");
 
-    expect(hintOf(over, "Tool calls")).toContain("over the newest 1,000");
-    expect(hintOf(over, "Denied")).toContain("over the newest 1,000");
-    expect(hintOf(over, "Median latency")).toContain("over the newest 1,000");
-    expect(over).toContain("buckets · over the newest 1,000");
-    expect(over).toContain("Events per day · over the newest 1,000");
+    // A row of the foreign namespace, reachable only by its own owner.
+    const foreignRows = await query(env.DB, world.foreign.ns.owner.userId, {});
+    const foreignId = foreignRows.rows[0]?.id;
+    expect(foreignId, "the foreign namespace recorded nothing").toBeDefined();
+    const yardstick = await hub("GET", `/api/hub/audit/${bodied.id + 1_000_000}`);
+    expect(yardstick.status).toBe(404);
+    const refusal = await yardstick.text();
+    for (const path of [`/api/hub/audit/${foreignId}`, "/api/hub/audit/not-a-number"]) {
+      const answered = await hub("GET", path);
+      expect(answered.status, path).toBe(404);
+      expect(await answered.text(), path).toBe(refusal);
+    }
 
-    // The selects' scan claim: `options` is read off the newest 1,000 rows of the WHOLE
-    // namespace, unfiltered — so the oldest-only principal above is excluded from it and
-    // the newest-row principal is present, independent of this page's own app filter.
-    const principalSelect = /<select name="principal"[^>]*>([\s\S]*?)<\/select>/.exec(over)?.[1] ?? "";
-    expect(principalSelect).not.toContain(OLDEST_ONLY_PRINCIPAL);
-    expect(principalSelect).toContain(NEWEST_PRINCIPAL);
+    const theirs = await seedOwnerSession(world.foreign.ns.owner);
+    const allowed = await hub("GET", `/api/hub/audit/${foreignId}`, undefined, { cookie: theirs.cookie });
+    expect(allowed.status, "the row its own owner recorded is unreadable to them").toBe(200);
+  });
 
-    // The twin: the world's ordinary window is far under the ceiling and carries no label.
-    const under = await page(auditPath({ app: "news" }));
-    expect(matchedLine(under)).toBeLessThan(1000);
-    expect(under).not.toContain("over the newest 1,000");
+  it("§13 · the export accepts REPEATED principal/app/event/tool/session/outcome keys, in RAW outcome codes — a two-value key is the union of its singles — plus `text`, while `limit`, `offset` and `expand` are ignored as they always were · a single-valued old bookmark still narrows exactly as it did (the twin)", async () => {
+    const two = await exportLines(new URLSearchParams([["tool", `${TOOL_PREFIX}1`], ["tool", `${TOOL_PREFIX}2`]]));
+    expect(two.map((row) => row.tool).sort()).toEqual([`${TOOL_PREFIX}1`, `${TOOL_PREFIX}2`]);
+    // The old link's shape, still exactly one of them: repeated keys widen, they do not
+    // replace the spelling every bookmark in the wild already carries.
+    const one = await exportLines(new URLSearchParams({ tool: `${TOOL_PREFIX}1` }));
+    expect(one.map((row) => row.tool)).toEqual([`${TOOL_PREFIX}1`]);
+
+    // A display class is the page's grouping and never reaches here: the link expands it,
+    // and what arrives is the raw codes the ledger stores.
+    const codes = await exportLines(new URLSearchParams([["outcome", "-32001"], ["outcome", "ok"], ["app", "news"]]));
+    expect(new Set(codes.map((row) => row.outcome))).toEqual(new Set(["-32001", "ok"]));
+
+    const searched = await exportLines(new URLSearchParams({ text: BODILESS_TOOL }));
+    expect(searched.map((row) => row.tool)).toEqual([BODILESS_TOOL]);
+
+    // The page's own paging keys are not the export's: an export is always the complete
+    // match (§8), whatever a link carries beside the filters.
+    const paged = await exportLines(
+      new URLSearchParams({ tool: `${TOOL_PREFIX}1`, limit: "1", offset: "5", expand: "3" }),
+    );
+    expect(paged.map((row) => row.id)).toEqual(one.map((row) => row.id));
+  });
+
+  it("§13 · the export emits exactly `total` lines for its filters, each row carrying its recorded bodies post-redaction with stubs as they were stored — never the bytes a blob stub stands for", async () => {
+    const filters = { event: "tools/call", app: "news" };
+    const truth = await query(env.DB, world.ns.owner.userId, filters as AuditQuery);
+    const lines = await exportLines(new URLSearchParams(filters));
+    expect(lines.length).toBe(truth.total);
+    const [row] = await exportLines(new URLSearchParams({ tool: `${TOOL_PREFIX}1` }));
+    expect(row.args).toEqual({ q: "term", token: "‹redacted›" });
+    expect(row.result).toEqual({ content: [{ stub: "blob", contentType: "image/png", bytes: 4_200_000 }] });
+  });
+
+  it("§13 · a selected tool is a PAIR: repeated `target=<app>/<tool>` keeps each (app, tool) together, so two targets export exactly those two — the `app IN (…) AND tool IN (…)` split that two keys would produce also exports the two combinations the page never showed, and an export that silently widens is the one failure a ledger may not have", async () => {
+    const targets = new URLSearchParams([
+      ["target", `${CROSS_APPS[0]}/${CROSS_TOOLS[0]}`],
+      ["target", `${CROSS_APPS[1]}/${CROSS_TOOLS[1]}`],
+    ]);
+    const paired = await exportLines(targets);
+    expect(paired.map((row) => `${String(row.app)}/${String(row.tool)}`).sort()).toEqual([
+      `${CROSS_APPS[0]}/${CROSS_TOOLS[0]}`,
+      `${CROSS_APPS[1]}/${CROSS_TOOLS[1]}`,
+    ]);
+
+    // The cross product the split WOULD have returned, spelled out — so this row fails with
+    // four lines rather than passing because the seed happened to hold two.
+    const crossed = await exportLines(
+      new URLSearchParams([
+        ["app", CROSS_APPS[0]],
+        ["app", CROSS_APPS[1]],
+        ["tool", CROSS_TOOLS[0]],
+        ["tool", CROSS_TOOLS[1]],
+      ]),
+    );
+    expect(crossed.length, "the four seeded combinations are not all there").toBe(4);
+
+    // A `tool` column may hold a resource URI (§20.4), which is exactly why a pair is split
+    // at the FIRST slash: an app slug never contains one and the tool side keeps all of its.
+    const uri = await exportLines(new URLSearchParams([["target", `news/${URI_TOOL}`]]));
+    expect(uri.map((row) => row.tool)).toEqual([URI_TOOL]);
+  });
+
+  it("§13 · a malformed `target` is a 400, never an ignored key: no slash at all, an empty app and an empty tool are each refused before any read — ignoring a filter WIDENS an export, and a download that quietly carries more rows than were asked for is worse than one that refuses", async () => {
+    for (const bad of ["news", "/get_news", "news/", "/"]) {
+      const answered = await get(`${paths.auditExport}?target=${encodeURIComponent(bad)}`);
+      expect(answered.status, `target=${bad}`).toBe(400);
+      expect(await answered.text(), `target=${bad}`).toContain("Bad target.");
+    }
+    // The twin: a well-formed one beside them streams its rows.
+    expect((await exportLines(new URLSearchParams([["target", `news/${CROSS_TOOLS[0]}`]]))).length).toBe(1);
+  });
+
+  it("§13/§15 · a selection with more filter values than one statement can bind is refused 400 before any read — D1 binds at most a hundred parameters per statement and the page's \"Show all N\" can tick more than that, so the owner gets a sentence instead of a database error mid-download · one value under the bound streams (the twin)", async () => {
+    const values = (count: number): URLSearchParams =>
+      new URLSearchParams(Array.from({ length: count }, (_, at) => ["tool", `${TOOL_PREFIX}${at}`]));
+
+    const over = await get(`${paths.auditExport}?${values(AUDIT_EXPORT_MAX_VALUES + 1).toString()}`);
+    expect(over.status).toBe(400);
+    expect(await over.text()).toContain("Too many filter values for one export");
+
+    // At the bound exactly, and therefore under D1's own: the refusal is a bound on the
+    // SELECTION, not a bound that has already been crossed.
+    const at = await exportLines(values(AUDIT_EXPORT_MAX_VALUES));
+    expect(at.length, "the seeded ledger holds the tools this selection names").toBeGreaterThan(0);
+
+    // A pair binds two parameters, so a `target` counts twice toward the same bound.
+    const pairs = new URLSearchParams(
+      Array.from({ length: AUDIT_EXPORT_MAX_VALUES / 2 + 1 }, () => ["target", `news/${CROSS_TOOLS[0]}`]),
+    );
+    expect((await get(`${paths.auditExport}?${pairs.toString()}`)).status).toBe(400);
   });
 });
 
@@ -6004,8 +5751,9 @@ const BROWSER_ONLY_TARGETS: ReadonlySet<string> = new Set([
  * Every SERVER-RENDERED, session-backed page — the walk's input for case 4.
  *
  * `/apps`, `/apps/new` and the app page's eight URLs left this list with the SPA cutover
- * (2026-09-18): they answer a shell document that renders no form at all, so walking them
- * would only ever prove the shell carries none. The coverage that went with them — the one
+ * (2026-09-18), and `/audit` with decision 36: they answer a shell document that renders no
+ * form at all, so walking them would only ever prove the shell carries none. The coverage
+ * that went with them — the one
  * retained `/apps/connect` form's CSRF field, now drawn client-side where no server-HTML
  * walk can see it — is owed to the behavioural case beside case 4, which posts that target
  * with no field and reads the refusal.
@@ -6016,7 +5764,6 @@ async function sessionPages(): Promise<Record<string, string>> {
   for (const path of [
     paths.approvals,
     paths.approval(world.approvalId),
-    paths.audit,
     // All seven panes, not just the landing one: a pane is a route, and a form that forgot
     // its CSRF field on /settings/tokens is as unposted as one that forgot it on /settings.
     ...PANES,
@@ -6027,69 +5774,13 @@ async function sessionPages(): Promise<Record<string, string>> {
   return rendered;
 }
 
-/** /audit under a set of filters, spelled the way a link on the page spells it. */
-function auditPath(filters: Record<string, string | number>): string {
-  const search = new URLSearchParams();
-  for (const [name, value] of Object.entries(filters)) search.set(name, String(value));
-  return `${paths.audit}?${search.toString()}`;
-}
-
-/** The "N events match" line, as a number. */
-function matchedLine(html: string): number {
-  const rendered = /([\d,]+) events match/.exec(html)?.[1];
-  if (rendered === undefined) throw new Error("the page rendered no \"N events match\" line");
-  return Number(rendered.replace(/,/g, ""));
-}
-
-/** The seeded tool names the page actually drew, in order — one per rendered row. */
-function renderedTools(html: string): string[] {
-  return [...html.matchAll(new RegExp(`>(${TOOL_PREFIX}\\d+)<`, "g"))]
-    .map((match) => match[1])
-    .filter((tool, at, all) => all.indexOf(tool) === at);
-}
-
 /**
- * The pager's "next page" href, or null when the page does not offer one. The two arrows
- * are the same element with the same class, so they are told apart by the one thing that
- * differs — the chevron each draws. That is markup, and this is the one place this file
- * reads any: a walk of "the page's own next link" has nothing else to grip.
+ * The export, parsed — one AuditRow per line, exactly as audit.exportJsonl frames it.
+ * Takes URLSearchParams rather than a record, because the keys the export accepts are
+ * REPEATED ones (decision 36) and a record can hold each name only once.
  */
-function nextPageLink(html: string): string | null {
-  const RIGHT_CHEVRON = "m9 18 6-6-6-6";
-  for (const anchor of html.matchAll(/<a class="btn-icon" href="([^"]+)">([\s\S]*?)<\/a>/g)) {
-    if (anchor[2].includes(RIGHT_CHEVRON)) return decodeEntities(anchor[1]);
-  }
-  return null;
-}
-
-/** The mobile "Load more" href, or null at the end of the set. */
-function loadMoreLink(html: string): string | null {
-  const block = /<a class="btn btn--outline btn--block" href="([^"]+)">\s*Load more/.exec(html);
-  return block === null ? null : decodeEntities(block[1]);
-}
-
-/** Every chevron link an /audit render draws — the label says which way it points. */
-function expandLinks(html: string): { label: string; href: string; query: URLSearchParams }[] {
-  const anchors = html.matchAll(/<a class="row-toggle" aria-label="((?:Show|Hide) detail)" aria-expanded="(?:true|false)" href="([^"]+)"/g);
-  return [...anchors].map((anchor) => {
-    const href = decodeEntities(anchor[2] ?? "");
-    return { label: anchor[1] ?? "", href, query: new URL(href, ORIGIN).searchParams };
-  });
-}
-
-/** The ?session=… link inside the OPEN detail row — every row's detail is in the page,
- *  so the first session link on it is not necessarily the expanded row's. */
-function sessionLink(html: string): string | null {
-  const open = /<tr class="row-detail" id="detail-\d+">([\s\S]*?)<\/tr>/.exec(html);
-  const link = open === null ? null : /href="(\/audit\?[^"]*session=[^"]*)"/.exec(open[1] ?? "");
-  return link === null ? null : decodeEntities(link[1] ?? "");
-}
-
-/** The export, parsed — one AuditRow per line, exactly as audit.exportJsonl frames it. */
-async function exportLines(filters: Record<string, string | number>): Promise<AuditRow[]> {
-  const search = new URLSearchParams();
-  for (const [name, value] of Object.entries(filters)) search.set(name, String(value));
-  const response = await get(`${paths.audit}/export.jsonl?${search.toString()}`);
+async function exportLines(search: URLSearchParams): Promise<AuditRow[]> {
+  const response = await get(`${paths.auditExport}?${search.toString()}`);
   expect(response.status).toBe(200);
   // Decoded rather than `.text()`d: the export declares application/x-ndjson, and
   // workerd warns when a body it does not consider text is read as one.

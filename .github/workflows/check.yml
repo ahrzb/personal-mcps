@@ -34,6 +34,14 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
 
+  # The Rust SDK is a standalone crate and consumes the checked-in cross-language fixtures.
+  rust-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - run: cargo test --locked --manifest-path clients/rust/Cargo.toml
+
   # The flake: builds the `pmcp` CLI and runs its install-check, which imports the built
   # entrypoint (so every dependency must resolve) and asserts the shipped `--version` matches
   # cli/package.json. Both halves were verified by breaking them.

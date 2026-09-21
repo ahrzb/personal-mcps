@@ -9,9 +9,12 @@
 // neither); parity direction A (§8's parity invariant) — every op renders as a `pmcp`
 // tool from its ONE schema, total in both directions, so the MCP front and the web form
 // can never drift apart; and, past the table, the one op whose ANSWER turns on values the
-// table cannot express — `audit_query`'s `principal` / `since` / `until`, each proven to
-// narrow, because a sample that passes no filter cannot tell a clause that is applied
-// from one that is silently dropped.
+// table cannot express — `audit_query`'s `principal` / `since` / `until` and the four
+// options decision 36 added (`id`, `text`, `bodies`, `outcome`), each proven to narrow,
+// because a sample that passes no filter cannot tell a clause that is applied from one
+// that is silently dropped. The module read's LIST form of the six exact filters is here
+// too, at `audit.query` rather than at the op, because that is exactly where it exists
+// (§8: the op stays single-valued; only the JSONL export hands lists in).
 //
 // Project: `worker` — real D1, every sibling module real, no sockets. The ops are D1
 // writes, so they belong where D1 is real. The half of each deleting cascade that closes
@@ -42,8 +45,9 @@ import { adminBackend, ops } from "../../src/admin";
 import { RESERVED_APP_SLUGS } from "../../src/app-routes";
 import { Approvals } from "../../src/approvals";
 import { query, record } from "../../src/audit";
-import type { AuditEntry, AuditRow } from "../../src/audit";
+import type { AuditEntry, AuditRow, AuditSlimRow } from "../../src/audit";
 import { CODES } from "../../src/errors";
+import { AUDIT_ARGS_HEAD_CHARS } from "../../src/limits";
 import type { BackendCtx, Tool } from "../../src/gateway";
 import { issueAdminToken, resolveCaller } from "../../src/identity";
 import { upsertBinding } from "../../src/oauth";
@@ -1230,9 +1234,10 @@ describe("§22.1 · admin tokens (fronting identity.ts's admin_token family)", (
 // theirs because they bound, and a bound is only observable against a ledger that spans
 // more than one instant (each case asserts that precondition rather than assuming it).
 //
-// Not here: `app`/`event`/`tool`/`session`, which the /audit filter walk already
-// passes values for (web-pages.test.ts), and `limit`/`offset`, whose defaults §8 pins and
-// whose paging the same page's cases drive.
+// Not here: `limit`/`offset`, whose defaults §8 pins and whose paging the CLI's own
+// chunked export walks. `app`/`event`/`tool`/`session` were the /audit filter walk's
+// (web-pages.test.ts) until decision 36 deleted the page that walked them; they are
+// covered here now, as four of the six the LIST-form case below passes values for.
 
 /** The op's answer, in the shape §8 pins — `{ rows, total }`, newest first. */
 type AuditPage = { rows: AuditRow[]; total: number };
@@ -1371,6 +1376,270 @@ function span(page: AuditPage): { oldest: number; newest: number } {
   expect(newest, "the seeded ledger spans a single instant — a bound would narrow nothing").toBeGreaterThan(oldest);
   return { oldest, newest };
 }
+
+// ── §8 · audit_query's four 2026-09-21 options, and the module's list form ─────────────
+//
+// Decision 36 gives the op `id`, `text`, `bodies` and `outcome`, and gives the MODULE a
+// list form of the six exact filters that the op deliberately does not carry. Both halves
+// are here for the reason the block above exists: an option that is declared and then
+// dropped answers `{ rows, total }` all the same, merely WIDER — and wider is the failure
+// that matters, because §13's explorer draws a namespace's whole ledger under whatever
+// filter the reader ticked.
+//
+// The op half goes through `ops.audit_query.handler` like every case above. The list half
+// goes through `audit.query` directly, because that is the only caller shape it has: the
+// op's own fields are single-valued `text`, which the last case proves by watching the op
+// refuse a list.
+
+/** The needle every text case hunts, and the column it was planted in. One row per column,
+ *  so a search that matched the wrong column fails naming the column it should have been. */
+const TEXT_COLUMNS = [
+  ["principal", "agent:needle-principal"],
+  ["event", "needle-event"],
+  ["app", "needle-app"],
+  ["tool", "needle-tool"],
+  ["client_session_id", "needle-session"],
+  ["detail", "needle-detail"],
+  ["args_json", "needle-args"],
+  ["result_json", "needle-result"],
+] as const;
+
+/**
+ * One row per searchable column, each carrying its needle THERE and nowhere else, plus the
+ * three rows the LIKE-escaping case is about: a literal `%`, a literal `_` and a literal
+ * backslash in the tool column, each beside a twin spelling the same word without it. A
+ * needle that reached SQL unescaped matches the twin too, which is the whole assertion.
+ */
+async function seedTextLedger(ns: SeededNamespace): Promise<void> {
+  const base = { ownerId: ns.owner.userId, principal: "agent:text", event: "tools/call", outcome: "ok" };
+  await record(env.DB, { ...base, principal: "agent:needle-principal" });
+  await record(env.DB, { ...base, event: "needle-event" });
+  await record(env.DB, { ...base, app: "needle-app" });
+  await record(env.DB, { ...base, tool: "needle-tool" });
+  await record(env.DB, { ...base, client: { sessionId: "needle-session" } });
+  await record(env.DB, { ...base, detail: { note: "needle-detail" } });
+  await record(env.DB, { ...base, args: { q: "needle-args" } });
+  await record(env.DB, { ...base, result: { structuredContent: { q: "needle-result" } } });
+  for (const tool of ["pct%literal", "pctXliteral", "und_literal", "undXliteral", "back\\literal", "backXliteral"]) {
+    await record(env.DB, { ...base, tool });
+  }
+}
+
+describe("§8 — audit_query's `id` is the one-row read, owner-scoped like every other", () => {
+  it("§8 · `id` answers exactly that row and `total: 1` — an id from ANOTHER namespace answers `{ rows: [], total: 0 }`, indistinguishable from an id that never existed · the stranger's own row IS readable under the stranger's own namespace (the allow-twin)", async () => {
+    const ns = await seedFixture();
+    await seedLedger(ns);
+    const all = await auditQuery(ns, {});
+    // Not the newest row: a read that ignored `id` and answered the first page would still
+    // have `rows[0]` right, and would fail here.
+    const wanted = all.rows[all.rows.length - 1];
+    expect(wanted, "the seeded ledger is empty").toBeDefined();
+
+    const one = await auditQuery(ns, { id: wanted.id });
+    expect(one.rows.map((row) => row.id)).toEqual([wanted.id]);
+    expect(one.total, "`total` counts the match set, which is one row").toBe(1);
+
+    const stranger = await seedFixture();
+    expect(await auditQuery(stranger, { id: wanted.id })).toEqual({ rows: [], total: 0 });
+    expect(await auditQuery(ns, { id: wanted.id + 1_000_000 })).toEqual({ rows: [], total: 0 });
+
+    // The allow-twin: the scoping narrows rather than breaks — the stranger reads its own.
+    await seedLedger(stranger);
+    const theirs = (await auditQuery(stranger, {})).rows[0];
+    expect((await auditQuery(stranger, { id: theirs.id })).rows.map((row) => row.id)).toEqual([theirs.id]);
+  });
+});
+
+describe("§8 — audit_query's `text` searches the row's strings and its bodies", () => {
+  it("§8 · every one of the eight columns is searched — principal, event, app, tool, client session id, detail, args and result — and the match is case-insensitive: the needle upper-cased finds the same one row", async () => {
+    const ns = await seedFixture();
+    await seedTextLedger(ns);
+    for (const [column, needle] of TEXT_COLUMNS) {
+      const found = await auditQuery(ns, { text: needle });
+      expect(found.total, `"${needle}" was planted in ${column} and nothing matched it`).toBe(1);
+      const shouted = await auditQuery(ns, { text: needle.toUpperCase() });
+      expect(shouted.rows.map((row) => row.id), `${column}: the search is case-sensitive`).toEqual(
+        found.rows.map((row) => row.id),
+      );
+    }
+  });
+
+  it("§8 · the LIKE wildcards are escaped in the needle: `%` matches only a literal percent, `_` only a literal underscore, and the escape character itself only a literal backslash — each beside the twin spelling that must NOT match", async () => {
+    const ns = await seedFixture();
+    await seedTextLedger(ns);
+    for (const [needle, matches, misses] of [
+      ["%", "pct%literal", "pctXliteral"],
+      ["_", "und_literal", "undXliteral"],
+      ["\\", "back\\literal", "backXliteral"],
+    ] as const) {
+      const found = await auditQuery(ns, { text: needle });
+      const tools = found.rows.map((row) => row.tool);
+      expect(tools, `a needle of "${needle}" missed its literal`).toContain(matches);
+      expect(tools, `a needle of "${needle}" reached SQL unescaped`).not.toContain(misses);
+    }
+    // The twin that proves the search works at all: a plain needle does match both.
+    const plain = await auditQuery(ns, { text: "literal" });
+    expect(plain.total).toBe(6);
+  });
+
+  it("§8 · a blank or whitespace-only needle is NO filter, never a filter matching nothing — an empty search box shows the ledger", async () => {
+    const ns = await seedFixture();
+    await seedTextLedger(ns);
+    const everything = await auditQuery(ns, {});
+    for (const needle of ["", "   "]) {
+      expect((await auditQuery(ns, { text: needle })).total, `"${needle}" narrowed the ledger`).toBe(everything.total);
+    }
+  });
+});
+
+describe("§8 — audit_query's `bodies: false` is the same rows, minus their bodies", () => {
+  /** A stored args body longer than the head, so the truncation is observable rather than
+   *  assumed — and long enough that `argsHead` cannot accidentally be the whole column. */
+  const LONG_ARGS = { q: "x".repeat(AUDIT_ARGS_HEAD_CHARS * 2) };
+
+  it("§8 · a body-less row carries `argsHead` — the first AUDIT_ARGS_HEAD_CHARS characters of the STORED args JSON — and `hasResult`, and never `args` or `result`; everything else is the full row verbatim (the twin: `bodies` omitted carries both bodies)", async () => {
+    const ns = await seedFixture();
+    await record(env.DB, {
+      ownerId: ns.owner.userId,
+      principal: "agent:slim",
+      event: "tools/call",
+      app: NEWS,
+      tool: "slim-tool",
+      outcome: "ok",
+      args: LONG_ARGS,
+      result: { structuredContent: { ok: true } },
+    });
+
+    const slim = (await auditQuery(ns, { bodies: false, tool: "slim-tool" })).rows as unknown as AuditSlimRow[];
+    const full = (await auditQuery(ns, { tool: "slim-tool" })).rows;
+    expect(slim.length).toBe(1);
+    const [lean, whole] = [slim[0], full[0]];
+
+    // Read off the value rather than through the type, because the TYPE not carrying the
+    // two fields is exactly what the implementation could be wrong about.
+    expect(lean, "a body-less read shipped the arguments").not.toHaveProperty("args");
+    expect(lean, "a body-less read shipped the result").not.toHaveProperty("result");
+    expect(lean.argsHead).toBe(JSON.stringify(LONG_ARGS).slice(0, AUDIT_ARGS_HEAD_CHARS));
+    expect(lean.argsHead?.length).toBe(AUDIT_ARGS_HEAD_CHARS);
+    expect(lean.hasResult).toBe(true);
+    // The same row otherwise: `argsHead`/`hasResult` replace the two columns and change
+    // nothing else, which is what "a body-less row is the same row minus two columns" means.
+    const { args: _args, result: _result, ...rest } = whole;
+    const { argsHead: _head, hasResult: _has, ...carried } = lean;
+    expect(carried).toEqual(rest);
+    expect(whole.args, "the twin read carries the bodies").toEqual(LONG_ARGS);
+  });
+
+  it("§8 · a row that recorded no arguments carries NO argsHead at all, and one with no result reads `hasResult: false` — absence stays absence rather than becoming an empty preview", async () => {
+    const ns = await seedFixture();
+    await record(env.DB, {
+      ownerId: ns.owner.userId,
+      principal: "agent:slim",
+      event: "auth.login",
+      outcome: "ok",
+    });
+    const [bare] = (await auditQuery(ns, { bodies: false, event: "auth.login" })).rows as unknown as AuditSlimRow[];
+    expect(bare).toBeDefined();
+    expect("argsHead" in bare, "a bodiless row invented an argsHead").toBe(false);
+    expect(bare.hasResult).toBe(false);
+  });
+});
+
+describe("§8 — audit_query's `outcome` is a sixth exact filter, over the RAW recorded code", () => {
+  it("§8 · `outcome` selects the rows recorded with that code and only those — `-32001` never pulls in the `-32000` beside it, and `ok` is the allow-twin that proves the clause selects rather than empties", async () => {
+    const ns = await seedFixture();
+    const base = { ownerId: ns.owner.userId, principal: "agent:outcome", event: "tools/call", app: NEWS, tool: "t" };
+    await record(env.DB, { ...base, outcome: "-32001" });
+    await record(env.DB, { ...base, outcome: "-32000" });
+    await record(env.DB, { ...base, outcome: "ok" });
+    await record(env.DB, { ...base, outcome: "ok" });
+
+    const denied = await auditQuery(ns, { outcome: "-32001", principal: "agent:outcome" });
+    expect(denied.rows.map((row) => row.outcome)).toEqual(["-32001"]);
+    const ok = await auditQuery(ns, { outcome: "ok", principal: "agent:outcome" });
+    expect(ok.rows.map((row) => row.outcome)).toEqual(["ok", "ok"]);
+    // A display CLASS is §13's grouping and no filter of this op: `denied` folds two codes
+    // and reaches the ledger only as the two raw codes, one call each.
+    expect((await auditQuery(ns, { outcome: "denied" })).total).toBe(0);
+  });
+});
+
+describe("§8/§13 — the LIST form of the six exact filters, which the module has and the op does not", () => {
+  it("§8 · `audit.query` takes one value OR a list per exact filter — a list matches ANY of its values (the union of the singles, never wider), an empty list is no filter at all, and each of the six is proven with a list of its own", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+    // One row per value, so every list below has exactly two members to find and a third
+    // value in the same column to leave behind.
+    const rows = [
+      { principal: "agent:one", app: "app-one", event: "ev-one", tool: "tool-one", client: { sessionId: "s-one" }, outcome: "-32001" },
+      { principal: "agent:two", app: "app-two", event: "ev-two", tool: "tool-two", client: { sessionId: "s-two" }, outcome: "-32002" },
+      { principal: "agent:three", app: "app-three", event: "ev-three", tool: "tool-three", client: { sessionId: "s-three" }, outcome: "-32003" },
+    ];
+    for (const row of rows) await record(env.DB, { ownerId, ...row });
+
+    for (const [field, values] of [
+      ["principal", ["agent:one", "agent:two"]],
+      ["app", ["app-one", "app-two"]],
+      ["event", ["ev-one", "ev-two"]],
+      ["tool", ["tool-one", "tool-two"]],
+      ["session", ["s-one", "s-two"]],
+      ["outcome", ["-32001", "-32002"]],
+    ] as const) {
+      const listed = await query(env.DB, ownerId, { [field]: [...values] });
+      const singles = await Promise.all(values.map((value) => query(env.DB, ownerId, { [field]: value })));
+      expect(listed.total, `${field}: a list of two matched ${listed.total} rows`).toBe(2);
+      expect(new Set(listed.rows.map((row) => row.id)), `${field}: the list is the union of its singles`).toEqual(
+        new Set(singles.flatMap((single) => single.rows.map((row) => row.id))),
+      );
+      // The empty list is the absent filter, not a clause nothing can satisfy.
+      const empty = await query(env.DB, ownerId, { [field]: [] });
+      expect(empty.total, `${field}: an empty list narrowed the ledger`).toBe((await query(env.DB, ownerId, {})).total);
+    }
+  });
+
+  it("§8/§13 · `targets` keeps each (app, tool) TOGETHER — `(app = ? AND tool = ?) OR …`, never the `app IN (…) AND tool IN (…)` cross product — AND-s with the other filters, and an empty list is no filter", async () => {
+    const ns = await seedFixture();
+    const ownerId = ns.owner.userId;
+    const base = { ownerId, principal: "agent:pairs", event: "tools/call", outcome: "ok" };
+    // All four combinations, so a cross product is four rows and the pair read is two.
+    for (const app of ["news", "notion"]) {
+      for (const tool of ["alpha", "beta"]) await record(env.DB, { ...base, app, tool });
+    }
+
+    const paired = await query(env.DB, ownerId, {
+      targets: [
+        { app: "news", tool: "alpha" },
+        { app: "notion", tool: "beta" },
+      ],
+    });
+    expect(paired.rows.map((row) => `${String(row.app)}/${String(row.tool)}`).sort()).toEqual([
+      "news/alpha",
+      "notion/beta",
+    ]);
+    // The split's answer, for comparison: the same four values as two lists match everything.
+    const crossed = await query(env.DB, ownerId, { app: ["news", "notion"], tool: ["alpha", "beta"] });
+    expect(crossed.total).toBe(4);
+
+    // AND-ed with the rest, and the empty list contributing nothing.
+    const narrowed = await query(env.DB, ownerId, {
+      targets: [{ app: "news", tool: "alpha" }],
+      outcome: "-32001",
+    });
+    expect(narrowed.total).toBe(0);
+    expect((await query(env.DB, ownerId, { targets: [] })).total).toBe(
+      (await query(env.DB, ownerId, {})).total,
+    );
+  });
+
+  it("§8 · the OP stays single-valued: a list handed to `audit_query`'s `principal` is refused as the wrong type, so nothing on the tool surface can express what the export's repeated keys do", async () => {
+    const ns = await seedFixture();
+    const refused = await wireRefusalOf(() =>
+      ops.audit_query.handler(ns.owner.userId, { principal: ["agent:one", "agent:two"] }),
+    );
+    expect(refused.code).toBe(CODES.invalidParams);
+    expect(refused.violations?.map((violation) => violation.field)).toEqual(["principal"]);
+  });
+});
 
 // D15 (2026-09-02) — rows landed as it.todo from docs/superpowers/plans/2026-09-02-d15-panes.md;
 // each row's mechanics are on its `asserts:` line there.

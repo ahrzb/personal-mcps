@@ -8,7 +8,8 @@
 # `pnpm pmcp` resolving from the root (§22.7).
 #
 # `server/` gets no manifest on purpose: Wrangler builds it from the root, so a manifest there
-# would be a third declaration with no consumer. `clients/py` and `clients/go` are not npm at all.
+# would be a third declaration with no consumer. `clients/py`, `clients/go`, and
+# `clients/rust` are not npm at all.
 packages:
   - cli
   - web

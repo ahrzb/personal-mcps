@@ -9,324 +9,406 @@
 <helmet>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;display=swap">
   <style>
-    body { margin: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; color: #09090b; }
-    a { color: #09090b; text-decoration: underline; text-underline-offset: 2px; }
-    a:hover { color: #52525b; }
+
+  /* Sizes are the layout & density ladder (design/layout-and-density.md §2): workspace
+     shape inside 24 px gutters, rail 200, dense rows 32 (6 / 16), controls 32 / 24,
+     badges and chips 20 / 11, nothing below 11 px. */
+  :root{
+    --fg:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;--row:#f4f4f5;--sunken:#fafafa;--subtle:#52525b;--dim:#a1a1aa;
+    --warn-fg:#92400e;--warn-bg:#fffbeb;--warn-br:#fde68a;--danger-fg:#b91c1c;--danger-bg:#fef2f2;--danger-br:#fecaca;
+    --ok-fg:#15803d;--ok-bg:#f0fdf4;--ok-br:#bbf7d0;
+    --o-ok:#d4d4d8;--o-approval:#fab219;--o-archived:#8a5a00;--o-denied:#e5484d;--o-error:#7f1d1d;
+    --rail-w:200px;--control-h-sm:32px;--control-h-xs:24px;--control-h-touch:44px;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:'Geist',system-ui,-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:var(--sans);color:var(--fg);font-size:14px;background:#fff}
+  button{font:inherit;color:inherit;cursor:pointer}
+  a{color:inherit}
+  [hidden]{display:none!important}
+  .mono{font-family:var(--mono)}
+  .narrow-only{display:none}
+  /* A non-call event is titled by its event name; what it was about rides beside it. */
+  .sub2{color:var(--muted-fg);font-weight:400}
+  .note{font-size:12px;color:var(--muted-fg);line-height:1.6;margin:0}
+  .eyebrow{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg);margin:0 0 8px}
+  .card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .btn{display:inline-flex;align-items:center;gap:6px;height:var(--control-h-sm);padding:0 12px;border-radius:8px;font-size:12px;font-weight:500;border:1px solid var(--border);background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap;text-decoration:none}
+  .btn:hover{background:var(--sunken)}
+  .btn.primary{background:#18181b;color:#fafafa;border-color:#18181b}
+  .btn.mini{height:var(--control-h-xs);padding:0 8px;font-size:11px;box-shadow:none}
+  .btn.mini.on{background:#18181b;color:#fafafa;border-color:#18181b}
+  .chip{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;background:var(--muted);color:var(--muted-fg);white-space:nowrap}
+  .chip.ok{background:var(--ok-bg);color:var(--ok-fg);border:1px solid var(--ok-br)}
+  .chip.warn{background:var(--warn-bg);color:var(--warn-fg);border:1px solid var(--warn-br)}
+  .chip.bad{background:var(--danger-bg);color:var(--danger-fg);border:1px solid var(--danger-br)}
+  .sw{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none}
+  .s-ok{background:var(--o-ok)}.s-approval{background:var(--o-approval)}.s-archived{background:var(--o-archived)}.s-denied{background:var(--o-denied)}.s-error{background:var(--o-error)}
+  .skel{background:linear-gradient(90deg,#f4f4f5,#ececee,#f4f4f5);border-radius:6px;height:12px}
+
+  .nav{height:56px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;gap:16px}
+  .navitem{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;font-size:14px;font-weight:500;color:var(--muted-fg)}
+  .navitem.on{background:var(--muted);color:var(--fg)}
+  .burger{display:none;width:var(--control-h-touch);height:var(--control-h-touch);border:1px solid var(--border);border-radius:9px;background:#fff;align-items:center;justify-content:center}
+  .wrap{padding:20px 24px 60px;display:flex;flex-direction:column;gap:12px;max-width:1500px;margin:0 auto}
+  /* Two rows of title, and the actions beside them; the phone re-areas the same grid.
+     Areas, not ids: the board capture strips every id attribute. */
+  .head{display:grid;grid-template-columns:1fr auto auto;grid-template-areas:"ttl exp seg" "sub exp seg";align-items:center;column-gap:12px}
+  .ttl{grid-area:ttl}.sub{grid-area:sub}.exp{grid-area:exp}.views{grid-area:seg}
+  h1{font-size:24px;font-weight:600;margin:0}
+  .seg{display:inline-flex;background:var(--muted);border-radius:9px;padding:3px}
+  .seg button{height:var(--control-h-sm);border:0;background:none;border-radius:7px;padding:0 14px;font-size:13px;color:var(--muted-fg)}
+  .seg button.on{background:#fff;color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08);font-weight:500}
+
+  /* filter bar */
+  .filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .fchip{display:inline-flex;align-items:center;height:var(--control-h-xs);border-radius:7px;background:var(--muted);font-family:var(--mono);font-size:12px;overflow:hidden}
+  .fchip .k{padding:0 4px 0 9px;color:var(--muted-fg)}
+  .fchip .v{padding-right:4px}
+  .fchip button{border:0;background:none;width:var(--control-h-xs);height:var(--control-h-xs);color:var(--dim);padding:0}
+  .fchip button:hover{background:#e4e4e7;color:var(--fg)}
+  .searchbox{display:flex;align-items:center;height:var(--control-h-sm);border:1px solid var(--border);border-radius:8px;padding:0 10px;gap:6px;min-width:260px}
+  .searchbox input{border:0;outline:0;font:inherit;font-size:13px;flex:1;min-width:0;background:none}
+
+  /* lane strip */
+  .strip{padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+  .striphead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .presets{display:inline-flex;gap:4px}
+  .lanes{--gut:114px;display:flex;flex-direction:column;gap:3px;position:relative;cursor:crosshair;user-select:none}
+  .lane{display:flex;align-items:center;gap:10px}
+  .lane .nm{width:104px;flex:none;font-family:var(--mono);font-size:11px;color:var(--subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lane .cells{flex:1;display:flex;gap:1px;height:16px;min-width:0}
+  .lane .c{flex:1;border-radius:1px;background:#f4f4f5}
+  .c.ok{background:var(--o-ok)}.c.approval{background:var(--o-approval)}.c.archived{background:var(--o-archived)}.c.denied{background:var(--o-denied)}.c.error{background:var(--o-error)}
+  /* not loaded, never empty: the window reaches further back than the ceiling allowed */
+  .c.nl{background:repeating-linear-gradient(45deg,#d4d4d8 0 2px,#fafafa 2px 4px)}
+  .brush{position:absolute;top:-3px;bottom:-3px;background:rgba(24,24,27,.07);border-left:2px solid #18181b;border-right:2px solid #18181b;border-radius:2px;pointer-events:none}
+  .axis{display:flex;margin-left:114px;font-size:11px;color:var(--muted-fg)}
+  .axis button{flex:1;border:0;background:none;padding:2px 0;text-align:left;font-size:11px;color:var(--muted-fg);border-radius:4px}
+  .axis button:hover{background:var(--muted);color:var(--fg)}
+  .axis button.on{background:var(--muted);color:var(--fg);font-weight:500}
+  .legend{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted-fg)}
+  .legend span.i{display:inline-flex;align-items:center;gap:5px}
+  .legend .code{font-family:var(--mono);color:var(--dim)}
+  .ceiling{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--warn-br);background:var(--warn-bg);border-radius:8px;font-size:12px;color:var(--warn-fg)}
+
+  .body{display:flex;gap:12px;align-items:flex-start}
+  .rail{width:var(--rail-w);flex:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto;padding:10px 8px}
+  .rail h3{font-size:12px;font-weight:600;margin:0 0 2px;padding:0 5px}
+  .fgroup{margin:10px 0 0}
+  .fgroup .eyebrow{margin:0 0 3px;padding:0 5px;font-size:11px}
+  .frow{display:flex;align-items:center;gap:7px;height:var(--control-h-xs);padding:0 5px;border-radius:5px;font-size:12px;position:relative;width:100%;border:0;background:none;text-align:left}
+  .frow .bar{position:absolute;left:0;top:2px;bottom:2px;background:#ececee;border-radius:4px}
+  .frow span{position:relative}
+  .frow .nm{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .frow .ct{margin-left:auto;color:var(--muted-fg);font-size:11px;padding-left:6px}
+  .frow:hover{box-shadow:inset 0 0 0 1px var(--border)}
+  .frow.on{background:#e4e4e7;font-weight:600}
+  .showall{border:0;background:none;padding:0 5px;height:var(--control-h-xs);font-size:11px;color:var(--muted-fg);text-decoration:underline;text-underline-offset:2px;width:100%;text-align:left;border-radius:5px}
+  .showall:hover{color:var(--fg)}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
+  .filtersbtn{display:none}
+
+  /* summary */
+  .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .grid2{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px}
+  .stat .v{font-size:24px;font-weight:600;letter-spacing:-.01em;line-height:1.2}
+  .stat .l{font-size:12px;color:var(--muted-fg)}
+  .look{border:1px solid var(--warn-br);background:var(--warn-bg);border-radius:10px;padding:12px 14px}
+  .look li{font-size:13px;line-height:1.75}
+  .look a{color:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+  .topn{display:flex;flex-direction:column;gap:2px}
+  .topn button{display:flex;align-items:center;gap:8px;height:var(--control-h-xs);font-size:12px;position:relative;border:0;background:none;width:100%;text-align:left;border-radius:5px;padding:0 5px}
+  .topn button:hover{box-shadow:inset 0 0 0 1px var(--border)}
+  .topn .bar{position:absolute;left:0;top:1px;bottom:1px;background:#f0f0f1;border-radius:4px}
+  .topn span{position:relative}
+  .topn .nm{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .topn .n{margin-left:auto;color:var(--muted-fg);font-variant-numeric:tabular-nums;padding-left:6px}
+
+  /* events — dense rows, 6 / 16 */
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg);padding:12px 16px;border-bottom:1px solid var(--border)}
+  td{padding:6px 16px;border-bottom:1px solid var(--row);font-size:13px;vertical-align:top}
+  tr.ev{cursor:pointer}
+  tr.ev:hover{background:var(--sunken)}
+  tr.ev.sel{background:var(--muted)}
+  .t-mono{font-family:var(--mono);font-size:12px}
+  td.c-when,td.c-who{white-space:nowrap}
+  .t-dim{color:var(--muted-fg)}
+  .chain{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--muted-fg);margin-top:2px}
+  .chain b{font-weight:500;color:var(--fg)}
+  .rowline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .prev{margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .more{padding:10px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  /* a run, opened: its members sit inside the What cell, so the table's columns hold */
+  .runbadge{border:1px solid var(--border);background:#fff;padding:0 6px 0 7px;gap:4px}
+  .runbadge:hover{background:var(--muted)}
+  .runbadge.on{background:#18181b;color:#fafafa;border-color:#18181b}
+  .runbadge .caret{color:var(--dim);font-size:9px}
+  .runbadge.on .caret{color:#a1a1aa}
+  .runlist{display:flex;flex-direction:column;gap:1px;margin-top:6px;border-top:1px solid var(--row);padding-top:5px}
+  .runlist .m{display:flex;align-items:center;gap:12px;min-height:var(--control-h-xs);border-radius:5px;padding:0 5px;font-size:12px;border:0;background:none;width:100%;text-align:left}
+  .runlist .m:hover{background:#fff;box-shadow:inset 0 0 0 1px var(--border)}
+  .runlist .mt{font-family:var(--mono);color:var(--muted-fg);width:124px;flex:none}
+  .runlist .md{font-family:var(--mono);color:var(--subtle);width:64px;flex:none}
+  .runlist .mfoot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 5px 0}
+  .stale{opacity:.45;transition:opacity .15s}
+  .searching{display:inline-flex;align-items:center;gap:6px;color:var(--muted-fg);font-size:12px;white-space:nowrap}
+
+  /* sessions */
+  .sess{border-bottom:1px solid var(--row)}
+  .sess .shead{display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;min-height:32px}
+  .sess .shead:hover{background:var(--sunken)}
+  .sess.open .shead{background:var(--muted)}
+  .sess .who{font-weight:600;font-size:13px}
+  .sess .meta{color:var(--muted-fg);font-size:12px}
+  .sess .counts{margin-left:auto;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+  .wf{padding:8px 14px 14px;background:var(--sunken);display:flex;flex-direction:column;gap:2px}
+  .wf .r{display:flex;align-items:center;gap:10px;font-size:12px;min-height:var(--control-h-xs);border-radius:5px;padding:0 4px}
+  .wf .r.click{cursor:pointer}
+  .wf .r.click:hover{background:#fff;box-shadow:inset 0 0 0 1px var(--border)}
+  .wf .t{width:52px;color:var(--muted-fg);font-family:var(--mono);flex:none}
+  .wf .lbl{width:230px;flex:none;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wf .track{flex:1;height:12px;position:relative;min-width:40px}
+  .wf .bar{position:absolute;top:1px;height:10px;min-width:3px;border-radius:3px;background:var(--o-ok)}
+  .wf .bar.approval{background:var(--o-approval)}.wf .bar.denied{background:var(--o-denied)}.wf .bar.archived{background:var(--o-archived)}.wf .bar.error{background:var(--o-error)}
+  .wf .rt{width:190px;flex:none;text-align:right;color:var(--muted-fg);font-size:11px}
+  .wf .fold{color:var(--muted-fg);font-style:italic}
+  .wf .r.keep .lbl{font-weight:600}
+
+  /* record — a drawer at wide, a full-screen level at narrow */
+  .scrim{position:fixed;inset:0;background:rgba(9,9,11,.18);z-index:40}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(620px,100vw);background:#fff;border-left:1px solid var(--border);box-shadow:-12px 0 40px rgba(0,0,0,.12);z-index:41;display:flex;flex-direction:column}
+  .dhead{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  .dhead b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+  .dtime{white-space:nowrap}
+  .dback{display:none;border:0;background:none;padding:0;font-size:14px;font-weight:500;color:var(--muted-fg);align-items:center}
+  .dbody{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px}
+  .ftab{border-collapse:collapse;width:100%}
+  .ftab td{padding:2px 8px 2px 0;font-size:12px;line-height:20px;border:0}
+  .ftab .k{color:var(--muted-fg);width:1%;white-space:nowrap;padding-right:14px}
+  .ftab .v{font-family:var(--mono);word-break:break-all}
+  /* The outcome row: the hub's words beside the chip, the sentence beneath it. Neither
+     is mono, and neither breaks mid-word the way an id may. */
+  .ftab .v .olabel{font-family:var(--sans)}
+  .ftab tr.tall td{vertical-align:top;padding-top:5px}
+  .why{font-family:var(--sans);max-width:72ch;word-break:normal;margin:3px 0 4px}
+  .ftab .v button{border:0;background:none;padding:0;font:inherit;font-family:var(--mono);text-decoration:underline;text-underline-offset:2px;cursor:pointer;text-align:left}
+  .tree{font-family:var(--mono);font-size:12px;line-height:19px}
+  .tree .n{display:flex;gap:6px;padding-left:var(--ind,0px)}
+  .tree .tog{border:0;background:none;padding:0;width:12px;color:var(--dim);text-align:left;flex:none}
+  .tree .key{color:var(--muted-fg)}
+  .tree .num{color:#1d4ed8}
+  .tree .stub{background:var(--muted);border-radius:4px;padding:0 4px;color:var(--subtle)}
+  .tree .hit,.hit{background:#fef08a;border-radius:2px}
+  .tree .count{color:var(--dim)}
+  .tl{display:flex;flex-direction:column;gap:2px}
+  .tl button{display:flex;align-items:center;gap:8px;min-height:var(--control-h-xs);width:100%;border:0;background:none;text-align:left;border-radius:5px;padding:0 5px;font-size:12px}
+  .tl button:hover{box-shadow:inset 0 0 0 1px var(--border)}
+  .tl .tt{font-family:var(--mono);color:var(--muted-fg);width:52px;flex:none}
+  .tl .te{font-family:var(--mono)}
+  .tl .tr{margin-left:auto;color:var(--muted-fg);padding-left:8px}
+  .tl .now{font-weight:600}
+  .empty{padding:40px 16px;text-align:center}
+  .empty b{display:block;margin-bottom:4px}
+
+  /* the Filters level — narrow only, a full screen over the page */
+  .level{position:fixed;inset:0;background:#fff;z-index:45;display:flex;flex-direction:column}
+  .lhead{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+  .lbody{flex:1;overflow:auto;padding:8px 8px 12px}
+  .lfoot{position:sticky;bottom:0;padding:12px 16px;border-top:1px solid var(--border);background:#fff;display:flex}
+  .lfoot .btn{height:var(--control-h-touch);flex:1;justify-content:center;font-size:14px}
+
+  /* ── regular (768–1023): the rail above the main pane, as a wrapping row of groups ── */
+  
+
+  /* the board, not the page: nothing scrolls, nothing is fixed */
+  body{background:#fafafa}
+  .rail{position:static;max-height:none;overflow:visible}
+  .drawer{position:static;width:620px;height:auto;box-shadow:0 1px 2px rgba(0,0,0,.05);border:1px solid #e4e4e7;border-radius:12px;overflow:hidden}
+  .dbody{overflow:visible}
+  .board{box-sizing:border-box;background:#fff}
+  .sheet{box-sizing:border-box;background:#fafafa;padding:32px;display:flex;flex-direction:column;gap:28px}
+  .panel{display:flex;flex-direction:column;gap:8px}
+  .lab{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#71717a}
+  .lab span{text-transform:none;letter-spacing:0;font-weight:400;color:#a1a1aa}
+  .notes{display:flex;flex-direction:column;gap:6px}
+  .notes .note{max-width:80ch}
+  .notes .note b{color:#09090b;font-weight:500}
+  .pane{background:#fff;border:1px solid #e4e4e7;border-radius:12px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .row2{display:grid;grid-template-columns:620px 620px;gap:32px;align-items:start}
+  .phones{display:flex;gap:40px;align-items:flex-start}
+  .slot{display:flex;flex-direction:column;gap:10px;width:390px;flex-shrink:0}
+  .phone{position:relative;width:390px;min-height:844px;background:#fff;border:1px solid #d4d4d8;border-radius:14px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.14)}
+.phone .wide-only{display:none!important}
+.phone .narrow-only{display:inline}
+.phone .burger{display:inline-flex}
+.phone .nav{padding:0 16px;height:56px}
+.phone .wrap{padding:10px 16px 40px;gap:6px}
+.phone h1{font-size:20px;line-height:26px}
+.phone .head{grid-template-columns:1fr auto;grid-template-areas:"ttl exp" "sub sub" "seg seg";row-gap:4px}
+.phone .head .exp{height:var(--control-h-touch);font-size:14px;padding:0 14px}
+.phone .head .seg{display:flex;padding:3px;margin-top:2px}
+.phone .head .seg button{flex:1;height:var(--control-h-touch);font-size:14px}
+.phone .strip{padding:8px 12px;gap:4px}
+.phone .striphead{flex-wrap:wrap;gap:6px 8px;font-size:12px}
+.phone .striphead>span:first-child{font-size:12px;white-space:nowrap}
+.phone .presets{margin-left:auto;flex:0 0 auto;gap:4px}
+.phone .presets .btn{height:var(--control-h-touch);padding:0 11px;font-size:12px}
+.phone .lanes{--gut:0px;cursor:default;gap:2px}
+.phone .lane{flex-wrap:wrap;gap:2px}
+.phone .lane .nm{width:100%;flex:1 1 100%;line-height:13px}
+.phone .lane .cells{flex:1 1 100%;height:10px;gap:0}
+.phone .brush{display:none}
+.phone .axis{margin-left:0;gap:2px}
+.phone .axis button{min-height:var(--control-h-touch);text-align:center}
+.phone .legend{gap:4px 10px;line-height:16px}
+/* align-items:flex-start would size the pane to its CONTENT in a column — one nowrap line then pushes the card past the phone. */
+.phone .body{flex-direction:column;align-items:stretch}
+.phone .rail{display:none}
+.phone .filters{gap:8px}
+.phone .filtersbtn{display:flex;height:var(--control-h-touch);justify-content:center;font-size:14px;flex:0 0 auto;padding:0 14px}
+.phone .filters .searchbox{height:var(--control-h-touch);min-width:0;flex:1 1 120px}
+.phone .dbody .searchbox{height:var(--control-h-touch);min-width:0;flex:none}
+.phone .fchip{height:var(--control-h-touch);border-radius:9px}
+.phone .fchip button{width:var(--control-h-touch);height:var(--control-h-touch)}
+.phone .filters>.btn{height:var(--control-h-touch)}
+.phone .grid3{grid-template-columns:minmax(0,1fr)}
+.phone .grid2{grid-template-columns:minmax(0,1fr)}
+.phone .topn button{height:var(--control-h-touch)}
+.phone .look li{line-height:1.9}
+/* A <table> sizes to its content, so one nowrap preview line would widen the whole card past the phone — the cards are blocks here, not a table. */
+.phone .etab{display:block;width:100%;table-layout:fixed}
+.phone .etab tbody{display:block;width:100%}
+.phone .etab thead{display:none}
+.phone .etab tr.ev{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:10px 14px;border-bottom:1px solid var(--row)}
+.phone .etab td{display:block;border:0;padding:0}
+.phone .etab td.c-when{order:1}
+.phone .etab td.c-who{order:2}
+.phone .etab td.c-out{order:3;margin-left:auto}
+.phone .etab td.c-what{order:4;flex:0 0 100%;min-width:0;max-width:100%}
+/* The card keeps the ARGUMENTS preview as one clipped line (the signature splits on argsHead); a row with no arguments stays two lines. */
+.phone .etab td.c-what .prev{display:none}
+.phone .etab td.c-what .prev-args{display:block}
+.phone .runlist .m{min-height:var(--control-h-touch);gap:10px}
+.phone .runlist .mt{width:auto;flex:1 1 auto}
+.phone .runlist .md{width:auto;margin-left:auto}
+.phone .runlist .mfoot .btn{height:var(--control-h-touch)}
+.phone .more{flex-wrap:wrap}
+.phone .more .btn{height:var(--control-h-touch);flex:0 0 auto;justify-content:center}
+.phone .more .note{flex:1 1 100%}
+.phone .runlist .m{min-width:0}
+.phone .runlist .mt{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.phone .tree .n{flex-wrap:wrap}
+.phone .tree .n>span{min-width:0;word-break:break-all}
+.phone .sess .shead{flex-wrap:wrap;padding:10px 14px;min-height:var(--control-h-touch)}
+.phone .sess .counts{margin-left:0;flex:1 1 100%;justify-content:flex-start}
+.phone .sess .meta{flex:1 1 100%}
+.phone .wf .r{flex-wrap:wrap;gap:2px 10px;padding:6px 4px}
+.phone .wf .lbl{width:auto;flex:1 1 auto;order:2}
+.phone .wf .t{order:1}
+.phone .wf .rt{order:3;width:auto;margin-left:auto;text-align:right}
+.phone .wf .track{order:4;flex:1 1 100%;min-width:0}
+.phone .drawer{width:100vw;left:0;border-left:0;box-shadow:none}
+.phone .dhead,body .lhead{flex-wrap:wrap;padding:4px 16px 10px;row-gap:2px}
+.phone .dback{display:inline-flex;flex:1 1 100%;height:var(--control-h-touch)}
+.phone .dhead b{white-space:normal;overflow:visible;flex:0 1 auto}
+.phone .dbody{padding:12px 16px}
+.phone .tl button{min-height:var(--control-h-touch)}
+/* One grid row per field: a fixed key column, the value beside it, both centred, and a
+   hairline under every row — not under some. */
+.phone .ftab,body .ftab tbody{display:block}
+.phone .ftab tr{display:grid;grid-template-columns:84px minmax(0,1fr);align-items:center;min-height:var(--control-h-touch);border-bottom:1px solid var(--row)}
+.phone .ftab td{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;padding:5px 0;line-height:18px;align-self:stretch}
+.phone .ftab .k{width:auto;padding-right:10px}
+.phone .ftab .v button{align-self:stretch;display:inline-flex;align-items:center;padding:0}
+.phone .ftab tr.tall td{align-items:flex-start;padding-top:11px}
+.phone .why{flex:1 1 100%;max-width:none}
+.phone .scrim{display:none}
+.phone .level .frow{height:var(--control-h-touch);font-size:13px}
+.phone .level .showall{height:var(--control-h-touch);font-size:12px}
+  /* The phone BOX, and it must come after the narrow rules: those size the record level
+     with 100vw, which is the viewport on a board rather than this 390 px phone. */
+  .phone .level,.phone .drawer{position:absolute;inset:0;width:auto;height:auto;border:0;border-radius:0;box-shadow:none;background:#fff}
+  .phone .rail{display:none}
   </style>
 </helmet>
-<div style="width: 1380px; min-height: 1460px; box-sizing: border-box; background: #ffffff; display: flex; flex-direction: column;">
-
-  <div style="height: 56px; box-sizing: border-box; border-bottom: 1px solid #e4e4e7; display: flex; align-items: center; justify-content: space-between; padding: 0 24px;">
-    <div style="display: flex; align-items: center; gap: 24px;">
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg>
-        <div style="font-size: 15px; font-weight: 600;">personal-mcps</div>
-      </div>
-      <div style="display: flex; align-items: center; gap: 4px;">
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Apps</div>
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Agents</div>
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; background: #f4f4f5; color: #09090b;">Audit</div>
-        <div style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Approvals<span style="display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #dc2626; color: #ffffff; font-size: 11px; font-weight: 600;">2</span></div>
-        <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #71717a;">Settings</div>
-      </div>
-    </div>
-    <div style="display: flex; align-items: center; gap: 12px;">
-      <div style="font-size: 14px; color: #71717a;">ahrzb</div>
-      <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">Sign out</div>
+<div class="board" style="width:1380px">
+<div class="nav">
+  <div style="display:flex;align-items:center;gap:24px;min-width:0">
+    <div style="display:flex;align-items:center;gap:8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3.5"></circle><path d="M12 8.5V3.5"></path><path d="M14.5 14.5L18.5 18.5"></path><path d="M9.5 14.5L5.5 18.5"></path></svg><div style="font-size:15px;font-weight:600">personal-mcps</div></div>
+    <div class="wide-only" style="display:flex;gap:4px"><div class="navitem">Apps</div><div class="navitem">Agents</div><div class="navitem on">Audit</div><div class="navitem">Approvals</div><div class="navitem">Settings</div></div>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span class="note wide-only" style="font-size:14px">ahrzb</span><span class="btn wide-only">Sign out</span>
+    <button class="burger" aria-label="Menu"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg></button>
+  </div>
+</div><div class="wrap">
+  <div class="head">
+    <h1 class="ttl">Audit log</h1>
+    <p class="note sub">1,401 events · Aug 17 14:47 → Aug 24 14:47 UTC · kept for 7 days</p>
+    <a class="btn exp" download="audit.jsonl" href="/audit/export.jsonl?since=1786978020000&amp;until=1787582820000">Export<span class="wide-only">JSONL</span></a>
+    <div class="seg views">
+      <button data-view="summary" class="on">Summary</button>
+      <button data-view="sessions">Sessions</button>
+      <button data-view="events">Events</button>
     </div>
   </div>
 
-  <div style="width: 1280px; box-sizing: border-box; margin: 0 auto; padding: 32px 0 48px 0; display: flex; flex-direction: column; gap: 24px;">
-
-    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-      <div style="display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 24px; font-weight: 600;">Audit log</div>
-        <div style="font-size: 14px; color: #71717a;">Tool calls, admin changes, and auth events. Kept for 7 days — export JSONL to archive.</div>
+  <div class="card strip"><div class="striphead">
+      <span style="font-weight:600;font-size:13px">Aug 17 14:47 → Aug 24 14:47</span>
+      <div class="presets">
+        <button class="btn mini" data-act="preset" data-h="1">1h</button>
+        <button class="btn mini" data-act="preset" data-h="24">24h</button>
+        <button class="btn mini on" data-act="preset" data-h="168">7d</button>
       </div>
-      <div style="display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; background: #ffffff; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path><path d="M12 15V3"></path></svg>
-        <span>Export JSONL</span>
-      </div>
+      <span class="note wide-only">an hour per cell, coloured by the worst outcome in it — drag to select</span>
+      <span class="wide-only" style="margin-left:auto"></span>
+      <span class="chip wide-only">1,401 events selected</span></div>
+    
+    <div class="lanes" tabindex="0">
+      <div class="lane"><span class="nm" title="agent:claude">agent:claude</span><span class="cells"><span class="c ok"></span><span class="c "></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c approval"></span><span class="c denied"></span><span class="c approval"></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c denied"></span><span class="c ok"></span><span class="c "></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c error"></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c approval"></span><span class="c denied"></span><span class="c error"></span><span class="c ok"></span><span class="c error"></span><span class="c "></span><span class="c ok"></span><span class="c approval"></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c denied"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c error"></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c approval"></span><span class="c error"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c denied"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c approval"></span><span class="c denied"></span><span class="c approval"></span><span class="c ok"></span><span class="c ok"></span><span class="c denied"></span><span class="c error"></span><span class="c ok"></span><span class="c approval"></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c approval"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c approval"></span><span class="c archived"></span></span></div><div class="lane"><span class="nm" title="agent:cron">agent:cron</span><span class="cells"><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c denied"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c error"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c error"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c error"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c denied"></span><span class="c "></span></span></div><div class="lane"><span class="nm" title="agent:cursor">agent:cursor</span><span class="cells"><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c approval"></span><span class="c ok"></span><span class="c denied"></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c denied"></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c approval"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c denied"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span></span></div><div class="lane"><span class="nm" title="user:ahrzb">user:ahrzb</span><span class="cells"><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c error"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span><span class="c ok"></span></span></div><div class="lane"><span class="nm" title="app:news">app:news</span><span class="cells"><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span></span></div><div class="lane"><span class="nm" title="app:home">app:home</span><span class="cells"><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span></span></div><div class="lane"><span class="nm" title="hub">1 other</span><span class="cells"><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c ok"></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span><span class="c "></span></span></div>
+      
     </div>
+    <div class="axis"><button data-act="day" data-i="0" class="on">Aug 17</button><button data-act="day" data-i="1" class="on">Aug 18</button><button data-act="day" data-i="2" class="on">Aug 19</button><button data-act="day" data-i="3" class="on">Aug 20</button><button data-act="day" data-i="4" class="on">Aug 21</button><button data-act="day" data-i="5" class="on">Aug 22</button><button data-act="day" data-i="6" class="on">Aug 23</button></div>
+    <div class="legend"><span class="i wide-only" style="font-weight:500;color:var(--subtle)">Worst outcome in the hour:</span>
+      <span class="i"><span class="sw s-ok"></span><span class="narrow-only">ok</span><span class="wide-only">ok</span></span><span class="i"><span class="sw s-approval"></span><span class="narrow-only">approval</span><span class="wide-only">approval required</span></span><span class="i"><span class="sw s-archived"></span><span class="narrow-only">archived</span><span class="wide-only">app archived</span></span><span class="i"><span class="sw s-denied"></span><span class="narrow-only">denied</span><span class="wide-only">denied — not permitted or unavailable</span></span><span class="i"><span class="sw s-error"></span><span class="narrow-only">error</span><span class="wide-only">error</span></span>
+      </div></div>
 
-    <div style="display: flex; flex-direction: column; gap: 12px;">
-      <div style="display: flex; align-items: center; gap: 12px;">
-        <div style="display: flex; align-items: center; background: #f4f4f5; border-radius: 8px; padding: 2px; gap: 2px;">
-          <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #71717a;">1h</div>
-          <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #71717a;">24h</div>
-          <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 6px; font-size: 13px; font-weight: 500; background: #ffffff; color: #09090b; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">7d</div>
-          <div style="display: flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #71717a;">30d</div>
-        </div>
-        <div style="height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; gap: 8px;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"></rect><path d="M16 2v4"></path><path d="M8 2v4"></path><path d="M3 10h18"></path></svg>
-          <span>Aug 18 – Aug 24, 2026</span>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
-        </div>
-        <div style="flex-grow: 1;"></div>
-        <div style="width: 260px; height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; gap: 8px;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a1a1aa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
-          <span style="color: #a1a1aa;">Filter by tool…</span>
-        </div>
-      </div>
-      <div style="display: flex; align-items: center; gap: 12px;">
-        <div style="width: 170px; height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; justify-content: space-between;">
-          <span>All agents</span>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
-        </div>
-        <div style="width: 170px; height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; justify-content: space-between;">
-          <span>All apps</span>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
-        </div>
-        <div style="width: 170px; height: 36px; box-sizing: border-box; padding: 0 12px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 14px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; justify-content: space-between;">
-          <span>All events</span>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
-        </div>
-        <div style="flex-grow: 1;"></div>
-        <div style="font-size: 13px; color: #71717a;">1,284 events match</div>
-        <div style="display: flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; background: transparent; color: #09090b; font-size: 13px; font-weight: 500; border-radius: 8px; border: 1px solid transparent;">Clear filters</div>
-      </div>
+  <div class="filters"><button class="btn filtersbtn" data-act="filters">Filters</button><div class="searchbox"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg><input placeholder="Search events and bodies…  ( / )" value=""></div></div>
+
+  <div class="body">
+    <aside class="card rail"><h3>Filter</h3><p class="note" style="padding:0 5px">1,401 of 1,401 in window</p><div class="fgroup"><p class="eyebrow">outcome</p><button class="frow" data-act="facet" data-f="outcome" data-v="ok" title="ok"><span class="bar" style="width:100%"></span><span class="sw s-ok"></span><span class="nm">ok</span><span class="ct">1,091</span></button><button class="frow" data-act="facet" data-f="outcome" data-v="denied" title="denied"><span class="bar" style="width:23.556370302474793%"></span><span class="sw s-denied"></span><span class="nm">denied</span><span class="ct">257</span></button><button class="frow" data-act="facet" data-f="outcome" data-v="approval" title="approval"><span class="bar" style="width:3.84967919340055%"></span><span class="sw s-approval"></span><span class="nm">approval</span><span class="ct">42</span></button><button class="frow" data-act="facet" data-f="outcome" data-v="error" title="error"><span class="bar" style="width:0.916590284142988%"></span><span class="sw s-error"></span><span class="nm">error</span><span class="ct">10</span></button><button class="frow" data-act="facet" data-f="outcome" data-v="archived" title="archived"><span class="bar" style="width:0.09165902841429881%"></span><span class="sw s-archived"></span><span class="nm">archived</span><span class="ct">1</span></button></div><div class="fgroup"><p class="eyebrow">principal</p><button class="frow" data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude"><span class="bar" style="width:100%"></span><span class="nm">agent:claude</span><span class="ct">847</span></button><button class="frow" data-act="facet" data-f="principal" data-v="agent:cron" title="agent:cron"><span class="bar" style="width:39.07910271546635%"></span><span class="nm">agent:cron</span><span class="ct">331</span></button><button class="frow" data-act="facet" data-f="principal" data-v="agent:cursor" title="agent:cursor"><span class="bar" style="width:16.883116883116884%"></span><span class="nm">agent:cursor</span><span class="ct">143</span></button><button class="frow" data-act="facet" data-f="principal" data-v="user:ahrzb" title="user:ahrzb"><span class="bar" style="width:6.965761511216057%"></span><span class="nm">user:ahrzb</span><span class="ct">59</span></button><button class="frow" data-act="facet" data-f="principal" data-v="app:news" title="app:news"><span class="bar" style="width:1.2987012987012987%"></span><span class="nm">app:news</span><span class="ct">11</span></button><button class="showall" data-act="showall" data-f="principal">Show all 7</button></div><div class="fgroup"><p class="eyebrow">app</p><button class="frow" data-act="facet" data-f="app" data-v="news" title="news"><span class="bar" style="width:100%"></span><span class="nm">news</span><span class="ct">669</span></button><button class="frow" data-act="facet" data-f="app" data-v="notion" title="notion"><span class="bar" style="width:37.5186846038864%"></span><span class="nm">notion</span><span class="ct">251</span></button><button class="frow" data-act="facet" data-f="app" data-v="linear" title="linear"><span class="bar" style="width:25.411061285500747%"></span><span class="nm">linear</span><span class="ct">170</span></button><button class="frow" data-act="facet" data-f="app" data-v="slack" title="slack"><span class="bar" style="width:17.040358744394617%"></span><span class="nm">slack</span><span class="ct">114</span></button><button class="frow" data-act="facet" data-f="app" data-v="github" title="github"><span class="bar" style="width:13.901345291479823%"></span><span class="nm">github</span><span class="ct">93</span></button><button class="showall" data-act="showall" data-f="app">Show all 6</button></div><div class="fgroup"><p class="eyebrow">tool</p><button class="frow" data-act="facet" data-f="tool" data-v="news/search_news" title="news/search_news"><span class="bar" style="width:100%"></span><span class="nm">news/search_news</span><span class="ct">423</span></button><button class="frow" data-act="facet" data-f="tool" data-v="news/get_news" title="news/get_news"><span class="bar" style="width:45.15366430260047%"></span><span class="nm">news/get_news</span><span class="ct">191</span></button><button class="frow" data-act="facet" data-f="tool" data-v="notion/search" title="notion/search"><span class="bar" style="width:23.167848699763592%"></span><span class="nm">notion/search</span><span class="ct">98</span></button><button class="frow" data-act="facet" data-f="tool" data-v="notion/get_page" title="notion/get_page"><span class="bar" style="width:21.27659574468085%"></span><span class="nm">notion/get_page</span><span class="ct">90</span></button><button class="frow" data-act="facet" data-f="tool" data-v="linear/create_issue" title="linear/create_issue"><span class="bar" style="width:17.73049645390071%"></span><span class="nm">linear/create_issue</span><span class="ct">75</span></button><button class="frow" data-act="facet" data-f="tool" data-v="slack/post_message" title="slack/post_message"><span class="bar" style="width:17.02127659574468%"></span><span class="nm">slack/post_message</span><span class="ct">72</span></button><button class="showall" data-act="showall" data-f="tool">Show all 19</button></div><div class="fgroup"><p class="eyebrow">event</p><button class="frow" data-act="facet" data-f="event" data-v="tools/call" title="tools/call"><span class="bar" style="width:100%"></span><span class="nm">tools/call</span><span class="ct">1,279</span></button><button class="frow" data-act="facet" data-f="event" data-v="approval.requested" title="approval.requested"><span class="bar" style="width:3.2838154808444098%"></span><span class="nm">approval.requested</span><span class="ct">42</span></button><button class="frow" data-act="facet" data-f="event" data-v="approval.approved" title="approval.approved"><span class="bar" style="width:2.2673964034401877%"></span><span class="nm">approval.approved</span><span class="ct">29</span></button><button class="frow" data-act="facet" data-f="event" data-v="connect.register" title="connect.register"><span class="bar" style="width:0.8600469116497262%"></span><span class="nm">connect.register</span><span class="ct">11</span></button><button class="frow" data-act="facet" data-f="event" data-v="auth.login" title="auth.login"><span class="bar" style="width:0.7818608287724784%"></span><span class="nm">auth.login</span><span class="ct">10</span></button><button class="frow" data-act="facet" data-f="event" data-v="approval.rejected" title="approval.rejected"><span class="bar" style="width:0.6254886630179828%"></span><span class="nm">approval.rejected</span><span class="ct">8</span></button><button class="showall" data-act="showall" data-f="event">Show all 17</button></div><div class="fgroup"><p class="eyebrow">session</p><p class="note" style="padding:0 5px">Opened from a record, never listed — too many to browse.</p></div></aside>
+    <div class="main"><div class="card" style="padding:16px;display:flex;flex-direction:column;gap:14px">
+    <div class="grid3">
+      <div class="stat"><div class="v">1,401</div><div class="l">events · 1,279 tool calls</div></div>
+      <div class="stat"><div class="v" style="color:var(--danger-fg)">300</div><div class="l">refused or waiting on you</div></div>
+      <div class="stat"><div class="v">421 ms</div><div class="l">median call · p95 1.6 s</div></div>
     </div>
-
-    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px;">
-      <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 16px 20px; display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 13px; color: #71717a;">Events</div>
-        <div style="font-size: 24px; font-weight: 600;">1,284</div>
-        <div style="font-size: 12px; color: #71717a;">+12% vs previous 7 days</div>
-      </div>
-      <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 16px 20px; display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 13px; color: #71717a;">Tool calls</div>
-        <div style="font-size: 24px; font-weight: 600;">1,131</div>
-        <div style="font-size: 12px; color: #71717a;">88% of all events</div>
-      </div>
-      <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 16px 20px; display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 13px; color: #71717a;">Denied</div>
-        <div style="font-size: 24px; font-weight: 600; color: #b91c1c;">23</div>
-        <div style="font-size: 12px; color: #71717a;">1.8% deny rate</div>
-      </div>
-      <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 16px 20px; display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 13px; color: #71717a;">Median latency</div>
-        <div style="font-size: 24px; font-weight: 600;">240 ms</div>
-        <div style="font-size: 12px; color: #71717a;">p95 1.9 s</div>
-      </div>
+    <div class="look"><p class="eyebrow" style="color:var(--warn-fg);margin:0 0 4px">Worth a look</p><ul style="margin:0;padding-left:18px">
+      <li><b>agent:cron was refused 230 times</b> calling <span class="mono">news/search_news</span> — denied. <a data-act="insight" data-i="0">show me</a></li><li><b>1 tool was called for the first time</b> in the last two days: <span class="mono">github/create_issue</span>. <a data-act="insight" data-i="1">show me</a></li><li><b>10 changes to your setup</b>: <span class="mono">admin.app_create</span>, <span class="mono">upstream.oauth_connected</span>, <span class="mono">admin.token_issue</span>. <a data-act="insight" data-i="2">show me</a></li></ul></div>
+    <div class="grid3">
+      <div><p class="eyebrow">Agents</p><div class="topn"><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude"><span class="bar" style="width:100%"></span><span class="nm">agent:claude</span><span class="n">847</span></button><button data-act="facet" data-f="principal" data-v="agent:cron" title="agent:cron"><span class="bar" style="width:39.07910271546635%"></span><span class="nm">agent:cron</span><span class="n">331</span></button><button data-act="facet" data-f="principal" data-v="agent:cursor" title="agent:cursor"><span class="bar" style="width:16.883116883116884%"></span><span class="nm">agent:cursor</span><span class="n">143</span></button><button data-act="facet" data-f="principal" data-v="user:ahrzb" title="user:ahrzb"><span class="bar" style="width:6.965761511216057%"></span><span class="nm">user:ahrzb</span><span class="n">59</span></button></div></div>
+      <div><p class="eyebrow">Apps</p><div class="topn"><button data-act="facet" data-f="app" data-v="news" title="news"><span class="bar" style="width:100%"></span><span class="nm">news</span><span class="n">669</span></button><button data-act="facet" data-f="app" data-v="notion" title="notion"><span class="bar" style="width:37.5186846038864%"></span><span class="nm">notion</span><span class="n">251</span></button><button data-act="facet" data-f="app" data-v="linear" title="linear"><span class="bar" style="width:25.411061285500747%"></span><span class="nm">linear</span><span class="n">170</span></button><button data-act="facet" data-f="app" data-v="slack" title="slack"><span class="bar" style="width:17.040358744394617%"></span><span class="nm">slack</span><span class="n">114</span></button></div></div>
+      <div><p class="eyebrow">Tools</p><div class="topn"><button data-act="facet" data-f="tool" data-v="news/search_news" title="news/search_news"><span class="bar" style="width:100%"></span><span class="nm">news/search_news</span><span class="n">423</span></button><button data-act="facet" data-f="tool" data-v="news/get_news" title="news/get_news"><span class="bar" style="width:45.15366430260047%"></span><span class="nm">news/get_news</span><span class="n">191</span></button><button data-act="facet" data-f="tool" data-v="notion/search" title="notion/search"><span class="bar" style="width:23.167848699763592%"></span><span class="nm">notion/search</span><span class="n">98</span></button><button data-act="facet" data-f="tool" data-v="notion/get_page" title="notion/get_page"><span class="bar" style="width:21.27659574468085%"></span><span class="nm">notion/get_page</span><span class="n">90</span></button></div></div>
     </div>
-
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); padding: 20px 24px; display: flex; flex-direction: column; gap: 16px;">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div style="display: flex; align-items: baseline; gap: 10px;">
-          <div style="font-size: 14px; font-weight: 500;">Events over time</div>
-          <div style="font-size: 12px; color: #71717a;">6-hour buckets</div>
-        </div>
-      </div>
-      <div style="position: relative; display: flex; align-items: flex-end; gap: 4px; height: 140px; border-bottom: 1px solid #e4e4e7; padding-bottom: 0;">
-        <div style="position: absolute; left: 0; right: 0; bottom: 130px; height: 1px; background: #f4f4f5;"></div>
-        <div style="position: absolute; left: 0; right: 0; bottom: 65px; height: 1px; background: #f4f4f5;"></div>
-        <div style="position: absolute; left: 0; bottom: 124px; width: 26px; text-align: right; font-size: 11px; line-height: 1; color: #71717a;">120</div>
-        <div style="position: absolute; left: 0; bottom: 59px; width: 26px; text-align: right; font-size: 11px; line-height: 1; color: #71717a;">60</div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 22px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 58px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 46px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 30px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 18px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 62px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 75px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 38px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 25px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 70px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 55px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 42px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 15px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 48px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 66px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 35px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 28px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end; position: relative;">
-          <div style="position: absolute; bottom: 92px; left: calc(100% + 8px); background: #18181b; color: #fafafa; border-radius: 6px; padding: 6px 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; flex-direction: column; gap: 2px; width: max-content;">
-            <div style="font-size: 12px; font-weight: 500;">Aug 22 · 06:00–12:00</div>
-            <div style="font-size: 12px; color: #a1a1aa;">96 events</div>
-          </div>
-          <div style="height: 128px; background: #52525b; border-radius: 3px 3px 0 0; position: relative;"></div>
-        </div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 89px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 50px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 20px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 74px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 60px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 33px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 26px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 86px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 64px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-        <div style="flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 14px; background: #71717a; border-radius: 3px 3px 0 0; position: relative;"></div></div>
-      </div>
-      <div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0;">
-        <div style="font-size: 11px; color: #71717a;">Aug 18</div>
-        <div style="font-size: 11px; color: #71717a;">Aug 19</div>
-        <div style="font-size: 11px; color: #71717a;">Aug 20</div>
-        <div style="font-size: 11px; color: #71717a;">Aug 21</div>
-        <div style="font-size: 11px; color: #71717a;">Aug 22</div>
-        <div style="font-size: 11px; color: #71717a;">Aug 23</div>
-        <div style="font-size: 11px; color: #71717a;">Aug 24</div>
-      </div>
+    <div class="grid2">
+      <div><p class="eyebrow">Refusals</p><div class="topn"><button data-act="facet" data-f="principal" data-v="agent:cron" title="agent:cron → news/search_news"><span class="bar" style="width:100%"></span><span class="nm">agent:cron → news/search_news</span><span class="n">230</span></button><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude → github/search_code"><span class="bar" style="width:6.521739130434782%"></span><span class="nm">agent:claude → github/search_code</span><span class="n">15</span></button><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude → slack/post_message"><span class="bar" style="width:5.6521739130434785%"></span><span class="nm">agent:claude → slack/post_message</span><span class="n">13</span></button><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude → linear/create_issue"><span class="bar" style="width:5.217391304347826%"></span><span class="nm">agent:claude → linear/create_issue</span><span class="n">12</span></button></div></div>
+      <div><p class="eyebrow">Changes you made</p><button class="frow" data-act="openidx" data-idx="1398" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">admin.grant_set</span><span class="ct">Aug 24 14:30</span></button><button class="frow" data-act="openidx" data-idx="1379" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">admin.app_archive</span><span class="ct">Aug 24 12:02</span></button><button class="frow" data-act="openidx" data-idx="1377" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">admin.grant_set</span><span class="ct">Aug 24 11:32</span></button><button class="frow" data-act="openidx" data-idx="957" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">admin.grant_set</span><span class="ct">Aug 22 09:26</span></button><button class="frow" data-act="openidx" data-idx="921" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">upstream.oauth_connected</span><span class="ct">Aug 22 07:31</span></button></div>
     </div>
-
-    <div style="background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;">
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 12px 20px; border-bottom: 1px solid #e4e4e7;">
-        <div style="display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 500; color: #71717a;"><span>Time</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"></path><path d="m19 12-7 7-7-7"></path></svg></div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Principal</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Event</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">App</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a;">Tool</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a; text-align: right;">Duration</div>
-        <div style="font-size: 13px; font-weight: 500; color: #71717a; padding-left: 16px;">Outcome</div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 14:32:07</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
-        <div style="font-size: 13px;">tools/call</div>
-        <div style="font-size: 13px;">news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">get_news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a; text-align: right;">340 ms</div>
-        <div style="padding-left: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">ok</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 14:31:48</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
-        <div style="font-size: 13px;">tools/call</div>
-        <div style="font-size: 13px;">notion</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">create_page</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a; text-align: right;">1.2 s</div>
-        <div style="padding-left: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">ok</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 14:30:12</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">user:ahrzb</div>
-        <div style="font-size: 13px;">admin.grant_set</div>
-        <div style="font-size: 13px;">notion</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa;">—</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa; text-align: right;">—</div>
-        <div style="padding-left: 16px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">ok</span></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; align-items: center; background: #fafafa;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 14:29:55</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
-        <div style="font-size: 13px;">approval.requested</div>
-        <div style="font-size: 13px;">home</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">set_scene</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa; text-align: right;">—</div>
-        <div style="padding-left: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">approval</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"></path></svg></div>
-      </div>
-      <div style="padding: 6px 20px; border-bottom: 1px solid #f4f4f5; background: #fafafa; display: flex; flex-direction: column; gap: 4px;">
-        <div style="font-size: 11px; font-weight: 500; color: #71717a; letter-spacing: 0.06em;">EVENT DETAIL</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #52525b;">{ "tool": "set_scene", "approval": "apr_8f2k", "status": "pending", "expires_in": "60m" }</div>
-        <div style="font-size: 12px; color: #71717a;">Client: claude-code 2.1.37 · session <a href="#">a3f9c2d1</a></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 14:18:03</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">app:news</div>
-        <div style="font-size: 13px;">connect.register</div>
-        <div style="font-size: 13px;">news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa;">—</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa; text-align: right;">—</div>
-        <div style="padding-left: 16px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">ok</span></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 14:17:59</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">app:news</div>
-        <div style="font-size: 13px;">connect.replaced</div>
-        <div style="font-size: 13px;">news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa;">—</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa; text-align: right;">—</div>
-        <div style="padding-left: 16px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">ok</span></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 13:58:31</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
-        <div style="font-size: 13px;">tools/call</div>
-        <div style="font-size: 13px;">home</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">lights_on</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a; text-align: right;">8 ms</div>
-        <div style="padding-left: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #fffbeb; color: #92400e; border: 1px solid #fde68a;">archived</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 13:44:10</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">user:ahrzb</div>
-        <div style="font-size: 13px;">approval.approved</div>
-        <div style="font-size: 13px;">home</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">set_scene</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa; text-align: right;">—</div>
-        <div style="padding-left: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">ok</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 13:20:05</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">user:ahrzb</div>
-        <div style="font-size: 13px;">auth.device_approved</div>
-        <div style="font-size: 13px; color: #a1a1aa;">—</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa;">—</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa; text-align: right;">—</div>
-        <div style="padding-left: 16px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">ok</span></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 12:59:47</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:cron</div>
-        <div style="font-size: 13px;">tools/call</div>
-        <div style="font-size: 13px;">news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">search_news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a; text-align: right;">4 ms</div>
-        <div style="padding-left: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;">denied</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 12:41:33</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
-        <div style="font-size: 13px;">tools/call</div>
-        <div style="font-size: 13px;">notion</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">search</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a; text-align: right;">890 ms</div>
-        <div style="padding-left: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">ok</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; border-bottom: 1px solid #f4f4f5; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 12:02:19</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">user:ahrzb</div>
-        <div style="font-size: 13px;">admin.app_archive</div>
-        <div style="font-size: 13px;">home</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa;">—</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #a1a1aa; text-align: right;">—</div>
-        <div style="padding-left: 16px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">ok</span></div>
-      </div>
-      <div style="display: grid; grid-template-columns: 150px 130px 160px 100px 150px 80px 1fr; gap: 0; padding: 6px 20px; align-items: center;">
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a;">Aug 24 11:47:02</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">agent:claude</div>
-        <div style="font-size: 13px;">tools/call</div>
-        <div style="font-size: 13px;">news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">get_news</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #71717a; text-align: right;">290 ms</div>
-        <div style="padding-left: 16px; display: flex; align-items: center; justify-content: space-between; gap: 8px;"><span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 500; background: #ffffff; color: #09090b; border: 1px solid #e4e4e7;">ok</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></div>
-      </div>
-    </div>
-
-    <div style="display: flex; align-items: center; justify-content: space-between;">
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <div style="font-size: 13px; color: #71717a;">Rows per page</div>
-        <div style="height: 32px; box-sizing: border-box; padding: 0 10px; border: 1px solid #e4e4e7; border-radius: 8px; font-size: 13px; color: #09090b; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.05); display: flex; align-items: center; gap: 6px;">
-          <span>50</span>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
-        </div>
-      </div>
-      <div style="display: flex; align-items: center; gap: 12px;">
-        <div style="font-size: 13px; color: #71717a;">1–50 of 1,284</div>
-        <div style="display: flex; gap: 6px;">
-          <div style="width: 32px; height: 32px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: #ffffff; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05); opacity: 0.5;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
-          </div>
-          <div style="width: 32px; height: 32px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: #ffffff; border-radius: 8px; border: 1px solid #e4e4e7; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#09090b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
-          </div>
-        </div>
-      </div>
-    </div>
-
+    <div style="border-top:1px solid var(--border);padding-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span class="note">The log itself is a click away — this page is the answer, not the record.</span>
+      <button class="btn primary" data-act="view" data-view="events" style="margin-left:auto">All 1,401 events →</button></div>
+  </div></div>
   </div>
+
+  
+</div>
+<div class="panel" style="padding:0 24px 24px"><div class="eyebrow">Board notes</div><div class="notes"><div class="note">&bull; <b>Three readings of one filtered set.</b> <b>Summary</b> answers &ldquo;is anything wrong?&rdquo;, <b>Sessions</b> reads a client&rsquo;s visit end to end, <b>Events</b> is the log itself (<span class="mono">AuditViews</span>). The window, the facets and the search are one state in the URL &mdash; <span class="mono">view</span>, <span class="mono">since</span>/<span class="mono">until</span>, repeated <span class="mono">principal</span> / <span class="mono">app</span> / <span class="mono">event</span> / <span class="mono">tool</span> / <span class="mono">outcome</span> / <span class="mono">session</span>, <span class="mono">q</span>, <span class="mono">expand</span>, <span class="mono">open</span> &mdash; so every state here is a link.</div><div class="note">&bull; <b>The workspace shape</b> (layout &amp; density ladder &sect;2): full width inside 24 px gutters, the facet rail 200 px as its own card, 12 px between cards. Rows are dense (32 px, 6 / 16), controls 32 / 24, badges and chips 20 / 11, nothing below 11 px. <span class="mono">Audit</span> moves out of the table row of the shape table into the workspace row.</div><div class="note">&bull; <b>The lane strip is the window control.</b> One lane per principal (at most six, busiest first, the rest folded into &ldquo;N others&rdquo; whose name carries them on hover), one cell per hour of the retention window, each cell the <b>worst</b> outcome in that hour under the current facets and search. Drag selects; <b>1h &middot; 24h &middot; 7d</b> sit beside the title (the last labelled from <span class="mono">retentionDays</span>, so the label never names a week the deployment may not keep) and <b>Whole window</b> clears. The strip is focusable: &larr;/&rarr; move the brush by an hour, Shift+&larr;/&rarr; resize it.</div><div class="note">&bull; <b>Colour never carries an outcome alone.</b> Five classes &mdash; <span class="mono">ok</span>, <span class="mono">approval</span> (&minus;32003), <span class="mono">archived</span> (&minus;32002), <span class="mono">denied</span> (&minus;32001, &minus;32000), <span class="mono">error</span> &mdash; and the class NAME is printed beside every swatch, chip and legend entry, with the raw codes after it where they differ.</div><div class="note">&bull; <b>Facets count exhaustively</b> (Hearst): a value&rsquo;s count is taken under every other filter but its own group&rsquo;s, so a group never collapses to one row as you click. Several values in one group OR, groups AND, top 5 (6 for tool and event) with <b>Show all N</b> expanding in place. <span class="mono">session</span> is never listed &mdash; it is set from a record.</div><div class="note">&bull; <b>Worth a look</b> is three hand-written rules, each with <b>show me</b>: the worst refused (principal, target) pair past 5, tools first called in the last two days, and changes to the setup (<span class="mono">admin.*</span>, <span class="mono">upstream.*</span>). With no <span class="mono">reason</span> in the ledger the first sentence ends at the outcome class &mdash; &ldquo;refused 230 times calling <span class="mono">news/search_news</span> &mdash; denied.&rdquo;</div><div class="note">&bull; <b>Export JSONL</b> is a plain link to <span class="mono">/audit/export.jsonl</span> carrying the current selection &mdash; the same read serialized, never a second one. An outcome <i>class</i> is the page&rsquo;s own grouping, so the link expands it to the raw codes the column holds; the <span class="mono">tool</span> facet is a <i>pair</i>, so it travels whole as <span class="mono">target=&lt;app&gt;/&lt;tool&gt;</span> rather than as <span class="mono">app=</span> + <span class="mono">tool=</span>, which would export their cross product.</div><div class="note">&bull; <b>One query per window.</b> Facets, lanes, merging and sessions are computed client-side over the loaded rows, so a facet click never fetches and dragging the brush never fetches. Over the ceiling (<span class="mono">AUDIT_EXPLORER_ROWS</span> = 5,000) the page says so and the hours it could not load draw hatched, never empty (<span class="mono">AuditDetailStates</span>).</div></div></div>
 </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":1380,"height":1460}}'>
+<script data-dc-script data-props='{"$preview":{"width":1380,"height":2160}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

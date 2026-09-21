@@ -1709,12 +1709,15 @@ export const ops: Record<string, AdminOp> = {
   }),
 
   /**
-   * `{ principal?, app?, event?, tool?, session?, since?, until?, limit?, offset? }`
-   * → `{ rows, total }`, newest first (§8) — the ops-table front over audit.query, which
-   * pins the filter semantics and defaults. Rows carry the recorded body fields when
-   * present — post-redaction and stub-substituted, the only stored form (§15).
-   * Read-only; `pmcp audit`, /audit, and the
-   * JSONL export all reduce to it.
+   * `{ principal?, app?, event?, tool?, session?, outcome?, id?, text?, bodies?, since?,
+   * until?, limit?, offset? }` → `{ rows, total }`, newest first (§8) — the ops-table front
+   * over audit.query, which pins the filter semantics and defaults. Rows carry the recorded
+   * body fields when present — post-redaction and stub-substituted, the only stored form
+   * (§15) — unless `bodies: false`, which answers the same rows with an args preview and a
+   * result flag in their place. Read-only; `pmcp audit`, §13's explorer and the JSONL export
+   * all reduce to it. Every exact filter here is SINGLE-valued: the module read's list form
+   * exists for the export alone (audit.AuditQuery), and each list is expressible to this op
+   * one value per call, which is why the parity list does not move.
    */
   audit_query: defineOp({
     schema: {
@@ -1725,6 +1728,19 @@ export const ops: Record<string, AdminOp> = {
         event: { kind: "text", description: "Exact event name, e.g. tools/call.", optional: true },
         tool: { kind: "text", description: "Exact unprefixed tool name.", optional: true },
         session: { kind: "text", description: "Exact client session id.", optional: true },
+        outcome: { kind: "text", description: "Exact outcome string, e.g. ok or -32001.", optional: true },
+        id: { kind: "count", description: "One row by its id, scoped to this namespace like every other read.", optional: true },
+        text: {
+          kind: "text",
+          description:
+            "Case-insensitive substring over the principal, event, app, tool, session id, detail and recorded bodies.",
+          optional: true,
+        },
+        bodies: {
+          kind: "flag",
+          description: "Include the recorded bodies (default true); false returns an args preview and a result flag instead.",
+          optional: true,
+        },
         since: { kind: "count", description: "Lower bound on the row timestamp, epoch ms.", optional: true },
         until: { kind: "count", description: "Upper bound on the row timestamp, epoch ms.", optional: true },
         limit: { kind: "count", description: "Page size (default 100).", optional: true },

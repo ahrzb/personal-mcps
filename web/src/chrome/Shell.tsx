@@ -58,18 +58,24 @@ export function Shell({
   );
 }
 
-/** The five nav destinations, in the order §13 renders them. */
-const NAV: { key: "apps" | "agents" | "audit" | "approvals" | "settings"; label: string; href: string }[] = [
-  { key: "apps", label: "Apps", href: paths.apps },
-  { key: "agents", label: "Agents", href: paths.agents },
-  { key: "audit", label: "Audit", href: paths.audit },
-  { key: "approvals", label: "Approvals", href: paths.approvals },
-  { key: "settings", label: "Settings", href: paths.settings },
+/** The five nav destinations, in the order §13 renders them. `routed` marks the ones this
+ *  client owns — the three route families — and therefore the ones that are `Link`s. */
+const NAV: {
+  key: "apps" | "agents" | "audit" | "approvals" | "settings";
+  label: string;
+  href: string;
+  routed: boolean;
+}[] = [
+  { key: "apps", label: "Apps", href: paths.apps, routed: true },
+  { key: "agents", label: "Agents", href: paths.agents, routed: true },
+  { key: "audit", label: "Audit", href: paths.audit(), routed: true },
+  { key: "approvals", label: "Approvals", href: paths.approvals, routed: false },
+  { key: "settings", label: "Settings", href: paths.settings, routed: false },
 ];
 
 /**
- * One nav entry. `/apps` and `/agents` are this client's own routes and stay client-side
- * links; `/audit`, `/approvals` and `/settings` are still server-rendered pages, so they are
+ * One nav entry. `/apps`, `/agents` and `/audit` are this client's own routes and stay
+ * client-side links; `/approvals` and `/settings` are still server-rendered pages, so they are
  * plain anchors — a client-side navigation to a route this router does not own would render
  * nothing at all.
  *
@@ -91,7 +97,7 @@ function NavEntry({
   const badge =
     item.key === "approvals" ? <PendingBadge /> : null;
   const current = item.key === active ? "page" : undefined;
-  if (item.key === "apps" || item.key === "agents") {
+  if (item.routed) {
     return (
       <Link className={className} to={item.href} aria-current={current} onClick={onNavigate}>
         {item.label}

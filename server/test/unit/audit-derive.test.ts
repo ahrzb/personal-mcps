@@ -25,6 +25,8 @@ import {
   outcomeLabel,
   outcomeRow,
   outcomeSentence,
+  runLine,
+  selectedRows,
   selectionOf,
   sessionsOf,
   stubLabel,
@@ -33,10 +35,14 @@ import {
   titleOfMerged,
   treeSearch,
   waterfallOf,
+  whenOf,
   windowPagePath,
 } from "../../../web/src/features/audit/derive.ts";
 import type { AuditSelection } from "../../../web/src/features/audit/derive.ts";
 import type { AuditWindowRow } from "../../../web/src/lib/types.ts";
+// The gallery’s own week — the same rows the design boards draw, so an ordering assertion here
+// is an assertion about what the reader actually sees.
+import { WEEK } from "../../../web/src/preview/fixtures/audit-week.ts";
 
 /** The instant the fixture week ends on — `web/src/preview/clock.ts`'s `FROZEN_NOW`, so a row
  *  built here and a row built for the gallery sit at the same place in the same window. */
@@ -220,11 +226,18 @@ describe("facet counts", () => {
     expect(groups.some((group) => (group.field as string) === "session")).toBe(false);
   });
 
-  it("counts under the search text as well as the other groups", () => {
-    const groups = facetGroups(rows, bare({ q: "get_page" }));
-    expect(groups.find((group) => group.field === "principal")?.values).toEqual([
-      { value: "agent:claude", count: 1, on: false },
-    ]);
+  it("never re-applies the search text — the loaded rows ARE the answer for it", () => {
+    // `text` is the one filter the SERVER applies, over every string column AND both body
+    // columns. The client holds only `argsHead`, so a client-side pass would drop rows the
+    // server matched deep in a result — and, mid-keystroke, would narrow the previous answer by
+    // a needle it was never read for and flash "Nothing matches".
+    const counted = facetGroups(rows, bare({ q: "get_page" }));
+    const unsearched = facetGroups(rows, bare());
+    expect(counted).toEqual(unsearched);
+  });
+
+  it("keeps every loaded row in the selection whatever the box currently holds", () => {
+    expect(selectedRows(rows, bare({ q: "nothing in these rows at all" }))).toHaveLength(rows.length);
   });
 });
 
@@ -270,6 +283,17 @@ describe("the chain merge", () => {
     ]);
   });
 
+  it("shows the NEWEST event's time, which is where the row sits", () => {
+    /* `mergeEvents` walks newest first, so a chain lands where its newest member was met — but
+       its head is `approval.requested`, the OLDEST. Printing the head's time put an old stamp
+       at a new row's position and made a newest-first list read as shuffled. */
+    const merged = mergeEvents(chain)[0]!;
+    expect(whenOf(merged)).toBe(NOW - HOUR + 1000);
+    expect(merged.head.ts).toBe(NOW - 2 * HOUR);
+    // The head still titles the row and is still the record it opens; only WHEN changes.
+    expect(merged.head.event).toBe("approval.requested");
+  });
+
   it("titles the chain ROW by the call it is the story of, and its record by the head row", () => {
     // The one exception to the titles rule: a chain headed by `approval.requested` is still the
     // story of `news/publish`, and titling the row by the head would file one event under two
@@ -288,6 +312,21 @@ describe("the chain merge", () => {
     // One row carrying an id nothing else shares is one row, not a chain of one.
     const merged = mergeEvents([row({ id: 20, detail: { approvalId: "ap_lonely" } })]);
     expect(merged[0]?.kind).toBe("one");
+  });
+});
+
+describe("the merged list reads newest first", () => {
+  it("never steps forward in time, over the whole fixture week", () => {
+    /* The regression this exists for was invisible in every hand-built case and obvious the
+       moment a real week was drawn: one chain between two plain rows is enough to make the
+       column look shuffled. So the assertion is over the SAME week the gallery and the boards
+       draw, with its 42 chains and its runs.
+       `whenOf`, not `head.ts` — that is the whole fix, and asserting on the head would pass
+       against the bug. */
+    const when = mergeEvents(WEEK).map(whenOf);
+    expect(when.length).toBeGreaterThan(100);
+    const forwards = when.filter((at, index) => index > 0 && at > (when[index - 1] ?? at));
+    expect(forwards).toEqual([]);
   });
 });
 
@@ -313,6 +352,37 @@ describe("×N runs", () => {
         refusal(2, { outcome: "-32000", detail: { failureClass: "token_refresh_failed" } }),
       ]),
     ).toHaveLength(2);
+  });
+
+  it("collapses only the SAME call — the arguments are part of the signature", () => {
+    // The owner's report: "the x5 runs look weird". Five calls with five different queries
+    // collapsed under the newest one's preview, so the row claimed one thing happened five
+    // times and showed one call's arguments.
+    const call = (id: number, argsHead: string): AuditWindowRow =>
+      row({ id, ts: NOW - id * HOUR, app: "news", tool: "search_news", argsHead });
+    expect(mergeEvents([call(1, '{"q":"markets"}'), call(2, '{"q":"markets"}')])).toHaveLength(1);
+    expect(mergeEvents([call(1, '{"q":"markets"}'), call(2, '{"q":"elections"}')])).toHaveLength(2);
+  });
+
+  it("still collapses refusals, which record no arguments at all", () => {
+    // A refusal never had bodies (§15), so every row of a repeated refusal has no `argsHead`
+    // and the seventh field is absent on both sides — the cron-every-30-minutes case, which is
+    // what ×N was for.
+    expect(mergeEvents([refusal(1), refusal(2), refusal(3)])[0]?.runs).toBe(3);
+  });
+
+  it("says what a run spans, dating the end only when it falls on another day", () => {
+    const within = [
+      row({ id: 2, ts: Date.parse("2026-08-24T11:30:00Z") }),
+      row({ id: 1, ts: Date.parse("2026-08-24T07:30:00Z") }),
+    ];
+    expect(runLine(within)).toBe("2 identical events · Aug 24 07:30 → 11:30");
+    const across = [
+      row({ id: 2, ts: Date.parse("2026-08-24T11:30:00Z") }),
+      row({ id: 1, ts: Date.parse("2026-08-23T22:00:00Z") }),
+    ];
+    // A bare "11:30" after "Aug 23 22:00" would read as running backwards.
+    expect(runLine(across)).toBe("2 identical events · Aug 23 22:00 → Aug 24 11:30");
   });
 
   it("never joins a chain to a run", () => {

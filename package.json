@@ -11,6 +11,7 @@
     "contracts:update": "vitest run --project worker contracts -u",
     "visual:compare": "pnpm --filter @ahrzb/personal-mcp-web exec node --experimental-strip-types scripts/visual-compare.mts",
     "check:drawer": "pnpm --filter @ahrzb/personal-mcp-web exec node --experimental-strip-types scripts/drawer-check.mts",
+    "check:audit-search": "pnpm --filter @ahrzb/personal-mcp-web exec node --experimental-strip-types scripts/audit-search-check.mts",
     "pmcp": "node --experimental-strip-types --env-file-if-exists=.env cli/pmcp.mts",
     "users": "node --experimental-strip-types --env-file-if-exists=.env scripts/users.mts",
     "smoke": "node --experimental-strip-types --env-file-if-exists=.env scripts/smoke.ts",

@@ -39,6 +39,7 @@ import type { Principal } from "./principal";
 import { applyRedaction } from "./registry";
 import type { App } from "./registry";
 import { CODES, HubError } from "./errors";
+import type { RefusalReason } from "./errors";
 import type { JsonRpcResponse } from "./gateway";
 import type { AuditEntry } from "./audit";
 import { APPROVAL_WINDOW_MS } from "./limits";
@@ -378,7 +379,14 @@ export class Approvals {
       // already-decided row, a dead one. A distinguishing message would let a caller probe
       // for ids outside its namespace, the same reason -32001 is indistinguishable (§7),
       // which is also why the code is READ from the pinned table rather than re-spelled.
-      throw new HubError(CODES.notPermitted, "no decidable approval request");
+      //
+      // Its own HubError rather than errors.notPermitted, for the message: this refusal
+      // says "no decidable approval request" and not "tool not permitted", and §8 pins
+      // that wording. What it borrows is the LEDGER half (decision 37) — the same
+      // `auditDetail` road, so an owner reading /audit sees a cause here too.
+      const refusal = new HubError(CODES.notPermitted, "no decidable approval request");
+      refusal.auditDetail = { reason: "not_decidable" satisfies RefusalReason };
+      throw refusal;
     }
 
     const status = decision === "approve" ? "approved" : "rejected";

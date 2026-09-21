@@ -1867,8 +1867,11 @@ export const adminBackend: AppBackend = {
     // The same code and the same words the gateway answers an ungranted tool with: an
     // unknown admin tool, and one adminOpsFor(ctx.principal) refuses, must not be
     // distinguishable from each other (§7/§22.1) — which is why this reaches for the
-    // shared factory rather than spelling any of the three refusals again.
-    if (op === undefined || !adminOpsFor(ctx.principal).has(name)) throw notPermitted();
+    // shared factory rather than spelling any of the three refusals again. The LEDGER is
+    // told which (decision 37): both are one answer on the wire and two different things
+    // for an owner to read afterwards — a typo, or a credential that may not do this.
+    if (op === undefined) throw notPermitted("not_in_catalog");
+    if (!adminOpsFor(ctx.principal).has(name)) throw notPermitted("op_withheld");
     const value = await op.handler(app.ownerId, msg.params?.arguments);
     return {
       jsonrpc: "2.0",
@@ -1881,7 +1884,9 @@ export const adminBackend: AppBackend = {
   async sensitivePaths(app, tool) {
     // deps: ops · registry.writeOnlyPaths
     const op = opNamed(tool);
-    if (op === undefined) return null;
+    // The builtin's catalog IS this table, so a name that is not a key is a catalog miss
+    // and never an unsound schema: every op's schema is this module's own (decision 37).
+    if (op === undefined) return { reason: "not_in_catalog" };
     return {
       args: [],
       results: op.outputSchema === undefined ? [] : writeOnlyPaths(jsonSchema(op.outputSchema as OpSchema)),

@@ -153,7 +153,7 @@ export const upstreamBackend: AppBackend = {
    * in v1 (spec pin), so there is no `writeOnly` map to derive in either direction —
    * config-declared `redact` / `redact_results` paths are the only proxied redaction
    * source, unioned in by the gateway (which is also why proxied `log_bodies`
-   * defaults OFF, §15). Never returns null: without a
+   * defaults OFF, §15). Never refuses, so it never names a cause: without a
    * catalog no tool is "unknown", so no proxied call is refused on that ground.
    */
   async sensitivePaths(app, tool) {

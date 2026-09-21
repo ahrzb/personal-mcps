@@ -369,18 +369,20 @@ export const tunnelBackend: AppBackend = {
    * registry.writeOnlyPaths — the one definition of the path grammar — and returns
    * `{ args, results }` (an absent outputSchema yields empty results); the caller
    * unions config-declared `redact` / `redact_results` paths in itself.
-   * Returns null when the tool is absent from the cached catalog (never-connected
-   * apps included) OR cached flagged schema-unsound (its schema tripped
-   * validateSchemaIndirection at catalog warm, §7): the gateway answers -32001
-   * (indistinguishable from
-   * not-permitted, §7) and nothing downstream runs. Answers from the cache: the one thing
+   * Refuses when the tool is absent from the cached catalog (never-connected apps
+   * included) — `not_in_catalog` — OR cached flagged schema-unsound, its schema having
+   * tripped validateSchemaIndirection at catalog warm (§7) — `unsound_schema`. The gateway
+   * answers -32001 either way (indistinguishable from
+   * not-permitted, §7) and nothing downstream runs; the ground is the ledger's alone
+   * (decision 37), and this backend is the one that can tell them apart, because the two
+   * are two different states of the same cache entry. Answers from the cache: the one thing
    * it can put on the live socket is listTools's own re-warm, which nothing here awaits.
    */
   async sensitivePaths(app, tool) {
     // deps: viaConnection · AppConnection.listTools · registry.writeOnlyPaths
     const entry = (await cachedCatalog(app.id)).find((t) => t.name === tool);
-    if (entry === undefined) return null;
-    if (schemaViolations(entry).length > 0) return null;
+    if (entry === undefined) return { reason: "not_in_catalog" };
+    if (schemaViolations(entry).length > 0) return { reason: "unsound_schema" };
     return {
       args: writeOnlyPaths(entry.inputSchema),
       results: entry.outputSchema === undefined ? [] : writeOnlyPaths(entry.outputSchema),

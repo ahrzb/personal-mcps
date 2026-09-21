@@ -32,7 +32,9 @@ export class HubError extends Error {
    * serialized to a consumer (toWire sends `code`, `message` and `data` alone). It is how
    * one -32000 on the wire can still tell an owner which failure class it was: an upstream
    * status vs a dead bundle, a tunnel that was offline vs one that timed out — the
-   * at-most-once question §15 exists to let the ledger answer. §15's hygiene applies like
+   * at-most-once question §15 exists to let the ledger answer — and, since decision 37,
+   * how one -32001 can tell an ungranted tool from an app that is not there
+   * (`RefusalReason`). §15's hygiene applies like
    * anywhere else: classes and bare numbers, never a status line, header, or body.
    */
   auditDetail?: Record<string, unknown>;
@@ -137,7 +139,61 @@ export const unavailable = (failureClass?: string): HubError => {
   return err;
 };
 
-export const notPermitted = (): HubError => new HubError(CODES.notPermitted, "tool not permitted");
+/**
+ * Why a -32001 was refused, as the LEDGER records it (§15, decision 37) — a closed
+ * vocabulary of classes, never free text and never a name the caller typed beyond what the
+ * row already holds in its own `app` and `tool` columns.
+ *
+ * The wire is unchanged and stays unchanged: §7 answers all nine with one
+ * `{ code: -32001, message: "tool not permitted" }` and no `data`, so a probing agent can
+ * still not map its grants, enumerate a namespace, or learn that an app is real. What makes
+ * recording the cause safe is WHO reads the ledger: an `agent` principal reaches no audit
+ * read at all (`admin.adminOpsFor` gives it the empty set) and every other audit surface
+ * needs the owner's session or the owner's own admin token — so the oracle a refusal
+ * withholds stays withheld from exactly the caller it was withheld from.
+ *
+ * - `no_app` — the addressed slug resolves to no app this caller can see. The scoped shape
+ *   is the only one that addresses an app at all: §23.1 removed the aggregated
+ *   `<slug>_<tool>` namespace, so an aggregate name reaches the hub's own two tools and is
+ *   refused `no_grant` or `not_in_catalog` — never this.
+ * - `app_changed` — §23.6: a program's pinned `expectAppId` no longer matches the slug.
+ * - `no_grant` — the access filter answered `deny` (tools, prompts, resources, and the
+ *   hub's own fixed list).
+ * - `not_in_catalog` — the backend holds no catalog entry for the subject, the hub's own
+ *   tools and declaration URIs included.
+ * - `unsound_schema` — the tool is cached schema-unsound, so no redaction map can be
+ *   derived and nothing may run (§7).
+ * - `credential_lapsed` — §23.4: the credential was revoked, expired or rebound while the
+ *   program that made this call was still running.
+ * - `op_withheld` — `admin.adminOpsFor` does not admit this op to this kind of credential.
+ * - `not_decidable` — approvals: there is no decidable request here for this caller.
+ * - `wrong_endpoint` — the credential is not admitted at the endpoint it arrived on.
+ */
+export type RefusalReason =
+  | "no_app"
+  | "app_changed"
+  | "no_grant"
+  | "not_in_catalog"
+  | "unsound_schema"
+  | "credential_lapsed"
+  | "op_withheld"
+  | "not_decidable"
+  | "wrong_endpoint";
+
+/**
+ * §7's -32001, and the one place a refusal's cause is attached to it. The reason is
+ * REQUIRED so the compiler finds every call site and no future one can answer "not
+ * permitted" without saying why — the state decision 37 exists to end. It rides
+ * `auditDetail`, which `gateway.toWire` never serializes and `gateway.dispatchTool` merges
+ * into the row's `detail`; `code` and `message` are the pinned ones and do not vary with
+ * it, which is the whole of the indistinguishability §7 asks for.
+ */
+export const notPermitted = (reason: RefusalReason): HubError => {
+  const err = new HubError(CODES.notPermitted, "tool not permitted");
+  err.auditDetail = { reason };
+  return err;
+};
+
 export const archived = (): HubError => new HubError(CODES.archived, "app archived");
 
 /**

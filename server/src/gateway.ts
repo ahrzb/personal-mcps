@@ -59,6 +59,7 @@ import {
 } from "./capabilities";
 import type { CapabilityKind, EndpointShape } from "./capabilities";
 import { archived, CODES, HubError, invalidParams, methodNotFound, notPermitted, unavailable } from "./errors";
+import type { RefusalReason } from "./errors";
 import { formatPrincipal, principalKey, tokenPattern } from "./principal";
 import type { Principal } from "./principal";
 import type { AuthenticatedCaller } from "./identity";
@@ -238,19 +239,29 @@ export interface AppBackend {
    * cached outputSchema (tunnel walks both; upstream has no cache and answers empty;
    * admin marks its own — token_issue's key). The gateway unions each direction with
    * the matching config map (registry.redactPathsFor "args" / "results") before
-   * anything is stored or shown — approval rows and audit bodies alike. Returns null
-   * when no sound map can exist: the tool is unknown to this backend (absent from a
-   * tunnel's cached catalog) OR its cached schema tripped
-   * registry.validateSchemaIndirection at registration (unsupported indirection could
-   * conceal a mark, §7). Either way the gateway answers -32001 — the same code as
+   * anything is stored or shown — approval rows and audit bodies alike. Refuses when no
+   * sound map can exist, and the two grounds are different facts, so it says WHICH
+   * (decision 37): `not_in_catalog` — the tool is unknown to this backend (absent from a
+   * tunnel's cached catalog) — or `unsound_schema` — its cached schema tripped
+   * registry.validateSchemaIndirection at registration, where unsupported indirection
+   * could conceal a mark (§7). The backend knows which at the moment it answers, so
+   * neither costs a second read. Either way the gateway answers -32001 — the same code as
    * not-permitted/unknown, so the refusal cannot be used to map grant patterns (§7) —
    * nothing downstream runs, and no body is ever recorded for such a tool (§15).
    */
-  sensitivePaths(
-    app: App,
-    tool: string,
-  ): Promise<{ args: string[]; results: string[] } | null>;
+  sensitivePaths(app: App, tool: string): Promise<SensitivePaths>;
 }
+
+/**
+ * What `AppBackend.sensitivePaths` answers: the per-direction map, or the CAUSE the
+ * ledger records for the refusal that follows. A discriminated union rather than `null`
+ * plus a second question, because only the backend can tell the two grounds apart and it
+ * already knows which at that point (decision 37). A caller reads it as
+ * `"reason" in answer`.
+ */
+export type SensitivePaths =
+  | { args: string[]; results: string[] }
+  | { reason: Extract<RefusalReason, "not_in_catalog" | "unsound_schema"> };
 
 /**
  * One listed item as the DOOR handles it — whichever of §20.2's four descriptors a family
@@ -338,7 +349,7 @@ export async function mcpMessage(
   // dispatches: the scoped `pmcp` and `hub` endpoints are the only doors this credential
   // opens (§23.1 admits it to `/mcp/hub`, never to `/mcp`).
   if (slug === undefined && principal.kind === "admin") {
-    return jsonRpc(toWire(notPermitted(), msg.id ?? null));
+    return jsonRpc(toWire(notPermitted("wrong_endpoint"), msg.id ?? null));
   }
   try {
     if (msg.method === LISTEN_METHOD) return await listenStream(env, ownerId, ctx, slug, reauthorize);
@@ -811,7 +822,7 @@ async function listScoped(
   const app = slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, slug);
   // The door already answered 404 for a slug this caller cannot see, so a miss here is
   // the same not-permitted answer every other unresolvable name gets.
-  if (app === null) throw notPermitted();
+  if (app === null) throw notPermitted("no_app");
   const filter = await registry.resolveAccess(ctx.principal, app);
   if (app.archived && !owner) throw archived();
   const catalog = await LIST_CATALOG[kind](selectBackend(app), app, { ...ctx, roles: filter.roleNames });
@@ -1218,9 +1229,9 @@ async function hubCall(
   ctx: BackendCtx,
   lifecycle: HubRequestLifecycle,
 ): Promise<JsonRpcResponse> {
-  if (hubAccess().check(name, "tools") === "deny") throw notPermitted();
+  if (hubAccess().check(name, "tools") === "deny") throw notPermitted("no_grant");
   const tool = hubToolFor(shape, name);
-  if (tool === null) throw notPermitted();
+  if (tool === null) throw notPermitted("not_in_catalog");
 
   const startedAt = Date.now();
   let outcome = "error";
@@ -1269,12 +1280,12 @@ async function hubCall(
     // nothing of the run published; an aborted request becomes a class-carrying -32000
     // (may-have-executed is the truth here) whose response nobody is reading.
     refusal = err instanceof HubCredentialRevokedError
-      ? notPermitted()
+      ? notPermitted("credential_lapsed")
       : err instanceof HubExecutionAbortedError
         ? unavailable("execution_aborted")
         : err;
     outcome = refusal instanceof HubError ? String(refusal.code) : "error";
-    if (refusal instanceof HubError) detail = refusal.auditDetail;
+    detail = auditDetailOf(refusal);
   }
   try {
     await recordDispatch(env, {
@@ -1318,10 +1329,11 @@ async function hubRead(env: Env, ownerId: string, msg: JsonRpcRequest, ctx: Back
   let outcome = "error";
   let answer: JsonRpcResponse | undefined;
   let refusal: unknown;
+  let detail: Record<string, unknown> | undefined;
   try {
-    if (hubAccess().check(uri, "resources") === "deny") throw notPermitted();
+    if (hubAccess().check(uri, "resources") === "deny") throw notPermitted("no_grant");
     const text = hubDeclarationText(await collectHubCatalog(env, ctx.principal, ownerId), uri);
-    if (text === null) throw notPermitted();
+    if (text === null) throw notPermitted("not_in_catalog");
     answer = {
       jsonrpc: "2.0",
       id: msg.id ?? null,
@@ -1331,6 +1343,7 @@ async function hubRead(env: Env, ownerId: string, msg: JsonRpcRequest, ctx: Back
   } catch (err) {
     refusal = err;
     outcome = err instanceof HubError ? String(err.code) : "error";
+    detail = auditDetailOf(err);
   }
   await recordDispatch(env, {
     ownerId,
@@ -1341,6 +1354,7 @@ async function hubRead(env: Env, ownerId: string, msg: JsonRpcRequest, ctx: Back
     outcome,
     durationMs: Date.now() - startedAt,
     bodies: {},
+    detail,
   });
   if (answer === undefined) throw refusal;
   return answer;
@@ -1456,17 +1470,17 @@ export async function dispatchTool(env: Env, input: ToolDispatch): Promise<JsonR
       input.slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, input.slug);
     // A slug that resolves to no visible app: -32001, indistinguishable from
     // not-permitted, so tool names cannot enumerate a namespace (§7 step 3).
-    if (app === null) throw notPermitted();
+    if (app === null) throw notPermitted("no_app");
     recordedSlug = app.slug;
     // §23.6: the snapshot pinned an immutable app id, and a slug that now resolves to
     // another one is refused exactly like an app the caller cannot see.
-    if (input.expectAppId !== undefined && app.id !== input.expectAppId) throw notPermitted();
+    if (input.expectAppId !== undefined && app.id !== input.expectAppId) throw notPermitted("app_changed");
 
     // 1 — filter. First, always: an ungranted agent may not learn that an app is
     // archived, unreachable, or even real.
     const filter = await registry.resolveAccess(ctx.principal, app);
     const mode = filter.check(input.tool);
-    if (mode === "deny") throw notPermitted();
+    if (mode === "deny") throw notPermitted("no_grant");
 
     // 2 — archived.
     if (app.archived) throw archived();
@@ -1484,11 +1498,12 @@ export async function dispatchTool(env: Env, input: ToolDispatch): Promise<JsonR
     if (unavailableAs !== null) throw unavailableAs;
 
     // Derived ONCE for the whole call, so the approval row and the audit row of the same
-    // call can never be masked under different maps (§15). Null means no sound map exists
-    // for this tool and nothing downstream may run — -32001, the same code as
-    // not-permitted, so the refusal cannot be used to map grant patterns (§7).
+    // call can never be masked under different maps (§15). A refusal means no sound map
+    // exists for this tool and nothing downstream may run — -32001, the same code as
+    // not-permitted, so the refusal cannot be used to map grant patterns (§7) — and the
+    // backend's own ground for it is what the row records (decision 37).
     const redaction = await redactionMapFor(registry, backend, app, input.tool);
-    if (redaction === null) throw notPermitted();
+    if ("reason" in redaction) throw notPermitted(redaction.reason);
 
     // 4 — the approval gate (owners are never routed into it; the filter answered
     // `allow` for them via the built-in `all`).
@@ -1523,16 +1538,15 @@ export async function dispatchTool(env: Env, input: ToolDispatch): Promise<JsonR
     // §7: every dispatch failure class collapses into one -32000, and the real class
     // survives ONLY here — which is what lets an owner tell expired static headers from a
     // down upstream, or a tunnel that was offline from one that timed out (§15's
-    // at-most-once). ONE rule for every backend: whichever layer knew the cause attached
-    // it to the error, and this function decides nothing about what a backend is allowed
-    // to record. §15's hygiene travels with the field (HubError.auditDetail).
+    // at-most-once).
     //
     // MERGED, not assigned (§15, decision 36): a claimed approval put its id here before
     // the dispatch, and a -32000 after a claim owes the owner BOTH facts — the class that
     // failed and the approval it spent. An assignment would keep only the last one written.
-    if (err instanceof HubError && err.auditDetail !== undefined) {
-      detail = { ...detail, ...err.auditDetail };
-    }
+    // Guarded, so a refusal that contributes nothing leaves `detail` UNDEFINED rather than
+    // an empty object — the column is NULL on a row with nothing to say.
+    const cause = auditDetailOf(err);
+    if (cause !== undefined) detail = { ...detail, ...cause };
   }
   await recordDispatch(env, {
     ownerId,
@@ -1554,7 +1568,7 @@ export async function dispatchTool(env: Env, input: ToolDispatch): Promise<JsonR
  *  (never a distinct code), so a revoked credential is indistinguishable from an ungranted
  *  one at this seam. */
 async function requireSamePrincipal(caller: AuthenticatedCaller): Promise<void> {
-  if (!(await reauthorizeCaller(caller))) throw notPermitted();
+  if (!(await reauthorizeCaller(caller))) throw notPermitted("credential_lapsed");
 }
 
 /**
@@ -1627,21 +1641,22 @@ async function passGate(
  * Each direction is the union of the backend's SCHEMA-declared paths (`writeOnly`) with
  * the app's configured ones (`redact` / `redact_results`).
  *
- * Null has ONE meaning here — no sound map can exist for this tool (unknown to the
- * backend, or its cached schema tripped registry.validateSchemaIndirection) — and one
+ * A refusal has ONE meaning here — no sound map can exist for this tool — and one
  * consequence, taken by dispatchTool at the gate: -32001, the same code as not-permitted, so
  * the refusal cannot be used to map grant patterns (§7). Nothing downstream runs, and no
- * body is ever recorded for such a tool (§15).
+ * body is ever recorded for such a tool (§15). WHICH ground it was travels through
+ * unchanged (`SensitivePaths`), because it is what the audit row records and this function
+ * is not the layer that knows it.
  */
 async function redactionMapFor(
   registry: Registry,
   backend: AppBackend,
   app: App,
   tool: string,
-): Promise<{ args: string[]; results: string[] } | null> {
+): Promise<SensitivePaths> {
   // deps: AppBackend.sensitivePaths · registry.redactPathsFor
   const schemaPaths = await backend.sensitivePaths(app, tool);
-  if (schemaPaths === null) return null;
+  if ("reason" in schemaPaths) return schemaPaths;
   return {
     args: union(schemaPaths.args, await registry.redactPathsFor(app, tool, "args")),
     results: union(schemaPaths.results, await registry.redactPathsFor(app, tool, "results")),
@@ -1704,6 +1719,26 @@ function blobStub(block: unknown): BodyStub {
 }
 
 /**
+ * What a thrown refusal contributes to its audit row's `detail`, or undefined when it
+ * contributes nothing — every audited method's catch reads its own error through this and
+ * through nothing else.
+ *
+ * One reader because the rule is one rule: whichever layer knew the real cause attached it
+ * to the HubError (§7's upstream `failureClass`, decision 37's refusal `reason`), and no
+ * dispatching method decides anything about what a backend is allowed to record. Anything
+ * that is not a HubError is a BUG rather than a refusal and contributes nothing — a defect
+ * has no cause a ledger reader could act on, and §15 sends it to -32603 with no cause at
+ * all. §15's hygiene travels with the field, not with this function.
+ *
+ * Callers assign; `dispatchTool` MERGES onto what it already holds, because a call that
+ * claimed an approval owes both facts (decision 36).
+ */
+function auditDetailOf(err: unknown): Record<string, unknown> | undefined {
+  // deps: errors.HubError
+  return err instanceof HubError ? err.auditDetail : undefined;
+}
+
+/**
  * The one audit write of every DISPATCHING method — `tools/call`, `prompts/get`,
  * `resources/read` and §21.6's two per-URI methods alike (§15, §20.4, §21.6). Every path
  * through each of those five ends in
@@ -1731,11 +1766,12 @@ async function recordDispatch(
     durationMs: number;
     bodies: CallBodies;
     /**
-     * What this row's `detail` column holds (§15) — never a body fragment. Two things reach
-     * it, and a row may owe both: §7's upstream `failureClass` on a -32000, and (decision
-     * 36) the `approvalId` of the approval a `tools/call` row opened or consumed. A read
-     * never carries either — no read is gated (§18 decision 27) and only a call's refusal
-     * classes are worth a class.
+     * What this row's `detail` column holds (§15) — never a body fragment. Three things
+     * reach it, and a row may owe more than one: §7's upstream `failureClass` on a -32000,
+     * (decision 36) the `approvalId` of the approval a `tools/call` row opened or consumed,
+     * and (decision 37) the `reason` a -32001 was refused for. The first two are a call's
+     * alone — no read is gated (§18 decision 27) and only a dispatch has a class — but
+     * every audited method can be FILTERED, so every one of them can owe a reason.
      */
     detail?: Record<string, unknown>;
   },
@@ -1791,14 +1827,15 @@ async function getPrompt(
   let answer: JsonRpcResponse | undefined;
   let refusal: unknown;
   let recordedSlug = slug;
+  let detail: Record<string, unknown> | undefined;
   try {
     const app = slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, slug);
-    if (app === null) throw notPermitted();
+    if (app === null) throw notPermitted("no_app");
     recordedSlug = app.slug;
 
     // 1 — filter, matched by NAME against the caller's prompt patterns (§20.2).
     const filter = await registry.resolveAccess(ctx.principal, app);
-    if (filter.check(name, "prompts") === "deny") throw notPermitted();
+    if (filter.check(name, "prompts") === "deny") throw notPermitted("no_grant");
     // 2 — archived.
     if (app.archived) throw archived();
     // 3 — availability. No approval gate follows it (§18 decision 27).
@@ -1815,6 +1852,7 @@ async function getPrompt(
     refusal = err;
     outcome = err instanceof HubError ? String(err.code) : "error";
     bodies = {};
+    detail = auditDetailOf(err);
   }
   await recordDispatch(env, {
     ownerId,
@@ -1825,6 +1863,7 @@ async function getPrompt(
     outcome,
     durationMs: Date.now() - startedAt,
     bodies,
+    detail,
   });
   if (answer === undefined) throw refusal;
   return answer;
@@ -1924,18 +1963,19 @@ export async function dispatchResourceRead(env: Env, input: ResourceDispatch): P
   let answer: JsonRpcResponse | undefined;
   let refusal: unknown;
   let recordedSlug = input.slug;
+  let detail: Record<string, unknown> | undefined;
   try {
     // Revocation is itself a dispatch decision and therefore belongs inside the one
     // audited path rather than escaping before the row is initialized.
     if (input.reauthorizeCredential === true) await requireSamePrincipal(input.caller);
     const app =
       input.slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, input.slug);
-    if (app === null) throw notPermitted();
+    if (app === null) throw notPermitted("no_app");
     recordedSlug = app.slug;
-    if (input.expectAppId !== undefined && app.id !== input.expectAppId) throw notPermitted();
+    if (input.expectAppId !== undefined && app.id !== input.expectAppId) throw notPermitted("app_changed");
 
     const filter = await registry.resolveAccess(ctx.principal, app);
-    if (filter.check(input.uri, "resources") === "deny") throw notPermitted();
+    if (filter.check(input.uri, "resources") === "deny") throw notPermitted("no_grant");
     if (app.archived) throw archived();
     const unavailableAs = await probeAvailability(app);
     if (unavailableAs !== null) throw unavailableAs;
@@ -1955,6 +1995,7 @@ export async function dispatchResourceRead(env: Env, input: ResourceDispatch): P
     refusal = err;
     outcome = err instanceof HubError ? String(err.code) : "error";
     bodies = {};
+    detail = auditDetailOf(err);
   }
   await recordDispatch(env, {
     ownerId,
@@ -1965,6 +2006,7 @@ export async function dispatchResourceRead(env: Env, input: ResourceDispatch): P
     outcome,
     durationMs: Date.now() - startedAt,
     bodies,
+    detail,
   });
   if (answer === undefined) throw refusal;
   return answer;
@@ -2049,14 +2091,14 @@ async function completeRef(
   // deps: registry.getApp · registry.resolveAccess · selectBackend · virtualPmcpApp · probeAvailability · prepareForward
   const registry = new Registry(env.DB);
   const app = slug === PMCP_SLUG ? virtualPmcpApp(ownerId) : await registry.getApp(ownerId, slug);
-  if (app === null) throw notPermitted();
+  if (app === null) throw notPermitted("no_app");
   const target = refTarget(msg);
   // A `ref` naming neither a prompt nor a resource template matches no pattern in any
   // family — the same -32001 an unmatched one gets, never a distinct "malformed ref" code.
-  if (target === null) throw notPermitted();
+  if (target === null) throw notPermitted("not_in_catalog");
 
   const filter = await registry.resolveAccess(ctx.principal, app);
-  if (filter.check(target.subject, target.family) === "deny") throw notPermitted();
+  if (filter.check(target.subject, target.family) === "deny") throw notPermitted("no_grant");
   if (app.archived) throw archived();
   const unavailableAs = await probeAvailability(app);
   if (unavailableAs !== null) throw unavailableAs;
@@ -2192,7 +2234,7 @@ async function subscribable(
   // stream, answered before any registry read (no D1 row for `pmcp` exists to read).
   if (slug === PMCP_SLUG) return [];
   const app = await registry.getApp(ownerId, slug);
-  if (app === null) throw notPermitted();
+  if (app === null) throw notPermitted("no_app");
   if (app.archived) throw archived();
   return app.kind === "tunnel" ? [app] : [];
 }
@@ -2510,14 +2552,15 @@ async function subscription(
   let outcome = "error";
   let answer: JsonRpcResponse | undefined;
   let refusal: unknown;
+  let detail: Record<string, unknown> | undefined;
   try {
     // A request with no `uri`, or one that is not a string, names no resource: -32602, the
     // same code the caps refuse with, because the alternative is a subscription stored
     // against `""` — a URI that passed no meaningful filter and that no app can emit.
     if (typeof uri !== "string") throw invalidParams();
-    if (app === null) throw notPermitted();
+    if (app === null) throw notPermitted("no_app");
     const filter = await registry.resolveAccess(ctx.principal, app);
-    if (filter.check(uri, "resources") === "deny") throw notPermitted();
+    if (filter.check(uri, "resources") === "deny") throw notPermitted("no_grant");
     if (app.archived) throw archived();
     const unavailableAs = await probeAvailability(app);
     if (unavailableAs !== null) throw unavailableAs;
@@ -2541,6 +2584,7 @@ async function subscription(
   } catch (err) {
     refusal = err;
     outcome = err instanceof HubError ? String(err.code) : "error";
+    detail = auditDetailOf(err);
   }
   await recordDispatch(env, {
     ownerId,
@@ -2551,6 +2595,7 @@ async function subscription(
     outcome,
     durationMs: Date.now() - startedAt,
     bodies: {},
+    detail,
   });
   if (answer === undefined) throw refusal;
   return answer;

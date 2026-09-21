@@ -7,6 +7,7 @@ import {
   fmtDayTime,
   fmtDuration,
   outcomeClass,
+  causeWords,
   outcomeLabel,
   sameUtcDay,
   titleOf,
@@ -143,7 +144,7 @@ function Waterfall({
         const cls = outcomeClass(row.outcome);
         const left = ((row.ts - session.first) / span) * 100;
         const width = Math.max(1.5, ((row.durationMs ?? SPANLESS_MS) / span) * 100);
-        const failure = row.detail?.failureClass;
+        const cause = causeWords(row);
         return (
           <button
             type="button"
@@ -162,15 +163,15 @@ function Waterfall({
               />
             </span>
             {/* What the line SAYS it was: a duration when it ran, otherwise the outcome in
-                words with its recorded cause after it — `app unavailable · timeout`. Never
-                `denied · -32001`: a bare code here is a number nobody can read, and the record
-                is the one place that prints one. */}
+                words with its recorded cause after it — `not permitted · no grant reaches it`,
+                `app unavailable · timeout`. Never `denied · -32001`: a bare code here is a
+                number nobody can read, and the record is the one place that prints one. */}
             <span className="a-wfrt">
               {cls === "ok"
                 ? fmtDuration(row.durationMs)
-                : typeof failure === "string" && failure !== ""
-                  ? `${outcomeLabel(row.outcome)} · ${failure}`
-                  : outcomeLabel(row.outcome)}
+                : cause === null
+                  ? outcomeLabel(row.outcome)
+                  : `${outcomeLabel(row.outcome)} · ${cause}`}
             </span>
           </button>
         );

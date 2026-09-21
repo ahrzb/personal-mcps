@@ -109,8 +109,20 @@ const OVERSIZE = pick("an oversize stub", (row) => hasStub(row, "oversize"));
 const UNAVAILABLE = pick("a -32000 with a failureClass", (row) => row.outcome === "-32000");
 const NO_BODIES = {
   off: pick("a row whose app has logging off", (row) => row.noBodies === "off"),
-  refused: pick("a refused row", (row) => row.noBodies === "refused"),
   unrecorded: pick("a row recorded before logging was on", (row) => row.noBodies === "unrecorded"),
+};
+
+/** The two `-32001` sentences: one that recorded WHY (decision 37), and one from before that
+ *  shipped, which is the only way the fallback sentence is ever drawn. */
+const REFUSED = {
+  withCause: pick(
+    "a -32001 that recorded a reason",
+    (row) => row.outcome === "-32001" && typeof row.detail?.reason === "string",
+  ),
+  noCause: pick(
+    "a -32001 from before reasons were recorded",
+    (row) => row.outcome === "-32001" && row.detail?.reason === undefined,
+  ),
 };
 
 /** Every record of the one complete chain, oldest first — the approval the timeline draws. */
@@ -265,10 +277,15 @@ export const auditSeeds: Record<string, Seed> = {
    *  "Cause: …", and the only place the page prints a raw code at all. */
   recordUnavailable: record(UNAVAILABLE),
 
-  /** The three no-bodies sentences, one state each. */
+  /** The three no-bodies sentences, one state each. The refused one is deliberately a `-32001`
+   *  that recorded NO reason, so its outcome row draws the pre-ship fallback sentence. */
   recordNoBodiesOff: record(NO_BODIES.off),
-  recordNoBodiesRefused: record(NO_BODIES.refused),
+  recordNoBodiesRefused: record(REFUSED.noCause),
   recordNoBodiesUnrecorded: record(NO_BODIES.unrecorded),
+
+  /** …and its twin: a refusal that recorded WHY, so the record says which cause fired
+   *  (decision 37). The pair is what `AuditDetailStates` draws side by side. */
+  recordRefusedCause: record(REFUSED.withCause),
 
   /** The record's own read in flight: the field table is already drawn from the slim row, the body
    *  sections are skeletons. */

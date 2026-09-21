@@ -93,12 +93,11 @@ const OUTCOME_WORDS: Record<string, { label: string; sentence?: string }> = {
   },
   "-32001": {
     label: "not permitted",
-    // Both named causes, and then "every such case" rather than a count: §7 answers THREE
-    // indistinguishable sources the same way, so the ledger cannot tell them apart and the
-    // sentence must not imply it has enumerated them. Saying only "no grant" would be a guess
-    // printed as a fact.
+    /* The FALLBACK only — a row recorded before `detail.reason` shipped. It says the ledger does
+       not say which, not that it never can: since 2026-09-21 it does, and `refusalSentence`
+       below builds the sentence from the recorded cause whenever there is one. */
     sentence:
-      "The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, so the ledger cannot say which.",
+      "The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, and rows recorded before 2026-09-21 do not say which.",
   },
   "-32000": {
     label: "app unavailable",
@@ -114,6 +113,124 @@ const OUTCOME_WORDS: Record<string, { label: string; sentence?: string }> = {
  *  least the truth, where a made-up label would not be. */
 export function outcomeLabel(outcome: string): string {
   return OUTCOME_WORDS[outcome]?.label ?? outcome;
+}
+
+/* ------------------------------------------- why a call was not permitted ---- */
+
+/**
+ * §15's nine closed refusal classes, as short words for a list row and a sentence for the
+ * record (decision 37, owner: "can the codes come with some actual description", "having a
+ * 'why' there would make things easier to understand/debug").
+ *
+ * THE WIRE DOES NOT CHANGE. Every `-32001` a consumer door emits stays byte-identical, so a
+ * probing agent still cannot map its grants or learn that an app is real; the cause rides
+ * `HubError.auditDetail` into `detail.reason` and never reaches a caller. What makes recording
+ * it safe is that the ledger is the OWNER's — an `agent` principal reaches no audit read at
+ * all — so the oracle the refusal withholds stays withheld from the caller it was withheld
+ * from (§1 of the dispatch brief).
+ *
+ * Pinned copy, verbatim from the brief's table and §13's. A class the page does not know prints
+ * as its raw token rather than as an invented phrase.
+ */
+const REFUSAL_WORDS: Record<string, { short: string; sentence: string }> = {
+  no_app: {
+    short: "no such app",
+    sentence:
+      "The name leads to no app this caller can see — a typo, a deleted app, or a prefix that matches nothing.",
+  },
+  app_changed: {
+    short: "app changed mid-program",
+    sentence:
+      "The name now points at a different app than when the program that made this call started.",
+  },
+  no_grant: {
+    short: "no grant reaches it",
+    sentence: "The app exists, but no grant this caller holds reaches this tool.",
+  },
+  not_in_catalog: {
+    short: "not in the app's catalog",
+    sentence:
+      "The app's catalog has nothing by this name — a wrong name, or an app that has not re-registered since it gained it.",
+  },
+  unsound_schema: {
+    short: "schema can't be masked",
+    sentence:
+      "The tool's schema cannot be masked safely, so the hub will not run it; the violation was reported to the app when it registered.",
+  },
+  credential_lapsed: {
+    short: "credential lapsed mid-program",
+    sentence:
+      "The credential was revoked, expired or rebound while the program that made this call was still running.",
+  },
+  op_withheld: {
+    short: "op withheld from this credential",
+    sentence: "This kind of credential may not run this admin op.",
+  },
+  not_decidable: {
+    short: "nothing to decide",
+    sentence: "There is no pending approval request here for this credential to decide.",
+  },
+  wrong_endpoint: {
+    short: "wrong endpoint for this credential",
+    sentence: "This credential is not admitted at this endpoint.",
+  },
+};
+
+/**
+ * The cause this row recorded, as the raw token, or null.
+ *
+ * TWO fields, because the two refusals learned their cause at different times and by different
+ * roads: `-32000` has carried `detail.failureClass` since the upstream work, `-32001` gained
+ * `detail.reason` with decision 37. One function so every surface asks the same question —
+ * the preview line, the waterfall, Summary's Refusals and the run signature all want "why",
+ * not "which field".
+ */
+export function causeOf(row: Pick<AuditWindowRow, "outcome" | "detail">): string | null {
+  const field = row.outcome === "-32001" ? row.detail?.reason : row.outcome === "-32000" ? row.detail?.failureClass : undefined;
+  return typeof field === "string" && field !== "" ? field : null;
+}
+
+/**
+ * The same cause in the words a list row shows: a refusal's SHORT words, a `-32000`'s
+ * `failureClass` humanized.
+ *
+ * Humanized rather than raw because one list must not mix words and raw pairs — "no grant
+ * reaches it" beside `failureClass=needs_reconnect` reads as two different kinds of fact. A
+ * token the vocabulary does not know prints as itself: the truth, where a guess would not be.
+ */
+export function causeWords(row: Pick<AuditWindowRow, "outcome" | "detail">): string | null {
+  return causeReading(row).words;
+}
+
+/**
+ * The cause in words, and WHICH `detail` keys those words already said.
+ *
+ * One function decides both, because the preview line must not repeat what the words carry:
+ * `upstream status upstreamStatus=502` said the number twice, once in prose and once as a raw
+ * pair — the exact mixing the humanizing exists to prevent. `consumed` is what the line then
+ * leaves out; everything else stays a pair, and the record's Detail tree still shows every
+ * field as recorded.
+ *
+ * Only a NUMBER is absorbed. A non-numeric `upstreamStatus` is data the words cannot carry
+ * faithfully, so it stays a pair and the words stay plain.
+ */
+function causeReading(row: Pick<AuditWindowRow, "outcome" | "detail">): { words: string | null; consumed: string[] } {
+  const cause = causeOf(row);
+  if (cause === null) return { words: null, consumed: [] };
+  if (row.outcome === "-32001") return { words: REFUSAL_WORDS[cause]?.short ?? cause, consumed: ["reason"] };
+  const words = cause.replace(/_/g, " ");
+  const status = row.detail?.upstreamStatus;
+  if (cause === "upstream_status" && typeof status === "number") {
+    return { words: `${words} ${status}`, consumed: ["failureClass", "upstreamStatus"] };
+  }
+  return { words, consumed: ["failureClass"] };
+}
+
+/** The `-32001` sentence: what happened, why, and that the caller was told none of it. A full
+ *  stop after the first clause, because the reason sentences start with a capital. */
+function refusalSentence(reason: string): string {
+  const known = REFUSAL_WORDS[reason]?.sentence ?? `Recorded cause: ${reason}.`;
+  return `The hub refused this call. ${known} The caller was told only "not permitted" — every cause gets the same answer.`;
 }
 
 /**
@@ -151,8 +268,10 @@ export function outcomeRow(outcome: string): { cls: OutcomeClass; label: string 
 export function outcomeSentence(row: Pick<AuditWindowRow, "outcome" | "detail">): string | null {
   const sentence = OUTCOME_WORDS[row.outcome]?.sentence;
   if (sentence === undefined) return null;
-  const cause = row.detail?.failureClass;
-  return typeof cause === "string" && cause !== "" ? `${sentence} Cause: ${cause}.` : sentence;
+  const cause = causeOf(row);
+  // A refusal that recorded WHY says so; one that did not keeps the pre-ship sentence above.
+  if (row.outcome === "-32001") return cause === null ? sentence : refusalSentence(cause);
+  return cause === null ? sentence : `${sentence} Cause: ${cause}.`;
 }
 
 /* --------------------------------------------------------------- the URL ---- */
@@ -761,14 +880,16 @@ function approvalIdOf(row: AuditWindowRow): string | null {
  * by hashing the full `args` server-side into the slim row if it ever misleads anyone.
  */
 function signatureOf(row: AuditWindowRow): string {
-  const failure = row.detail?.failureClass;
   return [
     row.event,
     row.app,
     row.tool,
     row.principal,
     row.outcome,
-    typeof failure === "string" ? failure : "",
+    // The recorded CAUSE, not just a `-32000`'s failureClass: two refusals with different
+    // reasons are two different facts, and collapsing them would put one cause's words on a
+    // row standing for several.
+    causeOf(row) ?? "",
     row.argsHead ?? "",
   ].join("|");
 }
@@ -821,12 +942,30 @@ export function previewOf(row: AuditWindowRow): string | null {
     const stub = stubOf(row.argsHead);
     return stub === null ? row.argsHead.slice(0, PREVIEW_CHARS) : stubLabel(stub);
   }
-  if (row.detail === undefined) return null;
+  // The recorded cause leads, IN WORDS. `consumed` is what those words already said — the
+  // cause's own field, and the upstream status when the words carried the number — so the line
+  // never repeats itself. Every other pair is unchanged.
+  const { words, consumed } = causeReading(row);
+  if (row.detail === undefined) return words;
   const pairs = Object.entries(row.detail)
+    .filter(([key]) => !consumed.includes(key))
     .slice(0, 3)
-    .map(([key, value]) => `${key}=${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
-    .join(" ");
-  return pairs === "" ? null : pairs.slice(0, PREVIEW_CHARS);
+    .map(([key, value]) => `${key}=${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
+  const line = [...(words === null ? [] : [words]), ...pairs].join(" ");
+  return line === "" ? null : line.slice(0, PREVIEW_CHARS);
+}
+
+/**
+ * Whether the preview line is the row's OWN EVIDENCE — its arguments or its recorded cause —
+ * rather than a spill of whatever else `detail` happened to hold.
+ *
+ * Those two and no others, because they are exactly what the run signature splits on: if the
+ * page can collapse two rows only when both agree on them, they are what tells one row from
+ * the next, and they are what the phone's two-line card keeps when it has room for one line
+ * and not three.
+ */
+export function previewIsEvidence(row: AuditWindowRow): boolean {
+  return row.argsHead !== undefined || causeOf(row) !== null;
 }
 
 /** An args head that is itself a whole-body stub. `argsHead` is a PREFIX of stored JSON, so a
@@ -997,20 +1136,33 @@ export function topOf(rows: AuditWindowRow[], field: FilterField, n: number): To
   return { rows: top, max: top[0]?.count ?? 1 };
 }
 
-/** Summary's Refusals panel: who was refused reaching what, busiest first. Keyed on the pair,
- *  and the filter it applies is the PRINCIPAL alone — the target half may be an event name,
- *  which is not a `tool` value. */
-export function refusalPairsOf(rows: AuditWindowRow[], n: number): { principal: string; target: string; count: number; max: number }[] {
-  const counts = new Map<string, number>();
+/**
+ * Summary's Refusals panel: who was refused reaching what, and WHY — busiest first.
+ *
+ * Grouped by (principal, target, cause), so two causes on one pair are two lines: "224 refusals
+ * of news/search_news" that were 220 missing grants and 4 wrong names is one number hiding two
+ * different problems. A group whose rows recorded no cause has `cause: null` and its line ends
+ * at the target.
+ *
+ * The filter a line applies is the PRINCIPAL alone — the target half may be an event name,
+ * which is not a `tool` value, and the cause has no facet at all by decision.
+ */
+export function refusalPairsOf(
+  rows: AuditWindowRow[],
+  n: number,
+): { principal: string; target: string; cause: string | null; count: number; max: number }[] {
+  const counts = new Map<string, { principal: string; target: string; cause: string | null; count: number }>();
   for (const row of rows.filter(isRefused)) {
-    counts.set(`${row.principal}|${targetOf(row) ?? row.event}`, (counts.get(`${row.principal}|${targetOf(row) ?? row.event}`) ?? 0) + 1);
+    const target = targetOf(row) ?? row.event;
+    const cause = causeWords(row);
+    const key = `${row.principal}|${target}|${cause ?? ""}`;
+    const held = counts.get(key);
+    if (held === undefined) counts.set(key, { principal: row.principal, target, cause, count: 1 });
+    else held.count += 1;
   }
-  const top = [...counts].sort((left, right) => right[1] - left[1]).slice(0, n);
-  const max = top[0]?.[1] ?? 1;
-  return top.map(([key, count]) => {
-    const at = key.indexOf("|");
-    return { principal: key.slice(0, at), target: key.slice(at + 1), count, max };
-  });
+  const top = [...counts.values()].sort((left, right) => right.count - left.count).slice(0, n);
+  const max = top[0]?.count ?? 1;
+  return top.map((each) => ({ ...each, max }));
 }
 
 /* ------------------------------------------------------------- worth a look ---- */
@@ -1062,24 +1214,26 @@ export function insightsOf(
 ): Insight[] {
   const out: Insight[] = [];
 
-  const pairs = new Map<string, number>();
-  for (const row of selected.filter(isRefused)) {
-    const key = `${row.principal}|${targetOf(row) ?? row.event}|${outcomeClass(row.outcome)}`;
-    pairs.set(key, (pairs.get(key) ?? 0) + 1);
-  }
-  const worst = [...pairs].sort((left, right) => right[1] - left[1])[0];
-  if (worst !== undefined && worst[1] > REFUSAL_THRESHOLD) {
-    const [principal = "", target = "", cls = ""] = worst[0].split("|");
+  // The same grouping Summary's Refusals uses, so the sentence and the panel below it can never
+  // disagree about which pair is the worst — the cause included.
+  const worst = refusalPairsOf(selected, 1)[0];
+  if (worst !== undefined && worst.count > REFUSAL_THRESHOLD) {
+    const cls = outcomeClass(
+      selected.find((row) => row.principal === worst.principal && (targetOf(row) ?? row.event) === worst.target)
+        ?.outcome ?? "-32001",
+    );
     out.push({
       parts: [
-        { text: `${principal} was refused ${fmtCount(worst[1])} times`, style: "strong" },
+        { text: `${worst.principal} was refused ${fmtCount(worst.count)} times`, style: "strong" },
         { text: " calling ", style: "plain" },
-        { text: target, style: "mono" },
-        { text: ` — ${cls}.`, style: "plain" },
+        { text: worst.target, style: "mono" },
+        // The cause when the group recorded one; the class alone when it did not — the
+        // sentence may not invent a reason the ledger never stored.
+        { text: worst.cause === null ? ` — ${cls}.` : ` — ${cls}, ${worst.cause}.`, style: "plain" },
       ],
       filters: [
-        { field: "principal", value: principal },
-        { field: "tool", value: target },
+        { field: "principal", value: worst.principal },
+        { field: "tool", value: worst.target },
       ],
     });
   }

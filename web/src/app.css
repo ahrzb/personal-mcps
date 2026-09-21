@@ -1066,8 +1066,10 @@ button.a-wfr:hover {
 .a-wfbar--fold {
   background: repeating-linear-gradient(90deg, var(--border) 0 5px, transparent 5px 9px);
 }
+/* Wide enough for the longest label-plus-cause on one line ("not permitted · op withheld from
+   this credential"); the track keeps its own 40px floor beside it. */
 .a-wfrt {
-  width: 190px;
+  width: 240px;
   flex: none;
   text-align: right;
   color: var(--muted-fg);
@@ -1517,6 +1519,9 @@ button.a-wfr:hover {
      the preview is what says they are five different calls. It ellipsises because the boxes
      ABOVE it are now sized by the viewport rather than by it. */
   .a-etab td.a-what .a-prev { min-width: 0; }
+  /* …but only when it is the row's own EVIDENCE. A card has room for one extra line, and a
+     spill of whatever else `detail` held is not the line that tells one card from the next. */
+  .a-etab td.a-what .a-prev--aside { display: none; }
   /* The foot wraps rather than pushing the card wider on its one long sentence. */
   .a-more { flex-wrap: wrap; }
   /* The disclosure is part of the card at this tier too — the member rows are the reason the

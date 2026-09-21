@@ -103,6 +103,10 @@ function pickRecords(rows: DemoRow[]): DemoRow[] {
   // A `-32000` carrying a `failureClass` — the one outcome whose sentence gains a cause, and
   // therefore the one the record's outcome row has to be seen drawing.
   take(rows.find((row) => row.outcome === "-32000" && typeof row.detail?.failureClass === "string"));
+  // Both `-32001` sentences: one that recorded WHY (decision 37) and one from before it shipped,
+  // which draws the fallback. The week deliberately keeps a handful of each.
+  take(rows.find((row) => row.outcome === "-32001" && typeof row.detail?.reason === "string"));
+  take(rows.find((row) => row.outcome === "-32001" && row.detail?.reason === undefined));
   // Every row of the first COMPLETE chain — the drawer's sibling timeline is drawn from the
   // loaded window, but the record it opens on is read by id, so each member needs its own row.
   const chains = new Map<string, DemoRow[]>();

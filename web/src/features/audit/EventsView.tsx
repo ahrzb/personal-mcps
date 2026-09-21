@@ -8,6 +8,7 @@ import {
   fmtDuration,
   fmtStamp,
   outcomeClass,
+  previewIsEvidence,
   previewOf,
   runLine,
   titleOfMerged,
@@ -194,7 +195,11 @@ function EventRow({
             ))}
           </div>
         )}
-        {preview === null ? null : <div className="note a-tmono a-prev">{preview}</div>}
+        {preview === null ? null : (
+          <div className={previewIsEvidence(head) ? "note a-tmono a-prev" : "note a-tmono a-prev a-prev--aside"}>
+            {preview}
+          </div>
+        )}
         {/* The members hang INSIDE this cell, under the run line and behind a hairline — the
             board's shape. A band across all four columns would put them under WHEN, which is
             not the column any of them belongs to. */}

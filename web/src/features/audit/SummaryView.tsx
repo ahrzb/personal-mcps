@@ -168,14 +168,17 @@ function Refusals({ rows, onPick }: { rows: AuditWindowRow[]; onPick: (filter: F
     <div className="a-topn">
       {pairs.map((pair) => (
         <button
-          key={`${pair.principal}|${pair.target}`}
+          key={`${pair.principal}|${pair.target}|${pair.cause ?? ""}`}
           type="button"
-          title={`${pair.principal} → ${pair.target}`}
+          title={`${pair.principal} → ${pair.target}${pair.cause === null ? "" : ` — ${pair.cause}`}`}
           onClick={() => onPick({ field: "principal", value: pair.principal })}
         >
           <span className="a-bar" style={{ width: `${(pair.count / pair.max) * 100}%` }} />
           <span className="a-nm">
             {pair.principal} → {pair.target}
+            {/* Why, in the same short words the list rows use — dim, because the pair is what
+                the line is about and the cause is what it adds. */}
+            {pair.cause === null ? null : <span className="a-sub2"> — {pair.cause}</span>}
           </span>
           <span className="a-n">{fmtCount(pair.count)}</span>
         </button>

@@ -1,0 +1,24 @@
+[package]
+name = "personal-mcp-client"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Keep an MCP server reachable through a personal-mcps hub's reverse tunnel."
+repository = "https://github.com/ahrzb/personal-mcps"
+
+[lib]
+name = "pmcp"
+
+[dependencies]
+futures-util = "0.3"
+rand = "0.10"
+rmcp = { version = "3.4", default-features = false, features = ["server"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+url = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

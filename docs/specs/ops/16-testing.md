@@ -7,6 +7,11 @@
 - **clients/py**: pytest; the WS↔anyio bridge tested against an in-process websocket
   server; reconnect/backoff logic unit-tested with a fake clock.
 - **clients/js**: vitest; same shape.
+- **clients/go**: `go test`; official SDK dispatch, tunnel contracts, reconnect policy, and
+  caller/schema helpers run against an in-process WebSocket hub.
+- **clients/rust**: `cargo test`; official RMCP discovery and legacy resource subscriptions,
+  tunnel contracts, reconnect policy, and caller/schema helpers run against an in-process
+  WebSocket hub.
 - **cli**: command parsing, profile precedence, output/error contracts, and admin/MCP dispatch.
 - **pattern matching**: regression tests pinned by §7 — `foo|bar` must NOT match
   `foox` (naive `^foo|bar$` parses as `(^foo)|(bar$)` and matches it via the `^foo`

@@ -17,6 +17,7 @@ personal-mcps/
     js/              # @ahrzb/personal-mcp-client — the third workspace importer
     py/              # personal-mcp-client (uv project, not npm)
     go/              # github.com/ahrzb/personal-mcps/clients/go module (not npm)
+    rust/            # personal-mcp-client package, `pmcp` crate (not npm)
   examples/
     news-py/         # smallest possible app, used in docs and e2e
   scripts/           # users.mts, smoke.ts, test-inventory.mjs
@@ -29,8 +30,9 @@ personal-mcps/
 **`cli`, `web` and `clients/js` are the workspace importers** — the two published npm
 packages plus the browser client. `server/` has no manifest of its own on purpose: Wrangler
 builds it from the root, so a manifest there would be a third declaration of the same
-dependency set with nothing consuming it. `clients/py` and `clients/go` are not npm packages
-at all. Nothing in `server/src` imports anything from `web/`: the Worker serves that
+dependency set with nothing consuming it. `clients/py`, `clients/go`, and
+`clients/rust` are not npm packages at all. Nothing in `server/src` imports anything from
+`web/`: the Worker serves that
 directory's two built files out of a static-asset binding, which is the whole of the edge
 between them (§4's dependency policy).
 

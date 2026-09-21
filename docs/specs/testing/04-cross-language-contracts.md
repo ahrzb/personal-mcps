@@ -6,7 +6,7 @@ declaration templates, tunnel frames/aliases, close codes, bootstrap, admin oper
 audit stubs, and push frames.
 
 `server/test/worker/contracts.test.ts` is the only writer. It emits fixtures from named
-runtime source exports; CLI, three clients, provider, and scripts consume them read-only.
+runtime source exports; CLI, four clients, provider, and scripts consume them read-only.
 `contracts/hub.json` pins the two hub tools/resources/limits, initialize comes from the
 capability producer, tunnel aliases from the registration producer, and the admin fixture
 from its operation table. Re-generating errors must remain byte-identical. Run

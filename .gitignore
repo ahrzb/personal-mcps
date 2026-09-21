@@ -13,6 +13,7 @@ __pycache__/
 # publish-time build outputs (prepublishOnly), never committed
 cli/dist/
 clients/js/dist/
+clients/rust/target/
 
 # `nix build` drops this symlink into the tree; the store path it points at is the artifact
 result

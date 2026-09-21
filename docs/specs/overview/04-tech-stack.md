@@ -92,12 +92,12 @@
   bearer) pointed at a local SQLite Kysely dialect (e.g. better-sqlite3); better-auth
   targets the same SQLite dialect either way, so the emitted SQL is checked in
   unchanged as the wrangler migration. No runtime migration endpoint.
-- **Clients**: Python — `mcp` package v2 (`MCPServer`, low-level `Server.run(read, write)`
-  over a custom transport: an async context manager bridging an outbound WebSocket to the
-  anyio stream pair). JS — `@modelcontextprotocol/server` v2 with a small custom
-  `Transport` implementation over `ws`. Both SDKs dropped built-in WebSocket transports in
-  v2, so this bridge is ours; it is small and the spec explicitly sanctions custom
-  transports.
+- **Clients**: Python — `mcp` package v2 (`MCPServer`, low-level
+  `Server.run(read, write)` over an anyio/WebSocket bridge). JS —
+  `@modelcontextprotocol/server` v2 with a `Transport` over `ws`. Go —
+  `modelcontextprotocol/go-sdk` over `coder/websocket`. Rust — official `rmcp`
+  over `tokio-tungstenite`. Each bridge is a small custom reverse-tunnel
+  transport; the official SDK continues to own MCP dispatch and discovery.
 - **Dependency policy** *(amended 2026-09-20, §23)*: the Worker runtime dependency
   boundary admits the existing authentication/MCP packages plus exact-pinned
   `typescript`, `@cfworker/json-schema`, `quickjs-emscripten-core`, and
@@ -116,15 +116,17 @@
   own minimal declarations.
 - **Monorepo**: pnpm workspaces with exactly three importers, `cli`, `web` and
   `clients/js` — the two published npm packages plus the browser client — plus a `uv`
-  project (`clients/py`) and a standalone Go module (`clients/go`), neither of which is
-  npm. `server/` deliberately has **no manifest**: Wrangler builds it from the
+  project (`clients/py`), a standalone Go module (`clients/go`), and a standalone
+  Cargo crate (`clients/rust`); none of those three is npm. `server/` deliberately has
+  **no manifest**: Wrangler builds it from the
   root, so one there would be a third declaration with no consumer. *(Amended
   2026-09-15: this line previously named `server` as a workspace package and
   omitted that none of the three directories were importers at all. Amended 2026-09-18:
   `web` became the third importer — unpublished, but a manifest of its own for the same
   reason the other two have one, since the root is where a mirrored declaration drifts.)*
 - **Toolchain authority**: `flake.nix`'s devShell — Node 24, pnpm 10, Go 1.25,
-  `uv` — added 2026-09-15 (§22.7). It sits beside the documented `pnpm install`
+  Rust, and `uv` — added 2026-09-15 (§22.7). It sits beside the documented
+  `pnpm install`
   flow rather than replacing it, so contributors without Nix keep working, and
   where a manifest or document disagrees with the flake the flake is correct.
   Wrangler stays an npm dependency so it matches the lockfile: its version

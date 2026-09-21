@@ -30,24 +30,27 @@ JS (`@personal-mcps/client` on npm) has the same shape:
 `typescript_aliases` at its public API and emits wire `typescriptAliases`.
 
 Go carries the same semantics in
-`pmcp.Options{URL, Token, Roles, TypeScriptAliases}`. All three transports copy the
-optional `{service, tools}` shape into `hub/register`; they validate no alias policy
-locally, because the hub must be the single syntax/collision authority. SDK hints rank
-below owner configuration and a collision does not disconnect the tunnel.
+`pmcp.Options{URL, Token, Roles, TypeScriptAliases}`. Rust uses
+`pmcp::Options { url, token, roles, typescript_aliases }`. All four
+transports copy the optional `{service, tools}` shape into `hub/register`; they
+validate no alias policy locally, because the hub must be the single
+syntax/collision authority. SDK hints rank below owner configuration and a
+collision does not disconnect the tunnel.
 
 Library responsibilities remain dial/authenticate, `hub/register`, answer
-`server/discover`, bridge frames, pass notifications, ping, reconnect/backoff, and stop
-on `hub/replaced`. Alias hints change only the registration control object. Python/JS
-continue answering discover in transport; Go continues using the official SDK. A
-boundary that cannot answer discover returns `-32601`, preserving the tools-only warm
-fallback.
+`server/discover`, bridge frames, pass notifications, ping, reconnect/backoff,
+and stop on `hub/replaced`. Alias hints change only the registration control
+object. Python/JS continue answering discover in transport; Go and Rust use their
+official SDKs. A boundary that cannot answer discover returns `-32601`, preserving
+the tools-only warm fallback.
 
 
 The packages also expose two in-handler affordances (§7): caller identity —
 principal, roles, and a role predicate read from forwarded `_meta` — and
 sensitive-field marking. Python exposes `Secret[T]` plus `sensitive()`, JS
-exposes `secret()` plus `sensitive()`, and Go exposes `Secret()` plus
-`Sensitive()` over `jsonschema.Schema`. Every spelling emits `writeOnly: true`
-at the marked input or output path; values still serialize normally on the
-wire, and the hub performs masking (§7, §15).
+exposes `secret()` plus `sensitive()`, Go exposes `Secret()` plus `Sensitive()`
+over `jsonschema.Schema`, and Rust exposes `secret()` plus `sensitive()` over
+`schemars::Schema`. Every spelling emits `writeOnly: true` at the marked input
+or output path; values still serialize normally on the wire, and the hub performs
+masking (§7, §15).
 

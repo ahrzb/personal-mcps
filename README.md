@@ -35,7 +35,7 @@ grants, human approvals, and the audit trail apply end to end.
   when signed in, `/login` otherwise.
 - **CLI** — `pmcp` covers login (RFC 8628 device flow), apps, agents, tokens,
   approvals, audit, and generic MCP/admin operation invocation.
-- **Client libraries** — Python, TypeScript, and Go packages keep an ordinary MCP
+- **Client libraries** — Python, TypeScript, Go, and Rust packages keep an ordinary MCP
   server object reachable through the tunnel. See the
   [client quickstart](docs/quickstart-clients.md).
 
@@ -50,6 +50,7 @@ grants, human approvals, and the audit trail apply end to end.
 | [clients/js](clients/js) | TypeScript app-author library |
 | [clients/py](clients/py) | Python app-author library |
 | [clients/go](clients/go) | Go app-author library |
+| [clients/rust](clients/rust) | Rust app-author library |
 | [contracts](contracts) | Producer-generated wire fixtures shared by every consumer |
 | [scripts](scripts) | `users.mts` (bootstrap user management), `smoke.ts` (post-deploy probe), `test-inventory.mjs` |
 | [docs/specs](docs/specs/README.md) | **The source of truth.** The design spec (§-references throughout the code point here) and the testing strategy, one file per section — [docs/specs/README.md](docs/specs/README.md) is the index |
@@ -61,7 +62,7 @@ The pnpm workspace has three importers: `cli` and `clients/js` — the two publi
 packages — and `web`, the browser client, which is unpublished but carries its own manifest
 because its dependency set is one no other part of the repo may import. `server/`
 deliberately has no manifest of its own, because Wrangler builds it from the root, and
-`clients/py` and `clients/go` are not npm packages at all.
+`clients/py`, `clients/go`, and `clients/rust` are not npm packages.
 
 ## Everyday commands
 
@@ -108,6 +109,12 @@ The Go client is a standalone module:
 cd clients/go && go test ./...
 ```
 
+The Rust client is a standalone crate:
+
+```bash
+cd clients/rust && cargo test
+```
+
 Deploy and verify:
 
 ```bash
@@ -122,8 +129,8 @@ pnpm smoke        # probes the deployed hub end to end
 ### The toolchain, and where its versions come from
 
 `nix develop` gives you a shell with the versions this repo is actually built and tested
-against — Node 24, pnpm 10, Go 1.25, uv — and **the flake is the authority**: when a manifest or
-a document disagrees with `flake.nix`, the flake is right and the other is stale.
+against — Node 24, pnpm 10, Go 1.25, Rust, and uv — and **the flake is the authority**:
+when a manifest or document disagrees with `flake.nix`, the flake is right and the other is stale.
 
 It sits **beside** `pnpm install`, not in front of it. Contributors without Nix keep working
 exactly as before; the flake exists so the versions stop being folklore, and so the `pmcp` CLI

@@ -145,7 +145,7 @@ export type ContractFamily = {
   file: string;
   spec: string;
   emission: string;
-  consumers: readonly ("cli" | "clients/js" | "clients/py" | "scripts" | "server")[];
+  consumers: readonly ("cli" | "clients/js" | "clients/py" | "clients/go" | "clients/rust" | "scripts" | "server")[];
   /**
    * The project that captures the emission. One member, and that is the point (FINDINGS
    * 2): every family is producible in `worker`, so this suite is the single writer §4
@@ -200,14 +200,14 @@ export const CONTRACT_FAMILIES: readonly ContractFamily[] = [
     file: "contracts/tunnel-frames.json",
     spec: "§6/§7",
     emission: "the hub/register REQUEST shape the DO accepts — HUB_METHODS.register plus the params keys it reads (clientVersion, protocolVersion, roles, the last carrying §20.3's two spellings in one declaration: a bare pattern list beside a per-family object) and the wire revision it speaks, with no app or slug field ever — beside the ack and hub/replaced notification the DO emits, named by the same exported HUB_METHODS, plus the forwarded-call _meta key names (hub/principal, hub/roles, the mirrored clientCapabilities)",
-    consumers: ["clients/js", "clients/py"],
+    consumers: ["clients/js", "clients/py", "clients/go", "clients/rust"],
     producer: "worker",
   },
   {
     file: "contracts/close-codes.json",
     spec: "§6",
     emission: "the exported close-code vocabulary — CLOSE_REPLACED, CLOSE_REVOKED, CLOSE_ARCHIVED, CLOSE_ROW_GONE, CLOSE_PROTOCOL — beside the 401 and 403 statuses captured from real handleConnect refusals (a dead credential, an archived app — both socket-free, which is why this project can produce them), each carrying its required client behavior and, where it reconnects, its schedule. The successful 101 is NOT an entry: §6's matrix gives it no meaning, it is not an ending, and the closed three-word behavior vocabulary has no member for \"proceed\"",
-    consumers: ["clients/js", "clients/py"],
+    consumers: ["clients/js", "clients/py", "clients/go", "clients/rust"],
     producer: "worker",
   },
   {
@@ -457,7 +457,7 @@ const FIXTURE_TOOL = "search";
  * §20.3's role declaration, in the TWO spellings one `hub/register` may mix: a bare
  * pattern list — which means tools, forever, so every app in the field keeps
  * registering unchanged — and the per-family object. Spelled once here because three
- * surfaces read it: the tunnel-frames emission (the wire shape both client libraries copy
+ * surfaces read it: the tunnel-frames emission (the wire shape four client libraries copy
  * with no shared declaration), the acceptance case, and the canonical-read case. A second
  * spelling among them is exactly the drift this directory exists to catch.
  *
@@ -479,7 +479,7 @@ const FIXTURE_ROLE_DECLARATION = {
 /**
  * §23's optional SDK alias-hint member, in the shape hub-types allocates from: a service
  * name beside a canonical→alias tool map. This is the value the accepted `hub/register`
- * request carries — both client libraries copy the request shape, so the fixture has to
+ * request carries — four client libraries copy the request shape, so the fixture has to
  * SHOW the member rather than merely leave room for it. The value is judged by the hub's
  * own validator in the register parity case below, so a spelling the hub would refuse
  * cannot sit in the fixture unnoticed; canonical names stay canonical on the wire, which
@@ -1095,13 +1095,13 @@ async function tunnelFramesEmission(): Promise<unknown> {
     methods: { ...HUB_METHODS },
     register: {
       // The request the DO ACCEPTS. `roles` carries §20.3's two spellings in ONE
-      // declaration — the family dimension is a shape both client libraries copy, so the
+      // declaration — the family dimension is a shape four client libraries copy, so the
       // fixture has to SHOW it rather than merely leave room for it. (Before 2026-08-26
       // this was `{}`, on the reasoning that an empty declaration is a declaration (§6);
-      // that stays true and is pinned where it is observable — both libraries send `{}`
+      // that stays true and is pinned where it is observable — all four libraries send `{}`
       // through unchanged when the author declares none.) §23's optional
       // `typescriptAliases` member rides beside them under the exported wire key, in the
-      // `{service, tools}` shape both libraries copy; absent means "no hints" and keeps
+      // `{service, tools}` shape all four libraries copy; absent means "no hints" and keeps
       // the three-key frame, which is what the client suites pin for an author who
       // declares none. The client's own version string varies, so its TYPE is pinned.
       request: {
@@ -1917,7 +1917,7 @@ describe("§4 · tunnel frames and close codes", () => {
     }
     // §23's optional alias member, keyed by the exported wire name and judged by the hub's
     // own validator rather than by this file: the fixture shows the `{service, tools}`
-    // shape both client libraries copy, and a spelling the DO would refuse (unknown key,
+    // shape four client libraries copy, and a spelling the DO would refuse (unknown key,
     // illegal identifier) fails HERE first — the same acceptance registry.validateRoles
     // gives the roles declaration. Absent-member behavior is the client suites' pin: a
     // transport built without hints emits the historical three-key frame.

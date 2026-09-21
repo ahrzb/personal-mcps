@@ -246,12 +246,14 @@
             (pnpmFor pkgs)
             pkgs.go_1_25 # clients/go
             pkgs.uv # clients/py
+            pkgs.rustc # clients/rust
+            pkgs.cargo # clients/rust
           ];
 
           # Wrangler stays an npm dependency so it matches the lockfile — a nixpkgs wrangler
           # would be a second version of the one tool whose version decides how the Worker runs.
           shellHook = ''
-            echo "pmcp devShell — node $(node --version), pnpm $(pnpm --version)"
+            echo "pmcp devShell — node $(node --version), pnpm $(pnpm --version), rustc $(rustc --version)"
             echo "wrangler comes from the lockfile: pnpm install, then pnpm dev"
           '';
         };

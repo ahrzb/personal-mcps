@@ -208,9 +208,11 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   `outcome` / `session`, `q` (the search text, sent to the server as `text`),
   `expand=<id>` (the open record) and `open=<sessionId>` (the open session in Sessions).
   Every key is a string or repeated strings, the SPA router's contract. A `tool` value is
-  spelled `<app>/<tool>` on the page — the facet names a tool by its app — and is split
-  again for the export link; an `outcome` value is one of the five classes below, which
-  the export link expands to its raw codes.
+  spelled `<app>/<tool>` on the page — the facet names a tool by its app — and travels
+  **whole** to the export as repeated `target=` *(2026-09-21, from review: never split into
+  `app=` + `tool=` lists, for the reason the Export paragraph gives)*; a legacy `?tool=<name>`
+  with no `/` still filters the page, by tool name alone. An `outcome` value is one of the
+  five classes below, which the export link expands to its raw codes.
 
   **Outcome classes**, five over the six recorded `outcome` values (§5): `ok` ← `ok`;
   `approval` ← `-32003`; `archived` ← `-32002`; `denied` ← `-32001` and `-32000`; `error`
@@ -278,7 +280,15 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   filters it names — the worst (principal, target) pair of refusals when it exceeds five,
   tools first seen in the last two days of the loaded window, and changes to the setup
   (`admin.*`, `upstream.*`); top-N bars for Agents, Apps and Tools; Refusals; Changes you
-  made; and the foot "All N events →". The ledger records no *reason* for a refusal (§15),
+  made *(2026-09-21, from review: the newest five, newest first)*; and the foot "All N events
+  →". Two rules on the rules themselves *(2026-09-21, from review)*: the **first-seen rule is
+  suppressed on a partial load** — when `total > ceiling`, or when a search text is active,
+  the loaded rows are not the whole retention window, so "called for the first time" is not
+  something the page knows; on a day and a half of loaded rows every tool would look new, and
+  an insight that is wrong is worse than an insight that is absent. And the **changes rule's
+  show me applies every distinct change event** it counted, as one OR-ed group, so "10
+  changes to your setup" opens a list of ten and not one event name's worth. The ledger
+  records no *reason* for a refusal (§15),
   so the first rule's sentence ends at the outcome class: "**agent:cron was refused 214
   times** calling `news/get_news` — denied."
 
@@ -307,11 +317,16 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   **The record** (`?expand=<id>`) — a right-hand drawer over a scrim at wide, a full-screen
   level on the phone, and a real dialog primitive (focus trap, Escape) rather than a
   hand-rolled one. Head: the outcome swatch, the title, the time, Close. Body: **Search
-  this record…**, which highlights matches in the trees; the **Record** field table (when,
+  this record…**, which highlights matches in the trees and **opens every ancestor of a
+  match**, so a match is never hidden behind a collapsed node, and says "No matches in this
+  record." when there are none *(2026-09-21, from review)*; the **Record** field table (when,
   principal, event, app, tool, outcome with its raw code, duration, client, session, id)
   in which **every id is a button that filters by it and closes the drawer** — the session
   id among them, which is what the `?session=…` link struck below became; then **Arguments** /
-  **Result** / **Detail** as collapsible JSON trees, first level open; the three no-bodies
+  **Result** / **Detail** as collapsible JSON trees with their first ~~level~~ **two levels**
+  open *(2026-09-21, from review: a `‹redacted›` leaf or a blob stub inside `content` has to be
+  visible the moment the record opens — showing what was sent is the record's whole purpose —
+  and a body is capped (§15), so the second level costs nothing to draw)*; the three no-bodies
   sentences below; a chain record's sibling events as a short timeline whose lines open
   their own records; and **Show this session** / **Copy as JSON**. The field table draws
   from the slim row already loaded and the bodies arrive from the page's own one-row read
@@ -380,8 +395,33 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   `tool` / `session` / `outcome` keys, handed to the one read as lists. The repeated
   `outcome=` holds **raw** outcome strings (`-32001`, `ok`, …), never a display class: an
   outcome class is the page's own grouping and `denied` folds two codes, so the page's export
-  link is what expands a class to its codes. `range`, `limit`, `offset` and `expand` are
-  ignored by the export as they always were.)*
+  link is what expands a class to its codes.)*
+
+  *(2026-09-21, from review — four rules the export carries because it is a ledger's archive
+  path and not a view. **A tool pair travels whole**, as repeated
+  `target=<app>/<tool>` behind a module-level pair filter, because splitting the page's pairs
+  into `app=` + `tool=` lists would export their **cross product** — `news/get_news` and
+  `notion/search` selected on the page would also export `news/search` — and an export that
+  silently widens what a ledger hands over is not acceptable at any convenience. `target` is
+  split at the **first** `/`: an app slug never contains one, while a `tool` column holding a
+  resource URI does (§20.4), which is exactly why the bare `tool=` key cannot carry pairs.
+  Bare `tool=` therefore stays an **exact match**, for the links that already exist. **A
+  malformed `target` is a `400`**, never ignored, for the same reason: ignoring a filter
+  widens an export. **Too many values is a `400`** — "Too many filter values for one export —
+  narrow the selection." — answered past `AUDIT_EXPORT_MAX_VALUES` (**64**) and **before any
+  read**: the route sums the repeated values across every key, a `target` pair counting
+  **two** because it binds two columns, and refuses when that sum exceeds the constant. The
+  bound is D1's rather than a policy — a prepared statement binds at most 100 parameters, and
+  the export's own statement already spends some on the namespace, the window pair, `text`'s
+  eight columns, its seek key and its chunk limit — and it is the **route** that refuses,
+  because the facet rail may legitimately tick more values than this (a namespace can hold
+  more tools than that) and a refusal the reader can act on beats a D1 error partway through
+  a download. And **the window is selected, not
+  defaulted**: `range` and a `since`/`until` pair narrow the export exactly as they always
+  did, and a link naming **no** window exports everything the ledger still holds — the
+  server-rendered page's last-24-h default is gone with the page, because the export is the
+  archive path (§15) and an archive that quietly stops at yesterday is the same failure as one
+  that quietly widens. `limit`, `offset` and `expand` stay ignored.)*
 
   **Deep links that must keep working** *(2026-09-21)*, the agent page, the app page and
   old bookmarks emitting them: `/audit?principal=agent:<slug>`, `/audit?app=<slug>`,

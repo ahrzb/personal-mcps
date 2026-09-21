@@ -108,8 +108,15 @@
   `AUDIT_ARGS_HEAD_CHARS` **160**, the length of the `argsHead` preview a body-less read
   returns in place of the arguments column. All three bound a **read**, never the table:
   retention stays the only bound on what the ledger holds and on body exposure, and the
-  JSONL export stays unbounded — which is why the explorer, on reaching the ceiling, points
-  at the export rather than loading more.)*
+  JSONL export stays unbounded in **rows** — which is why the explorer, on reaching the
+  ceiling, points at the export rather than loading more. A fourth,
+  `AUDIT_EXPORT_MAX_VALUES` (**64**), bounds the export's **filter values** rather than its
+  rows: the route sums the repeated values across every key, a `target` pair counting **two**
+  because it binds two columns, and answers a `400` before any read when that sum exceeds the
+  constant (§13's sentence). The number is D1's and not a policy — a prepared statement binds
+  at most 100 parameters, and the export's statement already spends some on the namespace, the
+  window pair, `text`'s eight columns, its seek key and its chunk limit — and it is the one
+  place a reader is told to narrow rather than handed a stream that dies mid-file.)*
 
 - Hub structured failures (§23) always name a bounded cause and say whether it is
   transient and whether an operation may have run. Only proven pre-launch container

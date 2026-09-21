@@ -96,7 +96,18 @@ it now accepts `since`, `until`, `text`, and **repeated** `principal` / `app` / 
 `tool` / `session` / `outcome` keys, handed to `exportJsonl` as lists. An outcome *class* is
 the page's own grouping (`denied` folds two codes), so `outcome=` holds **raw outcome
 strings** (`-32001`, `ok`, …) and the page's export link is what expands a class to its
-codes. `range`, `limit`, `offset` and `expand` are ignored by the export as today.
+codes. The page's `tool` facet is a **pair**, and splitting it into `app=` + `tool=` lists
+would export their cross product, so the pair travels whole: repeated
+`target=<app>/<tool>`, split at the first `/` (a slug never holds one; a `tool` column
+holding a resource URI does), backed by a module-level `targets` filter
+(`(app = ? AND tool = ?) OR …`); a malformed `target` is a `400`, never ignored — ignoring a
+filter widens an export. Bare `tool=` stays an exact match for old links. D1 refuses more
+than 100 bound parameters, so the route answers `400` ("Too many filter values for one
+export — narrow the selection.") past `AUDIT_EXPORT_MAX_VALUES`, before any read. `range`
+and `since`/`until` select the window as they always did, and a link naming **no** window
+exports everything the ledger holds (the export is the archive path, §15); `limit`,
+`offset` and `expand` are ignored. *(The last four sentences came out of review,
+2026-09-21.)*
 
 **Deep links that must keep working** (the agent page, the app page and old bookmarks emit
 them): `/audit?principal=agent:<slug>`, `/audit?app=<slug>`, `/audit?session=<id>`,
@@ -117,8 +128,9 @@ contract): `view=summary|sessions|events` (absent = `summary`), `since`, `until`
 `principal` / `app` / `event` / `tool` / `outcome` / `session`, `q` (the search text; sent to
 the server as `text`), `expand=<id>` (the open record), `open=<sessionId>` (the open session
 in Sessions). `tool` values are `<app>/<tool>` on the page (the facet names a tool by its
-app) and are split for the export link. `outcome` values are the five classes; the export
-link expands a class to its codes.
+app) and travel whole to the export as `target=` (§2) — never split into `app=` + `tool=`;
+a legacy `?tool=<name>` with no `/` still filters, by tool name alone. `outcome` values are
+the five classes; the export link expands a class to its codes.
 
 **Outcome classes** (the demo's, unchanged): `ok` ← `ok`; `approval` ← `-32003`; `archived`
 ← `-32002`; `denied` ← `-32001`, `-32000`; `error` ← `error`. Colours are the demo's five
@@ -160,7 +172,11 @@ box ("Search events and bodies…", `/` focuses it) and **Clear**.
 **Worth a look** — the three hand-written rules of the demo, each with **show me**: the
 worst refused (principal, target) pair when it exceeds 5, tools first seen in the last two
 days of the loaded window, and changes to the setup (`admin.*`, `upstream.*`); top-N bars
-for Agents, Apps, Tools; Refusals; Changes you made; and the foot "All N events →". With no
+for Agents, Apps, Tools; Refusals; Changes you made (the newest five, newest first); and the
+foot "All N events →". The first-seen rule is **suppressed on a partial load** — when
+`total > ceiling` or a search text is active, the loaded rows are not the whole window and
+"first" is unknowable. The changes rule’s **show me** applies every distinct change event
+(one group, OR-ed), so "10 changes" opens a list of ten *(both from review, 2026-09-21)*. With no
 `reason` in the ledger the first rule's sentence ends at the outcome class: "**agent:cron was
 refused 214 times** calling `news/get_news` — denied."
 
@@ -191,10 +207,10 @@ related events merged, repeats collapsed."
 
 **Record** (`?expand=<id>`): a right-hand drawer, 620 px, over a scrim — a Base UI Dialog
 (focus trap, Escape), not a hand-rolled one. Head: outcome swatch, title, time, Close. Body:
-**Search this record…** (highlights matches in the tree), the **Record** field table (when,
+**Search this record…** (highlights matches in the trees and opens every ancestor of a match; "No matches in this record." when there are none), the **Record** field table (when,
 principal, event, app, tool, outcome with its raw code, duration, client, session, id — every
 id a button that filters by it and closes the drawer), **Arguments** / **Result** /
-**Detail** as collapsible JSON trees (first level open; stubs as `‹blob image/png · 4.2 MB›`
+**Detail** as collapsible JSON trees (the first TWO levels open — a redacted leaf or a blob stub must be visible when the record opens; stubs as `‹blob image/png · 4.2 MB›`
 / `‹oversize · 20 KB›` per §13's KB/MB rule; `‹redacted›` as a stub chip), the three
 no-bodies sentences verbatim from §13, a chain record's sibling events as a short timeline
 whose lines open their own records, and **Show this session** / **Copy as JSON**. The bodies

@@ -43,8 +43,14 @@
   `result`; `outcome` as a sixth exact filter **on the op**, taking a raw recorded value; and
   the module read's list form of those six, an empty list being no filter); the
   two new `/api/hub` reads (401 without a session, the `404` for an id outside the namespace,
-  an `offset` past `AUDIT_EXPLORER_ROWS` answering an empty page, the echoed window); the
-  export's repeated keys, `outcome=` among them in raw codes; `detail.approvalId` on **both**
+  an `offset` past `AUDIT_EXPLORER_ROWS` answering an empty page, an offset **not** aligned to
+  `AUDIT_EXPLORER_PAGE` never reading past the ceiling either, the echoed window); the
+  export's repeated keys, `outcome=` among them in raw codes, plus the three rules review
+  added — two `target=` pairs export **neither** cross-product row, a malformed `target` is a
+  `400` rather than an ignored filter, and a selection past `AUDIT_EXPORT_MAX_VALUES` is a
+  `400` **before any read**, beside its allow-twin one value under the bound; the window rule
+  (a `range` or a `since`/`until` pair narrows; no window at all exports the whole ledger, not
+  a 24-hour default); `detail.approvalId` on **both**
   call rows — the one refused `-32003` and the one dispatched after a claim, the latter
   merged with a `failureClass` when the dispatch then failed; and the SPA shell on
   `GET /audit` behind the session gate, `no-store`. Pure rows:
@@ -55,14 +61,19 @@
   title), facet counts
   excluding their own group, the chain merge and its **(ts, id)** order (`approval.requested`
   heads the chain although the refused call may share its millisecond), ×N runs and that a
-  chain never joins one, the waterfall fold threshold, the three insight rules, the export
-  href (class → codes, `<app>/<tool>` split, repeated keys) and the lanes' worst-outcome and
-  not-loaded cells. The
+  chain never joins one, the waterfall fold threshold, the three insight rules — including
+  that the first-seen one is **absent** on a partial load (over the ceiling, or a search text
+  active) and that the changes one's "show me" carries **every** distinct change event it
+  counted — the export href (class → raw codes, the tool pair as `target=`, repeated keys,
+  `q` → `text`), the JSON tree's open paths for a tree and a query (the first two levels, plus
+  every ancestor of a match) and its match finding, and the
+  lanes' worst-outcome and not-loaded cells. The
   two `/audit` `describe`s in `server/test/worker/web-pages.test.ts` go with the page they
   pinned; what they pinned that still holds — the three no-bodies sentences and the stub
   size spellings — moves to that unit file rather than being dropped. The preview gallery
   gains an `audit` fixture set, one seed per page state §13 names plus the views, a session
-  opened, the record in each of its no-bodies and stub shapes, a chain record, and one
+  opened, the record in each of its no-bodies and stub shapes, a chain record, a
+  `recordSearch` seed (a query with its ancestors opened, and one with no match), and one
   long-data seed; the visual gate is the gallery beside the boards at both widths.
 - **upstream oauth**: fake AS in-test — expired access token triggers refresh before
   forwarding; failed refresh surfaces needs-reconnect and calls fail `-32000`; a

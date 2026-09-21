@@ -137,13 +137,15 @@ Tools (names final, shapes reviewed at implementation time):
   single-valued `text` field like them — "Exact outcome string, e.g. ok or -32001." — the
   raw recorded value (§5) and never one of §13's five display classes, which fold two codes
   into `denied` and are the page's own grouping. All six exact filters stay
-  **single-valued** on the op. What is *not* on the op is the **list form**: the module's own
-  read accepts one value **or a list** per exact filter — a list matching any of its values,
-  an empty list being no filter — and exactly one caller uses it, the JSONL export, which
-  §13's explorer links with a whole selection in it. That is not an op capability, so the
-  parity list below is unchanged, and so is the form-fields parity direction — `/audit`
-  renders no form at all. A body-less row is the same row minus two columns, never a second
-  shape with a second meaning.)*
+  **single-valued** on the op. What is *not* on the op is the module read's own two forms:
+  the **list form** — one value **or a list** per exact filter, a list matching any of its
+  values, an empty list being no filter — and the **pair form**, `targets`, which matches
+  `(app, tool)` pairs rather than the two columns independently, because §13's export selects
+  tools by their app and two independent lists would widen to their cross product. Exactly
+  one caller uses either: the JSONL export, which §13's explorer links with a whole selection
+  in it. Neither is an op capability, so the parity list below is unchanged, and so is the
+  form-fields parity direction — `/audit` renders no form at all. A body-less row is the same
+  row minus two columns, never a second shape with a second meaning.)*
 
 Every tool that takes an app slug rejects both virtual slugs `pmcp` and `hub` uniformly.
 `app_create` additionally refuses static `/apps/` route segments. Mutating tools write
@@ -169,12 +171,13 @@ are a browser interaction that mints authority, so they get no tool, while
 `connection_list`/`connection_revoke` cover everything the connections page can do)* —
 and `/audit`'s JSONL export (a streaming serialization of `audit_query` — same
 rows, different framing) *(amended 2026-09-21, decision 36: the export's repeated
-`principal` / `app` / `event` / `tool` / `session` / `outcome` keys sit inside this same
-exception and do not widen it — they are the module read's list form, reached only through
-the serialization that was already excepted, and every one of them is expressible to
-`audit_query` one value per call, which is why `outcome` is on the op and not only in the
-module. The explorer itself is not an exception: its two reads are that op with
-`bodies: false` and with `id`, both of which an admin token can call)*.
+`principal` / `app` / `event` / `tool` / `session` / `outcome` and `target` keys sit inside
+this same exception and do not widen it — they are the module read's list form and its pair
+form, reached only through the serialization that was already excepted, and every one of them
+is expressible to `audit_query` one value, or one `app` + `tool` pair, per call, which is why
+`outcome` is on the op and not only in the module. The explorer itself is not an exception:
+its two reads are that op with `bodies: false` and with `id`, both of which an admin token
+can call)*.
 
 The CLI performs admin operations on scoped `/mcp/pmcp`; there is no aggregate admin
 alias. Its generic `pmcp call pmcp <operation>` form reaches every operation admitted by

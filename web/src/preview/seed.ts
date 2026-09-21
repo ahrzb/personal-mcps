@@ -42,6 +42,20 @@ export type Seed = {
    * skeleton are both this, and both are states §13 pins.
    */
   hanging?: string[];
+  /**
+   * A read this state ANSWERS ITSELF, after a delay — the gallery's only way to show a page
+   * that REFETCHES.
+   *
+   * It exists because the absence of it hid a shipped bug (postmortem 2026-09-21). Every other
+   * channel is a cache entry: seeded, permanently fresh, behind a client that throws on
+   * anything unseeded. A state that types into a search box changes the query key, and the
+   * read for the new key could only ever reject — so the screen a reader actually sees while
+   * searching was never rendered here before it reached the owner.
+   *
+   * Returns null for a path this state does not answer, which then falls through to `hanging`
+   * and finally to the throw, so an incomplete seed still fails loudly.
+   */
+  respond?: (path: string) => { delayMs: number; data: unknown } | null;
 };
 
 /**

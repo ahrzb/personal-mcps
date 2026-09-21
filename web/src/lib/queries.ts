@@ -1,4 +1,4 @@
-import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient, UseMutationResult } from "@tanstack/react-query";
 import { useApi } from "./api-context";
 // The explorer's pure module owns the window read's page URL: the rule that every page after
@@ -194,6 +194,16 @@ export function auditWindowQuery(api: ApiClient, q: string) {
       return { ...first, rows: [...first.rows, ...rest.flatMap((page) => page.rows)] };
     },
     staleTime: STALE.audit,
+    /**
+     * The previous answer STAYS while a new search loads, and this one line is a bug fix rather
+     * than a nicety (postmortem 2026-09-21). `text` belongs in the key — it is the one filter
+     * the server applies — but a new key has no data, so without a placeholder the page's
+     * `isPending` branch replaced the whole explorer with a skeleton on every settled
+     * keystroke: the `<input>` was unmounted and remounted, and focus, caret, "Load more"
+     * counts, expanded facet groups and scroll position went with it. Typing past one word was
+     * impossible. With it, only the FIRST load has nothing to draw.
+     */
+    placeholderData: keepPreviousData,
   });
 }
 

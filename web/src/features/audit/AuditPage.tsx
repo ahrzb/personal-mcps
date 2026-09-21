@@ -31,7 +31,7 @@ import { EVENTS_PAGE, EventsView } from "./EventsView";
 import { RecordDrawer } from "./RecordDrawer";
 import { SESSIONS_PAGE, SessionsView } from "./SessionsView";
 import { SummaryView } from "./SummaryView";
-import { SearchBox, SkelBar, useDebounced, useNarrow, useSlashFocus } from "./parts";
+import { SearchBox, SkelBar, useNarrow, useSlashFocus } from "./parts";
 
 /**
  * `/audit` — the audit ledger as an explorer: three readings of one filtered set, a per-principal
@@ -56,20 +56,41 @@ export function AuditPage(): ReactNode {
   const api = useApi();
   const search = useSearch({ strict: false }) as SearchBag;
 
-  // The one refetching control. The URL takes every keystroke — the state lives there — and only
-  // the query key waits, so the box is never laggy and the server sees one read per pause.
-  const typed = oneOf(search, "q");
-  const window = useQuery(auditWindowQuery(api, useDebounced(typed, SEARCH_DEBOUNCE_MS)));
+  /**
+   * The search text as the URL holds it — SETTLED text, always.
+   *
+   * This page never sees a keystroke (postmortem 2026-09-21). `SearchBox` owns what is being
+   * typed and its own debounce, and hands up one value per pause; so a keystroke re-renders the
+   * box and nothing else, where writing the URL per character re-derived five thousand rows and
+   * reset how far the reader had scrolled — on a real ledger, still "typing re-renders the whole
+   * page".
+   */
+  const q = oneOf(search, "q");
+  const window = useQuery(auditWindowQuery(api, q));
 
+  /* The explorer is rendered whenever there are rows to draw — including the PREVIOUS answer
+     while a new search loads, which is what `placeholderData` keeps. Only a first load with
+     nothing at all falls through to the skeleton, and a failed refetch keeps the rows it had
+     and reports itself inside the page rather than replacing it. */
+  const data = window.data;
   return (
     <Shell active="audit">
       <main className="page--workspace audit">
-        {window.isPending ? (
-          <LoadingExplorer search={search} />
-        ) : window.isError ? (
-          <FailedExplorer message={window.error.message} onRetry={() => void window.refetch()} />
+        {data === undefined ? (
+          window.isError ? (
+            <FailedExplorer message={window.error.message} onRetry={() => void window.refetch()} />
+          ) : (
+            <LoadingExplorer search={search} />
+          )
         ) : (
-          <Explorer data={window.data} search={search} refetching={window.isFetching} />
+          <Explorer
+            data={data}
+            search={search}
+            searching={window.isPlaceholderData}
+            failure={
+              window.isError ? { message: window.error.message, retry: () => void window.refetch() } : null
+            }
+          />
         )}
       </main>
     </Shell>
@@ -87,11 +108,15 @@ const SEARCH_DEBOUNCE_MS = 250;
 function Explorer({
   data,
   search,
-  refetching,
+  searching,
+  failure,
 }: {
   data: AuditWindowResponse;
   search: SearchBag;
-  refetching: boolean;
+  /** A read for a NEW text is in flight, so `data` is the previous answer. */
+  searching: boolean;
+  /** The last read failed. The rows below are the ones it had before, not nothing. */
+  failure: { message: string; retry: () => void } | null;
 }): ReactNode {
   const navigate = useNavigate();
   const narrow = useNarrow();
@@ -186,7 +211,6 @@ function Explorer({
           <>
             {fmtCount(derived.selected.length)} events · {fmtDayTime(selection.since)} →{" "}
             {fmtDayTime(selection.until)} UTC · kept for {data.retentionDays} days
-            {refetching ? " · searching…" : ""}
           </>
         }
         exportTo={exportHref(selection)}
@@ -228,19 +252,38 @@ function Explorer({
             </button>
           </span>
         ))}
+        {/* One write per pause. `initial` is the settled text and the box re-seeds from it only
+            when something OTHER than the box changed it — Clear, below, is exactly that. */}
         <SearchBox
           inputRef={searchRef}
-          value={selection.q}
-          onChange={(next) => go({ q: next })}
+          initial={selection.q}
+          onSettled={(next) => go({ q: next })}
+          debounceMs={SEARCH_DEBOUNCE_MS}
           placeholder="Search events and bodies…  ( / )"
           label="Search events and bodies"
+          busy={searching}
         />
         {selection.filters.length > 0 || selection.q !== "" ? (
-          <button type="button" className="btn btn--outline btn--sm" onClick={() => go({ filters: [], q: "" })}>
+          <button
+            type="button"
+            className="btn btn--outline btn--sm"
+            onClick={() => go({ filters: [], q: "" })}
+          >
             Clear
           </button>
         ) : null}
       </div>
+
+      {/* A failed search REPORTS itself and leaves the rows it had. Replacing the page with an
+          error card would throw away an answer that is still on screen and still true. */}
+      {failure === null ? null : (
+        <div className="alert alert--danger" role="status">
+          {failure.message} The rows below are the last answer.{" "}
+          <button type="button" className="btn btn--outline btn--sm" onClick={failure.retry}>
+            Try again
+          </button>
+        </div>
+      )}
 
       <div className="a-body">
         <aside className="card a-rail">
@@ -255,7 +298,9 @@ function Explorer({
             }
           />
         </aside>
-        <div className="a-main">
+        {/* Dimmed while a new search loads, so the rows read as the PREVIOUS answer rather than
+            as the one being typed. A skeleton here is what tore the page down. */}
+        <div className={searching ? "a-main a-main--stale" : "a-main"} aria-busy={searching}>
           {rows.length === 0 && selection.filters.length === 0 && selection.q === "" ? (
             <EmptyLedger />
           ) : derived.selected.length === 0 ? (

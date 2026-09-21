@@ -44,6 +44,16 @@ export type Transient = {
    * one state where a search opens a collapsed subtree.
    */
   recordSearch?: string;
+  /**
+   * The ×N run the Events view has UNFOLDED, by its head row's id.
+   *
+   * Which runs are open is reading position — where somebody got to inside one row — so it is
+   * component state rather than URL state, and a seed has no other way to reach it. The board
+   * has to draw a collapsed row's expanded form: "how do I see what is inside" is part of that
+   * row's contract, and the one time it was not drawn the members turned out to be unreachable
+   * (postmortem 2026-09-21).
+   */
+  openRun?: number;
 };
 
 const TransientContext = createContext<Transient>({});

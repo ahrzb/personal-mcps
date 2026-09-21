@@ -103,9 +103,12 @@ export function RecordDrawer({
             <>
               <Head title={titleOf(head)} time={fmtStamp(head.ts)} cls={outcomeClass(head.outcome)} onClose={onClose} />
               <div className="a-dbody">
+                {/* No debounce here: this search filters a body already in hand, so there is
+                    nothing to wait for and every keystroke can highlight at once. */}
                 <SearchBox
-                  value={needle}
-                  onChange={setNeedle}
+                  initial={needle}
+                  onSettled={setNeedle}
+                  debounceMs={0}
                   placeholder="Search this record…"
                   label="Search this record"
                 />

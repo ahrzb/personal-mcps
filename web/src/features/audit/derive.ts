@@ -447,34 +447,6 @@ export function filterValueOf(row: AuditWindowRow, field: FilterField): string |
 }
 
 /**
- * Everything the search box searches, lowercased once and CACHED ON THE ROW.
- *
- * The cache is the one impurity here and it is load-bearing: 5,000 rows are re-searched on
- * every keystroke, and rebuilding the haystack each pass turns a 250 ms debounce into a
- * visible stall. It is keyed to the row object, so a new window read rebuilds it.
- */
-export function haystackOf(row: AuditWindowRow): string {
-  const cached = (row as { _haystack?: string })._haystack;
-  if (cached !== undefined) return cached;
-  const built = [
-    row.principal,
-    row.event,
-    row.app,
-    row.tool,
-    outcomeClass(row.outcome),
-    row.outcome,
-    row.argsHead,
-    row.detail === undefined ? undefined : JSON.stringify(row.detail),
-    row.client?.sessionId,
-  ]
-    .filter((part): part is string => part !== undefined)
-    .join(" ")
-    .toLowerCase();
-  Object.defineProperty(row, "_haystack", { value: built, enumerable: false });
-  return built;
-}
-
-/**
  * Whether a row survives the facets and the search — the BRUSH excluded, because the strip is
  * drawn over the brush rather than dimmed by it, and the rail's counts are "of N in window".
  *
@@ -513,19 +485,23 @@ function matchesTool(row: AuditWindowRow, value: string): boolean {
   return value.includes("/") ? filterValueOf(row, "tool") === value : row.tool === value;
 }
 
-export function matchesText(row: AuditWindowRow, q: string): boolean {
-  const needle = q.trim().toLowerCase();
-  return needle === "" || haystackOf(row).includes(needle);
-}
-
 export function inBrush(row: AuditWindowRow, selection: AuditSelection): boolean {
   return row.ts >= selection.since && row.ts <= selection.until;
 }
 
-/** The facet set: every loaded row the facets and the search keep, whatever the brush. What the
- *  strip is coloured from. */
+/**
+ * The facet set: every loaded row the facets keep, whatever the brush. What the strip is
+ * coloured from.
+ *
+ * `selection.q` is deliberately NOT applied. The loaded rows already ARE the server's answer for
+ * that text — `text` is the one filter the read performs, over every string column and both
+ * body columns — and the client holds only `argsHead`, so a second pass here could only drop
+ * rows the server matched inside a result it never shipped. It would also narrow the PREVIOUS
+ * answer by a needle it was never read for while the next read is in flight, which reads as the
+ * list emptying as you type.
+ */
 export function facetRows(rows: AuditWindowRow[], selection: AuditSelection): AuditWindowRow[] {
-  return rows.filter((row) => matchesFilters(row, selection) && matchesText(row, selection.q));
+  return rows.filter((row) => matchesFilters(row, selection));
 }
 
 /** The selection: the facet set inside the brush. What all three views read. */
@@ -562,7 +538,6 @@ export function facetGroups(rows: AuditWindowRow[], selection: AuditSelection): 
     for (const row of rows) {
       if (!inBrush(row, selection)) continue;
       if (!matchesFilters(row, selection, field)) continue;
-      if (!matchesText(row, selection.q)) continue;
       const value = filterValueOf(row, field);
       if (value === null) continue;
       counts.set(value, (counts.get(value) ?? 0) + 1);
@@ -689,6 +664,24 @@ export type MergedRow = {
   state: OutcomeClass;
 };
 
+/**
+ * WHEN a merged row happened — the instant the list is ordered by, and therefore the one the
+ * When column must print.
+ *
+ * A chain is the case this exists for. `mergeEvents` walks newest first, so a chain lands where
+ * its NEWEST member was met; but its head is the `approval.requested` row, which is its OLDEST.
+ * Printing `head.ts` put an old stamp at a new row's position, and one chain between two plain
+ * rows was enough to make a newest-first column read as shuffled (owner, from the searching
+ * screenshot). The head still titles the row and is still the record the row opens — only the
+ * time changes.
+ *
+ * A run needs nothing: its head IS the first row met, so already its newest member.
+ */
+export function whenOf(row: MergedRow): number {
+  if (row.kind !== "chain") return row.head.ts;
+  return row.group[row.group.length - 1]?.ts ?? row.head.ts;
+}
+
 /** Ordering within a chain and a session: by time, then by id. The tiebreaker is not
  *  decoration — a refused `tools/call` and the `approval.requested` it provoked routinely
  *  share a millisecond, and without the id the chain's order would be the reader's luck. */
@@ -753,11 +746,45 @@ function approvalIdOf(row: AuditWindowRow): string | null {
   return typeof id === "string" && id !== "" ? id : null;
 }
 
-/** What makes two rows "the same thing happening again" (§3's six fields). `failureClass` is
- *  among them because two `-32000`s with different causes are two different facts. */
+/**
+ * What makes two rows "the same thing happening again" (§3's seven fields). `failureClass` is
+ * among them because two `-32000`s with different causes are two different facts, and so is
+ * `argsHead`: a run is the SAME CALL repeated, and without the arguments five searches for five
+ * different things collapsed under the newest one's preview — a row claiming one thing happened
+ * five times while showing one call's arguments (postmortem 2026-09-21). A repeated refusal
+ * records no arguments at all, so the field is absent on both sides and ×N still collapses it,
+ * which is the case ×N was for.
+ *
+ * ponytail: `argsHead` is only the first `AUDIT_ARGS_HEAD_CHARS` characters, so two calls that
+ * differ only past character 160 still collapse into one run. Accepted — the run is now a
+ * disclosure, so its members are listed and each one's record shows the whole arguments. Lift it
+ * by hashing the full `args` server-side into the slim row if it ever misleads anyone.
+ */
 function signatureOf(row: AuditWindowRow): string {
   const failure = row.detail?.failureClass;
-  return [row.event, row.app, row.tool, row.principal, row.outcome, typeof failure === "string" ? failure : ""].join("|");
+  return [
+    row.event,
+    row.app,
+    row.tool,
+    row.principal,
+    row.outcome,
+    typeof failure === "string" ? failure : "",
+    row.argsHead ?? "",
+  ].join("|");
+}
+
+/**
+ * What a ×N row says about its members, under the title: how many, and the span they cover.
+ *
+ * The end is dated only when it falls on another day — "Aug 23 22:00 → 11:30" would read as
+ * running backwards — which is the session header's rule, for the same reason.
+ */
+export function runLine(group: AuditWindowRow[]): string {
+  const times = group.map((row) => row.ts);
+  const first = Math.min(...times);
+  const last = Math.max(...times);
+  const end = sameUtcDay(first, last) ? fmtClock(last) : fmtDayTime(last);
+  return `${fmtCount(group.length)} identical events · ${fmtDayTime(first)} → ${end}`;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { keys } from "@/lib/queries";
 import type { AuditEventRow, AuditWindowResponse, AuditWindowRow } from "@/lib/types";
 import type { Seed } from "../seed";
+import { mergeEvents } from "@/features/audit/derive";
 import { RECORDS, WEEK, WEEK_NOW, WEEK_RETENTION_DAYS } from "./audit-week";
 
 /**
@@ -9,7 +10,7 @@ import { RECORDS, WEEK, WEEK_NOW, WEEK_RETENTION_DAYS } from "./audit-week";
  *
  * That shared week is the point: these screenshots are read beside the boards, and two different
  * ledgers would make every difference between them unreadable. So nothing here invents rows
- * except the three `longData` ones, which exist to break the layout on purpose and have no
+ * except the `longData` ones, which exist to break the layout on purpose and have no
  * counterpart in a real ledger.
  *
  * The seeds split three ways:
@@ -21,7 +22,7 @@ import { RECORDS, WEEK, WEEK_NOW, WEEK_RETENTION_DAYS } from "./audit-week";
  */
 
 /** The whole week, as the window read answers it. `ceiling` is `AUDIT_EXPLORER_ROWS`, above the
- *  week's own 1,395 rows, so nothing is cut off and no cell is hatched. */
+ *  week's own rows, so nothing is cut off and no cell is hatched. */
 const WINDOW: AuditWindowResponse = {
   rows: WEEK,
   total: WEEK.length,
@@ -72,6 +73,73 @@ function record(id: number, over: { search?: Record<string, string>; records?: n
   });
 }
 
+/* ------------------------- which record each state opens ------------------------- */
+
+/**
+ * The record seeds name their rows by SHAPE, never by id.
+ *
+ * `web/scripts/audit-week.mts` picks the records by rule — whichever row now carries a stub,
+ * whichever now has each no-bodies reason — so every id moves when the week is regenerated. A
+ * hardcoded one would quietly seed `undefined` and the state would render an empty drawer, which
+ * is exactly the kind of silent fixture rot the gallery exists to catch rather than commit.
+ *
+ * A shape the week no longer holds THROWS at module load: a seed that cannot be built is a
+ * broken gallery, and the index failing loudly is the point.
+ */
+const RECORD_ROWS = Object.values(RECORDS);
+
+function pick(what: string, match: (row: AuditEventRow) => boolean): number {
+  const found = RECORD_ROWS.find(match);
+  if (found === undefined) {
+    throw new Error(`pmcp: the fixture week holds no record that is ${what} — regenerate audit-week.ts`);
+  }
+  return found.id;
+}
+
+const hasStub = (row: AuditEventRow, kind: "blob" | "oversize"): boolean =>
+  JSON.stringify([row.args, row.result]).includes(`"stub":"${kind}"`);
+
+/** A plain call with bodies and no stub — the one whose args carry the `‹redacted›` leaf. */
+const PLAIN = pick(
+  "a plain call with bodies",
+  (row) => row.args !== undefined && row.result !== undefined && !hasStub(row, "blob") && !hasStub(row, "oversize"),
+);
+const BLOB = pick("a blob stub", (row) => hasStub(row, "blob"));
+const OVERSIZE = pick("an oversize stub", (row) => hasStub(row, "oversize"));
+const UNAVAILABLE = pick("a -32000 with a failureClass", (row) => row.outcome === "-32000");
+const NO_BODIES = {
+  off: pick("a row whose app has logging off", (row) => row.noBodies === "off"),
+  refused: pick("a refused row", (row) => row.noBodies === "refused"),
+  unrecorded: pick("a row recorded before logging was on", (row) => row.noBodies === "unrecorded"),
+};
+
+/** Every record of the one complete chain, oldest first — the approval the timeline draws. */
+const CHAIN = (() => {
+  const id = RECORD_ROWS.find((row) => typeof row.detail?.approvalId === "string")?.detail?.approvalId;
+  const group = RECORD_ROWS.filter((row) => row.detail?.approvalId === id).sort((left, right) => left.ts - right.ts);
+  if (group.length < 4) throw new Error("pmcp: the fixture week holds no complete approval chain");
+  return { head: group.find((row) => row.event === "approval.requested")?.id ?? group[0]!.id, ids: group.map((row) => row.id) };
+})();
+
+/**
+ * The week's longest ×N run, and a window around it — derived for the same reason the records
+ * are: the state exists to show a run UNFOLDED, not to show one particular row, and both the id
+ * and the instants move when the week is regenerated.
+ */
+const RUN = (() => {
+  const biggest = mergeEvents(WEEK)
+    .filter((row) => row.runs > 1)
+    .sort((left, right) => right.runs - left.runs)[0];
+  if (biggest === undefined) throw new Error("pmcp: the fixture week holds no ×N run to unfold");
+  const times = biggest.group.map((row) => row.ts);
+  // Half an hour either side, so the run sits among ordinary rows rather than alone.
+  return {
+    head: biggest.head.id,
+    since: String(Math.min(...times) - 30 * 60_000),
+    until: String(Math.max(...times) + 30 * 60_000),
+  };
+})();
+
 /* ---------------------------- the long-data rows ---------------------------- */
 
 /**
@@ -113,6 +181,23 @@ const LONG_WINDOW: Partial<AuditWindowResponse> = {
   total: 41,
 };
 
+/**
+ * One page of the window read, answered from the fixture week — what `searchLive`'s responder
+ * serves.
+ *
+ * The match is a substring of the whole serialized row rather than the server's column-by-column
+ * `LIKE`: this is a fixture whose job is to answer DIFFERENTLY for different text and to take a
+ * moment doing it, and a second implementation of §1's escaping grammar here would be a second
+ * thing to keep true.
+ */
+function windowFor(path: string): AuditWindowResponse {
+  const params = new URLSearchParams(path.slice(path.indexOf("?") + 1));
+  const text = (params.get("text") ?? "").trim().toLowerCase();
+  const offset = Number(params.get("offset") ?? 0);
+  const matched = text === "" ? WEEK : WEEK.filter((row) => JSON.stringify(row).toLowerCase().includes(text));
+  return { ...WINDOW, rows: matched.slice(offset, offset + 1000), total: matched.length };
+}
+
 /* --------------------------------- the states -------------------------------- */
 
 export const auditSeeds: Record<string, Seed> = {
@@ -127,44 +212,67 @@ export const auditSeeds: Record<string, Seed> = {
     search: { view: "events", ...RECENT, principal: "agent:claude", outcome: "ok" },
   }),
 
+  /**
+   * A ×N run UNFOLDED — the disclosure the run row shipped without.
+   *
+   * The window is the eight hours around the fixture week's longest run (a cron agent refused
+   * every half hour), because a board that draws a collapsed row has to draw its expanded form
+   * too: "how do I see what is inside" is part of the row's contract, and the one time it was
+   * not drawn the members turned out to be unreachable (postmortem 2026-09-21).
+   */
+  eventsRunOpen: {
+    ...seed({ search: { view: "events", since: RUN.since, until: RUN.until } }),
+    transient: { openRun: RUN.head },
+  },
+
+  /**
+   * The search box with a LIVE read behind it — the one state a seeded cache cannot express,
+   * and the state whose absence let the search bug ship.
+   *
+   * `respond` answers `/audit/window` late instead of throwing, so typing actually refetches
+   * here: the explorer stays mounted over the previous rows, the box keeps its focus and caret
+   * and says "Searching…", and `web/scripts/audit-search-check.mts` walks exactly this.
+   */
+  searchLive: {
+    ...seed(),
+    respond: (path) => (path.startsWith("/audit/window") ? { delayMs: 250, data: windowFor(path) } : null),
+  },
+
   /** Sessions with one session open on its waterfall, where the ok runs fold. */
   sessionsOpen: seed({ search: { view: "sessions", ...RECENT, open: "a3f9c2d1" } }),
 
   /** A call with bodies: a `‹redacted›` leaf in the arguments, a structured result. */
-  record: record(41_362),
+  record: record(PLAIN),
 
   /** One `blob` stub, as a single element of `content`. */
-  recordStubs: record(41_363),
+  recordStubs: record(BLOB),
 
   /** An `oversize` stub, which replaces a WHOLE section rather than one block. */
-  recordOversize: record(41_034),
+  recordOversize: record(OVERSIZE),
 
   /** A chain record, headed by its `approval.requested` row: the timeline of all four events, and
    *  the title rule's exception visible behind it in the Events row. */
-  recordChain: record(41_352, {
-    search: { view: "events", ...RECENT },
-    records: [41_352, 41_353, 41_354, 41_355],
-  }),
+  recordChain: record(CHAIN.head, { search: { view: "events", ...RECENT }, records: CHAIN.ids }),
 
   /** A search inside the record, which has OPENED the subtree its match sits in — `token` is at
    *  `arguments.credentials.token`, two levels down and collapsed by nothing. */
   recordSearch: {
-    ...record(41_362),
+    ...record(PLAIN),
     transient: { recordSearch: "token" },
   },
 
   /** A `-32000` that recorded a `failureClass` — the one outcome whose sentence gains a
    *  "Cause: …", and the only place the page prints a raw code at all. */
-  recordUnavailable: record(41_159),
+  recordUnavailable: record(UNAVAILABLE),
 
   /** The three no-bodies sentences, one state each. */
-  recordNoBodiesOff: record(41_337),
-  recordNoBodiesRefused: record(41_353),
-  recordNoBodiesUnrecorded: record(41_349),
+  recordNoBodiesOff: record(NO_BODIES.off),
+  recordNoBodiesRefused: record(NO_BODIES.refused),
+  recordNoBodiesUnrecorded: record(NO_BODIES.unrecorded),
 
   /** The record's own read in flight: the field table is already drawn from the slim row, the body
    *  sections are skeletons. */
-  recordLoading: seed({ search: { expand: "41362" }, hanging: ["/audit/41362"] }),
+  recordLoading: seed({ search: { expand: String(PLAIN) }, hanging: [`/audit/${PLAIN}`] }),
 
   /** An id outside retention — the one refusal the record read can make. */
   recordMissing: {

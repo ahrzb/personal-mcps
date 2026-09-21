@@ -217,11 +217,11 @@
        this file's own header forbids; the five outcome colours and four fills below are the
        values that have no shared name, and they sit on `.audit` rather than on `:root`.
      - every class is prefixed `a-`, which is what lets the rules below carry no ancestor
-       selector at all. `.rail`, `.filters`, `.more`, `.strip` and `.scrim` all exist in the
-       shared sheet with other meanings — and `.scrim` is `display: none` above 768px, which
-       would have hidden this page's drawer backdrop outright. The prefix also survives the
-       PORTAL: the record drawer and the Filters level render outside `.audit`, so a scoped
-       rule would have had to be written twice.
+       selector at all. `.rail`, `.more` and `.scrim` all exist in the shared sheet with other
+       meanings — and `.scrim` is `display: none` above 768px, which would have hidden this
+       page's drawer backdrop outright. The prefix also survives the PORTAL: the record drawer
+       and the Filters level render outside `.audit`, so a scoped rule would have had to be
+       written twice.
 
    These rules are here and not in `server/src/pages/styles.css` because that sheet is shared
    with the server-rendered pages and `/audit` is no longer one of them. */
@@ -371,6 +371,21 @@
   height: auto;
   padding: 0;
   box-shadow: none;
+}
+
+/* Inside the box, so the wait is where the typing is. `flex: none` and `nowrap` so it never
+   squeezes the field it sits beside. */
+.a-searching {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Rows that are the PREVIOUS answer while a new search loads. Dimmed rather than replaced —
+   a skeleton here unmounted the search box itself (postmortem 2026-09-21) — and still
+   readable, because they are still true. */
+.a-main--stale {
+  opacity: 0.55;
+  transition: opacity 0.12s;
 }
 
 .a-filtersbtn { display: none; }
@@ -846,6 +861,92 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The ×N badge is the run's DISCLOSURE, so it is a real button — and it has to sit above the
+   title's row-wide `::after`, or the row would swallow its click and open a record instead of
+   unfolding. Same trick as the apps list's row controls. */
+.a-runtoggle {
+  position: relative;
+  z-index: 1;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+/* The tap target, invisible. A badge is 20px by the ladder and the board draws it at 20px on
+   the phone too, so the 44px this control owes touch is given as area around it rather than as
+   a slab that would be the only 44px thing on a line of 20px ones. */
+.a-runtoggle::before {
+  content: "";
+  position: absolute;
+  inset: -12px -6px;
+}
+.a-runtoggle:hover { background: var(--muted); }
+.a-runtoggle[aria-expanded="true"] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-fg);
+}
+
+/* What the run covers, under the title: the same slot the chain sentence uses, so a row says
+   what it stands for in one place whichever kind it is. */
+.a-runline { margin-top: 2px; }
+
+/* Inside the What-happened cell, under the run line: a hairline and then the members, indented
+   to the title they belong to. No ground of its own — the board keeps the row one row. */
+.a-members {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--row-border);
+}
+/* A member is a row-button of its own — that is the whole point of the disclosure: its record,
+   and therefore its bodies, is one click from here. */
+.a-member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  min-height: var(--control-h-xs);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.a-member:hover { background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); }
+.a-member--sel { background: var(--muted); }
+/* Wide enough for a whole stamp on one line — a member is identified by WHEN it happened (the
+   rest of the row is identical by construction), so a wrapped date is the one thing here that
+   must not wrap. */
+.a-membertime {
+  width: 132px;
+  flex: none;
+  color: var(--muted-fg);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.a-memberdur {
+  width: 72px;
+  flex: none;
+  color: var(--muted-fg);
+  font-variant-numeric: tabular-nums;
+}
+.a-memberfoot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding-top: var(--space-3);
 }
 
 .a-more {
@@ -1389,7 +1490,26 @@ button.a-wfr:hover {
     order: 4;
     flex: 0 0 100%;
   }
-  .a-etab td.a-what .a-prev { display: none; }
+  /* The arguments preview STAYS on the phone, as one clipped line. The run signature splits on
+     `argsHead`, so without it five `news/search_news` cards read as the same card five times —
+     the preview is what says they are five different calls. `min-width: 0` is what lets it
+     ellipsise inside the flex cell rather than widening the card. */
+  .a-etab td.a-what .a-prev {
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* The disclosure is part of the card at this tier too — the member rows are the reason the
+     run is openable at all, so they take the touch height rather than being hidden. The BADGE
+     does not: it keeps its 20px metrics and gets its tap area from `::before`, as the board
+     draws it.
+
+     Time left, duration and outcome pushed right — the card grammar, not the table one. */
+  .a-member {
+    min-height: var(--control-h-touch);
+    font-size: var(--text-sm);
+  }
+  .a-memberdur { margin-left: auto; }
+  .a-memberfoot .btn { height: var(--control-h-touch); }
   .a-more .btn {
     height: var(--control-h-touch);
     flex: 1;

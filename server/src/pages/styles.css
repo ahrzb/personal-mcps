@@ -852,7 +852,7 @@ select {
   box-shadow: none;
 }
 
-/* segmented control — audit's 1h/24h/7d/30d */
+/* segmented control — settings' token-kind filter and /audit's view segment */
 .segmented {
   display: flex;
   align-items: center;
@@ -884,23 +884,6 @@ select {
   background: var(--bg);
   color: var(--fg);
   box-shadow: var(--shadow);
-}
-
-/* filter bar rows above a table */
-.filters {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-6);
-}
-
-.filters select,
-.filters input {
-  width: 170px;
-}
-
-.filters .input-group input {
-  width: 260px;
 }
 
 /* two full-width action buttons — device's Approve/Deny row. DOM order stays
@@ -1063,13 +1046,6 @@ select {
   color: var(--muted-fg);
 }
 
-/* audit's four summary tiles */
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-8);
-}
-
 .stat {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1094,11 +1070,6 @@ select {
 
 .stat-value--danger {
   color: var(--danger-fg);
-}
-
-.stat-hint {
-  font-size: var(--text-xs);
-  color: var(--muted-fg);
 }
 
 /* plain rows inside a padded card — passkeys, sessions on narrow */
@@ -1138,13 +1109,6 @@ select {
   text-align: left;
 }
 
-/* table-layout:auto lets an unbreakable cell (a long tool name) steal width
-   from every other column via <colgroup>-ignoring content sizing — fixed
-   layout makes the <colgroup> widths authoritative regardless of content. */
-.table--fixed {
-  table-layout: fixed;
-}
-
 .table th {
   padding: var(--space-6) var(--space-9);
   border-bottom: 1px solid var(--border);
@@ -1165,14 +1129,6 @@ select {
   border-bottom: 0;
 }
 
-/* The dense tier (§2 "The density ladder"): 32px rows for a table OF EVENTS — audit's
-   list is read by scanning a week, not by reading each line, and the default 40px row
-   costs a fifth of the screen per page of it. */
-.table--dense th,
-.table--dense td {
-  padding: var(--space-3) var(--space-8);
-}
-
 /* A row that is still listed but no longer live — the expired token on
    SettingsTokens.dc.html. The whole row recedes to `--ring` (the board's #a1a1aa),
    including the cells and links that set a colour of their own, so what still reads at
@@ -1190,14 +1146,6 @@ select {
 }
 
 .table .cell-time {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--muted-fg);
-  white-space: nowrap;
-}
-
-.table .cell-num {
-  text-align: right;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--muted-fg);
@@ -1237,38 +1185,9 @@ select {
   font-family: var(--font-mono);
 }
 
-.detail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
 /* the mobile one-line summary of a table row: hidden on wide screens */
 .cell-summary {
   display: none;
-}
-
-/* an expandable event rendered as a native <details> (audit's EVENT DETAIL panel) */
-.disclosure > summary {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-6);
-  padding: var(--space-6) var(--space-8);
-  list-style: none;
-  cursor: pointer;
-}
-
-.disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-
-.disclosure[open] {
-  background: var(--sunken);
-}
-
-.disclosure > .detail {
-  padding: 0 var(--space-8) var(--space-6);
 }
 
 /* ------------------------------------------------------------- approvals ---- */
@@ -1645,17 +1564,12 @@ dialog .actions {
 
 /* ------------------------------------------------------------- app detail ---- */
 
-/* One Tools row (AppDetail.dc.html): the disclosure the audit page already uses, with
-   the row's own metrics — a full-bleed rule inside a padded card, and no open-state tint,
-   because here the tint belongs to the expanded block rather than to the whole row. */
+/* One Tools row (AppDetail.dc.html): a native <details> summary with the row's own
+   metrics — a full-bleed rule inside a padded card, and no open-state tint of its own. */
 .tool > summary {
   padding: var(--space-5) 0;
   border-bottom: 1px solid var(--row-border);
   font-size: var(--text-sm);
-}
-
-.disclosure.tool[open] {
-  background: none;
 }
 
 .tool-name {
@@ -2725,11 +2639,6 @@ dialog .actions {
 
   .confirm-actions {
     flex-direction: column-reverse;
-    gap: var(--space-5);
-  }
-
-  .stat-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-5);
   }
 

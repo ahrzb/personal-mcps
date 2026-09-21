@@ -22,6 +22,9 @@ import {
   mergeEvents,
   outcomeClass,
   outcomeCodes,
+  outcomeLabel,
+  outcomeRow,
+  outcomeSentence,
   selectionOf,
   sessionsOf,
   stubLabel,
@@ -80,6 +83,79 @@ describe("outcome classes", () => {
   it("expands a class back to the raw codes the export filter takes", () => {
     expect(outcomeCodes("denied")).toEqual(["-32001", "-32000"]);
     expect(outcomeCodes("ok")).toEqual(["ok"]);
+  });
+});
+
+describe("a code never stands alone", () => {
+  // The owner's words: "I literally won't know what -32001 is, it's not like 404." Every string
+  // below is the brief's own table, verbatim — this file is where they are pinned, because a
+  // label that drifted from §7's wording would describe a refusal the hub does not make.
+  it("labels every recorded outcome in the hub's own words", () => {
+    expect(outcomeLabel("ok")).toBe("ok");
+    expect(outcomeLabel("-32003")).toBe("approval required");
+    expect(outcomeLabel("-32002")).toBe("app archived");
+    expect(outcomeLabel("-32001")).toBe("not permitted");
+    expect(outcomeLabel("-32000")).toBe("app unavailable");
+    expect(outcomeLabel("error")).toBe("error");
+  });
+
+  it("labels an outcome the table does not know by its raw value, and gives it no sentence", () => {
+    expect(outcomeLabel("-31999")).toBe("-31999");
+    expect(outcomeSentence(row({ id: 1, outcome: "-31999" }))).toBe(null);
+  });
+
+  it("says nothing under an ok row", () => {
+    expect(outcomeSentence(row({ id: 1, outcome: "ok" }))).toBe(null);
+  });
+
+  it("explains each of the four refusals and the error", () => {
+    expect(outcomeSentence(row({ id: 1, outcome: "-32003" }))).toBe(
+      "This tool needs your approval for this agent. The call was held, not run — it waits on, or was settled in, Approvals.",
+    );
+    expect(outcomeSentence(row({ id: 2, outcome: "-32002" }))).toBe(
+      "The app is archived, so the hub dispatches nothing to it.",
+    );
+    // "every such case", not "both": §7 has THREE indistinguishable sources, so a count here
+    // would be a count the ledger cannot back. Straight apostrophe, as §13 writes it.
+    expect(outcomeSentence(row({ id: 3, outcome: "-32001" }))).toBe(
+      "The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, so the ledger cannot say which.",
+    );
+    expect(outcomeSentence(row({ id: 4, outcome: "-32000" }))).toBe(
+      "The app could not be reached or did not answer in time.",
+    );
+    expect(outcomeSentence(row({ id: 5, outcome: "error" }))).toBe(
+      "The call was dispatched and the app answered with an error.",
+    );
+  });
+
+  it("never prints the same word twice on the record's outcome row", () => {
+    // The chip already says the class, so a label that repeats it and a code that repeats the
+    // label are noise: an `ok` record read "ok ok ok".
+    expect(outcomeRow("ok")).toEqual({ cls: "ok", label: null, code: null });
+    expect(outcomeRow("error")).toEqual({ cls: "error", label: null, code: null });
+    // A refusal is three different words, so it prints all three.
+    expect(outcomeRow("-32003")).toEqual({ cls: "approval", label: "approval required", code: "-32003" });
+    expect(outcomeRow("-32002")).toEqual({ cls: "archived", label: "app archived", code: "-32002" });
+    expect(outcomeRow("-32001")).toEqual({ cls: "denied", label: "not permitted", code: "-32001" });
+    expect(outcomeRow("-32000")).toEqual({ cls: "denied", label: "app unavailable", code: "-32000" });
+  });
+
+  it("prints an unknown outcome once, as the raw value beside the error chip", () => {
+    // Its label IS its raw value, so printing both would say it twice — it belongs in the code
+    // slot, where the page sets a raw value in mono.
+    expect(outcomeRow("-31999")).toEqual({ cls: "error", label: null, code: "-31999" });
+  });
+
+  it("appends the cause to an unavailable row that recorded one", () => {
+    // The same sentence as its twin above, then the class the writer recorded — the one thing
+    // the ledger knows about WHY a `-32000` happened.
+    expect(
+      outcomeSentence(row({ id: 6, outcome: "-32000", detail: { failureClass: "timeout" } })),
+    ).toBe("The app could not be reached or did not answer in time. Cause: timeout.");
+    // A detail that is not a string is not a cause.
+    expect(outcomeSentence(row({ id: 7, outcome: "-32000", detail: { failureClass: 7 } }))).toBe(
+      "The app could not be reached or did not answer in time.",
+    );
   });
 });
 

@@ -11,7 +11,8 @@ personal-mcps/
     src/chrome/       # the shell, the pane rail, the dialogs
     src/features/     # apps, app-detail, agents, audit
     src/preview/      # the state gallery, preview-mode only
-    scripts/          # visual-compare.mts, drawer-check.mts — hand-run, browser-driven
+    scripts/          # visual-compare.mts, drawer-check.mts, audit-search-check.mts
+                      #   (2026-09-21) — hand-run, browser-driven
   clients/
     js/              # @ahrzb/personal-mcp-client — the third workspace importer
     py/              # personal-mcp-client (uv project, not npm)

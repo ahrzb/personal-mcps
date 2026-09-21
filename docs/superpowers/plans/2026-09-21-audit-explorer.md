@@ -140,7 +140,14 @@ never colour alone.
 **Loading.** One TanStack query per `(since, until, q)`: page 0 first, then the remaining
 pages up to the ceiling in parallel, concatenated. Facets, the brush, views, merging and
 sessions are all computed client-side over the loaded rows — a facet click never fetches.
-`q` is debounced 250 ms. The window the query asks for is always the **whole retention
+`q` is debounced 250 ms, and a search **never unmounts the page**: while the read for a new
+text is in flight the previous rows stay on screen (`placeholderData`), the explorer and its
+input stay mounted with focus and caret intact, the box owns its text locally, and the box
+shows "Searching…" until the answer lands *(postmortem 2026-09-21)*. A keystroke re-renders
+the box and nothing else: the URL and the query key both take the SETTLED text, one write per
+pause, and only an external `?q=` (Clear, a deep link) re-seeds the box — never the page's own
+echo *(review, same day: a per-keystroke URL write re-derived every loaded row and could lose
+a character to its own lagging echo)*. The window the query asks for is always the **whole retention
 window**; `since`/`until` in the URL are the **brush**, applied client-side, so dragging
 never fetches either. When `total > ceiling`: the notice "Showing the newest 5,000 of N
 events — narrow the search, or export JSONL for all of them." — a **template**: both numbers
@@ -222,8 +229,20 @@ above).
 earliest; a chain is ordered by (ts, id) — the hub writes `approval.requested` before the
 refused call's own row), with the chain sentence ("asked for approval → you approved 18:00
 → ran ok 1.2 s" — the refused call IS the ask, not a step of its own) and the state of its
-last event; consecutive un-chained rows with the same
-(event, app, tool, principal, outcome, `detail.failureClass`) collapse to **×N runs**. The
+last event. **WHEN is the time the row sorts by**: a chain row sits where its NEWEST event sits
+and shows that event's time (the head still titles it and is the record it opens) — printing
+the head's time put "07:47" above "08:07" in a newest-first list *(review, 2026-09-21)*; a run
+row already shows its newest member's. Consecutive un-chained rows with the same
+(event, app, tool, principal, outcome, `detail.failureClass`, `argsHead`) collapse to **×N runs** —
+a run is the SAME call repeated, so the arguments preview is part of the signature and five
+calls with five different queries stay five rows *(owner, 2026-09-21: "the x5 runs look weird,
+how can I look at all of them? or look at the bodies?")*. A run row is a **disclosure**: the
+×N badge is a button (`aria-expanded`) and beneath the title the row says "N identical events ·
+<first> → <last>"; expanded, it lists its members newest first — time, duration, outcome chip —
+each a row that opens its OWN record (bodies and all), 50 at a time behind **Show more**, with
+**Hide** to collapse and the foot "N of M · each line opens its own record." The members sit
+INSIDE the What-happened cell under the run line (a hairline above them), so the table keeps its
+four columns — not a full-width band. Which runs are open is reading position, not URL state. The
 third line previews `argsHead` clipped to 110 characters (an oversize stub's head renders as
 its placeholder), else the first three `detail` pairs. The foot: "N rows from M events —
 related events merged, repeats collapsed."
@@ -251,8 +270,11 @@ record is gone — audit rows are kept for N days.").
 runs full width at 44 px. The strip keeps its lanes with each name **above** its cells; there
 is **no drag** on touch — the presets and tapping a day on the axis set the window. The rail
 becomes a **Filters · N** button opening a full-screen level headed `‹ Audit` with the same
-groups at 44 px rows and a sticky **Show N events**. Event rows become two-line cards (time ·
-principal · outcome chip; then the mono title, the chain line, ×N). A session header wraps
+groups at 44 px rows and a sticky **Show N events**. Event rows become cards (time ·
+principal · outcome chip; then the mono title, the chain line, ×N; then — only when the row
+has one — the arguments preview as ONE clipped line: since the run signature splits on
+`argsHead`, five `search_news` calls with five queries are five cards, and without the preview
+they would read as the same card five times). A session header wraps
 to two lines and its waterfall puts each label above its bar. The record is a full-screen
 level headed `‹ Audit`, not a drawer. 768–1023: the desktop layout with the rail above the
 main pane as a wrapping row of groups.

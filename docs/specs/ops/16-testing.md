@@ -65,8 +65,11 @@
   exception** — a chain titled by its call while the record it opens keeps the head row's
   title), facet counts
   excluding their own group, the chain merge and its **(ts, id)** order (`approval.requested`
-  heads the chain although the refused call may share its millisecond), ×N runs and that a
-  chain never joins one, the waterfall fold threshold, the three insight rules — including
+  heads the chain although the refused call may share its millisecond), a chain's **when**
+  being its newest event's `ts` while its head still titles it — and, over the fixture week,
+  the merged list's `when` never increasing — ×N runs **keyed on
+  seven fields incl. `argsHead`** (so five calls with five different queries stay five rows)
+  and that a chain never joins one, the waterfall fold threshold, the three insight rules — including
   that the first-seen one is **absent** on a partial load (over the ceiling, or a search text
   active) and that the changes one's "show me" carries **every** distinct change event it
   counted — the export href (class → raw codes, the tool pair as `target=`, repeated keys,
@@ -78,8 +81,16 @@
   size spellings — moves to that unit file rather than being dropped. The preview gallery
   gains an `audit` fixture set, one seed per page state §13 names plus the views, a session
   opened, the record in each of its no-bodies and stub shapes, a chain record, a
-  `recordSearch` seed (a query with its ancestors opened, and one with no match), and one
-  long-data seed; the visual gate is the gallery beside the boards at both widths.
+  `recordSearch` seed (a query with its ancestors opened, and one with no match),
+  `eventsRunOpen` (a run expanded on its members), `searchLive` — a read that **answers
+  late** rather than a seeded cache, because a seed that is permanently fresh cannot express a
+  refetch and that is exactly the gap the 2026-09-21 postmortem names — and one
+  long-data seed; the visual gate is the gallery beside the boards at both widths. One
+  **dev-only browser walk** joins `visual-compare.mts` and `drawer-check.mts`,
+  `web/scripts/audit-search-check.mts`: it types with pauses longer than the debounce and
+  asserts that the input is the **same node**, still focused, its value intact, and that no
+  skeleton was ever attached — the one thing no fixture and no pure test can see, since the
+  actor is the network.
 - **upstream oauth**: fake AS in-test — expired access token triggers refresh before
   forwarding; failed refresh surfaces needs-reconnect and calls fail `-32000`; a
   callback carrying a valid code but a missing, consumed, expired, or other-session

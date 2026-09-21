@@ -276,6 +276,15 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   views, the merging and the sessions are all computed over those loaded rows: a facet
   click, a view switch and a brush drag never fetch. `since`/`until` in the URL are the
   **brush**, applied client-side; `q` is debounced and is the one control that refetches.
+  **A search never unmounts the page** *(2026-09-21, postmortem
+  `docs/superpowers/postmortems/2026-09-21-audit-search-unmounts-the-page.md`)*: while the
+  read for a new text is in flight the previous rows stay on screen, the explorer and its
+  input stay mounted with focus and caret intact, the box owns its text locally and shows
+  "Searching…" until the answer lands, and **only the first load draws the skeleton**; a
+  search that fails keeps the previous rows and says so inline, with **Try again**. The reason
+  is structural, not a nicety: the text is part of the read's key, so every settled keystroke
+  makes that read pending, and a page that renders "pending" as a different subtree throws
+  away the very box being typed into.
   Past the ceiling the page says so rather than lying by omission — the notice, pinned as a
   **template** and not as a literal: "Showing the newest <ceiling> of <total> events — narrow
   the search, or export JSONL for all of them.", which at today's constant renders as
@@ -347,9 +356,30 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   millisecond, and a chain would otherwise be free to open on the refusal)*; carrying the
   chain sentence ("asked for approval → you approved 18:00 → ran ok 1.2 s" — **the refused
   call is the ask**, never a step of its own, so a chain of a refusal, a decision and a
-  dispatch reads as three clauses and not four) and the state of its last event;
-  consecutive un-chained rows with the same (event, app, tool, principal, outcome,
-  `detail.failureClass`) collapse to **×N runs**, and a chain never joins a run. The third
+  dispatch reads as three clauses and not four) and the state of its last event.
+  **WHEN is the time the row sorts by** *(2026-09-21, orchestrator review of the boards
+  against the built page — a consequence of the newest-first ordering, not an owner ruling)*:
+  a chain row sits where its **newest** event sits and shows that event's time, in the
+  desktop's When column and on the phone card alike, while the **head** still titles the row
+  and is the record the row opens. Printing the head's time — `approval.requested`, a chain's
+  oldest event — made a newest-first list read shuffled, "07:47" standing above "08:07". A ×N
+  run row already shows its newest member's time, and this makes the two kinds of merged row
+  agree.
+  Consecutive un-chained rows with the same (event, app, tool, principal, outcome,
+  `detail.failureClass`, **`argsHead`** *(2026-09-21, same postmortem: a seventh field,
+  because a run is the **same call repeated** — without the arguments preview in the
+  signature, five calls with five different queries collapsed under the newest one's preview
+  and the row claimed one thing had happened five times)*) collapse to **×N runs**, and a
+  chain never joins a run. **A run row is a disclosure** *(2026-09-21)*: the ×N badge is a
+  button, the line "N identical events · <first> → <last>" sits beneath the title, and
+  expanded the row lists its members newest first — time, duration, outcome chip — each
+  opening its **own** record and its own bodies, fifty at a time behind **Show more**, with
+  **Hide** to collapse; the run's title still opens the newest member. Which runs are open is
+  reading position, not URL state, so it is the one thing on this page the URL does not carry.
+  The known ceiling, stated rather than hidden: `argsHead` is only the first
+  `AUDIT_ARGS_HEAD_CHARS` characters of the stored arguments, so two calls differing only past
+  that still collapse into one run — and opening it shows the difference on the members' own
+  records. The third
   line previews `argsHead` clipped (an oversize stub's head renders as its placeholder),
   else the first three `detail` pairs. The foot: "N rows from M events — related events
   merged, repeats collapsed."
@@ -419,8 +449,14 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   height. The strip keeps its lanes with each name **above** its cells and has **no drag**
   on touch — the presets and tapping a day on the axis set the window. The rail becomes a
   **Filters · N** button opening a full-screen level headed `‹ Audit`, the same groups at
-  the narrow tap height under a sticky **Show N events**. Event rows become two-line cards
-  (time · principal · outcome chip, then the mono title, the chain line, ×N); a session
+  the narrow tap height under a sticky **Show N events**. Event rows become ~~two-line~~
+  cards (time · principal · outcome chip, then the mono title, the chain line, ×N, then —
+  **only when the row has one** — the arguments preview as **one clipped line**, never
+  wrapping) *(2026-09-21, from the boards, drawing the expanded run on the phone: the card is
+  no longer fixed at two lines, because the ×N signature splits on `argsHead` (**Events**
+  above), so five `search_news` calls with five queries are five cards — and without the
+  preview they would read as the same card five times. A consequence of that run rule, not a
+  product decision of its own)*; a session
   header wraps to two lines and its waterfall puts each label above its bar; and the record
   is a full-screen level headed `‹ Audit` rather than a drawer. Between that breakpoint and
   the side-by-side one the desktop layout stands, with the rail above the main pane as a

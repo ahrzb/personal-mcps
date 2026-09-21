@@ -6,9 +6,9 @@ import {
   fmtCount,
   fmtDay,
   fmtDayTime,
-  outcomeCodes,
+  outcomeLabel,
 } from "./derive";
-import type { AuditSelection, Lane } from "./derive";
+import type { AuditSelection, Lane, OutcomeClass } from "./derive";
 import { SkelBar, Swatch, WarnIcon } from "./parts";
 
 /**
@@ -191,15 +191,14 @@ export function LaneStrip({
 
       <div className="a-legend">
         <span className="a-legend-i a-legend-lbl wide-only">Worst outcome in the hour:</span>
+        {/* At wide the legend says what each colour MEANS, in the hub's own words; the class
+            name alone is what fits at 375. Never the raw codes: a `-32001` beside a swatch is
+            a number to go and look up, and the record is the one place that prints one. */}
         {OUTCOME_CLASSES.map((cls) => (
           <span className="a-legend-i" key={cls}>
             <Swatch cls={cls} />
-            {cls}
-            {/* The raw codes, where they differ from the class name — wide only, because at
-                375px they double the legend's height to say what the record already says. */}
-            {cls === "ok" || cls === "error" ? null : (
-              <span className="a-legend-code wide-only">{outcomeCodes(cls).join(" · ")}</span>
-            )}
+            <span className="narrow-only">{cls}</span>
+            <span className="wide-only">{LEGEND_WORDS[cls]}</span>
           </span>
         ))}
         {anyNotLoaded ? (
@@ -250,6 +249,22 @@ export function LaneStripSkeleton(): ReactNode {
     </div>
   );
 }
+
+/**
+ * What each colour means, in words, at the wide tier.
+ *
+ * A CLASS is the page's grouping and `denied` folds two codes, so its entry names both halves:
+ * the reader has to know that one red cell can be either refusal, and neither the class name
+ * nor a pair of numbers would tell them. `derive.outcomeLabel` owns the per-code wording and
+ * these are built from it, so the legend cannot drift from the record.
+ */
+const LEGEND_WORDS: Record<OutcomeClass, string> = {
+  ok: outcomeLabel("ok"),
+  approval: outcomeLabel("-32003"),
+  archived: outcomeLabel("-32002"),
+  denied: `denied — ${outcomeLabel("-32001")} or ${outcomeLabel("-32000").replace("app ", "")}`,
+  error: outcomeLabel("error"),
+};
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;

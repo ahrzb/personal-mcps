@@ -13,6 +13,8 @@ import {
   fmtDuration,
   fmtStamp,
   outcomeClass,
+  outcomeRow,
+  outcomeSentence,
   siblingsOf,
   titleOf,
   treeSearch,
@@ -208,7 +210,8 @@ function Head({
  * class is the page's grouping and the code is what the ledger holds.
  */
 function Fields({ row, onFilter }: { row: AuditWindowRow | AuditEventRow; onFilter: (filter: Filter) => void }): ReactNode {
-  const cls = outcomeClass(row.outcome);
+  const shown = outcomeRow(row.outcome);
+  const sentence = outcomeSentence(row);
   const sessionId = row.client?.sessionId;
   const rows: [string, ReactNode][] = [
     ["when", `${fmtStamp(row.ts)} UTC`],
@@ -235,9 +238,16 @@ function Fields({ row, onFilter }: { row: AuditWindowRow | AuditEventRow; onFilt
       ),
     ],
     [
+      // The ONE place a raw code is printed, and never on its own: the chip, then what the code
+      // MEANS, then the code itself dim — because that last value is what `pmcp audit
+      // --outcome` and the export take, and nothing else on the page would let a reader find it.
+      // `outcomeRow` drops whichever of the three the one before it already said.
       "outcome",
       <span key="o">
-        <OutcomeBadge cls={cls} /> <span className="a-dim mono">{row.outcome}</span>
+        <OutcomeBadge cls={shown.cls} />
+        {shown.label === null ? null : <> <span className="a-olabel">{shown.label}</span></>}
+        {shown.code === null ? null : <> <span className="a-dim mono">{shown.code}</span></>}
+        {sentence === null ? null : <span className="note a-why">{sentence}</span>}
       </span>,
     ],
     ["duration", fmtDuration(row.durationMs)],
@@ -256,7 +266,11 @@ function Fields({ row, onFilter }: { row: AuditWindowRow | AuditEventRow; onFilt
     <table className="a-ftab">
       <tbody>
         {rows.map(([key, value]) => (
-          <tr key={key}>
+          /* The outcome row is the one whose value is TWO lines — a chip line and a sentence
+             under it — so it is the one that must top-align. Centred, its key drifts down
+             beside the sentence and the chip line is left with no key at all. Every other row
+             is one line, where top and centre are the same thing. */
+          <tr key={key} className={key === "outcome" ? "a-ftab-row--top" : undefined}>
             <td className="a-ftab-k">{key}</td>
             <td className="a-ftab-v">{value}</td>
           </tr>

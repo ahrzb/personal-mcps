@@ -153,6 +153,10 @@ export const auditSeeds: Record<string, Seed> = {
     transient: { recordSearch: "token" },
   },
 
+  /** A `-32000` that recorded a `failureClass` — the one outcome whose sentence gains a
+   *  "Cause: …", and the only place the page prints a raw code at all. */
+  recordUnavailable: record(41_159),
+
   /** The three no-bodies sentences, one state each. */
   recordNoBodiesOff: record(41_337),
   recordNoBodiesRefused: record(41_353),

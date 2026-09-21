@@ -1067,6 +1067,28 @@ button.a-wfr:hover {
   font-family: var(--font-mono);
   word-break: break-all;
 }
+
+/* The outcome's label is WORDS, so it is set in words — the value column is mono for ids and
+   codes, and a label in mono beside one reads as a second code. */
+.a-olabel { font-family: var(--font-sans); }
+
+/* A row whose value runs to two lines. Both cells carry the same 20px line-height, so topping
+   them puts the key's first line exactly on the chip line and leaves the sentence hanging
+   beneath it in the value column. */
+.a-ftab-row--top td { vertical-align: top; }
+
+/* What the outcome MEANS, under the code rather than beside it: its own line, in prose rather
+   than mono, capped at the sheet's own measure so a three-clause refusal does not run the whole
+   width of the drawer. */
+.a-why {
+  display: block;
+  margin-top: 2px;
+  max-width: 72ch;
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
 .a-ftab-v button {
   border: 0;
   background: none;
@@ -1471,6 +1493,25 @@ button.a-wfr:hover {
     display: inline-flex;
     align-items: center;
     padding: 0;
+  }
+
+  /* The cell is a wrapping flex row at this tier, so the sentence takes a line of its own
+     spanning the value column rather than trailing the code. */
+  .a-why {
+    flex: 1 1 100%;
+    margin-top: var(--space-2);
+  }
+
+  /* The same rule at the touch tier, where the row is a grid and the cells are flex: the key
+     rides the chip line rather than floating between the two. The 44px minimum and the
+     hairline are the row's own and are untouched. */
+  .a-ftab-row--top {
+    align-items: start;
+  }
+
+  .a-ftab-row--top td {
+    align-items: flex-start;
+    align-content: flex-start;
   }
 
   .audit-level .a-frow {

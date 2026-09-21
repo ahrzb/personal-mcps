@@ -100,6 +100,9 @@ function pickRecords(rows: DemoRow[]): DemoRow[] {
   for (const reason of ["off", "refused", "unrecorded"] as const) {
     take(rows.find((row) => row.noBodies === reason));
   }
+  // A `-32000` carrying a `failureClass` — the one outcome whose sentence gains a cause, and
+  // therefore the one the record's outcome row has to be seen drawing.
+  take(rows.find((row) => row.outcome === "-32000" && typeof row.detail?.failureClass === "string"));
   // Every row of the first COMPLETE chain — the drawer's sibling timeline is drawn from the
   // loaded window, but the record it opens on is read by id, so each member needs its own row.
   const chains = new Map<string, DemoRow[]>();

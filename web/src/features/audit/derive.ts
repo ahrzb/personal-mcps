@@ -64,6 +64,97 @@ export function outcomeCodes(cls: string): readonly string[] {
   return CODES_OF[cls as OutcomeClass] ?? [cls];
 }
 
+/* ------------------------------------------------- a code never stands alone ---- */
+
+/**
+ * What each recorded outcome MEANS, in the hub's own §7 words — a label everywhere, and for the
+ * four refusals and `error` a sentence as well.
+ *
+ * The rule this table exists for, in the owner's words: "I literally won't know what -32001 is,
+ * it's not like 404." A JSON-RPC code is an implementation detail of the wire, and a page that
+ * prints one bare is a page that answers "why did this fail?" with a number to go and look up.
+ * So the raw code is printed in exactly ONE place — the record's outcome row, beside its label,
+ * because that is the value `pmcp audit --outcome` and the export take — and everywhere else
+ * the words stand on their own.
+ *
+ * Both live here rather than in a component because three surfaces say them (the record, the
+ * legend, the waterfall) and a fourth wording would be a fourth account of the same refusal.
+ */
+const OUTCOME_WORDS: Record<string, { label: string; sentence?: string }> = {
+  ok: { label: "ok" },
+  "-32003": {
+    label: "approval required",
+    sentence:
+      "This tool needs your approval for this agent. The call was held, not run — it waits on, or was settled in, Approvals.",
+  },
+  "-32002": {
+    label: "app archived",
+    sentence: "The app is archived, so the hub dispatches nothing to it.",
+  },
+  "-32001": {
+    label: "not permitted",
+    // Both named causes, and then "every such case" rather than a count: §7 answers THREE
+    // indistinguishable sources the same way, so the ledger cannot tell them apart and the
+    // sentence must not imply it has enumerated them. Saying only "no grant" would be a guess
+    // printed as a fact.
+    sentence:
+      "The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, so the ledger cannot say which.",
+  },
+  "-32000": {
+    label: "app unavailable",
+    sentence: "The app could not be reached or did not answer in time.",
+  },
+  error: {
+    label: "error",
+    sentence: "The call was dispatched and the app answered with an error.",
+  },
+};
+
+/** An outcome in words. One the table does not know is labelled by its raw value — which is at
+ *  least the truth, where a made-up label would not be. */
+export function outcomeLabel(outcome: string): string {
+  return OUTCOME_WORDS[outcome]?.label ?? outcome;
+}
+
+/**
+ * What the record's outcome row PRINTS: the chip's class, and the label and the raw code only
+ * where each says something the one before it did not.
+ *
+ * A word is never printed twice. The chip already carries the class, so `ok` read "ok ok ok"
+ * and `error` read "error error error" when all three were printed unconditionally. A refusal
+ * is three genuinely different things — the grouping (`denied`), what the hub did (`not
+ * permitted`) and the value the export and `pmcp audit --outcome` take (`-32001`) — and prints
+ * all three. An outcome the table does not know has no label of its own, so it prints once, as
+ * the code: that is where the page sets a raw value in mono.
+ *
+ * Here rather than in the drawer because the drawer and the phone level are one component's
+ * two renderings of it, and because "which of these three is redundant" is a rule with cases.
+ */
+export function outcomeRow(outcome: string): { cls: OutcomeClass; label: string | null; code: string | null } {
+  const cls = outcomeClass(outcome);
+  const words = outcomeLabel(outcome);
+  // A label that merely repeats the chip, or that IS the raw code, says nothing new.
+  const label = words === cls || words === outcome ? null : words;
+  // …and the code says nothing new when the line above it already reads the same.
+  const code = outcome === (label ?? cls) ? null : outcome;
+  return { cls, label, code };
+}
+
+/**
+ * Why this row ended the way it did, or null where there is nothing to explain: `ok` needs no
+ * sentence, and an outcome the table does not know gets none rather than a wrong one.
+ *
+ * A `-32000` that recorded a `failureClass` appends it as a cause. That class is the only thing
+ * the ledger knows about WHY the app was unreachable, so it is said here rather than left in
+ * the Detail tree for the reader to find.
+ */
+export function outcomeSentence(row: Pick<AuditWindowRow, "outcome" | "detail">): string | null {
+  const sentence = OUTCOME_WORDS[row.outcome]?.sentence;
+  if (sentence === undefined) return null;
+  const cause = row.detail?.failureClass;
+  return typeof cause === "string" && cause !== "" ? `${sentence} Cause: ${cause}.` : sentence;
+}
+
 /* --------------------------------------------------------------- the URL ---- */
 
 /** The three readings of one filtered set. Switching one never refetches and never changes

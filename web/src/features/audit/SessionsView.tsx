@@ -7,6 +7,7 @@ import {
   fmtDayTime,
   fmtDuration,
   outcomeClass,
+  outcomeLabel,
   sameUtcDay,
   titleOf,
   waterfallOf,
@@ -160,10 +161,16 @@ function Waterfall({
                 style={{ left: `${Math.min(97, left)}%`, width: `${Math.min(width, 100 - left)}%` }}
               />
             </span>
+            {/* What the line SAYS it was: a duration when it ran, otherwise the outcome in
+                words with its recorded cause after it — `app unavailable · timeout`. Never
+                `denied · -32001`: a bare code here is a number nobody can read, and the record
+                is the one place that prints one. */}
             <span className="a-wfrt">
               {cls === "ok"
                 ? fmtDuration(row.durationMs)
-                : `${cls} · ${typeof failure === "string" ? failure : row.outcome}`}
+                : typeof failure === "string" && failure !== ""
+                  ? `${outcomeLabel(row.outcome)} · ${failure}`
+                  : outcomeLabel(row.outcome)}
             </span>
           </button>
         );

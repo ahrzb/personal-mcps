@@ -1432,7 +1432,16 @@ button.a-wfr:hover {
     line-height: 16px;
   }
 
-  .a-body { flex-direction: column; }
+  /* STRETCH, not the wide tier's `flex-start`. This one declaration is the difference between a
+     page that fits and a page that scrolls sideways: on a column flex container `flex-start`
+     sizes every child to its own CONTENT, so `.a-main` took the width of the events table, the
+     table took the width of its widest `white-space: nowrap` line — the arguments preview — and
+     the card, the outcome chips and the page went with it. A `max-width: 100%` on the preview
+     cannot help, because its containing block is the thing that grew. */
+  .a-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
   .a-rail { display: none; }
   .a-fbar { gap: var(--space-4); }
   .a-filtersbtn {
@@ -1466,6 +1475,15 @@ button.a-wfr:hover {
   /* Event rows become two-line cards: time · principal · outcome on one line, the mono title
      and the chain line under it. The preview goes — a third line of arguments at 375px is a
      wrapped fragment nobody reads. */
+  /* A BLOCK at this tier. The rows are already flex and the cells already blocks, so the table
+     layout is vestigial here — and a `display: table` box is shrink-to-fit around its widest
+     unbreakable line however wide its parent is, which is the second half of the overflow
+     above. As a block it simply fills the card. */
+  .a-etab,
+  .a-etab tbody {
+    display: block;
+    width: 100%;
+  }
   .a-etab thead { display: none; }
   .a-etab tr.a-ev {
     display: flex;
@@ -1486,18 +1504,21 @@ button.a-wfr:hover {
     order: 3;
     margin-left: auto;
   }
+  /* `min-width: 0` is what lets this cell — and the clipped preview inside it — be NARROWER
+     than its content. A flex item's floor is its min-content width by default, and the
+     preview's min-content width is the whole unbreakable line. */
   .a-etab td.a-what {
     order: 4;
     flex: 0 0 100%;
+    min-width: 0;
   }
   /* The arguments preview STAYS on the phone, as one clipped line. The run signature splits on
      `argsHead`, so without it five `news/search_news` cards read as the same card five times —
-     the preview is what says they are five different calls. `min-width: 0` is what lets it
-     ellipsise inside the flex cell rather than widening the card. */
-  .a-etab td.a-what .a-prev {
-    min-width: 0;
-    max-width: 100%;
-  }
+     the preview is what says they are five different calls. It ellipsises because the boxes
+     ABOVE it are now sized by the viewport rather than by it. */
+  .a-etab td.a-what .a-prev { min-width: 0; }
+  /* The foot wraps rather than pushing the card wider on its one long sentence. */
+  .a-more { flex-wrap: wrap; }
   /* The disclosure is part of the card at this tier too — the member rows are the reason the
      run is openable at all, so they take the touch height rather than being hidden. The BADGE
      does not: it keeps its 20px metrics and gets its tap area from `::before`, as the board

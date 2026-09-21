@@ -67,6 +67,13 @@ Spec `9dbdcdf`, boards `8833314`, tests `3c044eb`, code `a8b3299` (2026-09-21).
 - Found reviewing the fix's own screenshot: a chain row printed its head's time (its OLDEST
   event) at the position of its newest, so a newest-first list read shuffled. `whenOf`.
 
+- The fix regressed the phone before it shipped: the arguments line (nowrap, in a table cell,
+  in a content-sized flex pane) made five phone states 541–772 px wide. The agent's overflow
+  check SAW it and printed it; its output went through `grep -v` on a note every narrow state
+  carries, which discarded every narrow failure. Caught by looking at the 375 shot beside the
+  board. The check now exits non-zero and asserts each saved PNG is the viewport's width —
+  the ship rule ("never pipe a gating command") holds for an agent's checks too.
+
 Enacted from the candidates below: the late-answering gallery seed (`respond`), and the walk
 — `pnpm check:audit-search` — including a burst under 6x CPU throttle.
 

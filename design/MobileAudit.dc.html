@@ -276,7 +276,9 @@
 .phone .filters>.btn{height:var(--control-h-touch)}
 .phone .grid3{grid-template-columns:minmax(0,1fr)}
 .phone .grid2{grid-template-columns:minmax(0,1fr)}
-.phone .topn button{height:var(--control-h-touch)}
+/* A refusal names its cause on a line of its own here: at 390 the pair and the short words never share one. */
+.phone .topn button{height:auto;min-height:var(--control-h-touch);flex-wrap:wrap;padding:5px}
+.phone .topn .cause{flex:1 1 100%}
 .phone .look li{line-height:1.9}
 /* A <table> sizes to its content, so one nowrap preview line would widen the whole card past the phone — the cards are blocks here, not a table. */
 .phone .etab{display:block;width:100%;table-layout:fixed}
@@ -288,9 +290,9 @@
 .phone .etab td.c-who{order:2}
 .phone .etab td.c-out{order:3;margin-left:auto}
 .phone .etab td.c-what{order:4;flex:0 0 100%;min-width:0;max-width:100%}
-/* The card keeps the ARGUMENTS preview as one clipped line (the signature splits on argsHead); a row with no arguments stays two lines. */
+/* The card keeps the line that is the row's OWN evidence — its arguments, or its recorded refusal cause, both fields the run signature splits on; anything else stays off and the card is two lines. */
 .phone .etab td.c-what .prev{display:none}
-.phone .etab td.c-what .prev-args{display:block}
+.phone .etab td.c-what .prev-keep{display:block}
 .phone .runlist .m{min-height:var(--control-h-touch);gap:10px}
 .phone .runlist .mt{width:auto;flex:1 1 auto}
 .phone .runlist .md{width:auto;margin-left:auto}
@@ -389,14 +391,14 @@
       <div class="stat"><div class="v">421 ms</div><div class="l">median call · p95 1.6 s</div></div>
     </div>
     <div class="look"><p class="eyebrow" style="color:var(--warn-fg);margin:0 0 4px">Worth a look</p><ul style="margin:0;padding-left:18px">
-      <li><b>agent:cron was refused 230 times</b> calling <span class="mono">news/search_news</span> — denied. <a data-act="insight" data-i="0">show me</a></li><li><b>1 tool was called for the first time</b> in the last two days: <span class="mono">github/create_issue</span>. <a data-act="insight" data-i="1">show me</a></li><li><b>10 changes to your setup</b>: <span class="mono">admin.app_create</span>, <span class="mono">upstream.oauth_connected</span>, <span class="mono">admin.token_issue</span>. <a data-act="insight" data-i="2">show me</a></li></ul></div>
+      <li><b>agent:cron was refused 224 times</b> calling <span class="mono">news/search_news</span> — denied, no grant reaches it. <a data-act="insight" data-i="0">show me</a></li><li><b>1 tool was called for the first time</b> in the last two days: <span class="mono">github/create_issue</span>. <a data-act="insight" data-i="1">show me</a></li><li><b>10 changes to your setup</b>: <span class="mono">admin.app_create</span>, <span class="mono">upstream.oauth_connected</span>, <span class="mono">admin.token_issue</span>. <a data-act="insight" data-i="2">show me</a></li></ul></div>
     <div class="grid3">
       <div><p class="eyebrow">Agents</p><div class="topn"><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude"><span class="bar" style="width:100%"></span><span class="nm">agent:claude</span><span class="n">847</span></button><button data-act="facet" data-f="principal" data-v="agent:cron" title="agent:cron"><span class="bar" style="width:39.07910271546635%"></span><span class="nm">agent:cron</span><span class="n">331</span></button><button data-act="facet" data-f="principal" data-v="agent:cursor" title="agent:cursor"><span class="bar" style="width:16.883116883116884%"></span><span class="nm">agent:cursor</span><span class="n">143</span></button><button data-act="facet" data-f="principal" data-v="user:ahrzb" title="user:ahrzb"><span class="bar" style="width:6.965761511216057%"></span><span class="nm">user:ahrzb</span><span class="n">59</span></button></div></div>
       <div><p class="eyebrow">Apps</p><div class="topn"><button data-act="facet" data-f="app" data-v="news" title="news"><span class="bar" style="width:100%"></span><span class="nm">news</span><span class="n">669</span></button><button data-act="facet" data-f="app" data-v="notion" title="notion"><span class="bar" style="width:37.5186846038864%"></span><span class="nm">notion</span><span class="n">251</span></button><button data-act="facet" data-f="app" data-v="linear" title="linear"><span class="bar" style="width:25.411061285500747%"></span><span class="nm">linear</span><span class="n">170</span></button><button data-act="facet" data-f="app" data-v="slack" title="slack"><span class="bar" style="width:17.040358744394617%"></span><span class="nm">slack</span><span class="n">114</span></button></div></div>
       <div><p class="eyebrow">Tools</p><div class="topn"><button data-act="facet" data-f="tool" data-v="news/search_news" title="news/search_news"><span class="bar" style="width:100%"></span><span class="nm">news/search_news</span><span class="n">423</span></button><button data-act="facet" data-f="tool" data-v="news/get_news" title="news/get_news"><span class="bar" style="width:45.15366430260047%"></span><span class="nm">news/get_news</span><span class="n">191</span></button><button data-act="facet" data-f="tool" data-v="notion/search" title="notion/search"><span class="bar" style="width:23.167848699763592%"></span><span class="nm">notion/search</span><span class="n">98</span></button><button data-act="facet" data-f="tool" data-v="notion/get_page" title="notion/get_page"><span class="bar" style="width:21.27659574468085%"></span><span class="nm">notion/get_page</span><span class="n">90</span></button></div></div>
     </div>
     <div class="grid2">
-      <div><p class="eyebrow">Refusals</p><div class="topn"><button data-act="facet" data-f="principal" data-v="agent:cron" title="agent:cron → news/search_news"><span class="bar" style="width:100%"></span><span class="nm">agent:cron → news/search_news</span><span class="n">230</span></button><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude → github/search_code"><span class="bar" style="width:6.521739130434782%"></span><span class="nm">agent:claude → github/search_code</span><span class="n">15</span></button><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude → slack/post_message"><span class="bar" style="width:5.6521739130434785%"></span><span class="nm">agent:claude → slack/post_message</span><span class="n">13</span></button><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude → linear/create_issue"><span class="bar" style="width:5.217391304347826%"></span><span class="nm">agent:claude → linear/create_issue</span><span class="n">12</span></button></div></div>
+      <div><p class="eyebrow">Refusals</p><div class="topn"><button data-act="facet" data-f="principal" data-v="agent:cron" title="agent:cron → news/search_news — no grant reaches it"><span class="bar" style="width:100%"></span><span class="nm">agent:cron → news/search_news</span><span class="nm cause sub2">— no grant reaches it</span><span class="n">224</span></button><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude → github/search_code — no grant reaches it"><span class="bar" style="width:5.803571428571429%"></span><span class="nm">agent:claude → github/search_code</span><span class="nm cause sub2">— no grant reaches it</span><span class="n">13</span></button><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude → slack/post_message"><span class="bar" style="width:5.803571428571429%"></span><span class="nm">agent:claude → slack/post_message</span><span class="n">13</span></button><button data-act="facet" data-f="principal" data-v="agent:claude" title="agent:claude → linear/create_issue"><span class="bar" style="width:5.357142857142857%"></span><span class="nm">agent:claude → linear/create_issue</span><span class="n">12</span></button></div></div>
       <div><p class="eyebrow">Changes you made</p><button class="frow" data-act="openidx" data-idx="1398" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">admin.grant_set</span><span class="ct">Aug 24 14:30</span></button><button class="frow" data-act="openidx" data-idx="1379" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">admin.app_archive</span><span class="ct">Aug 24 12:02</span></button><button class="frow" data-act="openidx" data-idx="1377" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">admin.grant_set</span><span class="ct">Aug 24 11:32</span></button><button class="frow" data-act="openidx" data-idx="957" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">admin.grant_set</span><span class="ct">Aug 22 09:26</span></button><button class="frow" data-act="openidx" data-idx="921" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">upstream.oauth_connected</span><span class="ct">Aug 22 07:31</span></button></div>
     </div>
     <div style="border-top:1px solid var(--border);padding-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -460,7 +462,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">topic=semiconductors limit=5</div>
+          <div class="note t-mono prev prev-keep">topic=semiconductors limit=5</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1399">
         <td class="c-when t-dim t-mono">Aug 24 14:31:48</td><td class="c-who t-mono">agent:claude</td>
@@ -468,7 +470,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">title=Weekly report parent=Reports credentials={"token":"‹redacted›"}</div>
+          <div class="note t-mono prev prev-keep">title=Weekly report parent=Reports credentials={"token":"‹redacted›"}</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1398">
         <td class="c-when t-dim t-mono">Aug 24 14:30:12</td><td class="c-who t-mono">user:ahrzb</td>
@@ -532,7 +534,7 @@
           </div>
           
           
-          
+          <div class="note t-mono prev prev-keep">no grant reaches it</div>
           </td>
         <td class="c-out"><span class="chip bad">denied</span></td></tr><tr class="ev" data-act="openidx" data-idx="1386">
         <td class="c-when t-dim t-mono">Aug 24 12:46:36</td><td class="c-who t-mono">agent:claude</td>
@@ -540,7 +542,7 @@
           <button class="chip runbadge on" data-act="run" data-idx="1386" aria-expanded="true">×6 runs <span class="caret">▾</span></button></div>
           
           <div class="chain"><b>6 identical events</b><span style="color:var(--dim)">·</span><span>Aug 24 12:43:11 → Aug 24 12:46:36</span></div>
-          <div class="note t-mono prev prev-args">page_id=page_7c02</div>
+          <div class="note t-mono prev prev-keep">page_id=page_7c02</div>
           <div class="runlist">
     <button class="m" data-act="openidx" data-idx="1386"><span class="mt">Aug 24 12:46:36</span><span class="md">761 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1385"><span class="mt">Aug 24 12:45:55</span><span class="md">588 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1384"><span class="mt">Aug 24 12:45:14</span><span class="md">705 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1383"><span class="mt">Aug 24 12:44:33</span><span class="md">933 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1382"><span class="mt">Aug 24 12:43:52</span><span class="md">640 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1381"><span class="mt">Aug 24 12:43:11</span><span class="md">812 ms</span><span class="chip ok">ok</span></button>
     <div class="mfoot">
@@ -585,7 +587,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">q=elections since=24h</div>
+          <div class="note t-mono prev prev-keep">q=elections since=24h</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1375">
         <td class="c-when t-dim t-mono">Aug 24 11:00:07</td><td class="c-who t-mono">agent:cron</td>
@@ -593,7 +595,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">q=space since=24h</div>
+          <div class="note t-mono prev prev-keep">q=space since=24h</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1374">
         <td class="c-when t-dim t-mono">Aug 24 10:30:07</td><td class="c-who t-mono">agent:cron</td>
@@ -601,7 +603,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">q=elections since=24h</div>
+          <div class="note t-mono prev prev-keep">q=elections since=24h</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr>
     </tbody></table>
@@ -769,7 +771,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">topic=semiconductors limit=5</div>
+          <div class="note t-mono prev prev-keep">topic=semiconductors limit=5</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1399">
         <td class="c-when t-dim t-mono">Aug 24 14:31:48</td><td class="c-who t-mono">agent:claude</td>
@@ -777,7 +779,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">title=Weekly report parent=Reports credentials={"token":"‹redacted›"}</div>
+          <div class="note t-mono prev prev-keep">title=Weekly report parent=Reports credentials={"token":"‹redacted›"}</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1396">
         <td class="c-when t-dim t-mono">Aug 24 14:29:55</td><td class="c-who t-mono">agent:claude</td>
@@ -809,7 +811,7 @@
           <button class="chip runbadge on" data-act="run" data-idx="1386" aria-expanded="true">×6 runs <span class="caret">▾</span></button></div>
           
           <div class="chain"><b>6 identical events</b><span style="color:var(--dim)">·</span><span>Aug 24 12:43:11 → Aug 24 12:46:36</span></div>
-          <div class="note t-mono prev prev-args">page_id=page_7c02</div>
+          <div class="note t-mono prev prev-keep">page_id=page_7c02</div>
           <div class="runlist">
     <button class="m" data-act="openidx" data-idx="1386"><span class="mt">Aug 24 12:46:36</span><span class="md">761 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1385"><span class="mt">Aug 24 12:45:55</span><span class="md">588 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1384"><span class="mt">Aug 24 12:45:14</span><span class="md">705 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1383"><span class="mt">Aug 24 12:44:33</span><span class="md">933 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1382"><span class="mt">Aug 24 12:43:52</span><span class="md">640 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1381"><span class="mt">Aug 24 12:43:11</span><span class="md">812 ms</span><span class="chip ok">ok</span></button>
     <div class="mfoot">
@@ -854,7 +856,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">topic=ai policy limit=10</div>
+          <div class="note t-mono prev prev-keep">topic=ai policy limit=10</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1362">
         <td class="c-when t-dim t-mono">Aug 24 07:47:02</td><td class="c-who t-mono">agent:claude</td>
@@ -862,7 +864,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">topic=energy limit=20</div>
+          <div class="note t-mono prev prev-keep">topic=energy limit=20</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1360">
         <td class="c-when t-dim t-mono">Aug 24 07:25:59</td><td class="c-who t-mono">agent:claude</td>
@@ -870,7 +872,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">topic=ai policy limit=10</div>
+          <div class="note t-mono prev prev-keep">topic=ai policy limit=10</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1359">
         <td class="c-when t-dim t-mono">Aug 24 07:25:47</td><td class="c-who t-mono">agent:claude</td>
@@ -878,7 +880,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">topic=semiconductors limit=20</div>
+          <div class="note t-mono prev prev-keep">topic=semiconductors limit=20</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1358">
         <td class="c-when t-dim t-mono">Aug 24 07:24:27</td><td class="c-who t-mono">agent:claude</td>
@@ -894,7 +896,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">topic=climate limit=5</div>
+          <div class="note t-mono prev prev-keep">topic=climate limit=5</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1356">
         <td class="c-when t-dim t-mono">Aug 24 07:22:18</td><td class="c-who t-mono">agent:claude</td>
@@ -978,7 +980,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">topic=semiconductors limit=5</div>
+          <div class="note t-mono prev prev-keep">topic=semiconductors limit=5</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1399">
         <td class="c-when t-dim t-mono">Aug 24 14:31:48</td><td class="c-who t-mono">agent:claude</td>
@@ -986,7 +988,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">title=Weekly report parent=Reports credentials={"token":"‹redacted›"}</div>
+          <div class="note t-mono prev prev-keep">title=Weekly report parent=Reports credentials={"token":"‹redacted›"}</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1398">
         <td class="c-when t-dim t-mono">Aug 24 14:30:12</td><td class="c-who t-mono">user:ahrzb</td>
@@ -1050,7 +1052,7 @@
           </div>
           
           
-          
+          <div class="note t-mono prev prev-keep">no grant reaches it</div>
           </td>
         <td class="c-out"><span class="chip bad">denied</span></td></tr><tr class="ev" data-act="openidx" data-idx="1386">
         <td class="c-when t-dim t-mono">Aug 24 12:46:36</td><td class="c-who t-mono">agent:claude</td>
@@ -1058,7 +1060,7 @@
           <button class="chip runbadge on" data-act="run" data-idx="1386" aria-expanded="true">×6 runs <span class="caret">▾</span></button></div>
           
           <div class="chain"><b>6 identical events</b><span style="color:var(--dim)">·</span><span>Aug 24 12:43:11 → Aug 24 12:46:36</span></div>
-          <div class="note t-mono prev prev-args">page_id=page_7c02</div>
+          <div class="note t-mono prev prev-keep">page_id=page_7c02</div>
           <div class="runlist">
     <button class="m" data-act="openidx" data-idx="1386"><span class="mt">Aug 24 12:46:36</span><span class="md">761 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1385"><span class="mt">Aug 24 12:45:55</span><span class="md">588 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1384"><span class="mt">Aug 24 12:45:14</span><span class="md">705 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1383"><span class="mt">Aug 24 12:44:33</span><span class="md">933 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1382"><span class="mt">Aug 24 12:43:52</span><span class="md">640 ms</span><span class="chip ok">ok</span></button><button class="m" data-act="openidx" data-idx="1381"><span class="mt">Aug 24 12:43:11</span><span class="md">812 ms</span><span class="chip ok">ok</span></button>
     <div class="mfoot">
@@ -1103,7 +1105,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">q=elections since=24h</div>
+          <div class="note t-mono prev prev-keep">q=elections since=24h</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1375">
         <td class="c-when t-dim t-mono">Aug 24 11:00:07</td><td class="c-who t-mono">agent:cron</td>
@@ -1111,7 +1113,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">q=space since=24h</div>
+          <div class="note t-mono prev prev-keep">q=space since=24h</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr><tr class="ev" data-act="openidx" data-idx="1374">
         <td class="c-when t-dim t-mono">Aug 24 10:30:07</td><td class="c-who t-mono">agent:cron</td>
@@ -1119,7 +1121,7 @@
           </div>
           
           
-          <div class="note t-mono prev prev-args">q=elections since=24h</div>
+          <div class="note t-mono prev prev-keep">q=elections since=24h</div>
           </td>
         <td class="c-out"><span class="chip ok">ok</span></td></tr>
     </tbody></table>
@@ -1144,10 +1146,10 @@
         <button class="btn" data-act="copy" data-idx="1242">Copy as JSON</button></div>
     </div></aside></div></div>
   </div>
-<div class="panel" style="padding:0 24px 24px"><div class="eyebrow">Board notes</div><div class="notes"><div class="note">&bull; <b>One column, and the window set without a drag.</b> Touch has no hover and no precise drag, so the brush is not drawn at narrow: the <b>1h &middot; 24h &middot; 7d</b> presets and <b>tapping a day</b> on the axis set the window, and the tapped day is marked. The lanes stay &mdash; each name sits <b>above</b> its cells, and the cells lose their 1 px gaps so an hour is still a readable band at this width.</div><div class="note">&bull; <b>The rail becomes Filters &middot; N</b>, a full-screen level headed <span class="mono">&lsquo; Audit</span> with the same groups at 44 px rows, the same exhaustive counts and <b>Show all N</b>, and a sticky <b>Show N events</b> at the foot. The level names itself, so the rail&rsquo;s own &ldquo;Filter&rdquo; title is dropped there &mdash; a listing header never repeats what the level header shows.</div><div class="note">&bull; <b>The record is a level, not a drawer</b>, headed <span class="mono">&lsquo; Audit</span>; Close belongs to the pointer rendering. Every id in the field table keeps its 44 px target, which is why the table reads as a list of rows here rather than the two tight columns the drawer draws.</div><div class="note">&bull; <b>An event card keeps its arguments.</b> Time &middot; principal &middot; outcome chip, then the mono title with the chain line and &times;N, then &mdash; <b>only when the row has one</b> &mdash; the <span class="mono">argsHead</span> preview as ONE clipped line (mono, muted, ellipsis, never wrapping); a row with no arguments stays two lines. The phone cannot drop it: the run signature splits on <span class="mono">argsHead</span>, so five <span class="mono">news/search_news</span> calls with five queries are five cards, and without the line they would read as the same card five times <i>(owner ruling, 2026-09-21)</i>. 768&ndash;1023 keeps the desktop layout with the rail above the main pane as a wrapping row of groups.</div><div class="note">&bull; <b>Same shell as the other phone boards</b> (<span class="mono">MobileAppDetail</span>, <span class="mono">MobileAgentDetail</span>): the brand and a hamburger whose sidebar carries the five nav entries, the Approvals count and Sign out.</div></div></div>
+<div class="panel" style="padding:0 24px 24px"><div class="eyebrow">Board notes</div><div class="notes"><div class="note">&bull; <b>One column, and the window set without a drag.</b> Touch has no hover and no precise drag, so the brush is not drawn at narrow: the <b>1h &middot; 24h &middot; 7d</b> presets and <b>tapping a day</b> on the axis set the window, and the tapped day is marked. The lanes stay &mdash; each name sits <b>above</b> its cells, and the cells lose their 1 px gaps so an hour is still a readable band at this width.</div><div class="note">&bull; <b>The rail becomes Filters &middot; N</b>, a full-screen level headed <span class="mono">&lsquo; Audit</span> with the same groups at 44 px rows, the same exhaustive counts and <b>Show all N</b>, and a sticky <b>Show N events</b> at the foot. The level names itself, so the rail&rsquo;s own &ldquo;Filter&rdquo; title is dropped there &mdash; a listing header never repeats what the level header shows.</div><div class="note">&bull; <b>The record is a level, not a drawer</b>, headed <span class="mono">&lsquo; Audit</span>; Close belongs to the pointer rendering. Every id in the field table keeps its 44 px target, which is why the table reads as a list of rows here rather than the two tight columns the drawer draws.</div><div class="note">&bull; <b>An event card keeps the line that is its own evidence.</b> Time &middot; principal &middot; outcome chip, then the mono title with the chain line and &times;N, then &mdash; <b>only when the row has one</b> &mdash; ONE clipped line (mono, muted, ellipsis, never wrapping): the <span class="mono">argsHead</span> preview, or a refusal's recorded cause in its short words. Everything else (the first <span class="mono">detail</span> pairs) stays off and the card is two lines. The phone cannot drop those two: the run signature splits on <i>both</i>, so five <span class="mono">news/search_news</span> calls with five queries are five cards and two refusals with different causes are two cards &mdash; without the line each would read as the same card twice <i>(owner ruling, 2026-09-21, read across to the cause)</i>. 768&ndash;1023 keeps the desktop layout with the rail above the main pane as a wrapping row of groups.</div><div class="note">&bull; <b>Same shell as the other phone boards</b> (<span class="mono">MobileAppDetail</span>, <span class="mono">MobileAgentDetail</span>): the brand and a hamburger whose sidebar carries the five nav entries, the Approvals count and Sign out.</div></div></div>
   </div>
 </x-dc>
-<script data-dc-script data-props='{"$preview":{"width":2174,"height":3060}}'>
+<script data-dc-script data-props='{"$preview":{"width":2174,"height":3080}}'>
 class Component extends DCLogic {
   renderVals() { return {}; }
 }

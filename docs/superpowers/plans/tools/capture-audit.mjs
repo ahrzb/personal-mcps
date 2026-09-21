@@ -212,12 +212,26 @@ const F = {};
   await p.evaluate(() => {
     S.filters = []; S.q = ""; S.from = WEEK_START; S.to = NOW; S.view = "sessions"; S.open = null;
     S.sessionsShown = 5;
+    // The waterfall is worth drawing on the session that shows the most kinds of line,
+    // and it must hold a refusal so the right-hand cause words are on a board.
+    const withRefusal = new Set(LOADED.filter((e) => e.outcome === "-32001").map((e) => e.client?.sessionId).filter(Boolean));
+    const byVariety = new Map();
+    for (const e of LOADED) {
+      const id = e.client?.sessionId; if (!id) continue;
+      (byVariety.get(id) ?? byVariety.set(id, new Set()).get(id)).add(OUT[e.outcome]);
+    }
+    const pick = [...byVariety].filter(([id]) => withRefusal.has(id)).sort((a, b) => b[1].size - a[1].size)[0][0];
+    S.sessOpen = pick;
+    // Brushed to the day that session ran, so it is near the top of the list rather than
+    // sixty rows down — the strip's brush is part of what this panel draws anyway.
+    const ss = LOADED.filter((e) => e.client?.sessionId === pick);
+    const day = Math.floor(Math.max(...ss.map((e) => e.ms)) / 864e5) * 864e5;
+    S.from = day; S.to = day + 864e5;
     render();
-    const best = [...document.querySelectorAll(".sess")]
-      .map((el) => ({ el, n: el.querySelectorAll(".counts .chip").length }))
-      .sort((a, b) => b.n - a.n)[0];
-    S.sessOpen = best.el.querySelector(".shead").dataset.id;
-    render();
+    // The window stays whole, so the foot still shows the paging; the count grows just
+    // far enough to reach the session being opened.
+    for (let i = 0; i < 20 && !document.querySelector(".wf"); i++) { S.sessionsShown += 5; render(); }
+    if (!document.querySelector(".wf")) throw new Error("the picked session never rendered");
   });
   F.sessions = await p.evaluate(() => window.__page());
   await ctx.close();
@@ -247,9 +261,14 @@ const F = {};
     // sentence; -32003 and -32000 get panels of their own below.
     F["rec_" + why] = await drawer(new Function("", `
       const e = EV.find((x) => x.noBodies === ${JSON.stringify(why)} && x.event === "tools/call"
-        && (${JSON.stringify(why)} !== "refused" || x.outcome === "-32001"));
+        && (${JSON.stringify(why)} !== "refused" || (x.outcome === "-32001" && x.detail?.reason === "no_grant")));
       S.open = e.idx; S.drawerQ = ""; S.treeOpen = {}; renderDrawer();`));
   }
+  // The same refusal before the hub recorded causes: the pre-ship sentence.
+  F.recNoReason = await drawer(() => {
+    const e = EV.find((x) => x.outcome === "-32001" && !x.detail?.reason);
+    S.open = e.idx; S.drawerQ = ""; S.treeOpen = {}; renderDrawer();
+  });
   F.recApproval = await drawer(() => {
     const e = EV.find((x) => x.outcome === "-32003");
     S.open = e.idx; S.drawerQ = ""; S.treeOpen = {}; renderDrawer();
@@ -396,7 +415,8 @@ ${panel("RECORD &mdash; a chain, with its timeline", "every row sharing one deta
 ${panel("RECORD &mdash; search within the record", "Search this record… highlights every match in the trees", F.recSearch)}
 ${panel("RECORD &mdash; a config change", "an admin.* row: no bodies to have, so no sentence either", F.recAdmin)}
 ${panel("RECORD &mdash; no bodies: body logging is off", "&sect;13&rsquo;s first sentence, verbatim", F.rec_off)}
-${panel("RECORD &mdash; no bodies: refused", "&sect;13&rsquo;s second sentence &mdash; a refusal never had bodies, whatever log_bodies says &mdash; over &minus;32001&rsquo;s own", F.rec_refused)}
+${panel("RECORD &mdash; refused, WITH its cause", "&minus;32001 carrying detail.reason = no_grant: the sentence says why, and says the caller was told none of it", F.rec_refused)}
+${panel("RECORD &mdash; refused, with NO cause recorded", "the same refusal from before this shipped: the pre-ship sentence, ending &ldquo;rows recorded before 2026-09-21 do not say which&rdquo;", F.recNoReason)}
 ${panel("RECORD &mdash; the call that needed approval", "&minus;32003: the call was held, not run; its approvalId ties it to the rest of the chain", F.recApproval)}
 ${panel("RECORD &mdash; the app was unavailable", "&minus;32000, with the sentence ending in Cause: &lt;failureClass&gt; &mdash; the one thing &sect;7 lets the ledger keep about a dispatch failure", F.recUnavailable)}
 ${panel("RECORD &mdash; no bodies: unrecorded", "&sect;13&rsquo;s third sentence", F.rec_unrecorded)}
@@ -416,7 +436,9 @@ ${notes([
   `<b>The chain timeline is the ledger&rsquo;s own join.</b> ${mono("detail.approvalId")} now rides the four ${mono("approval.*")} rows, the ${mono("tools/call")} refused &minus;32003, and the ${mono("tools/call")} dispatched after the claim (brief &sect;1) &mdash; which is the whole of what makes &ldquo;asked &rarr; you approved &rarr; ran&rdquo; drawable. It reads in WRITE order, ts then id: ${mono("approvals.check")} records the request before the gateway records the refusal it threw, so the request always takes the lower id.`,
   `<b>Bodies arrive on their own.</b> The window read is slim (no ${mono("args_json")} / ${mono("result_json")} &mdash; projected away in SQL, never parsed to be thrown away); the drawer fetches ${mono("GET /api/hub/audit/:id")} when it opens, so a record id outside the loaded rows still opens.`,
   `<b>A code never stands alone</b> (owner, 2026-09-21: &ldquo;I literally won&rsquo;t know what &minus;32001 is, it&rsquo;s not like 404&rdquo;). Every outcome has a <b>label</b> in the hub&rsquo;s own &sect;7 words, and the four refusals and ${mono("error")} have a <b>sentence</b> &mdash; both live once, in ${mono("derive.ts")}. The record&rsquo;s outcome row reads chip &middot; label &middot; dim raw code (<b>denied</b> &middot; not permitted &middot; ${mono("-32001")}) with the sentence beneath; the legend drops the codes for words; a waterfall line reads the label plus its ${mono("failureClass")}, never ${mono("class &middot; code")}. Row chips and the facet rail keep the short class names. <b>The raw code is printed in exactly one place, the record</b> &mdash; because that is the value ${mono("pmcp audit --outcome")} and the export take.`,
-  `<b>No reason is invented.</b> A &minus;32001 carries no ${mono("detail")} at all &mdash; &sect;7 keeps its three sources indistinguishable &mdash; so the record shows the class, the raw code, and nothing it does not have. A &minus;32000 carries ${mono("detail.failureClass")} (plus ${mono("upstreamStatus")} where an upstream answered one), which is what lets an owner tell a down upstream from a timed-out tunnel.`,
+  `<b>A &minus;32001 now says WHY</b> <i>(owner, 2026-09-21: &ldquo;having a &lsquo;why&rsquo; there would make things easier to understand/debug&rdquo;)</i>. <b>The wire does not change</b>: every cause still answers ${mono("{ -32001, \"tool not permitted\" }")} with no ${mono("data")}, so a probing agent cannot map grants, enumerate a namespace or learn that an app is real. <b>The ledger may know because only the owner reads it</b> &mdash; an ${mono("agent")} principal reaches no audit read at all, and the one machine credential that does is the owner's own admin token. ${mono("detail.reason")} is a closed vocabulary of nine classes, never free text and never a name the caller typed beyond what the row already records.`,
+  `<b>Where the cause shows.</b> The record prints the reason's sentence and then says the caller was told none of it; an Events row's third line prints its <b>short words</b> (&ldquo;no grant reaches it&rdquo;) rather than ${mono("reason=no_grant")}; a run's signature counts the recorded cause as its sixth field, so two refusals with different causes are two rows; Summary&rsquo;s <b>Refusals</b> group by (principal, target, cause) and end in the short words. A row recorded before this shipped keeps the old sentence, and a token the page does not know prints as itself. No new facet and no new URL key: the search already reaches ${mono("detail")}, so typing ${mono("no_grant")} finds them.`,
+  `<b>Nothing is invented.</b> A row that recorded no cause shows none &mdash; the page never guesses one from the app and tool it can see. A &minus;32000 carries ${mono("detail.failureClass")} (plus ${mono("upstreamStatus")} where an upstream answered one), which is what lets an owner tell a down upstream from a timed-out tunnel, and a &minus;32001 carries ${mono("detail.reason")} the same way, on the same road (${mono("HubError.auditDetail")}).`,
 ])}
 </div>`;
 
@@ -433,7 +455,7 @@ ${notes([
   `<b>One column, and the window set without a drag.</b> Touch has no hover and no precise drag, so the brush is not drawn at narrow: the <b>1h &middot; 24h &middot; 7d</b> presets and <b>tapping a day</b> on the axis set the window, and the tapped day is marked. The lanes stay &mdash; each name sits <b>above</b> its cells, and the cells lose their 1 px gaps so an hour is still a readable band at this width.`,
   `<b>The rail becomes Filters &middot; N</b>, a full-screen level headed ${mono("&lsquo; Audit")} with the same groups at 44 px rows, the same exhaustive counts and <b>Show all N</b>, and a sticky <b>Show N events</b> at the foot. The level names itself, so the rail&rsquo;s own &ldquo;Filter&rdquo; title is dropped there &mdash; a listing header never repeats what the level header shows.`,
   `<b>The record is a level, not a drawer</b>, headed ${mono("&lsquo; Audit")}; Close belongs to the pointer rendering. Every id in the field table keeps its 44 px target, which is why the table reads as a list of rows here rather than the two tight columns the drawer draws.`,
-  `<b>An event card keeps its arguments.</b> Time &middot; principal &middot; outcome chip, then the mono title with the chain line and &times;N, then &mdash; <b>only when the row has one</b> &mdash; the ${mono("argsHead")} preview as ONE clipped line (mono, muted, ellipsis, never wrapping); a row with no arguments stays two lines. The phone cannot drop it: the run signature splits on ${mono("argsHead")}, so five ${mono("news/search_news")} calls with five queries are five cards, and without the line they would read as the same card five times <i>(owner ruling, 2026-09-21)</i>. 768&ndash;1023 keeps the desktop layout with the rail above the main pane as a wrapping row of groups.`,
+  `<b>An event card keeps the line that is its own evidence.</b> Time &middot; principal &middot; outcome chip, then the mono title with the chain line and &times;N, then &mdash; <b>only when the row has one</b> &mdash; ONE clipped line (mono, muted, ellipsis, never wrapping): the ${mono("argsHead")} preview, or a refusal's recorded cause in its short words. Everything else (the first ${mono("detail")} pairs) stays off and the card is two lines. The phone cannot drop those two: the run signature splits on <i>both</i>, so five ${mono("news/search_news")} calls with five queries are five cards and two refusals with different causes are two cards &mdash; without the line each would read as the same card twice <i>(owner ruling, 2026-09-21, read across to the cause)</i>. 768&ndash;1023 keeps the desktop layout with the rail above the main pane as a wrapping row of groups.`,
   `<b>Same shell as the other phone boards</b> (${mono("MobileAppDetail")}, ${mono("MobileAgentDetail")}): the brand and a hamburger whose sidebar carries the five nav entries, the Approvals count and Sign out.`,
 ])}
   </div>`;

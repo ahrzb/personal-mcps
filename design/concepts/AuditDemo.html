@@ -268,7 +268,9 @@ body .fchip button{width:var(--control-h-touch);height:var(--control-h-touch)}
 body .filters>.btn{height:var(--control-h-touch)}
 body .grid3{grid-template-columns:minmax(0,1fr)}
 body .grid2{grid-template-columns:minmax(0,1fr)}
-body .topn button{height:var(--control-h-touch)}
+/* A refusal names its cause on a line of its own here: at 390 the pair and the short words never share one. */
+body .topn button{height:auto;min-height:var(--control-h-touch);flex-wrap:wrap;padding:5px}
+body .topn .cause{flex:1 1 100%}
 body .look li{line-height:1.9}
 /* A <table> sizes to its content, so one nowrap preview line would widen the whole card past the phone — the cards are blocks here, not a table. */
 body .etab{display:block;width:100%;table-layout:fixed}
@@ -280,9 +282,9 @@ body .etab td.c-when{order:1}
 body .etab td.c-who{order:2}
 body .etab td.c-out{order:3;margin-left:auto}
 body .etab td.c-what{order:4;flex:0 0 100%;min-width:0;max-width:100%}
-/* The card keeps the ARGUMENTS preview as one clipped line (the signature splits on argsHead); a row with no arguments stays two lines. */
+/* The card keeps the line that is the row's OWN evidence — its arguments, or its recorded refusal cause, both fields the run signature splits on; anything else stays off and the card is two lines. */
 body .etab td.c-what .prev{display:none}
-body .etab td.c-what .prev-args{display:block}
+body .etab td.c-what .prev-keep{display:block}
 body .runlist .m{min-height:var(--control-h-touch);gap:10px}
 body .runlist .mt{width:auto;flex:1 1 auto}
 body .runlist .md{width:auto;margin-left:auto}
@@ -407,15 +409,55 @@ const OUTCOME_WORDS = {
   ok: ['ok', ''],
   '-32003': ['approval required', 'This tool needs your approval for this agent. The call was held, not run — it waits on, or was settled in, Approvals.'],
   '-32002': ['app archived', 'The app is archived, so the hub dispatches nothing to it.'],
-  '-32001': ['not permitted', "The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, so the ledger cannot say which."],
+  '-32001': ['not permitted', "The hub refused this call: the agent holds no grant that reaches this tool, or it named an app or tool the hub doesn't know. The hub answers every such case the same way, and rows recorded before 2026-09-21 do not say which."],
   '-32000': ['app unavailable', 'The app could not be reached or did not answer in time.'],
   error: ['error', 'The call was dispatched and the app answered with an error.'],
 };
 const label = o => OUTCOME_WORDS[o]?.[0] ?? o;
+
+/* Why a call was "not permitted" (brief 2026-09-21-refusal-reasons §2). The WIRE does not
+   change — every cause answers `{-32001, "tool not permitted"}` with no data — but the
+   ledger may know, because only the owner ever reads it. A closed vocabulary, never free
+   text: short words for a list row, a sentence for the record. */
+const REFUSAL_REASONS = {
+  no_app: ['no such app', 'The name leads to no app this caller can see — a typo, a deleted app, or a prefix that matches nothing.'],
+  app_changed: ['app changed mid-program', 'The name now points at a different app than when the program that made this call started.'],
+  no_grant: ['no grant reaches it', 'The app exists, but no grant this caller holds reaches this tool.'],
+  not_in_catalog: ["not in the app's catalog", "The app's catalog has nothing by this name — a wrong name, or an app that has not re-registered since it gained it."],
+  unsound_schema: ["schema can't be masked", 'The tool’s schema cannot be masked safely, so the hub will not run it; the violation was reported to the app when it registered.'],
+  credential_lapsed: ['credential lapsed mid-program', 'The credential was revoked, expired or rebound while the program that made this call was still running.'],
+  op_withheld: ['op withheld from this credential', 'This kind of credential may not run this admin op.'],
+  not_decidable: ['nothing to decide', 'There is no pending approval request here for this credential to decide.'],
+  wrong_endpoint: ['wrong endpoint for this credential', 'This credential is not admitted at this endpoint.'],
+};
+/** The short words a list row prints; an unknown token prints as itself. */
+const shortWords = token => REFUSAL_REASONS[token]?.[0] ?? token;
+/** What a run's sixth signature field is: two refusals with different causes are two facts. */
+const causeOf = e => e.detail?.failureClass ?? e.detail?.reason;
+/** The recorded cause IN WORDS, wherever a list prints one: a -32001's short words, or a
+ *  -32000's failureClass humanized — with the upstream's status NUMBER folded in, since
+ *  "upstream status" without it says less than the row knows. One list never mixes words
+ *  with raw pairs. */
+const causeWords = e => {
+  if (e.detail?.reason) return shortWords(e.detail.reason);
+  const fc = e.detail?.failureClass;
+  if (!fc) return '';
+  const words = String(fc).replace(/_/g, ' ');
+  return statusFolded(e) ? `${words} ${e.detail.upstreamStatus}` : words;
+};
+/** Whether `upstreamStatus` is already inside the cause words, so a list must not print
+ *  the pair a second time. The record's Detail tree still shows both fields. */
+const statusFolded = e => e.detail?.failureClass === 'upstream_status' && typeof e.detail?.upstreamStatus === 'number';
 /** The sentence the record prints under the outcome row, with the cause when one rode
  *  along on the -32000 (errors.ts's `failureClass`). */
 const sentenceFor = e => {
   const s = OUTCOME_WORDS[e.outcome]?.[1] ?? '';
+  // A -32001 that recorded its cause says it; one that did not keeps the pre-ship
+  // sentence; a token the page does not know prints as itself rather than as nothing.
+  if (e.outcome === '-32001' && e.detail?.reason) {
+    const known = REFUSAL_REASONS[e.detail.reason]?.[1] ?? `Recorded cause: ${e.detail.reason}.`;
+    return `The hub refused this call. ${known} The caller was told only "not permitted" — every cause gets the same answer.`;
+  }
   return s && e.detail?.failureClass ? `${s} Cause: ${e.detail.failureClass}.` : s;
 };
 const CODES = { ok: ['ok'], approval: ['-32003'], archived: ['-32002'], denied: ['-32001', '-32000'], error: ['error'] };
@@ -466,8 +508,21 @@ const kv = o => Object.entries(o).map(([k, v]) => `${k}=${typeof v === 'object' 
 /** `argsHead`: the recorded arguments as one line, or the stub that replaced them. Absent
  *  arguments read as '' — which is why refusals still collapse into runs. */
 const argsPreview = e => e.args === undefined ? '' : isStub(e.args) ? stubLabel(e.args) : kv(e.args).join(' ');
-/** The row's third line: the arguments preview, else the first three `detail` pairs. */
-const previewOf = e => argsPreview(e) || (e.detail ? kv(e.detail).slice(0, 3).join(' ') : '');
+/** Whether the phone keeps the third line: it does when the line is the row's OWN evidence
+ *  — its arguments, or its recorded cause. Both are fields the run signature splits on, so
+ *  without the line two rows the page deliberately kept apart read as one card twice. A
+ *  line that is only the first `detail` pairs stays off at narrow. */
+const keepPreview = e => Boolean(argsPreview(e) || causeWords(e));
+/** The row's third line: the arguments preview, else the first three `detail` pairs — with
+ *  the recorded cause in WORDS rather than as `reason=no_grant` / `failureClass=unreachable`. */
+const previewOf = e => {
+  const args = argsPreview(e);
+  if (args || !e.detail) return args;
+  return Object.entries(e.detail)
+    .filter(([k]) => !(k === 'upstreamStatus' && statusFolded(e)))
+    .map(([k, v]) => (k === 'reason' || k === 'failureClass' ? causeWords(e) : `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`))
+    .slice(0, 3).join(' ');
+};
 const val = (e, f) => f === 'outcome' ? OUT[e.outcome] : f === 'tool' ? (e.tool ? `${e.app}/${e.tool}` : null) : (e[f] ?? null);
 const $ = s => document.querySelector(s);
 
@@ -534,7 +589,7 @@ function merge(list) {
   /* Collapse consecutive rows with the same signature — a run is the SAME call repeated,
      so the arguments preview is part of it: five searches with five different queries are
      five rows, and the cron agent's refusals (which carry no args) still collapse. */
-  const sig = r => [r.head.event, r.head.app, r.head.tool, r.head.principal, r.head.outcome, r.head.detail?.failureClass, argsPreview(r.head)].join('|');
+  const sig = r => [r.head.event, r.head.app, r.head.tool, r.head.principal, r.head.outcome, causeOf(r.head), argsPreview(r.head)].join('|');
   const out = [];
   for (const r of rows) {
     const last = out[out.length - 1];
@@ -559,11 +614,12 @@ function insights(list) {
   const out = [];
   const refused = list.filter(e => ['denied', 'approval', 'archived'].includes(OUT[e.outcome]));
   const byPair = new Map();
-  for (const e of refused) { const k = `${e.principal}|${e.app}/${e.tool ?? e.event}|${OUT[e.outcome]}`; byPair.set(k, (byPair.get(k) ?? 0) + 1); }
+  for (const e of refused) { const k = `${e.principal}|${e.app}/${e.tool ?? e.event}|${OUT[e.outcome]}|${causeOf(e) ?? ''}`; byPair.set(k, (byPair.get(k) ?? 0) + 1); }
   const worst = [...byPair].sort((a, b) => b[1] - a[1])[0];
   if (worst && worst[1] > 5) {
-    const [principal, target, cls] = worst[0].split('|');
-    out.push({ text: `<b>${esc(principal)} was refused ${worst[1]} times</b> calling <span class="mono">${esc(target)}</span> — ${esc(cls)}.`, f: [['principal', principal], ['tool', target]] });
+    // The cause when the group recorded one; the outcome class alone when it did not.
+    const [principal, target, cls, cause] = worst[0].split('|');
+    out.push({ text: `<b>${esc(principal)} was refused ${worst[1]} times</b> calling <span class="mono">${esc(target)}</span> — ${esc(cause ? `${cls}, ${shortWords(cause)}` : cls)}.`, f: [['principal', principal], ['tool', target]] });
   }
   const firstSeen = new Map();
   for (const e of LOADED) if (e.tool) { const k = `${e.app}/${e.tool}`; if (!firstSeen.has(k)) firstSeen.set(k, e); }
@@ -722,10 +778,19 @@ function viewSummary(list) {
     </div>
     <div class="grid2">
       <div><p class="eyebrow">Refusals</p>${(() => {
+        // (principal, app/tool, cause): two refusals with different causes are two facts,
+        // and the line ends in the cause's short words.
         const c = new Map();
-        for (const e of refused) { const k = `${e.principal} → ${e.app}/${e.tool ?? e.event}`; c.set(k, (c.get(k) ?? 0) + 1); }
+        for (const e of refused) {
+          const cause = causeOf(e);
+          const k = `${e.principal} → ${e.app}/${e.tool ?? e.event}|${cause ?? ''}`;
+          c.set(k, (c.get(k) ?? 0) + 1);
+        }
         const rows = [...c].sort((a, b) => b[1] - a[1]).slice(0, 4); const max = rows[0]?.[1] ?? 1;
-        return `<div class="topn">${rows.map(([v, k]) => `<button data-act="facet" data-f="principal" data-v="${esc(v.split(' → ')[0])}" title="${esc(v)}"><span class="bar" style="width:${k / max * 100}%"></span><span class="nm">${esc(v)}</span><span class="n">${fN(k)}</span></button>`).join('') || '<p class="note">None.</p>'}</div>`;
+        return `<div class="topn">${rows.map(([v, k]) => {
+          const [pair, cause] = v.split('|');
+          return `<button data-act="facet" data-f="principal" data-v="${esc(pair.split(' → ')[0])}" title="${esc(pair)}${cause ? ` — ${esc(shortWords(cause))}` : ''}"><span class="bar" style="width:${k / max * 100}%"></span><span class="nm">${esc(pair)}</span>${cause ? `<span class="nm cause sub2">— ${esc(shortWords(cause))}</span>` : ''}<span class="n">${fN(k)}</span></button>`;
+        }).join('') || '<p class="note">None.</p>'}</div>`;
       })()}</div>
       <div><p class="eyebrow">Changes you made</p>${admin.map(e => `<button class="frow" data-act="openidx" data-idx="${e.idx}" style="height:auto;padding:3px 5px"><span class="nm" style="font-size:12px">${esc(e.event)}</span><span class="ct">${dt(e.ms)}</span></button>`).join('') || '<p class="note">None this window.</p>'}</div>
     </div>
@@ -782,9 +847,10 @@ function waterfall(s) {
   const line = e => {
     const o = OUT[e.outcome];
     const l = (e.ms - s.first) / span * 100, w = Math.max(1.5, (e.durationMs ?? 6e4) / span * 100);
-    // Words, never `class · code`: the label, and the cause after it when one exists.
-    const right = o === 'ok' ? dur(e.durationMs)
-      : esc(label(e.outcome)) + (e.detail?.failureClass ? ` · ${esc(e.detail.failureClass)}` : '');
+    // Words, never `class · code`: the label, and the recorded cause after it when there
+    // is one — a -32001's short words as much as a -32000's failure class.
+    const why = causeWords(e);
+    const right = o === 'ok' ? dur(e.durationMs) : esc(label(e.outcome)) + (why ? ` · ${esc(why)}` : '');
     return `<div class="r click${o !== 'ok' ? ' keep' : ''}" data-act="openidx" data-idx="${e.idx}">
       <span class="t">${hm(e.ms)}</span><span class="lbl">${titleHtml(e)}</span>
       <span class="track"><span class="bar ${o}" style="left:${Math.min(97, l)}%;width:${Math.min(w, 100 - l)}%"></span></span>
@@ -844,7 +910,7 @@ function viewEvents(list) {
           ${r.runs ? runBadge(r) : ''}${r.kind === 'chain' ? `<span class="chip">${r.group.length} events</span>` : ''}</div>
           ${chain.length ? `<div class="chain">${chain.map(c => `<b>${esc(c)}</b>`).join('<span style="color:var(--dim)">→</span>')}</div>` : ''}
           ${r.runs ? runLine(r) : ''}
-          ${prev ? `<div class="note t-mono prev${argsPreview(e) ? ' prev-args' : ''}">${esc(prev.slice(0, 110))}</div>` : ''}
+          ${prev ? `<div class="note t-mono prev${keepPreview(e) ? ' prev-keep' : ''}">${esc(prev.slice(0, 110))}</div>` : ''}
           ${r.runs && S.runOpen[e.idx] ? runList(r) : ''}</td>
         <td class="c-out"><span class="chip ${chipCls(state)}">${state}</span></td></tr>`;
     }).join('')}

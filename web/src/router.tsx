@@ -118,8 +118,8 @@ const appNewRoute = createRoute({
  *
  * This looked like a place to tidy — one URL per screen — and it is not. §2's narrow shell
  * has three levels, and the bare URL is the only one that produces LEVEL 1, the rail as a
- * list: `styles.css`'s `[data-level="1"] .rail` is the only rule that shows it below the
- * breakpoint, and every pane URL is level 2. Redirecting would delete the phone's top level
+ * list: `data-level="1"` is the only state that shows the rail below the breakpoint
+ * (`chrome/Panes`), and every pane URL is level 2. Redirecting would delete the phone's top level
  * outright. Above the breakpoint the two URLs are identical renders, which is what made the
  * mistake easy to miss and is exactly why it is written down here.
  *

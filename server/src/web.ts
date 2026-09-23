@@ -416,7 +416,7 @@ export function pageRoutes(): PageRouter {
   app.get(paths.serviceWorker, () => new Response(SERVICE_WORKER, { headers: JAVASCRIPT }));
 
   // The browser client, straight out of the ASSETS binding — `/app.css` is the shell's one
-  // stylesheet since pass 2's P0, the shared sheet layered inside it (web/src/legacy.css).
+  // stylesheet since pass 2's P0.
   // The raw request goes through unmodified, so the asset lookup is `web/dist/app.js` /
   // `web/dist/app.css` with no prefix to rewrite and no second spelling of either name;
   // wrangler's `run_worker_first` is what makes these two routes the only reachable path

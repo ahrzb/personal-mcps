@@ -36,7 +36,7 @@ export const THEME_SPACING = [
 export const THEME_TEXT = ["2xs", "badge-xs", "md", "title-narrow"] as const;
 
 /** `--shadow-<name>` beyond Tailwind's defaults. */
-export const THEME_SHADOW = ["menu", "pop", "record", "thumb"] as const;
+export const THEME_SHADOW = ["focus", "menu", "pop", "record", "thumb"] as const;
 
 /** `--container-<name>`: the named max widths. */
 export const THEME_CONTAINER = ["auth", "kv-key", "kv-key-dense", "page", "page-narrow", "pane", "rail"] as const;

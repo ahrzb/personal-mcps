@@ -46,9 +46,10 @@ const buttonVariants = cva(
       },
     },
     compoundVariants: [
-      // Each ring or shadow below is the one legacy.css draws. On focus it draws the global
-      // `:focus-visible` ring. `.btn--outline`'s own box-shadow outranks that ring, and so does
-      // `.btn--mini`'s `none`, so a focused outline or mini button looks as it does at rest.
+      // Each ring or shadow below is the one legacy.css drew. On focus it drew the global
+      // `:focus-visible` ring, but `.btn--outline`'s own box-shadow outranked that ring, and so
+      // did `.btn--mini`'s `none`, so a focused outline or mini button looks as it does at rest.
+      // Their `shadow-xs` and `shadow-none` outrank the base ring the same way.
       { variant: "outline", size: ["default", "sm", "cell"], class: "shadow-xs" },
       {
         variant: ["default", "ghost", "danger", "danger-outline", "danger-ghost"],

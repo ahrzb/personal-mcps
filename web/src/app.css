@@ -1,38 +1,28 @@
 /* app.css — the SPA's one stylesheet: every rule a page reads arrives through this file.
 
    It is also where every design TOKEN is written down: the `@theme` below holds each value
-   today's look uses, under the names Tailwind's utilities read, so a generated component
-   that says `rounded-md text-sm border-border` draws today's 8px, 13px and #e4e4e7 by
+   the look uses, under the names Tailwind's utilities read, so a generated component that
+   says `rounded-md text-sm border-border` draws the design's 8px, 13px and #e4e4e7 by
    construction (pass 2's P1a).
 
-   The page chrome is still `legacy.css`, the sheet pass 1 shipped (the server once served it
-   at /styles.css): every page-chrome class, every table and rail. It is imported into
-   `layer(legacy)`, BENEATH `utilities`, so a Tailwind utility on an element beats the legacy
-   class rule it replaces by construction, and pass 2 converts a page by adding utilities and
-   never by writing a counter-rule. What stays unlayered here — the drawer's open state,
-   /audit's own sheet — outranks both. */
+   A page is drawn by utilities on its markup, through `components/ui/*` and `chrome/*`.
+   What stays a stylesheet rule is what no markup can carry a class for: the element defaults
+   (`base`, below) and the Markdown an app writes (`.md`). Pass 2 deleted the sheet pass 1
+   shipped, `legacy.css`, in P5, once no class of it was left in the markup
+   (`scripts/legacy-class-grep.mts` is the proof, and re-runs it).
 
-/* Tailwind's three sheets are imported one by one, instead of as the `tailwindcss` bundle
-   the shadcn CLI writes, so each lands in its own layer. PREFLIGHT is `base`, the lowest,
-   with the restorations after it (pass 2's P4).
-
-   `theme` sits ABOVE `legacy`, which is what makes the `@theme` below the one place a
-   token's value lives: legacy.css's own `:root` still declares every token, and in the
-   layer beneath it every one of those declarations loses. It is dead until P5 deletes the
-   file with it. The theme layer holds nothing but custom properties on `:root`, so
-   the move reorders nothing else. */
-@layer base, legacy, theme, utilities;
+   Tailwind's three sheets are imported one by one, instead of as the `tailwindcss` bundle the
+   shadcn CLI writes, so each lands in its own layer: PREFLIGHT in `base`, the lowest, with the
+   restorations after it (pass 2's P4). The theme layer holds nothing but custom properties on
+   `:root`, so where it sits reorders nothing. */
+@layer base, theme, utilities;
 
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/preflight.css" layer(base);
 
-/* What preflight strips that today's look still draws. Each rule names the hazard it
-   answers in §4 of docs/superpowers/plans/2026-09-23-shadcn-inventory.md. They come after
-   preflight in the same layer, so they win on order, and every utility still beats them.
-
-   Until P5 deletes legacy.css, its own element rules (body, a, h1–h3, :focus-visible,
-   ::placeholder) sit one layer up and mask the copies here. Those copies are written
-   against the theme's names, so they hold once that file is gone. */
+/* What preflight strips that the look still draws. Each rule names the hazard it answers in
+   §4 of docs/superpowers/plans/2026-09-23-shadcn-inventory.md. They come after preflight in
+   the same layer, so they win on order, and every utility still beats them. */
 @layer base {
   /* The colour a `border` utility that names none draws (shadcn's base sets the same).
      Preflight's `border: 0 solid` leaves it currentColor, a near-black line. It also
@@ -78,7 +68,7 @@
   :focus-visible {
     outline: none;
     border-color: var(--color-ring);
-    box-shadow: var(--focus-ring);
+    box-shadow: var(--shadow-focus);
   }
 
   /* #9. Preflight's placeholder is the text colour at 50%. */
@@ -114,17 +104,74 @@
     opacity: revert-layer;
   }
 
-  /* #2. A native checkbox or radio keeps the browser's margin. That covers an app's
-     task-list box and the gallery's legacy `.cb` and `.sw` inputs. */
-  input:is([type="checkbox"], [type="radio"]) {
-    margin: revert-layer;
+  /* App prose (`.md`): the Markdown an app writes (`server/src/pages/markdown.ts`), rendered
+     server-side and handed to `dangerouslySetInnerHTML` by the few containers that wear
+     `.md`: the catalog pane's rows and notes, the agent page's row details and its details
+     note. Its renderer strips every id, class and style attribute, so only descendant
+     selectors reach it, and these rules are the whole of the styling app prose can earn.
+     The containers that are ONE line high (a listing row, a summary line) are fed
+     inline-only markup, so the block rules never fire there.
+
+     The spacing and code rules are legacy.css's, moved here in P5. The rest restores what the
+     browser drew before preflight, at the browser's own values, so the flip moved nothing but
+     the rule (#3). */
+
+  /* A paragraph that can run long is capped at 72ch even where its container is fluid (a
+     workspace pane is as wide as the screen), because a description is still read. */
+  .md {
+    max-width: 72ch;
   }
 
-  /* App prose (`.md`): the Markdown an app writes, rendered server-side and handed to
-     `dangerouslySetInnerHTML`. Its renderer strips every class, so only descendant
-     selectors reach it. legacy.css's `.md` rules set margins and code. What the browser
-     drew before preflight is restored here at the browser's own values, so the flip moves
-     nothing but the rule (#3). */
+  .md > :first-child {
+    margin-top: 0;
+  }
+
+  .md > :last-child {
+    margin-bottom: 0;
+  }
+
+  .md p {
+    margin: 0 0 --spacing(2);
+  }
+
+  .md ul,
+  .md ol {
+    margin: 0 0 --spacing(2);
+    padding-left: --spacing(5);
+  }
+
+  .md li {
+    margin: --spacing(0.5) 0;
+  }
+
+  /* The tone is the container's own: app prose inside a muted row must not out-shout it.
+     After `a:hover` above, which it also beats. */
+  .md a {
+    color: inherit;
+  }
+
+  .md code {
+    background: var(--color-muted);
+    border-radius: var(--radius-sm);
+    padding: 1px --spacing(1);
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+  }
+
+  .md pre {
+    margin: 0 0 --spacing(2);
+    padding: --spacing(2.5) --spacing(3);
+    background: var(--color-sunken);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+  }
+
+  .md pre code {
+    padding: 0;
+    background: none;
+    font-size: var(--text-sm);
+  }
 
   /* #1. The bullets and numbers, with the browser's circle and square for nested lists. */
   .md ul {
@@ -143,8 +190,7 @@
     list-style-type: square;
   }
 
-  /* #2. A quote's indent and a GFM table's spaced cells. A task's checkbox takes its margin
-     from the checkbox rule above. */
+  /* #2. A quote's indent, a GFM table's spaced cells, and a task-list checkbox's margin. */
   .md blockquote {
     margin: 1em 40px;
   }
@@ -159,6 +205,10 @@
     padding: 1px;
   }
 
+  .md input[type="checkbox"] {
+    margin: revert-layer;
+  }
+
   /* #3. A thematic break keeps the browser's spacing. Its 1px line is new: the reset
      preflight replaced zeroed the border, so before the flip the rule drew nothing. The
      `*` rule above gives it the border colour instead of currentColor. */
@@ -167,18 +217,7 @@
   }
 }
 
-@import "./legacy.css" layer(legacy);
-
 @import "tailwindcss/utilities.css" layer(utilities);
-
-/* Two Tailwind utilities share their names with legacy.css classes the pages' markup uses,
-   so the scanner emits them: `table` (`display: table`) and `list-item`
-   (`display: list-item`). Beneath an unlayered sheet they were inert; above
-   `layer(legacy)` the first would beat the phone's `.table { display: block }` and un-stack
-   every narrow table, and the second would turn every `.list-item { display: flex }` row on
-   /settings into a bulleted block. No page wants either utility. The other shared names
-   (`sr-only`, `contents`, `sticky` beside `.gh`) declare the same values in both sheets. */
-@source not inline("table list-item");
 
 /* The two sheets the generated components assume: `shadcn/tailwind.css` carries the custom
    variants and utilities base-vega's class strings use, and `tw-animate-css` carries the
@@ -190,24 +229,23 @@
 
 /* The product has one appearance, so a `dark:` utility in a generated class string must
    match nothing. Tailwind's own `dark` variant is `prefers-color-scheme: dark`, which would
-   repaint every converted component on a phone in dark mode beside legacy markup that does
-   not change; keyed to a `.dark` class nothing ever sets, it never fires. */
+   repaint a component on a phone in dark mode with colours the design never chose; keyed to
+   a `.dark` class nothing ever sets, it never fires. There is no `.dark` block either. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ------------------------------------------------------------ the theme ---- */
-/* Every value is today's, copied from legacy.css's `:root` (itself lifted from
-   design/Main.dc.html) and from the literals legacy.css and audit.css write inline. The
-   look wins over design/layout-and-density.md's ladder (pass 2 brief, ruling 1.3): where
-   today's look leaves the ladder, the value is NAMED below rather than rounded onto it, so a
-   departure reads as one in the markup that uses it.
+/* Every value is pass 1's look, copied from legacy.css's `:root` (itself lifted from
+   design/Main.dc.html) and from the literals legacy.css and audit.css wrote inline. The look
+   wins over design/layout-and-density.md's ladder (pass 2 brief, ruling 1.3): where it leaves
+   the ladder, the value is NAMED below rather than rounded onto it, so a departure reads as
+   one in the markup that uses it.
 
-   `static`, so Tailwind emits every variable here whether or not a utility uses it: the
-   names legacy.css, audit.css and 40 inline styles read (the block after this one) reach
-   these through `var()`, and a pruned variable would blank them.
+   `static`, so Tailwind emits every variable here whether or not a utility uses it: the base
+   rules above and the inline `style` props that read `var(--color-…)` reach these through
+   `var()`, and a pruned variable would blank them.
 
-   Everything is in px, as today, including the spacing unit and the breakpoints: Tailwind's
-   rem would make a converted control grow with a reader's default font size while the
-   legacy markup beside it does not. Moving to rem is its own later change. */
+   Everything is in px, including the spacing unit and the breakpoints, because pass 2 kept
+   pass 1's px look exactly. Moving to rem is its own later change. */
 @theme static {
   /* colour — shadcn's names first, then today's extras, one Tailwind name per legacy.css
      token (`--x` → `--color-x`) so a conversion is a rename */
@@ -251,8 +289,7 @@
   --color-scrim-drawer: rgba(9, 9, 11, 0.35);
   --color-scrim-record: rgba(9, 9, 11, 0.18);
   /* /audit's own: the five outcomes, the two bar fills, a search hit and a number leaf
-     (audit.css says what each is for; it declares the same values on `.audit` until the
-     audit family converts). The hatch gradient stays audit.css's local variable. */
+     (`features/audit/parts.tsx` says what each outcome's fill and the hatch are for). */
   --color-o-ok: #d4d4d8;
   --color-o-approval: #fab219;
   --color-o-archived: #8a5a00;
@@ -267,8 +304,8 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* Type. Each size's LINE HEIGHT is `initial`, which deletes Tailwind's own, so a `text-*`
-     utility sets the size alone and the line height is inherited, exactly as every
-     legacy.css class that sets a size does: body's 1.55, a heading's 1.2, a button's 1.
+     utility sets the size alone and the line height is inherited, exactly as every legacy.css
+     class that set a size did: body's 1.55, a heading's 1.2, a button's 1.
      Tailwind's would put `text-sm` at 1.4286 and move every table row by about 1.6px. A
      component that needs a line height says so with a `leading-*` utility. */
   --text-2xl: 24px;   /* page title */
@@ -290,7 +327,7 @@
   --text-badge-xs: 10px;
 
   /* The spacing unit, in px (see above): `p-4` is 16px, `h-9` 36px. legacy.css's
-     `--space-N` ladder is this scale at 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 8, 9, 12. */
+     `--space-N` ladder was this scale at 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 8, 9, 12. */
   --spacing: 4px;
   /* control heights — the ladder's four, nothing in between */
   --spacing-control: 36px;
@@ -321,7 +358,7 @@
   --container-kv-key: 180px;       /* a key column at page width */
   --container-kv-key-dense: 110px; /* a key column inside a details column */
 
-  /* breakpoints — legacy.css's two, in px as its media queries are (`max-md:` is its
+  /* breakpoints — legacy.css's two, in px as its media queries were (`max-md:` is its
      `max-width: 767px`, `md:max-lg:` its 768–1023 tier); the other three keep Tailwind's
      values, in px because Tailwind sorts breakpoints of one unit only */
   --breakpoint-sm: 640px;
@@ -340,138 +377,7 @@
   --shadow-menu: 0 0 40px rgba(0, 0, 0, 0.18);  /* the phone drawer */
   --shadow-record: -12px 0 40px rgba(0, 0, 0, 0.12); /* /audit's record drawer */
   --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.2); /* a switch's thumb */
+  /* The ring every focusable that no primitive draws wears (the base `:focus-visible`):
+     `--color-ring` at 35%, as a primitive's `ring-3 ring-ring/35` draws it. */
+  --shadow-focus: 0 0 0 3px rgba(161, 161, 170, 0.35);
 }
-
-/* The OTHER names every token is read by, resolved from the theme above: legacy.css's own
-   (its rules, audit.css and 40 inline `style` props read `var(--space-4)`,
-   `var(--muted-fg)`, …), and shadcn's raw names (generated class strings read
-   `var(--secondary)`, `var(--radius)`). In the theme layer, so each one here beats
-   legacy.css's own declaration of the same name.
-
-   There is no `.dark` block: the product has one appearance. */
-@layer theme {
-  :root {
-    --bg: var(--color-background);
-    --fg: var(--color-foreground);
-    --muted: var(--color-muted);
-    --muted-fg: var(--color-muted-foreground);
-    --border: var(--color-border);
-    --primary: var(--color-primary);
-    --primary-fg: var(--color-primary-foreground);
-    --destructive: var(--color-destructive);
-    --ring: var(--color-ring);
-    --success: var(--color-success);
-    --success-bg: var(--color-success-bg);
-    --success-border: var(--color-success-border);
-    --warning: var(--color-warning);
-    --warning-bg: var(--color-warning-bg);
-    --warning-border: var(--color-warning-border);
-    --danger-fg: var(--color-danger-fg);
-    --danger-bg: var(--color-danger-bg);
-    --danger-border: var(--color-danger-border);
-    --dim-fg: var(--color-dim-fg);
-    --sunken: var(--color-sunken);
-    --fg-subtle: var(--color-fg-subtle);
-    --row-border: var(--color-row-border);
-
-    --space-1: calc(var(--spacing) * 0.5);
-    --space-2: calc(var(--spacing) * 1);
-    --space-3: calc(var(--spacing) * 1.5);
-    --space-4: calc(var(--spacing) * 2);
-    --space-5: calc(var(--spacing) * 2.5);
-    --space-6: calc(var(--spacing) * 3);
-    --space-7: calc(var(--spacing) * 3.5);
-    --space-8: calc(var(--spacing) * 4);
-    --space-9: calc(var(--spacing) * 5);
-    --space-10: calc(var(--spacing) * 6);
-    --space-11: calc(var(--spacing) * 8);
-    --space-12: calc(var(--spacing) * 9);
-    --space-13: calc(var(--spacing) * 12);
-
-    --radius: var(--radius-md);
-    --radius-full: 999px;
-    --shadow: var(--shadow-xs);
-    --focus-ring: 0 0 0 3px rgba(161, 161, 170, 0.35);
-
-    --control-h: var(--spacing-control);
-    --control-h-sm: var(--spacing-control-sm);
-    --control-h-xs: var(--spacing-control-xs);
-    --control-h-touch: var(--spacing-control-touch);
-    --header-h: var(--spacing-header);
-
-    --page-wide: var(--container-page);
-    --page-narrow: var(--container-page-narrow);
-    --card-auth: var(--container-auth);
-    --rail-w: var(--container-rail);
-    --pane-w: var(--container-pane);
-    --kv-key: var(--container-kv-key);
-    --kv-key-dense: var(--container-kv-key-dense);
-
-    --background: var(--color-background);
-    --foreground: var(--color-foreground);
-    --card: var(--color-card);
-    --card-foreground: var(--color-card-foreground);
-    --popover: var(--color-popover);
-    --popover-foreground: var(--color-popover-foreground);
-    --primary-foreground: var(--color-primary-foreground);
-    --secondary: var(--color-secondary);
-    --secondary-foreground: var(--color-secondary-foreground);
-    --muted-foreground: var(--color-muted-foreground);
-    --accent: var(--color-accent);
-    --accent-foreground: var(--color-accent-foreground);
-    --destructive-foreground: var(--color-destructive-foreground);
-    --input: var(--color-input);
-  }
-}
-
-/* The narrow drawer's OPEN state, which legacy.css cannot supply to this client. It draws
-   the drawer and the scrim but kept no open state at all once its `#menu:target` rules went
-   (pass 2's P0): the server-rendered pages it was written for shipped no script, and a URL
-   fragment was the only switch they had. Here the same markup is opened by a Base UI Dialog,
-   whose switch is `data-open` on the popup and on the backdrop. Without these rules the
-   dialog opens — focus trapped, scroll locked — while the panel stays `visibility: hidden`
-   and translated a full width off-screen, so the hamburger reads as dead.
-
-   `[data-starting-style]` marks the one frame Base UI mounts the popup in before flipping
-   it open; excluding it is what leaves a closed style to transition FROM, so the panel
-   slides in as it did on the server-rendered pages rather than appearing. The exit needs no
-   rule: Base UI keeps the element mounted until legacy.css's own 0.22s transition finishes.
-
-   Inside the sheet's own narrow breakpoint, because above it `.menu` and `.scrim` are
-   `display: none` and there is no drawer to open. */
-@media (max-width: 767px) {
-  .menu[data-open]:not([data-starting-style]) {
-    visibility: visible;
-    transform: none;
-  }
-
-  .scrim[data-open]:not([data-starting-style]) {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  /* The drawer's elevation as pass 1 shipped it. A coexistence rule this file carried for
-     the generated primitives, `[data-slot="dialog-content"] { box-shadow: var(--shadow-pop) }`,
-     also reached this popup (Shell sets that slot by hand) and replaced legacy.css's own
-     `0 0 40px` shadow. The rule went in pass 2's P0; this keeps the look it drew, and P2a's
-     Sheet decides which of the two the drawer wears. */
-  .menu {
-    box-shadow: var(--shadow-pop);
-  }
-
-  /* The drawer's two controls are <button>s here — the Dialog's Trigger and Close — where
-     the SSR pages drew anchors, and legacy.css styles them by class alone. So the user
-     agent's button chrome survives: a grey fill and an outset border that put the hamburger
-     in a box the server rendering never had (found porting /approvals, 2026-09-23). */
-  .menu-open,
-  .menu-close {
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-  }
-}
-
-/* /audit's own sheet, unlayered and last, exactly where it sat when it was the bottom of
-   this file: the audit family owns a file rather than a line range. */
-@import "./features/audit/audit.css";

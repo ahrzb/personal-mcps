@@ -12,8 +12,8 @@
       dist/app.js and dist/app.css — never the file itself.
 
       In `vite dev --mode preview` it IS the document, so the head below spells what the
-      Worker's shell spells. It links no stylesheet: main.tsx imports app.css, which carries
-      legacy.css in a layer, so the gallery and the live pages read one stylesheet, not a copy.
+      Worker's shell spells. It links no stylesheet: main.tsx imports app.css, the one stylesheet,
+      so the gallery and the live pages read the same one, not a copy.
     -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />

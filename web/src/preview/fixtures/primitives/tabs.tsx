@@ -1,19 +1,18 @@
 import type { ReactNode } from "react";
 import type { PrimitiveState } from "../../seed";
 import { Tabs, TabsList, TabsTrigger, tabsListVariants, tabsTriggerVariants } from "@/components/ui/tabs";
-import { Columns } from "./Columns";
+import { Bench } from "./Bench";
 
 /**
- * The Tabs bench: `.segmented` twice. As /audit's view switch (buttons with `aria-current`)
- * beside `<Tabs>`, and as /settings' token-kind row (links, which stay links) beside the same
- * links wearing `tabsListVariants` / `tabsTriggerVariants`.
+ * The Tabs bench: the segmented strip twice. As /audit's view switch, `<Tabs>`, and as
+ * /settings' token-kind row, links (which stay links) wearing `tabsListVariants` /
+ * `tabsTriggerVariants`.
  *
  * Focus is staged on an arm that is not current and on the current one, which today shows no
- * ring. Hover has no state: neither side draws one.
+ * ring. Hover has no state: nothing draws one.
  *
- * At 390 an arm is 44px of 14px text, and either strip is wider than the cell: each side is
- * clipped to its cell by `Clip`, since a strip spilling out of the legacy cell would paint under
- * the component's and show in its crop.
+ * At 390 an arm is 44px of 14px text, and either strip is wider than the cell, so `Clip` cuts it
+ * at the cell's edge, as the baselines were shot.
  */
 
 const VIEWS = ["Summary", "Sessions", "Events"] as const;
@@ -24,41 +23,23 @@ function Clip({ children }: { children: ReactNode }): ReactNode {
   return <div className="w-full overflow-hidden p-1">{children}</div>;
 }
 
-/** `focus` names the arm the compare focuses, on both sides. */
+/** `focus` names the arm the compare focuses. */
 function Views({ focus }: { focus?: string }): ReactNode {
   const current = "Sessions";
   return (
-    <Columns
-      legacy={
-        <Clip>
-          <div className="segmented" role="group" aria-label="View">
+    <Bench>
+      <Clip>
+        <Tabs defaultValue={current}>
+          <TabsList aria-label="View">
             {VIEWS.map((view) => (
-              <button
-                key={view}
-                type="button"
-                aria-current={view === current ? "page" : undefined}
-                data-focus={view === focus ? "" : undefined}
-              >
+              <TabsTrigger key={view} value={view} data-focus={view === focus ? "" : undefined}>
                 {view}
-              </button>
+              </TabsTrigger>
             ))}
-          </div>
-        </Clip>
-      }
-      next={
-        <Clip>
-          <Tabs defaultValue={current}>
-            <TabsList aria-label="View">
-              {VIEWS.map((view) => (
-                <TabsTrigger key={view} value={view} data-focus={view === focus ? "" : undefined}>
-                  {view}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-        </Clip>
-      }
-    />
+          </TabsList>
+        </Tabs>
+      </Clip>
+    </Bench>
   );
 }
 
@@ -77,18 +58,11 @@ function Kinds({ focus }: { focus?: string }): ReactNode {
       </a>
     ));
   return (
-    <Columns
-      legacy={
-        <Clip>
-          <div className="segmented">{links()}</div>
-        </Clip>
-      }
-      next={
-        <Clip>
-          <div className={tabsListVariants()}>{links(tabsTriggerVariants())}</div>
-        </Clip>
-      }
-    />
+    <Bench>
+      <Clip>
+        <div className={tabsListVariants()}>{links(tabsTriggerVariants())}</div>
+      </Clip>
+    </Bench>
   );
 }
 

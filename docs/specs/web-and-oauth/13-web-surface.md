@@ -1746,6 +1746,17 @@ wins in pass 2 (*Where the numbers live*, above). Pass 2 ends with Tailwind's pr
 imported, `legacy.css` deleted once nothing in `web/src` matches a rule in it, and the `.md`
 prose rules and the few base rules that must stay global moved into `app.css`.
 
+*(Amended 2026-09-23 — pass 2 has shipped.)* It ended as planned, with three facts the plan did
+not have. Preflight's form-control rule (`font: inherit`, colour, radius, background, disabled
+opacity) is undone with `revert-layer` in `app.css`'s base layer, because every component was
+matched against the browser's own control values; adopting it is a look change, left to the
+follow-up that also takes the known gaps (missing focus rings and the rest). With `legacy.css`
+gone the primitives page has no legacy column: each state's component crop is compared against
+its baseline (`design/baseline/primitives__*`, cut from pass 2's last two-column render) at
+budget 0. And `web/visual-accepted.json` closes pass 2 with six entries, each a named
+improvement: the four `agent-new` pairs (typeless fields that no rule reached become `Input`)
+and the two `catalogMarkdown` pairs (a markdown `hr` that drew nothing becomes a 1px rule).
+
 **The SPA's server surface** is `/api/hub`, under the already-reserved `api` segment: ~~ten~~
 **twelve** *(2026-09-21, decision 36: the two the explorer adds — below)*
 cookie-authenticated JSON reads and, for writes, one allowlisting op dispatcher plus six

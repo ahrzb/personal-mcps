@@ -1,182 +1,98 @@
 import type { ReactNode } from "react";
 import type { PrimitiveState } from "../../seed";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Columns } from "./Columns";
+import { Button } from "@/components/ui/button";
+import { Bench } from "./Bench";
 
 /**
- * The Alert bench: `.alert` in its four tones and every shape the pages write it in, and
- * `.a-ceiling` (`size="compact"`), each beside `<Alert>`.
+ * The Alert bench: `<Alert>` in its four tones and every shape the pages write it in, and
+ * /audit's ceiling notice (`size="compact"`).
  *
  * The shapes are the pages' own: `chrome/Notice`'s icon beside a titled or an untitled
- * message (spaced, as /apps draws it, or flush, as /approvals does), `.alert-text` alone,
+ * message (spaced, as /apps draws it, or flush, as /approvals does), a description alone,
  * a bare message, /settings' icon-less wrapper, and `chrome/States`' message with a Retry
  * button beside it.
  */
 export const alertStates: Record<string, PrimitiveState> = {
   alert: () => (
-    <Columns
-      legacy={
-        <>
-          {TONES.map((tone) => (
-            <Full key={tone}>
-              <div className={tone === "default" ? "alert" : `alert alert--${tone}`}>
-                <Icon />
-                <div>
-                  <div className="alert-title">Grants full admin access</div>
-                  <div className="alert-text">This client can read and change every app on this hub.</div>
-                </div>
-              </div>
-            </Full>
-          ))}
-        </>
-      }
-      next={
-        <>
-          {TONES.map((tone) => (
-            <Full key={tone}>
-              <Alert variant={tone}>
-                <Icon />
-                <div>
-                  <AlertTitle>Grants full admin access</AlertTitle>
-                  <AlertDescription>This client can read and change every app on this hub.</AlertDescription>
-                </div>
-              </Alert>
-            </Full>
-          ))}
-        </>
-      }
-    />
+    <Bench>
+      {TONES.map((tone) => (
+        <Full key={tone}>
+          <Alert variant={tone}>
+            <Icon />
+            <div>
+              <AlertTitle>Grants full admin access</AlertTitle>
+              <AlertDescription>This client can read and change every app on this hub.</AlertDescription>
+            </div>
+          </Alert>
+        </Full>
+      ))}
+    </Bench>
   ),
 
   "alert-untitled": () => (
-    <Columns
-      legacy={
-        <>
-          <Full>
-            <div className="alert alert--success">
-              <Icon />
-              <div>
-                <div className="alert-text">App connected.</div>
-              </div>
-            </div>
-          </Full>
-          <Full>
-            <div className="alert alert--success">
-              <Icon />
-              <div>
-                <div>Request approved.</div>
-              </div>
-            </div>
-          </Full>
-          <Full>
-            <div className="alert alert--warning">
-              <Icon />
-              <div className="alert-text">This application registered itself — identity unverified.</div>
-            </div>
-          </Full>
-          <Full>
-            <div className="alert alert--danger">
-              <div className="alert-text">That name is taken.</div>
-            </div>
-          </Full>
-          <Full>
-            <div className="alert alert--warning">This token is shown only once. Store it in your bot&apos;s secret store.</div>
-          </Full>
-          <Full>
-            <div className="alert">Tunnelled apps reach the hub over a Cloudflare Tunnel.</div>
-          </Full>
-          <Full>
-            <div className="alert alert--danger">
-              <div>
-                <div>Password changed.</div>
-              </div>
-            </div>
-          </Full>
-          <Full>
-            <div className="alert alert--danger">
-              The read failed. The rows below are the last answer.{" "}
-              <button type="button" className="btn btn--outline btn--sm">
-                Try again
-              </button>
-            </div>
-          </Full>
-        </>
-      }
-      next={
-        <>
-          <Full>
-            <Alert variant="success">
-              <Icon />
-              <div>
-                <AlertDescription>App connected.</AlertDescription>
-              </div>
-            </Alert>
-          </Full>
-          <Full>
-            <Alert variant="success">
-              <Icon />
-              <div>
-                <div>Request approved.</div>
-              </div>
-            </Alert>
-          </Full>
-          <Full>
-            <Alert variant="warning">
-              <Icon />
-              <AlertDescription>This application registered itself — identity unverified.</AlertDescription>
-            </Alert>
-          </Full>
-          <Full>
-            <Alert variant="danger">
-              <AlertDescription>That name is taken.</AlertDescription>
-            </Alert>
-          </Full>
-          <Full>
-            <Alert variant="warning">This token is shown only once. Store it in your bot&apos;s secret store.</Alert>
-          </Full>
-          <Full>
-            <Alert>Tunnelled apps reach the hub over a Cloudflare Tunnel.</Alert>
-          </Full>
-          <Full>
-            <Alert variant="danger">
-              <div>
-                <div>Password changed.</div>
-              </div>
-            </Alert>
-          </Full>
-          <Full>
-            <Alert variant="danger">
-              The read failed. The rows below are the last answer.{" "}
-              <button type="button" className="btn btn--outline btn--sm">
-                Try again
-              </button>
-            </Alert>
-          </Full>
-        </>
-      }
-    />
+    <Bench>
+      <Full>
+        <Alert variant="success">
+          <Icon />
+          <div>
+            <AlertDescription>App connected.</AlertDescription>
+          </div>
+        </Alert>
+      </Full>
+      <Full>
+        <Alert variant="success">
+          <Icon />
+          <div>
+            <div>Request approved.</div>
+          </div>
+        </Alert>
+      </Full>
+      <Full>
+        <Alert variant="warning">
+          <Icon />
+          <AlertDescription>This application registered itself — identity unverified.</AlertDescription>
+        </Alert>
+      </Full>
+      <Full>
+        <Alert variant="danger">
+          <AlertDescription>That name is taken.</AlertDescription>
+        </Alert>
+      </Full>
+      <Full>
+        <Alert variant="warning">This token is shown only once. Store it in your bot&apos;s secret store.</Alert>
+      </Full>
+      <Full>
+        <Alert>Tunnelled apps reach the hub over a Cloudflare Tunnel.</Alert>
+      </Full>
+      <Full>
+        <Alert variant="danger">
+          <div>
+            <div>Password changed.</div>
+          </div>
+        </Alert>
+      </Full>
+      <Full>
+        <Alert variant="danger">
+          The read failed. The rows below are the last answer.{" "}
+          <Button variant="outline" size="sm">
+            Try again
+          </Button>
+        </Alert>
+      </Full>
+    </Bench>
   ),
 
   // /audit's strip, where the ceiling notice sits: one line, the 14px info glyph.
   "alert-compact": () => (
-    <Columns
-      legacy={
-        <Full>
-          <div className="a-ceiling">
-            <CeilingIcon />
-            <span>Showing the newest 5,000 of 12,340 events — narrow the search, or export JSONL for all of them.</span>
-          </div>
-        </Full>
-      }
-      next={
-        <Full>
-          <Alert variant="warning" size="compact">
-            <CeilingIcon />
-            <span>Showing the newest 5,000 of 12,340 events — narrow the search, or export JSONL for all of them.</span>
-          </Alert>
-        </Full>
-      }
-    />
+    <Bench>
+      <Full>
+        <Alert variant="warning" size="compact">
+          <CeilingIcon />
+          <span>Showing the newest 5,000 of 12,340 events — narrow the search, or export JSONL for all of them.</span>
+        </Alert>
+      </Full>
+    </Bench>
   ),
 };
 

@@ -117,9 +117,8 @@ export type PreviewSeeds = {
 /**
  * One state of the `primitives` bench — pass 2's component gate, not a route. It is a
  * component the gallery renders bare (no router, no query cache, no Shell), drawing one
- * generated component beside the legacy markup it replaces through
- * `fixtures/primitives/Columns.tsx`, whose comment is the two-column contract
- * `visual-compare.mts` crops by. Its states have no baseline: the legacy column IS the
- * reference, inside the same screenshot.
+ * generated component in `fixtures/primitives/Bench.tsx`'s cell, which `visual-compare.mts`
+ * crops and diffs against the state's baseline at a budget of zero. `Bench`'s comment says why
+ * the cell's geometry is fixed.
  */
 export type PrimitiveState = () => ReactNode;

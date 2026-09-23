@@ -38,8 +38,8 @@ export type SpaShellProps = {
    *  unskippable. What the value means is the caller's business, which keeps this template
    *  from knowing what a session or a sign-in step is. */
   island: { id: "pmcp-bootstrap" | "pmcp-login"; value: unknown };
-  /** The client bundle's one sheet: the design language, the utilities, and — since pass 2's
-   *  P0 — the shared page sheet layered beneath them (web/src/legacy.css). */
+  /** The client bundle's one sheet (web/src/app.css, built): the theme, Tailwind's preflight
+   *  with the base rules today's look restores, and the utilities. */
   stylesheet: string;
   /** The client bundle. */
   script: string;

@@ -130,8 +130,8 @@ function CredentialsCard({
 const SWITCH_LINK_NARROW =
   "max-md:flex max-md:h-control-touch max-md:w-full max-md:items-center max-md:justify-center max-md:rounded-md max-md:border max-md:border-border max-md:bg-background max-md:px-4 max-md:text-base max-md:font-medium max-md:text-foreground max-md:no-underline max-md:shadow-xs";
 
-/** The six-box TOTP challenge. `contents` on the form (Tailwind's own utility, matching
- *  legacy.css's identical `.contents`), so its children take the card's own rhythm rather
+/** The six-box TOTP challenge. `contents` on the form (Tailwind's own utility, as
+ *  legacy.css's `.contents` was), so its children take the card's own rhythm rather
  *  than `FieldGroup`'s. */
 function TotpCard({
   error,

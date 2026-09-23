@@ -2,14 +2,14 @@ import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 /**
- * An overlay drawn OPEN inside a `Columns` cell, so the crop compares it like for like. The
- * overlays' benches (dialog, sheet) draw each side through one of these.
+ * An overlay drawn OPEN inside the `Bench` cell, so the crop holds it. The overlays' benches
+ * (dialog, sheet) draw through one of these.
  *
  * Dialog and Sheet are `position: fixed`, laid out against the viewport, which would put them
- * outside every cell the compare crops. A `transform` makes a box the containing block of its
- * fixed descendants, so the inner box here stands in for the screen: an overlay inside it (the
- * legacy markup directly, the component through its portal `container`) lays out against that
- * box as it would against the page, scrim and all, and the cell-wide window around it clips
+ * outside the cell the compare crops. A `transform` makes a box the containing block of its
+ * fixed descendants, so the inner box here stands in for the screen: an overlay portalled into
+ * it (through its `container`) lays out against that box as it would against the page, scrim
+ * and all, and the cell-wide window around it clips
  * whatever falls outside. `vw` units still read the real viewport, which keeps a sheet's `85vw`
  * or `100vw` cap and the dialog's `100vw - 40px` today's.
  *

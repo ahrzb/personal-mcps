@@ -210,8 +210,8 @@ function DecidedCard({ decision }: { decision: "approved" | "denied" }): ReactNo
 function ApprovedIcon(): ReactNode {
   return (
     <svg width="48" height="48" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <circle cx="24" cy="24" r="23" fill="var(--success-bg)" stroke="var(--success-border)" strokeWidth="1.5" />
-      <path d="M16 24.5 21.5 30 32 19" stroke="var(--success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="24" cy="24" r="23" fill="var(--color-success-bg)" stroke="var(--color-success-border)" strokeWidth="1.5" />
+      <path d="M16 24.5 21.5 30 32 19" stroke="var(--color-success)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -220,8 +220,8 @@ function ApprovedIcon(): ReactNode {
 function DeniedIcon(): ReactNode {
   return (
     <svg width="48" height="48" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <circle cx="24" cy="24" r="23" fill="var(--danger-bg)" stroke="var(--danger-border)" strokeWidth="1.5" />
-      <path d="M18 18 30 30M30 18 18 30" stroke="var(--danger-fg)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="24" cy="24" r="23" fill="var(--color-danger-bg)" stroke="var(--color-danger-border)" strokeWidth="1.5" />
+      <path d="M18 18 30 30M30 18 18 30" stroke="var(--color-danger-fg)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

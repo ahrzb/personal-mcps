@@ -20,12 +20,13 @@
 // rendering SHOULD differ, and a named, reviewable exception records that better than a
 // threshold loosened until everything passes.
 //
-// The `primitives` bench is compared differently: not against a baseline file, but its
-// component column against its legacy column, both cropped out of the same render, at a
-// budget of zero (`columns` below). A state declares the two columns by rendering
-// `preview/fixtures/primitives/Columns.tsx`, whose comment is the contract. A full-page pair
-// can hide a changed radius inside its 2%; a crop of one component at zero cannot, which is
-// why pass 2 gates its components there before any page uses them.
+// The `primitives` bench is compared as a CROP: each state's one component, cut out of the page
+// by `preview/fixtures/primitives/Bench.tsx`'s cell, against its baseline at a budget of zero
+// (`bench` below). A full-page pair can hide a changed radius inside its 2%; a crop of one
+// component at zero cannot, which is why pass 2 gated its components there before any page
+// used them. Its baselines are that cell as pass 2's P5 cut it: the component column of the
+// two-column bench, which crop-compared each component against its legacy markup until
+// legacy.css was deleted.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -45,9 +46,9 @@ import {
   waitForServer,
 } from "./shots.mts";
 
-/** The share of differing pixels a pair may carry before it fails: a whole page against its
- *  baseline, and a `primitives` component column against its legacy column. */
-const BUDGET = { page: 0.02, columns: 0 } as const;
+/** The share of differing pixels a pair may carry before it fails: a whole page, and a
+ *  `primitives` component's crop, each against its baseline. */
+const BUDGET = { page: 0.02, component: 0 } as const;
 
 /**
  * Per-pixel colour tolerance handed to pixelmatch. Antialiasing along a glyph edge differs
@@ -119,11 +120,11 @@ try {
         await mounted(page);
         await settle(page);
         if (name === "primitives") {
-          results.push(await columns(page, key, accepted[key] ?? null));
+          results.push(await compare(key, await bench(page), accepted[key] ?? null, "component"));
           continue;
         }
         const shot = await page.screenshot({ fullPage: true });
-        results.push(await compare(key, shot, accepted[key] ?? null));
+        results.push(await compare(key, shot, accepted[key] ?? null, "page"));
       } finally {
         await page.close();
       }
@@ -152,7 +153,7 @@ console.log(`\nreport: ${REPORT}report.html`);
 const failures = results.filter((each) => each.accepted === null && failed(each));
 if (failures.length > 0) {
   console.error(
-    `${failures.length} pair(s) over budget (${BUDGET.page * 100}% a page, ${BUDGET.columns} a primitives column) ` +
+    `${failures.length} pair(s) over budget (${BUDGET.page * 100}% a page, ${BUDGET.component} a primitives component) ` +
       `and not listed in visual-accepted.json`,
   );
 }
@@ -165,36 +166,25 @@ function failed(result: Result): boolean {
 /** One pair, diffed against its baseline. A MISSING baseline is a failure with a reason
  *  rather than a crash: it means the gallery holds a state no baseline was shot for, which is
  *  worth seeing in the report — and its `.new.png` is what a baseline for it is copied from. */
-async function compare(key: string, shot: Buffer, accepted: string | null): Promise<Result> {
+async function compare(key: string, shot: Buffer, accepted: string | null, mode: Result["mode"]): Promise<Result> {
   const baselineBytes = await readFile(`${BASELINE}${key}.png`).catch(() => null);
   if (baselineBytes === null) {
     await writeFile(`${REPORT}${key}.new.png`, shot);
-    return { key, ratio: 1, sizeMismatch: true, accepted, mode: "page" };
+    return { key, ratio: 1, sizeMismatch: true, accepted, mode };
   }
-  return await diff(key, baselineBytes, shot, accepted, "page");
+  return await diff(key, baselineBytes, shot, accepted, mode);
 }
 
 /**
- * One `primitives` state: its `next` column diffed against its `legacy` column, both cropped
- * out of this one render by `Columns`' `data-column` cells. There is no baseline file — the
- * legacy markup drawn beside the component is the reference. A state that does not render
- * exactly one `Columns` throws here (the locator is strict), which fails the run by name.
+ * One `primitives` state's crop: `Bench`'s `[data-bench]` cell. A state that does not render
+ * exactly one `Bench` throws here (the locator is strict), which fails the run by name.
+ *
+ * A focus state marks its target with `data-focus`, which is focused just before the shot
+ * (programmatic focus with no prior pointer input matches `:focus-visible`); a page cannot be
+ * rendered focused. A state with no `data-focus` is shot as rendered.
  */
-async function columns(page: Page, key: string, accepted: string | null): Promise<Result> {
-  const legacy = await column(page, "legacy");
-  const next = await column(page, "next");
-  return await diff(key, legacy, next, accepted, "columns");
-}
-
-/**
- * One cell of a `primitives` state, cropped. A document has ONE focused element, so a focus
- * state cannot show `:focus-visible` in both cells of one render: a fixture marks its focus
- * target with `data-focus` on BOTH sides, and each cell's target is focused just before that
- * cell is shot (programmatic focus with no prior pointer input matches `:focus-visible`).
- * Cells with no `data-focus` are shot as rendered.
- */
-async function column(page: Page, side: "legacy" | "next"): Promise<Buffer> {
-  const cell = page.locator(`[data-column="${side}"]`);
+async function bench(page: Page): Promise<Buffer> {
+  const cell = page.locator("[data-bench]");
   const target = cell.locator("[data-focus]").first();
   if ((await target.count()) > 0) {
     await target.focus();
@@ -238,8 +228,7 @@ async function acceptedPairs(): Promise<Record<string, string>> {
   return out;
 }
 
-/** Side by side: the reference (the baseline, or a primitive's legacy column), the React
- *  rendering, and the diff. */
+/** Side by side: the baseline, the React rendering, and the diff. */
 function reportHtml(results: Result[]): string {
   const rows = results
     .slice()
@@ -253,12 +242,11 @@ function reportHtml(results: Result[]): string {
             : each.ratio > BUDGET[each.mode]
               ? `<span class="fail">over budget</span>`
               : `<span class="ok">ok</span>`;
-      const [before, after] = each.mode === "columns" ? ["legacy column", "component column"] : ["baseline", "react"];
       return `<section><h2>${escapeHtml(each.key)}</h2>
 <p>${(each.ratio * 100).toFixed(2)}% differing · ${verdict}</p>
 <div class="shots">
-  <figure><figcaption>${before}</figcaption><img src="${each.key}.old.png"></figure>
-  <figure><figcaption>${after}</figcaption><img src="${each.key}.new.png"></figure>
+  <figure><figcaption>baseline</figcaption><img src="${each.key}.old.png"></figure>
+  <figure><figcaption>react</figcaption><img src="${each.key}.new.png"></figure>
   <figure><figcaption>diff</figcaption><img src="${each.key}.diff.png"></figure>
 </div></section>`;
     })

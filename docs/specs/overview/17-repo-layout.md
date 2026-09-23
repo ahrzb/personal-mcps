@@ -13,8 +13,8 @@ personal-mcps/
     src/chrome/       # the shell, the pane rail, the dialogs
     src/components/ui/ # the shadcn components pass 2 edits to today's look (2026-09-23)
     src/features/     # apps, app-detail, agents, audit (+ the five page families, 2026-09-23)
-    src/legacy.css    # the old shared sheet, @layer legacy, from pass 2's first phase to
-                      #   its last (2026-09-23)
+    ~~src/legacy.css~~ # the old shared sheet, @layer legacy, from pass 2's first phase to
+                      #   its last — deleted at pass 2's close (2026-09-23)
     src/preview/      # the state gallery, preview-mode only — the kept demo of every
                       #   state since server/dev/ retired (2026-09-23), and pass 2's
                       #   primitives page
@@ -72,4 +72,9 @@ which had nothing left to shoot from; `server/src/pages/` keeps `spa.tsx`, `mode
 `styles.css`. `design/baseline/` is pass 2's reference: the server's PNGs, except the pairs
 pass 1 accepted, which are re-shot from the SPA gallery at `d815c18` (decision 38's pass-2
 amendment; the server's versions stay in git).)*
+
+*(Amended 2026-09-23, at pass 2's close: `web/src/legacy.css` — the old `styles.css` — and
+`web/src/features/audit/audit.css` are deleted. The `.md` prose rules and the base rules
+today's look needs live in `app.css`'s base layer; `web/scripts/legacy-class-grep.mts` is
+the proof that nothing still writes a class only those sheets defined.)*
 

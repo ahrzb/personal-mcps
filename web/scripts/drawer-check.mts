@@ -4,7 +4,7 @@
 //
 //   pnpm check:drawer             # exits non-zero on the first broken behaviour
 //
-// It exists because the drawer shipped broken. `styles.css` (now `legacy.css`) drew the
+// It exists because the drawer shipped broken. `styles.css` (later `legacy.css`, gone since pass 2's P5) drew the
 // panel and the scrim but keyed OPEN on `#menu:target` — the server-rendered pages it was
 // written for shipped no script, and a URL fragment was their only switch. This client opens the same markup with a
 // Base UI Dialog, whose switch is `data-open`, so the dialog opened — focus trapped, scroll

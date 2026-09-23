@@ -1,43 +1,53 @@
 import type { ReactNode } from "react";
 import type { PrimitiveState } from "../../seed";
+import { Note } from "@/chrome/Text";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { Columns } from "./Columns";
+import { BACK, LEVEL_HEAD } from "@/features/audit/parts";
+import { Bench } from "./Bench";
 import { OverlayStage } from "./OverlayStage";
 
 /**
- * The Sheet bench: the phone drawer `.menu`, /audit's record `.audit-drawer` and its Filters
- * `.audit-level`, each open over its scrim beside `<SheetContent>` in that variant, drawn in-flow
- * by `OverlayStage`. What sits INSIDE each panel is the caller's markup, the same on both sides,
- * so only the panel, its scrim and its motion's resting frame are compared.
+ * The Sheet bench: `<SheetContent>` in its three variants — the phone drawer, /audit's record
+ * panel and its Filters level — each open over its scrim, drawn in-flow by `OverlayStage`. What
+ * sits INSIDE each panel is a short stand-in for the caller's markup, in the caller's classes.
  *
- * Each side renders already open, which is also why neither slides: an element that mounts open
- * starts there (legacy: `data-open` is present at the first style; Base UI: no starting frame
- * for a popup that is open on its first render).
+ * Each renders already open, which is also why none slides: Base UI gives a popup that is open
+ * on its first render no starting frame.
  */
 
-/** The phone drawer's own content, as Shell writes it. `focus` marks a nav entry. */
+/** A drawer entry, as Shell writes it but ringed by the base `:focus-visible` rule. */
+const MENU_LINK =
+  "flex h-control-touch items-center justify-between rounded-lg px-3 text-md font-medium text-muted-foreground no-underline aria-[current=page]:bg-muted aria-[current=page]:text-foreground";
+
+/** The phone drawer's own content, in Shell's classes. `focus` marks a nav entry. */
 function MenuBody({ focus = false }: { focus?: boolean }): ReactNode {
   return (
     <>
-      <div className="menu-head">
-        <span className="brand">
+      <div className="mb-1.5 flex h-header items-center justify-between border-b border-row-border pl-3">
+        <span className="flex shrink-0 items-center gap-2 text-md font-semibold">
           <span>personal-mcps</span>
         </span>
-        <button type="button" className="menu-close" aria-label="Close menu">
+        <button
+          type="button"
+          className="inline-flex size-control-touch cursor-pointer items-center justify-center rounded-md bg-transparent p-0 text-foreground"
+          aria-label="Close menu"
+        >
           ✕
         </button>
       </div>
-      <a className="menu-link" href="#apps" aria-current="page">
+      <a className={MENU_LINK} href="#apps" aria-current="page">
         Apps
       </a>
-      <a className="menu-link" href="#agents" data-focus={focus ? "" : undefined}>
+      <a className={MENU_LINK} href="#agents" data-focus={focus ? "" : undefined}>
         Agents
       </a>
-      <a className="menu-link" href="#audit">
+      <a className={MENU_LINK} href="#audit">
         Audit
       </a>
-      <div className="menu-foot">
-        <span className="header-user">owner</span>
+      <div className="mt-auto flex items-center justify-between gap-2.5 border-t border-row-border px-3 pt-2.5 pb-1">
+        <span className="text-base text-muted-foreground">owner</span>
       </div>
     </>
   );
@@ -45,58 +55,47 @@ function MenuBody({ focus = false }: { focus?: boolean }): ReactNode {
 
 /**
  * The drawer at 390, in a 340px stand-in screen so its left edge, shadow and scrim fall 60px
- * into the cell. At 1280 both sides draw nothing: the drawer does not exist above the narrow
+ * into the cell. At 1280 it draws nothing: the drawer does not exist above the narrow
  * breakpoint, and that absence is what is compared.
  */
 function Menu({ focus = false }: { focus?: boolean }): ReactNode {
   const viewport = { right: "auto", width: 340 };
   return (
-    <Columns
-      legacy={
-        <OverlayStage height={360} viewport={viewport}>
-          {() => (
-            // `data-open` is the switch app.css's open-state rules read, as Base UI sets it.
-            <>
-              <div className="scrim" data-open="" />
-              <div className="menu" data-open="">
-                <MenuBody focus={focus} />
-              </div>
-            </>
-          )}
-        </OverlayStage>
-      }
-      next={
-        <OverlayStage height={360} viewport={viewport}>
-          {(container) => (
-            // Not modal, and no initial focus: see the dialog bench.
-            <Sheet open modal={false}>
-              <SheetContent variant="menu" container={container} initialFocus={false}>
-                <MenuBody focus={focus} />
-              </SheetContent>
-            </Sheet>
-          )}
-        </OverlayStage>
-      }
-    />
+    <Bench>
+      <OverlayStage height={360} viewport={viewport}>
+        {(container) => (
+          // Not modal, and no initial focus: see the dialog bench.
+          <Sheet open modal={false}>
+            <SheetContent variant="menu" container={container} initialFocus={false}>
+              <MenuBody focus={focus} />
+            </SheetContent>
+          </Sheet>
+        )}
+      </OverlayStage>
+    </Bench>
   );
 }
 
-/** The record's head and a line of body, as RecordDrawer writes them. */
+/** The record's head and a line of body, in RecordDrawer's classes. */
 function RecordBody(): ReactNode {
   return (
     <>
-      <div className="a-dhead">
-        <button type="button" className="a-dback">
+      <div className={LEVEL_HEAD}>
+        <button type="button" className={`${BACK} hidden max-md:inline-flex`}>
           ‹ Audit
         </button>
-        <span className="a-dtitle mono">tools/call github.search_issues</span>
-        <span className="note a-dtime">Sep 23, 14:02:11</span>
-        <button type="button" className="btn btn--outline btn--sm a-dclose wide-only">
+        <span className="min-w-0 truncate font-mono text-base font-semibold max-md:flex-[0_1_auto] max-md:overflow-visible max-md:whitespace-normal max-md:wrap-anywhere">
+          tools/call github.search_issues
+        </span>
+        <Note render={<span />} className="whitespace-nowrap">
+          Sep 23, 14:02:11
+        </Note>
+        <Button variant="outline" size="sm" className="ml-auto max-md:hidden">
           Close
-        </button>
+        </Button>
       </div>
-      <div className="a-dbody">
-        <p className="note">Bodies are read on their own, by id — the fields above came with the row.</p>
+      <div className="flex flex-1 flex-col gap-3.5 overflow-auto px-4 py-3.5 max-md:py-3">
+        <Note>Bodies are read on their own, by id — the fields above came with the row.</Note>
       </div>
     </>
   );
@@ -110,55 +109,39 @@ function RecordBody(): ReactNode {
 function Record(): ReactNode {
   const viewport = { right: "auto", width: 680 };
   return (
-    <Columns
-      legacy={
-        <OverlayStage height={320} viewport={viewport}>
-          {() => (
-            <>
-              <div className="audit-scrim" />
-              <div className="audit-drawer">
-                <RecordBody />
-              </div>
-            </>
-          )}
-        </OverlayStage>
-      }
-      next={
-        <OverlayStage height={320} viewport={viewport}>
-          {(container) => (
-            <Sheet open modal={false}>
-              <SheetContent variant="panel" container={container} initialFocus={false}>
-                <RecordBody />
-              </SheetContent>
-            </Sheet>
-          )}
-        </OverlayStage>
-      }
-    />
+    <Bench>
+      <OverlayStage height={320} viewport={viewport}>
+        {(container) => (
+          <Sheet open modal={false}>
+            <SheetContent variant="panel" container={container} initialFocus={false}>
+              <RecordBody />
+            </SheetContent>
+          </Sheet>
+        )}
+      </OverlayStage>
+    </Bench>
   );
 }
 
-/** The Filters level's frame, as AuditPage writes it. */
+/** The Filters level's frame, in AuditPage's classes. */
 function LevelBody(): ReactNode {
   return (
     <>
-      <div className="a-lhead">
-        <button type="button" className="a-dback" style={{ display: "inline-flex" }}>
+      <div className={LEVEL_HEAD}>
+        <button type="button" className={`${BACK} inline-flex`}>
           ‹ Audit
         </button>
-        <b style={{ fontSize: 14 }}>Filters</b>
-        <span className="badge">2 on</span>
-        <button type="button" className="btn btn--outline btn--sm a-lclear">
+        <b className="text-base">Filters</b>
+        <Badge>2 on</Badge>
+        <Button variant="outline" size="sm" className="ml-auto">
           Clear
-        </button>
+        </Button>
       </div>
-      <div className="a-lbody">
-        <p className="note">The rail's groups.</p>
+      <div className="flex-1 overflow-auto px-2 pt-2 pb-3">
+        <Note>The rail's groups.</Note>
       </div>
-      <div className="a-lfoot">
-        <button type="button" className="btn btn--primary">
-          Show 1,204 events
-        </button>
+      <div className="sticky bottom-0 flex border-t bg-background px-4 py-3">
+        <Button className="h-control-touch flex-1">Show 1,204 events</Button>
       </div>
     </>
   );
@@ -169,28 +152,17 @@ function LevelBody(): ReactNode {
 function Level(): ReactNode {
   const viewport = { inset: 16 };
   return (
-    <Columns
-      legacy={
-        <OverlayStage height={320} viewport={viewport}>
-          {() => (
-            <div className="audit-level">
+    <Bench>
+      <OverlayStage height={320} viewport={viewport}>
+        {(container) => (
+          <Sheet open modal={false}>
+            <SheetContent variant="level" container={container} initialFocus={false}>
               <LevelBody />
-            </div>
-          )}
-        </OverlayStage>
-      }
-      next={
-        <OverlayStage height={320} viewport={viewport}>
-          {(container) => (
-            <Sheet open modal={false}>
-              <SheetContent variant="level" container={container} initialFocus={false}>
-                <LevelBody />
-              </SheetContent>
-            </Sheet>
-          )}
-        </OverlayStage>
-      }
-    />
+            </SheetContent>
+          </Sheet>
+        )}
+      </OverlayStage>
+    </Bench>
   );
 }
 

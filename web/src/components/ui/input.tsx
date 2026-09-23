@@ -9,9 +9,10 @@ import { cn } from "@/lib/cn"
  * url, number, date) and for a field written with no `type` at all, which that rule never
  * reached and which rendered as the browser's own grey field.
  *
- * Deliberately NO focus ring, because today's field has none. legacy.css's `:focus-visible`
- * ring loses to its own `input[type=…]` rule on specificity, so a focused field looks exactly
- * like a resting one apart from its caret. Adding a ring is a look change for the owner to
+ * Deliberately NO focus ring, because the design's field has none. legacy.css's
+ * `:focus-visible` ring lost to its own `input[type=…]` rule on specificity, so a focused field
+ * looked exactly like a resting one apart from its caret; here `border-input` and `shadow-xs`
+ * outrank the base ring the same way. Adding a ring is a look change for the owner to
  * accept, not something a conversion slips in.
  *
  * `aria-invalid="true"` is the invalid state: a red border and no shadow.

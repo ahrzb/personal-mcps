@@ -10,7 +10,7 @@ import { cn } from "@/lib/cn";
  * THE RAIL IS ALWAYS THE FRAMED ONE. Every paned page puts it in the one framed box
  * (`chrome/Page`'s `Workspace`, legacy.css's `.paned--framed`), so its framed shape — the
  * sunken 200px column, 28px entries a pixel apart — is its only shape, and the free-standing
- * rail legacy.css also describes is drawn by no page.
+ * rail legacy.css also described is drawn by no page.
  *
  * NARROW LEVELS are read off the nearest `data-level` ancestor (the page's `<main>`, see
  * `chrome/Page`), as arbitrary variants on the attribute: below 1024px a page with levels
@@ -200,8 +200,7 @@ export type LevelHeaderModel = { backHref: string; backLabel: string; title: str
  * carries nothing, which is why it is hidden from anyone reading the page's contents.
  *
  * Full-bleed: it negates the page's own top padding and gutter through the `--pad-top` and
- * `--gutter` properties the page's `<main>` declares (`chrome/Page`, and legacy.css's
- * `.page--*` until every page is one).
+ * `--gutter` properties the page's `<main>` declares (`chrome/Page`).
  */
 export function LevelHeader({ header }: { header: LevelHeaderModel }): ReactNode {
   return (

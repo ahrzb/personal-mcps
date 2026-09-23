@@ -20,7 +20,7 @@ import { parseSearch, routeTree, stringifySearch } from "@/router";
  *
  *   GET /__preview                   — an index linking every page × state pair
  *   GET /__preview/<page>/<state>    — that page, rendered against that state's seed
- *   GET /__preview/primitives/<x>    — one component beside its legacy markup (`PrimitiveState`)
+ *   GET /__preview/primitives/<x>    — one component on the bench (`PrimitiveState`)
  *
  * PREVIEW MODE ONLY. `main.tsx` reaches this module behind `import.meta.env.MODE ===
  * "preview"`, which Vite replaces with a literal at build time, so Rollup drops this whole

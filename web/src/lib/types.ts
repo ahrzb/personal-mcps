@@ -260,7 +260,7 @@ export type SchemaLeaf = {
  *  - `text` in a `title` or `aria-label`, which cannot carry markup at all.
  *
  * `inline` and `block` are the ONLY strings this client may pass to
- * `dangerouslySetInnerHTML`, and only inside the `.md` container `styles.css` styles. All
+ * `dangerouslySetInnerHTML`, and only inside a `.md` container, which app.css styles. All
  * three are `""` for an empty description.
  */
 export type RenderedProse = { inline: string; block: string; text: string };

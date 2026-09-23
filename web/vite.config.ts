@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 // a Vite manifest to discover a hashed one. Revalidation is therefore the asset platform's
 // ETag rather than a content hash in the URL, which is safe for the reason web.ts records:
 // the hazard is an unversioned URL carrying `immutable`, which nothing here sets.
-// `dist/app.css` is the page's only stylesheet: legacy.css reaches it through app.css's
-// `@import`, so the dev server needs no route of its own for it.
+// `dist/app.css` is the page's only stylesheet, so the dev server needs no route of its own
+// for a second one.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {

@@ -1,160 +1,88 @@
 import type { ReactNode } from "react";
 import type { PrimitiveState } from "../../seed";
+import { Kv, KvList } from "@/chrome/Kv";
+import { DetailsBody } from "@/chrome/Listing";
+import { Eyebrow, Note } from "@/chrome/Text";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Columns } from "./Columns";
+import { Bench } from "./Bench";
 
 /**
- * The Card bench: `.card` bare and padded, `.card-head/-title/-desc`, `.card--danger`,
- * `.db .card--pad` (`sm`) and `.auth-card` (`auth`), each beside `<Card>` in the same wrappers.
+ * The Card bench: `<Card>` padded, with a header, in danger, and bare (`flush`); the details
+ * column's panel (`sm`); and the auth card (`auth`), each in the wrapper its page gives it.
  *
- * Every sample sits in a full-width box on both sides, because a card on a page fills its
- * column, and the bench's cells would otherwise shrink it to its content.
+ * Every sample sits in a full-width box, because a card on a page fills its column, and the
+ * bench's cell would otherwise shrink it to its content.
  */
 export const cardStates: Record<string, PrimitiveState> = {
   card: () => (
-    <Columns
-      legacy={
-        <>
-          <Full>
-            <div className="card card--pad">
-              <div className="card-head">
-                <div>
-                  <div className="card-title">Passkeys</div>
-                  <div className="card-desc">Sign in with a device you already unlock.</div>
-                </div>
-                <button type="button" className="btn btn--outline btn--sm">
-                  Add
-                </button>
-              </div>
-              <p className="note">No passkeys yet.</p>
+    <Bench>
+      <Full>
+        <Card>
+          <CardHeader>
+            <div>
+              <CardTitle>Passkeys</CardTitle>
+              <CardDescription>Sign in with a device you already unlock.</CardDescription>
             </div>
-          </Full>
-          <Full>
-            <section className="card card--pad card--danger">
-              <h2 className="card-title">Delete agent</h2>
-              <p className="card-desc">Its keys stop working at once and its grants are removed.</p>
-            </section>
-          </Full>
-          <Full>
-            <div className="card">
-              <div className="card--pad" style={{ gap: "var(--space-1)" }}>
-                <div className="card-title">Connected clients</div>
-                <div className="card-desc">Outside software you approved to reach this hub.</div>
-              </div>
-              <p className="note" style={{ padding: "0 var(--space-10) var(--space-10)" }}>
-                A bare card holds a table edge to edge.
-              </p>
-            </div>
-          </Full>
-        </>
-      }
-      next={
-        <>
-          <Full>
-            <Card>
-              <CardHeader>
-                <div>
-                  <CardTitle>Passkeys</CardTitle>
-                  <CardDescription>Sign in with a device you already unlock.</CardDescription>
-                </div>
-                <button type="button" className="btn btn--outline btn--sm">
-                  Add
-                </button>
-              </CardHeader>
-              <p className="note">No passkeys yet.</p>
-            </Card>
-          </Full>
-          <Full>
-            <Card render={<section />} className="border-danger-border">
-              <CardTitle render={<h2 />}>Delete agent</CardTitle>
-              <CardDescription render={<p />}>Its keys stop working at once and its grants are removed.</CardDescription>
-            </Card>
-          </Full>
-          <Full>
-            <Card size="flush">
-              <CardContent style={{ gap: "var(--space-1)" }}>
-                <CardTitle>Connected clients</CardTitle>
-                <CardDescription>Outside software you approved to reach this hub.</CardDescription>
-              </CardContent>
-              <p className="note" style={{ padding: "0 var(--space-10) var(--space-10)" }}>
-                A bare card holds a table edge to edge.
-              </p>
-            </Card>
-          </Full>
-        </>
-      }
-    />
+            <Button variant="outline" size="sm">
+              Add
+            </Button>
+          </CardHeader>
+          <Note>No passkeys yet.</Note>
+        </Card>
+      </Full>
+      <Full>
+        <Card render={<section />} className="border-danger-border">
+          <CardTitle render={<h2 />}>Delete agent</CardTitle>
+          <CardDescription render={<p />}>Its keys stop working at once and its grants are removed.</CardDescription>
+        </Card>
+      </Full>
+      <Full>
+        <Card size="flush">
+          <CardContent className="gap-0.5">
+            <CardTitle>Connected clients</CardTitle>
+            <CardDescription>Outside software you approved to reach this hub.</CardDescription>
+          </CardContent>
+          <Note className="px-6 pb-6">A bare card holds a table edge to edge.</Note>
+        </Card>
+      </Full>
+    </Bench>
   ),
 
-  // The details column's small panel: `.db` is its context on both sides, and the panel's
-  // key/value lines are the column's own (`.kv`), unchanged.
+  // The details column's small panel, in the column's body, holding the column's key/value
+  // lines.
   "card-sm": () => (
-    <Columns
-      legacy={
-        <Full>
-          <div className="db">
-            <div className="card card--pad">
-              <div className="eyebrow">Upstream</div>
-              <div className="kv">
-                <div className="kv-row">
-                  <div className="kv-key">URL</div>
-                  <div className="mono">https://mcp.example.com/sse</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Full>
-      }
-      next={
-        <Full>
-          <div className="db">
-            <Card size="sm">
-              <div className="eyebrow">Upstream</div>
-              <div className="kv">
-                <div className="kv-row">
-                  <div className="kv-key">URL</div>
-                  <div className="mono">https://mcp.example.com/sse</div>
-                </div>
-              </div>
-            </Card>
-          </div>
-        </Full>
-      }
-    />
+    <Bench>
+      <Full>
+        <DetailsBody>
+          <Card size="sm">
+            <Eyebrow>Upstream</Eyebrow>
+            <KvList>
+              <Kv k="URL">
+                <span className="font-mono">https://mcp.example.com/sse</span>
+              </Kv>
+            </KvList>
+          </Card>
+        </DetailsBody>
+      </Full>
+    </Bench>
   ),
 
-  // The approval page's card, inside the `.auth` frame on both sides (its `min-height: 100vh`
-  // lifted, identically, so the bench is not a screen tall). At 390 the card goes chromeless
-  // and its heading grows to 20px.
+  // The approval page's card, on the auth frame's ground and layout (`chrome/AuthFrame` less
+  // its brand and its screen-tall minimum). At 390 the card goes chromeless and its heading
+  // grows to 20px.
   "card-auth": () => (
-    <Columns
-      legacy={
-        <div className="auth min-h-0 w-full">
-          <div className="auth-card">
-            <div>
-              <h1 className="card-title">Approve this request?</h1>
-              <p className="card-desc">An agent wants to run an approval-gated tool.</p>
-            </div>
-            <button type="button" className="btn btn--primary btn--block">
-              Approve
-            </button>
+    <Bench>
+      <div className="flex w-full flex-col items-center justify-center gap-6 bg-sunken px-5 py-8 max-md:bg-background">
+        <Card size="auth">
+          <div>
+            <CardTitle render={<h1 />}>Approve this request?</CardTitle>
+            <CardDescription render={<p />}>An agent wants to run an approval-gated tool.</CardDescription>
           </div>
-        </div>
-      }
-      next={
-        <div className="auth min-h-0 w-full">
-          <Card size="auth">
-            <div>
-              <CardTitle render={<h1 />}>Approve this request?</CardTitle>
-              <CardDescription render={<p />}>An agent wants to run an approval-gated tool.</CardDescription>
-            </div>
-            <button type="button" className="btn btn--primary btn--block">
-              Approve
-            </button>
-          </Card>
-        </div>
-      }
-    />
+          <Button className="w-full">Approve</Button>
+        </Card>
+      </div>
+    </Bench>
   ),
 };
 

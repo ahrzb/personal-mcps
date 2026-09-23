@@ -113,7 +113,7 @@ export function formatArgs(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** A badge's class suffix — `styles.css`'s `.badge--*`. */
+/** A badge's tone: the `Badge` variant it draws in. */
 export type Tone = "warning" | "success" | "danger" | "muted";
 
 /**

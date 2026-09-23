@@ -32,14 +32,14 @@ function SheetTitle({ ...props }: SheetPrimitive.Title.Props) {
  *
  * - `menu`, the phone's navigation drawer (legacy `.menu`): 280px from the right, never past
  *   85% of the screen, sliding in over 220ms. `shadow-pop` rather than the sheet's own
- *   `0 0 40px`, because that is what pass 1 shipped (app.css's P0 note). It exists below the
+ *   `0 0 40px`, because that is what pass 1 shipped (a note app.css carried from P0 to P5). It exists below the
  *   narrow breakpoint only; above it the bar's own nav is the navigation.
  * - `panel`, a wide inspector beside a page that stays readable (audit's `.audit-drawer`):
  *   `min(620px, 100vw)` from the right with a left rule. At the narrow breakpoint 620px IS
  *   the screen, so it takes all of it and drops the rule and the shadow.
  * - `level`, the phone's full-screen level (audit's `.audit-level`). Its shadow falls outside
  *   the screen and never shows; it is kept because a full-page capture draws it below the
- *   fold and it decides how Chrome antialiases the level's text (audit.css says so).
+ *   fold and it decides how Chrome antialiases the level's text (as audit.css recorded).
  */
 const sheetVariants = cva("fixed flex flex-col bg-background outline-none", {
   variants: {

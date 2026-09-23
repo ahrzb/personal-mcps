@@ -1757,6 +1757,13 @@ budget 0. And `web/visual-accepted.json` closes pass 2 with six entries, each a 
 improvement: the four `agent-new` pairs (typeless fields that no rule reached become `Input`)
 and the two `catalogMarkdown` pairs (a markdown `hr` that drew nothing becomes a 1px rule).
 
+*(Amended 2026-09-23 — after pass 2.)* The migration is over, so the screenshot gate stops
+measuring against the server: every page baseline is re-shot from the SPA gallery at `54b3f80`
+(pass 2 plus the shared alias editor), and `web/visual-accepted.json` restarts empty. The gate is
+a regression check from here: a change meant to look different re-shoots the baselines it moves
+and names each in its commit, instead of adding an accepted entry. The server's PNGs stay in git
+history.
+
 **The SPA's server surface** is `/api/hub`, under the already-reserved `api` segment: ~~ten~~
 **twelve** *(2026-09-21, decision 36: the two the explorer adds — below)*
 cookie-authenticated JSON reads and, for writes, one allowlisting op dispatcher plus six

@@ -1,11 +1,10 @@
 // visual-compare.mts — DEV-ONLY. Screenshots every state of the React preview gallery and
 // compares it against the committed baselines in design/baseline/, so "nothing looks
-// different" is evidence rather than an assertion. The baselines are the reference: shot from
-// the server-rendered pages before each one moved to this client (decision 38 — the server
-// preview that drew them is retired, `src/preview/seed.ts` says what it was), and for /audit
-// from this gallery's own accepted render (decision 36). The 51 pairs pass 1 had accepted
-// (server fixture wrong, SPA right) and the states the server never had were shot from this
-// gallery at pass 1's close, in pass 2's P0, so pass 2 starts with nothing accepted.
+// different" is evidence rather than an assertion. Through decision 38's two passes the
+// baselines were the server-rendered pages, the migration's reference. Since pass 2's close
+// (2026-09-23) every page baseline is this gallery's own render at that commit, and
+// `visual-accepted.json` restarted empty: the gate is now a regression check, and a change
+// that should look different re-shoots the baselines it moves, naming each in its commit.
 //
 //   pnpm visual:compare           # writes web/.visual/report.html, exits non-zero on a fail
 //   VISUAL_PORT=5231 VISUAL_ONLY=apps,app-new pnpm visual:compare   # those gallery pages only,

@@ -15,7 +15,8 @@
 // pmcp_-prefixed token never falls through to session lookup, expiry-vs-revocation
 // semantics, and the coarse last_used_at stamp — plus the 401-vs-404 anti-enumeration
 // matrix for consumer requests, the session-scope guards that keep CLI-sourced
-// sessions away from credential management, and the BOOTSTRAP_SECRET behavior of
+// sessions away from credential management and day-old sessions away from changing a
+// credential (decision 39), and the BOOTSTRAP_SECRET behavior of
 // /internal/users. Authorization is deliberately absent: what a resolved principal
 // may do belongs to registry (grants, roles) and the gateway pipeline.
 //
@@ -32,7 +33,7 @@
 // originates here; mapping errors into JSON-RPC is the gateway's monopoly.
 
 import { env } from "cloudflare:workers";
-import { betterAuth } from "better-auth";
+import { BASE_ERROR_CODES, betterAuth } from "better-auth";
 import { bearer } from "better-auth/plugins/bearer";
 import { deviceAuthorization } from "better-auth/plugins/device-authorization";
 import { jwt } from "better-auth/plugins/jwt";
@@ -153,8 +154,13 @@ function buildAuth() {
       // §2's charset, handed to the plugin that would otherwise apply its own (which
       // rejects the hyphen every generated username may carry). One rule for what a
       // username is, spelled where §2 says it: admin.provisionUser writes it, this
-      // accepts it.
-      usernamePlugin({ usernameValidator: (name) => USERNAME_CHARSET.test(name) }),
+      // accepts it. `immutableUsername` because the name, once written, is the namespace
+      // (§2) — the mount already refuses `/update-user` outright (REFUSED); this keeps the
+      // plugin's own update hook refusing a rename should anything reach it another way.
+      usernamePlugin({
+        usernameValidator: (name) => USERNAME_CHARSET.test(name),
+        immutableUsername: true,
+      }),
       // §13's authenticator entry, named by the same decision argued one line below for
       // `passkey({ rpName })`. Without it the `otpauth://` URI falls back to
       // `ctx.context.appName` (two-factor/index.mjs:169), and `betterAuth()` sets no
@@ -992,7 +998,8 @@ export async function requireOwnerSession(
  * "Recent authentication" is better-auth's own session freshness — `createdAt` inside the
  * configured `freshAge`, the same window it guards its own sensitive endpoints with.
  * Deliberately not a second window of ours: two answers to "is this session fresh enough"
- * is one more than the system can keep consistent.
+ * is one more than the system can keep consistent. The hub's `recent: true` gate and the
+ * mount's FRESH_REQUIRED guard (decision 39) both ask here.
  */
 async function isRecentAuth(createdAt: Date | string): Promise<boolean> {
   const freshAgeSeconds = (await auth().$context).sessionConfig.freshAge;
@@ -1290,7 +1297,10 @@ export function deleteTokensForStatement(refId: string): D1Stmt {
  * credential family here is deliberately never exposed as pmcp tools, and a request
  * carrying an `Authorization` header reaches only the endpoints it has business at
  * (BEARER_ADMITTED below — §4's session-scope guard, standing at the mount rather than
- * only at the hub's wrappers).
+ * only at the hub's wrappers). A cookie session older than better-auth's `freshAge` is
+ * refused every change to a credential (FRESH_REQUIRED — decision 39), with better-auth's
+ * own 403 and before better-auth runs, so a refused change changes nothing. The endpoints
+ * in REFUSED answer every caller as a disabled better-auth endpoint does.
  */
 export function authRoutes(): unknown {
   // deps: better-auth · audit.record · D1 `passkey`
@@ -1298,11 +1308,17 @@ export function authRoutes(): unknown {
   // One catch-all: which endpoints exist under here is better-auth's plugin list to
   // decide, not a route table of ours to keep in sync with it.
   app.all("/*", async (c) => {
+    // First, and for every caller: an endpoint the hub does not offer at all — see REFUSED.
+    if (REFUSED.has(mountSubPath(c.req.url))) return notAvailable();
     // §4's session-scope guard, enforced HERE because this is the seam it is a property
     // of — see BEARER_ADMITTED.
     if (c.req.raw.headers.get("Authorization") !== null && !admitsBearer(c.req.url)) {
       return credentialFamilyForbidden();
     }
+    // §4's recent authentication, at the same seam and for the same reason — a direct
+    // call reaches better-auth through no hub wrapper. See FRESH_REQUIRED.
+    const unfresh = await freshnessRefusal(c.req.raw);
+    if (unfresh !== null) return unfresh;
     // §5's last_used_at stamp, for the credential the ASSERTION named. That id is in the
     // request body better-auth is about to consume, so it is read off a clone before the
     // handler runs and written only once the handler says the assertion verified.
@@ -1379,9 +1395,113 @@ const BEARER_ADMITTED = ["sign-out", "device/code", "device/token"] as const;
 
 /** Whether a request URL under this mount is one an `Authorization` header may reach. */
 function admitsBearer(url: string): boolean {
-  const path = new URL(url).pathname;
-  const sub = path.startsWith(AUTH_BASE_PATH) ? path.slice(AUTH_BASE_PATH.length) : path;
+  const sub = mountSubPath(url);
   return BEARER_ADMITTED.some((name) => sub === `/${name}` || sub.startsWith(`/${name}/`));
+}
+
+/** A URL's path below this mount (`/api/auth/change-password` → `/change-password`): the
+ *  spelling better-auth routes by, and the one both guards' lists are written in. */
+function mountSubPath(url: string): string {
+  const path = new URL(url).pathname;
+  return path.startsWith(AUTH_BASE_PATH) ? path.slice(AUTH_BASE_PATH.length) : path;
+}
+
+/**
+ * Decision 39's list: every endpoint under this mount that changes the owner's password,
+ * second factor, passkeys or sessions and that better-auth serves to ANY valid session. Its
+ * own `freshSessionMiddleware` guards only `/list-sessions` and passkey registration, and
+ * those stay its. fresh-auth.test.ts's table is the list the decision defers to — change both.
+ *
+ * Exact sub-paths, because better-auth's router matches them exactly: a trailing slash, a
+ * doubled slash or an escaped character is a 404 there, never a route this list misses.
+ *
+ * Why a DENYLIST, when BEARER_ADMITTED argues for an allowlist: that guard's cost for an
+ * endpoint it has not heard of is a refused bearer, which no CLI flow needs. This one's
+ * would be a refused day-old browser at sign-out, the device approval and OAuth consent —
+ * flows decision 39 keeps open on purpose. So a credential endpoint a better-auth upgrade
+ * adds is a gap until it is named here; re-read the plugins' endpoints at every upgrade.
+ *
+ * `/two-factor/verify-totp`, `-backup-code` and `-otp` each serve a sign-in challenge (no
+ * session yet, only the two-factor cookie) and a signed-in change (enrolment, or spending a
+ * code). The guard judges only a request that resolves a session — the same test
+ * better-auth's `verifyTwoFactor` picks its arm by — so the challenge never meets it.
+ *
+ * ponytail: a path list at the mount, compared to better-auth's refusal by a test. The
+ * upgrade is a better-auth `hooks.before` matching `ctx.path` and throwing
+ * `APIError.from("FORBIDDEN", BASE_ERROR_CODES.SESSION_NOT_FRESH)`: the library's own
+ * routing and its own refusal, by construction instead of by comparison.
+ */
+const FRESH_REQUIRED: ReadonlySet<string> = new Set([
+  "/change-password",
+  "/two-factor/enable",
+  "/two-factor/disable",
+  "/two-factor/generate-backup-codes",
+  "/two-factor/verify-totp",
+  "/two-factor/verify-backup-code",
+  "/two-factor/verify-otp",
+  "/passkey/delete-passkey",
+  "/passkey/update-passkey",
+  "/revoke-session",
+  "/revoke-sessions",
+  "/revoke-other-sessions",
+]);
+
+/**
+ * Endpoints better-auth serves under this mount that the hub does not offer to anyone —
+ * any field, any session or none. `/update-user` because the username it can rewrite is the
+ * namespace: the first segment of every MCP URL (`/<username>/…/mcp`, and so every issued
+ * token's audience), the `user:<username>` principal in every audit row, and a name §2's
+ * reserved-segment rule was checked against only when admin.provisionUser wrote it. Its other
+ * fields (name, image) have no caller either — nothing in server, web or cli posts it.
+ */
+const REFUSED: ReadonlySet<string> = new Set(["/update-user"]);
+
+/**
+ * The answer better-auth gives an endpoint its config has switched off — `/delete-user` with
+ * `user.deleteUser` unset throws `APIError.fromStatus("NOT_FOUND")`
+ * (better-auth/dist/api/routes/update-user.mjs), which better-call renders as a 404 with an
+ * empty body under `Content-Type: application/json`. Mirrored so a refused endpoint reads as
+ * absent, not as a policy a caller could argue with.
+ */
+function notAvailable(): Response {
+  return new Response(null, { status: 404, headers: { "Content-Type": "application/json" } });
+}
+
+/**
+ * The mount's freshness guard: `null` lets the request on to better-auth; otherwise the
+ * refusal it answers instead. Refuses only a FRESH_REQUIRED endpoint whose cookie resolves a
+ * session older than `freshAge`. No session is not stale — an anonymous call, or a sign-in
+ * challenge carrying only its two-factor cookie, is better-auth's to answer. The cookie is
+ * the only carrier read: a bearer on any of these paths was already refused above.
+ */
+async function freshnessRefusal(req: Request): Promise<Response | null> {
+  // deps: better-auth · isRecentAuth
+  const endpoint = mountSubPath(req.url);
+  const cookie = req.headers.get("Cookie");
+  if (!FRESH_REQUIRED.has(endpoint) || cookie === null) return null;
+  // Refresh off: a refused request must not extend the life of the session it refused.
+  const session = await auth().api.getSession({
+    headers: new Headers({ cookie }),
+    query: { disableRefresh: true },
+  });
+  if (session === null || (await isRecentAuth(session.session.createdAt))) return null;
+  // A decision, so one line — the user id and the endpoint, never the cookie.
+  console.warn(
+    `pmcp/fresh-auth: refused ${endpoint} for user ${session.user.id}: session older than freshAge (not transient — a fresh sign-in clears it)`,
+  );
+  return sessionNotFresh();
+}
+
+/**
+ * The freshness refusal in better-auth's own shape: `freshSessionMiddleware` throws
+ * `APIError.from("FORBIDDEN", BASE_ERROR_CODES.SESSION_NOT_FRESH)`
+ * (better-auth/dist/api/routes/session.mjs), which better-call renders as a 403 carrying
+ * `{ message, code }` as JSON. The same status and body here, so a client that handles the
+ * library's refusal at passkey registration handles this one.
+ */
+function sessionNotFresh(): Response {
+  const { message, code } = BASE_ERROR_CODES.SESSION_NOT_FRESH;
+  return Response.json({ message, code }, { status: 403 });
 }
 
 /**

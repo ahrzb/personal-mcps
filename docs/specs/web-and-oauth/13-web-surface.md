@@ -1764,6 +1764,11 @@ a regression check from here: a change meant to look different re-shoots the bas
 and names each in its commit, instead of adding an accepted entry. The server's PNGs stay in git
 history.
 
+*(Amended 2026-09-23 — preflight's control rule adopted.)* The owner took Tailwind's reset whole:
+the `revert-layer` block is gone, so a control inherits its font, line height, weight and colour,
+and a primitive that has a disabled look states it (`disabled:opacity-50`). The baselines it
+moved are re-shot and named in that commit.
+
 **The SPA's server surface** is `/api/hub`, under the already-reserved `api` segment: ~~ten~~
 **twelve** *(2026-09-21, decision 36: the two the explorer adds — below)*
 cookie-authenticated JSON reads and, for writes, one allowlisting op dispatcher plus six

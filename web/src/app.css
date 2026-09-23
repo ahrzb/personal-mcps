@@ -22,7 +22,13 @@
 
 /* What preflight strips that the look still draws. Each rule names the hazard it answers in
    §4 of docs/superpowers/plans/2026-09-23-shadcn-inventory.md. They come after preflight in
-   the same layer, so they win on order, and every utility still beats them. */
+   the same layer, so they win on order, and every utility still beats them.
+
+   #10 and #11, preflight's control rule, are adopted, not restored (the owner's call,
+   2026-09-23; pass 2 had handed them back to the browser). A button, input or select
+   inherits its font, line height, weight and colour, has square corners and no fill, and is
+   not dimmed when disabled. A primitive states on top of that what it draws: its size, fill
+   and radius, and `disabled:opacity-50` where disabled has a look. */
 @layer base {
   /* The colour a `border` utility that names none draws (shadcn's base sets the same).
      Preflight's `border: 0 solid` leaves it currentColor, a near-black line. It also
@@ -76,34 +82,6 @@
   /* #9. Preflight's placeholder is the text colour at 50%. */
   ::placeholder {
     color: var(--color-ring);
-  }
-
-  /* #10, #11. Preflight's control rule, undone. It makes a control inherit its font, line
-     height, weight and colour, squares its corners, clears its background and undims it
-     when disabled. Today's controls were drawn on the browser's own values for all of
-     these, and P1b matched every primitive against them. A primitive states its size and
-     family but leaves its line height and weight to the browser. So adopting the rule
-     moves a NativeSelect in a medium-weight row, every audit row button, a badge's `×` and
-     a disabled select.
-
-     `revert-layer`, in the lowest layer, hands each property back to the browser. A
-     utility that names one still wins. Adopting the rule is a look change, and it belongs
-     with pass 2's follow-up on known look gaps: delete this block, then give each control
-     that moves the values it relied on. */
-  button,
-  input,
-  select,
-  optgroup,
-  textarea,
-  ::file-selector-button {
-    font: revert-layer;
-    font-feature-settings: revert-layer;
-    font-variation-settings: revert-layer;
-    letter-spacing: revert-layer;
-    color: revert-layer;
-    border-radius: revert-layer;
-    background-color: revert-layer;
-    opacity: revert-layer;
   }
 
   /* App prose (`.md`): the Markdown an app writes (`server/src/pages/markdown.ts`), rendered

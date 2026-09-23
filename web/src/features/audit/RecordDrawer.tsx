@@ -433,10 +433,10 @@ const CELL =
 /** An id in the field table: it filters the list by itself. On the phone it fills its row, so
  *  the tap target is the row and not the text. */
 const ID_BUTTON =
-  "cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-xs leading-[inherit] text-inherit underline underline-offset-2 max-md:inline-flex max-md:items-center max-md:self-stretch";
+  "cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-xs text-inherit underline underline-offset-2 max-md:inline-flex max-md:items-center max-md:self-stretch";
 
 /** What the outcome means, a `Note` on its own line under the code. */
 const WHY = "mt-0.5 block font-sans leading-normal [word-break:normal] wrap-anywhere max-md:mt-1 max-md:flex-[1_1_100%]";
 
 /** A line of the approval's timeline, opening that row's record. */
-const SIBLING = `flex min-h-control-xs w-full cursor-pointer items-center gap-2 rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left font-[family-name:inherit] text-xs text-inherit ${HOVER_RING} max-md:min-h-control-touch`;
+const SIBLING = `flex min-h-control-xs w-full cursor-pointer items-center gap-2 rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left text-xs text-inherit ${HOVER_RING} max-md:min-h-control-touch`;

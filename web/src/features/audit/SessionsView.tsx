@@ -110,7 +110,7 @@ export function SessionsView({
 /** A session's head: the toggle that opens its waterfall. On the phone it wraps, the meta and
  *  the counts each taking a line. */
 const SESSION_HEAD =
-  "flex min-h-control-sm w-full cursor-pointer items-center gap-2.5 border-0 px-3.5 py-2 text-left [font:inherit] text-inherit max-md:min-h-control-touch max-md:flex-wrap max-md:py-2.5";
+  "flex min-h-control-sm w-full cursor-pointer items-center gap-2.5 border-0 px-3.5 py-2 text-left text-inherit max-md:min-h-control-touch max-md:flex-wrap max-md:py-2.5";
 
 const META = "text-xs text-muted-foreground max-md:flex-[1_1_100%]";
 
@@ -200,7 +200,7 @@ function Waterfall({
 /** One waterfall line, a fold or a row. On the phone each label sits above its own bar, so a
  *  230px mono name does not squeeze the track to nothing. */
 const LINE =
-  "flex min-h-control-xs w-full items-center gap-2.5 rounded-[5px] border-0 bg-transparent px-1 py-0 text-left font-[family-name:inherit] text-xs text-inherit max-md:flex-wrap max-md:gap-x-2.5 max-md:gap-y-0.5 max-md:py-1.5";
+  "flex min-h-control-xs w-full items-center gap-2.5 rounded-[5px] border-0 bg-transparent px-1 py-0 text-left text-xs text-inherit max-md:flex-wrap max-md:gap-x-2.5 max-md:gap-y-0.5 max-md:py-1.5";
 
 /** A line's `CLOCK`, first on the phone. */
 const TIME = `${CLOCK} max-md:order-1`;

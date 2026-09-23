@@ -15,12 +15,12 @@ import { cn } from "@/lib/cn"
  *   resting shadow and does not add to it.
  * - `aria-invalid="true"` draws a red border and no shadow. Focused, it keeps the red border
  *   and draws the ring, as Input does, so an invalid field still shows where focus is.
+ * - Disabled is dimmed to 50%, as Button is. Preflight leaves a disabled control undimmed.
  * - `size`, as Input's: `default` is 36px and 44px at the narrow breakpoint; `sm` is 32px at
  *   every width. `sm` is `.gh-form select`, whose call site also says `w-auto`.
  */
-// `font-[family-name:inherit]`: see Input's for why not `font-[inherit]`.
 const nativeSelectVariants = cva(
-  "w-full cursor-pointer rounded-md border border-input bg-background px-3 font-[family-name:inherit] text-base text-foreground shadow-xs focus-visible:border-ring focus-visible:shadow-none focus-visible:ring-3 focus-visible:ring-ring/35 focus-visible:outline-none aria-invalid:border-destructive aria-invalid:shadow-none",
+  "w-full cursor-pointer rounded-md border border-input bg-background px-3 text-base text-foreground shadow-xs focus-visible:border-ring focus-visible:shadow-none focus-visible:ring-3 focus-visible:ring-ring/35 focus-visible:outline-none disabled:cursor-default disabled:opacity-50 aria-invalid:border-destructive aria-invalid:shadow-none",
   {
     variants: {
       size: {

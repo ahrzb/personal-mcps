@@ -12,13 +12,12 @@ import { cn } from "@/lib/cn"
  * take it as it is, with no `cn`.
  */
 const buttonVariants = cva(
-  // `[font-family:inherit]`: without preflight a <button> keeps the user agent's system font.
   // `no-underline`: an <a> with these classes would otherwise take the base link underline.
   // The focus ring is restated here rather than left to app.css's base `:focus-visible`, because
   // any `shadow-*` utility below (outline's resting shadow, mini's `none`) outranks that base
   // rule. The ring replaces the resting shadow, as the base rule's does, and keeps the variant's
   // border.
-  "group/button inline-flex items-center justify-center gap-1.5 rounded-md border [font-family:inherit] font-medium leading-none whitespace-nowrap no-underline cursor-pointer outline-none focus-visible:shadow-none focus-visible:ring-3 focus-visible:ring-ring/35 disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-default aria-disabled:opacity-50",
+  "group/button inline-flex items-center justify-center gap-1.5 rounded-md border font-medium leading-none whitespace-nowrap no-underline cursor-pointer outline-none focus-visible:shadow-none focus-visible:ring-3 focus-visible:ring-ring/35 disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-default aria-disabled:opacity-50",
   {
     variants: {
       variant: {

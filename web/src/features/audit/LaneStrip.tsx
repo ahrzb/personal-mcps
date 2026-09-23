@@ -198,7 +198,7 @@ export function LaneStrip({
           <button
             key={index}
             type="button"
-            className="flex-1 cursor-pointer rounded-[4px] border-0 bg-transparent px-0 py-0.5 text-left font-[family-name:inherit] text-2xs text-muted-foreground hover:bg-muted hover:text-foreground aria-pressed:bg-muted aria-pressed:font-medium aria-pressed:text-foreground max-md:min-h-control-touch max-md:text-center"
+            className="flex-1 cursor-pointer rounded-[4px] border-0 bg-transparent px-0 py-0.5 text-left text-2xs text-muted-foreground hover:bg-muted hover:text-foreground aria-pressed:bg-muted aria-pressed:font-medium aria-pressed:text-foreground max-md:min-h-control-touch max-md:text-center"
             aria-pressed={dayOn(index)}
             onClick={() => onBrush({ since: dayAt(index), until: dayAt(index) + DAY })}
           >

@@ -78,7 +78,7 @@ export function SummaryView({
                 )}{" "}
                 <button
                   type="button"
-                  className="cursor-pointer border-0 bg-transparent p-0 [font:inherit] text-inherit underline underline-offset-2"
+                  className="cursor-pointer border-0 bg-transparent p-0 text-inherit underline underline-offset-2"
                   onClick={() => onDrillTo(insight.filters)}
                 >
                   show me
@@ -218,7 +218,7 @@ function Refusals({ rows, onPick }: { rows: AuditWindowRow[]; onPick: (filter: F
 const TOPN = "flex flex-col gap-0.5";
 
 /** One bar: a 24px row (the touch height on the phone) with its bar behind the labels. */
-const TOPN_ROW = `relative flex h-control-xs w-full cursor-pointer items-center gap-2 rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left font-[family-name:inherit] text-xs text-inherit max-md:h-control-touch ${HOVER_RING}`;
+const TOPN_ROW = `relative flex h-control-xs w-full cursor-pointer items-center gap-2 rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left text-xs text-inherit max-md:h-control-touch ${HOVER_RING}`;
 
 /** One step quieter than the rail's bar: three of these panels sit side by side, and the rail's
  *  fill at that repetition reads as a shaded block rather than as three charts. */

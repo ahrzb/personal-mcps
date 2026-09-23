@@ -276,7 +276,7 @@ const ROW =
  * is the row, so a ring around four words in the middle of it would point at the wrong thing.
  */
 const ROW_LINK =
-  "cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-xs leading-[inherit] font-semibold text-inherit focus-visible:shadow-none focus-visible:outline-none focus-visible:after:rounded-sm focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring";
+  "cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-xs font-semibold text-inherit focus-visible:shadow-none focus-visible:outline-none focus-visible:after:rounded-sm focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring";
 
 /**
  * The ×N badge is the run's DISCLOSURE, so a real button, raised above the title's row-wide
@@ -285,14 +285,14 @@ const ROW_LINK =
  * rather than a slab that would be the only 44px thing on a line of 20px ones.
  */
 const RUN_TOGGLE =
-  "relative z-1 cursor-pointer py-0 font-[family-name:inherit] leading-[inherit] before:absolute before:-inset-x-1.5 before:-inset-y-3 hover:bg-muted aria-expanded:border-primary aria-expanded:bg-primary aria-expanded:text-primary-foreground";
+  "relative z-1 cursor-pointer py-0 before:absolute before:-inset-x-1.5 before:-inset-y-3 hover:bg-muted aria-expanded:border-primary aria-expanded:bg-primary aria-expanded:text-primary-foreground";
 
 /** The arguments preview, a `Note`: one clipped mono line. */
 const PREVIEW = "mt-px truncate font-mono";
 
 /** A member of an unfolded run: a row-button of its own, whose record — and so whose bodies —
  *  is one click away. On the phone it takes the touch height rather than being hidden. */
-const MEMBER = `flex min-h-control-xs cursor-pointer items-center gap-2.5 rounded-[5px] border-0 px-1.5 py-0 text-left font-[family-name:inherit] text-xs leading-[inherit] text-inherit hover:bg-background ${HOVER_RING} max-md:min-h-control-touch max-md:text-sm`;
+const MEMBER = `flex min-h-control-xs cursor-pointer items-center gap-2.5 rounded-[5px] border-0 px-1.5 py-0 text-left text-xs text-inherit hover:bg-background ${HOVER_RING} max-md:min-h-control-touch max-md:text-sm`;
 
 /** The disclosure's own arrow. Decoration beside a badge that already counts, and beside an
  *  `aria-expanded` that already says which way it points. */

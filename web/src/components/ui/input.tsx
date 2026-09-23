@@ -17,6 +17,8 @@ import { cn } from "@/lib/cn"
  * `aria-invalid="true"` is the invalid state: a red border and no shadow. Focused, it keeps
  * the red border and draws the ring.
  *
+ * Disabled is dimmed to 50%, as Button and NativeSelect are.
+ *
  * A mono field, one that holds an identifier or a code, says `font-mono` at its call site.
  *
  * `size`:
@@ -28,11 +30,8 @@ import { cn } from "@/lib/cn"
  * It replaces the native `size` attribute, a width in characters, which nothing here uses.
  * The one-time-code box is sizing classes at its call site (`OtpBoxes`).
  */
-// `font-[family-name:inherit]` rather than `font-[inherit]`: cn reads the bare form as a
-// WEIGHT, so a caller's `font-semibold` would delete it and the field would fall back to the
-// browser's own font.
 const inputVariants = cva(
-  "w-full rounded-md border border-input bg-background px-3 font-[family-name:inherit] text-base text-foreground shadow-xs outline-none placeholder:text-ring focus-visible:border-ring focus-visible:shadow-none focus-visible:ring-3 focus-visible:ring-ring/35 aria-invalid:border-destructive aria-invalid:shadow-none",
+  "w-full rounded-md border border-input bg-background px-3 text-base text-foreground shadow-xs outline-none placeholder:text-ring focus-visible:border-ring focus-visible:shadow-none focus-visible:ring-3 focus-visible:ring-ring/35 disabled:cursor-default disabled:opacity-50 aria-invalid:border-destructive aria-invalid:shadow-none",
   {
     variants: {
       size: {

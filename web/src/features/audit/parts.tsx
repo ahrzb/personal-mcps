@@ -25,7 +25,7 @@ export const HOVER_RING = "hover:shadow-[inset_0_0_0_1px_var(--color-border)]";
  * sets no height, since the two differ. Its bar is `absolute` and painted over whatever is not
  * positioned, so every label in it says `relative`.
  */
-export const FROW = `relative flex w-full cursor-pointer items-center gap-[7px] rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left font-[family-name:inherit] text-xs text-inherit aria-pressed:bg-border aria-pressed:font-semibold ${HOVER_RING}`;
+export const FROW = `relative flex w-full cursor-pointer items-center gap-[7px] rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left text-xs text-inherit aria-pressed:bg-border aria-pressed:font-semibold ${HOVER_RING}`;
 
 /** A bar-backed row's value, in mono, clipped to the row. */
 export const FROW_VALUE = "relative truncate font-mono";
@@ -48,7 +48,7 @@ export const LEVEL_HEAD =
 /** `‹ Audit`, the way back out of a level: a 44px line of its own on the phone. It sets no
  *  display: the record shows it on the phone only, the Filters level at every width. */
 export const BACK =
-  "cursor-pointer items-center border-0 bg-transparent p-0 font-[family-name:inherit] text-base font-medium text-muted-foreground max-md:h-control-touch max-md:flex-[1_1_100%]";
+  "cursor-pointer items-center border-0 bg-transparent p-0 text-base font-medium text-muted-foreground max-md:h-control-touch max-md:flex-[1_1_100%]";
 
 /** The hatch that means "not loaded": an hour the ceiling cut off, which must never read as an
  *  hour in which nothing happened. A background IMAGE with no colour under it. */

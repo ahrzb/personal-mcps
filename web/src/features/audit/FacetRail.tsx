@@ -125,4 +125,4 @@ const LEVEL_ROW = "max-md:h-control-touch max-md:text-sm";
 
 /** Widens a group past its top few, or folds it back. */
 const SHOW_ALL =
-  "h-control-xs w-full cursor-pointer rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left font-[family-name:inherit] text-2xs text-muted-foreground underline underline-offset-2 hover:text-foreground";
+  "h-control-xs w-full cursor-pointer rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left text-2xs text-muted-foreground underline underline-offset-2 hover:text-foreground";

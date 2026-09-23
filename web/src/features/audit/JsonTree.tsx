@@ -168,7 +168,7 @@ const NODE = "flex gap-1.5 [&>span]:min-w-0 [&>span]:wrap-anywhere";
 
 /** The ▸/▾ column, 12px, present on a leaf too so every key lines up. */
 const TOGGLE =
-  "w-3 flex-none cursor-pointer border-0 bg-transparent p-0 text-left font-[family-name:inherit] text-ring";
+  "w-3 flex-none cursor-pointer border-0 bg-transparent p-0 text-left text-ring";
 
 /** A chip the ledger put where a value was: a cap's stub, or the gateway's `‹redacted›`. */
 const STUB = "rounded-[4px] bg-muted px-1 text-fg-subtle";

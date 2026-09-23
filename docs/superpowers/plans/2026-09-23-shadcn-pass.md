@@ -107,10 +107,15 @@ in them (P5's grep proves it later). The look does not change.
   app.css's base layer hands those back to the browser. Adopting the rule is a look change and
   joins the post-pass-2 follow-up (with §3.7's gaps, which the owner approved for after the
   gates): delete that block, then give each control that moves the values it relied on.
+- **Preflight's form-control rule is adopted** (2026-09-23, the owner's decision; commit
+  `<fill in>`): the `revert-layer` block is deleted and 83 baselines re-shot. NativeSelect,
+  the one control that stopped reading as itself, and Input, which never had, now dim when
+  disabled (`disabled:opacity-50`), as Button does.
 
 ## 4 · Closed (2026-09-23)
 
 P5 shipped as `e160f01`; the shared alias editor (`54b3f80`) followed. The page baselines were
 then re-shot from the SPA and the accepted list emptied (`35ffc4c`, spec §13), and the owner's
 follow-up on §3.7's gaps shipped as `91a39f8`: one focus ring everywhere, the mono fields, the UTC
-label. Deferred: adopting preflight's form-control rule (see "Rulings made during P3").
+label. Preflight's form-control rule, deferred at the close, was adopted after it (see
+"Rulings made during P3").

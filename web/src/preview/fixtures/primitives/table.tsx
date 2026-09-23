@@ -186,7 +186,7 @@ const CELL = {
 /** /audit's row title: a real button, stretched over the row by `RowLink`, with the row's ring
  *  on its `::after` (EventsView's `ROW_LINK`). */
 const ROW_BUTTON =
-  "cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-xs leading-[inherit] font-semibold text-inherit focus-visible:shadow-none focus-visible:outline-none focus-visible:after:rounded-sm focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring";
+  "cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-xs font-semibold text-inherit focus-visible:shadow-none focus-visible:outline-none focus-visible:after:rounded-sm focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring";
 
 const HISTORY = [
   { when: "Aug 24, 14:02", principal: "agent:triage-bot", tool: "github/create_issue", outcome: "Approved", tone: "success" },

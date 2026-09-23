@@ -2,5 +2,7 @@
   "agent-new__default__1280x900": "pass 2 P3 agents: the three typeless browser fields become <Input> (36px, the design's field), pushing the form down; before, no stylesheet rule reached them",
   "agent-new__default__390x844": "pass 2 P3 agents: the three typeless browser fields become <Input> (44px on a phone, the design's field), pushing the form down",
   "agent-new__refused__1280x900": "pass 2 P3 agents: the three typeless browser fields become <Input>; the refused slug field now draws the design's invalid border",
-  "agent-new__refused__390x844": "pass 2 P3 agents: the three typeless browser fields become <Input> (44px on a phone); the refused slug field draws the design's invalid border"
+  "agent-new__refused__390x844": "pass 2 P3 agents: the three typeless browser fields become <Input> (44px on a phone); the refused slug field draws the design's invalid border",
+  "app-detail__catalogMarkdown__1280x900": "pass 2 P4: the markdown hr, invisible before (the old border reset zeroed its width), is now a 1px --color-border rule; everything under it moves down 1px",
+  "app-detail__catalogMarkdown__390x844": "pass 2 P4: the markdown hr is now a visible 1px --color-border rule, so the page is 1px taller (1305 to 1306)"
 }

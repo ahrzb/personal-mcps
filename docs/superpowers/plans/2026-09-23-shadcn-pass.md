@@ -101,3 +101,9 @@ in them (P5's grep proves it later). The look does not change.
 - **`cn` keeps a `leading-*` before a `text-<size>`** (`586f7b9`, found by p3-agents and
   p3-settings): Tailwind 4 reads a size's line height through `--tw-leading`, so tailwind-merge's
   size-drops-leading rule only deleted Button's `leading-none`.
+- **Preflight's form-control rule is undone for pass 2** (P4, found by p4-preflight): its `font:
+  inherit`, colour, radius, background and disabled opacity would move 85 shots, because every
+  primitive was matched against the browser's own control values. A `revert-layer` block in
+  app.css's base layer hands those back to the browser. Adopting the rule is a look change and
+  joins the post-pass-2 follow-up (with §3.7's gaps, which the owner approved for after the
+  gates): delete that block, then give each control that moves the values it relied on.

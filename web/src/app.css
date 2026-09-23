@@ -12,16 +12,9 @@
    never by writing a counter-rule. What stays unlayered here — the drawer's open state,
    /audit's own sheet — outranks both. */
 
-/* Tailwind's PREFLIGHT is deliberately not imported, which is why `tailwindcss/theme.css`
-   and `tailwindcss/utilities.css` are imported separately instead of the `tailwindcss`
-   bundle the shadcn CLI writes. Preflight strips `list-style` from `ul`/`ol`, and
-   legacy.css's `.md ul` / `.md ol` rules set only margin and padding — they assume the
-   browser's markers are still there, so importing preflight would silently delete every
-   bullet in rendered app prose (pass 2's P4 imports it with the restorations). The one
-   preflight rule the primitives genuinely depend on (a default border style, so a bare
-   `border` utility paints) is restored below, inside `base` and therefore BENEATH
-   `utilities`: unlayered it would outrank every layered utility and delete the borders the
-   primitives ask for.
+/* Tailwind's three sheets are imported one by one, instead of as the `tailwindcss` bundle
+   the shadcn CLI writes, so each lands in its own layer. PREFLIGHT is `base`, the lowest,
+   with the restorations after it (pass 2's P4).
 
    `theme` sits ABOVE `legacy`, which is what makes the `@theme` below the one place a
    token's value lives: legacy.css's own `:root` still declares every token, and in the
@@ -31,36 +24,146 @@
 @layer base, legacy, theme, utilities;
 
 @import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
 
-/* The base border colour shadcn's own base sheet sets: without it, every generated `border`
-   or `border-b` that names no colour draws `currentColor`, a near-black line. Beneath
-   `legacy`, so every legacy rule that draws a border keeps the colour it names. */
+/* What preflight strips that today's look still draws. Each rule names the hazard it
+   answers in §4 of docs/superpowers/plans/2026-09-23-shadcn-inventory.md. They come after
+   preflight in the same layer, so they win on order, and every utility still beats them.
+
+   Until P5 deletes legacy.css, its own element rules (body, a, h1–h3, :focus-visible,
+   ::placeholder) sit one layer up and mask the copies here. Those copies are written
+   against the theme's names, so they hold once that file is gone. */
 @layer base {
+  /* The colour a `border` utility that names none draws (shadcn's base sets the same).
+     Preflight's `border: 0 solid` leaves it currentColor, a near-black line. It also
+     colours a markdown rule (#3). */
   *,
   ::before,
   ::after {
-    border-style: solid;
-    border-width: 0;
     border-color: var(--color-border);
   }
-}
 
-/* …but that reset is Tailwind's preflight rule, kept on purpose for the primitives and for
-   nothing else, and it must not reach a control the browser was left to draw. legacy.css
-   styles text controls BY TYPE (`input[type="text"]`, `[type="search"]`, …), so an
-   `<input>` written with no `type` attribute matches none of those rules and has always
-   rendered as the user agent's own field. Zeroing its border does not restyle such a field,
-   it erases it, and recolouring it restyles it.
+  /* #8. Preflight gives `html` the theme font at 1.5. The page is 14px at 1.55. */
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-size: var(--text-base);
+    line-height: 1.55;
+  }
 
-   `revert` rather than a width and a colour of this file's own: the correct appearance is
-   the UA sheet's, and writing one here would be a second definition of a control's look in
-   a file whose whole point is to carry none. Scoped to the absent attribute rather than to
-   a page, and still inside `base`, so a primitive's own `border` utility still wins. */
-@layer base {
-  input:not([type]) {
-    border-style: revert;
-    border-width: revert;
-    border-color: revert;
+  /* #6. Preflight makes a link inherit its colour and decoration. A bare link (15 files,
+     and app prose) is underlined, and it lightens on hover. */
+  a {
+    color: var(--color-foreground);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  a:hover {
+    color: var(--color-fg-subtle);
+  }
+
+  /* #7. Preflight makes a heading inherit its weight. Each heading's class sets its size,
+     but a card, section or rail title takes its line height from here. */
+  h1,
+  h2,
+  h3 {
+    line-height: 1.2;
+    font-weight: 600;
+  }
+
+  /* #13. The ring on every focusable that no primitive draws: links, rail entries and the
+     `.a-*` row buttons. It replaces the browser's outline. A primitive's own focus
+     utilities outrank it. */
+  :focus-visible {
+    outline: none;
+    border-color: var(--color-ring);
+    box-shadow: var(--focus-ring);
+  }
+
+  /* #9. Preflight's placeholder is the text colour at 50%. */
+  ::placeholder {
+    color: var(--color-ring);
+  }
+
+  /* #10, #11. Preflight's control rule, undone. It makes a control inherit its font, line
+     height, weight and colour, squares its corners, clears its background and undims it
+     when disabled. Today's controls were drawn on the browser's own values for all of
+     these, and P1b matched every primitive against them. A primitive states its size and
+     family but leaves its line height and weight to the browser. So adopting the rule
+     moves a NativeSelect in a medium-weight row, every audit row button, a badge's `×` and
+     a disabled select.
+
+     `revert-layer`, in the lowest layer, hands each property back to the browser. A
+     utility that names one still wins. Adopting the rule is a look change, and it belongs
+     with pass 2's follow-up on known look gaps: delete this block, then give each control
+     that moves the values it relied on. */
+  button,
+  input,
+  select,
+  optgroup,
+  textarea,
+  ::file-selector-button {
+    font: revert-layer;
+    font-feature-settings: revert-layer;
+    font-variation-settings: revert-layer;
+    letter-spacing: revert-layer;
+    color: revert-layer;
+    border-radius: revert-layer;
+    background-color: revert-layer;
+    opacity: revert-layer;
+  }
+
+  /* #2. A native checkbox or radio keeps the browser's margin. That covers an app's
+     task-list box and the gallery's legacy `.cb` and `.sw` inputs. */
+  input:is([type="checkbox"], [type="radio"]) {
+    margin: revert-layer;
+  }
+
+  /* App prose (`.md`): the Markdown an app writes, rendered server-side and handed to
+     `dangerouslySetInnerHTML`. Its renderer strips every class, so only descendant
+     selectors reach it. legacy.css's `.md` rules set margins and code. What the browser
+     drew before preflight is restored here at the browser's own values, so the flip moves
+     nothing but the rule (#3). */
+
+  /* #1. The bullets and numbers, with the browser's circle and square for nested lists. */
+  .md ul {
+    list-style-type: disc;
+  }
+
+  .md ol {
+    list-style-type: decimal;
+  }
+
+  .md :is(ul, ol) ul {
+    list-style-type: circle;
+  }
+
+  .md :is(ul, ol) :is(ul, ol) ul {
+    list-style-type: square;
+  }
+
+  /* #2. A quote's indent and a GFM table's spaced cells. A task's checkbox takes its margin
+     from the checkbox rule above. */
+  .md blockquote {
+    margin: 1em 40px;
+  }
+
+  .md table {
+    border-collapse: separate;
+    border-spacing: 2px;
+  }
+
+  .md th,
+  .md td {
+    padding: 1px;
+  }
+
+  /* #3. A thematic break keeps the browser's spacing. Its 1px line is new: the reset
+     preflight replaced zeroed the border, so before the flip the rule drew nothing. The
+     `*` rule above gives it the border colour instead of currentColor. */
+  .md hr {
+    margin-block: 0.5em;
   }
 }
 

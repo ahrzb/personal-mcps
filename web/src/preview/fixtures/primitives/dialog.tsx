@@ -28,11 +28,14 @@ const TEXT = "Deleting an agent deletes its tokens and removes its grants everyw
 /**
  * What the native element gets from being MODAL, which a dialog inside a column cannot be
  * (`showModal()` lifts it into the top layer, over the whole page): the UA's `dialog:modal`
- * declarations, and its `::backdrop` drawn as a sibling with legacy.css's colour.
+ * declarations, and its `::backdrop` drawn as a sibling with legacy.css's colour. Also the
+ * UA's `margin: auto`, the one declaration that centres it, which preflight's `margin: 0`
+ * strips (pass 2's P4, inventory §4 #4). Confirm's `<dialog>` had that margin.
  */
 const MODAL: CSSProperties = {
   position: "fixed",
   insetBlock: 0,
+  margin: "auto",
   maxHeight: "calc(100% - 6px - 2em)",
   overflow: "auto",
 };

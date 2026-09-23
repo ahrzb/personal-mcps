@@ -32,6 +32,13 @@ function Dash(): ReactNode {
   );
 }
 
+/** legacy.css's `.cb` input. A checked one draws its tick as an `::after` whose 4 × 8px size
+ *  was written for `content-box`, the browser's default for a pseudo-element. Preflight makes
+ *  every pseudo-element `border-box` (pass 2's P4), which shrinks the tick by its border. The
+ *  utility restores the default, so this column still draws what the pages drew. No page
+ *  uses `.cb` now. */
+const CB = "cb checked:after:box-content";
+
 /** One row of squares. It is framed, so a ring drawn outside them is still in the shot. It
  *  wraps, so a row too wide for the 390px column never paints into its neighbour. */
 function Row({ children }: { children: ReactNode }): ReactNode {
@@ -45,11 +52,11 @@ export const checkboxStates: Record<string, PrimitiveState> = {
     <Columns
       legacy={
         <Row>
-          <input className="cb" type="checkbox" aria-label="off" />
-          <input className="cb" type="checkbox" aria-label="on" defaultChecked />
-          <input className="cb" type="checkbox" aria-label="on, disabled" defaultChecked disabled />
-          <input className="cb" type="checkbox" aria-label="off, disabled" disabled />
-          <input className="cb lock" type="checkbox" aria-label="locked" defaultChecked disabled />
+          <input className={CB} type="checkbox" aria-label="off" />
+          <input className={CB} type="checkbox" aria-label="on" defaultChecked />
+          <input className={CB} type="checkbox" aria-label="on, disabled" defaultChecked disabled />
+          <input className={CB} type="checkbox" aria-label="off, disabled" disabled />
+          <input className={`${CB} lock`} type="checkbox" aria-label="locked" defaultChecked disabled />
         </Row>
       }
       next={
@@ -150,7 +157,7 @@ export const checkboxStates: Record<string, PrimitiveState> = {
     <Columns
       legacy={
         <Row>
-          <input className="cb" type="checkbox" aria-label="off" data-focus />
+          <input className={CB} type="checkbox" aria-label="off" data-focus />
         </Row>
       }
       next={
@@ -164,7 +171,7 @@ export const checkboxStates: Record<string, PrimitiveState> = {
     <Columns
       legacy={
         <Row>
-          <input className="cb" type="checkbox" aria-label="on" defaultChecked data-focus />
+          <input className={CB} type="checkbox" aria-label="on" defaultChecked data-focus />
         </Row>
       }
       next={

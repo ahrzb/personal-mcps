@@ -20,18 +20,19 @@ import { ApprovalDetailPage } from "@/features/approvals/ApprovalDetailPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { settingsPaneOf } from "@/features/settings/derive";
 import { DevicePage } from "@/features/device/DevicePage";
+import { ConsentPage } from "@/features/consent/ConsentPage";
 import { APP_PANES, AGENT_PANES, paths } from "@/lib/paths";
 import type { AppPane, AgentPane } from "@/lib/paths";
 
 /**
- * The route families this client owns, and nothing else. `/login` and `/oauth/consent` are
- * still server-rendered pages — the router never sees one, and nothing the shell draws links
- * to them.
+ * The route families this client owns, and nothing else. `/login` is still a server-rendered
+ * page — the router never sees it, and nothing the shell draws links to it.
  *
  * Adding a family here is adding a page, and a page the Worker does not serve a shell for is
  * unreachable — so each one arrives with its shell route. `/audit` became the third on
  * 2026-09-21 (decision 36); `/approvals` and `/approvals/<id>` the fourth on 2026-09-23, the
- * first of decision 38's move of every page onto the SPA, then `/settings`, then `/device`.
+ * first of decision 38's move of every page onto the SPA, then `/settings`, `/device` and
+ * `/oauth/consent`.
  */
 
 /**
@@ -278,6 +279,18 @@ const deviceRoute = createRoute({
   component: DevicePage,
 });
 
+/**
+ * `/oauth/consent` — §19.5's consent screen, chromeless. Its query is the provider's SIGNED
+ * request, which the page reads raw off the history (`ConsentPage` says why), so the route's
+ * pass-through validator only ever sees it and never feeds it back.
+ */
+const consentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/oauth/consent",
+  validateSearch: passThroughSearch,
+  component: ConsentPage,
+});
+
 /** The tree both mounts share: `main.tsx` builds a browser-history router over it, and the
  *  preview gallery a memory-history one — which is what lets the gallery show a ROUTE
  *  rather than a component. */
@@ -297,6 +310,7 @@ export const routeTree = rootRoute.addChildren([
   settingsRoute,
   settingsPaneRoute,
   deviceRoute,
+  consentRoute,
 ]);
 
 /** The router, built once. No lazy routes: the build is one file by configuration (the

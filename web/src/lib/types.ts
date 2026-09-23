@@ -660,6 +660,33 @@ export type DeviceRead = { request: DeviceRequest };
  *  `/device?decided=approved|denied`, or `/device?error=…` when the code could not be decided. */
 export type DeviceDecideBody = { userCode: string; decision: "approve" | "deny" };
 
+/* -------------------------------------------------------------- /oauth/consent ---- */
+
+/**
+ * `GET /api/hub/oauth/consent?<signed>` — `api.ts`'s `ConsentRead`: every field the consent
+ * screen shows or its form echoes, and nothing else (§19.5, decision 24). The four client
+ * strings came out of a body anyone could POST to an unauthenticated registration endpoint, so
+ * each is rendered as TEXT — never markup, never a link. An edited or expired query is 400
+ * `{ reason: "The authorization request could not be verified." }`.
+ */
+export type ConsentRead = {
+  /** The signed query exactly as THIS request carried it — the value the form posts back as
+   *  `oauth_query`, never something the client assembled. */
+  oauthQuery: string;
+  /** Untrusted; null when the client registered without one ("An application"). */
+  clientName: string | null;
+  /** §19.3's marker: nobody signed in vouched for this client at registration. */
+  clientSelfRegistered: boolean;
+  /** The ORIGIN of redirect_uri — where the code will go — never the whole URI. Shown BESIDE
+   *  the self-chosen name, never instead of it. */
+  redirectOrigin: string;
+  scopes: string[];
+  /** The namespace named by `resource`. */
+  namespace: string;
+  /** The owner's own agents, for the picker (`agent_list` unchanged). */
+  agents: { slug: string; name: string }[];
+};
+
 /** The four shapes `POST /api/hub/apps` answers with, discriminated by which keys are
  *  present — one route, because two of the three arms carry something the client cannot ask
  *  for twice: a plaintext key shown once (§15), and an authorize URL bound to a single-use

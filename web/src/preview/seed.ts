@@ -83,6 +83,7 @@ export const PREVIEW_PAGES = [
   "approval-detail",
   "settings",
   "device",
+  "oauth-consent",
 ] as const;
 
 export type PreviewName = (typeof PREVIEW_PAGES)[number];

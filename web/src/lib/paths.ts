@@ -83,6 +83,11 @@ export const paths = {
   /** The device-flow verdict page the CLI prints (`verification_uri`), and its
    *  `?user_code=` deep link (`verification_uri_complete`). */
   device: "/device",
+  /**
+   * The consent screen (§19.5), and the target of its KEPT form POST: that POST answers a 303
+   * to the client's own redirect_uri, which a `fetch` cannot carry into the address bar.
+   */
+  oauthConsent: "/oauth/consent",
   /** The sign-out target — a real form POST, because the answer is Set-Cookie plus a 303 to
    *  /login. The WORKER's translating route, not better-auth's `/api/auth/sign-out`: that one
    *  refuses a control-less form body with 415 and answers JSON, which is what this form
@@ -176,6 +181,15 @@ export const settingsApi = {
 export const deviceApi = {
   read: "/device",
   decide: "/device/decide",
+} as const;
+
+/**
+ * /oauth/consent's one read, relative to `/api/hub` (routes design §4). The signed query is
+ * appended to it VERBATIM — the document's own raw search, never parsed, rebuilt or
+ * re-encoded — because the provider re-verifies its signature byte for byte on every read.
+ */
+export const consentApi = {
+  read: "/oauth/consent",
 } as const;
 
 /**

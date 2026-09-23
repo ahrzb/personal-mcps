@@ -14,6 +14,7 @@ import type {
   AuditWindowResponse,
   ApprovalDetailRead,
   ApprovalsResponse,
+  ConsentRead,
   DeviceRead,
   SettingsRead,
   CapabilitiesResponse,
@@ -25,7 +26,7 @@ import type {
   TokensResponse,
 } from "./types";
 import type { ApiClient } from "./http";
-import { deviceApi, settingsApi } from "./paths";
+import { consentApi, deviceApi, settingsApi } from "./paths";
 
 /**
  * Every query key this client uses, array-shaped and MOST GENERAL FIRST so a prefix
@@ -58,6 +59,7 @@ export const keys = {
   approval: (id: string) => ["approvals", "one", id] as const,
   settings: () => ["settings"] as const,
   device: (userCode: string) => ["device", userCode] as const,
+  consent: (rawSearch: string) => ["consent", rawSearch] as const,
 } as const;
 
 /**
@@ -290,6 +292,20 @@ export function deviceQuery(api: ApiClient, userCode: string) {
   return queryOptions({
     queryKey: keys.device(userCode),
     queryFn: () => api.get<DeviceRead>(`${deviceApi.read}?user_code=${encodeURIComponent(userCode)}`),
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+/**
+ * The consent screen's read over the document's RAW search (`?<signed>`, verbatim — see
+ * `consentApi`). Never stale and never retried: a signature that failed once fails again, and
+ * the one refusal (400) is an answer the page shows.
+ */
+export function consentQuery(api: ApiClient, rawSearch: string) {
+  return queryOptions({
+    queryKey: keys.consent(rawSearch),
+    queryFn: () => api.get<ConsentRead>(`${consentApi.read}${rawSearch}`),
     staleTime: Infinity,
     retry: false,
   });

@@ -30,7 +30,7 @@
 //       noticeUrl) · admin.ops · gateway.ownerCatalog ·
 //       catalog-view · registry (Registry, effectiveRoles, writeOnlyPaths) · tunnel.capabilities ·
 //       upstream.beginConnect · pages/model (the composers, auditFilters/auditQueryOf,
-//       approvalOf, deviceRequestOf, settingsRead, enrollmentOf/revealedCodesOf) ·
+//       approvalOf, consentRead, deviceRequestOf, settingsRead, enrollmentOf/revealedCodesOf) ·
 //       wiring.approvalsFromEnv (subscribePush) · errors.HubError
 
 import { env } from "cloudflare:workers";
@@ -67,6 +67,7 @@ import {
   composeRedaction,
   composeRoles,
   composeTypescriptAliases,
+  consentRead,
   deviceRequestOf,
   enrollmentOf,
   eventRow,
@@ -78,6 +79,7 @@ import {
 } from "./pages/model";
 import type {
   AuditEventRow,
+  ConsentRead,
   DetailApproval,
   DeviceRequest,
   PasswordField,
@@ -204,6 +206,15 @@ export type DeviceRead = { request: DeviceRequest };
  *  Answers `Redirected` with `reload: false`: `/device?decided=approved|denied`, or
  *  `/device?error=…` when better-auth refused the verdict. */
 export type DeviceDecideBody = { userCode: string; decision: "approve" | "deny" };
+
+/* ------------------------------------------------------------------ *
+ * The consent read (§19.5, decision 38)
+ * ------------------------------------------------------------------ */
+
+/** `GET /api/hub/oauth/consent?<signed query>` — pages/model's `ConsentRead`: exactly what
+ *  §19.5's screen shows or its form echoes. An edited or expired query (or an unknown
+ *  client) is 400 `{ reason: "The authorization request could not be verified." }`. */
+export type { ConsentRead };
 
 /* ------------------------------------------------------------------ *
  * The drafts a typed route takes
@@ -674,6 +685,25 @@ export function hubApiRoutes(): unknown {
         return redirected(`${paths.device}?error=${encodeURIComponent("That code could not be decided.")}`, null);
       }
       return redirected(`${paths.device}?decided=${decision === "approve" ? "approved" : "denied"}`, null);
+    }),
+  );
+
+  /* ------------------------------- consent ------------------------------ */
+
+  // §19.5's screen, read (decision 38). Bound to the signed request exactly as the render
+  // was: the client appends its own URL's query VERBATIM, `consentRead` takes this request's
+  // raw search once and hands it to the provider's `public-client-prelogin`, which
+  // re-verifies the signature on every read — so the `oauthQuery` answered is the bytes just
+  // verified, and the form posts those, never a string the client assembled. It answers only
+  // the owner, and only a function of a query the caller already holds plus this owner's own
+  // `agent_list`: nothing the screen does not show. The consent POST itself stays web.ts's
+  // form route, unchanged.
+  app.get(
+    "/hub/oauth/consent",
+    reader(async (session, c) => {
+      const read = await consentRead({ ownerId: session.user.userId }, c.req.raw);
+      if (read === null) return refuse(400, "The authorization request could not be verified.");
+      return json(read satisfies ConsentRead);
     }),
   );
 

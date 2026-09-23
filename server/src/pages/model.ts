@@ -1043,16 +1043,16 @@ export type AuditEventRow = Omit<AuditRow, "ownerId" | "args" | "result"> & {
 export type ConsentAgentOption = { slug: string; name: string };
 
 /**
- * /oauth/consent — chromeless, like /login and /device: reached from the provider's own
- * redirect, not from inside the signed-in app. Every field here is either the SIGNED
- * `oauth_query` echoed verbatim (§19.5 step 2 — this page cannot invent, drop or edit a
- * parameter) or a value read out of the SAME verified query, through the provider's own
+ * `GET /api/hub/oauth/consent`'s answer (decision 38) — exactly what §19.5 step 3's screen
+ * shows or its form echoes, and nothing else. Every field is either the SIGNED `oauth_query`
+ * echoed verbatim (§19.5 step 2 — the screen cannot invent, drop or edit a parameter) or a
+ * value read out of the SAME verified query, through the provider's own
  * `/oauth2/public-client-prelogin` (which re-checks the signature, §19.5 step 2's blocking
  * probe observation).
  */
-export type ConsentProps = PageProps & {
-  csrfToken: string;
-  /** The whole signed query, byte-for-byte — the hidden field this form echoes back. */
+export type ConsentRead = {
+  /** The whole signed query, byte-for-byte, as THIS request carried it — the value the
+   *  consent form posts back, so the bytes posted are the bytes the provider verified. */
   oauthQuery: string;
   /** The client's own self-chosen name — untrusted, rendered as text, never markup. `null`
    *  when the client registered without one. */
@@ -1072,6 +1072,13 @@ export type ConsentProps = PageProps & {
    *  invariant). Empty is the first-run path, not an edge case (§19.5's empty state). */
   agents: ConsentAgentOption[];
 };
+
+/**
+ * /oauth/consent as the retained template draws it (ruling §5.2 keeps it for the states
+ * preview until family 5): the read, plus the render instant and the form's CSRF token.
+ * Chromeless, like /login and /device: reached from the provider's own redirect.
+ */
+export type ConsentProps = PageProps & ConsentRead & { csrfToken: string };
 
 /* ------------------------------------------------------------------ *
  * The Connected clients pane's rows (§19.6/§8/§13)
@@ -1995,15 +2002,16 @@ export async function deviceRequestOf(req: Request, userCode: string): Promise<D
 /* ------------------------------------- /oauth/consent (§19.5) ------------------------------------- */
 
 /**
- * /oauth/consent — the whole read, off the SIGNED query string the provider redirected the
- * browser here with and nothing else. `req.url`'s raw search string IS `oauth_query`
- * (§19.5 step 2: "the page cannot invent, drop or edit a parameter"), so it is read here
- * ONCE, echoed back unread by anything downstream, and handed to the provider's own
- * `/oauth2/public-client-prelogin` — which re-verifies the signature (§19.5 step 2's
- * blocking probe observation: "public-client-prelogin wants client_id alongside
- * oauth_query"). `null` means that verification failed — an edited or expired query, or an
- * unknown client — and the caller (web.ts) answers a plain 400 rather than rendering a
- * page whose every field would be unverified.
+ * /oauth/consent's whole read (decision 38: `GET /api/hub/oauth/consent`'s answer, and the
+ * shell's own document check), off the SIGNED query string the request carries and nothing
+ * else. `req.url`'s raw search string IS `oauth_query` (§19.5 step 2: "the page cannot
+ * invent, drop or edit a parameter") — the shell's URL's, or the read's, which the client
+ * appends verbatim — so it is read here ONCE, echoed back unread, and handed to the
+ * provider's own `/oauth2/public-client-prelogin` — which re-verifies the signature (§19.5
+ * step 2's blocking probe observation: "public-client-prelogin wants client_id alongside
+ * oauth_query") on every call. `null` means that verification failed — an edited or expired
+ * query, or an unknown client — and each caller answers a 400 rather than a screen whose
+ * every field would be unverified.
  *
  * `clientSelfRegistered` is read directly off `oauthClient` rather than through an admin op:
  * no op fronts it (nothing else in this hub needs it), it names no capability an agent or
@@ -2011,7 +2019,7 @@ export async function deviceRequestOf(req: Request, userCode: string): Promise<D
  * reads and /audit's stats as a named exception to "every loader reads through admin.ops"
  * rather than a silent one.
  */
-export async function consentProps(ctx: PageContext, req: Request): Promise<ConsentProps | null> {
+export async function consentRead(ctx: { ownerId: string }, req: Request): Promise<ConsentRead | null> {
   // deps: identity.callAuth (public-client-prelogin) · admin.ops (agent_list) · D1 `oauthClient`
   const oauthQuery = new URL(req.url).search.slice(1);
   const requested = new URLSearchParams(oauthQuery);
@@ -2026,8 +2034,6 @@ export async function consentProps(ctx: PageContext, req: Request): Promise<Cons
   if (client === null) return null;
   const listed = await read<{ agents: { slug: string; name: string }[] }>(ctx, "agent_list");
   return {
-    now: ctx.now,
-    csrfToken: ctx.csrfToken,
     oauthQuery,
     clientName: typeof client.client_name === "string" && client.client_name !== "" ? client.client_name : null,
     clientSelfRegistered: await isDcrClient(clientId),

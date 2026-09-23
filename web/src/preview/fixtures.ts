@@ -5,6 +5,7 @@ import { auditSeeds } from "./fixtures/audit";
 import { approvalDetailSeeds, approvalsSeeds } from "./fixtures/approvals";
 import { settingsSeeds } from "./fixtures/settings";
 import { deviceSeeds } from "./fixtures/device";
+import { consentSeeds } from "./fixtures/consent";
 import type { PreviewSeeds } from "./seed";
 
 /**
@@ -30,4 +31,5 @@ export const seeds: PreviewSeeds = {
   "approval-detail": approvalDetailSeeds,
   settings: settingsSeeds,
   device: deviceSeeds,
+  "oauth-consent": consentSeeds,
 };

@@ -43,13 +43,12 @@ import { upsertBinding } from "./oauth";
 import { Registry } from "./registry";
 import type { App, Violation } from "./registry";
 import { beginConnect } from "./upstream";
-import { ConsentPage } from "./pages/consent";
 import { Login } from "./pages/login";
 import { SpaShell } from "./pages/spa";
 import {
   approvalOf,
   auditExportQuery,
-  consentProps,
+  consentRead,
   hubRelative,
   loginProps,
   loginUrl,
@@ -111,9 +110,11 @@ type PageRouter = unknown;
  * - /apps, /apps/new — app management fronting the app_* admin ops;
  *   Connect/Reconnect redirect into the upstream module's OAuth initiation.
  * - /oauth/consent — §19.5's inbound-OAuth consent screen: the provider redirects an
- *   authenticated, uncovered authorization request here with a signed query the page
- *   echoes back verbatim; the POST verifies with the provider's own /oauth2/consent
- *   BEFORE writing oauth_binding, so a refused request writes nothing.
+ *   authenticated, uncovered authorization request here with a signed query, verified
+ *   before the SPA shell is answered (decision 38; the screen reads api.ts's
+ *   `/api/hub/oauth/consent`). The POST stays a form here: it resolves the chosen agent,
+ *   then verifies with the provider's own /oauth2/consent BEFORE writing oauth_binding,
+ *   so a refused request writes nothing.
  * - /oauth/connections — a 301 to /settings/clients, where §13 re-homed the bindings the
  *   consent screen produced. connection_list/connection_revoke are fronted by that pane,
  *   through `/api/hub/settings` and `/api/hub/settings/clients/connection_revoke`.
@@ -317,14 +318,18 @@ export function pageRoutes(): PageRouter {
   // page's own URL (query included) as `next=`, which is §19.5 step 1's "carries the query
   // through" for a browser that reloaded here after its cookie expired mid-flow.
 
+  // Since decision 38 the SPA shell — after the same two checks, in the same order, before
+  // any HTML: the owner session, then the provider's own signature check on this request's
+  // raw query (`consentRead`, which the screen's JSON read runs again over the same bytes).
   app.get(paths.oauthConsent, async (c) => {
     const session = await requireOwnerSession(c.req.raw);
-    const ctx = await context(c.req.raw, session);
-    const props = await consentProps(ctx, c.req.raw);
+    const verified = await consentRead({ ownerId: session.user.userId }, c.req.raw);
     // null means the provider's own signature check on the query failed (edited, expired,
-    // or an unknown client) — nothing to render, and nothing was ever going to be written.
-    if (props === null) return new Response("Bad Request", { status: 400, headers: TEXT });
-    return render(ConsentPage(props));
+    // or an unknown client) — nothing to show, and nothing was ever going to be written.
+    if (verified === null) return new Response("Bad Request", { status: 400, headers: TEXT });
+    // The client's self-chosen name, untrusted: SpaShell sets the title as JSX text, so
+    // markup in it is escaped, never parsed.
+    return shellDocument(session, `Connect ${verified.clientName ?? "An application"}`);
   });
 
   // The consent decision: §13's strictest mutation gate (session, form, CSRF, body), because
@@ -899,25 +904,35 @@ function shell(
     // The `/settings` prefix gate's stricter session where it ran, this URL's own otherwise.
     const session = await sessionOf(c);
     if (exists !== undefined && !(await exists(c, session))) return noSuchPage();
-    const bootstrap = {
-      csrf: await csrfTokenFor(session.sessionId),
-      username: session.user.username,
-      // The CANONICAL origin, not whatever host this request arrived on: a scoped endpoint
-      // URL is a value the owner copies into a bot's configuration, and this is the origin
-      // the hub puts on the wire everywhere else (§7's approvalUrl, the CIMD document, the
-      // `wss://` the clients derive). So the client never reads `location.origin`.
-      origin: env.PUBLIC_ORIGIN,
-      // Configuration no API reports, which the approvals page's push control subscribes
-      // with (decision 38). "" where the secret is unset (a local `wrangler dev` with no
-      // .dev.vars): the client requires the field on every shell, so an absent secret must
-      // still be a string — the push control then fails on click, as the server page did
-      // with no key, instead of the whole client refusing to mount.
-      vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
-    };
-    return render(
-      SpaShell({ title, bootstrap, stylesheet: paths.stylesheet, appStylesheet: paths.clientStylesheet, script: paths.clientScript }),
-    );
+    return shellDocument(session, title);
   };
+}
+
+/**
+ * The shell document itself, for a session a gate has already resolved and whose URL has
+ * already passed its document-level check — `shell`'s last step, and the whole of what
+ * `/oauth/consent` answers once the provider has verified its query (that page's check
+ * answers a 400 rather than a 404, and its title names the verified client).
+ */
+async function shellDocument(session: OwnerSession, title: string): Promise<Response> {
+  const bootstrap = {
+    csrf: await csrfTokenFor(session.sessionId),
+    username: session.user.username,
+    // The CANONICAL origin, not whatever host this request arrived on: a scoped endpoint
+    // URL is a value the owner copies into a bot's configuration, and this is the origin
+    // the hub puts on the wire everywhere else (§7's approvalUrl, the CIMD document, the
+    // `wss://` the clients derive). So the client never reads `location.origin`.
+    origin: env.PUBLIC_ORIGIN,
+    // Configuration no API reports, which the approvals page's push control subscribes
+    // with (decision 38). "" where the secret is unset (a local `wrangler dev` with no
+    // .dev.vars): the client requires the field on every shell, so an absent secret must
+    // still be a string — the push control then fails on click, as the server page did
+    // with no key, instead of the whole client refusing to mount.
+    vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
+  };
+  return render(
+    SpaShell({ title, bootstrap, stylesheet: paths.stylesheet, appStylesheet: paths.clientStylesheet, script: paths.clientScript }),
+  );
 }
 
 /**

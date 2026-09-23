@@ -139,10 +139,15 @@ const RAIL =
  * current entry lifts off the sunken ground as a white chip. Below 1024px on a page with
  * levels, the entries are a touch-height list, each ending in a drawn chevron, and the current
  * one needs no chip on a level that IS the list.
+ *
+ * Focus draws the ring as a utility, in place of the chip's shadow, because the current entry's
+ * `shadow-xs` (or `shadow-none` on a level) outranks app.css's base `:focus-visible` ring.
+ * No screenshot gates this ring or the pills' below: the primitives bench has no router for
+ * these links and no page state is shot focused.
  */
 const RAIL_LINK =
-  "group/rail-link flex h-rail-row items-center justify-between gap-1.5 rounded-sm px-2 text-sm no-underline " +
-  "hover:bg-muted hover:text-foreground aria-[current=page]:bg-background aria-[current=page]:font-medium aria-[current=page]:text-foreground aria-[current=page]:shadow-xs " +
+  "group/rail-link flex h-rail-row items-center justify-between gap-1.5 rounded-sm px-2 text-sm no-underline focus-visible:ring-3 focus-visible:ring-ring/35 " +
+  "hover:bg-muted hover:text-foreground aria-[current=page]:bg-background aria-[current=page]:font-medium aria-[current=page]:text-foreground aria-[current=page]:shadow-xs aria-[current=page]:focus-visible:shadow-none " +
   "[[data-level]_&]:max-lg:h-control-touch [[data-level]_&]:max-lg:rounded-lg " +
   "[[data-level]_&]:max-lg:after:text-[18px] [[data-level]_&]:max-lg:after:leading-none [[data-level]_&]:max-lg:after:text-ring [[data-level]_&]:max-lg:after:content-['›'] " +
   "[[data-level]_&]:max-lg:aria-[current=page]:bg-transparent [[data-level]_&]:max-lg:aria-[current=page]:shadow-none";
@@ -155,7 +160,9 @@ const DOT: Record<"on" | "off" | "warn", string> = {
 };
 
 /** The same panes below the breakpoint: a horizontally scrolling pill row under the page
- *  title — label only, no markers (§13's Mobile rule). Shown below 768px only. */
+ *  title — label only, no markers (§13's Mobile rule). Shown below 768px only. A pill's
+ *  focus ring is a utility, in place of its shadow, because its `shadow-xs` outranks app.css's
+ *  base `:focus-visible` ring. */
 export function PanePills({ label, entries }: { label: string; entries: PaneEntry[] }): ReactNode {
   return (
     <nav
@@ -165,7 +172,7 @@ export function PanePills({ label, entries }: { label: string; entries: PaneEntr
       {entries.map((entry) => (
         <Link
           key={entry.href}
-          className="flex h-control-sm shrink-0 items-center rounded-full border bg-background px-3 text-sm font-medium whitespace-nowrap text-muted-foreground no-underline shadow-xs aria-[current=page]:border-primary aria-[current=page]:bg-primary aria-[current=page]:text-primary-foreground"
+          className="flex h-control-sm shrink-0 items-center rounded-full border bg-background px-3 text-sm font-medium whitespace-nowrap text-muted-foreground no-underline shadow-xs focus-visible:shadow-none focus-visible:ring-3 focus-visible:ring-ring/35 aria-[current=page]:border-primary aria-[current=page]:bg-primary aria-[current=page]:text-primary-foreground"
           to={entry.href}
           activeOptions={CURRENT_ONLY}
           aria-current={entry.current ? "page" : undefined}

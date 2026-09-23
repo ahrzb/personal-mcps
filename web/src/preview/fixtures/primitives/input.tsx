@@ -25,7 +25,8 @@ export const inputStates: Record<string, PrimitiveState> = {
   input: () => (
     <Bench>
       <Fields />
-      {/* The fields that wore `.input--mono`, which never applied (see Input's comment): sans */}
+      {/* Two fields that wore `.input--mono`, which never applied, drawn sans as the slug field
+          still is. The device and backup codes say `font-mono` at their call sites. */}
       <Input type="text" defaultValue="linear" />
       <Input type="text" placeholder="XXXX-XXXX" />
       <Input type="text" size="sm" className="w-50 max-w-full font-mono" placeholder="role name" />
@@ -45,8 +46,7 @@ export const inputStates: Record<string, PrimitiveState> = {
     </Bench>
   ),
   // `data-focus`: visual-compare focuses the target just before the shot. The
-  // `p-1` frame would keep a ring inside the crop. Today's field draws none, and
-  // this state is the proof.
+  // `p-1` frame keeps the 3px ring, which is drawn outside the box, inside the crop.
   "input-focus": () => (
     <Bench>
       <div className="flex w-full flex-col gap-3 p-1">

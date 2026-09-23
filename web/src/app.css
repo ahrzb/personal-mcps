@@ -62,9 +62,11 @@
     font-weight: 600;
   }
 
-  /* #13. The ring on every focusable that no primitive draws: links, rail entries and the
-     `.a-*` row buttons. It replaces the browser's outline. A primitive's own focus
-     utilities outrank it. */
+  /* #13. The ring on every focusable that draws none of its own: links, a badge's `×`, a bare
+     button. It replaces the browser's outline. Any utility outranks it, and a `shadow-*` one
+     hides the ring, so an element that wears one restates it as
+     `focus-visible:ring-3 focus-visible:ring-ring/35` (the same pixels), dropping its resting
+     shadow: Button, Input, NativeSelect, InputGroup, a Tabs arm, a rail entry, a pane pill. */
   :focus-visible {
     outline: none;
     border-color: var(--color-ring);

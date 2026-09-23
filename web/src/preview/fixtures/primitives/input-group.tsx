@@ -51,7 +51,7 @@ export const inputGroupStates: Record<string, PrimitiveState> = {
     </Bench>
   ),
   // `data-focus`: visual-compare focuses the target just before the shot. The `p-1` frame
-  // would keep a ring inside the crop. Today's box draws none, and this state is the proof.
+  // keeps the box's 3px ring inside the crop.
   "input-group-focus": () => (
     <Bench>
       <div className="w-full p-1">

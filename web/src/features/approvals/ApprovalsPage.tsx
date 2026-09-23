@@ -106,7 +106,7 @@ export function ApprovalsPage(): ReactNode {
             {(data: ApprovalsResponse) => <History {...historyOf(data.approvals, historyLimit)} limit={historyLimit} />}
           </QueryState>
           <Note render={<div />}>
-            History prunes with the audit trail after 7 days. Times are local.
+            History prunes with the audit trail after 7 days. Times are UTC.
           </Note>
         </Section>
       </Page>

@@ -111,7 +111,7 @@ export function OverviewPane(props: AppPaneProps): ReactNode {
             <FieldGroup>
               <Field render={<label />}>
                 <Label render={<span />}>Service name</Label>
-                <Input type="text" value={service} onChange={(event) => edit({ service: event.target.value })} />
+                <Input type="text" className="font-mono" value={service} onChange={(event) => edit({ service: event.target.value })} />
                 <FieldDescription render={<span />}>Names this app's namespace in generated programs.</FieldDescription>
                 <FieldErrors refusal={refusal} field="typescript_aliases.service" />
               </Field>

@@ -44,6 +44,7 @@ export function AliasRows({
             <TableCell>
               <Input
                 type="text"
+                className="font-mono"
                 value={row.canonicalName}
                 placeholder="canonical tool name"
                 aria-label={`Canonical tool name, row ${index + 1}`}
@@ -60,6 +61,7 @@ export function AliasRows({
             <TableCell className="max-md:mt-2">
               <Input
                 type="text"
+                className="font-mono"
                 value={row.alias}
                 placeholder="alias"
                 aria-label={`TypeScript alias, row ${index + 1}`}

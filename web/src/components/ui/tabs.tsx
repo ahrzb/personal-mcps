@@ -29,14 +29,13 @@ const tabsListVariants = cva("flex items-center gap-0.5 rounded-md bg-muted p-0.
  * One arm: 32px, or 44px and growing into the free width at the narrow breakpoint. The
  * current arm is `aria-selected` on a Tab and `aria-current="page"` on a borrowed link.
  *
- * A focused arm shows today's 35% ring, except the current one, which keeps only its raised
- * shadow: `.segmented`'s current-arm rule outranked the sheet's `:focus-visible`, and each
- * `ring-0` below reproduces that, as it must stay later in the output than
- * `focus-visible:ring-3`. The font, padding and fill are set outright because a `<button>`'s
- * are the user agent's.
+ * A focused arm, the current one included, shows the 35% ring in place of any raised shadow.
+ * The current arm's `…:focus-visible:shadow-none` is stacked on its state because a bare
+ * `focus-visible:` utility is output before `aria-*` ones and would lose to its `shadow-xs`.
+ * The font, padding and fill are set outright because a `<button>`'s are the user agent's.
  */
 const tabsTriggerVariants = cva(
-  "flex h-control-sm cursor-pointer items-center justify-center rounded-sm bg-transparent px-3 py-0 font-sans text-sm font-medium text-muted-foreground no-underline focus-visible:ring-3 focus-visible:ring-ring/35 focus-visible:outline-none aria-selected:bg-background aria-selected:text-foreground aria-selected:shadow-xs aria-selected:ring-0 aria-[current=page]:bg-background aria-[current=page]:text-foreground aria-[current=page]:shadow-xs aria-[current=page]:ring-0 max-md:h-control-touch max-md:grow max-md:text-base"
+  "flex h-control-sm cursor-pointer items-center justify-center rounded-sm bg-transparent px-3 py-0 font-sans text-sm font-medium text-muted-foreground no-underline focus-visible:ring-3 focus-visible:ring-ring/35 focus-visible:outline-none aria-selected:bg-background aria-selected:text-foreground aria-selected:shadow-xs aria-selected:focus-visible:shadow-none aria-[current=page]:bg-background aria-[current=page]:text-foreground aria-[current=page]:shadow-xs aria-[current=page]:focus-visible:shadow-none max-md:h-control-touch max-md:grow max-md:text-base"
 )
 
 function TabsList({ className, ...props }: TabsPrimitive.List.Props) {

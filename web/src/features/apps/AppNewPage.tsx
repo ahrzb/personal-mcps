@@ -225,6 +225,7 @@ function FormCard({
           <Input
             id="app-slug"
             type="text"
+            className="font-mono"
             name="slug"
             value={draft.slug}
             pattern="[a-z0-9\-]+"
@@ -246,6 +247,7 @@ function FormCard({
           <Input
             id="app-endpoint"
             type="url"
+            className="font-mono"
             name="endpoint"
             value={draft.endpoint}
             placeholder="https://mcp.example.com/mcp"
@@ -286,6 +288,7 @@ function FormCard({
           <Input
             id="app-typescript-service"
             type="text"
+            className="font-mono"
             name={ALIAS_SERVICE_FIELD}
             value={draft.aliases.service}
             onChange={(event) =>

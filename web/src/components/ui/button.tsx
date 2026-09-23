@@ -14,7 +14,11 @@ import { cn } from "@/lib/cn"
 const buttonVariants = cva(
   // `[font-family:inherit]`: without preflight a <button> keeps the user agent's system font.
   // `no-underline`: an <a> with these classes would otherwise take the base link underline.
-  "group/button inline-flex items-center justify-center gap-1.5 rounded-md border [font-family:inherit] font-medium leading-none whitespace-nowrap no-underline cursor-pointer outline-none disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-default aria-disabled:opacity-50",
+  // The focus ring is restated here rather than left to app.css's base `:focus-visible`, because
+  // any `shadow-*` utility below (outline's resting shadow, mini's `none`) outranks that base
+  // rule. The ring replaces the resting shadow, as the base rule's does, and keeps the variant's
+  // border.
+  "group/button inline-flex items-center justify-center gap-1.5 rounded-md border [font-family:inherit] font-medium leading-none whitespace-nowrap no-underline cursor-pointer outline-none focus-visible:shadow-none focus-visible:ring-3 focus-visible:ring-ring/35 disabled:cursor-default disabled:opacity-50 aria-disabled:cursor-default aria-disabled:opacity-50",
   {
     variants: {
       variant: {
@@ -37,7 +41,7 @@ const buttonVariants = cva(
         /** `.btn--sm`: 32px and 13px text, the default's 44px and 14px on a phone */
         sm: "h-control-sm px-3 text-sm max-md:h-control-touch max-md:text-base",
         /** `.btn--sm.btn--mini`: 24px in a dense row (/audit's strip), the same on a phone,
-         *  with no shadow and so no focus ring */
+         *  with no resting shadow in any variant */
         xs: "h-control-xs px-2 text-2xs shadow-none",
         /** `.table .cell-actions .btn`: a row's control in a table's actions cell, `sm` at
          *  10px sides and 4px apart; on a phone an equal 44px share of the row's own action
@@ -46,16 +50,8 @@ const buttonVariants = cva(
       },
     },
     compoundVariants: [
-      // Each ring or shadow below is the one legacy.css drew. On focus it drew the global
-      // `:focus-visible` ring, but `.btn--outline`'s own box-shadow outranked that ring, and so
-      // did `.btn--mini`'s `none`, so a focused outline or mini button looks as it does at rest.
-      // Their `shadow-xs` and `shadow-none` outrank the base ring the same way.
+      // `.btn--outline`'s resting shadow, which `.btn--mini` removed.
       { variant: "outline", size: ["default", "sm", "cell"], class: "shadow-xs" },
-      {
-        variant: ["default", "ghost", "danger", "danger-outline", "danger-ghost"],
-        size: ["default", "sm", "cell"],
-        class: "focus-visible:ring-3 focus-visible:ring-ring/35",
-      },
     ],
     defaultVariants: {
       variant: "default",

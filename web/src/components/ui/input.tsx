@@ -9,13 +9,15 @@ import { cn } from "@/lib/cn"
  * url, number, date) and for a field written with no `type` at all, which that rule never
  * reached and which rendered as the browser's own grey field.
  *
- * Deliberately NO focus ring, because the design's field has none. legacy.css's
- * `:focus-visible` ring lost to its own `input[type=…]` rule on specificity, so a focused field
- * looked exactly like a resting one apart from its caret; here `border-input` and `shadow-xs`
- * outrank the base ring the same way. Adding a ring is a look change for the owner to
- * accept, not something a conversion slips in.
+ * Focus draws NativeSelect's ring: a `--ring` border and a 3px ring at 35%, replacing the
+ * resting shadow. It is restated here because `border-input` and `shadow-xs` outrank app.css's
+ * base `:focus-visible`. A text field matches `:focus-visible` however it was focused, so a
+ * click or `autoFocus` shows it too.
  *
- * `aria-invalid="true"` is the invalid state: a red border and no shadow.
+ * `aria-invalid="true"` is the invalid state: a red border and no shadow. Focused, it keeps
+ * the red border and draws the ring.
+ *
+ * A mono field, one that holds an identifier or a code, says `font-mono` at its call site.
  *
  * `size`:
  * - `default` is 36px, and 44px at the narrow breakpoint (the touch target).
@@ -25,17 +27,12 @@ import { cn } from "@/lib/cn"
  *
  * It replaces the native `size` attribute, a width in characters, which nothing here uses.
  * The one-time-code box is sizing classes at its call site (`OtpBoxes`).
- *
- * `.input--mono` has NO counterpart. It never applied: `input[type=…]` sets
- * `font-family: inherit` and outranks it, so every field that carries it draws in sans. A mono
- * field is a look change. `input.role-name` is the exception: it is mono, because its own rule
- * outranks the typed rule, so its call site says `font-mono`.
  */
 // `font-[family-name:inherit]` rather than `font-[inherit]`: cn reads the bare form as a
 // WEIGHT, so a caller's `font-semibold` would delete it and the field would fall back to the
 // browser's own font.
 const inputVariants = cva(
-  "w-full rounded-md border border-input bg-background px-3 font-[family-name:inherit] text-base text-foreground shadow-xs outline-none placeholder:text-ring aria-invalid:border-destructive aria-invalid:shadow-none",
+  "w-full rounded-md border border-input bg-background px-3 font-[family-name:inherit] text-base text-foreground shadow-xs outline-none placeholder:text-ring focus-visible:border-ring focus-visible:shadow-none focus-visible:ring-3 focus-visible:ring-ring/35 aria-invalid:border-destructive aria-invalid:shadow-none",
   {
     variants: {
       size: {

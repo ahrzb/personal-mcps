@@ -126,9 +126,11 @@ function CredentialsCard({
 }
 
 /** The switch link below the TOTP and backup-code cards: a plain link wide, a full-width
- *  bordered button on the phone (legacy.css's `.switch-method a`, narrow only). */
+ *  bordered button on the phone (legacy.css's `.switch-method a`, narrow only). Its resting
+ *  shadow is `not-focus-visible:` so that, focused, app.css's base ring shows instead, the
+ *  same ring an outline Button draws; a shadow utility would otherwise hide it. */
 const SWITCH_LINK_NARROW =
-  "max-md:flex max-md:h-control-touch max-md:w-full max-md:items-center max-md:justify-center max-md:rounded-md max-md:border max-md:border-border max-md:bg-background max-md:px-4 max-md:text-base max-md:font-medium max-md:text-foreground max-md:no-underline max-md:shadow-xs";
+  "max-md:flex max-md:h-control-touch max-md:w-full max-md:items-center max-md:justify-center max-md:rounded-md max-md:border max-md:border-border max-md:bg-background max-md:px-4 max-md:text-base max-md:font-medium max-md:text-foreground max-md:no-underline max-md:not-focus-visible:shadow-xs";
 
 /** The six-box TOTP challenge. `contents` on the form (Tailwind's own utility, as
  *  legacy.css's `.contents` was), so its children take the card's own rhythm rather
@@ -194,6 +196,7 @@ function BackupCodeCard({
             id="backup-code"
             name="code"
             type="text"
+            className="font-mono"
             placeholder="xxxx-xxxx-xxxx"
             autoComplete="one-time-code"
             required

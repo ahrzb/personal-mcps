@@ -83,6 +83,7 @@ function EnterCodeCard({ userCode, error }: { userCode: string; error: string | 
           <Input
             id="user_code"
             type="text"
+            className="font-mono"
             name="user_code"
             placeholder="XXXX-XXXX"
             defaultValue={userCode}

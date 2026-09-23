@@ -10,9 +10,9 @@ import { Input } from "@/components/ui/input"
  * radius, with no shadow and no ground of its own. Its parts sit 6px apart, 10px in from
  * each side.
  *
- * Focus draws NOTHING, as today: `.a-search input` removes the input's outline and shadow,
- * and the box has no focus style. A `focus-within` ring would be an accessibility fix, and a
- * look change for the owner to accept.
+ * Focus draws Input's ring on the BOX, not the input: a `--ring` border and a 3px ring at 35%
+ * while the input inside is focused. The input's own ring is cancelled, since it has no box to
+ * draw it on.
  *
  * `size`, as Input's:
  * - `default` is 36px, and 44px at the narrow breakpoint.
@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input"
  *   drawer's copy stays 32.
  */
 const inputGroupVariants = cva(
-  "flex items-center gap-1.5 rounded-md border border-input px-2.5",
+  "flex items-center gap-1.5 rounded-md border border-input px-2.5 has-[input:focus-visible]:border-ring has-[input:focus-visible]:ring-3 has-[input:focus-visible]:ring-ring/35",
   {
     variants: {
       size: {
@@ -70,15 +70,15 @@ function InputGroupAddon({ className, onClick, ...props }: React.ComponentProps<
 
 /**
  * The group's input: `.a-search input`. It is Input with its box removed (no border, ground,
- * shadow, padding or height), with 13px text at every width and the line height it inherits,
- * and it takes the room its addons leave.
+ * shadow, focus ring, padding or height), with 13px text at every width and the line height it
+ * inherits, and it takes the room its addons leave.
  */
 function InputGroupInput({ className, ...props }: React.ComponentProps<typeof Input>) {
   return (
     <Input
       data-slot="input-group-control"
       className={cn(
-        "h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent p-0 text-sm leading-[inherit] shadow-none max-md:h-auto",
+        "h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent p-0 text-sm leading-[inherit] shadow-none focus-visible:ring-0 max-md:h-auto",
         className
       )}
       {...props}

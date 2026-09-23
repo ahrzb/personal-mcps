@@ -9,11 +9,11 @@ import { Bench } from "./Bench";
  * button.
  *
  * State names keep the vocabulary of the legacy `.btn` classes the bench was first matched
- * against, because each name keys a baseline: `button-<modifier>[-sm|-mini][-focus|-disabled]`.
+ * against, because each name keys a baseline: `button-<modifier>[-sm|-mini|-cell][-focus|-disabled]`.
  */
 
 type Variant = "default" | "outline" | "ghost" | "danger" | "danger-outline" | "danger-ghost";
-type Size = "default" | "sm" | "xs";
+type Size = "default" | "sm" | "xs" | "cell";
 
 /** Each variant's state-name modifier (the old `.btn--` suffix), and a label. */
 const VARIANTS: Record<Variant, { modifier: string; label: string }> = {
@@ -30,6 +30,7 @@ const SIZES: Record<Size, { suffix: string }> = {
   default: { suffix: "" },
   sm: { suffix: "-sm" },
   xs: { suffix: "-mini" },
+  cell: { suffix: "-cell" },
 };
 
 /** 4px of room, so a focus ring (3px) is inside the crop. */

@@ -8,8 +8,8 @@ import { Bench } from "./Bench";
  * /settings' token-kind row, links (which stay links) wearing `tabsListVariants` /
  * `tabsTriggerVariants`.
  *
- * Focus is staged on an arm that is not current and on the current one, which today shows no
- * ring. Hover has no state: nothing draws one.
+ * Focus is staged on an arm that is not current and on the current one, whose ring replaces its
+ * raised shadow. Hover has no state: nothing draws one.
  *
  * At 390 an arm is 44px of 14px text, and either strip is wider than the cell, so `Clip` cuts it
  * at the cell's edge, as the baselines were shot.

@@ -49,13 +49,16 @@ export function QueryState<T>({
  * because the loading state is NEW: the server-rendered pages had none — they blocked the
  * document on their reads — so there is no existing class to reuse and inventing one would
  * mean editing the sheet every page shares.
+ *
+ * `rounded-sm` is 6px, the radius these rows were drawn with when `rounded-md` still meant
+ * Tailwind's 6px; the theme's `rounded-md` is a control's 8px since pass 2's P1a.
  */
 export function Skeleton({ rows }: { rows: number }): ReactNode {
   return (
     <div className="flex flex-col gap-2" aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading…</span>
       {Array.from({ length: rows }, (_, index) => (
-        <div key={index} className="h-9 animate-pulse rounded-md bg-muted" />
+        <div key={index} className="h-9 animate-pulse rounded-sm bg-muted" />
       ))}
     </div>
   );

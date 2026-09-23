@@ -198,6 +198,35 @@ Line numbers are rule starts.
 
 ## 2 · The 12 generated components against today's look
 
+> **P1a outcome (the theme, `web/src/app.css`): the vocabulary P1b builds with.** Every
+> token now lives in `@theme` under Tailwind's names. `legacy.css`'s `:root` is dead, because
+> the `theme` layer outranks `legacy`. Values are in px, today's values exactly, and
+> `--spacing` is 4px. The "two facts" below were true at the time of the survey. They are now
+> resolved: `rounded-md` is **8**, and a `text-*` utility sets **no line height**. It
+> inherits, like every legacy class that sets a size does. When a component needs a line
+> height, it says so with a `leading-*` utility (`leading-none` for Button, `leading-normal`
+> for 1.5).
+>
+> | | Use | Not |
+> |---|---|---|
+> | **Height** | `h-control` 36 · `h-control-sm` 32 · `h-control-xs` 24 · `max-md:h-control-touch` 44. Badges: `h-badge` 20 · `h-badge-title` 22 · `h-badge-xs` 16 · `h-nav-badge min-w-nav-badge` 18. Also `h-rail-row` / `h-code-chip` 28 · `w-otp-w h-otp-h` 44×48, `max-md:w-otp-w-touch max-md:h-otp-h-touch` 48×52 · `max-md:h-code-display-touch` 52 · `h-level-header` 48 · `h-header` 56 | `h-9`/`h-8` (the same px, but the name says which control height it is), `h-10`, arbitrary `h-[22px]` |
+> | **Radius** | `rounded-md` 8 for controls (Button, Input, InputGroup, NativeSelect, Tabs list, Alert) · `rounded-sm` 6 for Badge, Tab trigger, code chip, Skeleton, rail row · `rounded-lg` 12 for Card, Dialog, Empty · `rounded-xs` 3 for Checkbox, `.badge-x` · `rounded-full` for the nav count | `rounded-4xl`, `rounded-xl`, `rounded-[…]` |
+> | **Text** | `text-base` 14 for controls · `text-sm` 13 for small controls, cells, helpers, descriptions · `text-xs` 12 · `text-2xs` 11 for Badge and eyebrows · `text-badge-xs` 10 · `text-md` 15 · `text-lg` 16 for Card and Dialog titles · `text-xl` 18 · `text-2xl` 24 · `max-md:text-title-narrow` 20 | `md:text-sm` (it makes desktop inputs 13) |
+> | **Border** | `border`, with the colour from the base rule (`--color-border`, #e4e4e7) · `border-input` (the same) · `border-row-border` between body rows · `border-transparent` for `.btn`'s rim · tones `border-{success,warning,danger}-border` | an uncoloured `border-b` expecting black |
+> | **Focus ring** | `focus-visible:outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/35`. Invalid is `aria-invalid:border-destructive` with **no** ring | `ring-ring/50`, `aria-invalid:ring-3` |
+> | **Colour** | `bg-muted text-primary` (Badge) · `text-muted-foreground` · `{bg,text,border}-{success,warning}{,-bg,-border}` · `text-danger-fg bg-danger-bg border-danger-border` · `bg-destructive text-destructive-foreground` (#fff) · `bg-sunken` · `text-fg-subtle` · `text-dim-fg` · `placeholder:text-ring` · audit's `o-*` and `a-*` | `bg-destructive/10`, `bg-black/10` |
+> | **Elevation** | `shadow-xs` (card, control) · `shadow-pop` (Dialog, popups) · `shadow-menu` (phone drawer) · `shadow-record` (audit record) · `shadow-thumb` (Switch) · scrims `bg-scrim-dialog` .4 · `bg-scrim-drawer` .35 · `bg-scrim-record` .18 | `shadow-md`, `ring-1 ring-foreground/10` |
+> | **Width** | `w-auth` 400 (auth card, Dialog) · `max-w-page` 1280 · `max-w-page-narrow` 760 · `max-w-pane` 640 · `w-rail` 200 · `w-kv-key` 180 · `w-kv-key-dense` 110 | `sm:max-w-md`, `w-100` |
+>
+> - **Breakpoints.** `max-md:` is legacy.css's `max-width: 767px`, and `md:max-lg:` its
+>   768–1023 tier.
+> - **`dark:` never fires.** It is keyed to a `.dark` class that nothing sets. Delete these
+>   classes, or leave them inert.
+> - **Spacing.** legacy.css's `--space-N` is Tailwind's scale at these steps: 1→`0.5`, 2→`1`,
+>   3→`1.5`, 4→`2`, 5→`2.5`, 6→`3`, 7→`3.5`, 8→`4`, 9→`5`, 10→`6`, 11→`8`, 12→`9`, 13→`12`.
+> - **Legacy names stay readable.** `var(--muted-fg)`, `var(--space-4)`, `var(--radius)` and
+>   the rest all resolve through the theme until their last reader goes.
+
 Two facts decide most rows:
 
 - **Font sizes.** styles.css's unlayered `:root` re-declares Tailwind's `--text-*`, `--radius-sm`

@@ -1,12 +1,16 @@
 /* app.css — the SPA's one stylesheet: every rule a page reads arrives through this file.
 
-   The design language is still `legacy.css`, the sheet pass 1 shipped (the server once served
-   it at /styles.css): every token, every page-chrome class, every table and rail. It is
-   imported into `layer(legacy)`, BENEATH `utilities`, which is the whole point of the layer
-   order below: a Tailwind utility on an element beats the legacy class rule it replaces by
-   construction, so pass 2 converts a page by adding utilities and never by writing a
-   counter-rule. What stays unlayered here — the bridge, the drawer's open state, /audit's
-   own sheet — outranks both. */
+   It is also where every design TOKEN is written down: the `@theme` below holds each value
+   today's look uses, under the names Tailwind's utilities read, so a generated component
+   that says `rounded-md text-sm border-border` draws today's 8px, 13px and #e4e4e7 by
+   construction (pass 2's P1a).
+
+   The page chrome is still `legacy.css`, the sheet pass 1 shipped (the server once served it
+   at /styles.css): every page-chrome class, every table and rail. It is imported into
+   `layer(legacy)`, BENEATH `utilities`, so a Tailwind utility on an element beats the legacy
+   class rule it replaces by construction, and pass 2 converts a page by adding utilities and
+   never by writing a counter-rule. What stays unlayered here — the drawer's open state,
+   /audit's own sheet — outranks both. */
 
 /* Tailwind's PREFLIGHT is deliberately not imported, which is why `tailwindcss/theme.css`
    and `tailwindcss/utilities.css` are imported separately instead of the `tailwindcss`
@@ -17,17 +21,27 @@
    preflight rule the primitives genuinely depend on (a default border style, so a bare
    `border` utility paints) is restored below, inside `base` and therefore BENEATH
    `utilities`: unlayered it would outrank every layered utility and delete the borders the
-   primitives ask for. */
-@layer theme, base, legacy, utilities;
+   primitives ask for.
+
+   `theme` sits ABOVE `legacy`, which is what makes the `@theme` below the one place a
+   token's value lives: legacy.css's own `:root` still declares every token, and in the
+   layer beneath it every one of those declarations loses. It is dead until P5 deletes the
+   file with it. The theme layer holds nothing but custom properties on `:root`, so
+   the move reorders nothing else. */
+@layer base, legacy, theme, utilities;
 
 @import "tailwindcss/theme.css" layer(theme);
 
+/* The base border colour shadcn's own base sheet sets: without it, every generated `border`
+   or `border-b` that names no colour draws `currentColor`, a near-black line. Beneath
+   `legacy`, so every legacy rule that draws a border keeps the colour it names. */
 @layer base {
   *,
   ::before,
   ::after {
     border-style: solid;
     border-width: 0;
+    border-color: var(--color-border);
   }
 }
 
@@ -36,7 +50,7 @@
    styles text controls BY TYPE (`input[type="text"]`, `[type="search"]`, …), so an
    `<input>` written with no `type` attribute matches none of those rules and has always
    rendered as the user agent's own field. Zeroing its border does not restyle such a field,
-   it erases it.
+   it erases it, and recolouring it restyles it.
 
    `revert` rather than a width and a colour of this file's own: the correct appearance is
    the UA sheet's, and writing one here would be a second definition of a control's look in
@@ -46,6 +60,7 @@
   input:not([type]) {
     border-style: revert;
     border-width: revert;
+    border-color: revert;
   }
 }
 
@@ -70,64 +85,241 @@
 @import "shadcn/tailwind.css";
 @import "tw-animate-css";
 
-/* shadcn's generated classes reach the palette two ways — `bg-primary` through Tailwind's
-   `--color-*` theme namespace, and `color-mix(in oklch, var(--secondary), …)` through the
-   raw name — so both vocabularies have to exist. Neither is a palette: every value below
-   resolves to a token defined in legacy.css's `:root`, which stays the only place a colour
-   is written down. A second palette here is the thing this block exists to prevent.
+/* The product has one appearance, so a `dark:` utility in a generated class string must
+   match nothing. Tailwind's own `dark` variant is `prefers-color-scheme: dark`, which would
+   repaint every converted component on a phone in dark mode beside legacy markup that does
+   not change; keyed to a `.dark` class nothing ever sets, it never fires. */
+@custom-variant dark (&:where(.dark, .dark *));
 
-   There is no `.dark` block and no `@custom-variant dark`, for the same reason legacy.css
-   has no dark theme: the product has one appearance. A `dark:` utility in a generated class
-   string therefore matches nothing, which is the correct outcome rather than a gap. */
-:root {
-  --background: var(--bg);
-  --foreground: var(--fg);
-  --card: var(--bg);
-  --card-foreground: var(--fg);
-  --popover: var(--bg);
-  --popover-foreground: var(--fg);
-  --primary-foreground: var(--primary-fg);
-  --secondary: var(--muted);
-  --secondary-foreground: var(--fg);
-  --muted-foreground: var(--muted-fg);
-  --accent: var(--muted);
-  --accent-foreground: var(--fg);
-  --destructive-foreground: var(--primary-fg);
-  --input: var(--border);
+/* ------------------------------------------------------------ the theme ---- */
+/* Every value is today's, copied from legacy.css's `:root` (itself lifted from
+   design/Main.dc.html) and from the literals legacy.css and audit.css write inline. The
+   look wins over design/layout-and-density.md's ladder (pass 2 brief, ruling 1.3): where
+   today's look leaves the ladder, the value is NAMED below rather than rounded onto it, so a
+   departure reads as one in the markup that uses it.
+
+   `static`, so Tailwind emits every variable here whether or not a utility uses it: the
+   names legacy.css, audit.css and 40 inline styles read (the block after this one) reach
+   these through `var()`, and a pruned variable would blank them.
+
+   Everything is in px, as today, including the spacing unit and the breakpoints: Tailwind's
+   rem would make a converted control grow with a reader's default font size while the
+   legacy markup beside it does not. Moving to rem is its own later change. */
+@theme static {
+  /* colour — shadcn's names first, then today's extras, one Tailwind name per legacy.css
+     token (`--x` → `--color-x`) so a conversion is a rename */
+  --color-background: #ffffff;
+  --color-foreground: #09090b;
+  --color-card: var(--color-background);
+  --color-card-foreground: var(--color-foreground);
+  --color-popover: var(--color-background);
+  --color-popover-foreground: var(--color-foreground);
+  --color-primary: #18181b;
+  --color-primary-foreground: #fafafa;
+  --color-secondary: var(--color-muted);
+  --color-secondary-foreground: var(--color-foreground);
+  --color-muted: #f4f4f5;
+  --color-muted-foreground: #71717a;
+  --color-accent: var(--color-muted);
+  --color-accent-foreground: var(--color-foreground);
+  --color-destructive: #dc2626;
+  /* white, not `--primary-fg`'s #fafafa: `.btn--danger` and `.nav-badge` write #ffffff */
+  --color-destructive-foreground: #ffffff;
+  --color-border: #e4e4e7;
+  --color-input: var(--color-border);
+  /* also the placeholder colour and the focus ring's, at 35% */
+  --color-ring: #a1a1aa;
+  --color-success: #15803d;
+  --color-success-bg: #f0fdf4;
+  --color-success-border: #bbf7d0;
+  --color-warning: #92400e;
+  --color-warning-bg: #fffbeb;
+  --color-warning-border: #fde68a;
+  --color-danger-fg: #b91c1c;
+  --color-danger-bg: #fef2f2;
+  --color-danger-border: #fecaca;
+  --color-dim-fg: #d4d4d8;     /* a dimmed rail entry's marker */
+  --color-sunken: #fafafa;     /* auth page ground, a sunken panel inside a card */
+  --color-fg-subtle: #52525b;  /* link hover, code text */
+  --color-row-border: #f4f4f5; /* between table rows, lighter than --color-border */
+  /* The three scrims, one per overlay that dims the page: Confirm's dialog, the phone
+     drawer, and /audit's record drawer (lighter, because the page behind stays read). */
+  --color-scrim-dialog: rgba(9, 9, 11, 0.4);
+  --color-scrim-drawer: rgba(9, 9, 11, 0.35);
+  --color-scrim-record: rgba(9, 9, 11, 0.18);
+  /* /audit's own: the five outcomes, the two bar fills, a search hit and a number leaf
+     (audit.css says what each is for; it declares the same values on `.audit` until the
+     audit family converts). The hatch gradient stays audit.css's local variable. */
+  --color-o-ok: #d4d4d8;
+  --color-o-approval: #fab219;
+  --color-o-archived: #8a5a00;
+  --color-o-denied: #e5484d;
+  --color-o-error: #7f1d1d;
+  --color-a-bar: #ececee;
+  --color-a-bar-soft: #f0f0f1;
+  --color-a-hit: #fef08a;
+  --color-a-num: #1d4ed8;
+
+  --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Type. Each size's LINE HEIGHT is `initial`, which deletes Tailwind's own, so a `text-*`
+     utility sets the size alone and the line height is inherited, exactly as every
+     legacy.css class that sets a size does: body's 1.55, a heading's 1.2, a button's 1.
+     Tailwind's would put `text-sm` at 1.4286 and move every table row by about 1.6px. A
+     component that needs a line height says so with a `leading-*` utility. */
+  --text-2xl: 24px;   /* page title */
+  --text-2xl--line-height: initial;
+  --text-xl: 18px;    /* section heading */
+  --text-xl--line-height: initial;
+  --text-lg: 16px;    /* card title */
+  --text-lg--line-height: initial;
+  --text-md: 15px;    /* brand, approval tool */
+  --text-base: 14px;  /* body, controls */
+  --text-base--line-height: initial;
+  --text-sm: 13px;    /* helper text, small controls, table cells */
+  --text-sm--line-height: initial;
+  --text-xs: 12px;    /* captions, badges beside a title, timestamps */
+  --text-xs--line-height: initial;
+  --text-2xs: 11px;   /* eyebrow labels, badges */
+  /* ladder departures: the phone's page, auth and card titles, and the in-row badge */
+  --text-title-narrow: 20px;
+  --text-badge-xs: 10px;
+
+  /* The spacing unit, in px (see above): `p-4` is 16px, `h-9` 36px. legacy.css's
+     `--space-N` ladder is this scale at 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 8, 9, 12. */
+  --spacing: 4px;
+  /* control heights — the ladder's four, nothing in between */
+  --spacing-control: 36px;
+  --spacing-control-sm: 32px;
+  --spacing-control-xs: 24px;     /* inline controls in a dense row; WCAG AA's minimum target */
+  --spacing-control-touch: 44px;  /* every tappable control at the narrow breakpoint */
+  --spacing-header: 56px;
+  /* ladder departures, each today's size for one element */
+  --spacing-rail-row: 28px;       /* a framed rail entry */
+  --spacing-code-chip: 28px;      /* a backup-code chip */
+  --spacing-badge: 20px;          /* THE badge, 11px text */
+  --spacing-badge-title: 22px;    /* a badge beside a 24px page title, 12px text */
+  --spacing-badge-xs: 16px;       /* a badge inside a row's first line, 10px text */
+  --spacing-nav-badge: 18px;      /* the red count beside Approvals, height and min width */
+  --spacing-otp-w: 44px;          /* a one-time-code digit box */
+  --spacing-otp-h: 48px;
+  --spacing-otp-w-touch: 48px;    /* …at the narrow breakpoint */
+  --spacing-otp-h-touch: 52px;
+  --spacing-code-display-touch: 52px; /* device's live user code at the narrow breakpoint */
+  --spacing-level-header: 48px;   /* the phone's `‹ back` level header */
+
+  /* widths: `w-*` and `max-w-*` read these */
+  --container-page: 1280px;        /* the table shape, gutters included */
+  --container-page-narrow: 760px;  /* the document shape */
+  --container-auth: 400px;         /* login, device, two-factor, add-app; Confirm's dialog */
+  --container-pane: 640px;         /* the Password pane */
+  --container-rail: 200px;         /* the one rail width, framed or free-standing */
+  --container-kv-key: 180px;       /* a key column at page width */
+  --container-kv-key-dense: 110px; /* a key column inside a details column */
+
+  /* breakpoints — legacy.css's two, in px as its media queries are (`max-md:` is its
+     `max-width: 767px`, `md:max-lg:` its 768–1023 tier); the other three keep Tailwind's
+     values, in px because Tailwind sorts breakpoints of one unit only */
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+
+  --radius-xs: 3px;   /* a checkbox, a badge's remove button */
+  --radius-sm: 6px;
+  --radius-md: 8px;   /* controls; Tailwind's own is 6 */
+  --radius-lg: 12px;  /* cards */
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);  /* a card, a control */
+  --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.15); /* a floating surface */
+  --shadow-menu: 0 0 40px rgba(0, 0, 0, 0.18);  /* the phone drawer */
+  --shadow-record: -12px 0 40px rgba(0, 0, 0, 0.12); /* /audit's record drawer */
+  --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.2); /* a switch's thumb */
 }
-/* --primary, --muted, --border, --ring, --destructive and --radius are legacy.css's own
-   names already and carry exactly the meaning shadcn gives them, so re-declaring them here
-   would be a second definition of one token rather than a bridge. */
 
-@theme inline {
-  --color-background: var(--bg);
-  --color-foreground: var(--fg);
-  --color-card: var(--bg);
-  --color-card-foreground: var(--fg);
-  --color-popover: var(--bg);
-  --color-popover-foreground: var(--fg);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-fg);
-  --color-secondary: var(--muted);
-  --color-secondary-foreground: var(--fg);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-fg);
-  --color-accent: var(--muted);
-  --color-accent-foreground: var(--fg);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--primary-fg);
-  --color-border: var(--border);
-  --color-input: var(--border);
-  --color-ring: var(--ring);
+/* The OTHER names every token is read by, resolved from the theme above: legacy.css's own
+   (its rules, audit.css and 40 inline `style` props read `var(--space-4)`,
+   `var(--muted-fg)`, …), and shadcn's raw names (generated class strings read
+   `var(--secondary)`, `var(--radius)`). In the theme layer, so each one here beats
+   legacy.css's own declaration of the same name.
+
+   There is no `.dark` block: the product has one appearance. */
+@layer theme {
+  :root {
+    --bg: var(--color-background);
+    --fg: var(--color-foreground);
+    --muted: var(--color-muted);
+    --muted-fg: var(--color-muted-foreground);
+    --border: var(--color-border);
+    --primary: var(--color-primary);
+    --primary-fg: var(--color-primary-foreground);
+    --destructive: var(--color-destructive);
+    --ring: var(--color-ring);
+    --success: var(--color-success);
+    --success-bg: var(--color-success-bg);
+    --success-border: var(--color-success-border);
+    --warning: var(--color-warning);
+    --warning-bg: var(--color-warning-bg);
+    --warning-border: var(--color-warning-border);
+    --danger-fg: var(--color-danger-fg);
+    --danger-bg: var(--color-danger-bg);
+    --danger-border: var(--color-danger-border);
+    --dim-fg: var(--color-dim-fg);
+    --sunken: var(--color-sunken);
+    --fg-subtle: var(--color-fg-subtle);
+    --row-border: var(--color-row-border);
+
+    --space-1: calc(var(--spacing) * 0.5);
+    --space-2: calc(var(--spacing) * 1);
+    --space-3: calc(var(--spacing) * 1.5);
+    --space-4: calc(var(--spacing) * 2);
+    --space-5: calc(var(--spacing) * 2.5);
+    --space-6: calc(var(--spacing) * 3);
+    --space-7: calc(var(--spacing) * 3.5);
+    --space-8: calc(var(--spacing) * 4);
+    --space-9: calc(var(--spacing) * 5);
+    --space-10: calc(var(--spacing) * 6);
+    --space-11: calc(var(--spacing) * 8);
+    --space-12: calc(var(--spacing) * 9);
+    --space-13: calc(var(--spacing) * 12);
+
+    --radius: var(--radius-md);
+    --radius-full: 999px;
+    --shadow: var(--shadow-xs);
+    --focus-ring: 0 0 0 3px rgba(161, 161, 170, 0.35);
+
+    --control-h: var(--spacing-control);
+    --control-h-sm: var(--spacing-control-sm);
+    --control-h-xs: var(--spacing-control-xs);
+    --control-h-touch: var(--spacing-control-touch);
+    --header-h: var(--spacing-header);
+
+    --page-wide: var(--container-page);
+    --page-narrow: var(--container-page-narrow);
+    --card-auth: var(--container-auth);
+    --rail-w: var(--container-rail);
+    --pane-w: var(--container-pane);
+    --kv-key: var(--container-kv-key);
+    --kv-key-dense: var(--container-kv-key-dense);
+
+    --background: var(--color-background);
+    --foreground: var(--color-foreground);
+    --card: var(--color-card);
+    --card-foreground: var(--color-card-foreground);
+    --popover: var(--color-popover);
+    --popover-foreground: var(--color-popover-foreground);
+    --primary-foreground: var(--color-primary-foreground);
+    --secondary: var(--color-secondary);
+    --secondary-foreground: var(--color-secondary-foreground);
+    --muted-foreground: var(--color-muted-foreground);
+    --accent: var(--color-accent);
+    --accent-foreground: var(--color-accent-foreground);
+    --destructive-foreground: var(--color-destructive-foreground);
+    --input: var(--color-input);
+  }
 }
-
-/* The radius and font namespaces are deliberately NOT aliased here. Tailwind's own
-   `theme.css` already defines `--radius-*` and `--font-sans`, and it is imported into
-   `layer(theme)` — beneath legacy.css's `:root` in `layer(legacy)`, which redeclares
-   `--radius-sm`, `--radius-lg`, `--radius-full` and `--font-sans` with the repo's values. So
-   `rounded-sm` and `font-sans` already resolve to the design tokens, and an alias here would
-   be a SECOND declaration of the same name in a higher position — a token ladder beside the
-   one legacy.css owns, which is what the bridge exists to avoid. */
 
 /* The narrow drawer's OPEN state, which legacy.css cannot supply to this client. It draws
    the drawer and the scrim but kept no open state at all once its `#menu:target` rules went

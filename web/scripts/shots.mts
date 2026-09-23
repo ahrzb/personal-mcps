@@ -74,8 +74,15 @@ export async function mounted(page: Page): Promise<void> {
  * — no external input reaches it — so the shell adds no injection surface.
  */
 export function startServer(command: string[], cwd: string): ChildProcess {
+  // Each server gets a dependency cache of its own, keyed by its port (vite.config.ts's
+  // cacheDir): gallery gates run in parallel, and a shared `.vite` re-optimized under a
+  // running server answers "504 Outdated Optimize Dep" and aborts its navigations.
+  const port = command[command.indexOf("--port") + 1];
+  const env = { ...process.env };
+  if (port !== undefined && env.VITE_CACHE_DIR === undefined) env.VITE_CACHE_DIR = `node_modules/.vite-${port}`;
   return spawn(command[0] ?? "", command.slice(1), {
     cwd,
+    env,
     stdio: ["ignore", "pipe", "pipe"],
     shell: true,
   });

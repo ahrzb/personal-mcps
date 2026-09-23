@@ -95,22 +95,32 @@ try {
   await mkdir(REPORT, { recursive: true });
   for (const viewport of VIEWPORTS) {
     const context = await browser.newContext({ ...CONTEXT, viewport });
-    const page = await context.newPage();
     // Read the pair list from the RENDERED index rather than its HTML: the gallery is a
     // client-side router, so `fetch` would see only the empty document shell. It doubles as
     // the first proof that the gallery mounts at all.
-    const pairs = await pairsFromPage(page, `${ORIGIN}/__preview`, "/__preview");
+    const index = await context.newPage();
+    const pairs = await pairsFromPage(index, `${ORIGIN}/__preview`, "/__preview");
+    await index.close();
     for (const [name, state] of pairs) {
       const key = `${name}__${state}__${viewport.width}x${viewport.height}`;
-      await page.goto(`${ORIGIN}/__preview/${name}/${state}`, { waitUntil: "load" });
-      await mounted(page);
-      await settle(page);
-      if (name === "primitives") {
-        results.push(await columns(page, key, accepted[key] ?? null));
-        continue;
+      // A TAB PER STATE, closed after its capture. One reused tab leaks the dev server's HMR
+      // WebSocket on every navigation; at ~256 open sockets Chrome's pool is exhausted and the
+      // tab's requests queue forever — a deterministic hang near state 250 once P1b's
+      // primitives pushed a viewport past it (found by p2-overlays, 2026-09-23).
+      const page = await context.newPage();
+      try {
+        await page.goto(`${ORIGIN}/__preview/${name}/${state}`, { waitUntil: "load" });
+        await mounted(page);
+        await settle(page);
+        if (name === "primitives") {
+          results.push(await columns(page, key, accepted[key] ?? null));
+          continue;
+        }
+        const shot = await page.screenshot({ fullPage: true });
+        results.push(await compare(key, shot, accepted[key] ?? null));
+      } finally {
+        await page.close();
       }
-      const shot = await page.screenshot({ fullPage: true });
-      results.push(await compare(key, shot, accepted[key] ?? null));
     }
     await context.close();
   }
@@ -165,9 +175,26 @@ async function compare(key: string, shot: Buffer, accepted: string | null): Prom
  * exactly one `Columns` throws here (the locator is strict), which fails the run by name.
  */
 async function columns(page: Page, key: string, accepted: string | null): Promise<Result> {
-  const legacy = await page.locator('[data-column="legacy"]').screenshot();
-  const next = await page.locator('[data-column="next"]').screenshot();
+  const legacy = await column(page, "legacy");
+  const next = await column(page, "next");
   return await diff(key, legacy, next, accepted, "columns");
+}
+
+/**
+ * One cell of a `primitives` state, cropped. A document has ONE focused element, so a focus
+ * state cannot show `:focus-visible` in both cells of one render: a fixture marks its focus
+ * target with `data-focus` on BOTH sides, and each cell's target is focused just before that
+ * cell is shot (programmatic focus with no prior pointer input matches `:focus-visible`).
+ * Cells with no `data-focus` are shot as rendered.
+ */
+async function column(page: Page, side: "legacy" | "next"): Promise<Buffer> {
+  const cell = page.locator(`[data-column="${side}"]`);
+  const target = cell.locator("[data-focus]").first();
+  if ((await target.count()) > 0) {
+    await target.focus();
+    await settle(page);
+  }
+  return await cell.screenshot();
 }
 
 /** Diffs `after` against `before` and writes the report's three images for `key`. */

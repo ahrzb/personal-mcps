@@ -16,6 +16,12 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   base: "/",
+  // One dependency cache per dev server when several run at once: the gallery gates
+  // (visual-compare, drawer-check, audit-search-check) each start their own `vite dev`, and
+  // parallel agents sharing `node_modules/.vite` re-optimize under each other — "504 Outdated
+  // Optimize Dep", missing chunks, aborted navigations. The scripts set VITE_CACHE_DIR per
+  // port; unset, it is Vite's default.
+  cacheDir: process.env.VITE_CACHE_DIR ?? "node_modules/.vite",
   build: {
     outDir: "dist",
     emptyOutDir: true,
